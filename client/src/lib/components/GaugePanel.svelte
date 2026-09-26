@@ -27,7 +27,7 @@
   } from "../canvas/presentation";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
-  import { MISSING, STAGE } from "../presentation/vocabulary";
+  import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
 
@@ -302,9 +302,7 @@
               <span class="terminal-number">{readout.terminal.value}</span>
               <span class="terminal-unit">{gaugeUnit}</span>
               {#if readout.terminal.dashed}
-                <span class="terminal-partial"
-                  >Partial {readout.terminal.direction}</span
-                >
+                <span class="terminal-partial">{OUTCOME.partial}</span>
               {/if}
             </div>
           {:else}

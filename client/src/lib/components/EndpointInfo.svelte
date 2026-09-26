@@ -192,7 +192,7 @@
       {/if}
       <dl class="kv">
         <div>
-          <dt>Node</dt>
+          <dt>Server</dt>
           <dd>{server?.name ?? "Checking server"}</dd>
         </div>
         <div>

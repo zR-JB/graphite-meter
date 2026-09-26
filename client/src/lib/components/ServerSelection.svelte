@@ -147,7 +147,7 @@
             ? ""
             : store.primaryLatencyServer}
           label="Latency measurement servers"
-          aggregate="Every server"
+          aggregate="Combined"
           hint="Measure latency to every server"
           disabled={locked}
           onchange={(id) =>

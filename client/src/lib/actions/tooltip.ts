@@ -2,7 +2,6 @@
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
   text: string;
-  disabled?: boolean;
   // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
   instant?: boolean;
 }
@@ -35,7 +34,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     node.tabIndex = 0;
   }
   function show() {
-    if (opts.disabled || bubble || !opts.text || !node.isConnected) return;
+    if (bubble || !opts.text || !node.isConnected) return;
     bubble = document.createElement("div");
     bubble.className = "tooltip";
     bubble.id = id;
@@ -159,7 +158,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     update(next: TooltipParam) {
       opts = normalize(next);
       if (!bubble) return;
-      if (opts.disabled || !opts.text) hide();
+      if (!opts.text) hide();
       else bubble.textContent = opts.text;
     },
     destroy() {
