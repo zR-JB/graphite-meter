@@ -29,7 +29,7 @@
   announceChanges(() => label);
 </script>
 
-<div class="pulse" use:tooltip={label}>
+<div class="pulse" {@attach tooltip(() => label)}>
   <span class="sr-only">{label}</span>
   <span class="dot" data-state={store.effectiveConnectivity}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">

@@ -1,4 +1,5 @@
-// Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
+// Anchored tooltips for jargon, controls and chart points; the words live in vocabulary.ts.
+import { fromAction } from "svelte/attachments";
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
   text: string;
@@ -12,7 +13,11 @@ const TOUCH_DISMISS_MS = 4000;
 function normalize(param: TooltipParam): TooltipOptions {
   return typeof param === "string" ? { text: param } : param;
 }
-export function tooltip(node: HTMLElement, param: TooltipParam) {
+/** An attachment; the getter updates the text in place, so an open tip stays open. */
+export const tooltip = (param: () => TooltipParam) =>
+  fromAction(tooltipAction, param);
+
+function tooltipAction(node: HTMLElement, param: TooltipParam) {
   let opts = normalize(param);
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;

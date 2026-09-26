@@ -44,7 +44,7 @@
     popovertarget={menuId}
     style:anchor-name={`--${menuId}`}
     onkeydown={triggerKeydown}
-    use:tooltip={label}
+    {@attach tooltip(() => label)}
   >
     <Icon name="more" />
   </button>

@@ -278,7 +278,7 @@
       class="btn btn-icon btn-inset close-detail"
       type="button"
       aria-label="Close result"
-      use:tooltip={"Close (Esc)"}
+      {@attach tooltip(() => "Close (Esc)")}
       onclick={onClose}
     >
       <Icon name="close" />
@@ -360,7 +360,7 @@
                 >{counts.exceptions.join(" · ") ||
                   "No timeouts"}{#if lane.accountingComplete === false}<em
                     class="term"
-                    use:tooltip={PARTIAL_ACCOUNTING_HELP}
+                    {@attach tooltip(() => PARTIAL_ACCOUNTING_HELP)}
                     >· partial accounting</em
                   >{/if}</span
               >

@@ -301,7 +301,10 @@
           aria-label={result.description}
           style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
           style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
-          use:tooltip={{ text: result.description, instant: true }}
+          {@attach tooltip(() => ({
+            text: result.description ?? "",
+            instant: true,
+          }))}
         ></span>
       {/if}
     {/each}

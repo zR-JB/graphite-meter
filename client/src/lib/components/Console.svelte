@@ -531,9 +531,11 @@
       aria-label={measurementOpen
         ? "Graphite Meter — return to a fresh, blank test"
         : "Graphite Meter — return to live meter"}
-      use:tooltip={measurementOpen
-        ? "Return to a fresh, blank test"
-        : "Return to live meter"}
+      {@attach tooltip(() =>
+        measurementOpen
+          ? "Return to a fresh, blank test"
+          : "Return to live meter",
+      )}
       onclick={requestReturnToStart}
       ><svg class="brand-glyph" viewBox="0 0 24 24" aria-hidden="true"
         ><path
@@ -554,7 +556,7 @@
       class="btn btn-icon"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
-      use:tooltip={"Settings — test and display (S)"}
+      {@attach tooltip(() => "Settings — test and display (S)")}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
@@ -567,7 +569,9 @@
         data-tone={awayRunIndicator.tone}
         type="button"
         aria-label={`${awayRunIndicator.label}. Return to live meter.`}
-        use:tooltip={`${awayRunIndicator.label} — return to live meter`}
+        {@attach tooltip(
+          () => `${awayRunIndicator.label} — return to live meter`,
+        )}
         onclick={() => {
           focusWorkspace("measurement");
           routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
@@ -587,9 +591,9 @@
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
-        use:tooltip={historyOpen
-          ? "Close History"
-          : "History — saved results (H)"}
+        {@attach tooltip(() =>
+          historyOpen ? "Close History" : "History — saved results (H)",
+        )}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         ><Icon name="history" /></button
@@ -597,14 +601,17 @@
     <button
       class="btn btn-icon direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
-      use:tooltip={`Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`}
+      {@attach tooltip(
+        () =>
+          `Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`,
+      )}
       onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
     <button
       class="btn btn-icon direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
-      use:tooltip={"Details — server and connection (D)"}
+      {@attach tooltip(() => "Details — server and connection (D)")}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button

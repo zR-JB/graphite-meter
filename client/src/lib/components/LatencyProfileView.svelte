@@ -191,7 +191,7 @@
               : "waiting"
             : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        <em class="term jit" use:tooltip={JARGON.jitter}
+        <em class="term jit" {@attach tooltip(() => JARGON.jitter)}
           >{lane.jitter == null
             ? `jitter ${MISSING}`
             : `${fmtMs(lane.jitter)} ms jitter`}</em
@@ -210,14 +210,16 @@
               aria-label={[`${lane.label}: measurement details`, accounting]
                 .filter(Boolean)
                 .join(". ")}
-              use:tooltip={[
-                lane.reflectorTiming
-                  ? reflectorTimingDescription(lane.reflectorTiming)
-                  : "",
-                accounting,
-              ]
-                .filter(Boolean)
-                .join("\n\n")}><Icon name="info" /></span
+              {@attach tooltip(() =>
+                [
+                  lane.reflectorTiming
+                    ? reflectorTimingDescription(lane.reflectorTiming)
+                    : "",
+                  accounting,
+                ]
+                  .filter(Boolean)
+                  .join("\n\n"),
+              )}><Icon name="info" /></span
             >
           {/if}
         </span>

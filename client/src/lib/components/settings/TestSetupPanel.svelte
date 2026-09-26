@@ -226,9 +226,11 @@
         class="badge term"
         data-readiness={readiness}
         data-tone={READINESS[readiness].tone}
-        use:tooltip={readiness === "verified"
-          ? JARGON.checkReuse
-          : READINESS[readiness].label}
+        {@attach tooltip(() =>
+          readiness === "verified"
+            ? JARGON.checkReuse
+            : READINESS[readiness].label,
+        )}
       >
         {READINESS[readiness].label}
       </span>
@@ -309,13 +311,13 @@
           <button
             type="button"
             aria-pressed={store.unitKind === "bits"}
-            use:tooltip={JARGON.unitBits}
+            {@attach tooltip(() => JARGON.unitBits)}
             onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
           >
           <button
             type="button"
             aria-pressed={store.unitKind === "bytes"}
-            use:tooltip={JARGON.unitBytes}
+            {@attach tooltip(() => JARGON.unitBytes)}
             onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
           >
         </div>
@@ -326,13 +328,13 @@
           <button
             type="button"
             aria-pressed={store.unitBase === "base10"}
-            use:tooltip={JARGON.unitDecimal}
+            {@attach tooltip(() => JARGON.unitDecimal)}
             onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
           >
           <button
             type="button"
             aria-pressed={store.unitBase === "base2"}
-            use:tooltip={JARGON.unitBinary}
+            {@attach tooltip(() => JARGON.unitBinary)}
             onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
           >
         </div>

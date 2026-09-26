@@ -30,14 +30,17 @@
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
   onclick={controller.toggleRun}
-  use:tooltip={blocker ||
-    (pending
-      ? "Cancel starting the test (Space / Esc)"
-      : store.isRunning
-        ? "Stop the test (Space / Esc)"
-        : resolved
-          ? "Run the test again (Space / R)"
-          : "Start the test (Space)")}
+  {@attach tooltip(
+    () =>
+      blocker ||
+      (pending
+        ? "Cancel starting the test (Space / Esc)"
+        : store.isRunning
+          ? "Stop the test (Space / Esc)"
+          : resolved
+            ? "Run the test again (Space / R)"
+            : "Start the test (Space)"),
+  )}
 >
   {#key label}
     <span class="run-button-content enter">

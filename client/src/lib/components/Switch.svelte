@@ -36,7 +36,9 @@
   {#if label}
     {#if tooltipText}
       <!-- The tooltip adds a tab stop, so only a label with text gets one. -->
-      <span class="label term" use:tooltip={tooltipText}>{label}</span>
+      <span class="label term" {@attach tooltip(() => tooltipText)}
+        >{label}</span
+      >
     {:else}
       <span class="label">{label}</span>
     {/if}

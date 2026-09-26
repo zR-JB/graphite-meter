@@ -48,7 +48,7 @@
             ><Icon name={card.icon} /></span
           >
           {#if card.key === "latency"}
-            <span class="label term" use:tooltip={JARGON.latency}
+            <span class="label term" {@attach tooltip(() => JARGON.latency)}
               >{card.label}</span
             >
           {:else}
@@ -59,7 +59,7 @@
             <span
               class="badge term"
               data-tone={QUALITY_TONE[card.quality.band]}
-              use:tooltip={pct}
+              {@attach tooltip(() => pct)}
               >{card.quality.band}<span class="sr-only">, {pct}</span></span
             >
           {:else if card.status !== "complete"}
@@ -75,13 +75,15 @@
             {#if card.jitter !== null}
               <p class="line">
                 <strong>{card.jitter} <small>ms</small></strong>
-                <span class="term" use:tooltip={JARGON.jitter}>jitter</span>
+                <span class="term" {@attach tooltip(() => JARGON.jitter)}
+                  >jitter</span
+                >
               </p>
             {/if}
             {#if card.added !== null}
               <p class="line">
                 <strong>{card.added} <small>ms</small></strong>
-                <span class="term" use:tooltip={JARGON.addedLatency}
+                <span class="term" {@attach tooltip(() => JARGON.addedLatency)}
                   >added latency</span
                 >
               </p>
@@ -89,7 +91,7 @@
             {#if card.grade !== null}
               <p class="line">
                 <strong>{card.grade}</strong>
-                <span class="term" use:tooltip={JARGON.addedLatency}
+                <span class="term" {@attach tooltip(() => JARGON.addedLatency)}
                   >added latency</span
                 >
               </p>
@@ -97,7 +99,9 @@
             {#if card.wire}
               <p class="line">
                 <strong>{card.wire.num}</strong>
-                <span class="term" use:tooltip={card.wire.tooltip}
+                <span
+                  class="term"
+                  {@attach tooltip(() => card.wire?.tooltip ?? "")}
                   >wire{card.wire.pct ? ` ${card.wire.pct}` : ""}</span
                 >
               </p>

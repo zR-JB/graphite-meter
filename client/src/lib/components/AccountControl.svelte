@@ -49,7 +49,7 @@
     aria-label={`${label} · ${provider}`}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
-    <div class="identity" use:tooltip={`${label} · ${provider}`}>
+    <div class="identity" {@attach tooltip(() => `${label} · ${provider}`)}>
       <span class="avatar" aria-hidden="true">
         <svg viewBox="0 0 20 20">
           <circle cx="10" cy="7" r="3" />
@@ -63,7 +63,7 @@
       type="submit"
       name="scope"
       value="all"
-      use:tooltip={"End all sessions for this account"}
+      {@attach tooltip(() => "End all sessions for this account")}
       aria-label={`Sign out ${label} everywhere`}
     >
       <svg viewBox="0 0 20 20" aria-hidden="true">
@@ -74,7 +74,7 @@
     <button
       class="btn btn-icon btn-quiet signout"
       type="submit"
-      use:tooltip={"Sign out"}
+      {@attach tooltip(() => "Sign out")}
       aria-label={`Sign out ${label}`}
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">

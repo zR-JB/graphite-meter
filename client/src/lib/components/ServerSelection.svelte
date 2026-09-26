@@ -84,10 +84,12 @@
               choices.delete(server.id);
             };
           }}
-          use:tooltip={[server.name, server.location, new URL(server.url).host]
-            .concat(preflightMs == null ? [] : [JARGON.preflight])
-            .filter(Boolean)
-            .join("\n")}
+          {@attach tooltip(() =>
+            [server.name, server.location, new URL(server.url).host]
+              .concat(preflightMs == null ? [] : [JARGON.preflight])
+              .filter(Boolean)
+              .join("\n"),
+          )}
           class:checked
           style:--server-accent={serverAccent(
             server,

@@ -22,7 +22,9 @@
 </script>
 
 {#if refused}
-  <span class="label term" use:tooltip={store.startError || store.startBlocker}
+  <span
+    class="label term"
+    {@attach tooltip(() => store.startError || store.startBlocker)}
     >{label}</span
   >
 {:else}
@@ -31,7 +33,7 @@
 <span
   class="elapsed"
   class:secondary={showRemaining}
-  use:tooltip={`Elapsed ${fmtDuration(elapsedMs)}`}
+  {@attach tooltip(() => `Elapsed ${fmtDuration(elapsedMs)}`)}
   ><span class="caption">elapsed&nbsp;</span><span class="readout"
     >{fmtDuration(elapsedMs)}</span
   ></span

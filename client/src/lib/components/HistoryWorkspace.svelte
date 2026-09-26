@@ -433,7 +433,9 @@
                   : descending
                     ? "descending"
                     : "ascending"}
-                use:tooltip={(column !== "date" && COLUMN[column].help) || ""}
+                {@attach tooltip(
+                  () => (column !== "date" && COLUMN[column].help) || "",
+                )}
                 onclick={() =>
                   setSort(
                     column,

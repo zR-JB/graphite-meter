@@ -233,9 +233,9 @@
           >
           <span
             class="term"
-            use:tooltip={indicatedServers
-              .map((server) => server.name)
-              .join(", ")}>{serverIndicator}</span
+            {@attach tooltip(() =>
+              indicatedServers.map((server) => server.name).join(", "),
+            )}>{serverIndicator}</span
           >
         </div>
       {/if}

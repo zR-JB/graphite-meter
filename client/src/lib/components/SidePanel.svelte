@@ -144,7 +144,7 @@
       <button
         class="btn btn-icon btn-inset"
         aria-label={`Close ${title}`}
-        use:tooltip={"Close (Esc)"}
+        {@attach tooltip(() => "Close (Esc)")}
         onclick={onClose}
       >
         <Icon name="close" />

@@ -61,7 +61,7 @@
         : s.state === 'complete'
           ? ` (${STATUS.complete})`
           : ''}"
-      use:tooltip={s.tip}
+      {@attach tooltip(() => s.tip)}
       disabled={s.locked}
       onclick={() => controller.toggleStage(s.key)}
     >
