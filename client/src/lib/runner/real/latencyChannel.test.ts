@@ -16,7 +16,6 @@ const target: LatencyTarget = {
   transport: "websocket",
   protocol: "http1",
   tls: false,
-  routes: { probe: "/probe", ping: "/ws/ping" },
 };
 
 type ChannelHost = ConstructorParameters<typeof LatencyChannel>[0]["host"];

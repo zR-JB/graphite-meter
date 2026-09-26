@@ -5,18 +5,16 @@ import {
   needsPings,
   laneStaggerMs,
   protocolFromNextHop,
-  selectThroughputTarget,
-  selectLatencyTarget,
+  selectTarget,
   browserProtocolMatchesTarget,
   classifyTransportDiscovery,
-  fetchViewOfWebTransport,
-  targetOfKind,
-  ROUTES,
-  automaticThroughputTargets,
-  automaticLatencyTargets,
-} from "./backendPure";
+  fetchViewOfOrigin,
+  candidates,
+  emptyConnectionValidation,
+  type AnyTarget,
+} from "../paths";
+import type { DiscoveredTarget } from "../contract";
 import { isLoopbackHostname } from "../../servers/catalog";
-import { kindsForRole, ridesSession } from "./transports";
 import type {
   PreparedPaths,
   ConnectionRole,
@@ -24,7 +22,6 @@ import type {
   RunnerConfig,
   TransportDiscovery,
 } from "../contract";
-import { emptyConnectionValidation } from "../connectionModel";
 import { DEFAULT_CONFIG } from "../../state/defaults";
 import {
   TEST_BUILD_TOKENS,
@@ -37,6 +34,10 @@ type ThroughputAdvertisement = Parameters<
 type LatencyAdvertisement = Parameters<
   typeof classifyTransportDiscovery
 >[1][number];
+const targetOfKind = <T extends AnyTarget>(
+  entry: DiscoveredTarget<T> | undefined,
+  kind: string,
+) => entry?.targets.find((target) => target.transport === kind);
 const discovery = (
   throughput: ThroughputAdvertisement[],
   latency: LatencyAdvertisement[] = [],
@@ -93,12 +94,12 @@ test("proxy endpoints resolve relative to preflight and negotiate the browser ho
     true,
     "h2",
   );
-  const target = selectThroughputTarget(catalog, "auto");
+  const target = selectTarget(catalog, "throughput", "auto", true);
   expect(target?.origin).toBe("https://meter.example");
   expect(target?.protocol).toBe("negotiated");
   if (target?.transport !== "fetch-stream") throw new Error("not fetch");
   expect(browserProtocolMatchesTarget(target, "h2")).toBe(true);
-  expect(selectLatencyTarget(catalog, "auto")?.origin).toBe(
+  expect(selectTarget(catalog, "latency", "auto", false)?.origin).toBe(
     "https://meter.example",
   );
 });
@@ -117,7 +118,9 @@ test("Automatic prefers HTTP1 bulk streams deterministically and never selects u
     "https://meter",
     true,
   );
-  const ids = automaticThroughputTargets(catalog).map((target) => target.id);
+  const ids = candidates(catalog, "throughput", true).map(
+    (target) => target.id,
+  );
   expect(ids).toEqual([
     "https://meter",
     "https://meter:2",
@@ -125,15 +128,17 @@ test("Automatic prefers HTTP1 bulk streams deterministically and never selects u
     "https://meter:3::wt",
   ]);
   expect(
-    automaticThroughputTargets(
+    candidates(
       discovery(offered.toReversed(), [], "https://meter", true),
+      "throughput",
+      true,
     ).map((target) => target.id),
   ).toEqual(ids);
   expect(
-    automaticLatencyTargets(catalog, true).map((target) => target.transport),
+    candidates(catalog, "latency", true).map((target) => target.transport),
   ).toEqual(["webtransport", "websocket"]);
   expect(
-    automaticLatencyTargets(catalog, false).map((target) => target.transport),
+    candidates(catalog, "latency", false).map((target) => target.transport),
   ).toEqual(["websocket"]);
 });
 
@@ -149,9 +154,13 @@ test("multiple off-origin alternatives remain usable and a proven proxy hop part
     true,
     "h2",
   );
-  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://proxy");
+  expect(selectTarget(catalog, "throughput", "auto", true)?.origin).toBe(
+    "https://proxy",
+  );
   catalog.pageProtocol = "h3";
-  expect(selectThroughputTarget(catalog, "auto")?.origin).toBe("https://proxy");
+  expect(selectTarget(catalog, "throughput", "auto", true)?.origin).toBe(
+    "https://proxy",
+  );
 });
 
 test("deterministic native target wins when self resolves to the same origin", () => {
@@ -166,7 +175,9 @@ test("deterministic native target wins when self resolves to the same origin", (
     targetOfKind(catalog.throughput["https://meter.example"], "fetch-stream")
       ?.protocol,
   ).toBe("http1");
-  expect(selectThroughputTarget(catalog, "auto")?.protocol).toBe("http1");
+  expect(selectTarget(catalog, "throughput", "auto", true)?.protocol).toBe(
+    "http1",
+  );
 });
 
 test("native endpoints remain deterministic and mixed content stays blocked", () => {
@@ -181,10 +192,15 @@ test("native endpoints remain deterministic and mixed content stays blocked", ()
     "h2",
   );
   expect(catalog.throughput["http://meter:7246"].state).toBe("browser-blocked");
-  expect(selectThroughputTarget(catalog, "https://meter:7248")?.protocol).toBe(
-    "http2",
+  expect(
+    selectTarget(catalog, "throughput", "https://meter:7248", true)?.protocol,
+  ).toBe("http2");
+  const h2Target = selectTarget(
+    catalog,
+    "throughput",
+    "https://meter:7248",
+    true,
   );
-  const h2Target = selectThroughputTarget(catalog, "https://meter:7248");
   if (h2Target?.transport !== "fetch-stream") throw new Error("not fetch");
   expect(browserProtocolMatchesTarget(h2Target, "http/1.1")).toBe(false);
 });
@@ -198,16 +214,16 @@ test("an IPv6 origin resolves each of its mechanisms", () => {
     true,
     "h3",
   );
-  expect(selectThroughputTarget(catalog, origin)?.transport).toBe(
+  expect(selectTarget(catalog, "throughput", origin, true)?.transport).toBe(
     "fetch-stream",
   );
-  expect(selectThroughputTarget(catalog, `${origin}::wt`)?.transport).toBe(
-    "webtransport",
-  );
-  expect(selectLatencyTarget(catalog, `${origin}::wt`, true)?.transport).toBe(
-    "webtransport",
-  );
-  expect(selectLatencyTarget(catalog, origin, true)?.transport).toBe(
+  expect(
+    selectTarget(catalog, "throughput", `${origin}::wt`, true)?.transport,
+  ).toBe("webtransport");
+  expect(
+    selectTarget(catalog, "latency", `${origin}::wt`, true)?.transport,
+  ).toBe("webtransport");
+  expect(selectTarget(catalog, "latency", origin, true)?.transport).toBe(
     "webtransport",
   );
 });
@@ -229,28 +245,29 @@ test("WebTransport folds onto its origin and leads latency auto-selection", () =
   const datagram = targetOfKind(entry, "webtransport-datagram");
   expect(targetOfKind(entry, "fetch-stream")?.transport).toBe("fetch-stream");
   expect(wtStreams?.id).toBe("https://meter:7249::wt");
-  expect(
-    wtStreams && "wtDownload" in wtStreams.routes
-      ? wtStreams.routes.wtDownload
-      : undefined,
-  ).toBe(ROUTES.wtDownload);
   expect(datagram?.id).toBe("https://meter:7249::wtdg");
   expect(datagram?.transport).toBe("webtransport-datagram");
-  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+  expect(selectTarget(catalog, "throughput", "auto", true)?.transport).toBe(
     "fetch-stream",
   );
   expect(
-    selectThroughputTarget(catalog, "https://meter:7249::wt")?.transport,
+    selectTarget(catalog, "throughput", "https://meter:7249::wt", true)
+      ?.transport,
   ).toBe("webtransport");
   expect(
-    selectThroughputTarget(catalog, "https://meter:7249::wtdg")?.transport,
+    selectTarget(catalog, "throughput", "https://meter:7249::wtdg", true)
+      ?.transport,
   ).toBe("webtransport-datagram");
-  expect(selectThroughputTarget(catalog, "https://meter:7249")?.transport).toBe(
-    "fetch-stream",
+  expect(
+    selectTarget(catalog, "throughput", "https://meter:7249", true)?.transport,
+  ).toBe("fetch-stream");
+  expect(selectTarget(catalog, "latency", "auto", false)?.transport).toBe(
+    "websocket",
   );
-  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
-  expect(selectLatencyTarget(catalog, "https://meter:7249", false)).toBeNull();
-  const wt = selectLatencyTarget(catalog, "auto", true);
+  expect(
+    selectTarget(catalog, "latency", "https://meter:7249", false),
+  ).toBeNull();
+  const wt = selectTarget(catalog, "latency", "auto", true);
   expect(wt?.transport).toBe("webtransport");
   expect(wt?.origin).toBe("https://meter:7249");
 });
@@ -267,18 +284,18 @@ test("one origin advertising both latency buses keeps the WebSocket fallback", (
   expect(targetOfKind(entry, "websocket")?.transport).toBe("websocket");
   expect(targetOfKind(entry, "webtransport")?.transport).toBe("webtransport");
   expect(targetOfKind(entry, "webtransport")?.id).toBe("https://meter::wt");
-  expect(selectLatencyTarget(catalog, "auto", true)?.transport).toBe(
+  expect(selectTarget(catalog, "latency", "auto", true)?.transport).toBe(
     "webtransport",
   );
-  expect(selectLatencyTarget(catalog, "auto", false)?.transport).toBe(
+  expect(selectTarget(catalog, "latency", "auto", false)?.transport).toBe(
     "websocket",
   );
   expect(
-    selectLatencyTarget(catalog, "https://meter::wt", true)?.transport,
+    selectTarget(catalog, "latency", "https://meter::wt", true)?.transport,
   ).toBe("webtransport");
-  expect(selectLatencyTarget(catalog, "https://meter", false)?.transport).toBe(
-    "websocket",
-  );
+  expect(
+    selectTarget(catalog, "latency", "https://meter", false)?.transport,
+  ).toBe("websocket");
 });
 
 test("a WebTransport-only origin is auto's last resort and keeps a fetch view", () => {
@@ -289,13 +306,12 @@ test("a WebTransport-only origin is auto's last resort and keeps a fetch view", 
     true,
     "h3",
   );
-  const target = selectThroughputTarget(catalog, "auto");
+  const target = selectTarget(catalog, "throughput", "auto", true);
   expect(target?.transport).toBe("webtransport");
   if (target?.transport !== "webtransport") throw new Error("not wt");
-  const view = fetchViewOfWebTransport(target);
+  const view = fetchViewOfOrigin(catalog, target);
   expect(view.transport).toBe("fetch-stream");
   expect(view.origin).toBe("https://meter:7249");
-  expect(view.routes.uploadSession).toBe(ROUTES.uploadSession);
 });
 
 test("an explicit WebSocket target resolves to a WebSocket bus", () => {
@@ -305,7 +321,9 @@ test("an explicit WebSocket target resolves to a WebSocket bus", () => {
     "https://meter.test",
     true,
   );
-  expect(selectLatencyTarget(catalog, "auto")?.transport).toBe("websocket");
+  expect(selectTarget(catalog, "latency", "auto", false)?.transport).toBe(
+    "websocket",
+  );
 });
 
 test("browser protocol verification is independent of server probe evidence", () => {
@@ -799,7 +817,7 @@ test("cross-origin IPv6 discovery and path preparation fail with DNS guidance be
   }) as typeof fetch);
   try {
     const { discoverServer, prepareConnections } = await import("./prepare");
-    const { BrowserOriginBlockedError } = await import("./transportError");
+    const { BrowserOriginBlockedError } = await import("./prepare");
     const remote = "http://[::1]:7246";
     await expect(
       discoverServer(new AbortController().signal, {
@@ -842,7 +860,7 @@ test("secure interfaces reject clear non-loopback discovery before any request",
   );
   try {
     const { discoverServer } = await import("./prepare");
-    const { BrowserOriginBlockedError } = await import("./transportError");
+    const { BrowserOriginBlockedError } = await import("./prepare");
     const failure = await discoverServer(new AbortController().signal, {
       server: {
         id: "clear",
@@ -883,8 +901,10 @@ test("same-origin IPv6 discovery remains available through the page origin", asy
       server: { id: "self", name: "IPv6", url: origin },
       kind: "public",
     });
-    expect(selectThroughputTarget(result, "auto")?.origin).toBe(origin);
-    expect(selectLatencyTarget(result, "auto")?.origin).toBe(origin);
+    expect(selectTarget(result, "throughput", "auto", true)?.origin).toBe(
+      origin,
+    );
+    expect(selectTarget(result, "latency", "auto", false)?.origin).toBe(origin);
   } finally {
     restore();
   }
@@ -993,10 +1013,10 @@ test("a WebTransport-less browser is refused by mechanism, not by availability",
     false,
     "http/1.1",
   );
-  expect(selectThroughputTarget(catalog, "auto")?.transport).toBe(
+  expect(selectTarget(catalog, "throughput", "auto", true)?.transport).toBe(
     "webtransport",
   );
-  expect(selectThroughputTarget(catalog, "auto", false)).toBeNull();
+  expect(selectTarget(catalog, "throughput", "auto", false)).toBeNull();
   const globals = globalThis as typeof globalThis & Record<string, unknown>;
   const realWebTransport = Object.getOwnPropertyDescriptor(
     globalThis,
@@ -1226,19 +1246,6 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     else globals.WebTransport = realWebTransport;
     restore();
   }
-});
-
-test("transport dispatch distinguishes sessions and supported roles", () => {
-  expect(ridesSession("webtransport")).toBe(true);
-  expect(ridesSession("webtransport-datagram")).toBe(true);
-  expect(ridesSession("fetch-stream")).toBe(false);
-  expect(ridesSession("websocket")).toBe(false);
-  expect(kindsForRole("throughput")).toEqual([
-    "fetch-stream",
-    "webtransport",
-    "webtransport-datagram",
-  ]);
-  expect(kindsForRole("latency")).toEqual(["websocket", "webtransport"]);
 });
 
 test("latency preparation collects replies while metadata is still pending", async () => {

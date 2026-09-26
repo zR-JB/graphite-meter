@@ -1,14 +1,26 @@
 import { expect, test } from "bun:test";
-import { classifyTransportDiscovery } from "../runner/real/backendPure";
+import {
+  classifyTransportDiscovery,
+  planServerStreams,
+  portableTransportSelection,
+} from "../runner/paths";
+import { pathOptions } from "../presentation/paths";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { testPreparedPaths } from "../runner/test-helpers.testutil";
-import {
-  portableTransportSelection,
-  serverTransportOptions,
-} from "./transportOptions";
-import { planServerStreams } from "./streamBudget";
 import { parseCatalog } from "./catalog";
 
+function configFor(
+  role: "throughput" | "latency",
+  selected: string,
+  datagrams: boolean,
+) {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.experimentalDatagramThroughput = datagrams;
+  config.transports[
+    role === "throughput" ? "throughputTarget" : "latencyTarget"
+  ] = selected;
+  return config;
+}
 const servers = [
   { id: "a", name: "A", url: "https://a.example" },
   { id: "b", name: "B", url: "https://b.example" },
@@ -33,13 +45,11 @@ const discoveries = new Map(
   ]),
 );
 test("automatic may use different reliable protocols while explicit compatibility covers every server", () => {
-  const options = serverTransportOptions(
+  const options = pathOptions(
     "throughput",
     servers,
     discoveries,
-    false,
-    "auto",
-    false,
+    configFor("throughput", "auto", false),
   );
   expect(options.find((option) => option.value === "auto")?.disabled).toBe(
     false,
@@ -51,13 +61,11 @@ test("automatic may use different reliable protocols while explicit compatibilit
     options.find((option) => option.value === "protocol:http2")?.detail,
   ).toBe("Unavailable on A");
   expect(
-    serverTransportOptions(
+    pathOptions(
       "latency",
       servers,
       discoveries,
-      false,
-      "auto",
-      false,
+      configFor("latency", "auto", false),
     ).find((option) => option.value === "transport:websocket")?.disabled,
   ).toBe(false);
   expect(
@@ -74,13 +82,13 @@ test("server transport options name the browser's IPv6 configuration remedy", ()
     "http://ui.example",
     false,
   );
-  const options = serverTransportOptions(
+  const options = pathOptions(
     "throughput",
     [{ id: "ipv6", name: "IPv6 meter", url: origin }],
     new Map([["ipv6", { discovery }]]),
-    false,
-    "auto",
-    false,
+    configFor("throughput", "auto", false),
+    undefined,
+    true,
   );
   expect(
     options.find((option) => option.value === "protocol:http1"),

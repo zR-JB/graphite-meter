@@ -2,7 +2,7 @@ import { DEFAULT_CONFIG } from "../state/defaults";
 import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
 import type { ParticipantHost } from "./transport";
-import { classifyTransportDiscovery, ROUTES } from "./real/backendPure";
+import { classifyTransportDiscovery } from "./paths";
 import type { ServerCatalog } from "../servers/catalog";
 
 /** A real self-server selection for controller tests with injected network operations. */
@@ -23,13 +23,6 @@ export const TEST_BUILD_TOKENS = {
   __GM_BUILD_IDENTITY__: "test test-revision",
   __GM_CLIENT_VERSION__: "0.0.0-test",
 } as const;
-const testRoutes = {
-  probe: ROUTES.probe,
-  download: ROUTES.download,
-  upload: ROUTES.upload,
-  uploadSession: ROUTES.uploadSession,
-  uploadProgress: ROUTES.uploadProgress,
-};
 export const testTransfer = (
   id: string,
   origin: string,
@@ -41,7 +34,6 @@ export const testTransfer = (
   transport: "fetch-stream",
   protocol,
   tls,
-  routes: testRoutes,
 });
 export const testLatency = (
   id: string,
@@ -53,7 +45,6 @@ export const testLatency = (
   protocol: "http1",
   tls,
   transport: "websocket",
-  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
 });
 /** A participant host that ignores every report unless overridden. */
 export function testParticipantHost(

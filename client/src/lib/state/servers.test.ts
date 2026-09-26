@@ -8,10 +8,7 @@ import {
 import { singleLatencyBucket } from "../runner/latencyBuckets";
 import { LatencyPopulation } from "../runner/measure";
 import { parseCatalog } from "../servers/catalog";
-import {
-  emptyConnectionValidation,
-  type ServerView,
-} from "../runner/connectionModel";
+import { emptyConnectionValidation, type ServerView } from "../runner/paths";
 
 const ids = ["constructor", "toString", "__proto__"];
 

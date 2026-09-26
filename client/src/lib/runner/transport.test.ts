@@ -305,7 +305,7 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
     },
   });
   const { ServerStage } = await import("./transport");
-  const { classifyTransportDiscovery } = await import("./real/backendPure");
+  const { classifyTransportDiscovery } = await import("./paths");
   const config = testWtConfig();
   type Advertised = Parameters<typeof classifyTransportDiscovery>;
   const discovery = classifyTransportDiscovery(

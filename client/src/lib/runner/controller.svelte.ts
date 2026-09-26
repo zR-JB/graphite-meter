@@ -26,7 +26,6 @@ import {
   type ServerCredentials,
 } from "../servers/credentials";
 import { originLimiter } from "../servers/originLimiter";
-import { portableTransportSelection } from "../servers/transportOptions";
 import type {
   ConnectionRole,
   EngineInfo,
@@ -37,17 +36,15 @@ import type {
   RunnerEvent,
   TransportDiscovery,
 } from "./contract";
-import { abortable, withinBudget } from "./abortable";
+import { abortable, findCause, withinBudget } from "./abortable";
 import { engineInfo, Run, type PreparedServer } from "./run";
 import {
+  BrowserOriginBlockedError,
   discoverServer,
+  PreflightUnavailableError,
   prepareConnections,
   type ConnectionPreparation,
 } from "./real/prepare";
-import {
-  BrowserOriginBlockedError,
-  PreflightUnavailableError,
-} from "./real/transportError";
 import type {
   store as applicationStore,
   StageKey,
@@ -69,7 +66,8 @@ import {
   uploadCapabilityFailure,
   type ConnectionValidation,
   type ServerView,
-} from "./connectionModel";
+  portableTransportSelection,
+} from "./paths";
 
 interface ApplicationDependencies {
   loadCatalog: (signal: AbortSignal) => Promise<ServerCatalog>;
@@ -114,21 +112,11 @@ const retryState = (): Retry => ({ attempts: 0, at: 0, authentication: false });
 const aborted = () =>
   new DOMException("Connection selection changed", "AbortError");
 
-function authenticationFailure(
-  cause: unknown,
-): ServerAuthenticationRequired | undefined {
-  const seen = new Set<unknown>();
-  while (cause instanceof Error && !seen.has(cause)) {
-    if (cause instanceof ServerAuthenticationRequired) return cause;
-    seen.add(cause);
-    cause = cause.cause;
-  }
-}
 export function connectionFailureMessage(
   cause: unknown,
   server?: ServerEntry,
 ): string {
-  const authentication = authenticationFailure(cause);
+  const authentication = findCause(cause, ServerAuthenticationRequired);
   if (authentication) return authentication.message;
   if (cause instanceof BrowserOriginBlockedError) return cause.message;
   if (cause instanceof PreflightUnavailableError) {
@@ -367,7 +355,7 @@ export function createApplicationController(
       store.connectivity = "connected";
   }
   function failed(retry: Retry, error: unknown): void {
-    retry.authentication = !!authenticationFailure(error);
+    retry.authentication = !!findCause(error, ServerAuthenticationRequired);
     retry.at = retry.authentication
       ? Infinity
       : Date.now() + connectionFailureBackoff(++retry.attempts);

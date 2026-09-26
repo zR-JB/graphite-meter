@@ -2,7 +2,7 @@ import { stubGlobals } from "../test-helpers.testutil";
 import { test, expect } from "bun:test";
 import type { RunnerConfig } from "./contract";
 import type { ConnectionPreparation } from "./real/prepare";
-import { emptyConnectionValidation } from "./connectionModel";
+import { emptyConnectionValidation } from "./paths";
 import {
   TEST_BUILD_TOKENS,
   TEST_WT_ORIGIN,
@@ -95,11 +95,8 @@ async function withPathCheck(
 }
 test("a refused WebTransport check is re-dialled on the next probe, so Retry works", async () => {
   await withPathCheck(FakeWebTransport, preflight, async (check) => {
-    const { TransportUnavailableError } = await import("./real/transportError");
     for (const attempt of [1, 2]) {
-      await expect(check(config)).rejects.toBeInstanceOf(
-        TransportUnavailableError,
-      );
+      await expect(check(config)).rejects.toThrow(/did not establish/);
       expect(dials.length).toBe(attempt);
     }
     expect(dials[0]).toContain("/wt/download");
@@ -120,11 +117,8 @@ test("a session that establishes but carries no bytes is not Ready", async () =>
     }
   }
   await withPathCheck(SilentWebTransport, preflight, async (check) => {
-    const { TransportUnavailableError } = await import("./real/transportError");
     await expect(check(config)).rejects.toThrow(/carried no bytes/);
-    await expect(check(config)).rejects.toBeInstanceOf(
-      TransportUnavailableError,
-    );
+    await expect(check(config)).rejects.toThrow(/carried no bytes/);
     expect(closes).toBe(2); // one per established session, both released
   });
 });
@@ -143,10 +137,10 @@ test("a session kind this client cannot drive fails its role before any dial", a
     },
   };
   await withPathCheck(FakeWebTransport, datagramPreflight, async (check) => {
-    const { TRANSPORTS } = await import("./real/transports");
-    const realUsable = TRANSPORTS["webtransport-datagram"].usable;
+    const globals = globalThis as Record<string, unknown>;
+    const realWebTransport = globals.WebTransport;
     try {
-      TRANSPORTS["webtransport-datagram"].usable = () => false;
+      Reflect.deleteProperty(globals, "WebTransport");
       const dialled = dials.length;
       await expect(
         check({
@@ -161,7 +155,7 @@ test("a session kind this client cannot drive fails its role before any dial", a
       );
       expect(dials.length).toBe(dialled);
     } finally {
-      TRANSPORTS["webtransport-datagram"].usable = realUsable;
+      globals.WebTransport = realWebTransport;
     }
   });
 });

@@ -2,24 +2,13 @@
   import { store } from "../../state/store.svelte";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import {
-    summarizeRoleValidation,
-    type ConnectionRole,
-  } from "../../runner/connectionModel";
-  import {
-    latencyOptionView,
-    throughputOptionView,
-  } from "../../runner/real/transportViewModel";
+  import { summarizeRoleValidation } from "../../runner/paths";
+  import type { ConnectionRole } from "../../runner/contract";
+  import type { PathOption } from "../../presentation/paths";
 
-  interface Option {
-    value: string;
-    label: string;
-    disabled?: boolean;
-    detail?: string;
-  }
   interface Props {
     role: ConnectionRole;
-    options: readonly Option[];
+    options: readonly PathOption[];
     locked?: boolean;
   }
   let { role, options, locked = false }: Props = $props();
@@ -63,22 +52,13 @@
   function select(value: string) {
     controller.selectConnection(role, value);
   }
-
-  function optionView(value: string) {
-    return role === "throughput"
-      ? throughputOptionView(store.transportDiscovery, value)
-      : latencyOptionView(store.transportDiscovery, value);
-  }
 </script>
 
 <fieldset>
   <legend class="caps">{title}</legend>
   <div class="options">
     {#each options as option (option.value)}
-      {@const view =
-        option.detail !== undefined
-          ? { disabled: option.disabled ?? false, detail: option.detail }
-          : optionView(option.value)}
+      {@const view = option}
       <label
         class="choice"
         class:selected={selected === option.value}

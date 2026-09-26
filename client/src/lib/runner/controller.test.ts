@@ -1,10 +1,7 @@
 // Contracts of the connection model and the application controller that owns it.
 import "../state/runes.testutil";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import type {
-  FetchThroughputTarget,
-  WebSocketLatencyTarget,
-} from "../api/endpoints";
+import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type {
   NetworkRunner,
   PreparedPaths,
@@ -18,26 +15,21 @@ import {
   connectionDraftRoleKey,
   roleNeedsValidation,
   preparedPaths,
-  presentConnections,
   CONNECTION_FRESH_MS,
   emptyConnectionValidation,
+  classifyTransportDiscovery,
+  fetchViewOfOrigin,
+  selectTarget,
   type ConnectionValidation,
   type ServerView,
-} from "./connectionModel";
+} from "./paths";
+import { presentConnections } from "../presentation/paths";
 import type {
   ApplicationController,
   createApplicationController,
 } from "./controller.svelte";
-import {
-  classifyTransportDiscovery,
-  fetchViewOfOrigin,
-  selectLatencyTarget,
-  selectThroughputTarget,
-  ROUTES,
-} from "./real/backendPure";
 import type { ConnectionPreparation } from "./real/prepare";
 import type { IdleEvent } from "./real/latencyChannel";
-import { PreflightUnavailableError } from "./real/transportError";
 import type { ServerEntry } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { DEFAULT_CONFIG } from "../state/defaults";
@@ -61,21 +53,13 @@ const throughput: FetchThroughputTarget = {
   transport: "fetch-stream",
   protocol: "http2",
   tls: true,
-  routes: {
-    probe: ROUTES.probe,
-    download: ROUTES.download,
-    upload: ROUTES.upload,
-    uploadSession: ROUTES.uploadSession,
-    uploadProgress: ROUTES.uploadProgress,
-  },
 };
-const latency: WebSocketLatencyTarget = {
+const latency: LatencyTarget = {
   id: "ws-http1-tls",
   origin: "https://meter.test:7247",
   transport: "websocket",
   protocol: "http1",
   tls: true,
-  routes: { probe: ROUTES.probe, ping: ROUTES.ping },
 };
 function config(): RunnerConfig {
   return {
@@ -101,8 +85,8 @@ function makeDiscovery(): TransportDiscovery {
 }
 function makePaths(discovery = makeDiscovery()): PreparedPaths {
   const base = testPreparedPaths();
-  const transfer = selectThroughputTarget(discovery, "auto", true)!;
-  const ping = selectLatencyTarget(discovery, "auto", true);
+  const transfer = selectTarget(discovery, "throughput", "auto", true)!;
+  const ping = selectTarget(discovery, "latency", "auto", true);
   return {
     discovery,
     throughput: {
@@ -207,8 +191,7 @@ test("old evidence is hidden after selection, target descriptor, or generation c
       .serverProtocol,
   ).toBeUndefined();
   const changed = structuredClone(paths.discovery);
-  changed.throughput[throughput.origin].targets[0].routes.probe =
-    "/different-probe";
+  changed.throughput[throughput.origin].targets[0].protocol = "http1";
   expect(roleNeedsValidation(config(), validation, "throughput", changed)).toBe(
     true,
   );
@@ -528,6 +511,7 @@ test("a failed role preserves the independently verified role", async () => {
 });
 
 test("wrapped remote authentication retains actionable sign-in details", async () => {
+  const { PreflightUnavailableError } = await import("./real/prepare");
   await withController(
     {
       hidden: true,

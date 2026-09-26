@@ -6,8 +6,8 @@ import type {
   TransportDiscovery,
   TransportKind,
 } from "../runner/contract";
-import { httpProtocolLabel } from "../runner/protocol";
-import type { ConnectionValidationState } from "../runner/connectionModel";
+import { httpProtocolLabel } from "../runner/paths";
+import type { ConnectionValidationState } from "../runner/paths";
 
 type EndpointPathMode = "live" | "running" | "result";
 

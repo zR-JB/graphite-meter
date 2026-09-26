@@ -1,9 +1,6 @@
 // Counts protocol bytes only, excluding runtime behavior and reverse traffic.
 import type { CompensationTransport, TransportKind } from "./runner/contract";
-import {
-  compensationTransportFromProtocol,
-  normalizeHttpProtocol,
-} from "./runner/protocol";
+import { normalizeHttpProtocol } from "./runner/paths";
 
 type CompensationConfidence = "high" | "medium" | "low";
 
@@ -165,9 +162,15 @@ export function estimateCompensation(
   const webTransport =
     selectedTransport === "webtransport" ||
     selectedTransport === "webtransport-datagram";
-  const transport = webTransport
-    ? "http3-quic"
-    : compensationTransportFromProtocol(detectedProtocol, secure);
+  const detectedTransport = normalizeHttpProtocol(detectedProtocol);
+  const transport: CompensationTransport =
+    webTransport || detectedTransport === "http3"
+      ? "http3-quic"
+      : detectedTransport === "http2"
+        ? "http2"
+        : secure
+          ? "https-tls"
+          : "http1-clear";
   // Conservative defaults: 1500 B Ethernet, preflight IP family, standard options, no unknown VLAN/tunnel.
   const mtuBytes = 1_500;
   const ipVersion = detectedIPVersion ?? 4;
@@ -175,7 +178,6 @@ export function estimateCompensation(
   const ethernet = WIRE.ethernetBytes;
   const factors: CompensationFactor[] = [];
   const ipVersionSource = detectedIPVersion ? "detected" : "fallback";
-  const detectedTransport = normalizeHttpProtocol(detectedProtocol);
   const transportSource =
     webTransport || (detectedTransport && detectedTransport !== "negotiated")
       ? "detected"

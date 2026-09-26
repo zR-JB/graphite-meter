@@ -7,11 +7,7 @@ import {
   type Lane,
   type WorkerMsg,
 } from "../src/lib/runner/transport";
-import {
-  laneUrl,
-  PER_STREAM_BYTES,
-  ROUTES,
-} from "../src/lib/runner/real/backendPure";
+import { laneUrl, PER_STREAM_BYTES, ROUTES } from "../src/lib/runner/paths";
 
 /** Resolution of the within-cell rate series, which yields the stability figure. */
 const BUCKET_MS = 200;
@@ -132,10 +128,7 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
   const urls = {
     dir: spec.dir,
     base: spec.origin,
-    downloadPath: ROUTES.download,
-    uploadPath: ROUTES.upload,
     cbSeed: `bench${Math.round(performance.now())}`,
-    bytes: PER_STREAM_BYTES,
   };
 
   const events =

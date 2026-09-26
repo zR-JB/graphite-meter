@@ -30,7 +30,8 @@ import {
   laneUrl,
   needsPings,
   PER_STREAM_BYTES,
-} from "./real/backendPure";
+  ROUTES,
+} from "./paths";
 import {
   DIRECTION_PROGRESS_WINDOW_MS,
   ESTABLISH_BUDGET_MS,
@@ -473,8 +474,8 @@ export class ServerStage implements StageTransport {
     const wt =
       throughput.target.transport !== "fetch-stream" ? throughput.target : null;
     const feed = wt
-      ? `${wt.origin}${wt.routes.uploadProgress}?id=${encodeURIComponent(id)}`
-      : `${throughput.fetch.origin}${throughput.fetch.routes.uploadProgress}?id=${encodeURIComponent(id)}`;
+      ? `${wt.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(id)}`
+      : `${throughput.fetch.origin}${ROUTES.uploadProgress}?id=${encodeURIComponent(id)}`;
     const receiver = new UploadReceiver(
       this,
       id,
@@ -502,8 +503,7 @@ export class ServerStage implements StageTransport {
     );
     if (target.transport !== "fetch-stream") {
       const datagrams = target.transport === "webtransport-datagram";
-      const path =
-        dir === "down" ? target.routes.wtDownload : target.routes.wtUpload;
+      const path = dir === "down" ? ROUTES.wtDownload : ROUTES.wtUpload;
       const query =
         dir === "down"
           ? `bytes=${PER_STREAM_BYTES}&${datagrams ? "datagrams=1" : `streams=${streams}`}`
@@ -522,14 +522,7 @@ export class ServerStage implements StageTransport {
         openLane(laneWorker("wt"), start, true, on),
       );
     } else {
-      const spec = {
-        dir,
-        base: fetchTarget.origin,
-        downloadPath: fetchTarget.routes.download,
-        uploadPath: fetchTarget.routes.upload,
-        cbSeed: this.#seed,
-        bytes: PER_STREAM_BYTES,
-      };
+      const spec = { dir, base: fetchTarget.origin, cbSeed: this.#seed };
       this.#lanes[dir] = new LaneSet(this, dir, streams, (index, on) =>
         openLane(
           laneWorker(dir === "down" ? "download" : "upload"),
@@ -571,7 +564,7 @@ export class ServerStage implements StageTransport {
     const requestedAtMs = performance.now();
     const response = await measurementFetch(
       this.#paths.credentials,
-      `${target.origin}/upload/checkpoint?id=${encodeURIComponent(receiver.id)}`,
+      `${target.origin}${ROUTES.uploadCheckpoint}?id=${encodeURIComponent(receiver.id)}`,
       {
         method: "POST",
         cache: "no-store",
@@ -615,7 +608,7 @@ export class ServerStage implements StageTransport {
     try {
       const response = await measurementFetch(
         this.#paths.credentials,
-        `${target.origin}${target.routes.uploadSession}`,
+        `${target.origin}${ROUTES.uploadSession}`,
         {
           method: "POST",
           cache: "no-store",

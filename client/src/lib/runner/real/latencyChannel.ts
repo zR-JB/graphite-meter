@@ -14,8 +14,7 @@ import {
   ServerAuthenticationRequired,
   type ServerCredentials,
 } from "../../servers/credentials";
-import { httpToWs } from "./backendPure";
-import { TransportUnavailableError } from "./transportError";
+import { httpToWs, ROUTES } from "../paths";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../latencyBuckets";
 import { fixedPingIntervalMs } from "../pingCadence";
@@ -49,8 +48,8 @@ function pingUrl(
 ): string | null {
   if (!target || target.transport !== kind) return null;
   return target.transport === "webtransport"
-    ? target.origin + target.routes.wtPing
-    : httpToWs(target.origin) + target.routes.ping;
+    ? target.origin + ROUTES.wtPing
+    : httpToWs(target.origin) + ROUTES.ping;
 }
 
 /* Token mint for a WebTransport ping dial, when authentication is on. */
@@ -60,8 +59,8 @@ function pingMint(
 ) {
   if (!target) return undefined;
   return target.transport === "webtransport"
-    ? socketMint(credentials, target.origin, target.routes.wtPing, "wt")
-    : socketMint(credentials, target.origin, target.routes.ping, "ws");
+    ? socketMint(credentials, target.origin, ROUTES.wtPing, "wt")
+    : socketMint(credentials, target.origin, ROUTES.ping, "ws");
 }
 
 interface LatencyChannelDeps {
@@ -385,11 +384,7 @@ export class IdleKeepalive {
       this.#respawnTimer = null;
     }
     this.#probeCollect?.finish();
-    this.#probeReady?.finish(
-      new TransportUnavailableError("latency channel validation stopped", {
-        role: "latency",
-      }),
-    );
+    this.#probeReady?.finish(new Error("latency channel validation stopped"));
     if (this.#worker) {
       this.#worker.terminate();
       this.#worker = null;
@@ -436,13 +431,7 @@ export class IdleKeepalive {
       const aborted = (): void =>
         finish(new Error("latency channel validation aborted"));
       const timer = setTimeout(
-        () =>
-          finish(
-            new TransportUnavailableError(
-              "latency channel did not become ready",
-              { role: "latency" },
-            ),
-          ),
+        () => finish(new Error("latency channel did not become ready")),
         // The worker's own establish deadline plus its mint sit inside this one, so without the margin the owner.
         PING_ESTABLISH_TIMEOUT_MS,
       );

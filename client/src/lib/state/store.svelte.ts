@@ -20,11 +20,11 @@ import type {
 } from "../runner/contract";
 import {
   CONNECTION_FAILURE_REASONS,
-  presentConnections,
   emptyConnectionValidation,
   type ConnectionValidation,
   type ServerView,
-} from "../runner/connectionModel";
+} from "../runner/paths";
+import { presentConnections } from "../presentation/paths";
 import {
   combineCompensationEstimates,
   type CompensationEstimate,

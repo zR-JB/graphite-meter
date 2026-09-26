@@ -52,3 +52,18 @@ export async function abortableDelay(
     clearTimeout(timer!);
   }
 }
+
+/** The first error of `type` in a cause chain. */
+export function findCause<T extends Error>(
+  error: unknown,
+  type: abstract new (...args: never[]) => T,
+): T | undefined {
+  for (
+    const seen = new Set<unknown>();
+    error instanceof Error && !seen.has(error);
+    error = error.cause
+  ) {
+    if (error instanceof type) return error;
+    seen.add(error);
+  }
+}

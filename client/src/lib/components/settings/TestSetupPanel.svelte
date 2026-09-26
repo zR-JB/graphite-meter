@@ -2,20 +2,13 @@
   import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
   import { DURATION_PRESETS } from "../../state/defaults";
-  import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
-  import type {
-    FetchThroughputTarget,
-    LatencyTarget,
-    WebTransportThroughputTarget,
-  } from "../../api/endpoints";
+  import type { RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
-  import { describeTarget } from "../../runner/real/targetPresentation";
-  import { normalizeStreamCount } from "../../runner/real/streamPolicy";
-  import { panelReadiness } from "../../runner/connectionModel";
+  import { panelReadiness, pathOptions } from "../../presentation/paths";
+  import { normalizeStreamCount } from "../../runner/paths";
   import { JARGON, tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
-  import { serverTransportOptions } from "../../servers/transportOptions";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import {
@@ -48,17 +41,6 @@
     customDuration = false;
   }
 
-  function targetOption(
-    target:
-      FetchThroughputTarget | WebTransportThroughputTarget | LatencyTarget,
-    observedProtocol?: ProtocolTarget,
-  ) {
-    return {
-      value: target.id,
-      label: describeTarget(store.transportDiscovery!, target, observedProtocol)
-        .label,
-    };
-  }
   // The caution follows the selected datagram card, not the toggle.
   const datagramSelected = $derived(
     store.connections.throughput.target?.transport === "webtransport-datagram",
@@ -67,88 +49,35 @@
   const selectedServers = $derived(
     catalogSelection(store.serverCatalog, store.selectedServers),
   );
-  const globalThroughput = $derived(
-    store.config.transports.throughputTarget.startsWith("protocol:") ||
-      store.config.transports.throughputTarget.startsWith("transport:"),
-  );
-  const globalLatency = $derived(
-    store.config.transports.latencyTarget.startsWith("transport:"),
-  );
+  const throughputPath = $derived(store.connections.throughput);
   const throughputTargets = $derived(
-    simultaneous
-      ? serverTransportOptions(
-          "throughput",
-          selectedServers,
-          store.servers,
-          store.config.experimentalDatagramThroughput,
-          store.config.transports.throughputTarget,
-        )
-      : [
-          { value: "auto", label: "Automatic" },
-          ...(globalThroughput
-            ? serverTransportOptions(
-                "throughput",
-                selectedServers,
-                store.servers,
-                store.config.experimentalDatagramThroughput,
-                store.config.transports.throughputTarget,
-              ).filter(
-                (option) =>
-                  option.value === store.config.transports.throughputTarget,
-              )
-            : []),
-          ...Object.values(store.transportDiscovery?.throughput ?? {}).flatMap(
-            (entry) =>
-              entry.targets
-                .filter(
-                  (target) =>
-                    target.transport !== "webtransport-datagram" ||
-                    store.config.experimentalDatagramThroughput ||
-                    store.config.transports.throughputTarget === target.id,
-                )
-                .map((target) =>
-                  // The observed protocol only describes the path actually in use.
-                  targetOption(
-                    target,
-                    store.connections.throughput.target?.id === target.id
-                      ? store.connections.throughput.observedProtocol
-                      : undefined,
-                  ),
-                ),
-          ),
-        ],
+    pathOptions(
+      "throughput",
+      selectedServers,
+      store.servers,
+      store.config,
+      throughputPath.target
+        ? {
+            id: throughputPath.target.id,
+            protocol: throughputPath.observedProtocol,
+          }
+        : undefined,
+      simultaneous,
+    ),
   );
   const latencyTargets = $derived(
-    simultaneous
-      ? serverTransportOptions(
-          "latency",
-          store.latencySelection.mode === "primary"
-            ? selectedServers.filter(
-                (server) => server.id === store.primaryLatencyServer,
-              )
-            : selectedServers,
-          store.servers,
-          false,
-          store.config.transports.latencyTarget,
-        )
-      : [
-          { value: "auto", label: "Automatic" },
-          ...(globalLatency
-            ? serverTransportOptions(
-                "latency",
-                selectedServers,
-                store.servers,
-                false,
-                store.config.transports.latencyTarget,
-              ).filter(
-                (option) =>
-                  option.value === store.config.transports.latencyTarget,
-              )
-            : []),
-          ...Object.values(store.transportDiscovery?.latency ?? {}).flatMap(
-            (entry) => entry.targets.map((target) => targetOption(target)),
-          ),
-        ],
+    pathOptions(
+      "latency",
+      store.latencySelection.mode === "primary"
+        ? selectedServers.filter(
+            (server) => server.id === store.primaryLatencyServer,
+          )
+        : selectedServers,
+      store.servers,
+      store.config,
+      undefined,
+      simultaneous,
+    ),
   );
 
   const CADENCES = [

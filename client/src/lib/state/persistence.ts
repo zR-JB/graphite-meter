@@ -1,5 +1,5 @@
 import type { PingCadence, RunnerConfig } from "../runner/contract";
-import { normalizeStreamCount } from "../runner/real/streamPolicy";
+import { normalizeStreamCount } from "../runner/paths";
 import { canonicalAdaptiveConfig, DEFAULT_CONFIG } from "./defaults";
 
 const STORAGE_VERSION = 1;

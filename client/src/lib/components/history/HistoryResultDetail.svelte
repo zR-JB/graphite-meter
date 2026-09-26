@@ -1,6 +1,6 @@
 <script lang="ts">
   import { historyWirePresentation } from "../../history/wire";
-  import { httpProtocolLabel } from "../../runner/protocol";
+  import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
   import { ICON } from "../../constants";

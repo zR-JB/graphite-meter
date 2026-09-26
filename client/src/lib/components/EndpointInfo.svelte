@@ -1,14 +1,14 @@
 <script lang="ts">
   import { catalogSelection } from "../presentation/serverAppearance";
   import {
-    presentConnections,
+    describeTransferStreams,
     emptyConnectionValidation,
     latencyPathNeeded,
-  } from "../runner/connectionModel";
+  } from "../runner/paths";
+  import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
   import { fmtMs } from "../format";
   import { BUILD } from "../buildenv";
-  import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { buildSegments } from "../runner/schedule";
   import {
     advertisedServerCapabilities,

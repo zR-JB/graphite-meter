@@ -23,7 +23,8 @@ import { ServerAuthenticationRequired } from "../servers/credentials";
 import {
   planServerStreams,
   validateServerStreams,
-} from "../servers/streamBudget";
+  transportRunnable,
+} from "./paths";
 import { BUILD } from "../buildenv";
 import {
   pathEvidence,
@@ -52,7 +53,6 @@ import {
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
 } from "./real/budgets";
-import { transportRunnable } from "./real/transports";
 import {
   ServerStage,
   type ParticipantHost,
