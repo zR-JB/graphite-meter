@@ -4,6 +4,7 @@ import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
 import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery } from "./paths";
 import type { ServerCatalog } from "../servers/catalog";
+import type { ConnectionPreparation } from "./real/prepare";
 
 /** A real self-server selection for controller tests with injected network operations. */
 export async function testServerCatalog(): Promise<ServerCatalog> {
@@ -197,5 +198,41 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
     startedAt: 0,
     durationMs: 0,
     ...overrides,
+  };
+}
+
+export function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => (resolve = done));
+  return { promise, resolve };
+}
+export async function until(done: () => boolean, turns = 100) {
+  for (let turn = 0; turn < turns && !done(); turn++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
+}
+export const settle = () => until(() => false, 10);
+/** Discovery and both verified paths of one server generation. */
+export function testEvidence(generation = "gen-a"): PreparedPaths {
+  const paths = testPreparedPaths();
+  paths.discovery.generation = generation;
+  paths.throughput.generation = generation;
+  paths.latency!.generation = generation;
+  return paths;
+}
+export function testPreparation(
+  config: RunnerConfig = DEFAULT_CONFIG,
+  paths = testEvidence(),
+): ConnectionPreparation {
+  const role = <P>(selection: string, path: P) => ({
+    selection,
+    state: "verified" as const,
+    path,
+  });
+  return {
+    discovery: paths.discovery,
+    validation: {
+      throughput: role(config.transports.throughputTarget, paths.throughput),
+      latency: role(config.transports.latencyTarget, paths.latency),
+    },
   };
 }

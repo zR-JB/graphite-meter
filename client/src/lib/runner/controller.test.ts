@@ -1,27 +1,24 @@
 // Application controller contracts: selection, approval, run start/stop and the store it writes.
 import "../state/runes.testutil";
 import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
-import type {
-  NetworkRunner,
-  PreparedPaths,
-  RunnerConfig,
-  RunnerEvent,
-} from "./contract";
+import type { NetworkRunner, RunnerConfig, RunnerEvent } from "./contract";
 import { CONNECTION_FRESH_MS, type ServerView } from "./paths";
 import type {
   ApplicationController,
   createApplicationController,
 } from "./controller.svelte";
 import type { ConnectionPreparation } from "./real/prepare";
-import type { IdleEvent } from "./real/latencyChannel";
 import type { ServerEntry } from "../servers/catalog";
-import { DEFAULT_CONFIG } from "../state/defaults";
 import { stubGlobals } from "../test-helpers.testutil";
 import {
+  deferred,
+  settle,
   TEST_BUILD_TOKENS,
-  testPreparedPaths,
+  testEvidence as evidence,
+  testPreparation as preparation,
   testRunResult,
   testServerDiscovery,
+  until,
 } from "./test-helpers.testutil";
 
 // Store and runner modules read build tokens when they first load.
@@ -37,72 +34,11 @@ interface Harness {
   controller: ApplicationController;
   store: Store;
   runner: TestRunner;
-  idle: ReturnType<typeof idleMonitors>;
+  idle: () => boolean;
   setVisibility: (state: "hidden" | "visible") => void;
   view: (id?: string) => ServerView;
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => (resolve = done));
-  return { promise, resolve };
-}
-async function until(done: () => boolean, turns = 100): Promise<void> {
-  for (let turn = 0; turn < turns && !done(); turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
-}
-const settle = () => until(() => false, 10);
-function evidence(generation = "gen-a"): PreparedPaths {
-  const paths = testPreparedPaths();
-  paths.discovery.generation = generation;
-  paths.throughput.generation = generation;
-  paths.latency!.generation = generation;
-  return paths;
-}
-function preparation(
-  config: RunnerConfig = DEFAULT_CONFIG,
-  paths = evidence(),
-): ConnectionPreparation {
-  return {
-    discovery: paths.discovery,
-    validation: {
-      throughput: {
-        selection: config.transports.throughputTarget,
-        state: "verified",
-        path: paths.throughput,
-      },
-      latency: {
-        selection: config.transports.latencyTarget,
-        state: "verified",
-        path: paths.latency,
-      },
-    },
-  };
-}
-function idleMonitors() {
-  let active = false;
-  let stops = 0;
-  let onEvent: (event: IdleEvent) => void = () => {};
-  return {
-    active: () => active,
-    stops: () => stops,
-    create: (): NonNullable<ConnectionPreparation["idle"]> => ({
-      start() {
-        active = true;
-      },
-      stop() {
-        active = false;
-        stops++;
-      },
-      get onEvent() {
-        return onEvent;
-      },
-      set onEvent(value) {
-        onEvent = value;
-      },
-    }),
-  };
-}
 class TestRunner implements NetworkRunner {
   phase: NetworkRunner["phase"] = "idle";
   listener: (event: RunnerEvent) => void = () => {};
@@ -179,7 +115,7 @@ async function withController(
       ? { id: server, name: server, url: origin.origin }
       : server,
   );
-  const idle = idleMonitors();
+  let idle = false;
   const runner = new TestRunner();
   const controller = createApplicationController(store, {
     loadCatalog: async () => ({
@@ -189,7 +125,13 @@ async function withController(
     discover: testServerDiscovery,
     prepare: async (config, _previous, roles) => ({
       ...preparation(config),
-      idle: roles.includes("latency") ? idle.create() : undefined,
+      idle: roles.includes("latency")
+        ? {
+            start: () => void (idle = true),
+            stop: () => void (idle = false),
+            onEvent() {},
+          }
+        : undefined,
     }),
     createRunner: () => runner,
     ...options,
@@ -200,7 +142,7 @@ async function withController(
       controller,
       store,
       runner,
-      idle,
+      idle: () => idle,
       setVisibility(state) {
         document.visibilityState = state;
         documentEvents.emit("visibilitychange");
@@ -288,17 +230,17 @@ test("a failed Start check stays idle instead of manufacturing a run error", asy
 
 test("idle latency stops before the run starts and resumes after abort", async () => {
   await withController({}, async ({ controller, runner, idle }) => {
-    expect(idle.active()).toBe(true);
+    expect(idle()).toBe(true);
     const start = runner.start.bind(runner);
     runner.start = () => {
-      expect(idle.active()).toBe(false);
+      expect(idle()).toBe(false);
       start();
     };
     controller.toggleRun();
     await until(() => runner.starts === 1);
-    expect(idle.active()).toBe(false);
+    expect(idle()).toBe(false);
     controller.toggleRun();
-    expect(idle.active()).toBe(true);
+    expect(idle()).toBe(true);
   });
 });
 

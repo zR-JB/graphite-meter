@@ -11,7 +11,14 @@ import {
 import { originLimiter } from "../servers/originLimiter";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { stubGlobals } from "../test-helpers.testutil";
-import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.testutil";
+import {
+  deferred,
+  settle,
+  TEST_BUILD_TOKENS,
+  testEvidence as evidence,
+  testPreparation as preparation,
+  until,
+} from "./test-helpers.testutil";
 
 let restoreBuild: () => void;
 let Connection: typeof ServerConnection;
@@ -28,40 +35,6 @@ afterEach(() => {
   for (const connection of open.splice(0)) connection.close();
 });
 
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => (resolve = done));
-  return { promise, resolve };
-}
-async function until(done: () => boolean, turns = 100): Promise<void> {
-  for (let turn = 0; turn < turns && !done(); turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
-}
-const settle = () => until(() => false, 10);
-function evidence(generation = "gen-a") {
-  const paths = testPreparedPaths();
-  paths.discovery.generation = generation;
-  paths.throughput.generation = generation;
-  paths.latency!.generation = generation;
-  return paths;
-}
-function preparation(
-  config: RunnerConfig = DEFAULT_CONFIG,
-  paths = evidence(),
-): ConnectionPreparation {
-  const role = <P>(selection: string, path: P) => ({
-    selection,
-    state: "verified" as const,
-    path,
-  });
-  return {
-    discovery: paths.discovery,
-    validation: {
-      throughput: role(config.transports.throughputTarget, paths.throughput),
-      latency: role(config.transports.latencyTarget, paths.latency),
-    },
-  };
-}
 const monitor = (stopped = () => {}) => ({
   start() {},
   stop: stopped,
