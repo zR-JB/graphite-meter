@@ -1,41 +1,28 @@
 import { compensationTooltip, type WireModel } from "../compensation";
 import { fmtAddedMs, fmtBytes, fmtMs } from "../format";
-import type { TransportRole } from "../runner/contract";
+import type {
+  BufferbloatGrade,
+  RunResult,
+  TransportRole,
+} from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
 import { MISSING, STAGE } from "./vocabulary";
 
 type Band = "low" | "medium" | "high";
-type Throughput = {
-  reportedBytesPerSec: number;
-  totalBytes: number;
-  stabilityPct: number;
-  wire?: WireModel | null;
-};
-type Latency = { reportedMs: number; jitterMs: number | null };
-type WireStage = "download" | "upload" | "bidirectional";
-type Added = {
-  addedMs?: Partial<Record<WireStage, number | null>>;
-  grade: string;
-};
 export type SummaryStatus = "complete" | "partial" | "failed";
 export interface WireView {
   bytesPerSec: number;
   pct: string | null;
   tooltip: string;
 }
-export interface SummaryEvidence {
+export interface SummaryEvidence extends Pick<
+  RunResult,
+  "download" | "upload" | "bidirectional" | "latency"
+> {
   status: Partial<Record<TransportRole, SummaryStatus>>;
-  download: Throughput | null;
-  upload: Throughput | null;
-  bidirectional: {
-    down: Throughput | null;
-    up: Throughput | null;
-    wire?: WireModel | null;
-  } | null;
-  latency: Latency | null;
-  added: Added | null;
+  added: BufferbloatGrade | null;
   latencySource?: string;
 }
 export interface SummaryCard {
@@ -199,7 +186,7 @@ export function summaryCards(
       if (result)
         card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
-    const added = evidence.added?.addedMs?.[key];
+    const added = evidence.added?.addedMs[key];
     if (added != null && status !== "failed") card.added = fmtAddedMs(added);
     if (value === null) return [card];
     const shown = rate(value);

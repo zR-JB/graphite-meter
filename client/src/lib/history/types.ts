@@ -167,7 +167,7 @@ const rate = maybe(
 const lanes = maybe(shape({ down: rate, up: rate }));
 const populations = each(maybe(shape({ p50Ms: maybe(num), probeCount: num })));
 const measured = {
-  latency: maybe(shape({ reportedMs: num, band: str })),
+  latency: maybe(shape({ reportedMs: num })),
   latencyByStage: populations,
   download: rate,
   upload: rate,

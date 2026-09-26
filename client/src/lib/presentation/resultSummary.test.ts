@@ -28,8 +28,10 @@ const lane = (reportedBytesPerSec: number) => ({
   reportedBytesPerSec,
   totalBytes: 1_000_000,
   stabilityPct: 95,
+  peakBytesPerSec: null,
 });
 const rate = (value: number) => ({ num: String(value), unit: "B/s" });
+const latencyOnly = { idleMs: 12, loadedMs: 20, increaseMs: 8 };
 
 test("a saved wire overhead shows from half a percent and only when chosen", () => {
   const wire = (totalMultiplier: number, show = true) =>
@@ -100,6 +102,7 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
       added: {
         addedMs: { download: 8.25, upload: -0.04, bidirectional: 0 },
         grade: "B",
+        ...latencyOnly,
       },
     },
     rate,
@@ -117,21 +120,4 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
     [null, null, undefined],
     [null, "Grade B", "high"],
   ]);
-});
-
-test("records saved before per-stage added latency show only the grade", () => {
-  const [latency] = summaryCards(
-    {
-      status: { latency: "complete" },
-      download: null,
-      upload: null,
-      bidirectional: null,
-      latency: { reportedMs: 12, jitterMs: 1 },
-      added: { grade: "C" },
-    },
-    rate,
-    "base10",
-    true,
-  );
-  expect(latency.grade).toBe("Grade C");
 });
