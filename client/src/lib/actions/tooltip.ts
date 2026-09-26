@@ -1,35 +1,7 @@
-/** Fixed overlays use the visible viewport, including pinch zoom and panning. */
-function floatingViewport() {
-  const viewport = window.visualViewport;
-  const left = viewport?.offsetLeft ?? 0;
-  const top = viewport?.offsetTop ?? 0;
-  const width = viewport?.width ?? innerWidth;
-  const height = viewport?.height ?? innerHeight;
-  return {
-    left,
-    top,
-    width,
-    height,
-    right: left + width,
-    bottom: top + height,
-  };
-}
-
-function clampFloatingPosition(
-  element: HTMLElement,
-  left: number,
-  top: number,
-  viewport: ReturnType<typeof floatingViewport>,
-) {
-  element.style.left = `${Math.max(viewport.left + 8, Math.min(left, viewport.right - element.offsetWidth - 8))}px`;
-  element.style.top = `${Math.max(viewport.top + 8, Math.min(top, viewport.bottom - element.offsetHeight - 8))}px`;
-}
-
 // Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
   text: string;
-  placement?: "top" | "bottom";
   disabled?: boolean;
   // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
   instant?: boolean;
@@ -45,17 +17,16 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   let opts = normalize(param);
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
-  let popoverHost: HTMLElement | null = null;
   let prevDescribedBy: string | null = null;
   let touchOpen = false;
   let autoDismissTimer = 0;
   let hoverTimer = 0;
-  let focusFrame = 0;
-  let focusGeneration = 0;
-  let placement: {
-    anchor: DOMRect;
-    viewport: ReturnType<typeof floatingViewport>;
-  } | null = null;
+  // CSS anchor positioning places the bubble; its top-layer popover paints above any open popover.
+  const anchorNames = node.style.getPropertyValue("anchor-name");
+  node.style.setProperty(
+    "anchor-name",
+    anchorNames ? `${anchorNames}, --${id}` : `--${id}`,
+  );
   // Definitions (.term) and notes stay reachable by keyboard; other inert
   // anchors already carry their text in an accessible name, so they do not
   // add a tab stop per value.
@@ -66,59 +37,29 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   ) {
     node.tabIndex = 0;
   }
-  // Centred on the anchor, flipped to the opposite side when the requested one overflows the viewport, then clamped.
-  function place() {
-    if (!bubble) return;
-    const anchor = node.getBoundingClientRect();
-    const viewport = floatingViewport();
-    placement = { anchor, viewport };
-    bubble.style.maxWidth = `${Math.max(0, Math.min(300, viewport.width - 16))}px`;
-    const bubbleBox = bubble.getBoundingClientRect();
-    const margin = 8;
-    let top =
-      opts.placement === "bottom"
-        ? anchor.bottom + margin
-        : anchor.top - bubbleBox.height - margin;
-    if (top < viewport.top + margin) top = anchor.bottom + margin;
-    if (top + bubbleBox.height > viewport.bottom - margin)
-      top = anchor.top - bubbleBox.height - margin;
-    clampFloatingPosition(
-      bubble,
-      anchor.left + (anchor.width - bubbleBox.width) / 2,
-      top,
-      viewport,
-    );
-  }
   function show() {
-    if (opts.disabled || bubble || !opts.text) return;
+    if (opts.disabled || bubble || !opts.text || !node.isConnected) return;
     bubble = document.createElement("div");
     bubble.className = "tooltip";
     bubble.id = id;
+    bubble.popover = "manual";
     bubble.setAttribute("role", "tooltip");
+    bubble.style.setProperty("position-anchor", `--${id}`);
     bubble.textContent = opts.text;
-    popoverHost = node.closest<HTMLElement>("[popover]:popover-open");
-    if (popoverHost) {
-      // A normal z-index cannot paint above the host's native top layer.
-      bubble.popover = "manual";
-      popoverHost.appendChild(bubble);
-      bubble.showPopover();
-      popoverHost.addEventListener("beforetoggle", onHostToggle);
-    } else document.body.appendChild(bubble);
+    document.body.appendChild(bubble);
+    bubble.showPopover();
     prevDescribedBy = node.getAttribute("aria-describedby");
     node.setAttribute(
       "aria-describedby",
       prevDescribedBy ? `${prevDescribedBy} ${id}` : id,
     );
-    place();
     requestAnimationFrame(() => bubble?.setAttribute("data-show", "true"));
     for (const [target, type, listener, capture] of dismissListeners)
       target.addEventListener(type, listener as EventListener, capture);
   }
-  function onHostToggle(event: Event) {
-    if (
-      event.target === popoverHost &&
-      (event as ToggleEvent).newState === "closed"
-    )
+  function onPopoverToggle(event: Event) {
+    const host = event.target as Node;
+    if ((event as ToggleEvent).newState === "closed" && host.contains(node))
       hide();
   }
   function clearHoverTimer() {
@@ -135,44 +76,13 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function onVisibilityDismiss() {
     if (document.visibilityState !== "visible") hide();
   }
-  function onLayoutChange(event: Event) {
-    const previous = placement;
-    if (!previous) return;
-    if (
-      event.type === "scroll" &&
-      event.target instanceof Node &&
-      !event.target.contains(node)
-    ) {
-      hide();
-      return;
-    }
-    const anchor = node.getBoundingClientRect();
-    const viewport = floatingViewport();
-    // Focus reveal and viewport updates can deliver a queued notification
-    // after placement. Only actual movement invalidates the visible tooltip.
-    if (
-      (["left", "top", "width", "height"] as const).some(
-        (key) =>
-          anchor[key] !== previous.anchor[key] ||
-          viewport[key] !== previous.viewport[key],
-      )
-    )
-      hide();
-  }
   function hide() {
-    focusGeneration++;
     clearHoverTimer();
-    if (focusFrame) {
-      cancelAnimationFrame(focusFrame);
-      focusFrame = 0;
-    }
     if (autoDismissTimer) {
       clearTimeout(autoDismissTimer);
       autoDismissTimer = 0;
     }
     if (!bubble) return;
-    popoverHost?.removeEventListener("beforetoggle", onHostToggle);
-    popoverHost = null;
     const leaving = bubble;
     leaving.removeAttribute("role");
     leaving.setAttribute("aria-hidden", "true");
@@ -181,7 +91,6 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       leaving.getAnimations().map((animation) => animation.finished),
     ).then(() => leaving.remove());
     bubble = null;
-    placement = null;
     if (prevDescribedBy === null) node.removeAttribute("aria-describedby");
     else node.setAttribute("aria-describedby", prevDescribedBy);
     prevDescribedBy = null;
@@ -190,9 +99,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
       target.removeEventListener(type, listener as EventListener, capture);
   }
   function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && (bubble || focusFrame)) {
-      hide();
-    }
+    if (event.key === "Escape" && bubble) hide();
   }
   function onPointerEnter(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
@@ -208,48 +115,11 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   }
   function onPointerLeave(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
-    clearHoverTimer();
     hide();
   }
   // Keyboard focus asks for the tip; focus landing from a click does not.
   function onFocus(event: FocusEvent) {
-    const target = event.target as HTMLElement;
-    if (!target.matches(":focus-visible")) return;
-    const generation = ++focusGeneration;
-    // A newly opened workspace can still be entering when keyboard focus lands.
-    // Wait for its finite motion and focus reveal before placing the tooltip.
-    focusFrame = requestAnimationFrame(async () => {
-      const animations: Animation[] = [];
-      for (
-        let anchor: HTMLElement | null = target;
-        anchor;
-        anchor = anchor.parentElement
-      )
-        animations.push(
-          ...anchor
-            .getAnimations()
-            .filter(
-              (animation) =>
-                animation.playState === "running" &&
-                animation.effect?.getComputedTiming().iterations !== Infinity,
-            ),
-        );
-      await Promise.allSettled(
-        animations.map((animation) => animation.finished),
-      );
-      if (generation !== focusGeneration) return;
-      focusFrame = requestAnimationFrame(() => {
-        focusFrame = 0;
-        if (
-          document.activeElement === target &&
-          target.matches(":focus-visible")
-        )
-          show();
-      });
-    });
-  }
-  function onBlur() {
-    hide();
+    if ((event.target as HTMLElement).matches(":focus-visible")) show();
   }
   // A tap on a control runs the control, so only inert jargon shows a tip on touch.
   function onPointerUp(event: PointerEvent) {
@@ -268,19 +138,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     if (event.pointerType !== "touch") hide();
   }
   function onClick() {
-    if (touchOpen) return;
-    hide();
+    if (!touchOpen) hide();
   }
   const dismissListeners = [
     [window, "blur", hide, false],
-    ...(window.visualViewport
-      ? ([
-          [window.visualViewport, "resize", onLayoutChange, false],
-          [window.visualViewport, "scroll", onLayoutChange, false],
-        ] as const)
-      : []),
     [document, "visibilitychange", onVisibilityDismiss, false],
-    [document, "scroll", onLayoutChange, true],
+    [document, "toggle", onPopoverToggle, true],
     [document, "pointerdown", onDocumentPointerDown, true],
   ] as const;
   const nodeListeners = [
@@ -288,7 +151,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     ["pointerenter", onPointerEnter],
     ["pointerleave", onPointerLeave],
     ["focusin", onFocus],
-    ["focusout", onBlur],
+    ["focusout", hide],
     ["pointerup", onPointerUp],
     ["keydown", onKeydown],
     ["click", onClick],
@@ -298,13 +161,9 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   return {
     update(next: TooltipParam) {
       opts = normalize(next);
-      if (bubble) {
-        if (opts.disabled || !opts.text) hide();
-        else {
-          bubble.textContent = opts.text;
-          place();
-        }
-      }
+      if (!bubble) return;
+      if (opts.disabled || !opts.text) hide();
+      else bubble.textContent = opts.text;
     },
     destroy() {
       hide();

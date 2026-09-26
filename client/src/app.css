@@ -814,9 +814,12 @@
   .tooltip {
     position: fixed;
     inset: auto;
-    z-index: 200;
     max-width: min(300px, calc(100vw - 16px));
-    margin: 0;
+    margin: 8px;
+    overflow: visible;
+    position-area: block-start;
+    position-try-fallbacks: flip-block;
+    position-visibility: anchors-visible;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);

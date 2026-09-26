@@ -458,7 +458,7 @@
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
       return;
-    if (document.querySelector(":popover-open")) return;
+    if (document.querySelector(":popover-open:not(.tooltip)")) return;
     if (isEditable(e.target)) return;
     if (resetConfirmOpen) return;
 
