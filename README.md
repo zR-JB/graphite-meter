@@ -79,30 +79,30 @@ with compact phone controls, clearer saved results, and persistent desktop panel
 - **Phone layout:** compact phase cards keep names and status readable above full-width progress bars. The toolbar stays within
   reach, and the bottom status bar keeps the current phase and remaining time visible while the
   workspace scrolls.
-- **Wide desktop workspace:** open Settings and Endpoint info side by side with the meter. Resize
+- **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize
   each panel to suit your monitor; your widths survive resizing and reload. Below the docked
   layout, one panel opens as a flyout and the URL follows the visible panel.
 - **Local history:** optionally save up to 2,000 completed summaries on your device. Sort and
   inspect past runs while the live test continues, then return to it from the toolbar.
 
-<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Endpoint info open beside the completed meter on a wide desktop" width="1080">
+<img src="docs/assets/workspace.png" alt="Graphite Meter v0.8.5 with Settings and Details open beside the completed meter on a wide desktop" width="1080">
 
 <p align="center"><sub>v0.8.5 · simulated measurements · resizable desktop panels</sub></p>
 
 ### Read a saved result
 
-For multi-server runs, choose **Throughput results** to inspect the combined run or one server's
-contribution. Choose **Latency source** separately to compare that server's idle and loaded responsiveness. The two
-controls preserve their own selection, and a server without latency measurements stays explicitly
-unmeasured.
+A saved result opens with the same summary cards as the live meter. For multi-server runs, one
+selector switches between **Combined** and each server's contribution. Latency follows the chosen
+server when it measured latency; otherwise the run's headline latency server stays shown and named.
 
 Latency notes and probe details explain timeouts, interrupted probes, and server timing. Secondary
-server and path metadata sits under **Servers & run context**, so the measurements remain the first thing you see.
+server and path metadata sits under **Servers & paths**, **Probe accounting**, **Issues** and
+**Build & environment**, so the measurements remain the first thing you see.
 History is stored in the current browser; it is not a server-side archive or a recording of every
 raw sample.
 
 See the [gallery](docs/SCREENSHOTS.md) for light and dark themes, mobile controls, saved results,
-and endpoint details.
+and connection details.
 
 ## Native terminal client
 
