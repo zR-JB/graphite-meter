@@ -43,30 +43,89 @@ func (l *pipeListener) Close() error {
 
 func (l *pipeListener) Addr() net.Addr { return pipeConn{}.RemoteAddr() }
 
+func newPipeListener() *pipeListener {
+	return &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
+}
+
+// client dials l until the test ends.
+func (l *pipeListener) client(t *testing.T) *http.Client {
+	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		client, server := net.Pipe()
+		select {
+		case l.conns <- pipeConn{server}:
+			return client, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	t.Cleanup(tr.CloseIdleConnections)
+	return &http.Client{Transport: tr}
+}
+
 // laneServer serves the transfer routes over pipes and returns a client for them.
 func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cfg := config.Default()
 	cfg.MaxOperationDuration = operation
 	e := buildEndpoints(ctx, &cfg)
-	ln := &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
+	ln := newPipeListener()
 	srv := &http.Server{Handler: newMux(ctx, e, muxTopology{transfers: true}, nil, publicAuth(t))}
 	go func() { _ = srv.Serve(ln) }()
-	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		client, server := net.Pipe()
-		select {
-		case ln.conns <- pipeConn{server}:
-			return client, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}}
 	t.Cleanup(func() {
 		cancel()
 		_ = srv.Close()
-		tr.CloseIdleConnections()
 	})
-	return e, &http.Client{Transport: tr}
+	return e, ln.client(t)
+}
+
+// pipeSockets serves the clear listener over ln.
+type pipeSockets struct{ ln *pipeListener }
+
+func (s pipeSockets) listenTCP(string) (net.Listener, error) { return s.ln, nil }
+func (pipeSockets) listenUDP(string) (net.PacketConn, error) { return nil, net.ErrClosed }
+
+// Shutdown drains measurements for its grace period, then cuts the ones still open.
+func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cfg := config.Default()
+		ln := newPipeListener()
+		stopped := make(chan error)
+		go func() { stopped <- runWithSockets(ctx, &cfg, pipeSockets{ln}) }()
+		client := ln.client(t)
+		session, err := client.Post("http://meter/upload/session", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var minted struct {
+			UploadID string `json:"uploadId"`
+		}
+		_ = json.UnmarshalRead(session.Body, &minted)
+		session.Body.Close()
+		body, w := io.Pipe()
+		defer w.Close()
+		go func() { _, _ = w.Write([]byte("x")) }()
+		answered := make(chan time.Duration)
+		start := time.Now()
+		go func() {
+			res, err := client.Post("http://meter/upload?id="+minted.UploadID, "", body)
+			if err == nil {
+				res.Body.Close()
+			}
+			answered <- time.Since(start)
+		}()
+		synctest.Wait()
+		cancel()
+		if err := <-stopped; err != nil {
+			t.Fatal(err)
+		}
+		w.Close()
+		if took := <-answered; took > 6*time.Second {
+			t.Fatalf("a stalled upload outlived the shutdown drain by %v", took)
+		}
+		// net/http lingers half a second after closing an answered connection's write side.
+		time.Sleep(time.Second)
+	})
 }
 
 // A stalled upload lane is answered 408 once idle for the bound and keeps its bytes, as does one that reaches its

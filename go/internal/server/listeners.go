@@ -274,7 +274,14 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 		served = tls.NewListener(served, b.cm.tlsConfig(l.alpn))
 	}
 	b.services = append(b.services, service{name: l.name, addr: l.addr, network: "tcp",
-		run: func() error { return serve(served, s) }, stop: s.Shutdown})
+		run: func() error { return serve(served, s) }, stop: func(ctx context.Context) error {
+			// Measurements still open when the drain ends are cut, not left to their own bounds.
+			err := s.Shutdown(ctx)
+			if err != nil {
+				_ = s.Close()
+			}
+			return err
+		}})
 	return nil
 }
 
