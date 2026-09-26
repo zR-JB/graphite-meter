@@ -153,7 +153,8 @@ function watchDisplay() {
       settleTransfer();
       phase = next;
     }
-    if (!TRANSFER.includes(phase)) return;
+    // A hidden page runs no frames, so only a visible needle can be judged.
+    if (!TRANSFER.includes(phase) || document.hidden) return;
     const readout = document.querySelector(".gauge-value")?.textContent ?? "";
     if (!/\d/.test(readout)) return;
     readouts.add(readout);
