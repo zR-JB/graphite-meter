@@ -6,32 +6,25 @@ import (
 	"net/netip"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// ClientKey keys upload ownership and admission by subject, IPv4 address, or IPv6 /64.
-func ClientKey(r *http.Request, trusted []netip.Prefix) string {
-	if p, ok := auth.PrincipalFromContext(r.Context()); ok {
-		return "principal:" + p.Subject
-	}
-	client, _ := transport.ResolveClientAddress(r, trusted)
-	return transport.AddressBucket(client.Addr)
+// uploadClient owns receivers as a browser grant, principal or IPv6 /64, and spends that client's budgets.
+type uploadClient struct {
+	owner string
+	keys  []string
 }
 
-// UploadOwner separates delegated browser access without multiplying admission budgets.
-func UploadOwner(r *http.Request, trusted []netip.Prefix) string {
-	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.MeasurementOwner() != "" {
-		return p.MeasurementOwner()
+// uploadClientOf is zero, owning nothing, when a trusted proxy's evidence is ambiguous.
+func uploadClientOf(r *http.Request, trusted []netip.Prefix) uploadClient {
+	keys, ok := auth.ClientKeys(r, trusted)
+	if !ok {
+		return uploadClient{}
 	}
-	return ClientKey(r, trusted)
-}
-
-// SessionKey buckets the session budget by login, else by client key.
-func SessionKey(r *http.Request, clientKey string) string {
-	if p, ok := auth.PrincipalFromContext(r.Context()); ok && p.LoginID() != "" {
-		return "login:" + p.LoginID()
+	c := uploadClient{owner: keys[0], keys: keys}
+	if p, _ := auth.PrincipalFromContext(r.Context()); p.MeasurementOwner() != "" {
+		c.owner = p.MeasurementOwner()
 	}
-	return clientKey
+	return c
 }
 
 func noStoreJSON(w http.ResponseWriter) {

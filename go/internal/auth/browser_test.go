@@ -176,7 +176,7 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	native := grantFor(t, s, sess)
 	handler := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := PrincipalFromContext(r.Context())
-		if !ok || p.LoginID() != sess.id {
+		if !ok || p.session != sess {
 			t.Fatal("grant lost parent admission identity")
 		}
 		w.WriteHeader(299)
@@ -212,7 +212,7 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	second, _ := approveBrowser(t, s, raw, sess)
 	p, _ := s.authenticateGrant(grant)
 	q, _ := s.authenticateGrant(second)
-	if p.MeasurementOwner() == q.MeasurementOwner() || p.LoginID() != q.LoginID() {
+	if p.MeasurementOwner() == q.MeasurementOwner() || p.session != q.session {
 		t.Fatal("upload access or parent budget is not correctly scoped")
 	}
 }

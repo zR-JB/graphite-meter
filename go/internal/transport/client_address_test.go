@@ -3,6 +3,7 @@ package transport
 import (
 	"net/http/httptest"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -54,20 +55,16 @@ func TestResolveClientAddress(t *testing.T) {
 	}
 }
 
-// Every per-client budget buckets an IPv6 client by the /64 it controls.
-func TestAddressBucketCollapsesIPv6ToTheAllocation(t *testing.T) {
+// An IPv6 client is keyed by the /64 it controls and the /56 and /48 an allocation may hold.
+func TestAddressKeysAggregateIPv6Allocations(t *testing.T) {
 	for addr, want := range map[string]string{
 		"203.0.113.7":                      "203.0.113.7",
 		"::ffff:203.0.113.7":               "203.0.113.7",
-		"2001:db8:1:2::1":                  "2001:db8:1:2::/64",
-		"2001:db8:1:2:ffff:ffff:ffff:ffff": "2001:db8:1:2::/64",
-		"2001:db8:1:3::1":                  "2001:db8:1:3::/64",
+		"2001:db8:1:2::1":                  "2001:db8:1:2::/64 2001:db8:1::/56 2001:db8:1::/48",
+		"2001:db8:1:2ff:ffff:ffff:ffff:ff": "2001:db8:1:2ff::/64 2001:db8:1:200::/56 2001:db8:1::/48",
 	} {
-		if got := AddressBucket(netip.MustParseAddr(addr)); got != want {
-			t.Errorf("AddressBucket(%s) = %s, want %s", addr, got, want)
+		if got := strings.Join(AddressKeys(netip.MustParseAddr(addr)), " "); got != want {
+			t.Errorf("AddressKeys(%s) = %s, want %s", addr, got, want)
 		}
-	}
-	if got := AddressBucket(netip.Addr{}); got != "unknown" {
-		t.Errorf("AddressBucket(invalid) = %s, want unknown", got)
 	}
 }

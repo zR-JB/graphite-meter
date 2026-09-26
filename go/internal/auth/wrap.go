@@ -31,13 +31,6 @@ func sessionPrincipal(sess *session, provider string, bearer bool) Principal {
 		session: sess, Bearer: bearer}
 }
 
-func (p Principal) LoginID() string {
-	if p.session == nil {
-		return ""
-	}
-	return p.session.id
-}
-
 func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 	if !s.Enabled() {
 		return next

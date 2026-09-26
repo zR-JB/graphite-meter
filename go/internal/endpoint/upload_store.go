@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -21,7 +22,7 @@ type uploadAgg struct {
 	bytes          atomic.Int64 // drained bytes across all of this id's lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
 	lastTouchMono  atomic.Int64 // the sweeper's idle clock
-	owner          string
+	client         uploadClient
 	lanes          int
 	lanesChanged   chan struct{} // closed and replaced on every change: a broadcast
 	finished       chan struct{} // closed by DELETE /upload/progress
@@ -167,13 +168,14 @@ func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
 }
 
 // accessFor resolves or creates id's receiver; lanes join under the lock, watchers stay passive.
-func (u *Upload) accessFor(id, owner string, join bool) (*uploadAgg, uploadAccess) {
+func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, uploadAccess) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	if agg, ok := u.receivers[id]; ok {
-		if owner != agg.owner {
-			return nil, uploadAccessOwnerMismatch
-		}
+	agg, ok := u.receivers[id]
+	if c.owner == "" || ok && c.owner != agg.client.owner {
+		return nil, uploadAccessOwnerMismatch
+	}
+	if ok {
 		if join {
 			if agg.isFinished() {
 				return nil, uploadAccessInvalid
@@ -186,17 +188,16 @@ func (u *Upload) accessFor(id, owner string, join bool) (*uploadAgg, uploadAcces
 	if !u.validID(id) {
 		return nil, uploadAccessInvalid
 	}
-	budget, _, _ := strings.Cut(owner, "\x00")
-	if budget != "" && u.byOwner[budget] >= maxLiveUploadsPerClient {
+	if transport.ShareFull(c.keys, maxLiveUploadsPerClient, func(key string) int { return u.byClient[key] }) {
 		return nil, uploadAccessClientFull
 	}
 	if len(u.receivers) >= maxLiveUploads && !u.evictEmptyLocked() {
 		return nil, uploadAccessGlobalFull
 	}
-	if budget != "" {
-		u.byOwner[budget]++
+	for _, key := range c.keys {
+		u.byClient[key]++
 	}
-	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
+	agg = &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), client: c}
 	agg.lastTouchMono.Store(u.now())
 	u.receivers[id] = agg
 	if join {
@@ -225,10 +226,9 @@ func (u *Upload) expireLocked(id string) {
 	agg := u.receivers[id]
 	delete(u.receivers, id)
 	close(agg.expired)
-	// Delegated owners share their subject's retention budget while keeping distinct access rights.
-	if budget, _, _ := strings.Cut(agg.owner, "\x00"); budget != "" {
-		if u.byOwner[budget]--; u.byOwner[budget] == 0 {
-			delete(u.byOwner, budget)
+	for _, key := range agg.client.keys {
+		if u.byClient[key]--; u.byClient[key] == 0 {
+			delete(u.byClient, key)
 		}
 	}
 }
@@ -240,7 +240,7 @@ func (u *Upload) finishFor(id, owner string) uploadAccess {
 	switch {
 	case !ok:
 		return uploadAccessInvalid
-	case owner != agg.owner:
+	case owner != agg.client.owner:
 		return uploadAccessOwnerMismatch
 	case !agg.isFinished():
 		close(agg.finished)

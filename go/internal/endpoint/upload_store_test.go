@@ -24,12 +24,15 @@ func (s *Upload) live() int {
 	return len(s.receivers)
 }
 
+func ownedBy(owner string) uploadClient { return uploadClient{owner: owner, keys: []string{owner}} }
+
 func (s *Upload) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.accessFor(id, owner, false)
+	return s.accessFor(id, ownedBy(owner), false)
 }
 
+// getOrCreate spends no client budget, so only the global cap applies.
 func (s *Upload) getOrCreate(id string) (*uploadAgg, bool) {
-	agg, access := s.getOrCreateFor(id, "")
+	agg, access := s.accessFor(id, uploadClient{owner: "unbudgeted"}, false)
 	return agg, access == uploadAccessOK
 }
 
@@ -104,37 +107,38 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 	}
 }
 
-// A receiver answers only its own owner, including one created without an owner key.
+// A receiver answers only its own owner, and a client without an identity owns nothing.
 func TestUploadOwnershipFailsClosed(t *testing.T) {
 	s := NewUpload(nil, nil)
-	for _, owner := range []string{"", "192.0.2.1"} {
-		id := s.Mint()
-		if _, access := s.getOrCreateFor(id, owner); access != uploadAccessOK {
-			t.Fatal(access)
+	id := s.Mint()
+	if _, access := s.accessFor(id, uploadClient{}, true); access != uploadAccessOwnerMismatch {
+		t.Fatalf("a client without an identity created a receiver: %v", access)
+	}
+	if _, access := s.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
+		t.Fatal(access)
+	}
+	for _, other := range []uploadClient{{}, ownedBy("198.51.100.9")} {
+		if _, access := s.accessFor(id, other, true); access != uploadAccessOwnerMismatch {
+			t.Fatalf("%q joined another client's receiver with %v", other.owner, access)
 		}
-		if _, access := s.accessFor(id, "198.51.100.9", true); access != uploadAccessOwnerMismatch {
-			t.Fatalf("owner %q: another client joined with %v", owner, access)
-		}
-		if access := s.finishFor(id, "198.51.100.9"); access != uploadAccessOwnerMismatch {
-			t.Fatalf("owner %q: another client finished with %v", owner, access)
+		if access := s.finishFor(id, other.owner); access != uploadAccessOwnerMismatch {
+			t.Fatalf("%q finished another client's receiver with %v", other.owner, access)
 		}
 	}
 }
 
-// Delegated owners share their subject's retention budget while keeping distinct access rights.
+// Delegated grants keep distinct access rights while sharing their subject's retention budget.
 func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
 	store := NewUpload(nil, nil)
+	grant := func(i int) uploadClient {
+		return uploadClient{owner: fmt.Sprint("browser-grant:", i), keys: []string{"principal:subject"}}
+	}
 	for i := range maxLiveUploadsPerClient {
-		owner := "principal:subject\x00browser-grant:first"
-		if i%2 == 1 {
-			owner = "principal:subject\x00browser-grant:second"
-		}
-		if _, access := store.getOrCreateFor(store.Mint(), owner); access != uploadAccessOK {
+		if _, access := store.accessFor(store.Mint(), grant(i%2), false); access != uploadAccessOK {
 			t.Fatal(access)
 		}
 	}
-	third := "principal:subject\x00browser-grant:third"
-	if _, access := store.getOrCreateFor(store.Mint(), third); access != uploadAccessClientFull {
+	if _, access := store.accessFor(store.Mint(), grant(2), false); access != uploadAccessClientFull {
 		t.Fatal("another grant multiplied retention capacity")
 	}
 }
@@ -147,7 +151,7 @@ func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 		const owner = "192.0.2.1"
 		carried, _ := s.getOrCreateFor(s.Mint(), owner)
 		carried.recordChunk(s.now(), 1<<20)
-		active, _ := s.accessFor(s.Mint(), owner, true)
+		active, _ := s.accessFor(s.Mint(), ownedBy(owner), true)
 		for range maxLiveUploadsPerClient - 2 {
 			s.getOrCreateFor(s.Mint(), owner)
 		}
@@ -191,10 +195,10 @@ func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 		if retained, ok := store.get(id); !ok || retained != agg {
 			t.Fatal("finished receiver was swept while its token could still create state")
 		}
-		if _, access := store.accessFor(id, "original", true); access != uploadAccessInvalid {
+		if _, access := store.accessFor(id, ownedBy("original"), true); access != uploadAccessInvalid {
 			t.Fatalf("finished owner rejoined with access %v", access)
 		}
-		if _, access := store.accessFor(id, "other", true); access != uploadAccessOwnerMismatch {
+		if _, access := store.accessFor(id, ownedBy("other"), true); access != uploadAccessOwnerMismatch {
 			t.Fatalf("ownership was lost with access %v", access)
 		}
 	})
@@ -221,7 +225,7 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 		}
 		watchers := fill(func(*uploadAgg) {})
 		upload := s
-		if n, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err != nil || n != 4 {
+		if n, err := upload.Receive(s.Mint(), ownedBy("client"), strings.NewReader("lane")); err != nil || n != 4 {
 			t.Fatalf("lane at a cap of empty receivers = %d, %v", n, err)
 		}
 		select {
@@ -235,7 +239,7 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 		s.mu.Lock()
 		close(watchers[1].finished)
 		s.mu.Unlock()
-		if _, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err == nil {
+		if _, err := upload.Receive(s.Mint(), ownedBy("client"), strings.NewReader("lane")); err == nil {
 			t.Fatal("a receiver holding bytes or a finish was displaced")
 		}
 		select {

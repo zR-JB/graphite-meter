@@ -53,11 +53,18 @@ func Trusted(addr netip.Addr, trusted []netip.Prefix) bool {
 	return slices.ContainsFunc(trusted, func(p netip.Prefix) bool { return p.Contains(addr) })
 }
 
-// AddressBucket keys a per-client budget: an IPv4 address or an IPv6 /64.
-func AddressBucket(addr netip.Addr) string { return AddressBuckets(addr)[0] }
+// ShareFull reports whether any key holds its share: limit for the first, doubling for each wider aggregate.
+func ShareFull(keys []string, limit int, held func(key string) int) bool {
+	for i, key := range keys {
+		if held(key) >= limit<<i {
+			return true
+		}
+	}
+	return false
+}
 
-// AddressBuckets adds, for IPv6, the /56 and /48 that hold the /64; budgets double at each level.
-func AddressBuckets(addr netip.Addr) []string {
+// AddressKeys keys a client's budgets: an IPv4 address, or an IPv6 /64 and the /56 and /48 that hold it.
+func AddressKeys(addr netip.Addr) []string {
 	addr = addr.Unmap()
 	switch {
 	case !addr.IsValid():
@@ -65,11 +72,11 @@ func AddressBuckets(addr netip.Addr) []string {
 	case addr.Is4():
 		return []string{addr.String()}
 	}
-	var buckets []string
+	var keys []string
 	for _, bits := range []int{64, 56, 48} {
-		buckets = append(buckets, netip.PrefixFrom(addr, bits).Masked().String())
+		keys = append(keys, netip.PrefixFrom(addr, bits).Masked().String())
 	}
-	return buckets
+	return keys
 }
 
 func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {

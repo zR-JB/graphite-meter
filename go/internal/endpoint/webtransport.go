@@ -207,8 +207,8 @@ func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 		query := r.URL.Query()
 		id := query.Get("id")
-		owner := UploadOwner(r, upload.trusted)
-		agg, access := upload.accessFor(id, owner, false)
+		client := uploadClientOf(r, upload.trusted)
+		agg, access := upload.accessFor(id, client, false)
 		if access != uploadAccessOK {
 			serveRefusal(ctx, sess, access)
 			lingerForPeer(ctx, sess, wtRefusalLinger)
@@ -226,7 +226,7 @@ func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 			}
 		})
 		if wtDatagramMode(query) {
-			wg.Go(func() { drainDatagrams(ctx, upload, sess, agg, id, owner, live) })
+			wg.Go(func() { drainDatagrams(ctx, upload, sess, agg, id, client, live) })
 		}
 		lanes := make(chan struct{}, wire.WTMaxStreams)
 		for {
@@ -238,7 +238,7 @@ func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 			case lanes <- struct{}{}:
 				wg.Go(func() {
 					defer func() { <-lanes }()
-					serveUploadLane(ctx, upload, sess, str, id, owner, live)
+					serveUploadLane(ctx, upload, sess, str, id, client, live)
 				})
 			default:
 				str.CancelRead(0)
@@ -248,10 +248,10 @@ func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 }
 
 func serveUploadLane(ctx context.Context, upload *Upload, sess *webtransport.Session,
-	str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
+	str *webtransport.ReceiveStream, id string, client uploadClient, live *sessionActivity) {
 	// A blocked read does not watch ctx.
 	defer transport.UnblockReadsOnDone(ctx, str)()
-	_, err := upload.Receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
+	_, err := upload.Receive(id, client, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		serveRefusal(ctx, sess, refusal.access)
 	}
@@ -266,8 +266,8 @@ func serveRefusal(ctx context.Context, sess *webtransport.Session, access upload
 	withWTWriteStream(ctx, str, func() { writeRefusalRecord(str, access) })
 }
 
-func drainDatagrams(ctx context.Context, upload *Upload, conn datagramConn, agg *uploadAgg, id, owner string,
-	live *sessionActivity) {
+func drainDatagrams(ctx context.Context, upload *Upload, conn datagramConn, agg *uploadAgg, id string,
+	client uploadClient, live *sessionActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -277,7 +277,7 @@ func drainDatagrams(ctx context.Context, upload *Upload, conn datagramConn, agg 
 		case <-ctx.Done():
 		}
 	}()
-	_, _ = upload.Receive(ctx, id, owner, datagramSource{conn: conn, ctx: ctx, live: live})
+	_, _ = upload.Receive(id, client, datagramSource{conn: conn, ctx: ctx, live: live})
 }
 
 // idleTimeoutReader bounds a lane by inactivity, within 7/8 of timeout.

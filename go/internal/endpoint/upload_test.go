@@ -186,14 +186,14 @@ func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
 			upload := store
 			id := store.Mint()
 			if tc.want != uploadAccessGlobalFull {
-				if n, err := upload.Receive(t.Context(), id, "owner", strings.NewReader("first")); err != nil ||
+				if n, err := upload.Receive(id, ownedBy("owner"), strings.NewReader("first")); err != nil ||
 					n != 5 {
 					t.Fatalf("initial upload = %d, %v", n, err)
 				}
 			}
 			tc.setup(store, id)
 			body := strings.NewReader("must not be drained")
-			n, err := upload.Receive(t.Context(), id, tc.owner, body)
+			n, err := upload.Receive(id, ownedBy(tc.owner), body)
 			refusal, ok := errors.AsType[*uploadRefusalError](err)
 			if !ok || refusal.access != tc.want || n != 0 || body.Len() != len("must not be drained") ||
 				!strings.Contains(err.Error(), uploadAccessInfos[tc.want].message) {

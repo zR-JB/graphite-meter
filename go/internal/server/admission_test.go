@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
@@ -149,11 +151,17 @@ func TestRequestAdmissionBudgets(t *testing.T) {
 			[]step{{"a", "", 0}, {"a", "", 0}, {"b", "", 0}, {"b", "", 0}, {"c", "lc", 503}}, 1, 0},
 		{"separate refusal counters", 4, 4, 1, 4, []step{{"a", "la", 0}, {"b", "lb", 503},
 			{"c", "", 0}, {"c", "", 0}, {"c", "", 0}, {"d", "", 503}}, 1, 1},
+		{"IPv6 aggregates double", 100, 1, 100, 1, []step{{"a b x", "", 0}, {"c b x", "", 0}, {"d b x", "", 429},
+			{"e f x", "", 0}, {"g f x", "", 0}, {"h i x", "", 429}}, 0, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := newRequestAdmission(tc.pool, tc.client, tc.sessions, tc.login, time.Minute, time.Hour)
 			for i, step := range tc.steps {
-				if release, status := a.acquire(step.key, step.login); status != step.want {
+				keys := strings.Fields(step.key)
+				if step.login != "" {
+					keys = []string{step.login}
+				}
+				if release, status := a.acquire(step.login != "", keys...); status != step.want {
 					t.Fatalf("step %d %+v = %d", i, step, status)
 				} else if status == 0 {
 					defer release()
@@ -164,16 +172,6 @@ func TestRequestAdmissionBudgets(t *testing.T) {
 				t.Fatalf("refusals = %d pool / %d session", requests.rejectedGlobal, sessions.rejectedGlobal)
 			}
 		})
-	}
-}
-
-func TestClientKeyUsesTheTrustedProxysRealIP(t *testing.T) {
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.RemoteAddr = "10.0.0.2:1234"
-	r.Header.Set("X-Real-IP", "198.51.100.9")
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	if got := endpoint.ClientKey(r, trusted); got != "198.51.100.9" {
-		t.Fatalf("client key = %q, want %q", got, "198.51.100.9")
 	}
 }
 
@@ -231,7 +229,7 @@ func TestAdmissionSetsSocketDeadlinesByRouteKind(t *testing.T) {
 
 func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	a := newRequestAdmission(1, 1, 1, 4, time.Minute, time.Hour)
-	release, status := a.acquire("occupied", "")
+	release, status := a.acquire(false, "occupied")
 	if status != 0 {
 		t.Fatal("failed to occupy admission slot")
 	}
@@ -268,5 +266,45 @@ func TestAdmissionReleasesTheSlotOfAPanickingHandler(t *testing.T) {
 		if requests, sessions := a.stats(); requests.active != 0 || sessions.active != 0 {
 			t.Fatalf("%s panic left %d requests and %d sessions admitted", path, requests.active, sessions.active)
 		}
+	}
+}
+
+// Behind a trusted proxy an IPv6 client's receivers spend its /64, /56 and /48 shares, and ambiguous evidence
+// is refused before any budget.
+func TestIPv6ClientsShareTheirAllocationsBudgets(t *testing.T) {
+	cfg := config.Default()
+	cfg.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")}
+	e := buildEndpoints(t.Context(), &cfg)
+	srv := httptest.NewServer(newMux(t.Context(), e, muxTopology{transfers: true}, nil, publicAuth(t)))
+	defer srv.Close()
+	upload := func(realIP ...string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/upload?id="+e.upload.Mint(), strings.NewReader("x"))
+		for _, ip := range realIP {
+			req.Header.Add("X-Real-IP", ip)
+		}
+		res, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		return res
+	}
+	// Four /64s in two /56s fill the /48's four shares; each finished upload keeps its receiver.
+	for i := range 128 {
+		subnet := i / 32
+		if res := upload(fmt.Sprintf("2001:db8:0:%x::1", subnet/2<<8|subnet%2)); res.StatusCode != http.StatusOK {
+			t.Fatalf("upload %d = %d", i, res.StatusCode)
+		}
+	}
+	if res := upload("2001:db8:0:200::1"); res.StatusCode != http.StatusTooManyRequests ||
+		res.Header.Get("X-Graphite-Upload-Refusal") != "clientFull" {
+		t.Fatalf("a fresh /56 of a full /48 = %d %v", res.StatusCode, res.Header)
+	}
+	if res := upload("2001:db8:1::1"); res.StatusCode != http.StatusOK {
+		t.Fatalf("another /48 = %d", res.StatusCode)
+	}
+	if res := upload("2001:db8:1::1", "2001:db8:2::1"); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ambiguous evidence = %d, want 400", res.StatusCode)
 	}
 }

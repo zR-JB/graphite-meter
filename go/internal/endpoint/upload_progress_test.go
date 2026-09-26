@@ -73,7 +73,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 			rec.Header().Get("Cache-Control") != "no-store, no-transform" {
 			t.Fatalf("feed headers = %v", rec.Header())
 		}
-		agg, access := store.accessFor(id, "192.0.2.1", true)
+		agg, access := store.accessFor(id, ownedBy("192.0.2.1"), true)
 		if access != uploadAccessOK {
 			t.Fatal("aggregate not created by progress GET")
 		}
@@ -135,7 +135,7 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		store := NewUpload(nil, nil)
-		agg, _ := store.accessFor(store.Mint(), "", true)
+		agg, _ := store.accessFor(store.Mint(), ownedBy("192.0.2.1"), true)
 		superseded := make(chan struct{})
 		done := make(chan bool, 1)
 		go func() { done <- store.waitDrained(make(chan struct{}), superseded, agg) }()

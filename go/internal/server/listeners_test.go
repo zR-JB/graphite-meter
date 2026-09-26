@@ -416,7 +416,7 @@ func TestRunServicesReturnsAndStopsOnListenerError(t *testing.T) {
 func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 	e := testEndpoints(t)
 	e.admission = newRequestAdmission(1, 2, 1, 2, time.Minute, time.Hour)
-	release, status := e.admission.acquire("occupied", "")
+	release, status := e.admission.acquire(false, "occupied")
 	if status != 0 {
 		t.Fatalf("occupy slot: %d", status)
 	}

@@ -18,6 +18,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"golang.org/x/oauth2"
 )
@@ -32,7 +33,7 @@ type oidcTransaction struct {
 	state, nonce, verifier string
 	browser                [32]byte
 	expires                time.Time
-	client                 string
+	clients                []string
 	cliChallenge           string
 	discovery              *oidcDiscovery // the provider as discovered when the transaction started
 	prior                  [32]byte
@@ -164,7 +165,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	client, ok := s.clientBucket(r)
+	clients, ok := ClientKeys(r, s.trusted)
 	if !ok {
 		s.oidcLoginFailure(w, r, reasonClientAddress)
 		return
@@ -173,7 +174,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	tx := oidcTransaction{
 		state: randomToken(32), nonce: randomToken(32), verifier: oauth2.GenerateVerifier(),
 		browser: sha256.Sum256([]byte(browser)), expires: time.Now().Add(oidcTransactionLifetime),
-		client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge")),
+		clients: clients, cliChallenge: challengeOrEmpty(r.FormValue("challenge")),
 	}
 	if c := uniqueCookie(r, sessionCookie); c != nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
@@ -182,14 +183,17 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	o.mu.Lock()
 	now := time.Now()
 	maps.DeleteFunc(o.tx, func(_ [32]byte, v oidcTransaction) bool { return !now.Before(v.expires) })
-	perClient := 0
-	for v := range maps.Values(o.tx) {
-		if v.client == tx.client {
-			perClient++
+	clientFull := transport.ShareFull(clients, maxClientOIDCTransactions, func(key string) int {
+		n := 0
+		for v := range maps.Values(o.tx) {
+			if slices.Contains(v.clients, key) {
+				n++
+			}
 		}
-	}
+		return n
+	})
 	global := len(o.tx) >= maxOIDCTransactions
-	if global || perClient >= maxClientOIDCTransactions {
+	if global || clientFull {
 		o.mu.Unlock()
 		s.count(countCapacity)
 		if global {

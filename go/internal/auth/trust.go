@@ -65,10 +65,25 @@ func requestHostname(host string) string {
 	return u.Hostname()
 }
 
-// clientBucket keys a request's client; a trusted proxy's ambiguous evidence refuses it instead.
-func (s *Service) clientBucket(r *http.Request) (string, bool) {
-	client, ok := transport.ResolveClientAddress(r, s.trusted)
-	return transport.AddressBucket(client.Addr), ok
+// ClientKeys keys every per-client budget: a principal is one key, an address its transport.AddressKeys.
+// A trusted proxy's ambiguous evidence has no key.
+func ClientKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
+	if p, ok := PrincipalFromContext(r.Context()); ok {
+		return []string{"principal:" + p.Subject}, true
+	}
+	client, ok := transport.ResolveClientAddress(r, trusted)
+	if !ok {
+		return nil, false
+	}
+	return transport.AddressKeys(client.Addr), true
+}
+
+// SessionKeys keys a session budget by login, so each login of a subject holds its own share.
+func SessionKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
+	if p, _ := PrincipalFromContext(r.Context()); p.session != nil {
+		return []string{"login:" + p.session.id}, true
+	}
+	return ClientKeys(r, trusted)
 }
 
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {

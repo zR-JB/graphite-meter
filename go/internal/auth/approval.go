@@ -10,10 +10,12 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -28,7 +30,7 @@ const (
 // approval is a pending delegation of a login to a native client, or to one browser origin.
 type approval struct {
 	browserOrigin string
-	client        string
+	clients       []string
 	code          string
 	session       *session
 	expires       time.Time
@@ -87,18 +89,24 @@ func loginRedirect(w http.ResponseWriter, r *http.Request, challenge string) {
 	http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
 }
 
-func (s *Service) approvalRoomLocked(sess *session, client string, now time.Time) (bool, bool) {
+func (s *Service) approvalRoomLocked(sess *session, clients []string, now time.Time) (bool, bool) {
 	maps.DeleteFunc(s.approvals, func(_ string, a *approval) bool { return !now.Before(a.expires) })
-	bySession, byClient := 0, 0
+	bySession := 0
 	for a := range maps.Values(s.approvals) {
 		if a.session == sess {
 			bySession++
 		}
-		if a.client == client {
-			byClient++
-		}
 	}
-	return bySession < maxSessionApprovals, byClient < maxClientApprovals && len(s.approvals) < maxApprovals
+	clientFull := transport.ShareFull(clients, maxClientApprovals, func(key string) int {
+		n := 0
+		for a := range maps.Values(s.approvals) {
+			if slices.Contains(a.clients, key) {
+				n++
+			}
+		}
+		return n
+	})
+	return bySession < maxSessionApprovals, !clientFull && len(s.approvals) < maxApprovals
 }
 
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
@@ -121,17 +129,17 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, challenge)
 		return
 	}
-	client, ok := s.clientBucket(r)
+	clients, ok := ClientKeys(r, s.trusted)
 	if !ok {
 		forbidden(w)
 		return
 	}
 	now := time.Now()
 	s.mu.Lock()
-	sessionRoom, clientRoom := s.approvalRoomLocked(p.session, client, now)
+	sessionRoom, clientRoom := s.approvalRoomLocked(p.session, clients, now)
 	a = s.approvals[challenge]
 	if a == nil && sessionRoom && clientRoom {
-		a = &approval{code: verificationCode(challenge), session: p.session, client: client,
+		a = &approval{code: verificationCode(challenge), session: p.session, clients: clients,
 			expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = a
 	}
@@ -149,7 +157,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 	securityHeaders(w.Header())
 	challenge := r.URL.Query().Get("challenge")
 	clientOrigin, valid := secureBrowserOrigin(r.URL.Query().Get("client_origin"))
-	client, ok := s.clientBucket(r)
+	clients, ok := ClientKeys(r, s.trusted)
 	if !validChallenge(challenge) || !valid || !ok {
 		forbidden(w)
 		return
@@ -163,11 +171,11 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	_, clientRoom := s.approvalRoomLocked(nil, client, now)
+	_, clientRoom := s.approvalRoomLocked(nil, clients, now)
 	a = s.approvals[challenge]
 	if a == nil && clientRoom {
 		a = &approval{code: verificationCode(challenge), expires: now.Add(approvalLifetime),
-			browserOrigin: clientOrigin, client: client}
+			browserOrigin: clientOrigin, clients: clients}
 		s.approvals[challenge] = a
 	}
 	valid = a != nil && a.browserOrigin == clientOrigin
@@ -188,7 +196,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	sessionRoom, _ := s.approvalRoomLocked(p.session, client, now)
+	sessionRoom, _ := s.approvalRoomLocked(p.session, clients, now)
 	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && sessionRoom)
 	if valid {
 		a.session = p.session
@@ -357,5 +365,5 @@ func (p Principal) MeasurementOwner() string {
 	if p.browserOrigin() == "" {
 		return ""
 	}
-	return "principal:" + p.Subject + "\x00browser-grant:" + p.grant.id
+	return "browser-grant:" + p.grant.id
 }

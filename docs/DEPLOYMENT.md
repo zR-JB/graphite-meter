@@ -331,12 +331,14 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
   handlers, and session duration ≥ operation duration.
+- A client identity is the signed-in subject (each login for sessions), otherwise an IPv4 address or IPv6 /64 whose
+  /56 and /48 share two and four times its limit; connections and upload receivers are counted the same way.
 - A direct client address holds at most 8 QUIC connections and a browser opens one per WebTransport session, so a
   larger per-client session share only helps a login that spans addresses.
 - Graphite Meter never throttles measured traffic. Public deployments need authentication or connection policy at a
   trusted proxy or firewall.
 - `GM_TRUSTED_PROXIES` rejects default routes (`0.0.0.0/0`, `::/0`). A trusted peer names its client with exactly one
-  `X-Real-IP`; a missing or repeated header, or one with `Forwarded`/`X-Forwarded-For`, counts as the proxy itself
-  and sign-in refuses it.
+  `X-Real-IP`; a missing or repeated header, or one with `Forwarded`/`X-Forwarded-For`, is refused by sign-in and
+  measurement admission.
 - The browser keeps history in its own IndexedDB; its own choice overrides `GM_RESULT_HISTORY_DEFAULT`. Stopped and
   Failed runs are not saved.

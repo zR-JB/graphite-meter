@@ -12,7 +12,6 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -28,15 +27,12 @@ func newBudget(limit, clientLimit int) budget {
 	return budget{limit: limit, clientLimit: clientLimit, clients: make(map[string]int)}
 }
 
-// clientFull counts a refusal by any of keys; each later key is an aggregate with twice the share.
 func (b *budget) clientFull(keys ...string) bool {
-	for i, key := range keys {
-		if b.clients[key] >= b.clientLimit<<i {
-			b.rejectedClient++
-			return true
-		}
+	full := transport.ShareFull(keys, b.clientLimit, func(key string) int { return b.clients[key] })
+	if full {
+		b.rejectedClient++
 	}
-	return false
+	return full
 }
 
 func (b *budget) full() bool {
@@ -85,28 +81,29 @@ func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int,
 	}
 }
 
-func (a *requestAdmission) acquire(key, sessionKey string) (release func(), status int) {
+// acquire spends a request slot and keys' share of it, or for a session a pool slot and keys' session share.
+func (a *requestAdmission) acquire(session bool, keys ...string) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if sessionKey == "" {
-		if a.requests.clientFull(key) {
+	if !session {
+		if a.requests.clientFull(keys...) {
 			return nil, http.StatusTooManyRequests
 		}
 		if a.requests.full() {
 			return nil, http.StatusServiceUnavailable
 		}
-		a.requests.take(key)
-		return func() { a.mu.Lock(); a.requests.give(key); a.mu.Unlock() }, 0
+		a.requests.take(keys...)
+		return func() { a.mu.Lock(); a.requests.give(keys...); a.mu.Unlock() }, 0
 	}
-	if a.sessions.clientFull(sessionKey) {
+	if a.sessions.clientFull(keys...) {
 		return nil, http.StatusTooManyRequests
 	}
 	if a.requests.full() || a.sessions.full() {
 		return nil, http.StatusServiceUnavailable
 	}
 	a.requests.take()
-	a.sessions.take(sessionKey)
-	return func() { a.mu.Lock(); a.requests.give(); a.sessions.give(sessionKey); a.mu.Unlock() }, 0
+	a.sessions.take(keys...)
+	return func() { a.mu.Lock(); a.requests.give(); a.sessions.give(keys...); a.mu.Unlock() }, 0
 }
 
 func (a *requestAdmission) load() (active, max int) {
@@ -131,11 +128,16 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 	}
 	request := spec.Kind == route.HTTP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		key, sessionKey := endpoint.ClientKey(r, trusted), ""
+		keys, ok := auth.ClientKeys(r, trusted)
 		if session {
-			sessionKey = endpoint.SessionKey(r, key)
+			keys, ok = auth.SessionKeys(r, trusted)
 		}
-		release, status := a.acquire(key, sessionKey)
+		if !ok {
+			authn.MeasurementCORS(w.Header(), r)
+			http.Error(w, "ambiguous client address", http.StatusBadRequest)
+			return
+		}
+		release, status := a.acquire(session, keys...)
 		if status != 0 {
 			authn.MeasurementCORS(w.Header(), r)
 			w.Header().Set("Retry-After", "1")
@@ -207,7 +209,7 @@ func socketKeys(addr net.Addr, trusted []netip.Prefix) []string {
 	if transport.Trusted(ip, trusted) {
 		return nil
 	}
-	return transport.AddressBuckets(ip)
+	return transport.AddressKeys(ip)
 }
 
 func (a *connectionAdmission) acquire(addr net.Addr, quic bool) (func(), bool) {

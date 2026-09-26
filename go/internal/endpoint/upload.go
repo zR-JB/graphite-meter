@@ -25,7 +25,7 @@ type Upload struct {
 	tokenKey  [sha256.Size]byte
 	mu        sync.Mutex
 	receivers map[string]*uploadAgg
-	byOwner   map[string]int
+	byClient  map[string]int
 }
 
 const (
@@ -39,7 +39,7 @@ const (
 
 func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 	u := &Upload{meter: meter, trusted: trusted, epoch: time.Now(), receivers: map[string]*uploadAgg{},
-		byOwner: map[string]int{}}
+		byClient: map[string]int{}}
 	_, _ = rand.Read(u.tokenKey[:])
 	return u
 }
@@ -67,7 +67,7 @@ func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	limit, _ := r.Context().Deadline()
 	body := &idleTimeoutReader{str: bodyDeadline{r.Body, http.NewResponseController(w)}, timeout: uploadReadTimeout,
 		limit: limit}
-	n, err := u.Receive(r.Context(), r.URL.Query().Get("id"), UploadOwner(r, u.trusted), body)
+	n, err := u.Receive(r.URL.Query().Get("id"), uploadClientOf(r, u.trusted), body)
 	if err != nil {
 		if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 			writeUploadAccessError(w, refusal.access)
@@ -79,8 +79,8 @@ func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Receive joins the owner's receiver before reading and records each chunk.
-func (u *Upload) Receive(_ context.Context, id, owner string, src io.Reader) (int64, error) {
-	agg, access := u.accessFor(id, owner, true)
+func (u *Upload) Receive(id string, c uploadClient, src io.Reader) (int64, error) {
+	agg, access := u.accessFor(id, c, true)
 	if access != uploadAccessOK {
 		return 0, &uploadRefusalError{access: access}
 	}
@@ -106,7 +106,7 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeUploadAccessError(w, uploadAccessInvalid)
 		return
 	}
-	if agg.owner != UploadOwner(r, u.trusted) {
+	if agg.client.owner != uploadClientOf(r, u.trusted).owner {
 		writeUploadAccessError(w, uploadAccessOwnerMismatch)
 		return
 	}
@@ -119,10 +119,10 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 // ServeProgress streams the receiver's counter as NDJSON on GET and finishes it on DELETE.
 func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
-	id, owner := r.URL.Query().Get("id"), UploadOwner(r, u.trusted)
+	id, client := r.URL.Query().Get("id"), uploadClientOf(r, u.trusted)
 	switch r.Method {
 	case http.MethodDelete:
-		if access := u.finishFor(id, owner); access != uploadAccessOK {
+		if access := u.finishFor(id, client.owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)
 			return
 		}
@@ -139,7 +139,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	agg, access := u.accessFor(id, owner, false)
+	agg, access := u.accessFor(id, client, false)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)
 		return
