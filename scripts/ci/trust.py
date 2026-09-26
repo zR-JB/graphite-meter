@@ -214,9 +214,13 @@ def require_ci_gate(
                f"{run.get('status')}/{run.get('conclusion')}")
     pages = api(query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
                       per_page=100), paginate=True)
-    gates = [job for job in _objects(pages, "jobs") if job.get("name") == "Gate"]
+    jobs = _objects(pages, "jobs")
+    gates = [job for job in jobs if job.get("name") == "Gate"]
     if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
         refuse(f"Gate in CI run {run_id} did not succeed")
+    if event == "push" and (partial := [_text(job.get("name")) for job in jobs
+                                        if (job.get("status"), job.get("conclusion")) != DONE]):
+        refuse(f"CI run {run_id} on {branch} did not run every job: {', '.join(partial)}")
     return run_id
 
 

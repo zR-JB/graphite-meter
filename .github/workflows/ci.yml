@@ -16,7 +16,7 @@ env:
   SKOPEO_VERSION: 1.22.3
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -28,13 +28,13 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      core: ${{ steps.filter.outputs.core }}
-      go: ${{ steps.filter.outputs.go }}
-      tui: ${{ steps.filter.outputs.tui }}
-      e2e: ${{ steps.filter.outputs.e2e }}
-      smoke: ${{ steps.filter.outputs.smoke }}
-      release: ${{ steps.filter.outputs.release }}
-      security: ${{ steps.filter.outputs.security }}
+      core: ${{ github.event_name == 'push' || steps.filter.outputs.core == 'true' }}
+      go: ${{ github.event_name == 'push' || steps.filter.outputs.go == 'true' }}
+      tui: ${{ github.event_name == 'push' || steps.filter.outputs.tui == 'true' }}
+      e2e: ${{ github.event_name == 'push' || steps.filter.outputs.e2e == 'true' }}
+      smoke: ${{ github.event_name == 'push' || steps.filter.outputs.smoke == 'true' }}
+      release: ${{ github.event_name == 'push' || steps.filter.outputs.release == 'true' }}
+      security: ${{ github.event_name == 'push' || steps.filter.outputs.security == 'true' }}
     steps:
       - name: Checkout exact CI source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,7 +59,7 @@ jobs:
 
       - name: Summarize CI plan
         env:
-          CHANGES: ${{ steps.filter.outputs.changes }}
+          CHANGES: ${{ github.event_name == 'push' && 'every area on main' || steps.filter.outputs.changes }}
         run: |
           printf '### CI plan for `%s`\n\nSelected: `%s`; secret scan always runs.\n' \
             "$GITHUB_SHA" "$CHANGES" >>"$GITHUB_STEP_SUMMARY"

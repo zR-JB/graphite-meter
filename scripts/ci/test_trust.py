@@ -324,6 +324,11 @@ class RequestTests(unittest.TestCase):
                          (MAIN, 5151, ""))
         self.assertEqual(require_publishable(REPO, prerelease, api=fake(trusted_main(False))),
                          (MAIN, 5151, "77"))
+        skipped = trusted_main(True) | {"/actions/runs/5151/jobs": [{"jobs": [
+            {"name": "Gate", "status": "completed", "conclusion": "success"},
+            {"name": "Core checks", "status": "completed", "conclusion": "skipped"}]}]}
+        with self.assertRaisesRegex(TrustError, "did not run every job: Core checks"):
+            require_publishable(REPO, stable, api=fake(skipped))
         moved = {"/git/trees/" + HEAD: {"tree": []}} | trusted_main(False)
         with self.assertRaisesRegex(TrustError, "PR changes scripts"):
             require_publishable(REPO, prerelease, api=fake(moved))
