@@ -62,6 +62,16 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	HardeningHeaders(h)
 }
 
+// ServePreflight answers every measurement route's CORS preflight; Enforce sends authenticated ones here first.
+func (s *Service) ServePreflight(w http.ResponseWriter, r *http.Request) {
+	if !s.Enabled() {
+		s.MeasurementCORS(w.Header(), r)
+		allowPreflight(w, measurementMethods, "*")
+		return
+	}
+	s.corsPreflight(w, r, s.requestTrust(r))
+}
+
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust) {
 	origin := r.Header.Get("Origin")
 	method := r.Header.Get("Access-Control-Request-Method")
@@ -72,7 +82,8 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust)
 			forbidden(w)
 			return
 		}
-		allowBearerPreflight(w, clientOrigin, http.MethodPost, "Content-Type")
+		bearerCORS(w.Header(), clientOrigin)
+		allowPreflight(w, http.MethodPost, "Content-Type")
 		return
 	}
 	if t.Secure && browser && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
@@ -81,7 +92,8 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust)
 			forbidden(w)
 			return
 		}
-		allowBearerPreflight(w, clientOrigin, measurementMethods, "Authorization, Content-Type")
+		bearerCORS(w.Header(), clientOrigin)
+		allowPreflight(w, measurementMethods, "Authorization, Content-Type")
 		return
 	}
 	_, ok := requestedHeaders(r, "authorization", "content-type", "x-csrf-token")
@@ -90,11 +102,10 @@ func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust)
 		return
 	}
 	s.MeasurementCORS(w.Header(), r)
-	w.WriteHeader(http.StatusNoContent)
+	allowPreflight(w, measurementMethods, "Authorization, Content-Type, X-CSRF-Token")
 }
 
-func allowBearerPreflight(w http.ResponseWriter, origin, methods, headers string) {
-	bearerCORS(w.Header(), origin)
+func allowPreflight(w http.ResponseWriter, methods, headers string) {
 	w.Header().Set("Access-Control-Allow-Methods", methods)
 	w.Header().Set("Access-Control-Allow-Headers", headers)
 	w.Header().Set("Access-Control-Max-Age", preflightMaxAge)
@@ -129,11 +140,6 @@ func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Expose-Headers", refusalExposed)
 		h.Set("Timing-Allow-Origin", "*")
-		if r.Method == http.MethodOptions {
-			h.Set("Access-Control-Allow-Methods", measurementMethods)
-			h.Set("Access-Control-Allow-Headers", "*")
-			h.Set("Access-Control-Max-Age", preflightMaxAge)
-		}
 		return
 	}
 	p, authenticated := PrincipalFromContext(r.Context())
@@ -147,11 +153,6 @@ func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 		h.Set("Access-Control-Expose-Headers", authExposed)
 		h.Set("Timing-Allow-Origin", origin)
 		h.Add("Vary", "Origin")
-		if r.Method == http.MethodOptions {
-			h.Set("Access-Control-Allow-Methods", measurementMethods)
-			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
-			h.Set("Access-Control-Max-Age", preflightMaxAge)
-		}
 	case !authenticated && isMeasurementRoute(r.URL.Path):
 		if canonical, valid := secureBrowserOrigin(origin); valid {
 			bearerCORS(h, canonical)

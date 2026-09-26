@@ -88,11 +88,7 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 		}
 		h.ServeHTTP(w, r)
 	}))
-	// Public-mode preflight; authentication answers its own.
-	m.mux.HandleFunc(http.MethodOptions+" "+path, func(w http.ResponseWriter, r *http.Request) {
-		m.authn.MeasurementCORS(w.Header(), r)
-		w.WriteHeader(http.StatusNoContent)
-	})
+	m.mux.HandleFunc(http.MethodOptions+" "+path, m.authn.ServePreflight)
 }
 
 // minter mints kind tickets under authentication and is nil in public mode.
