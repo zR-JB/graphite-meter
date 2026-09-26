@@ -279,7 +279,7 @@ test("WebTransport reconnect ignores stale datagrams and retains fresh reply tim
       event.type === "samples" ? event.samples : [],
     );
     expect(samples.map((sample) => sample.reflectorHandlingMs)).toEqual([0, 0]);
-    expect(samples.every((sample) => !sample.lost)).toBe(true);
+    expect(samples.every((sample) => !sample.timedOut)).toBe(true);
   } finally {
     realm.send({
       type: "stop",

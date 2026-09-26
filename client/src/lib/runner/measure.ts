@@ -22,6 +22,7 @@ export const BUCKET_MS = 250;
 const WINDOW_MS = 4_000;
 const WINDOW_BUCKETS = WINDOW_MS / BUCKET_MS;
 const INTERVAL_LIMIT = 128;
+const PEAK_WINDOW_BUCKETS = 2;
 export const STAGES = [
   "latency",
   "download",
@@ -81,7 +82,7 @@ export interface ConfidenceScore {
   varianceRatio?: number;
   slopeRatio?: number;
   jitterRatio?: number;
-  lossRatio?: number;
+  timeoutRatio?: number;
 }
 
 /** score = 1 − 2.2·CV − 1.4·|first third − last third| / mean over the trailing window. */
@@ -105,6 +106,14 @@ export function transferConfidence(rates: readonly number[]): ConfidenceScore {
   return { score, varianceRatio, slopeRatio, sampleCount: values.length };
 }
 
+/** The fastest 500 ms of fixed-time buckets, never below the reported rate; one burst flush cannot set it. */
+export function peakRate(rates: readonly number[], reported: number): number {
+  let peak = reported;
+  for (let i = PEAK_WINDOW_BUCKETS; i <= rates.length; i++)
+    peak = Math.max(peak, mean(rates.slice(i - PEAK_WINDOW_BUCKETS, i)));
+  return peak;
+}
+
 /** Descriptive 0..100 steadiness of fixed-time rate buckets. */
 export function stabilityPct(rates: readonly number[]): number {
   const { sampleCount, varianceRatio = 1 } = transferConfidence(rates);
@@ -124,15 +133,15 @@ export function latencyConfidence(
     return {
       score: 0,
       jitterRatio: 1,
-      lossRatio: 1,
+      timeoutRatio: 1,
       sampleCount: window.length,
     };
   const center = median(values);
   const jitterRatio =
     median(values.map((v) => Math.abs(v - center))) / Math.max(center, 20);
-  const lossRatio = (window.length - values.length) / window.length;
-  const score = clamp01(1 - jitterRatio * 1.2 - lossRatio * 3.6);
-  return { score, jitterRatio, lossRatio, sampleCount: window.length };
+  const timeoutRatio = (window.length - values.length) / window.length;
+  const score = clamp01(1 - jitterRatio * 1.2 - timeoutRatio * 3.6);
+  return { score, jitterRatio, timeoutRatio, sampleCount: window.length };
 }
 
 /** Schmitt trigger: enter at the threshold, leave 0.08 below it. */
@@ -222,8 +231,8 @@ export class LatencyPopulation {
     if (continuity !== this.#continuity) this.#previous = null;
     this.#continuity = continuity;
     const { rttMs, reflectorHandlingMs: handling } = sample;
-    const valid = !sample.lost && Number.isFinite(rttMs) && rttMs >= 0;
-    if (sample.lost) this.#timeouts++;
+    const valid = !sample.timedOut && Number.isFinite(rttMs) && rttMs >= 0;
+    if (sample.timedOut) this.#timeouts++;
     else if (valid) this.#replies++;
     if (!valid || sample.rttEligible === false) return;
     this.rtts.push(rttMs);
@@ -323,7 +332,7 @@ export class ServerLatency {
   ): void {
     this.stages[stage].observe(sample, continuity);
     if (stage !== "latency" || sample.rttEligible === false) return;
-    this.#window.push({ t, rtt: sample.lost ? null : sample.rttMs });
+    this.#window.push({ t, rtt: sample.timedOut ? null : sample.rttMs });
     while (this.#window[this.#head]?.t <= t - WINDOW_MS) this.#head++;
     // Amortized trimming keeps dense reply-driven windows linear.
     if (this.#head < 4096) return;
@@ -576,10 +585,7 @@ export interface Boundary {
   down: Record<string, number>;
   up: Record<string, ReceiverCheckpoint | null>;
 }
-interface Series {
-  rates: Record<FlowDirection, RateBuckets>;
-  peak: Record<FlowDirection, number>;
-}
+type Series = Record<FlowDirection, RateBuckets>;
 interface OpenInterval {
   record: AggregationInterval;
   first: Boundary | null;
@@ -594,8 +600,8 @@ interface OpenInterval {
 type Totals = Record<FlowDirection, number>;
 
 const series = (): Series => ({
-  rates: { down: new RateBuckets(), up: new RateBuckets() },
-  peak: { down: 0, up: 0 },
+  down: new RateBuckets(),
+  up: new RateBuckets(),
 });
 const directions = (stage: TransferStage): FlowDirection[] =>
   stage === "bidirectional"
@@ -765,13 +771,11 @@ export class ThroughputAggregate {
     const ms = boundary.atMs - last.atMs;
     for (const dir of dirs) {
       const rate = rateOf(sample, dir)!;
-      open.total.rates[dir].observe((rate * ms) / 1000, ms);
-      open.total.peak[dir] = Math.max(open.total.peak[dir], rate);
-      for (const component of sample[dir]!) {
-        const server = open.servers.get(component.serverId)!;
-        server.rates[dir].observe(component.bytes, component.durationMs);
-        server.peak[dir] = Math.max(server.peak[dir], component.bytesPerSec);
-      }
+      open.total[dir].observe((rate * ms) / 1000, ms);
+      for (const component of sample[dir]!)
+        open.servers
+          .get(component.serverId)!
+          [dir].observe(component.bytes, component.durationMs);
     }
     open.combined.observe(
       (((sample.downBytesPerSec ?? 0) + (sample.upBytesPerSec ?? 0)) * ms) /
@@ -845,8 +849,8 @@ export class ThroughputAggregate {
         reportedBytesPerSec: rate,
         fullAverageBytesPerSec: rateOf(record.full!, dir)!,
         totalBytes: this.#stageTotal(stage, dir),
-        peakBytesPerSec: open.total.peak[dir],
-        stabilityPct: stabilityPct(open.total.rates[dir].rates),
+        peakBytesPerSec: peakRate(open.total[dir].rates, rate),
+        stabilityPct: stabilityPct(open.total[dir].rates),
         method: window === record.full ? "full-average" : "stable-window",
         stabilityScore: open.score,
         band: bandForState(open.wasStable, open.score),
@@ -872,13 +876,13 @@ export class ThroughputAggregate {
     const open = record && this.#interval(record);
     if (!component || !open || component.durationMs < MIN_EVIDENCE_MS)
       return null;
-    const server = open.servers.get(id)!;
+    const { rates } = open.servers.get(id)![dir];
     return {
       reportedBytesPerSec: component.bytesPerSec,
       fullAverageBytesPerSec: component.bytesPerSec,
       totalBytes: this.#stageTotal(stage, dir, id),
-      peakBytesPerSec: server.peak[dir],
-      stabilityPct: stabilityPct(server.rates[dir].rates),
+      peakBytesPerSec: peakRate(rates, component.bytesPerSec),
+      stabilityPct: stabilityPct(rates),
       method: "full-average",
       stabilityScore: 0,
       band: "low",

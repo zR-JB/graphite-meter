@@ -162,7 +162,7 @@ test("stop flushes an unbatched reply, drains a pending reply, then acknowledges
     expect(socket.closed).toBe(1);
     advance(20_000);
     expect(socket.pings).toHaveLength(sent);
-    expect(samples().every((sample) => !sample.lost)).toBe(true);
+    expect(samples().every((sample) => !sample.timedOut)).toBe(true);
   });
 });
 
@@ -176,7 +176,7 @@ test("drain retains original probe deadlines and emits timeout before its acknow
     expect(samples()).toEqual([
       {
         rtt: 250,
-        lost: true,
+        timedOut: true,
         observedAtEpochMs: 10_250,
         sentAtEpochMs: 10_000,
       },
@@ -193,7 +193,7 @@ test("a reply past its original deadline is a timeout even before the sweeper ru
     expect(samples()).toEqual([
       {
         rtt: 250,
-        lost: true,
+        timedOut: true,
         observedAtEpochMs: 10_250,
         sentAtEpochMs: 10_000,
       },
@@ -224,7 +224,7 @@ test("a local send failure is excluded from the probe timeout denominator", asyn
     stop();
     advance(20_000);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(false);
+    expect(samples()[0].timedOut).toBe(false);
     expect(posted).toContainEqual({
       type: "interrupted",
       sentAtEpochMs: [10_000],
@@ -270,7 +270,7 @@ test("an unconfirmed write remains unresolved when its bounded drain ends", asyn
     stop();
     advance(250);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(false);
+    expect(samples()[0].timedOut).toBe(false);
     expect(posted).toContainEqual({
       type: "interrupted",
       sentAtEpochMs: [10_000],
@@ -286,7 +286,7 @@ test("disconnect preserves a deadline outcome that preceded the connection gap",
     socket.disconnect();
     stop();
     expect(samples()).toHaveLength(1);
-    expect(samples()[0].lost).toBe(true);
+    expect(samples()[0].timedOut).toBe(true);
   });
 });
 
@@ -314,14 +314,14 @@ for (const failure of ["failSends", "rejectSends"] as const) {
           for (const sample of outcome.samples)
             population.observe({
               rttMs: sample.rtt,
-              lost: sample.lost,
+              timedOut: sample.timedOut,
               observedAtMs: 0,
             });
         } else if (outcome.type === "interrupted")
           population.interrupt(outcome.sentAtEpochMs.length, "send-failed");
       }
       // A later reply must not form an RTT variation pair across the failed send.
-      population.observe({ rttMs: 99, lost: false, observedAtMs: 0 });
+      population.observe({ rttMs: 99, timedOut: false, observedAtMs: 0 });
       expect(population.summary()).toMatchObject({
         probeCount: 3,
         sendFailureCount: 1,
@@ -350,7 +350,7 @@ test("application readiness requires one matched valid reply and excludes warmup
     stop(10);
     expect(readiness()).toBe(1);
     expect(samples()).toHaveLength(1);
-    expect(samples()[0]).toMatchObject({ rtt: 5, lost: false });
+    expect(samples()[0]).toMatchObject({ rtt: 5, timedOut: false });
   }, false);
 });
 
@@ -368,7 +368,7 @@ test("incomplete or malformed PONGs cannot resolve a probe or invent zero handli
     expect(samples()).toHaveLength(1);
     expect(samples()[0]).toMatchObject({
       rtt: 5,
-      lost: false,
+      timedOut: false,
       reflectorHandlingMs: 1,
     });
   });
@@ -383,9 +383,9 @@ test("impossible and imprecise handling never change a raw reply", async () => {
     }
     stop(15);
     expect(samples()).toHaveLength(durations.length);
-    expect(samples().every((sample) => sample.rtt === 5 && !sample.lost)).toBe(
-      true,
-    );
+    expect(
+      samples().every((sample) => sample.rtt === 5 && !sample.timedOut),
+    ).toBe(true);
     expect(samples().map((sample) => sample.reflectorHandlingMs)).toEqual([
       undefined,
       undefined,
@@ -457,11 +457,11 @@ test("late replies retain only their timeout while drain replies retain paired t
     reply(2, "2000000");
     const outcomes = samples();
     expect(outcomes).toHaveLength(2);
-    expect(outcomes[0]).toMatchObject({ rtt: 250, lost: true });
+    expect(outcomes[0]).toMatchObject({ rtt: 250, timedOut: true });
     expect(outcomes[0].reflectorHandlingMs).toBeUndefined();
     expect(outcomes[1]).toMatchObject({
       rtt: 5,
-      lost: false,
+      timedOut: false,
       reflectorHandlingMs: 2,
     });
     // The channel/core owns the cutoff; retaining metadata does not make a post-cutoff RTT eligible.

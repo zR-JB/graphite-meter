@@ -16,12 +16,12 @@ import { fixedPingIntervalMs } from "./pingCadence";
 
 const reply = (
   rttMs: number,
-  lost = false,
+  timedOut = false,
   rttEligible = true,
   reflectorHandlingMs?: number,
 ) => ({
   rttMs,
-  lost,
+  timedOut,
   observedAtMs: 0,
   rttEligible,
   reflectorHandlingMs,
@@ -114,9 +114,9 @@ test("paired server timing uses only valid in-window replies and leaves raw stat
     [250, true, true, 200],
     [90, false, false, 30],
   ];
-  for (const [rtt, lost, eligible, handling] of replies) {
-    timed.observe(reply(rtt, lost, eligible, handling));
-    raw.observe(reply(rtt, lost, eligible));
+  for (const [rtt, timedOut, eligible, handling] of replies) {
+    timed.observe(reply(rtt, timedOut, eligible, handling));
+    raw.observe(reply(rtt, timedOut, eligible));
   }
   const { reflectorTiming, ...summary } = timed.summary()!;
   expect(summary).toEqual(raw.summary()!);
@@ -437,6 +437,22 @@ test("opposite fluctuations use aggregate stability, simultaneous peaks and one 
   });
   const windows = m.intervals[0].headline!.up!;
   expect(windows[0].startNanos).toBe(windows[1].startNanos);
+});
+
+test("burst flushes cannot raise the peak above the fastest 500 ms", () => {
+  const m = new ThroughputAggregate();
+  m.begin("download", ["a"], 0);
+  let bytes = 0;
+  m.observe(boundary(0, { a: 0 }));
+  // 50 ms flushes alternate between a 4x burst and silence: 2 000 B/s on average.
+  for (let i = 1; i <= 40; i++) {
+    bytes += i % 2 ? 200 : 0;
+    m.observe(boundary(i * 50, { a: bytes }));
+  }
+  const down = m.result("download", false).down!;
+  expect(down.reportedBytesPerSec).toBe(2_000);
+  expect(down.peakBytesPerSec).toBeCloseTo(2_000, 6);
+  expect(m.serverResult("download", "down", "a")!.peakBytesPerSec).toBe(2_000);
 });
 
 test("overlapping evidence never double counts bytes across intervals or stages", () => {

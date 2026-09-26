@@ -2,6 +2,8 @@ import { test, expect } from "bun:test";
 import {
   fmtBytes,
   fmtDuration,
+  fmtMs,
+  fmtMsTick,
   fmtSpeed,
   rateScaleIndex,
   rateValueAt,
@@ -187,4 +189,15 @@ test("niceDomain: a zero-width range (min === max) doesn't divide by zero or pro
   expect(Number.isNaN(domain.max)).toBe(false);
   expect(Number.isNaN(domain.span)).toBe(false);
   expect(domain).toEqual({ min: 40, max: 60, span: 20 });
+});
+
+test("sub-resolution latency reads as below the browser timer resolution", () => {
+  expect([0, 0.04, 0.1, 12.34, 250].map(fmtMs)).toEqual([
+    "< 0.1",
+    "< 0.1",
+    "0.1",
+    "12.3",
+    "250",
+  ]);
+  expect(fmtMsTick(0)).toBe("0");
 });

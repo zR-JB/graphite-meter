@@ -120,7 +120,7 @@ export interface LatencyObservation {
   rttMs: number;
   /** Optional server application handling duration from this same reply. */
   reflectorHandlingMs?: number;
-  lost: boolean;
+  timedOut: boolean;
   observedAtMs: number;
   /** A reply after the stage cutoff resolves its probe but is outside the RTT measurement window. */
   rttEligible?: boolean;
@@ -143,13 +143,8 @@ export interface LatencyBucket {
   medianRttMs: number | null;
   p95RttMs: number | null;
   maxRttMs: number | null;
-  /** Exact consecutive-success RTT variation retained through aggregation. */
-  firstRttMs: number | null;
-  lastRttMs: number | null;
-  rttDeltaSumMs: number;
-  rttDeltaCount: number;
   pingCount: number;
-  lossCount: number;
+  timeoutCount: number;
   underLoad: boolean; // True when captured during transfer load; phase carries the producer tag.
   phase: Phase;
   continuityId: number;

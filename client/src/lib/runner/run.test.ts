@@ -181,7 +181,7 @@ const probe =
   (rttMs: number, count = 1) =>
   (host: ParticipantHost) => {
     for (let i = 0; i < count; i++)
-      host.latency({ rttMs, lost: false, observedAtMs: performance.now() });
+      host.latency({ rttMs, timedOut: false, observedAtMs: performance.now() });
   };
 
 test("one server runs every stage in order and its saved record describes the run", async () => {

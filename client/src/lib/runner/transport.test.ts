@@ -126,6 +126,7 @@ async function http(options: { checkpoint?: () => Response } = {}) {
   const failures: string[] = [];
   const stalls: (string | undefined)[] = [];
   const host = testParticipantHost(config, {
+    now: () => 42,
     receiver: (checkpoint) => receivers.push(checkpoint),
     fail: (_reason, message) => failures.push(message),
     stall: (info) => stalls.push(info.recoveryCause ?? info.detail),
@@ -247,7 +248,8 @@ test("a quiet feed is backed by same-receiver checkpoints", async () => {
   await until(() => h.receivers.length >= 2, 2_000);
   expect(h.receivers[0]).toMatchObject({
     id: "quiet",
-    requestedAtMs: expect.any(Number),
+    requestedAtMs: 42,
+    receivedAtMs: 42,
   });
   expect(h.receivers[1].bytes).toBeGreaterThan(h.receivers[0].bytes);
   const fresh = await stage.checkpoint(new AbortController().signal, true);

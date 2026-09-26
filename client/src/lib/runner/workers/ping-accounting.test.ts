@@ -70,14 +70,14 @@ async function replay(replies: number) {
 
 test("reply-driven accounting retains nine replies and one timeout regardless of display cadence", async () => {
   const samples = (await replay(9)).flatMap((batch) => batch.samples);
-  expect(samples.filter((sample) => !sample.lost)).toHaveLength(9);
-  expect(samples.filter((sample) => sample.lost)).toHaveLength(1);
+  expect(samples.filter((sample) => !sample.timedOut)).toHaveLength(9);
+  expect(samples.filter((sample) => sample.timedOut)).toHaveLength(1);
   expect(samples[0].observedAtEpochMs).toBe(51_002);
   const latency = new ServerLatency();
   for (const sample of samples)
     latency.observe(
       "latency",
-      { rttMs: sample.rtt, lost: sample.lost, observedAtMs: 0 },
+      { rttMs: sample.rtt, timedOut: sample.timedOut, observedAtMs: 0 },
       0,
       0,
     );
@@ -89,6 +89,6 @@ test("a fast reply burst produces bounded batches without discarding outcomes", 
   expect(batches.length).toBeGreaterThan(1);
   expect(batches.every((batch) => batch.samples.length <= 128)).toBe(true);
   const samples = batches.flatMap((batch) => batch.samples);
-  expect(samples.filter((sample) => !sample.lost)).toHaveLength(1_025);
-  expect(samples.filter((sample) => sample.lost)).toHaveLength(1);
+  expect(samples.filter((sample) => !sample.timedOut)).toHaveLength(1_025);
+  expect(samples.filter((sample) => sample.timedOut)).toHaveLength(1);
 });

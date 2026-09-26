@@ -54,6 +54,7 @@ export function testParticipantHost(
   const ignore = () => {};
   return {
     config,
+    now: () => performance.now(),
     download: ignore,
     receiver: ignore,
     latency: ignore,

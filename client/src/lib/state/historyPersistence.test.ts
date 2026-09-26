@@ -11,7 +11,7 @@ import {
   pathEvidence,
   ThroughputAggregate,
 } from "../runner/measure";
-import { singleLatencyBucket } from "../runner/latencyBuckets";
+import { singleLatencyBucket } from "../runner/series";
 
 const throughput: ThroughputResult = {
   reportedBytesPerSec: 12_500_000,
@@ -85,7 +85,7 @@ test("UI and history use the raw stage summary even when chart samples disagree"
     store.resultHistoryPreference = "enabled";
     const raw = new LatencyPopulation();
     for (const rttMs of [10, 100, 10, 100])
-      raw.observe({ rttMs, lost: false, observedAtMs: 0 });
+      raw.observe({ rttMs, timedOut: false, observedAtMs: 0 });
     store.ingest({
       type: "serverLatency",
       serverId: store.latencyFocus,

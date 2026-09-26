@@ -87,12 +87,12 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
   old.emit({ type: "stall", detail: "late close" });
   old.emit({
     type: "samples",
-    samples: [{ rtt: 12, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   expect(events).toEqual([]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
   expect(
     events.some(
@@ -110,11 +110,11 @@ test("idle latency buckets use each worker observation time", () => {
   keepalive.start();
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 12, lost: false, observedAtEpochMs: 11_250 }],
+    samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 11_250 }],
   });
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 0, lost: true, observedAtEpochMs: 12_500 }],
+    samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 12_500 }],
   });
 
   const samples = events.flatMap((event) =>
@@ -136,12 +136,12 @@ test("loss-only keepalive batches do not recover offline connectivity", () => {
   TestWorker.last!.emit({ type: "stall", detail: "server stopped answering" });
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 0, lost: true, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 1_000 }],
   });
   expect(states).toEqual(["offline"]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_100 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
   expect(states).toEqual(["offline", "connected"]);
   keepalive.stop();
@@ -166,14 +166,14 @@ test("adopting a verified idle monitor replays its proven connectivity without r
   keepalive.start();
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   const events: IdleEvent[] = [];
   keepalive.onEvent = (event) => events.push(event);
   expect(events).toEqual([{ type: "connectivity", state: "connected" }]);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 9, lost: false, observedAtEpochMs: 2_000 }],
+    samples: [{ rtt: 9, timedOut: false, observedAtEpochMs: 2_000 }],
   });
   expect(events.filter((event) => event.type === "connectivity")).toHaveLength(
     1,
@@ -195,8 +195,8 @@ test("stage latency preserves distinct times from one worker batch", () => {
   TestWorker.last!.emit({
     type: "samples",
     samples: [
-      { rtt: 8, lost: false, observedAtEpochMs: 10_100 },
-      { rtt: 9, lost: false, observedAtEpochMs: 10_350 },
+      { rtt: 8, timedOut: false, observedAtEpochMs: 10_100 },
+      { rtt: 9, timedOut: false, observedAtEpochMs: 10_350 },
     ],
   });
 
@@ -218,7 +218,7 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   expect(resumes).toBe(0);
   TestWorker.last!.emit({
     type: "samples",
-    samples: [{ rtt: 8, lost: false, observedAtEpochMs: 1_000 }],
+    samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   expect(resumes).toBe(1);
   channel.teardown();
@@ -297,21 +297,21 @@ test("stage finalization keeps terminal outcomes until ack and excludes post-loa
     samples: [
       {
         rtt: 10,
-        lost: false,
+        timedOut: false,
         reflectorHandlingMs: 2,
         sentAtEpochMs: stop.cutoffEpochMs - 20,
         observedAtEpochMs: stop.cutoffEpochMs - 10,
       },
       {
         rtt: 30,
-        lost: false,
+        timedOut: false,
         reflectorHandlingMs: 9,
         sentAtEpochMs: stop.cutoffEpochMs - 10,
         observedAtEpochMs: stop.cutoffEpochMs + 20,
       },
       {
         rtt: 10,
-        lost: false,
+        timedOut: false,
         sentAtEpochMs: stop.cutoffEpochMs + 1,
         observedAtEpochMs: stop.cutoffEpochMs + 11,
       },
@@ -361,7 +361,7 @@ test("abort settles an in-flight drain and prevents its late worker messages rea
   channel.prime("medium", true);
   worker.emit({
     type: "samples",
-    samples: [{ rtt: 10, lost: false, observedAtEpochMs: 100 }],
+    samples: [{ rtt: 10, timedOut: false, observedAtEpochMs: 100 }],
   });
   worker.emit({
     type: "interrupted",

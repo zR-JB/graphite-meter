@@ -46,7 +46,7 @@ import {
   type Segment,
 } from "./schedule";
 import { LiveRates, stallRate } from "./liveRates";
-import { LatencyPresentationBuckets } from "./latencyBuckets";
+import { LatencyPresentationBuckets } from "./series";
 import { fixedPingIntervalMs } from "./pingCadence";
 import {
   ESTABLISH_BUDGET_MS,
@@ -717,6 +717,7 @@ export class Run implements NetworkRunner {
       get config() {
         return run.#cfg!;
       },
+      now: () => run.#now(),
       download(bytes) {
         const stage = run.#activity?.stage;
         if (
@@ -800,7 +801,11 @@ export class Run implements NetworkRunner {
     const id = server.server.id;
     server.latency.observe(stage, sample, t, server.gaps);
     if (sample.rttEligible !== false)
-      for (const bucket of server.buckets.observe(t, sample.rttMs, sample.lost))
+      for (const bucket of server.buckets.observe(
+        t,
+        sample.rttMs,
+        sample.timedOut,
+      ))
         this.#emit({ type: "serverLatency", serverId: id, sample: bucket });
     const now = performance.now();
     if (now - server.summaryAt >= SUMMARY_CADENCE_MS) {

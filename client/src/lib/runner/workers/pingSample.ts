@@ -1,7 +1,7 @@
 /* Canonical ping outcome crossing the worker boundary. */
 export interface PingSample {
   rtt: number;
-  lost: boolean;
+  timedOut: boolean;
   /** Validated server application handling interval; milliseconds, same reply as RTT. */
   reflectorHandlingMs?: number;
   /** Probe submission time; determines membership at a stage's stop boundary. */
@@ -27,13 +27,13 @@ export const PING_STOP_MARGIN_MS = 250;
 
 export function pingSample(
   rtt: number,
-  lost: boolean,
+  timedOut: boolean,
   observedAtMs = performance.now(),
   timeOriginMs = performance.timeOrigin,
 ): PingSample {
   return {
     rtt,
-    lost,
+    timedOut,
     observedAtEpochMs: timeOriginMs + observedAtMs,
   };
 }

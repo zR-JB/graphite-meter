@@ -1,8 +1,5 @@
 import type { LatencyBucket, Phase } from "../runner/contract";
-import {
-  latencyScaleForHistory,
-  latencyScaleForReading,
-} from "../runner/latencyScale";
+import { latencyScale } from "../runner/series";
 
 interface GaugeLatencyPresentation {
   rttMs: number;
@@ -24,15 +21,16 @@ export function gaugeLatencyPresentation(
   const hasMeasuredLatencyBucket =
     state.phase === "latency" && state.history.at(-1)?.phase === "latency";
   if (state.phase === "complete" && state.completedRttMs != null) {
-    const scale = state.history.some((bucket) => bucket.medianRttMs != null)
-      ? latencyScaleForHistory(state.history)
-      : latencyScaleForReading(state.completedRttMs);
+    const medians = state.history.map((bucket) => bucket.medianRttMs);
+    const scale = latencyScale(
+      medians.some((value) => value != null) ? medians : [state.completedRttMs],
+    );
     return { rttMs: state.completedRttMs, scaleMs: scale };
   }
   return {
     rttMs: state.liveRttMs,
     scaleMs: hasMeasuredLatencyBucket
       ? state.liveScaleMs
-      : latencyScaleForReading(state.liveRttMs),
+      : latencyScale([state.liveRttMs]),
   };
 }

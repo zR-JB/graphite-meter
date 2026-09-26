@@ -4,11 +4,11 @@ import type {
   LatencyBucket,
 } from "../runner/contract";
 import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
-import { upsertThroughputSample } from "../runner/presentationHistory";
 import {
   latencyBucketExceedsScale,
-  latencyScaleForHistory,
-} from "../runner/latencyScale";
+  latencyScale,
+  upsertThroughputSample,
+} from "../runner/series";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
@@ -66,7 +66,7 @@ export interface HoverInfo {
   latencyX: number | null;
   rtt: number | null;
   pingCount: number;
-  lossCount: number;
+  timeoutCount: number;
   latencyOverflow: boolean;
 }
 /** Per-lane finalized result overlay drawn in result mode. */
@@ -346,7 +346,7 @@ export class ChartEngine {
       latencyX,
       rtt,
       pingCount: latencyBucket?.pingCount ?? 0,
-      lossCount: latencyBucket?.lossCount ?? 0,
+      timeoutCount: latencyBucket?.timeoutCount ?? 0,
       latencyOverflow:
         latencyBucket != null &&
         latencyBucketExceedsScale(latencyBucket, this.#vp.rttMax),
@@ -488,7 +488,7 @@ export class ChartEngine {
     const rttMin = 0;
     // Terminal mode resolves its Y domain from full history rather than the recent live controller.
     const rttMax = complete
-      ? latencyScaleForHistory(d.latency)
+      ? latencyScale(d.latency.map((bucket) => bucket.medianRttMs))
       : d.latencyScaleMs;
     this.#targetTMax = targetTMax;
     if (!this.#cameraInitialized) {
@@ -922,7 +922,7 @@ export class ChartEngine {
         ctx.fill();
       }
     }
-    if (s.lossCount > 0) {
+    if (s.timeoutCount > 0) {
       const x = this.#layout.x(s.t);
       ctx.fillStyle = this.#colors.err;
       ctx.beginPath();

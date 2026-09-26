@@ -7,7 +7,7 @@
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import { fmtDuration, fmtSpeed, fmtMs } from "../format";
+  import { fmtDuration, fmtSpeed, fmtMs, fmtMsTick } from "../format";
   import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
@@ -48,7 +48,7 @@
       details.push(`RTT median ${fmtMs(hover.rtt)} milliseconds`);
     if (hover.pingCount > 0)
       details.push(
-        `probe timeouts ${hover.lossCount} of ${hover.pingCount} resolved probes in bucket`,
+        `probe timeouts ${hover.timeoutCount} of ${hover.pingCount} resolved probes in bucket`,
       );
     if (
       hover.bytesPerSec == null &&
@@ -344,7 +344,7 @@
               class="axis-label axis-label-right"
               style:left={`${presentation.layout.width - 4}px`}
               style:top={`${row.y}px`}
-              >{fmtMs(
+              >{fmtMsTick(
                 presentation.layout.viewport.rttMin +
                   (presentation.layout.viewport.rttMax -
                     presentation.layout.viewport.rttMin) *
@@ -439,9 +439,10 @@
             >
           </div>
         {/if}
-        {#if hover.lossCount > 0}
+        {#if hover.timeoutCount > 0}
           <div class="chip-row">
-            <span>probe timeouts</span><b>{hover.lossCount}/{hover.pingCount}</b
+            <span>probe timeouts</span><b
+              >{hover.timeoutCount}/{hover.pingCount}</b
             >
           </div>
         {/if}

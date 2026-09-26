@@ -6,7 +6,7 @@ import {
   type ChartPresentation,
 } from "./ChartEngine";
 import type { LatencyBucket, ThroughputSample } from "../runner/contract";
-import { appendThroughputSample } from "../runner/presentationHistory";
+import { appendThroughputSample } from "../runner/series";
 
 function data(overrides: Partial<ChartData> = {}): ChartData {
   return {
@@ -256,12 +256,8 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
           medianRttMs: 20,
           p95RttMs: 20,
           maxRttMs: 20,
-          firstRttMs: 20,
-          lastRttMs: 20,
-          rttDeltaSumMs: 0,
-          rttDeltaCount: 0,
           pingCount: 1,
-          lossCount: 0,
+          timeoutCount: 0,
           underLoad: true,
           phase: "download",
           continuityId: 1,
@@ -299,12 +295,8 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       medianRttMs: 20,
       p95RttMs: 22,
       maxRttMs: 24,
-      firstRttMs: 20,
-      lastRttMs: 20,
-      rttDeltaSumMs: 0,
-      rttDeltaCount: 0,
       pingCount: 1,
-      lossCount: 0,
+      timeoutCount: 0,
       underLoad: false,
       phase: "latency",
       continuityId: 1,
@@ -416,12 +408,8 @@ test("inspection retains a time position through gaps without inventing latency"
           medianRttMs: null,
           p95RttMs: null,
           maxRttMs: null,
-          firstRttMs: null,
-          lastRttMs: null,
           pingCount: 1,
-          lossCount: 1,
-          rttDeltaSumMs: 0,
-          rttDeltaCount: 0,
+          timeoutCount: 1,
         },
       ],
     };
@@ -430,13 +418,13 @@ test("inspection retains a time position through gaps without inventing latency"
     const before = counts.paths;
     expect(engine.inspect(published.layout.x(400))).toMatchObject({
       rtt: null,
-      lossCount: 1,
+      timeoutCount: 1,
       pingCount: 1,
     });
     expect(engine.inspect(published.layout.x(2_000))).toMatchObject({
       t: 2_000,
       rtt: null,
-      lossCount: 0,
+      timeoutCount: 0,
       pingCount: 0,
     });
     expect(counts.paths).toBe(before);

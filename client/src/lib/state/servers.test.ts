@@ -5,7 +5,7 @@ import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
 } from "../runner/test-helpers.testutil";
-import { singleLatencyBucket } from "../runner/latencyBuckets";
+import { singleLatencyBucket } from "../runner/series";
 import { LatencyPopulation } from "../runner/measure";
 import { parseCatalog } from "../servers/catalog";
 import { emptyConnectionValidation, type ServerView } from "../runner/paths";
@@ -42,7 +42,11 @@ test("valid prototype-named servers retain isolated latency populations through 
     >();
     for (const [index, id] of ids.entries()) {
       const stats = new LatencyPopulation();
-      stats.observe({ rttMs: (index + 1) * 10, lost: false, observedAtMs: 0 });
+      stats.observe({
+        rttMs: (index + 1) * 10,
+        timedOut: false,
+        observedAtMs: 0,
+      });
       const summary = stats.summary();
       summaries.set(id, summary);
       store.ingest({

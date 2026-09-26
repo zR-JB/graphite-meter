@@ -39,8 +39,6 @@ import {
 } from "../format";
 import { gaugeScaleForPeak } from "../components/gaugeScale";
 import { buildSegments } from "../runner/schedule";
-import { LatencyScaleController } from "../runner/latencyScale";
-import { upsertLatencyBucket } from "../runner/latencyBuckets";
 import {
   latencyLanes,
   type LatencyLaneSnapshot,
@@ -50,8 +48,9 @@ import {
 import {
   appendThroughputSample,
   compactThroughputHistory,
-  PRESENTATION_POINT_LIMIT,
-} from "../runner/presentationHistory";
+  LatencyScaleController,
+  upsertLatencyBucket,
+} from "../runner/series";
 import {
   deriveStagePresentation,
   STAGE_ORDER,
@@ -650,24 +649,13 @@ class AppStore {
     this.bytesTransferred = sample.bytesCumulative;
     this.#peakBytesPerSec = Math.max(this.#peakBytesPerSec, scaleRate);
     const history = this.#throughput;
-    if (
-      appendThroughputSample(
-        history,
-        sample,
-        PRESENTATION_POINT_LIMIT,
-        this.#throughputTargetSpanMs,
-      )
-    )
+    if (appendThroughputSample(history, sample, this.#throughputTargetSpanMs))
       this.throughputRevision++;
     this.#throughputTail++;
   }
 
   #ingestLatency(sample: LatencyBucket): void {
-    if (
-      upsertLatencyBucket(this.#latency, sample, PRESENTATION_POINT_LIMIT) ===
-      "structural-change"
-    )
-      this.latencyRevision++;
+    if (upsertLatencyBucket(this.#latency, sample)) this.latencyRevision++;
     this.#latencyTail++;
     this.latencyScaleMs = this.#latencyScale.observe(sample);
   }
@@ -719,7 +707,7 @@ class AppStore {
           history = [];
           this.latencyByServer.set(event.serverId, history);
         }
-        upsertLatencyBucket(history, event.sample, PRESENTATION_POINT_LIMIT);
+        upsertLatencyBucket(history, event.sample);
         if (event.serverId === this.latencyFocus)
           this.#ingestLatency(event.sample);
         break;

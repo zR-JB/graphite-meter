@@ -10,12 +10,8 @@ function bucket(endT: number, medianRttMs: number): LatencyBucket {
     medianRttMs,
     p95RttMs: medianRttMs,
     maxRttMs: medianRttMs,
-    firstRttMs: medianRttMs,
-    lastRttMs: medianRttMs,
-    rttDeltaSumMs: 0,
-    rttDeltaCount: 0,
     pingCount: 1,
-    lossCount: 0,
+    timeoutCount: 0,
     underLoad: false,
     phase: "latency",
     continuityId: 0,
@@ -71,10 +67,8 @@ test("completed fallback derives its scale when history has no RTT", () => {
     medianRttMs: null,
     p95RttMs: null,
     maxRttMs: null,
-    firstRttMs: null,
-    lastRttMs: null,
     pingCount: 1,
-    lossCount: 1,
+    timeoutCount: 1,
   };
 
   for (const history of [[], [lossOnly]])

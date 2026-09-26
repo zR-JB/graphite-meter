@@ -95,10 +95,6 @@ export function rangeWidth(
   return Math.max(0, pos(max, domain) - pos(min, domain));
 }
 
-export function tickLabel(v: number): string {
-  return v <= 0 ? "0" : fmtMs(v);
-}
-
 // Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
 export function timeoutLabel(ratio: number): string {
   if (ratio <= 0) return "";

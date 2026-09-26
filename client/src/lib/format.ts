@@ -26,9 +26,13 @@ export function fmtSpeed(value: number): string {
   return value.toFixed(2);
 }
 
+/** Browser timers resolve 0.1 ms, so a smaller measured value is shown as below it. */
 export function fmtMs(ms: number): string {
+  if (ms >= 0 && ms < 0.1) return "< 0.1";
   return ms < 100 ? ms.toFixed(1) : ms.toFixed(0);
 }
+
+export const fmtMsTick = (ms: number) => (ms <= 0 ? "0" : fmtMs(ms));
 
 export function fmtDuration(ms: number, fractionDigits = 1): string {
   const seconds = Math.max(0, ms) / 1000;

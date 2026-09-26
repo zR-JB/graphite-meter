@@ -84,7 +84,7 @@ const wtLatencyAd = (baseUrl: string): LatencyAdvertisement => ({
   transport: "webtransport",
 });
 const pingSamples = (rtt: number) =>
-  Array.from({ length: 5 }, () => ({ rtt, lost: false }));
+  Array.from({ length: 5 }, () => ({ rtt, timedOut: false }));
 
 test("proxy endpoints resolve relative to preflight and negotiate the browser hop", () => {
   const catalog = discovery(

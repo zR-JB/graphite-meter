@@ -47,6 +47,8 @@ import { classifyUploadFailure } from "./uploadFailure";
 /** What a server's stage resources report to the run that owns them. */
 export interface ParticipantHost {
   readonly config: RunnerConfig;
+  /** Milliseconds on the run's timeline, which saved evidence shares. */
+  now(): number;
   /** Measured client-consumed download bytes. */
   download(bytes: number): void;
   /** Upload receiver evidence, pushed by its feed or answered by a checkpoint. */
@@ -561,7 +563,7 @@ export class ServerStage implements StageTransport {
     const receiver = this.receiver;
     if (!receiver || this.#abort.signal.aborted) return null;
     const target = this.#paths.throughput.fetch;
-    const requestedAtMs = performance.now();
+    const requestedAtMs = this.host.now();
     const response = await measurementFetch(
       this.#paths.credentials,
       `${target.origin}${ROUTES.uploadCheckpoint}?id=${encodeURIComponent(receiver.id)}`,
@@ -592,7 +594,7 @@ export class ServerStage implements StageTransport {
       bytes: bytes as number,
       nanos: nanos as number,
       requestedAtMs,
-      receivedAtMs: performance.now(),
+      receivedAtMs: this.host.now(),
     };
     receiver.observe(checkpoint);
     return checkpoint;
@@ -740,7 +742,7 @@ class UploadReceiver {
         id: this.id,
         bytes,
         nanos,
-        receivedAtMs: performance.now(),
+        receivedAtMs: this.stage.host.now(),
       },
     );
     lanes.progress(delta);

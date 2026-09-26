@@ -2,7 +2,7 @@
   import { tooltip, JARGON } from "../actions/tooltip";
   import { ICON } from "../constants";
   import { MISSING, STAGE } from "../presentation/vocabulary";
-  import { fmtMs } from "../format";
+  import { fmtMs, fmtMsTick } from "../format";
   import {
     entries,
     PARTIAL_ACCOUNTING_HELP,
@@ -17,7 +17,6 @@
     pos,
     profileDomain,
     rangeWidth,
-    tickLabel,
     type LatencyProfileDomain,
     type LatencyProfileViewLane,
     type MetricKey,
@@ -331,7 +330,7 @@
   <div class="ticks" aria-hidden="true">
     {#each ticks as tick, index (index)}
       <span style={`left:${pos(tick, scale)}%`}
-        >{tickLabel(tick)}{index === 2 ? " ms" : ""}</span
+        >{fmtMsTick(tick)}{index === 2 ? " ms" : ""}</span
       >
     {/each}
   </div>

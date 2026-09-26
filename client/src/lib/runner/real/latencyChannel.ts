@@ -16,7 +16,7 @@ import {
 } from "../../servers/credentials";
 import { httpToWs, ROUTES } from "../paths";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
-import { singleLatencyBucket } from "../latencyBuckets";
+import { singleLatencyBucket } from "../series";
 import { fixedPingIntervalMs } from "../pingCadence";
 import {
   pingSampleContextTime,
@@ -252,14 +252,14 @@ export class LatencyChannel {
           host.latency({
             rttMs: sample.rtt,
             reflectorHandlingMs: sample.reflectorHandlingMs,
-            lost: sample.lost,
+            timedOut: sample.timedOut,
             observedAtMs: pingSampleContextTime(sample, this.#timeOriginMs),
             rttEligible:
               this.#cutoffEpochMs === null ||
               sample.observedAtEpochMs <= this.#cutoffEpochMs,
           });
         }
-        if (!this.#finishing && msg.samples.some((sample) => !sample.lost))
+        if (!this.#finishing && msg.samples.some((sample) => !sample.timedOut))
           this.#deps.host.resumeLatency();
         break;
       }
@@ -467,18 +467,18 @@ export class IdleKeepalive {
       case "samples": {
         let receivedPong = false;
         for (const sample of msg.samples) {
-          if (this.#probeCollect && !sample.lost) {
+          if (this.#probeCollect && !sample.timedOut) {
             this.#probeCollect.rtts.push(sample.rtt);
             if (this.#probeCollect.rtts.length >= PROBE_PING_COUNT)
               this.#probeCollect.finish();
           }
-          if (!sample.lost) receivedPong = true;
+          if (!sample.timedOut) receivedPong = true;
           this.onEvent({
             type: "latency",
             sample: singleLatencyBucket(
               pingSampleContextTime(sample, this.#timeOriginMs),
               sample.rtt,
-              sample.lost,
+              sample.timedOut,
             ),
           });
         }

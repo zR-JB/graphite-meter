@@ -397,11 +397,11 @@ function onFrame(data: unknown): void {
     return;
   }
 
-  // A pong for an evicted ping still teaches the estimator, which is the only way it learns a fast to slow jump: lost.
+  // A pong for an evicted ping still teaches the estimator, which is the only way it learns a fast to slow jump.
   const late = graveyard.get(frame.id);
   if (late !== undefined) {
     graveyard.delete(frame.id);
-    rttEstimate = observeRtt(rttEstimate, recv - late); // already counted lost, so no sample
+    rttEstimate = observeRtt(rttEstimate, recv - late); // already counted as a timeout, so no sample
   }
   // Unknown and duplicate ids fall through, ignored.
 }
@@ -483,13 +483,13 @@ function eligible(ping: PendingPing): boolean {
 
 function recordOutcome(
   ping: PendingPing,
-  lost: boolean,
+  timedOut: boolean,
   observedAt: number,
   handlingMs?: number,
 ): void {
-  const handling = lost ? undefined : handlingMs;
+  const handling = timedOut ? undefined : handlingMs;
   record({
-    ...pingSample(observedAt - ping.sentAt, lost, observedAt),
+    ...pingSample(observedAt - ping.sentAt, timedOut, observedAt),
     sentAtEpochMs: performance.timeOrigin + ping.sentAt,
     ...(handling === undefined ? {} : { reflectorHandlingMs: handling }),
   });
