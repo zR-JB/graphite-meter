@@ -38,7 +38,6 @@
   // The instrument presents the phase it hands off to, never a flash of one it passes through.
   const view = handoff(() => store.phase);
   const phase = $derived(view.shown);
-  // Live chips give way to result cards in one handoff of their own.
   const results = handoff((): "none" | "partial" | "final" =>
     store.phase === "complete"
       ? "final"
@@ -209,15 +208,7 @@
     <div class="well stage">
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
-          <svg viewBox="0 0 20 20" aria-hidden="true"
-            ><rect x="2.5" y="3" width="15" height="5" rx="1.5" /><rect
-              x="2.5"
-              y="12"
-              width="15"
-              height="5"
-              rx="1.5"
-            /><path d="M6 5.5h.01M6 14.5h.01M10 8v4" /></svg
-          >
+          <Icon name="server" />
           <span
             {@attach tooltip(() =>
               indicatedServers.map((server) => server.name).join(", "),
@@ -414,13 +405,9 @@
     color: var(--text-muted);
     font: var(--w-normal) var(--type-xs) / 1.4 var(--font-sans);
   }
-  .server-indicator svg {
+  .server-indicator :global(svg) {
     width: 14px;
     height: 14px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.4;
-    stroke-linecap: round;
   }
   .gauge-face {
     position: relative;

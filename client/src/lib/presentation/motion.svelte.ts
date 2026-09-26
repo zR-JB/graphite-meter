@@ -130,69 +130,49 @@ export class Smoothed {
 const HANDOFF_OUT_MS = 90;
 const HANDOFF_IN_MS = 180;
 
-/**
- * A view of a changing state: while its key holds, `shown` follows the value; a new key fades the old
- * view out, swaps and fades the new one in. A key that lasts less than the fade-out is never shown.
- */
+/** A new key fades the shown view out and the new one in; a key shorter than the fade-out never shows. */
 export class Handoff<T> {
   shown: T = $state.raw() as T;
-  opacity = $state(1);
+  #fade = new Smoothed();
   #key: unknown;
   #latest: T;
   #keyOf: (value: T) => unknown;
-  #leaving = false;
-  #from = 1;
-  #at = 0;
   #stop: (() => void) | null = null;
 
   constructor(value: T, keyOf: (value: T) => unknown = (value) => value) {
     this.shown = this.#latest = value;
     this.#keyOf = keyOf;
     this.#key = keyOf(value);
+    this.#fade.set(1, { snap: true });
+  }
+
+  get opacity(): number {
+    return this.#fade.current;
   }
 
   set(value: T): void {
     this.#latest = value;
-    const same = this.#keyOf(value) === this.#key;
-    if (same && !this.#leaving) {
+    if (this.#keyOf(value) === this.#key) {
       this.shown = value;
-      return;
+      if (this.#stop) this.#swap();
+    } else if (still() || globalThis.document?.hidden) this.#swap();
+    else {
+      this.#fade.set(0, { over: HANDOFF_OUT_MS * this.#fade.current });
+      this.#stop ??= animate(this.#frame);
     }
-    if (still() || globalThis.document?.hidden) {
-      this.#swap();
-      this.opacity = 1;
-      this.#stop?.();
-      this.#stop = null;
-      return;
-    }
-    // Turning back mid-fade continues from the opacity reached.
-    this.#leaving = !same;
-    if (same) this.shown = value;
-    this.#from = this.opacity;
-    this.#at = performance.now();
-    this.#stop ??= animate(this.#frame);
   }
 
   #swap(): void {
+    this.#stop?.();
+    this.#stop = null;
     this.shown = this.#latest;
     this.#key = this.#keyOf(this.#latest);
-    this.#leaving = false;
+    this.#fade.set(1, { over: HANDOFF_IN_MS * (1 - this.#fade.current) });
   }
 
-  #frame = (now: number): boolean => {
-    const since = Math.max(0, now - this.#at);
-    if (this.#leaving) {
-      this.opacity = Math.max(0, this.#from - since / HANDOFF_OUT_MS);
-      if (this.opacity > 0) return true;
-      this.#swap();
-      this.#from = 0;
-      this.#at = now;
-      return true;
-    }
-    const t = Math.min(1, this.#from + since / HANDOFF_IN_MS);
-    this.opacity = 1 - (1 - t) ** 2;
-    if (t < 1) return true;
-    this.#stop = null;
+  #frame = (): boolean => {
+    if (this.#fade.current > 0) return true;
+    this.#swap();
     return false;
   };
 }

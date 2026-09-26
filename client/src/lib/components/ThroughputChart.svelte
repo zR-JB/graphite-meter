@@ -18,7 +18,6 @@
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  // A new stage's label and a finished stage's rate hand off; positions follow the camera.
   const marks = handoff(
     () => ({
       labels: chartPresentation?.phaseLabels ?? [],

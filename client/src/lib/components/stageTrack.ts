@@ -72,7 +72,6 @@ export function lockReason(
   state: SegState,
 ): string | null {
   if (canToggle) return null;
-  // A finished stage shows its check; only a partial one needs words.
   if (state === "complete") return null;
   if (state === "partial") return STATUS.partial;
   if (phaseStage === stage)

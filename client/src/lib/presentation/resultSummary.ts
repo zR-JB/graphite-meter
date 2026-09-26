@@ -22,7 +22,6 @@ export interface SummaryEvidence extends Pick<
 export interface SummaryRow {
   label: string;
   value: string;
-  /** The stage a row belongs to, drawn as its icon. */
   stage?: TransportRole;
   note?: string;
 }

@@ -115,8 +115,6 @@ export const JARGON = {
     "probe timeouts are left out.",
   wireRate:
     "Estimated physical-link rate, including forward-path protocol overhead.",
-  latency:
-    "Median round-trip time (RTT) to the server and back. Lower is faster.",
   unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
   unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
   unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",

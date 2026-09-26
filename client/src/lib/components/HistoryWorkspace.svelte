@@ -273,7 +273,6 @@
     onNavigate(selectedId === id ? null : id);
   }
 
-  // Sorted by date, rows group under their day and show only the time.
   const byDay = $derived(sort === "date");
   function dayHeading(value: number): string {
     const day = (time: number) => new Date(time).toDateString();

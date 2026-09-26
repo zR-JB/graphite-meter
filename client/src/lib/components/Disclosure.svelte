@@ -4,9 +4,7 @@
   interface Props {
     title?: string;
     facts?: string;
-    /** A status beside the title, such as a badge. */
     aside?: Snippet;
-    /** A custom summary instead of title and facts. */
     summary?: Snippet;
     children: Snippet;
     open?: boolean;

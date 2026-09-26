@@ -336,8 +336,7 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-  /* Only keyboard focus rings: a choice label draws its control's, and a region
-     focused to move the reading position draws none. */
+  /* Rings answer the keyboard: a choice label rings for its control, a focused region not at all. */
   label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
     outline: var(--focus-ring);
     outline-offset: var(--ring-offset, 2px);
@@ -346,7 +345,6 @@
   :is(section, article)[tabindex="-1"]:focus-visible {
     outline: none;
   }
-  /* Links inside prose; standalone links are buttons. */
   :is(p, dd) a:not(.btn) {
     color: var(--brand-strong);
     text-decoration: underline;
@@ -416,8 +414,8 @@
     line-height: 1.5;
   }
 
-  /* Buttons, and links that act as buttons. The visible edge is an inset ring so a
-     coarse pointer can grow the hit area with a transparent border without moving the drawn box. */
+  /* Buttons, and links acting as buttons. The visible edge is an inset ring so a coarse pointer
+     can grow the hit area with a transparent border without moving the drawn box. */
   .btn {
     --btn-line: var(--border);
     --hit-pad: 0px;
@@ -654,8 +652,7 @@
     color: var(--brand-strong);
   }
 
-  /* Disclosure (Disclosure.svelte): the summary states the key facts and is the
-     whole hit area; the surface carries the ring, the chevron and the opening. */
+  /* Disclosure.svelte: the summary is the hit area; its surface carries the ring and opens. */
   .disclosure {
     --disclosure-pad: var(--space-3);
     interpolate-size: allow-keywords;
