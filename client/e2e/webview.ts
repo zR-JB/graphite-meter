@@ -16,9 +16,7 @@ interface ElementState {
   attrs: Record<string, string>;
 }
 
-const artifacts = resolve(
-  process.env.GM_WEBVIEW_ARTIFACTS ?? "test-results/webview",
-);
+const artifacts = resolve(import.meta.dir, "../test-results/webview");
 // JSON is already a valid JavaScript expression for CDP evaluation.
 const encode = (value: unknown) =>
   JSON.stringify(value, (_key, item) =>
@@ -294,7 +292,7 @@ export class Page {
   }
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
-    const stem = resolve(artifacts, name.replace(/[^a-z0-9_.-]+/gi, "-"));
+    const stem = resolve(artifacts, name.replace(/[^a-z0-9_-]+/gi, "-"));
     const shot = await this.raw.screenshot().catch(() => undefined);
     if (shot) await Bun.write(`${stem}.png`, shot);
     const dom = await this.raw
