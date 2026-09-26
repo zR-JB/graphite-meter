@@ -399,7 +399,7 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		"Server timing (2 paired replies, means): raw 10.0 ms · handling 0.0 ms · adjusted 10.0 ms",
 		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
 		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
-		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Skipped",
+		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Bi-dir",
 		"Added: loaded median minus idle median.",
 	} {
 		if !strings.Contains(text, want) {
@@ -706,5 +706,22 @@ func TestGrantsFollowTheCatalogueOrigin(t *testing.T) {
 		if got := err != nil && strings.Contains(err.Error(), "authentication grant"); got != c.presented {
 			t.Errorf("catalogue %s: grant attached = %v, want %v (%v)", c.typed, got, c.presented, err)
 		}
+	}
+}
+
+func TestFailedRunShowsNoActivity(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	m.run = newRunState(m.cfg, "", time.Now())
+	done := goclient.Event{Kind: goclient.EventDone, Err: errors.New("refused")}
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{done}}))
+	screen, report := view(m), m.finalReport()
+	for _, stale := range []string{"Checking paths", "○", "Skipped", "Median"} {
+		if strings.Contains(screen+report, stale) {
+			t.Errorf("failed run still shows %q:\n%s\n%s", stale, screen, report)
+		}
+	}
+	if !strings.Contains(screen, "not run") || !strings.HasSuffix(report, "refused") {
+		t.Errorf("failed run hides its unrun stages or error:\n%s\n%s", screen, report)
 	}
 }

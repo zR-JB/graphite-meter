@@ -331,8 +331,10 @@ func (m model) testView(w int, compact bool) string {
 	switch {
 	case compact:
 		return strings.Join(m.stageTrack(w), "\n")
-	case r.details == nil:
+	case r.details == nil && m.running():
 		field("Servers", m.spin.View()+m.st.muted.Render(" Checking paths…"))
+	case r.details == nil:
+		field("Servers", m.st.muted.Render(missing))
 	default:
 		var names, throughputs []string
 		streams, latency := "", missing
@@ -380,6 +382,12 @@ func (m model) stageTrack(w int) []string {
 			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
 		case stageStopped:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
+		case stagePending:
+			if !m.running() {
+				lines = append(lines, name+m.st.muted.Render(missing+" not run"))
+				continue
+			}
+			fallthrough
 		default:
 			lines = append(lines, name+m.st.muted.Render("○ "+fmtSetting(s.duration)))
 		}
@@ -390,7 +398,10 @@ func (m model) stageTrack(w int) []string {
 func (m model) liveView(w, h int) string {
 	r := m.run
 	i := slices.IndexFunc(r.plan, func(s goclient.StagePlan) bool { return s.Name == r.stage })
-	if i < 0 || r.phase == goclient.PhasePreparing && m.running() {
+	switch {
+	case i < 0 && !m.running():
+		return m.st.muted.Render(missing)
+	case i < 0 || r.phase == goclient.PhasePreparing && m.running():
 		return m.spin.View() + m.st.muted.Render(" Checking paths…")
 	}
 	stage := r.plan[i]
@@ -473,7 +484,7 @@ func (m model) resultsView(w int) string {
 			notes = append(notes, m.st.err.Render(label+" incomplete: "+errorText(err)))
 		}
 	}
-	added := false
+	added, measured := false, false
 	for i, stage := range r.plan {
 		row := []string{compactStage(stage.Name), "", "", "", "", "", "", ""}
 		found := false
@@ -505,8 +516,9 @@ func (m model) resultsView(w int) string {
 			}
 			failed(label, population.Err)
 		}
+		measured = measured || found
 		if !found && !m.running() {
-			row[1] = "Skipped"
+			row[1] = missing
 			if r.stages[i].state == stageStopped {
 				row[1] = "Stopped"
 			}
@@ -516,7 +528,7 @@ func (m model) resultsView(w int) string {
 			rows = append(rows, row)
 		}
 	}
-	if len(rows) == 0 {
+	if !measured {
 		return ""
 	}
 	if added {
@@ -531,12 +543,15 @@ func (m model) finalReport() string {
 		return ""
 	}
 	w, _ := m.size()
-	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome], m.resultsView(w)}
+	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome]}
+	if results := m.resultsView(w); results != "" {
+		lines = append(lines, results)
+	}
 	if m.multipleRunServers() {
 		lines = append(lines, "", m.detailsView(w))
 	}
 	if m.run.err != nil {
-		lines = append(lines, "", errorText(m.run.err))
+		lines = append(lines, errorText(m.run.err))
 	}
 	report := strings.Split(ansi.Strip(strings.Join(lines, "\n")), "\n")
 	for i, line := range report {
