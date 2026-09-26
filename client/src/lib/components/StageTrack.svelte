@@ -1,65 +1,50 @@
 <script lang="ts">
-  // Stage rail keeps editable selection separate from retained run execution.
-  import { store, type StageKey } from "../state/store.svelte";
+  // Editable selection stays separate from the retained run's execution.
+  import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  const controller = getApplicationController();
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
   import { failureDetail } from "./failurePresentation";
+  import { STAGE } from "../presentation/vocabulary";
+  import { STAGE_ORDER } from "../state/stagePresentation";
 
-  const STAGES: {
-    key: Exclude<StageKey, "bidirectional">;
-    label: string;
-    icon: string;
-  }[] = [
-    { key: "latency", label: "Latency", icon: ICON.ping },
-    { key: "download", label: "Download", icon: ICON.download },
-    { key: "upload", label: "Upload", icon: ICON.upload },
-  ];
+  const controller = getApplicationController();
 
-  function onToggle(stage: StageKey) {
-    controller.toggleStage(stage);
-  }
-
-  const segments = $derived.by(() => {
-    return STAGES.map((stage) => {
-      const execution = store.stagePresentation[stage.key];
-      const selected = store.config.stages[stage.key];
-      const failure = execution.failure
-        ? store.stageFailures[stage.key]
-        : undefined;
-      const locked = !store.canToggleStage(stage.key);
+  // Bidirectional appears only while Settings includes it.
+  const segments = $derived(
+    STAGE_ORDER.filter(
+      (key) => key !== "bidirectional" || store.config.stages.bidirectional,
+    ).map((key) => {
+      const execution = store.stagePresentation[key];
+      const selected = store.config.stages[key];
+      const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
       const reason =
         model.tag ??
-        lockReason(
-          !locked,
-          store.phase,
-          store.phaseStage,
-          stage.key,
-          model.state,
-        );
-      return { ...stage, ...model, reason, failure };
-    });
-  });
-
-  // Bidirectional is an advanced Settings choice, not an always-present
-  // stage selector. Once disabled it must leave the rail entirely; Settings
-  // remains the sole place that can enable it again.
-  const bidiPresentation = $derived(store.stagePresentation.bidirectional);
-  const bidi = $derived(
-    store.config.stages.bidirectional
-      ? stageTrackModel({
-          selected: true,
-          locked: !store.canToggleStage("bidirectional"),
-          execution: bidiPresentation,
-        })
-      : null,
+        lockReason(!locked, store.phase, store.phaseStage, key, model.state);
+      const label = STAGE[key].short;
+      const failure = execution.failure ? store.stageFailures[key] : undefined;
+      const hint = failure
+        ? failureDetail(failure.message)
+        : key === "bidirectional" && !locked
+          ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
+          : reason === "skipped" && !locked
+            ? "skipped, toggle to include"
+            : (reason ?? (selected ? "toggle to skip" : "toggle to include"));
+      return {
+        ...model,
+        key,
+        label,
+        icon: STAGE[key].icon,
+        reason,
+        tip: `${label} — ${hint}`,
+      };
+    }),
   );
 </script>
 
-<fieldset class="stage-track" class:quad={bidi !== null}>
+<fieldset class="stage-track" class:quad={segments.length === 4}>
   <legend class="caps"
     >Test stages<span class="sr-only">
       — toggle to include or skip</span
@@ -79,17 +64,9 @@
         : s.state === 'complete'
           ? ' (complete)'
           : ''}"
-      use:tooltip={s.failure
-        ? `${s.label} — ${failureDetail(s.failure.message)}`
-        : s.reason
-          ? s.reason === "skipped" && !s.locked
-            ? `${s.label} — skipped, toggle to include`
-            : `${s.label} — ${s.reason}`
-          : s.selected
-            ? `${s.label} — toggle to skip`
-            : `${s.label} — toggle to include`}
+      use:tooltip={s.tip}
       disabled={s.locked}
-      onclick={() => onToggle(s.key)}
+      onclick={() => controller.toggleStage(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">
         {#if s.state === "warmup"}
@@ -119,54 +96,6 @@
       </span>
     </button>
   {/each}
-  {#if bidi}
-    <button
-      type="button"
-      class="seg seg--{bidi.state} on"
-      role="switch"
-      aria-checked="true"
-      aria-label="Bidirectional stage{store.canToggleStage('bidirectional')
-        ? ' — toggle to exclude'
-        : ' (running)'}"
-      use:tooltip={bidiPresentation.failure
-        ? `Bi-dir — ${failureDetail(store.stageFailures.bidirectional?.message)}`
-        : store.canToggleStage("bidirectional")
-          ? "Bidirectional — concurrent down + up. Toggle to exclude (re-enable in Settings)."
-          : "Bidirectional — running."}
-      disabled={!store.canToggleStage("bidirectional")}
-      onclick={() => {
-        controller.toggleStage("bidirectional");
-      }}
-    >
-      <div class="seg-bar" aria-hidden="true">
-        {#if bidi.state === "warmup"}
-          <span class="seg-fill seg-fill--warmup"></span>
-        {:else if bidi.state === "failed"}
-          <span class="seg-fill seg-fill--failed"></span>
-        {:else if bidi.state === "active" || bidi.state === "recovering" || bidi.state === "complete" || bidi.state === "partial"}
-          <span
-            class="seg-fill"
-            data-tone="bidirectional"
-            class:is-done={bidi.state === "complete" ||
-              bidi.state === "partial"}
-            class:is-stalled={bidi.state === "recovering"}
-            style="--progress:{bidi.fill / 100}"
-          ></span>
-        {/if}
-      </div>
-      <span class="seg-row">
-        <span class="seg-main">
-          <span class="seg-ico">{@html ICON.bidirectional}</span>
-          <span class="seg-label">Bi-dir</span>
-        </span>
-        {#if bidi.tag}
-          <span class="seg-tag">{bidi.tag}</span>
-        {:else if bidi.state === "complete"}
-          <span class="seg-ico seg-check">{@html ICON.check}</span>
-        {/if}
-      </span>
-    </button>
-  {/if}
 </fieldset>
 
 <style>

@@ -17,6 +17,7 @@
     endpointPathStatus,
   } from "./endpointInfo";
   import type { TransportKind } from "../runner/contract";
+  import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
@@ -27,6 +28,8 @@
     used: "neutral",
   };
 
+  let { onOpenLegal }: { onOpenLegal: (invoker: HTMLElement) => void } =
+    $props();
   let inspectedServer = $state("");
   const availableServers = $derived(
     store.activeServers.length
@@ -222,17 +225,12 @@
         >
       </header>
       {#if availableServers.length > 1}
-        <label class="field server-picker">
-          <span>Inspect server</span>
-          <select
-            value={selectedServer?.id}
-            onchange={(event) => (inspectedServer = event.currentTarget.value)}
-          >
-            {#each availableServers as entry (entry.id)}
-              <option value={entry.id}>{entry.name}</option>
-            {/each}
-          </select>
-        </label>
+        <ServerScope
+          servers={availableServers}
+          value={selectedServer?.id ?? ""}
+          label="Inspect server"
+          onchange={(id) => (inspectedServer = id)}
+        />
       {/if}
       <dl class="kv">
         <div>
@@ -422,6 +420,15 @@
       >
     </div>
   </details>
+  <p class="license">
+    <span>Legal</span>
+    <button
+      class="btn-link"
+      type="button"
+      onclick={(event) => onOpenLegal(event.currentTarget)}
+      >About &amp; legal</button
+    >
+  </p>
 </section>
 
 <style>
@@ -450,9 +457,6 @@
     justify-content: space-between;
     gap: var(--space-2);
   }
-  .server-picker {
-    margin-bottom: var(--space-1);
-  }
   .endpoint-failure {
     color: var(--err);
     font-size: var(--type-sm);
@@ -460,6 +464,15 @@
   }
   .kv {
     --kv-label: 6.5rem;
+  }
+  .license {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-2);
+    padding: 0 var(--space-1);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
   }
   .protocols {
     display: flex;

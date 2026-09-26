@@ -18,12 +18,36 @@
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import { PING_CADENCE } from "../../presentation/vocabulary";
   import { fmtDuration } from "../../format";
+  import { untrack } from "svelte";
+  import ConfirmDialog from "../ConfirmDialog.svelte";
 
   interface Props {
-    running?: boolean;
-    onOpenHistory?: (invoker: HTMLElement) => void;
+    open: boolean;
+    onOpenHistory: (invoker: HTMLElement) => void;
   }
-  let { running = false, onOpenHistory }: Props = $props();
+  let { open, onOpenHistory }: Props = $props();
+  const running = $derived(store.isRunning);
+  let resetConfirmOpen = $state(false);
+  $effect(() => {
+    if (!open) resetConfirmOpen = false;
+  });
+  $effect(() => {
+    if (
+      open &&
+      store.serverCatalog &&
+      !store.catalogLoading &&
+      !store.isRunning &&
+      !store.preparing
+    ) {
+      untrack(() => controller.loadServerMetadata());
+      return () => controller.cancelServerMetadata();
+    }
+  });
+  function resetSettings() {
+    resetConfirmOpen = false;
+    store.restoreTestDisplayDefaults();
+    durationMode = presetFromDuration();
+  }
 
   function targetOption(
     target:
@@ -374,7 +398,6 @@
       class="btn-link"
       href="#/history"
       onclick={(event) => {
-        if (!onOpenHistory) return;
         event.preventDefault();
         onOpenHistory(event.currentTarget as HTMLElement);
       }}>View History</a
@@ -510,7 +533,26 @@
       </p>
     {/if}
   </section>
+  <div class="settings-reset wide">
+    <button
+      class="btn btn-danger"
+      type="button"
+      disabled={running || store.preparing}
+      onclick={() => (resetConfirmOpen = true)}>Reset settings</button
+    >
+  </div>
 </div>
+
+<ConfirmDialog
+  open={resetConfirmOpen}
+  id="settings-reset-confirm"
+  title="Reset settings?"
+  description="Restore test, display, and history-saving settings to their defaults? Your theme, panel layout, and saved results will be kept."
+  cancelLabel="Keep settings"
+  confirmLabel="Reset settings"
+  onCancel={() => (resetConfirmOpen = false)}
+  onConfirm={resetSettings}
+/>
 
 <style>
   .setup-grid {
@@ -556,6 +598,10 @@
   }
   .btn-link {
     justify-self: start;
+  }
+  .settings-reset {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border);
   }
   .two,
   .duration-fields {

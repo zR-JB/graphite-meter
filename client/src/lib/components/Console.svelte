@@ -10,8 +10,9 @@
   import GaugePanel from "./GaugePanel.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
-  import SettingsPanel from "./settings/SettingsPanel.svelte";
-  import TelemetryPanel from "./TelemetryPanel.svelte";
+  import SidePanel from "./SidePanel.svelte";
+  import TestSetupPanel from "./settings/TestSetupPanel.svelte";
+  import EndpointInfo from "./EndpointInfo.svelte";
   import PhaseToast from "./PhaseToast.svelte";
   import ShortcutHints from "./ShortcutHints.svelte";
   import ConnectivityIndicator from "./ConnectivityIndicator.svelte";
@@ -743,7 +744,7 @@
   <!-- Auxiliary panels: one shared base, opposite sides. They dock on wide
        screens (pushing the stage) and overlay as flyouts below that. Docked
        panels resize from their inner edge, persisted via store.dockWidth. -->
-  <SettingsPanel
+  <SidePanel
     open={settingsOpen}
     docked={dockQuery.current}
     raised={lastOpened === "left"}
@@ -752,9 +753,17 @@
     onResize={(px) => setDockWidth("left", px)}
     onResetWidth={() => resetDockWidth("left")}
     onClose={() => dismissPanel("settings")}
-    onOpenHistory={(invoker: HTMLElement) => historyRoute(null, invoker)}
-  />
-  <TelemetryPanel
+    side="left"
+    title="Settings"
+    kicker="Test & Display"
+    width="min(560px, 94vw)"
+  >
+    <TestSetupPanel
+      open={settingsOpen}
+      onOpenHistory={(invoker) => historyRoute(null, invoker)}
+    />
+  </SidePanel>
+  <SidePanel
     open={telemetryOpen}
     docked={dockQuery.current}
     raised={lastOpened === "right"}
@@ -763,8 +772,12 @@
     onResize={(px) => setDockWidth("right", px)}
     onResetWidth={() => resetDockWidth("right")}
     onClose={() => dismissPanel("endpoint")}
-    onOpenLegal={openLegal}
-  />
+    title="Details"
+    kicker="Server & connection"
+    width="min(440px, 92vw)"
+  >
+    <EndpointInfo onOpenLegal={openLegal} />
+  </SidePanel>
 
   <PhaseToast />
 
