@@ -169,15 +169,21 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			r.latencyTarget = new(testChannel("test-ws", srv.URL, false))
 			started := time.Now()
 			err := r.runTestStage(ctx, "bidirectional", 3*time.Second)
-			if err == nil {
+			mu.Lock()
+			failure := err
+			if interruption != "cancel" && err == nil && len(results) > 0 {
+				failure = results[0].Err
+			}
+			mu.Unlock()
+			if failure == nil {
 				t.Fatal("interrupted stage reported success")
 			}
 			if interruption == "cancel" {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
-			} else if !strings.Contains(err.Error(), "503") {
-				t.Fatal(err)
+			} else if err != nil || !strings.Contains(failure.Error(), "503") {
+				t.Fatal(err, failure)
 			}
 			if time.Since(started) > 2*time.Second {
 				t.Fatal("stage failure did not promptly cancel its siblings and release progress")
@@ -386,7 +392,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 				started := time.Now()
 				result, err := r.testTransferResult(ctx, stage, duration)
 				if duration > redialWindow {
-					if !errors.Is(err, errNoSurvivors) ||
+					if err != nil || !errors.Is(result.Err, errStageSkipped) ||
 						details == nil ||
 						len(details.Failures) != 1 ||
 						!strings.Contains(details.Failures[0].Err.Error(), "stopped delivering bytes") {

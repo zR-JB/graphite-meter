@@ -355,6 +355,35 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 	}
 }
 
+func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
+	t.Parallel()
+	a := coordinatedFixture(t, "a")
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Download: true, Upload: true}
+	cfg.DownloadDuration, cfg.UploadDuration = time.Second, time.Second
+	samples := 0
+	var details *RunDetails
+	results := map[Stage]Result{}
+	err := Run(t.Context(), cfg, func(e Event) {
+		switch {
+		case e.Kind == EventThroughput && e.Stage == StageDownload:
+			if samples++; samples == 2 {
+				a.failed.Store(true)
+			}
+		case e.Kind == EventStage && e.Stage == StageDownload && e.Phase == PhaseFinished:
+			a.failed.Store(false)
+		case e.Kind == EventResult:
+			results[e.Stage] = *e.Result
+		case e.Kind == EventDone:
+			details = e.Servers
+		}
+	})
+	if err != nil || details == nil || details.Outcome != OutcomeIncomplete || len(details.Failures) != 1 ||
+		!results[StageDownload].Unavailable || results[StageUpload].Unavailable {
+		t.Fatalf("a sole server's failed stage ended the run: %v %+v %+v", err, details, results)
+	}
+}
+
 func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	t.Parallel()
 	a := coordinatedFixture(t, "a")

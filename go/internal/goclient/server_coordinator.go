@@ -48,7 +48,10 @@ type coordinator struct {
 	emit        func(Event)
 }
 
-var errNoSurvivors = errors.New("all selected servers failed")
+var (
+	errNoSurvivors  = errors.New("all selected servers failed")
+	errStageSkipped = errors.New("stage skipped")
+)
 
 const (
 	sampleInterval        = 250 * time.Millisecond
@@ -155,7 +158,7 @@ func (c *coordinator) run(ctx context.Context) error {
 	c.publish()
 	plan := c.cfg.Plan()
 	for i, stage := range plan {
-		if err := c.stage(ctx, stage, i < len(plan)-1); err != nil {
+		if err := c.stage(ctx, stage, i < len(plan)-1); err != nil && !errors.Is(err, errStageSkipped) {
 			return err
 		}
 		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseFinished})

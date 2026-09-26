@@ -76,6 +76,9 @@ func (c *coordinator) stage(ctx context.Context, plan StagePlan, handover bool) 
 }
 
 func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
+	if len(c.servers) == 1 && c.servers[0].transport != nil {
+		c.servers[0].removed = false
+	}
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	s := &stageRun{c: c, plan: plan, ctx: stageCtx, cancel: cancel, start: make(chan struct{}),
 		seen: map[readyResource]bool{}, samples: make(chan sampledBoundary, 1)}
@@ -175,7 +178,7 @@ func (s *stageRun) handle(outcome resourceOutcome) error {
 	return nil
 }
 
-// lost ends the stage once no server is left in it.
+// lost ends the stage once no server is left in it; a sole server that measured before retries next stage.
 func (s *stageRun) lost() error {
 	c := s.c
 	if len(c.ids()) > 0 {
@@ -183,6 +186,9 @@ func (s *stageRun) lost() error {
 	}
 	if s.measuring && s.transfer() {
 		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
+	}
+	if c.hasMeasured && len(c.servers) == 1 {
+		return fmt.Errorf("%w: %w", errStageSkipped, c.failures[len(c.failures)-1].Err)
 	}
 	return c.noSurvivors()
 }
