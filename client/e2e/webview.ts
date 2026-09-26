@@ -383,9 +383,18 @@ const axeSource = resolve(
   import.meta.dir,
   "../node_modules/axe-core/axe.min.js",
 );
+// Contrast is judged on settled colours, not mid-way through a theme transition.
+function settled() {
+  const finite = document
+    .getAnimations()
+    .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity);
+  return Promise.allSettled(finite.map((animation) => animation.finished));
+}
+
 export async function seriousViolations(page: Page, selector = "document") {
   if (!(await page.evaluate("typeof axe === 'object'")))
     await page.evaluate(`(() => { ${await Bun.file(axeSource).text()} })()`);
+  await page.evaluate(settled);
   const context = selector === "document" ? selector : encode(selector);
   const result = await page.evaluate<{ violations: { impact: string }[] }>(
     `axe.run(${context}, { resultTypes: ["violations"] })`,
