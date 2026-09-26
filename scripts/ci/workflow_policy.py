@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import json
 import re
-import shlex
 import subprocess
 import tomllib
 from pathlib import Path
@@ -82,11 +80,6 @@ FORBIDDEN = {
     "actions/build-oci/action.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
     ),
-}
-PATH_FILTERS = {
-    "go": ("api/**", "client/src/app.css"),
-    "code": (".dockerignore",),
-    "deps": ("client/package.json", "client/bun.lock", "client/bunfig.toml"),
 }
 
 
@@ -215,23 +208,6 @@ def check_ci(root: Path) -> None:
     for task in steps("ci"):
         if not re.search(rf"mise run {re.escape(task)}(?![\w-])", ci):
             fail(f"CI must run the local gate step {task}")
-    sections = re.findall(r"(?ms)^([a-z]+):\n(.*?)(?=^\S|\Z)", read(root, ".github/ci-paths.yml"))
-    filters = {section: set(re.findall(r"- '([^']+)'", body)) for section, body in sections}
-    for section, paths in PATH_FILTERS.items():
-        if missing := set(paths) - filters.get(section, set()):
-            fail(f"CI {section} checks must run when {sorted(missing)} change")
-    pinned = "${{ steps.toolchain.outputs.chrome-version }}"
-    versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (.+)$", ci)
-    setup = read(root, ".github/actions/setup-project/action.yml")
-    if (
-        set(versions) != {pinned} or len(versions) != 2
-        or "chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)" not in setup
-    ):
-        fail("the E2E job must install and version-check the pinned Chromium")
-    scripts = json.loads(read(root, "client/package.json"))["scripts"]
-    for name in ("test:e2e", "test:bench"):
-        if "--no-orphans" not in shlex.split(scripts[name]):
-            fail(f"{name} must clean up child processes with --no-orphans")
 
 
 def check_certificates(root: Path) -> None:

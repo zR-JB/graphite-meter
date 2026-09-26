@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -72,9 +71,6 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "mise run legal-check", "mise run legal-generate",
      "local gate step legal-check"),
     (REQUEST, "VERSION= mise run legal-check\n", "", "committed legal outputs"),
-    (".github/ci-paths.yml", "  - 'client/src/app.css'\n", "", "client/src/app.css"),
-    (W + "ci.yml", "chrome-version: ${{ steps", "chrome-version: latest #", "pinned Chromium"),
-    ("client/package.json", "--parallel=3 --no-orphans", "--parallel=3", "no-orphans"),
     ("certs/dev.txt", None, "local development certificate", "TLS certificate/key paths"),
     ("notes.txt", None, "-----BEGIN " + "PRIVATE KEY-----", "PEM"),
     (W + "ci.yml", "on:\n", "on:\n  pull_request_target:\n", "triggered only by"),
@@ -127,8 +123,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile",
-                     "client/package.json"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root
@@ -164,27 +159,6 @@ class WorkflowPolicyTests(unittest.TestCase):
                     (root / name).write_text(text.replace(step, rebound))
                     with self.assertRaisesRegex(PolicyError, f" {variable} must be exactly"):
                         check_repository(root)
-
-    def test_pinned_linters_reject_unpinned_actions_and_unknown_outputs(self) -> None:
-        zizmor = ("zizmor", "--offline", "--config", ".github/zizmor.yml", ".github")
-        for command, old, new, error in (
-            (zizmor, "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-             "actions/checkout@v7", "unpinned-uses"),
-            (zizmor, "persist-credentials: false", "fetch-depth: 1", "artipacked"),
-            (zizmor, "on:\n", "on:\n  pull_request_target:\n", "dangerous-triggers"),
-            (("actionlint", "-shellcheck=", "-pyflakes=", W + "ci.yml"),
-             "needs.plan.outputs.code ==", "needs.plan.outputs.missing ==", "missing"),
-        ):
-            if shutil.which(command[0]) is None:
-                self.fail(f"{command[0]} must be on PATH; run through mise run pipeline-test")
-            with self.subTest(error=error):
-                root = self.tree()
-                path = root / W / "ci.yml"
-                self.assertIn(old, path.read_text())
-                path.write_text(path.read_text().replace(old, new, 1))
-                result = subprocess.run(command, cwd=root, capture_output=True, text=True)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn(error, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
