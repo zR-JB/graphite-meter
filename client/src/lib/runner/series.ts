@@ -50,6 +50,7 @@ export class LatencyPresentationBuckets {
     this.restart(startT, continuityId);
   }
 
+  /** A new presentation series from `t`, keeping the phase and bucket width. */
   restart(t: number, continuityId: number): void {
     this.#continuityId = continuityId;
     this.#pending = this.#empty(t);
