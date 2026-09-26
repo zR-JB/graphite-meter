@@ -152,7 +152,6 @@ func TestValidate(t *testing.T) {
 			passwordAuth(c)
 			c.Auth.OIDCProviderName = "Auth\xffelia"
 		}},
-		{"auth setting while off", "GM_AUTH_MODE", func(c *Config) { c.Auth.PublicURL = "https://meter.example" }},
 		{"clear public URL", "GM_AUTH_PUBLIC_URL", func(c *Config) {
 			passwordAuth(c)
 			c.Auth.PublicURL = "http://meter.example"

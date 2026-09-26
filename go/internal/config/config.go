@@ -476,8 +476,7 @@ func (c Config) validateAuth() error {
 	a := c.Auth
 	switch a.Mode {
 	case "off":
-		if a.Explicit || a.PublicURL != "" || a.passwordConfigured() || a.oidcConfigured() ||
-			a.OIDCProviderName != "Authelia" {
+		if a.Explicit {
 			return errors.New("authentication settings require GM_AUTH_MODE to be enabled")
 		}
 		return nil
