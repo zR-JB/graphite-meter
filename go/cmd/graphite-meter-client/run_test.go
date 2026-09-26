@@ -451,6 +451,35 @@ func TestLiveViewFollowsTheStage(t *testing.T) {
 	}
 }
 
+func TestIdleReadingHoldsTheLastReplyThroughTimeouts(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	probe := func(sample goclient.LatencySample) goclient.Event {
+		return goclient.Event{Kind: goclient.EventLatency, ServerID: "a", Latency: sample}
+	}
+	reply, timeout := probe(goclient.LatencySample{RTT: 12e6}), probe(goclient.LatencySample{TimedOut: true})
+	stage := func(phase goclient.Phase) goclient.Event {
+		return goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: phase}
+	}
+	for _, c := range []struct {
+		name          string
+		events        []goclient.Event
+		want, without string
+	}{
+		{"reply", []goclient.Event{stage(goclient.PhaseMeasuring), reply}, "12.0 ms", "probe timeout"},
+		{"timeouts hold the reply", []goclient.Event{timeout, timeout}, "12.0 ms  probe timeout ×2", ""},
+		{"a reply ends the streak", []goclient.Event{reply}, "12.0 ms", "probe timeout"},
+		{"a new stage starts empty", []goclient.Event{stage(goclient.PhasePreparing), stage(goclient.PhaseMeasuring)},
+			"waiting", "12.0 ms"},
+	} {
+		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: c.events}))
+		live := ansi.Strip(m.liveView(60, 16))
+		if !strings.Contains(live, c.want) || c.without != "" && strings.Contains(live, c.without) {
+			t.Errorf("%s: live view %q, want %q without %q", c.name, live, c.want, c.without)
+		}
+	}
+}
+
 func TestStageTrackFollowsStageEvents(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
@@ -644,6 +673,35 @@ func TestViewFitsTheTerminal(t *testing.T) {
 					t.Errorf("%s at %dx%d: line %d spans %d cells: %q", name, width, height, i, got, line)
 				}
 			}
+		}
+	}
+}
+
+func TestGrantsFollowTheCatalogueOrigin(t *testing.T) {
+	t.Parallel()
+	a, b := httptest.NewServer(http.NotFoundHandler()), httptest.NewServer(http.NotFoundHandler())
+	defer a.Close()
+	defer b.Close()
+	m := testModel(t)
+	if err := m.controller.AcceptAuthorization(a.URL, "grant"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		typed     string
+		presented bool
+	}{
+		{b.URL, false},
+		{strings.ToUpper(a.URL) + "/", true},
+	} {
+		m.beginEdit(catalogueRow, "")
+		for _, r := range c.typed {
+			m, _ = modelAndCmd(m.Update(press(string(r))))
+		}
+		m, _ = modelAndCmd(m.Update(press("enter")))
+		_, err := m.preparation.PrepareRun()
+		// A plain-HTTP origin refuses the grant, which shows whether one was attached.
+		if got := err != nil && strings.Contains(err.Error(), "authentication grant"); got != c.presented {
+			t.Errorf("catalogue %s: grant attached = %v, want %v (%v)", c.typed, got, c.presented, err)
 		}
 	}
 }
