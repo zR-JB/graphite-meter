@@ -57,19 +57,20 @@ func TestMeasurementRoutesDispatchOnlyTheirMethods(t *testing.T) {
 	}
 }
 
-// Public mode holds no session state, so every measurement response and preflight is open to every origin.
+// Public mode holds no session state, so every measurement response, refusal and preflight is open to every origin.
 func TestPublicMeasurementCORS(t *testing.T) {
 	mux := publicMux(t, testEndpoints(t), muxTopology{discovery: true, transfers: true}, nil)
-	for _, method := range []string{http.MethodGet, http.MethodOptions} {
+	for _, method := range []string{http.MethodPost, http.MethodOptions} {
 		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(method, "/download?bytes=1", nil)
+		req := httptest.NewRequest(method, "/upload?id=forged", nil)
 		req.Header.Set("Origin", "https://page.example")
-		req.Header.Set("Access-Control-Request-Method", http.MethodGet)
+		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 		mux.ServeHTTP(rec, req)
-		want := map[string]string{"Access-Control-Allow-Origin": "*", "Timing-Allow-Origin": "*"}
+		want := map[string]string{"Access-Control-Allow-Origin": "*", "Timing-Allow-Origin": "*",
+			"Access-Control-Expose-Headers": "X-Graphite-Upload-Refusal, Retry-After", "X-Graphite-Upload-Refusal": "invalid"}
 		if method == http.MethodOptions {
-			want["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-			want["Access-Control-Allow-Headers"] = "*"
+			want = map[string]string{"Access-Control-Allow-Origin": "*", "Access-Control-Max-Age": "7200",
+				"Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "Access-Control-Allow-Headers": "*"}
 			if rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 				t.Errorf("preflight = %d with %d body bytes, want an empty 204", rec.Code, rec.Body.Len())
 			}

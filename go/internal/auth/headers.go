@@ -11,8 +11,10 @@ import (
 
 const (
 	measurementMethods = "GET, POST, DELETE, OPTIONS"
-	authExposed        = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL"
+	refusalExposed     = "X-Graphite-Upload-Refusal, Retry-After"
+	authExposed        = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, " + refusalExposed
 	hstsThisHostOnly   = "max-age=31536000"
+	preflightMaxAge    = "7200"
 )
 
 var appScriptHash = static.AppScriptCSPHash()
@@ -108,6 +110,7 @@ func allowBearerPreflight(w http.ResponseWriter, origin, methods, headers string
 	bearerCORS(w.Header(), origin)
 	w.Header().Set("Access-Control-Allow-Methods", methods)
 	w.Header().Set("Access-Control-Allow-Headers", headers)
+	w.Header().Set("Access-Control-Max-Age", preflightMaxAge)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -137,10 +140,12 @@ func allowedCORSMethod(path, method string) bool {
 func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 	if !s.Enabled() {
 		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Access-Control-Expose-Headers", refusalExposed)
 		h.Set("Timing-Allow-Origin", "*")
 		if r.Method == http.MethodOptions {
 			h.Set("Access-Control-Allow-Methods", measurementMethods)
 			h.Set("Access-Control-Allow-Headers", "*")
+			h.Set("Access-Control-Max-Age", preflightMaxAge)
 		}
 		return
 	}
@@ -158,6 +163,7 @@ func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
 		if r.Method == http.MethodOptions {
 			h.Set("Access-Control-Allow-Methods", measurementMethods)
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
+			h.Set("Access-Control-Max-Age", preflightMaxAge)
 		}
 	case !authenticated && isMeasurementRoute(r.URL.Path):
 		if canonical, valid := secureBrowserOrigin(origin); valid {
