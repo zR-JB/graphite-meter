@@ -31,9 +31,10 @@ pub fn generate_identity() -> Result<(String, String), Box<dyn std::error::Error
         .into());
     }
     let pem = String::from_utf8(output.stdout)?;
-    let start = pem
-        .find("-----BEGIN CERTIFICATE-----")
-        .ok_or("test identity has no certificate")?;
-    let (key, certificate) = pem.split_at(start);
+    let key_end = pem
+        .find("-----END ")
+        .and_then(|end| pem[end..].find('\n').map(|line| end + line + 1))
+        .ok_or("test identity has no key")?;
+    let (key, certificate) = pem.split_at(key_end);
     Ok((certificate.to_owned(), key.to_owned()))
 }
