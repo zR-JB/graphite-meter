@@ -98,8 +98,35 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 	}))
 	defer redirect.Close()
 	cfg.BaseURL = redirect.URL
-	if _, err := prepareRun(t.Context(), cfg, nil, nil); err == nil {
-		t.Fatal("catalogue redirect changed operator")
+	reads := a.catalogReads.Load()
+	if _, err := prepareRun(t.Context(), cfg, nil, nil); err == nil || a.catalogReads.Load() != reads {
+		t.Fatalf("catalogue redirect reached another operator: %v", err)
+	}
+}
+
+// Each selected server is prepared with its own grant, never the catalogue's or a peer's.
+func TestPreparedServersCarryOnlyTheirOwnGrant(t *testing.T) {
+	t.Parallel()
+	a := coordinatedFixture(t, "a")
+	grants := map[string]string{"https://127.0.0.1:1": "grant-b", "https://127.0.0.1:2": "grant-c"}
+	a.catalog = wire.ServerCatalog{
+		DefaultSelection: []string{"self", "b", "c"},
+		Servers: []wire.ServerEntry{
+			{ID: "self", URL: ".", Name: "A"},
+			{ID: "b", URL: "https://127.0.0.1:1", Name: "B"},
+			{ID: "c", URL: "https://127.0.0.1:2", Name: "C"},
+		},
+	}
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Download: true}
+	prepared, _ := prepareRun(t.Context(), cfg, nil, grants)
+	if prepared == nil || len(prepared.Servers) != 3 {
+		t.Fatalf("prepared %+v, want all three selected servers", prepared)
+	}
+	for _, server := range prepared.Servers {
+		if got := server.config.grant; got != grants[server.Server.URL] {
+			t.Errorf("%s prepared with grant %q, want %q", server.Server.ID, got, grants[server.Server.URL])
+		}
 	}
 }
 

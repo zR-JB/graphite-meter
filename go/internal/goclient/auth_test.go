@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -67,15 +68,21 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 			t.Fatalf("%s: authorization=%q, %v", target, seen, err)
 		}
 	}
-	for _, target := range []string{
-		"https://meter.example:9443/probe",
-		"https://other.example/probe",
-		"https://cdn.example/probe",
-		"http://meter.example/probe",
+	for _, origin := range []string{
+		"https://meter.example:9443",
+		"https://other.example",
+		"https://cdn.example",
+		"https://evil-meter.example",
+		"https://meter.example.evil.example",
+		"http://meter.example",
 	} {
-		bad, _ := http.NewRequest("GET", target, nil)
+		bad, _ := http.NewRequest("GET", origin+"/probe", nil)
 		if _, err := client.Do(bad); err == nil {
-			t.Fatalf("grant sent to %s outside the server's advertised HTTPS origins", target)
+			t.Fatalf("grant sent to %s outside the server's advertised HTTPS origins", origin)
+		}
+		if _, err := wtDial(t.Context(), cfg, origin, "/wt/ping", nil); err == nil ||
+			!strings.Contains(err.Error(), "refusing") {
+			t.Fatalf("WebTransport grant toward %s: %v", origin, err)
 		}
 	}
 }
@@ -199,5 +206,66 @@ func TestPollRejectsMalformedSuccessfulApproval(t *testing.T) {
 		if _, err := approval.Poll(t.Context()); err == nil {
 			t.Fatal("accepted malformed approval")
 		}
+	}
+}
+
+// A redirected approval poll would re-send the verifier wherever the redirect points.
+func TestApprovalPollNeverFollowsARedirect(t *testing.T) {
+	t.Parallel()
+	cfg := DefaultConfig()
+	cfg.BaseURL = "https://meter.example"
+	pending, err := beginAuthorization(cfg, "https://meter.example/login")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hosts []string
+	pending.client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		hosts = append(hosts, r.URL.Host)
+		return &http.Response{
+			StatusCode: http.StatusTemporaryRedirect,
+			Body:       io.NopCloser(strings.NewReader("")),
+			Header:     http.Header{"Location": {"https://collector.example/auth/cli/token"}},
+			Request:    r,
+		}, nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := pending.Poll(ctx); err == nil {
+		t.Fatal("a redirected poll returned a grant")
+	}
+	if !slices.Equal(hosts, []string{"meter.example"}) {
+		t.Fatalf("poll requests reached %v, want only the issuer", hosts)
+	}
+}
+
+func TestAuthenticatedPreparationRequiresVerifiedHTTPS(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		base     string
+		insecure bool
+	}{{"http://127.0.0.1:1", false}, {"https://127.0.0.1:1", true}} {
+		cfg := DefaultConfig()
+		cfg.BaseURL, cfg.InsecureSkipTLSVerify, cfg.grant = tc.base, tc.insecure, "secret"
+		if _, err := prepare(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "verified HTTPS") {
+			t.Fatalf("prepare %s insecure=%t with a grant: %v", tc.base, tc.insecure, err)
+		}
+	}
+}
+
+func TestAcceptAuthorizationKeysGrantsByCanonicalOrigin(t *testing.T) {
+	t.Parallel()
+	c := NewController(t.Context())
+	defer c.Close()
+	for _, origin := range []string{"https://Meter.example", "https://meter.example:443", "https://meter.example/",
+		"meter.example"} {
+		if err := c.AcceptAuthorization(origin, "grant"); err == nil {
+			t.Errorf("accepted a grant for the non-canonical origin %q", origin)
+		}
+	}
+	if err := c.AcceptAuthorization("https://meter.example", "grant"); err != nil {
+		t.Fatal(err)
+	}
+	if _, grants := c.snapshot(); len(grants) != 1 || grants["https://meter.example"] != "grant" {
+		t.Fatalf("grants = %v, want one under the canonical origin", grants)
 	}
 }
