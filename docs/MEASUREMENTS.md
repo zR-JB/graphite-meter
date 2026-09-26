@@ -78,8 +78,7 @@ server never retargets probes or changes saved statistics. The native client pro
 A hidden run continues: workers keep timing bytes and probes while page timers may be throttled. The schedule still
 enters every warmup and stage in order; one late tick never skips past the current segment. A timer gap over 1.5 s
 starts a new interval and restarts stability confirmation, so no headline or early finish spans the gap; a stage
-whose remaining evidence is too short fails. The native client applies the same limit to its own sampler: a gap
-over 1.75 s between sampled boundaries starts a new interval.
+whose remaining evidence is too short fails. Native stages apply the same limit to their sampler (below).
 
 ## Latency probing
 
