@@ -52,7 +52,12 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 		}
 		agg, _ := store.getOrCreateFor(id, "192.0.2.1")
 		agg.recordChunk(store.now(), 8192)
-		touch := agg.lastTouchMono.Load()
+		touched := func() int64 {
+			store.mu.Lock()
+			defer store.mu.Unlock()
+			return agg.lastTouch
+		}
+		touch := touched()
 		if w := checkpoint("192.0.2.2"); w.Code != http.StatusForbidden {
 			t.Fatal("checkpoint exposed another owner's bytes")
 		}
@@ -70,7 +75,7 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 					step+1)
 			}
 		}
-		if agg.lastTouchMono.Load() != touch {
+		if touched() != touch {
 			t.Fatal("checkpoint extended the receiver's lifetime")
 		}
 	})

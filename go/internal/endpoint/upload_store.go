@@ -22,7 +22,7 @@ import (
 type uploadAgg struct {
 	bytes          atomic.Int64 // drained bytes across all of this id's lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // the sweeper's idle clock
+	lastTouch      int64        // mono ns a lane last joined or left: the sweeper's idle clock
 	client         uploadClient
 	lanes          int
 	lanesChanged   chan struct{} // closed and replaced on every change: a broadcast
@@ -36,7 +36,6 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 		a.firstChunkMono.CompareAndSwap(0, now)
 	}
 	a.bytes.Add(int64(n))
-	a.lastTouchMono.Store(now)
 }
 
 func (a *uploadAgg) isFinished() bool {
@@ -60,6 +59,7 @@ func (u *Upload) leave(a *uploadAgg) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	a.setLanesLocked(a.lanes - 1)
+	a.lastTouch = u.now()
 }
 
 func (u *Upload) claimFeed(a *uploadAgg) chan struct{} {
@@ -184,7 +184,7 @@ func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, up
 				return nil, uploadAccessInvalid
 			}
 			agg.setLanesLocked(agg.lanes + 1)
-			agg.lastTouchMono.Store(u.now())
+			agg.lastTouch = u.now()
 		}
 		return agg, uploadAccessOK
 	}
@@ -201,7 +201,7 @@ func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, up
 		u.byClient[key]++
 	}
 	agg = &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), client: c}
-	agg.lastTouchMono.Store(u.now())
+	agg.lastTouch = u.now()
 	u.receivers[id] = agg
 	if join {
 		agg.lanes = 1
@@ -218,9 +218,8 @@ func (u *Upload) evictEmptyLocked() bool {
 	victim := ""
 	var oldest int64
 	for id, agg := range u.receivers {
-		touched := agg.lastTouchMono.Load()
-		if agg.lanes == 0 && agg.bytes.Load() == 0 && !agg.isFinished() && (victim == "" || touched < oldest) {
-			victim, oldest = id, touched
+		if agg.lanes == 0 && agg.bytes.Load() == 0 && !agg.isFinished() && (victim == "" || agg.lastTouch < oldest) {
+			victim, oldest = id, agg.lastTouch
 		}
 	}
 	if victim != "" {
@@ -270,7 +269,7 @@ func (u *Upload) sweep(ttl time.Duration) {
 	defer u.mu.Unlock()
 	maps.DeleteFunc(u.evicted, func(_ string, until int64) bool { return until < now })
 	for id, agg := range u.receivers {
-		if agg.lanes == 0 && agg.lastTouchMono.Load() < cutoff {
+		if agg.lanes == 0 && agg.lastTouch < cutoff {
 			u.expireLocked(id)
 		}
 	}
