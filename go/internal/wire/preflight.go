@@ -128,7 +128,9 @@ func targetOrigin(raw string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) > 2048 || !SafeText(raw) || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(raw, "#\\ \t\r\n") {
+	if len(raw) > 2048 || !SafeText(raw) || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" ||
+		u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
+		strings.ContainsAny(raw, "#\\ \t\r\n") {
 		return nil, fmt.Errorf("target baseUrl must be an HTTP(S) origin")
 	}
 	if port := u.Port(); port != "" {

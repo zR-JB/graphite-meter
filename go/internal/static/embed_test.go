@@ -111,7 +111,8 @@ func TestShellMetadata(t *testing.T) {
 		if strings.Contains(shell, "graphite-meter-auth") != tc.authenticated {
 			t.Errorf("authenticated=%t shell = %q", tc.authenticated, shell)
 		}
-		if asset := serve(h, http.MethodGet, "/assets/app.js").Body.String(); strings.Contains(asset, "graphite-meter") {
+		asset := serve(h, http.MethodGet, "/assets/app.js").Body.String()
+		if strings.Contains(asset, "graphite-meter") {
 			t.Errorf("asset was marked: %q", asset)
 		}
 	}

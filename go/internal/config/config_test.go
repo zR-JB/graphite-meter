@@ -47,9 +47,12 @@ func TestLoad(t *testing.T) {
 		{"budgets and durations", map[string]string{
 			"GM_MAX_ACTIVE_SESSIONS": "40", "GM_MAX_OPERATION_DURATION": "90s", "GM_MAX_SESSION_DURATION": "3h",
 		}, func(c Config) bool {
-			return c.MaxActiveSessions == 40 && c.MaxOperationDuration == 90*time.Second && c.MaxSessionDuration == 3*time.Hour
+			return c.MaxActiveSessions == 40 && c.MaxOperationDuration == 90*time.Second &&
+				c.MaxSessionDuration == 3*time.Hour
 		}},
-		{"explicit off mode", map[string]string{"GM_AUTH_MODE": "off"}, func(c Config) bool { return !c.Auth.Explicit }},
+		{"explicit off mode", map[string]string{"GM_AUTH_MODE": "off"}, func(c Config) bool {
+			return !c.Auth.Explicit
+		}},
 		{"invalid boolean", map[string]string{"GM_RESULT_HISTORY_DEFAULT": "not-a-bool"}, nil},
 		{"unknown native endpoint", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": "fictional"}, nil},
 		{"IPv4 default route", map[string]string{"GM_TRUSTED_PROXIES": "0.0.0.0/0"}, nil},

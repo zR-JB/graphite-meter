@@ -39,7 +39,8 @@ func (c ServerCatalog) Validate() error {
 	ids, origins := map[string]bool{}, map[string]bool{}
 	for _, entry := range c.Servers {
 		if len(entry.ID) == 0 || len(entry.ID) > 64 || strings.ContainsFunc(entry.ID, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-')
+			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+				r == '.' || r == '_' || r == '-')
 		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name+entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}

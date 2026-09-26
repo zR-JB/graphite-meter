@@ -251,7 +251,9 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 		"h1 tls": func(t *testing.T, cfg *config.Config) net.Conn {
 			return dialTLS(t, cfg.Native.H1TLS, "http/1.1")
 		},
-		"h3 companion": func(t *testing.T, cfg *config.Config) net.Conn { return dialTLS(t, cfg.Native.H3, "http/1.1") },
+		"h3 companion": func(t *testing.T, cfg *config.Config) net.Conn {
+			return dialTLS(t, cfg.Native.H3, "http/1.1")
+		},
 	}
 	for listener, dial := range dialers {
 		for stall, hold := range stalls {
@@ -291,8 +293,8 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 func slotServer(t *testing.T, timeout time.Duration) (*config.Config, *listenerBuild) {
 	t.Helper()
 	return startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
-		cfg.Native.H1, cfg.Native.H1TLS, cfg.Native.H2 = sockets.reserveTCP(), sockets.reserveTCP(), sockets.reserveTCP()
-		cfg.Native.H3 = sockets.reserveH3()
+		cfg.Native.H1, cfg.Native.H1TLS = sockets.reserveTCP(), sockets.reserveTCP()
+		cfg.Native.H2, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
 	}, func(e *endpoints) { e.controlTimeout = timeout })
 }
 

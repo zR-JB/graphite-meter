@@ -29,7 +29,8 @@ func TestTextPolicyKeepsTerminalControlsOut(t *testing.T) {
 
 func TestUploadRefusalDetailIsCleanedAtDecode(t *testing.T) {
 	t.Parallel()
-	event, err := DecodeUploadProgress([]byte(`{"type":"error","message":"busy\u001b]52;c;eA==\u0007","code":"x\u009b2J"}`))
+	event, err := DecodeUploadProgress(
+		[]byte(`{"type":"error","message":"busy\u001b]52;c;eA==\u0007","code":"x\u009b2J"}`))
 	if err != nil || event.Message != "busy ]52;c;eA== " || event.Code != "x 2J" {
 		t.Fatalf("refusal = %+v, %v", event, err)
 	}

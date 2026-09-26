@@ -553,7 +553,7 @@ func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
 	for {
 		if _, err := lane.Write(block); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				t.Fatal("a refused upload lane was left open: the client parked on flow control instead of seeing the reset")
+				t.Fatal("a refused upload lane stayed open: the client parked on flow control, not the reset")
 			}
 			break
 		}
