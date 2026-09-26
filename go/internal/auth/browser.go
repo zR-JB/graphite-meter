@@ -31,9 +31,13 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	client, ok := s.approvalClient(r)
+	if !ok {
+		forbidden(w)
+		return
+	}
 	now := time.Now()
 	s.mu.Lock()
-	s.pruneApprovalsLocked(nil, now)
 	a := s.approvals[challenge]
 	s.mu.Unlock()
 	if a == nil && !s.allowBrowserApproval(r) {
@@ -41,10 +45,11 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	_, clientRoom := s.approvalRoomLocked(nil, client, now)
 	a = s.approvals[challenge]
-	if a == nil && len(s.approvals) < maxApprovals {
+	if a == nil && clientRoom {
 		a = &cliApproval{code: verificationCode(challenge), expires: now.Add(approvalLifetime),
-			browserOrigin: clientOrigin}
+			browserOrigin: clientOrigin, client: client}
 		s.approvals[challenge] = a
 	}
 	valid = a != nil && a.browserOrigin == clientOrigin
@@ -66,8 +71,8 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	count := s.pruneApprovalsLocked(p.session, now)
-	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && count < maxSessionApprovals)
+	sessionRoom, _ := s.approvalRoomLocked(p.session, client, now)
+	valid = s.approvals[challenge] == a && (a.session == p.session || a.session == nil && sessionRoom)
 	if valid {
 		a.session = p.session
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -198,6 +199,33 @@ func finishOIDC(s *Service, state string, cookie *http.Cookie, query string) *ht
 	rr := httptest.NewRecorder()
 	s.oidcCallback(rr, r)
 	return rr
+}
+
+// One client holds at most its share of pending sign-ins, so it cannot exhaust the transaction table.
+func TestOIDCTransactionsAreBoundedPerClient(t *testing.T) {
+	s := newFakeOIDC(t).service(t)
+	start := func(remote string) string {
+		const csrf = "abcdefghijklmnopqrstuvwxyz0123456789"
+		r := secureRequest(http.MethodPost, "/auth/oidc/start", strings.NewReader("csrf="+csrf))
+		r.RemoteAddr = remote
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", s.origin)
+		r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
+		rr := httptest.NewRecorder()
+		s.oidcStart(rr, r)
+		return rr.Header().Get("Location")
+	}
+	for i := range maxClientOIDCTransactions {
+		if location := start(fmt.Sprintf("[2001:db8:1:2::%x]:40000", i)); strings.HasPrefix(location, "/login") {
+			t.Fatalf("sign-in %d refused: %s", i, location)
+		}
+	}
+	if location := start("[2001:db8:1:2::ff]:40000"); location != "/login?error=busy" {
+		t.Fatalf("sign-in over the client's share = %q, want a busy refusal", location)
+	}
+	if location := start("[2001:db8:1:3::1]:40000"); strings.HasPrefix(location, "/login") {
+		t.Fatalf("another client was refused: %s", location)
+	}
 }
 
 func TestOIDCLoginSecurityChecks(t *testing.T) {

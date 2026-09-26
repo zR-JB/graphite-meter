@@ -374,13 +374,14 @@ func TestBrowserGrantCapacityOffersExplicitLoginRenewal(t *testing.T) {
 	}
 }
 
-func TestPublicBrowserApprovalPagesCannotSpendOIDCExchangeBudget(t *testing.T) {
+// Public approval pages spend neither another client's share of the approval table nor the OIDC callback budget.
+func TestPublicBrowserApprovalPagesAreBoundedPerClient(t *testing.T) {
 	s := testService(t)
 	mux := http.NewServeMux()
 	s.Mount(mux)
 	handler := s.Enforce(mux, Listener{UI: true})
-	const remote = "198.51.100.4:40000"
-	for i := range maxAddressApprovals + 1 {
+	const remote = "[2001:db8:1:2::4]:40000"
+	request := func(i int, remote string) int {
 		challenge := make([]byte, 32)
 		challenge[0] = byte(i)
 		path := "/auth/browser?" + url.Values{"challenge": {base64.RawURLEncoding.EncodeToString(challenge)},
@@ -391,13 +392,19 @@ func TestPublicBrowserApprovalPagesCannotSpendOIDCExchangeBudget(t *testing.T) {
 		r.Header.Set("Sec-Fetch-Dest", "image")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := range maxAddressApprovals + 1 {
 		want := http.StatusSeeOther
-		if i == maxAddressApprovals {
+		if i >= maxClientApprovals {
 			want = http.StatusForbidden
 		}
-		if w.Code != want {
-			t.Fatalf("public approval request %d status=%d, want %d", i, w.Code, want)
+		if got := request(i, remote); got != want {
+			t.Fatalf("public approval request %d status=%d, want %d", i, got, want)
 		}
+	}
+	if len(s.approvals) != maxClientApprovals || request(99, "[2001:db8:1:3::4]:40000") != http.StatusSeeOther {
+		t.Fatalf("one /64 holds %d approvals and another was refused", len(s.approvals))
 	}
 	for range maxAddressExchanges {
 		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", remote)) {

@@ -10,17 +10,21 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 const (
 	maxApprovals        = 256
 	maxSessionApprovals = 8
+	maxClientApprovals  = 8
 	maxSessionGrants    = 8
 	approvalLifetime    = 2 * time.Minute
 )
 
 type cliApproval struct {
 	browserOrigin string
+	client        string
 	code          string
 	session       *session
 	expires       time.Time
@@ -61,15 +65,24 @@ func loginRedirect(w http.ResponseWriter, r *http.Request, challenge string) {
 	http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
 }
 
-func (s *Service) pruneApprovalsLocked(sess *session, now time.Time) int {
+// approvalRoomLocked prunes expired approvals and reports whether sess and client may start another.
+func (s *Service) approvalRoomLocked(sess *session, client string, now time.Time) (bool, bool) {
 	maps.DeleteFunc(s.approvals, func(_ string, a *cliApproval) bool { return !now.Before(a.expires) })
-	count := 0
+	bySession, byClient := 0, 0
 	for a := range maps.Values(s.approvals) {
 		if a.session == sess {
-			count++
+			bySession++
+		}
+		if a.client == client {
+			byClient++
 		}
 	}
-	return count
+	return bySession < maxSessionApprovals, byClient < maxClientApprovals && len(s.approvals) < maxApprovals
+}
+
+func (s *Service) approvalClient(r *http.Request) (string, bool) {
+	addr, ok := s.authClientAddress(r)
+	return transport.AddressBucket(addr), ok
 }
 
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
@@ -88,18 +101,23 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, challenge)
 		return
 	}
+	client, ok := s.approvalClient(r)
+	if !ok {
+		forbidden(w)
+		return
+	}
 	now := time.Now()
 	s.mu.Lock()
-	count := s.pruneApprovalsLocked(p.session, now)
+	sessionRoom, clientRoom := s.approvalRoomLocked(p.session, client, now)
 	approval := s.approvals[challenge]
 	if approval == nil {
-		if len(s.approvals) >= maxApprovals || count >= maxSessionApprovals {
+		if !sessionRoom || !clientRoom {
 			s.mu.Unlock()
 			s.count(countCapacity)
 			forbidden(w)
 			return
 		}
-		approval = &cliApproval{code: verificationCode(challenge), session: p.session,
+		approval = &cliApproval{code: verificationCode(challenge), session: p.session, client: client,
 			expires: now.Add(approvalLifetime)}
 		s.approvals[challenge] = approval
 	}
