@@ -29,7 +29,8 @@ type ServerCatalog struct {
 }
 
 func SingletonCatalog() ServerCatalog {
-	return ServerCatalog{DefaultSelection: []string{"self"}, Servers: []ServerEntry{{ID: "self", URL: ".", Name: "graphite-meter"}}}
+	return ServerCatalog{DefaultSelection: []string{"self"},
+		Servers: []ServerEntry{{ID: "self", URL: ".", Name: "graphite-meter"}}}
 }
 
 func (c ServerCatalog) Validate() error {
@@ -38,16 +39,21 @@ func (c ServerCatalog) Validate() error {
 	}
 	ids, origins := map[string]bool{}, map[string]bool{}
 	for _, entry := range c.Servers {
-		if len(entry.ID) == 0 || len(entry.ID) > 64 || strings.ContainsFunc(entry.ID, func(r rune) bool {
-			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-')
-		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !plainText(entry.Name+entry.Location) {
+		idRune := func(r rune) bool {
+			return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
+				strings.ContainsRune("._-", r)
+		}
+		if len(entry.ID) == 0 || len(entry.ID) > 64 ||
+			strings.ContainsFunc(entry.ID, func(r rune) bool { return !idRune(r) }) ||
+			len(entry.Name) > 256 || len(entry.Location) > 256 || !plainText(entry.Name+entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}
 		if ids[entry.ID] || origins[origin.Key(entry.URL)] {
 			return fmt.Errorf("duplicate catalogue server %q", entry.ID)
 		}
 		ids[entry.ID], origins[origin.Key(entry.URL)] = true, true
-		if _, err := CanonicalOrigin(entry.URL); (err != nil && entry.URL != ".") || entry.URL == "." && entry.ID != "self" {
+		_, err := CanonicalOrigin(entry.URL)
+		if entry.URL == "." && entry.ID != "self" || entry.URL != "." && err != nil {
 			return fmt.Errorf("invalid catalogue origin for %q", entry.ID)
 		}
 		if len(entry.AdditionalOrigins) > 32 {
@@ -111,17 +117,17 @@ func (s ServerEntry) ValidateDiscovery(p Preflight) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
+	var origins []string
 	for _, t := range p.Capabilities.ThroughputTargets {
-		if !s.AllowsOrigin(t.Origin) {
-			return fmt.Errorf("server %q advertised an unapproved throughput origin", s.ID)
-		}
+		origins = append(origins, t.Origin)
 	}
 	for _, t := range p.Capabilities.LatencyTargets {
-		if !s.AllowsOrigin(t.Origin) {
-			return fmt.Errorf("server %q advertised an unapproved latency origin", s.ID)
-		}
+		origins = append(origins, t.Origin)
 	}
-	return nil
+	if !slices.ContainsFunc(origins, func(o string) bool { return !s.AllowsOrigin(o) }) {
+		return nil
+	}
+	return fmt.Errorf("server %q advertised an unapproved target origin", s.ID)
 }
 
 // ConnectSources admits the configured hostname's transport ports, never subdomains.

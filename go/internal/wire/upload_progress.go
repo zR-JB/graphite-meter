@@ -67,7 +67,8 @@ func DecodeUploadProgress(data []byte) (UploadProgress, error) {
 		for name, dst := range map[string]*uint64{"bytes": &event.Bytes, "nanos": &event.Nanos} {
 			value := raw[name]
 			var number float64
-			if value.Kind() != '0' || json.Unmarshal(value, &number) != nil || number < 0 || number > maxUploadCounter || math.Trunc(number) != number {
+			if value.Kind() != '0' || json.Unmarshal(value, &number) != nil || number < 0 ||
+				number > maxUploadCounter || math.Trunc(number) != number {
 				return UploadProgress{}, errors.New("invalid upload progress counter")
 			}
 			*dst = uint64(number) // bounded above by the largest exact JSON integer

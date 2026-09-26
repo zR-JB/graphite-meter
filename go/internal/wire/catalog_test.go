@@ -9,8 +9,10 @@ import (
 func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 	c := SingletonCatalog()
 	c.Servers = append(c.Servers,
-		ServerEntry{ID: "ipv6", Name: "IPv6", URL: "https://[2001:db8::1]", AdditionalOrigins: []string{"https://bulk.example:7249"}},
-		ServerEntry{ID: "dns", Name: "DNS", URL: "https://meter.example", AdditionalOrigins: []string{"https://[2001:db8::2]:7248"}},
+		ServerEntry{ID: "ipv6", Name: "IPv6", URL: "https://[2001:db8::1]",
+			AdditionalOrigins: []string{"https://bulk.example:7249"}},
+		ServerEntry{ID: "dns", Name: "DNS", URL: "https://meter.example",
+			AdditionalOrigins: []string{"https://[2001:db8::2]:7248"}},
 	)
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
@@ -19,19 +21,24 @@ func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 	if strings.Contains(strings.Join(sources, " "), "[") {
 		t.Fatalf("IPv6 literal leaked into CSP sources: %v", sources)
 	}
-	for _, source := range []string{"https://meter.example:*", "wss://meter.example:*", "https://bulk.example:7249", "wss://bulk.example:7249"} {
+	for _, source := range []string{"https://meter.example:*", "wss://meter.example:*", "https://bulk.example:7249",
+		"wss://bulk.example:7249"} {
 		if !slices.Contains(sources, source) {
 			t.Fatalf("missing configured DNS source %s: %v", source, sources)
 		}
 	}
-	if !c.Servers[1].AllowsOrigin("https://[2001:db8::1]:7249") || !c.Servers[2].AllowsOrigin("https://[2001:db8::2]:7248") {
+	if !c.Servers[1].AllowsOrigin("https://[2001:db8::1]:7249") ||
+		!c.Servers[2].AllowsOrigin("https://[2001:db8::2]:7248") {
 		t.Fatal("browser CSP filtering altered the native discovery boundary")
 	}
 }
 
 func TestCatalogDiscoveryBoundary(t *testing.T) {
 	s := ServerEntry{URL: "https://meter.example", AdditionalOrigins: []string{"https://transfer.example:7248"}}
-	for raw, want := range map[string]bool{".": true, "https://meter.example:7249": true, "https://transfer.example:7248": true, "https://transfer.example:7247": false, "https://sub.meter.example": false, "http://meter.example": true, "https://user@meter.example": false, "https://meter.example/path": false} {
+	for raw, want := range map[string]bool{".": true, "https://meter.example:7249": true,
+		"https://transfer.example:7248": true, "https://transfer.example:7247": false,
+		"https://sub.meter.example": false, "http://meter.example": true, "https://user@meter.example": false,
+		"https://meter.example/path": false} {
 		if got := s.AllowsOrigin(raw); got != want {
 			t.Errorf("AllowsOrigin(%q)=%v, want %v", raw, got, want)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ type ServerInfo struct {
 
 // Capabilities lists the measurement targets a server offers.
 type Capabilities struct {
-	UploadCheckpoint  bool               `json:"uploadCheckpoint,omitempty"`
+	UploadCheckpoint  bool               `json:"uploadCheckpoint,omitzero"`
 	ThroughputTargets []ThroughputTarget `json:"throughput"`
 	LatencyTargets    []LatencyTarget    `json:"latency"`
 }
@@ -80,8 +81,9 @@ type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
 		Probe: route.Probe, Download: route.Download, Upload: route.Upload,
-		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress, UploadCheckpoint: route.UploadCheckpoint,
-		WTSession: route.WTSession, WTDownload: route.WTDownload, WTUpload: route.WTUpload,
+		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress,
+		UploadCheckpoint: route.UploadCheckpoint,
+		WTSession:        route.WTSession, WTDownload: route.WTDownload, WTUpload: route.WTUpload,
 	}
 }
 
@@ -101,16 +103,17 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	u, err := targetOrigin(raw.BaseURL)
-	if err != nil {
+	switch {
+	case err != nil:
 		return err
-	}
-	if raw.Transport != TransportFetchStream && raw.Transport != TransportWebTransport && raw.Transport != TransportWebTransportDatagram {
+	case !slices.Contains([]string{TransportFetchStream, TransportWebTransport, TransportWebTransportDatagram},
+		raw.Transport):
 		return fmt.Errorf("unsupported throughput transport %q", raw.Transport)
-	}
-	if raw.Protocol != "http1" && raw.Protocol != "http2" && raw.Protocol != "http3" && raw.Protocol != "negotiated" {
+	case !slices.Contains([]string{"http1", "http2", "http3", "negotiated"}, raw.Protocol):
 		return fmt.Errorf("unsupported throughput protocol %q", raw.Protocol)
 	}
-	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol, DefaultThroughputRoutes()
+	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol,
+		DefaultThroughputRoutes()
 	t.TLS = u.Scheme == "https"
 	return nil
 }
@@ -125,17 +128,15 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	u, err := targetOrigin(raw.BaseURL)
-	if err != nil {
+	protocol := map[string]string{TransportWebSocket: "http1", TransportWebTransport: "http3"}[raw.Transport]
+	switch {
+	case err != nil:
 		return err
-	}
-	if raw.Transport != TransportWebSocket && raw.Transport != TransportWebTransport {
+	case protocol == "":
 		return fmt.Errorf("unsupported latency transport %q", raw.Transport)
 	}
-	protocol := "http1"
-	if raw.Transport == TransportWebTransport {
-		protocol = "http3"
-	}
-	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, protocol, DefaultLatencyRoutes()
+	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, protocol,
+		DefaultLatencyRoutes()
 	t.TLS = u.Scheme == "https"
 	return nil
 }
@@ -164,7 +165,8 @@ func targetOrigin(raw string) (*url.URL, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(raw) > 2048 || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(raw, "#\\ \t\r\n") {
+	if len(raw) > 2048 || u.Scheme != "http" && u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.ContainsAny(raw, "#\\ \t\r\n") {
 		return nil, fmt.Errorf("target baseUrl must be an HTTP(S) origin")
 	}
 	if port := u.Port(); port != "" {
@@ -183,7 +185,8 @@ func (p Preflight) Validate() error {
 		!plainText(p.Server.Name+p.Server.Location+p.EngineVersion+p.Generation) {
 		return fmt.Errorf("invalid discovery metadata")
 	}
-	if p.Capabilities.ThroughputTargets == nil || p.Capabilities.LatencyTargets == nil || len(p.Capabilities.ThroughputTargets) > 32 || len(p.Capabilities.LatencyTargets) > 32 {
+	throughput, latency := p.Capabilities.ThroughputTargets, p.Capabilities.LatencyTargets
+	if throughput == nil || latency == nil || len(throughput) > 32 || len(latency) > 32 {
 		return fmt.Errorf("invalid discovery target lists")
 	}
 	return nil
@@ -191,7 +194,9 @@ func (p Preflight) Validate() error {
 
 // Validate checks protocol evidence and optional occupancy without deriving measurements.
 func (p Probe) Validate() error {
-	if len(p.ClientIP) == 0 || len(p.ClientIP) > 64 || (p.ClientIPVersion != 4 && p.ClientIPVersion != 6) || (p.ClientIPSource != "socket" && p.ClientIPSource != "forwarded") || (p.ProtocolNegotiated != "http/1.1" && p.ProtocolNegotiated != "h2" && p.ProtocolNegotiated != "h3") {
+	if len(p.ClientIP) == 0 || len(p.ClientIP) > 64 || p.ClientIPVersion != 4 && p.ClientIPVersion != 6 ||
+		p.ClientIPSource != "socket" && p.ClientIPSource != "forwarded" ||
+		!slices.Contains([]string{"http/1.1", "h2", "h3"}, p.ProtocolNegotiated) {
 		return fmt.Errorf("invalid probe evidence")
 	}
 	if p.Load != nil && (p.Load.Active < 0 || p.Load.Max < 1) {
