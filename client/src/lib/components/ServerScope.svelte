@@ -50,6 +50,29 @@
     font: var(--w-strong) var(--type-xs) / 1.3 var(--font-sans);
     text-overflow: ellipsis;
   }
+  @supports (appearance: base-select) {
+    .server-scope,
+    .server-scope::picker(select) {
+      appearance: base-select;
+    }
+    .server-scope::picker(select) {
+      margin-block: 4px;
+      padding: var(--space-1);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--r-chrome);
+      background: var(--surface-1);
+      box-shadow: var(--elev-float);
+    }
+    option {
+      padding: 6px var(--space-2);
+      border-radius: var(--r-well);
+      font: var(--w-strong) var(--type-xs) / 1.3 var(--font-sans);
+    }
+    option:checked {
+      background: var(--brand-soft);
+      color: var(--brand-strong);
+    }
+  }
   @media (pointer: coarse) {
     .server-scope {
       min-height: var(--hit);

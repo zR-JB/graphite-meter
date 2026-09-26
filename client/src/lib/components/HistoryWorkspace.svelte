@@ -853,10 +853,7 @@
       text-transform: uppercase;
     }
     .metric-cell strong {
-      overflow: hidden;
       font-size: var(--type-2xs);
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
   }
   @container history (max-width: 560px) {

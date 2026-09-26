@@ -216,7 +216,7 @@
     <article class="surface-inset card server-card">
       <header>
         <h3 class="caps">
-          {pathMode === "live" ? "Selected endpoints" : "Tested endpoints"}
+          {pathMode === "live" ? "Selected servers" : "Tested servers"}
         </h3>
         <span class="hint"
           >{availableServers.length > 1
