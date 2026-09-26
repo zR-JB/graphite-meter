@@ -90,5 +90,5 @@ client version set to `0.8.2`. It uses the shipped layout and colors; the termin
   at double pixel density. The README hero composes
   these captures with a simulated device frame. The UI itself is not rearranged or retouched.
 
-The ordinary production build excludes the dummy backend. To run your own measurements, follow
+Current builds contain no simulated backend. To run your own measurements, follow
 [deployment and configuration](DEPLOYMENT.md).

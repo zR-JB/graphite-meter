@@ -107,8 +107,7 @@ mise run check               # deterministic developer gate
 mise run ci                  # full local CI and release gate
 ```
 
-`mise run dev` serves Graphite Meter on <http://localhost:7246>. Development builds include diagnostics
-and the optional dummy backend. Production builds are real-only unless explicitly overridden.
+`mise run dev` serves Graphite Meter on <http://localhost:7246>. Development builds include diagnostics.
 
 ### Build identities
 
@@ -136,15 +135,11 @@ VERSION=0.8.0 mise run release-build 0.8.0
 
 ### Browser build flags
 
-| Environment               | Default                  | Meaning                                                      |
-| ------------------------- | ------------------------ | ------------------------------------------------------------ |
-| `GM_CLIENT_BUILD_PROFILE` | set by the task          | `dev` or `prod` feature profile.                             |
-| `GM_CLIENT_ALLOW_DUMMY`   | `0` for production tasks | Compile the dummy backend and development controls when `1`. |
-| `GM_CLIENT_REVISION`      | current short revision   | Source identity for an untagged build.                       |
-| `VERSION`                 | empty                    | Public release version.                                      |
-
-The real-only production build tree-shakes the dummy backend from the output. Enabling it is for
-development and browser tests, not release publication.
+| Environment               | Default                | Meaning                                |
+| ------------------------- | ---------------------- | -------------------------------------- |
+| `GM_CLIENT_BUILD_PROFILE` | set by the task        | `dev` or `prod` feature profile.       |
+| `GM_CLIENT_REVISION`      | current short revision | Source identity for an untagged build. |
+| `VERSION`                 | empty                  | Public release version.                |
 
 ## Validation
 
@@ -163,8 +158,7 @@ Useful focused commands:
 mise run client-ci
 mise run server-check
 mise run server-test
-mise run client-browser
-mise run client-e2e
+mise run e2e
 mise run tui-cross-build
 mise run check-generated
 mise run legal-check
@@ -174,31 +168,22 @@ The Bun unit suite is designed for parallel execution. On a constrained sandbox,
 `bun test src --parallel=1` only as an environmental workaround and still rely on hosted CI for
 the normal parallel gate.
 
-Browser tests use the repository's Bun.WebView harness and pinned Chrome for Testing. Failed runs
-retain a screenshot, URL, console log, page errors, and a compact DOM snapshot.
+`mise run e2e` builds the production client and one server binary, then `client/scripts/e2e.ts`
+starts a local fleet on free loopback ports with an ephemeral certificate: a public home with a
+catalogue, three public peers and a password-protected peer. Tests seed settings through
+`localStorage`, spawn their own server when they stop one, and drive pinned Chrome for Testing
+through `client/e2e/webview.ts`. Failures keep a screenshot, console, page errors and DOM under
+`client/test-results/webview`, and server logs under `client/test-results/servers`.
 
-For a focused browser iteration, build once and select the affected files:
+Rerun a subset against the built binary with any Bun test command:
 
 ```sh
 cd client
-bun run build:browser
-bun test browser/gauge-lifecycle.test.ts browser/chart-layout.test.ts --no-orphans --timeout 30000
+bun run scripts/e2e.ts bun test ./e2e --no-orphans --timeout=60000 -t "History"
 ```
 
-Rebuild after changing application source. Set `GM_WEBVIEW_DEBUG=1` for browser process and
-request diagnostics; failures are saved under `client/test-results/webview`. Use
-`GM_WEBVIEW_ARTIFACTS` to retain them in a different directory.
-
-`mise run client-e2e` builds and embeds the current production application, then runs it with a
-real server and ephemeral TLS certificate. The transport matrix verifies both transfer directions
-over clear and TLS HTTP/1.1, HTTP/2, HTTP/3, and WebTransport streams and datagrams. Protocol probes
-check which protocol the listener actually observed. CI runs connections, measurement,
-authentication, and performance suites on separate runners. Locally, `GM_E2E_SUITE`
-selects one of those suites; the default runs all four in separate processes. The
-authentication suite also separates home login from peer approval so real login
-limits are independent of test order. Measurement runs the mutual-catalogue partial-access
-cases in their own process and fleet. The stubbed browser suite remains the fast
-way to reproduce layout, keyboard, history, and failure states deterministically.
+`mise run bench-ui` measures frame delivery with default stage lengths and is not part of the gate.
+Set `GM_WEBVIEW_DEBUG=1` to see Chrome output.
 
 ### Worktree verification
 
@@ -207,18 +192,6 @@ assets, and browser artifacts local to that checkout; Bun's package cache and Go
 can be shared. Do not symlink another worktree's `node_modules`: its installed graph can disagree
 with the checked-out lockfile. The pre-commit hook also installs from the exact staged lockfile
 inside its disposable worktree before running client or legal checks.
-
-Give simultaneous E2E runs separate port ranges:
-
-```sh
-GM_E2E_PORT_BASE=17256 mise run client-e2e
-```
-
-The base defaults to 7256. The standalone transport server uses offsets 0–3; the
-five-server catalogue uses offsets 64–83, mutual-catalogue partial-access fixtures use
-96–111, and clear-HTTP performance fixtures use 128–129. Use non-overlapping ranges for concurrent runs. Readiness requires the
-identity of the server started by that fixture; an unrelated
-server on the same port cannot satisfy it. Manual development servers can use `GM_H1_ADDR`.
 
 Go uses its standard build cache, cached per CI job. In a restricted environment,
 set `GOCACHE` to a writable directory if needed. Chromium
@@ -235,7 +208,7 @@ mise run ci
 ```
 
 The full gate adds Go race tests and coverage, live vulnerability data, dependency audit, secret
-scanning, browser integration and E2E suites, cross-builds, release packaging, and container smoke
+scanning, the browser E2E suite, cross-builds, release packaging, and container smoke
 validation. Some steps need network access, a container engine, or loopback listeners and may need
 to run outside a restricted sandbox.
 
