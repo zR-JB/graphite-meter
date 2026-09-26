@@ -6,7 +6,8 @@ test("only clock.ts reads a clock in the runner", async () => {
   const readers: string[] = [];
   for await (const file of new Glob("**/*.ts").scan(src))
     if (
-      !/^workers\/|\.(test|bench)\.ts$/.test(file) &&
+      !file.startsWith("workers/") &&
+      !/\.(test|bench)\.ts$/.test(file) &&
       /performance\.now\(|Date\.now\(|new Date\(\)|Bun\.nanoseconds\(/.test(
         await Bun.file(`${src}/${file}`).text(),
       )
