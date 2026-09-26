@@ -342,9 +342,9 @@ func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 	t.Fatal("datagram upload never reached the server-authoritative counter")
 }
 
-// A refused datagram drain has no stream to reset and no status line, so it reports nothing itself.
-func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
-	base, _, wtTransport := wtTestServer(t)
+// A refused upload session has no status line: its refusal is the one record on its feed, and the session then ends.
+func TestWebTransportUploadReportsARefusedIDAndFreesItsSlot(t *testing.T) {
+	base, httpBase, wtTransport := wtTestServer(t)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?datagrams=1&id=gmu_never_minted")
 	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
 	acceptCtx, cancelAccept := context.WithTimeout(t.Context(), 10*time.Second)
@@ -372,9 +372,11 @@ func TestWebTransportDatagramUploadReportsARefusedID(t *testing.T) {
 		if event.Message != "unknown upload id" {
 			t.Fatalf("refusal message = %q", event.Message)
 		}
+		// The peer never closes, and the refused session still gives its slot back well inside the idle bound.
+		waitForLoad(t, httpBase, 0)
 		return
 	}
-	t.Fatal("a refused datagram upload reported nothing")
+	t.Fatal("a refused upload reported nothing")
 }
 
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
@@ -442,6 +444,20 @@ func TestIdleWebTransportUploadSessionFreesItsSlot(t *testing.T) {
 	assertWTSlotReleased(t, func(base, httpBase string, wtTransport *testWTTransport) {
 		// Dial an upload session with a real id and then send nothing at all.
 		dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+	})
+}
+
+// A lane that stops sending mid-transfer cannot hold its session open: its read unblocks when the session idles out.
+func TestStalledWebTransportUploadLaneFreesItsSlot(t *testing.T) {
+	assertWTSlotReleased(t, func(base, httpBase string, wtTransport *testWTTransport) {
+		sess := dialWT(t, wtTransport, base+"/wt/upload?id="+mintUploadID(t, httpBase))
+		lane, err := sess.OpenUniStreamSync(t.Context())
+		if err != nil {
+			t.Fatalf("open lane: %v", err)
+		}
+		if _, err := lane.Write(make([]byte, 4096)); err != nil {
+			t.Fatalf("write lane: %v", err)
+		}
 	})
 }
 

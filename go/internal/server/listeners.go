@@ -36,6 +36,8 @@ const (
 	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
 	browserH3UniStreams              = 3
 	wtLaneCreditHeadroom             = 4
+	h2ReceiveWindowPerConnection     = 16 << 20
+	h2ReceiveWindowPerStream         = 8 << 20
 )
 
 type endpoints struct {
@@ -247,6 +249,10 @@ func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
 		// Bound upload DATA frames so control requests can share a saturated connection.
 		MaxReadFrameSize: 16 << 10,
+		// The 1 MiB defaults cap a multiplexed upload at 1 MiB per round trip.
+		// Buffers fill only as data arrives, and connection admission bounds the worst case.
+		MaxReceiveBufferPerConnection: h2ReceiveWindowPerConnection,
+		MaxReceiveBufferPerStream:     h2ReceiveWindowPerStream,
 	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
 		if encrypted, ok := c.(*tls.Conn); ok {
 			c = encrypted.NetConn()
@@ -427,7 +433,7 @@ func (b *listenerBuild) assembleH3() error {
 		return err
 	}
 	b.opened = append(b.opened, pc)
-	quicTransport := &quic.Transport{Conn: pc, ConnContext: b.connections.connContext}
+	quicTransport := b.connections.quicTransport(pc)
 	quicListener, err := quicTransport.Listen(http3.ConfigureTLSConfig(h3.TLSConfig), h3.QUICConfig)
 	if err != nil {
 		b.closeOpened()

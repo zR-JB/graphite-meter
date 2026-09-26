@@ -2,8 +2,6 @@ package endpoint
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -27,7 +25,9 @@ type WTHandler interface {
 
 const wtDatagramPayload = 1000
 
-const wtVerifyLinger = 30 * time.Second
+// A verify session's answer is its handshake: both clients close it at once,
+// so an abandoned one holds its session slot only briefly.
+const wtVerifyLinger = 5 * time.Second
 
 type sessionActivity struct {
 	n      atomic.Uint64
@@ -123,22 +123,25 @@ func (h *wtDownload) HandleSession(ctx context.Context, sess *webtransport.Sessi
 		return
 	}
 	ctx, live := watchSession(ctx, h.idleBound)
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer live.cancel()
 	if wtDatagramMode(query) {
 		// The flood is this server's own traffic, so it cannot be what keeps the session alive.
-		go bumpOnPeerDatagrams(ctx, sess, live)
-		sink := &datagramSink{conn: sess}
+		wg.Go(func() { bumpOnPeerDatagrams(ctx, sess, live) })
+		sink := &datagramSink{conn: sess, done: ctx.Done()}
 		for ctx.Err() == nil && !sink.failed {
 			_ = h.download.HandleDownload(ctx, parseBytes(query.Get("bytes")), sink)
 		}
 		return
 	}
-	var wg sync.WaitGroup
 	lanes := laneOpener(func(ctx context.Context) (laneStream, error) {
 		return sess.OpenUniStreamSync(ctx)
 	})
 	for range wtStreamCount(query) {
 		wg.Go(func() { h.serveLane(ctx, lanes, query, live) })
 	}
+	// The session lasts as long as any lane is being served.
 	wg.Wait()
 }
 
@@ -228,13 +231,25 @@ func NewWTUpload(upload UploadHandler, progress *UploadProgress, trusted []netip
 
 func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 	query := r.URL.Query()
+	id := query.Get("id")
 	// A stream carries no request, so its CONNECT identifies the upload owner.
 	owner := UploadOwner(r, h.trusted)
+	agg, access := h.progress.store.watchFor(id, owner)
+	if access != uploadAccessOK {
+		// The refusal is the whole answer, so the session and its admission slot end with it.
+		h.serveRefusal(ctx, sess, access)
+		lingerForPeer(ctx, sess, wtRefusalLinger)
+		return
+	}
 	// The progress feed is server-generated, so its heartbeat must not count as activity.
 	ctx, live := watchSession(ctx, h.idleBound)
-	go h.serveProgress(ctx, sess, query.Get("id"), owner)
+	// Every goroutine below ends with the session's context, and the session ends only once they have.
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer live.cancel()
+	wg.Go(func() { h.serveProgress(ctx, sess, agg) })
 	if wtDatagramMode(query) {
-		go h.drainDatagrams(ctx, sess, query, owner, live)
+		wg.Go(func() { h.drainDatagrams(ctx, sess, agg, id, owner, live) })
 	}
 	// The client opens these, so the ceiling the download side applies to its own lanes applies here too.
 	lanes := make(chan struct{}, wire.WTMaxStreams)
@@ -245,19 +260,34 @@ func (h *wtUpload) HandleSession(ctx context.Context, sess *webtransport.Session
 		}
 		select {
 		case lanes <- struct{}{}:
-			go func() {
+			wg.Go(func() {
 				defer func() { <-lanes }()
-				h.serveLane(ctx, sess, str, query, owner, live)
-			}()
+				h.serveLane(ctx, sess, str, id, owner, live)
+			})
 		default:
 			str.CancelRead(0)
 		}
 	}
 }
 
-func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, query url.Values, owner string, live *sessionActivity) {
+// wtRefusalLinger lets a peer read a refusal record before the session closes under it.
+const wtRefusalLinger = 2 * time.Second
+
+func lingerForPeer(ctx context.Context, sess *webtransport.Session, bound time.Duration) {
+	timer := time.NewTimer(bound)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-sess.Context().Done():
+	case <-timer.C:
+	}
+}
+
+func (h *wtUpload) serveLane(ctx context.Context, sess *webtransport.Session, str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
+	// A blocked read watches neither the session's end nor its idle bound.
+	defer transport.UnblockReadsOnDone(ctx, str)()
 	src := idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live}
-	_, err := h.upload.HandleUpload(ctx, query.Get("id"), owner, src)
+	_, err := h.upload.HandleUpload(ctx, id, owner, src)
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		// Stream uploads have no response headers.
 		h.serveRefusal(ctx, sess, refusal.access)
@@ -271,20 +301,10 @@ func (h *wtUpload) serveRefusal(ctx context.Context, sess *webtransport.Session,
 	if err != nil {
 		return
 	}
-	withWTWriteStream(ctx, str, func() {
-		_ = json.MarshalEncode(jsontext.NewEncoder(str), wire.UploadProgress{
-			Type:    "error",
-			Message: uploadAccessMessage(access),
-			Code:    uploadAccessCode(access),
-		})
-	})
+	withWTWriteStream(ctx, str, func() { writeRefusalRecord(str, access) })
 }
 
-func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Session, query url.Values, owner string, live *sessionActivity) {
-	agg, access := h.progress.store.getOrCreateForActivity(query.Get("id"), owner, false)
-	if access != uploadAccessOK {
-		return
-	}
+func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Session, agg *uploadAgg, id, owner string, live *sessionActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
@@ -295,15 +315,15 @@ func (h *wtUpload) drainDatagrams(ctx context.Context, sess *webtransport.Sessio
 		}
 	}()
 	src := newIdleTimeoutSource(ctx, sess, uploadReadTimeout, live)
-	_, _ = h.upload.HandleUpload(ctx, query.Get("id"), owner, src)
+	_, _ = h.upload.HandleUpload(ctx, id, owner, src)
 }
 
-func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, id, owner string) {
+func (h *wtUpload) serveProgress(ctx context.Context, sess *webtransport.Session, agg *uploadAgg) {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
 		return
 	}
-	withWTWriteStream(ctx, str, func() { h.progress.HandleStream(ctx, id, owner, str) })
+	withWTWriteStream(ctx, str, func() { streamProgress(ctx, agg, str) })
 }
 
 type idleTimeoutReader struct {
@@ -369,12 +389,19 @@ func bumpOnPeerDatagrams(ctx context.Context, conn transport.DatagramConn, live 
 
 type datagramSink struct {
 	conn   transport.DatagramConn
+	done   <-chan struct{}
 	failed bool
 }
 
 func (s *datagramSink) Write(p []byte) (int, error) {
-	// SendDatagram blocks on a full send queue and watches no ctx.
+	// SendDatagram blocks on a full send queue and watches no ctx, so each datagram checks it first.
 	for off := 0; off < len(p); off += wtDatagramPayload {
+		select {
+		case <-s.done:
+			s.failed = true
+			return off, context.Canceled
+		default:
+		}
 		if err := s.conn.SendDatagram(p[off:min(off+wtDatagramPayload, len(p))]); err != nil {
 			s.failed = true
 			return off, err

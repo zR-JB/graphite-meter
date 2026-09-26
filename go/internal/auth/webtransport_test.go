@@ -181,7 +181,7 @@ func grantFor(t *testing.T, s *Service, sess *session) string {
 	h := sha256.Sum256([]byte(grant))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.grants[h] = struct{}{}
+	sess.grants[h] = 0
 	s.grants[h] = sess
 	return grant
 }

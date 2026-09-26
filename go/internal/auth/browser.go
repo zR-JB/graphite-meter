@@ -140,7 +140,8 @@ func (s *Service) browserToken(w http.ResponseWriter, r *http.Request) {
 	key := sha256.Sum256([]byte(raw))
 	ctx, cancel := context.WithCancel(sess.ctx)
 	s.browserGrants[key] = &browserGrant{sess: sess, origin: clientOrigin, id: randomToken(16), ctx: ctx, cancel: cancel}
-	sess.grants[key] = struct{}{}
+	s.grantSeq++
+	sess.grants[key] = s.grantSeq
 	delete(s.approvals, challenge)
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")

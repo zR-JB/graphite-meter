@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
@@ -120,6 +121,49 @@ func TestHTTP2ControlIsNotTrappedBehindAnUploadFrame(t *testing.T) {
 	defer res.Body.Close()
 	if _, err := io.Copy(io.Discard, res.Body); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server must advertise the larger windows.
+func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+	srv.Config = baseServer(http.NotFoundHandler(), nil)
+	srv.EnableHTTP2 = true
+	srv.StartTLS()
+	defer srv.Close()
+	conn, err := tls.Dial("tcp", srv.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec // test certificate
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	// The client preface and an empty SETTINGS frame.
+	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), 0, 0, 0, 4, 0, 0, 0, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	var streamWindow, connectionWindow uint32
+	for streamWindow == 0 || connectionWindow == 0 {
+		var header [9]byte
+		if _, err := io.ReadFull(conn, header[:]); err != nil {
+			t.Fatalf("read frame (stream window %d, connection window %d): %v", streamWindow, connectionWindow, err)
+		}
+		payload := make([]byte, int(header[0])<<16|int(header[1])<<8|int(header[2]))
+		if _, err := io.ReadFull(conn, payload); err != nil {
+			t.Fatal(err)
+		}
+		switch frameType, stream := header[3], binary.BigEndian.Uint32(header[5:])&0x7fffffff; {
+		case frameType == 0x4 && header[4]&0x1 == 0: // SETTINGS
+			for setting := payload; len(setting) >= 6; setting = setting[6:] {
+				if binary.BigEndian.Uint16(setting) == 0x4 { // SETTINGS_INITIAL_WINDOW_SIZE
+					streamWindow = binary.BigEndian.Uint32(setting[2:])
+				}
+			}
+		case frameType == 0x8 && stream == 0: // connection WINDOW_UPDATE
+			connectionWindow = 65535 + binary.BigEndian.Uint32(payload)&0x7fffffff
+		}
+	}
+	if streamWindow != h2ReceiveWindowPerStream || connectionWindow != h2ReceiveWindowPerConnection {
+		t.Fatalf("advertised stream/connection windows %d/%d, want %d/%d", streamWindow, connectionWindow, h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection)
 	}
 }
 

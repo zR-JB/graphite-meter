@@ -85,10 +85,10 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	if !ok {
 		t.Fatal("aggregate not created by progress GET")
 	}
-	agg.changePosts(1)
+	agg.beginPost()
 	agg.recordChunk(monoNanos(), 4096)
 	waitProgressText(t, rec, `"type":"progress","bytes":4096`)
-	agg.changePosts(-1)
+	agg.endPost()
 
 	finish := httptest.NewRecorder()
 	h.ServeHTTP(finish, httptest.NewRequest(http.MethodDelete, "/upload/progress?id="+id, nil))
@@ -159,7 +159,7 @@ func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
 	if a != b {
 		t.Fatal("two waiters got different channels: a single change cannot reach both")
 	}
-	agg.changePosts(1)
+	agg.beginPost()
 	for i, ch := range []<-chan struct{}{a, b} {
 		select {
 		case <-ch:
@@ -175,7 +175,7 @@ func TestLaneCountChangeWakesEveryTerminalWaiter(t *testing.T) {
 // A superseded feed must abandon the terminal wait rather than sit on it until its transport dies.
 func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
-	agg.changePosts(1)
+	agg.beginPost()
 	superseded := make(chan struct{})
 	done := make(chan bool, 1)
 	go func() { done <- waitForUploadPosts(make(chan struct{}), superseded, agg) }()

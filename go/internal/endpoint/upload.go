@@ -77,7 +77,7 @@ func (u *Upload) HandleUpload(_ context.Context, id, owner string, src io.Reader
 	if access != uploadAccessOK {
 		return 0, &uploadRefusalError{access: access}
 	}
-	defer agg.changePosts(-1)
+	defer agg.endPost()
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
 	u.meter.Open()

@@ -31,6 +31,7 @@ type Service struct {
 	mu               sync.Mutex
 	sessions         map[[32]byte]*session
 	grants           map[[32]byte]*session
+	grantSeq         uint64
 	browserGrants    map[[32]byte]*browserGrant
 	wtTokens         map[[32]byte]wtToken
 	attempts         map[string]loginAttempt

@@ -81,6 +81,16 @@ func (a *connectionAdmission) stats() admissionStats {
 	return admissionStats{active: a.active, peak: a.peak, rejectedGlobal: a.rejectedGlobal, rejectedClient: a.rejectedClient}
 }
 
+// verifySourceAddress makes a loaded server spend a Retry round trip before an
+// Initial may hold a slot: a spoofed source never completes Retry, so it cannot
+// pin a slot for the handshake timeout.
+func (a *connectionAdmission) verifySourceAddress(net.Addr) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.active >= a.globalMax/4
+}
+
+// connContext runs for every Initial that passed source-address policy, before its handshake.
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
 	release, ok := a.acquire(info.RemoteAddr)
 	if !ok {
@@ -88,6 +98,11 @@ func (a *connectionAdmission) connContext(ctx context.Context, info *quic.Client
 	}
 	context.AfterFunc(ctx, release)
 	return ctx, nil
+}
+
+// quicTransport admits QUIC connections from pc against the shared connection budget.
+func (a *connectionAdmission) quicTransport(pc net.PacketConn) *quic.Transport {
+	return &quic.Transport{Conn: pc, ConnContext: a.connContext, VerifySourceAddress: a.verifySourceAddress}
 }
 
 type admittedListener struct {

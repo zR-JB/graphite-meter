@@ -140,23 +140,38 @@ func (s *Service) cliToken(w http.ResponseWriter, r *http.Request) {
 		s.writeGrantPending(w)
 		return
 	}
+	sess := approval.session
+	if len(sess.grants) >= maxSessionGrants {
+		// A new CLI login replaces the oldest CLI grant, never a browser grant whose run may be live.
+		oldest, found := s.oldestCLIGrantLocked(sess)
+		if !found {
+			s.mu.Unlock()
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		delete(sess.grants, oldest)
+		s.deleteGrantLocked(oldest)
+	}
 	grant := randomToken(32)
 	delete(s.approvals, challenge)
 	h := sha256.Sum256([]byte(grant))
-	sess := approval.session
-	if len(sess.grants) >= maxSessionGrants {
-		for old := range maps.Keys(sess.grants) {
-			delete(sess.grants, old)
-			s.deleteGrantLocked(old)
-			break
-		}
-	}
-	sess.grants[h] = struct{}{}
+	s.grantSeq++
+	sess.grants[h] = s.grantSeq
 	s.grants[h] = sess
 	expires := sess.expires
 	s.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = jsonv2.MarshalWrite(w, map[string]any{"token": grant, "expires": expires})
+}
+
+func (s *Service) oldestCLIGrantLocked(sess *session) (oldest [32]byte, found bool) {
+	var issued uint64
+	for grant, seq := range sess.grants {
+		if _, browser := s.browserGrants[grant]; !browser && (!found || seq < issued) {
+			oldest, issued, found = grant, seq, true
+		}
+	}
+	return oldest, found
 }
 
 func (s *Service) writeGrantPending(w http.ResponseWriter) {

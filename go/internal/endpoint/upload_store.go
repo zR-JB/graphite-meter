@@ -39,9 +39,8 @@ type uploadAgg struct {
 	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
 	postsMu        sync.Mutex
 	postsChanged   chan struct{} // closed and replaced on every change: a broadcast
-	finished       chan struct{} // explicitly closed by DELETE /upload/progress
+	finished       chan struct{} // closed under postsMu by DELETE /upload/progress
 	expired        chan struct{} // closed when idle state is reaped
-	finishOnce     sync.Once
 	progressMu     sync.Mutex
 	progressHeld   chan struct{} // closed when a later claim supersedes the holder
 	owner          string
@@ -80,32 +79,48 @@ func (a *uploadAgg) recordChunk(now int64, n int) {
 	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
-func (a *uploadAgg) changePosts(delta int32) {
-	a.posts.Add(delta)
-	a.postsMu.Lock()
-	defer a.postsMu.Unlock()
-	if a.postsChanged != nil {
-		close(a.postsChanged)
-		a.postsChanged = nil
-	}
-}
-
-// beginPost and finishFor share postsMu so no lane can join after the
+// beginPost, endPost and finish share postsMu so no lane can join after the
 // completion marker, including between a finished-count check and registration.
 func (a *uploadAgg) beginPost() bool {
 	a.postsMu.Lock()
 	defer a.postsMu.Unlock()
-	select {
-	case <-a.finished:
+	if a.isFinished() {
 		return false
-	default:
 	}
 	a.posts.Add(1)
+	a.broadcastPostsLocked()
+	return true
+}
+
+func (a *uploadAgg) endPost() {
+	a.postsMu.Lock()
+	defer a.postsMu.Unlock()
+	a.posts.Add(-1)
+	a.broadcastPostsLocked()
+}
+
+func (a *uploadAgg) finish() {
+	a.postsMu.Lock()
+	defer a.postsMu.Unlock()
+	if !a.isFinished() {
+		close(a.finished)
+	}
+}
+
+func (a *uploadAgg) isFinished() bool {
+	select {
+	case <-a.finished:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *uploadAgg) broadcastPostsLocked() {
 	if a.postsChanged != nil {
 		close(a.postsChanged)
 		a.postsChanged = nil
 	}
-	return true
 }
 
 func (a *uploadAgg) elapsedNanos(now int64) int64 {
@@ -206,12 +221,10 @@ const (
 	uploadAccessOwnerMismatch
 )
 
-func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.getOrCreateForActivity(id, owner, true)
-}
-
-func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
-	return s.accessFor(id, owner, touch, false)
+// watchFor resolves the receiver a progress feed observes. Watching is not
+// upload activity, so it never refreshes the idle clock.
+func (s *UploadStore) watchFor(id, owner string) (*uploadAgg, uploadAccess) {
+	return s.accessFor(id, owner, false, false)
 }
 
 // A lane joins while the shard is held, so sweeping cannot remove the
@@ -299,9 +312,7 @@ func (s *UploadStore) finishFor(id, owner string) uploadAccess {
 	if agg.owner != "" && owner != agg.owner {
 		return uploadAccessOwnerMismatch
 	}
-	agg.postsMu.Lock()
-	agg.finishOnce.Do(func() { close(agg.finished) })
-	agg.postsMu.Unlock()
+	agg.finish()
 	return uploadAccessOK
 }
 

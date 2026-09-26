@@ -9,6 +9,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// getOrCreateFor is an upload lane's lookup without the lane: it creates and touches but does not join.
+func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
+	return s.accessFor(id, owner, true, false)
+}
+
 func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 	agg, access := s.getOrCreateFor(id, "")
 	return agg, access == uploadAccessOK
@@ -219,13 +224,13 @@ func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
 	s := NewUploadStore()
 	id := s.Mint()
 	agg, _ := s.getOrCreate(id)
-	agg.changePosts(1)
+	agg.beginPost()
 	agg.lastTouchMono.Store(monoNanos() - int64(2*uploadIDTTL))
 	s.sweep(uploadIDTTL)
 	if _, ok := s.get(id); !ok {
 		t.Fatal("active upload was reaped")
 	}
-	agg.changePosts(-1)
+	agg.endPost()
 	s.sweep(uploadIDTTL)
 	if _, ok := s.get(id); ok {
 		t.Fatal("idle upload survived after its final post exited")

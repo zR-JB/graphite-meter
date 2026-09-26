@@ -16,7 +16,7 @@ func addGrant(s *Service, sess *session, token string) [32]byte {
 	h := sha256.Sum256([]byte(token))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.grants[h] = struct{}{}
+	sess.grants[h] = 0
 	s.grants[h] = sess
 	return h
 }

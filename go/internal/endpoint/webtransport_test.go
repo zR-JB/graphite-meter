@@ -69,6 +69,17 @@ func TestDatagramSinkLatchesASendFailure(t *testing.T) {
 	}
 }
 
+// SendDatagram ignores cancellation, so an ended session must stop the sink between datagrams.
+func TestDatagramSinkStopsWhenTheSessionEnds(t *testing.T) {
+	conn := &recordingConn{}
+	done := make(chan struct{})
+	close(done)
+	sink := &datagramSink{conn: conn, done: done}
+	if n, err := sink.Write(make([]byte, 4*wtDatagramPayload)); err == nil || n != 0 || len(conn.sent) != 0 || !sink.failed {
+		t.Fatalf("write after the session ended = %d, %v with %d datagrams sent, want nothing sent and a latched failure", n, err, len(conn.sent))
+	}
+}
+
 // Every spelling of zero is the park path.
 func TestWTDownloadParksOnEveryZeroSpelling(t *testing.T) {
 	for _, spelling := range []string{"0", "00", "+0", "-0"} {
@@ -274,7 +285,7 @@ func TestIdleTimeoutSourceDisarmsWhenTheDrainEnds(t *testing.T) {
 	})
 }
 
-func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
+func TestStreamProgressReportsTheCounter(t *testing.T) {
 	store := NewUploadStore()
 	id := store.Mint()
 	agg, access := store.getOrCreateFor(id, "owner")
@@ -285,7 +296,7 @@ func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 
 	r, w := io.Pipe()
 	go func() {
-		NewUploadProgress(store).HandleStream(t.Context(), id, "owner", w)
+		streamProgress(t.Context(), agg, w)
 		_ = w.Close()
 	}()
 
@@ -303,19 +314,6 @@ func TestUploadProgressHandleStreamReportsTheCounter(t *testing.T) {
 			t.Fatalf("terminal record = %+v, want complete with 4096 bytes", event)
 		}
 		return
-	}
-}
-
-func TestUploadProgressHandleStreamRefusesAnUnknownID(t *testing.T) {
-	var out strings.Builder
-	NewUploadProgress(NewUploadStore()).HandleStream(t.Context(), "gmu_missing", "owner", &out)
-
-	var event wire.UploadProgress
-	if err := json.Unmarshal([]byte(out.String()), &event); err != nil {
-		t.Fatalf("decode %q: %v", out.String(), err)
-	}
-	if event.Type != "error" || event.Message != uploadAccessMessage(uploadAccessInvalid) || event.Code != uploadAccessCode(uploadAccessInvalid) {
-		t.Fatalf("record = %+v, want the unknown-id refusal", event)
 	}
 }
 

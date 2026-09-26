@@ -2,15 +2,16 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net"
-	"net/http"
 	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 type testAddr string
@@ -148,10 +149,42 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	}
 }
 
-// An idle connection holds an admission slot on every listener.
-func TestBaseServerBoundsIdleConnections(t *testing.T) {
-	s := baseServer(http.NotFoundHandler(), nil)
-	if s.IdleTimeout != 60*time.Second || s.MaxHeaderBytes != 32<<10 {
-		t.Fatalf("server not hardened: idle=%v max=%d", s.IdleTimeout, s.MaxHeaderBytes)
+// Under load a QUIC Initial holds a connection slot only once Retry has validated its source address.
+func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
+	_, cm := protocolTestTLS(t)
+	for _, loaded := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle", true: "loaded"}[loaded], func(t *testing.T) {
+			a := newConnectionAdmission(4, 4, nil)
+			if loaded {
+				release, _ := a.acquire(testAddr("192.0.2.1:1"))
+				defer release()
+			}
+			pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			tr := a.quicTransport(pc)
+			defer tr.Close()
+			admit, verified := tr.ConnContext, make(chan bool, 1)
+			tr.ConnContext = func(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
+				verified <- info.AddrVerified
+				return admit(ctx, info)
+			}
+			ln, err := tr.Listen(cm.tlsConfig("gm-test"), transport.NewQUICConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			conn, err := quic.DialAddr(ctx, pc.LocalAddr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"gm-test"}}, transport.NewQUICConfig()) //nolint:gosec // test certificate
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.CloseWithError(0, "")
+			if got := <-verified; got != loaded {
+				t.Fatalf("admitted with a validated source = %v, want %v", got, loaded)
+			}
+		})
 	}
 }

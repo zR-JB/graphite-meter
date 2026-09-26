@@ -28,7 +28,7 @@ type session struct {
 	expires, created        time.Time
 	ctx                     context.Context
 	cancel                  context.CancelFunc
-	grants                  map[[32]byte]struct{}
+	grants                  map[[32]byte]uint64 // grant hash -> issue order
 	wtTokens                map[[32]byte]struct{}
 	csrf                    string
 }
@@ -40,7 +40,7 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	h := sha256.Sum256([]byte(raw))
 	csrf, id := randomToken(32), randomToken(16)
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
-	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]struct{}{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
+	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires, created: now, ctx: ctx, cancel: cancel, grants: map[[32]byte]uint64{}, wtTokens: map[[32]byte]struct{}{}, csrf: csrf}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
@@ -68,7 +68,7 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
-	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ struct{}) bool {
+	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ uint64) bool {
 		s.deleteGrantLocked(grant)
 		return true
 	})

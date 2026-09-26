@@ -61,57 +61,55 @@ func (e *UploadProgress) HandleHTTP(w http.ResponseWriter, r *http.Request) erro
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return nil
 	}
-	// no-transform and X-Accel-Buffering tell intermediaries not to buffer or recode the stream.
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("Cache-Control", "no-store, no-transform")
-	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return nil
 	}
+	agg, access := e.store.watchFor(id, owner)
+	if access != uploadAccessOK {
+		writeUploadAccessError(w, access)
+		return nil
+	}
+	// no-transform and X-Accel-Buffering tell intermediaries not to buffer or recode the stream.
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-store, no-transform")
+	w.Header().Set("X-Accel-Buffering", "no")
 	// NDJSON requires a stateful encoder and one newline-delimited record per event.
 	enc := jsontext.NewEncoder(w)
-	emit := func(event wire.UploadProgress) bool {
+	serveProgress(r.Context().Done(), agg, func(event wire.UploadProgress) bool {
 		if err := json.MarshalEncode(enc, event); err != nil {
 			return false
 		}
 		flusher.Flush()
 		return true
-	}
-
-	e.streamProgress(r.Context().Done(), id, owner, emit, func() bool {
+	}, func() bool {
 		if _, err := w.Write([]byte("\n")); err != nil {
 			return false
 		}
 		flusher.Flush()
 		return true
-	}, func(access uploadAccess) { writeUploadAccessError(w, access) })
+	})
 	return nil
 }
 
-// HandleStream serves the feed over a server-opened WebTransport stream.
-func (e *UploadProgress) HandleStream(ctx context.Context, id, owner string, w io.Writer) {
+// streamProgress serves a resolved receiver's feed over a server-opened WebTransport stream.
+func streamProgress(ctx context.Context, agg *uploadAgg, w io.Writer) {
 	// This WebTransport feed is also NDJSON; retain Encoder framing per record.
 	enc := jsontext.NewEncoder(w)
-	emit := func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }
-
-	e.streamProgress(ctx.Done(), id, owner, emit, func() bool {
+	serveProgress(ctx.Done(), agg, func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }, func() bool {
 		_, err := w.Write([]byte("\n"))
 		return err == nil
-	}, func(access uploadAccess) {
-		emit(wire.UploadProgress{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
 	})
 }
 
-// streamProgress owns the shared aggregate claim and lifecycle for both feed transports.
-func (e *UploadProgress) streamProgress(done <-chan struct{}, id, owner string, emit func(wire.UploadProgress) bool, heartbeat func() bool, refused func(uploadAccess)) {
-	// Watching is not upload activity: a progress stream must never refresh the idle clock.
-	agg, access := e.store.getOrCreateForActivity(id, owner, false)
-	if access != uploadAccessOK {
-		refused(access)
-		return
-	}
+// writeRefusalRecord is the refusal a stream carries in place of a status line.
+func writeRefusalRecord(w io.Writer, access uploadAccess) {
+	_ = json.MarshalEncode(jsontext.NewEncoder(w), wire.UploadProgress{Type: "error", Message: uploadAccessMessage(access), Code: uploadAccessCode(access)})
+}
+
+// serveProgress owns the receiver's progress claim and lifecycle for both feed transports.
+func serveProgress(done <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool, heartbeat func() bool) {
 	claim := agg.claimProgress()
 	defer agg.releaseProgress(claim)
 	if !emit(wire.UploadProgress{Type: "ready"}) {

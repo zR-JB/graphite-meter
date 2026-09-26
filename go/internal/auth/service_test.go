@@ -535,7 +535,7 @@ func TestBearerCannotAccessBrowserRoutes(t *testing.T) {
 	_, sess, _ := s.createSession("subject", "Name", "local")
 	grant := randomToken(32)
 	grantHash := sha256.Sum256([]byte(grant))
-	sess.grants[grantHash] = struct{}{}
+	sess.grants[grantHash] = 0
 	s.grants[grantHash] = sess
 	h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), Listener{UI: true})
 	r := secureRequest("GET", "/auth/session", nil)
@@ -934,26 +934,59 @@ func TestCLIApprovalExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 		t.Fatal("grant survived parent logout")
 	}
 }
-func TestCLIGrantSetIsBounded(t *testing.T) {
+
+// A CLI login at the grant cap replaces the oldest CLI grant and never a browser grant whose run may be live.
+func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local")
-	for i := range 20 {
+	var browser []*browserGrant
+	addBrowserGrant := func() {
+		ctx, cancel := context.WithCancel(sess.ctx)
+		g := &browserGrant{sess: sess, origin: requestingUI, ctx: ctx, cancel: cancel}
+		h := sha256.Sum256([]byte(randomToken(32)))
+		s.grantSeq++
+		s.browserGrants[h], sess.grants[h] = g, s.grantSeq
+		browser = append(browser, g)
+	}
+	exchange := func(i int) int {
 		verifier := fmt.Sprintf("verifier-%d", i)
 		sum := sha256.Sum256([]byte(verifier))
-		challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-		s.approvals[challenge] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute), approved: true}
+		s.approvals[base64.RawURLEncoding.EncodeToString(sum[:])] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute), approved: true}
 		rr := httptest.NewRecorder()
 		r := secureRequest("POST", "/auth/cli/token", nil)
 		r.Body = io.NopCloser(strings.NewReader(`{"verifier":"` + verifier + `"}`))
 		s.cliToken(rr, r)
-		if rr.Code != 200 {
-			t.Fatalf("exchange %d code=%d, want 200", i, rr.Code)
+		return rr.Code
+	}
+	addBrowserGrant() // the oldest grant of all
+	for i := range 20 {
+		if code := exchange(i); code != http.StatusOK {
+			t.Fatalf("exchange %d code=%d, want 200", i, code)
 		}
 	}
-	if len(sess.grants) > 8 {
-		t.Fatalf("grants=%d, want at most 8", len(sess.grants))
+	if len(sess.grants) != maxSessionGrants || browser[0].ctx.Err() != nil {
+		t.Fatalf("grants=%d browser grant cancelled=%v, want %d grants with the browser grant live", len(sess.grants), browser[0].ctx.Err() != nil, maxSessionGrants)
+	}
+	// Replace every CLI grant with a browser grant.
+	for grant := range sess.grants {
+		if s.browserGrants[grant] == nil {
+			delete(sess.grants, grant)
+			s.deleteGrantLocked(grant)
+		}
+	}
+	for len(browser) < maxSessionGrants {
+		addBrowserGrant()
+	}
+	if code := exchange(99); code != http.StatusTooManyRequests {
+		t.Fatalf("CLI exchange against %d browser grants = %d, want 429", maxSessionGrants, code)
+	}
+	for i, g := range browser {
+		if g.ctx.Err() != nil {
+			t.Fatalf("browser grant %d was cancelled by a CLI login", i)
+		}
 	}
 }
+
 func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 	css, err := os.ReadFile("../../../client/src/app.css")
 	if err != nil {
