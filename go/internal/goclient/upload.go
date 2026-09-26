@@ -81,7 +81,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if out.UploadID == "" || len(out.UploadID) > 8192 {
-		return "", fmt.Errorf("upload session returned invalid uploadId")
+		return "", errors.New("upload session returned invalid uploadId")
 	}
 	return out.UploadID, nil
 }

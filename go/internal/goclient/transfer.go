@@ -39,7 +39,7 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 		if err == nil {
 			return nil
 		}
-		if final(err) {
+		if permanent(err) {
 			return err
 		}
 		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
@@ -58,7 +58,7 @@ type refusal struct{ error }
 
 func (r refusal) Unwrap() error { return r.error }
 
-func final(err error) bool {
+func permanent(err error) bool {
 	_, refused := errors.AsType[refusal](err)
 	_, auth := errors.AsType[*AuthRequiredError](err)
 	return refused || auth
@@ -75,7 +75,7 @@ func persist(ctx context.Context, attempt func(context.Context) (progressed bool
 		if ctx.Err() != nil {
 			return nil
 		}
-		if final(err) {
+		if permanent(err) {
 			return err
 		}
 		if progressed {
@@ -207,7 +207,7 @@ func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, err
 func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot, error) {
 	id, _ := r.coordinated.uploaded()
 	if id == "" {
-		return nil, fmt.Errorf("upload receiver is not ready")
+		return nil, errors.New("upload receiver is not ready")
 	}
 	endpoint, err := r.endpoint(route.UploadCheckpoint)
 	if err != nil {
@@ -222,7 +222,7 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 		return nil, err
 	}
 	if count.Nanos == 0 || count.Nanos > uint64(1<<63-1) {
-		return nil, fmt.Errorf("invalid receiver clock")
+		return nil, errors.New("invalid receiver clock")
 	}
 	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos}, nil
 }

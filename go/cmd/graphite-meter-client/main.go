@@ -32,7 +32,7 @@ func main() {
 	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)",
 		func(id string) error {
 			if id == "" || len(cfg.ServerIDs) >= 4 || slices.Contains(cfg.ServerIDs, id) {
-				return fmt.Errorf("select one to four different server IDs")
+				return errors.New("select one to four different server IDs")
 			}
 			cfg.ServerIDs = append(cfg.ServerIDs, id)
 			return nil
