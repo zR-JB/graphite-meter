@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""The control plane's single GitHub CLI and JSON decoding boundary."""
+"""Shared control-plane boundaries: the GitHub CLI, JSON decoding, paths and key material."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
@@ -15,6 +16,12 @@ JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 JsonObject: TypeAlias = dict[str, JsonValue]
 JsonArray: TypeAlias = list[JsonValue]
+TLS_NAME = re.compile(
+    r"(^|/)(\.dev-certs|certs?|certificates?|letsencrypt)(/|$)|"
+    r"\.(pem|key|crt|cer|der|csr|p12|pfx|pkcs8|jks|keystore)$",
+    re.IGNORECASE,
+)
+PEM = re.compile(rb"-----BEGIN (?:CERTIFICATE|(?:[^ -]+ )*PRIVATE KEY)-----")
 
 
 class ControlPlaneError(RuntimeError):

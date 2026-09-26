@@ -11,7 +11,7 @@ import tomllib
 from pathlib import Path
 from typing import NoReturn
 
-from precommit import PEM, TLS_NAME
+from github_api import PEM, TLS_NAME
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]

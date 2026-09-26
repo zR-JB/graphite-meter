@@ -15,8 +15,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import ControlPlaneError, confined_path, decode_json
-from precommit import TLS_NAME
+from github_api import TLS_NAME, ControlPlaneError, confined_path, decode_json
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
