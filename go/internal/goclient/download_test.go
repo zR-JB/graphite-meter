@@ -95,7 +95,7 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 	if got := total.Load(); got < 2*partial {
 		t.Errorf("total = %d, want at least %d (the lane must reopen after the drop)", got, 2*partial)
 	}
-	if paced := int64(window/wtRedialBackoff) + 2; requests.Load() > paced {
+	if paced := int64(window/retryBackoff) + 2; requests.Load() > paced {
 		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced", requests.Load(), window, paced)
 	}
 }

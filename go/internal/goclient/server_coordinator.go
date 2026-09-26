@@ -472,7 +472,7 @@ func (c *coordinator) openWindow(
 	started := time.Now()
 	initial.at = started.Sub(c.started)
 	for _, p := range c.active() {
-		initial.down[p.id()] = p.transport.coordinated.download()
+		initial.down[p.id()] = p.transport.coordinated.down.Load()
 	}
 	if len(stage.Directions) > 0 {
 		c.aggregate.begin(stage.Name, c.ids(), initial.at, "stage-start")
@@ -527,7 +527,7 @@ func (s *sampler) reset() {
 		s.cancel()
 	}
 	s.c.aggregate.begin(s.stage.Name, s.c.ids(), time.Since(s.c.started), "dropout")
-	s.c.emitUnavailable(s.stage)
+	s.c.emitRates(s.stage, nil)
 	s.capture(s.ending)
 }
 
@@ -545,11 +545,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 		s.capture(s.ending)
 		return false, nil
 	}
-	if window := c.aggregate.observe(sample.boundary); window != nil {
-		c.emitRates(s.stage, *window)
-	} else {
-		c.emitUnavailable(s.stage)
-	}
+	c.emitRates(s.stage, c.aggregate.observe(sample.boundary))
 	removed := false
 	for _, server := range servers {
 		if server.removed {
@@ -566,13 +562,13 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 			if dir == Down && bytes.down > s.lastBytes[id].down || dir == Up && bytes.up > s.lastBytes[id].up {
 				s.lastMovement[id][dir] = time.Now()
 			} else if !s.ending &&
-				server.transport.targetTransport() == wire.TransportFetchStream &&
-				time.Since(s.lastMovement[id][dir]) >= busRedialWindow {
+				server.transport.target.Transport == wire.TransportFetchStream &&
+				time.Since(s.lastMovement[id][dir]) >= redialWindow {
 				c.failure(
 					server,
 					s.stage,
 					string(dir),
-					fmt.Errorf("%s stopped delivering bytes for %v", dir, busRedialWindow),
+					fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow),
 					time.Now(),
 				)
 				removed = true
@@ -603,8 +599,8 @@ func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*p
 		observedUp: map[string]uploadLedger{},
 	}
 	for _, server := range servers {
-		boundary.down[server.id()] = server.transport.coordinated.download()
-		if id, bytes, _ := server.transport.coordinated.upload(); id != "" {
+		boundary.down[server.id()] = server.transport.coordinated.down.Load()
+		if id, bytes := server.transport.coordinated.uploaded(); id != "" {
 			boundary.observedUp[server.id()] = uploadLedger{id, bytes}
 		}
 	}
@@ -625,37 +621,23 @@ func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*p
 	return boundary
 }
 
-func (c *coordinator) emitRates(stage StagePlan, window AggregateWindow) {
+func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
 	for _, dir := range stage.Directions {
-		rate := window.DownBytesPerSec
-		if dir == Up {
-			rate = window.UpBytesPerSec
-		}
-		if rate != nil {
-			var total uint64
-			for _, bytes := range c.aggregate.stageTotals[stage.Name] {
-				total += bytes.of(dir)
+		sample := ThroughputSample{Unavailable: true}
+		if window != nil {
+			rate := window.DownBytesPerSec
+			if dir == Up {
+				rate = window.UpBytesPerSec
 			}
-			c.emit(Event{
-				Kind:       EventThroughput,
-				At:         time.Now(),
-				Stage:      stage.Name,
-				Direction:  dir,
-				Throughput: ThroughputSample{BytesPerSec: *rate, TotalBytes: total},
-			})
+			if rate == nil {
+				continue
+			}
+			sample = ThroughputSample{BytesPerSec: *rate}
+			for _, bytes := range c.aggregate.stageTotals[stage.Name] {
+				sample.TotalBytes += bytes.of(dir)
+			}
 		}
-	}
-}
-
-func (c *coordinator) emitUnavailable(stage StagePlan) {
-	for _, dir := range stage.Directions {
-		c.emit(Event{
-			Kind:       EventThroughput,
-			At:         time.Now(),
-			Stage:      stage.Name,
-			Direction:  dir,
-			Throughput: ThroughputSample{Unavailable: true},
-		})
+		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: sample})
 	}
 }
 

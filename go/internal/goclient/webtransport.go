@@ -90,7 +90,7 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 		if err := sess.SendDatagram([]byte(wire.EncodePing(0))); err != nil {
 			return fmt.Errorf("latency WebTransport probe failed: %w", err)
 		}
-		replyCtx, cancelReply := context.WithTimeout(verifyCtx, wtVerifyReplyTimeout)
+		replyCtx, cancelReply := context.WithTimeout(verifyCtx, 750*time.Millisecond)
 		reply, err := sess.ReceiveDatagram(replyCtx)
 		cancelReply()
 		if err != nil {
@@ -129,12 +129,6 @@ func (b wtBus) Recv(ctx context.Context) (string, error) {
 
 func (b wtBus) Close() { b.sess.close() }
 
-const wtRedialBackoff = 500 * time.Millisecond
-
-const wtVerifyReplyTimeout = 750 * time.Millisecond
-
-const wtSessionRedialWindow = busRedialWindow
-
 var errWTStageClosed = errors.New("webtransport stage session closed")
 
 type wtStageSession struct {
@@ -152,18 +146,24 @@ func newWTStageSession(
 	establish func(ctx context.Context, sess *wtSession) error,
 ) (*wtStageSession, error) {
 	w := &wtStageSession{dial: dial, establish: establish}
-	sess, err := dial(ctx)
+	sess, err := w.open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if establish != nil {
-		if err := establish(ctx, sess); err != nil {
-			sess.close()
-			return nil, err
-		}
-	}
 	w.sess = sess
 	return w, nil
+}
+
+func (w *wtStageSession) open(ctx context.Context) (*wtSession, error) {
+	sess, err := w.dial(ctx)
+	if err != nil || w.establish == nil {
+		return sess, err
+	}
+	if err := w.establish(ctx, sess); err != nil {
+		sess.close()
+		return nil, err
+	}
+	return sess, nil
 }
 
 func (w *wtStageSession) current() (*wtSession, int) {
@@ -182,40 +182,14 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 		return nil
 	}
 	w.sess.close()
-	windowCtx, cancelWindow := context.WithTimeout(ctx, wtSessionRedialWindow)
-	defer cancelWindow()
-	var lastErr error
-	for {
-		sess, err := w.dial(windowCtx)
-		if err == nil && w.establish != nil {
-			if err = w.establish(windowCtx, sess); err != nil {
-				sess.close()
-			}
-		}
+	return restore(ctx, time.Now().Add(redialWindow), "webtransport session", func(ctx context.Context) error {
+		sess, err := w.open(ctx)
 		if err == nil {
 			w.sess = sess
 			w.gen++
-			return nil
 		}
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
-			return err
-		}
-		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
-			lastErr = err
-		}
-		select {
-		case <-windowCtx.Done():
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			return fmt.Errorf(
-				"webtransport session lost and not replaced within %v: %w",
-				wtSessionRedialWindow,
-				lastErr,
-			)
-		case <-time.After(wtRedialBackoff):
-		}
-	}
+		return err
+	})
 }
 
 func (w *wtStageSession) close() {
@@ -226,8 +200,6 @@ func (w *wtStageSession) close() {
 }
 
 const wtLaneMaxFastFailures = 5
-
-const wtLaneProgressWindow = wtSessionRedialWindow
 
 func runWTLane(
 	ctx context.Context,
@@ -246,17 +218,17 @@ func runWTLane(
 		if progressed {
 			fastFailures = 0
 			failingSince = time.Time{}
-		} else if time.Since(started) >= wtRedialBackoff {
+		} else if time.Since(started) >= retryBackoff {
 			fastFailures = 0
 			if failingSince.IsZero() {
 				failingSince = started
 			}
-			if time.Since(failingSince) >= wtLaneProgressWindow {
+			if time.Since(failingSince) >= redialWindow {
 				return err
 			}
 		} else if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
 			return err
-		} else if !laneRetryPause(ctx) {
+		} else if !pause(ctx, retryBackoff) {
 			return nil
 		}
 		if sess.alive() {
@@ -279,7 +251,7 @@ func (r *runner) wtDownloadQuery() url.Values {
 	}
 }
 
-func (r *runner) downloadLaneWT(
+func downloadLaneWT(
 	ctx context.Context,
 	sess *wtSession,
 	buf []byte,
@@ -314,7 +286,7 @@ func (r *runner) downloadLaneWT(
 	return progressed, nil
 }
 
-func (r *runner) uploadLaneWT(ctx context.Context, sess *wtSession, block []byte, ready func()) (bool, error) {
+func uploadLaneWT(ctx context.Context, sess *wtSession, block []byte, ready func()) (bool, error) {
 	str, err := sess.OpenUniStreamSync(ctx)
 	if err != nil {
 		return false, laneStopError(ctx, err)

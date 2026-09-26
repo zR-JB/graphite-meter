@@ -3,8 +3,6 @@ package goclient
 import (
 	"context"
 	"errors"
-	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,62 +13,34 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func laneRetryPause(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(wtRedialBackoff):
-		return true
-	}
-}
-
-func (r *runner) measureDownload(ctx context.Context, gate *stageGate) (failure error) {
-	var total atomic.Uint64
-	r.coordinated.attachDownload(&total)
-	var lane func(context.Context, int, func()) error
-	if r.targetTransport() == wire.TransportWebTransport {
-		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
-			return wtDial(dialCtx, r.cfg, r.target.Origin, route.WTDownload, r.wtDownloadQuery())
+func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
+	total := &r.coordinated.down
+	if r.target.Transport == wire.TransportWebTransport {
+		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
+			return wtDial(ctx, r.cfg, r.target.Origin, r.target.Routes.WTDownload, r.wtDownloadQuery())
 		}, nil)
 		if err != nil {
 			return err
 		}
 		defer host.close()
-		lane = func(laneCtx context.Context, _ int, ready func()) error {
-			buf := make([]byte, 1024*1024)
-			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
-				return r.downloadLaneWT(lctx, sess, buf, &total, ready)
+		return r.runLanes(ctx, gate, Down, nil, func(ctx context.Context, _ int, ready func()) error {
+			buf := make([]byte, 1<<20)
+			return runWTLane(ctx, host, func(ctx context.Context, sess *wtSession) (bool, error) {
+				return downloadLaneWT(ctx, sess, buf, total, ready)
 			})
-		}
-	} else {
-		base, err := r.endpoint(route.Download)
-		if err != nil {
-			return err
-		}
-		lane = func(laneCtx context.Context, i int, ready func()) error {
-			return r.downloadLane(laneCtx, base, i, &total, ready)
-		}
+		})
 	}
-	streams := r.streams.of(Down)
-	lanes := r.startLanes(ctx, streams, lane)
-	defer lanes.stop()
-	defer func() {
-		if failure != nil {
-			gate.cancel(failure)
-		}
-	}()
-	if err := lanes.waitReady(ctx); err != nil {
+	base, err := r.endpoint(r.target.Routes.Download)
+	if err != nil {
 		return err
 	}
-	gate.reportReady()
-	if err := lanes.waitStart(ctx, gate.start, nil); err != nil {
-		return err
-	}
-	return waitCoordinatedTransfer(ctx, lanes.errs, nil)
+	return r.runLanes(ctx, gate, Down, nil, func(ctx context.Context, lane int, ready func()) error {
+		return r.downloadLane(ctx, base, lane, total, ready)
+	})
 }
 
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64, ready func()) error {
-	buf := make([]byte, 1024*1024)
+	buf := make([]byte, 1<<20)
 	for ctx.Err() == nil {
 		u, err := endpointWithQuery(base, url.Values{
 			"bytes": {strconv.FormatInt(transferBytesPerStream, 10)},
@@ -86,44 +56,25 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			if !laneRetryPause(ctx) {
-				return nil
-			}
+			pause(ctx, retryBackoff)
 			continue
 		}
 		if res.StatusCode != http.StatusOK {
-			err := unexpectedStatus(res)
 			_ = res.Body.Close()
-			return err
+			return unexpectedStatus(res)
 		}
 		ready()
-		for {
-			n, readErr := res.Body.Read(buf)
-			if n > 0 {
-				total.Add(uint64(n))
-			}
-			if readErr != nil {
-				_ = res.Body.Close()
-				if !errors.Is(readErr, io.EOF) && !laneRetryPause(ctx) {
-					return nil
+		for ctx.Err() == nil {
+			n, err := res.Body.Read(buf)
+			total.Add(uint64(n))
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					pause(ctx, retryBackoff)
 				}
 				break
 			}
-			if ctx.Err() != nil {
-				_ = res.Body.Close()
-				return nil
-			}
 		}
+		_ = res.Body.Close()
 	}
 	return nil
-}
-
-func unexpectedStatus(res *http.Response) error {
-	if res == nil {
-		return fmt.Errorf("empty HTTP response")
-	}
-	if err := authResponseError(res); err != nil {
-		return err
-	}
-	return fmt.Errorf("HTTP %d from %s", res.StatusCode, res.Request.URL.String())
 }

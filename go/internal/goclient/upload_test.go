@@ -21,30 +21,14 @@ import (
 
 func TestCyclingBody(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		limit int64
-		want  []byte
-	}{
-		{0, []byte{1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3}},
-		{7, []byte{1, 2, 3, 1, 2, 3, 1}},
-	} {
-		b := &cyclingBody{ctx: t.Context(), block: []byte{1, 2, 3}, limit: c.limit}
-		var got []byte
-		buf := make([]byte, 4)
-		for len(got) < 12 {
-			n, err := b.Read(buf)
-			got = append(got, buf[:n]...)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-		}
-		if !bytes.Equal(got, c.want) {
-			t.Errorf("limit %d emitted %v, want %v", c.limit, got, c.want)
-		}
+	b := &cyclingBody{ctx: t.Context(), block: []byte{1, 2, 3}, remaining: 7}
+	got, err := io.ReadAll(b)
+	if want := []byte{1, 2, 3, 1, 2, 3, 1}; err != nil || !bytes.Equal(got, want) {
+		t.Errorf("emitted %v, %v; want %v", got, err, want)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := (&cyclingBody{ctx: ctx, block: []byte{1}}).Read(make([]byte, 4)); err == nil {
+	if _, err := (&cyclingBody{ctx: ctx, block: []byte{1}, remaining: 1}).Read(make([]byte, 4)); err == nil {
 		t.Fatal("a cancelled request kept reading")
 	}
 }
@@ -64,7 +48,7 @@ func TestMintUploadID(t *testing.T) {
 			}
 			_, _ = io.WriteString(w, body)
 		}))
-		id, err := (&runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}).mintUploadID(t.Context())
+		id, err := testRunner(srv).mintUploadID(t.Context())
 		srv.Close()
 		if id != want || (err == nil) != (want != "") {
 			t.Errorf("session response %q minted %q, %v; want %q", body, id, err, want)
@@ -89,7 +73,7 @@ func TestUploadLaneDrainsBytes(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
+	r := testRunner(srv)
 	block := make([]byte, 64*1024)
 
 	ctx, cancel := context.WithCancel(t.Context())
@@ -124,7 +108,7 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
+	r := testRunner(srv)
 	if err := r.uploadLane(t.Context(), "test-id", 0, make([]byte, 1024), func() {}); err == nil {
 		t.Fatal("HTTP 503 did not fail the upload lane")
 	}
@@ -145,7 +129,7 @@ func TestUploadLaneSurvivesAbruptConnectionDrop(t *testing.T) {
 	srv := newAbruptCloseUploadServer(&requests)
 	defer srv.Close()
 
-	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
+	r := testRunner(srv)
 	block := make([]byte, 64*1024)
 
 	ctx, cancel := context.WithCancel(t.Context())

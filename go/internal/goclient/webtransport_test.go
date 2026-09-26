@@ -120,7 +120,7 @@ func runWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 		select {
 		case <-laneCtx.Done():
 			return false, laneCtx.Err()
-		case <-time.After(wtRedialBackoff + 50*time.Millisecond):
+		case <-time.After(retryBackoff + 50*time.Millisecond):
 		}
 		return false, errors.New("session closed by the server")
 	})
@@ -145,7 +145,7 @@ func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	if wtLaneMaxFastFailures != 5 {
 		t.Fatalf("wtLaneMaxFastFailures = %d, want 5", wtLaneMaxFastFailures)
 	}
-	const slowFailure = wtRedialBackoff + 20*time.Millisecond
+	const slowFailure = retryBackoff + 20*time.Millisecond
 	cases := []fastFailureCase{
 		{
 			name:     "one short of the ceiling is absorbed",
@@ -382,7 +382,7 @@ func wtStageSessionClosesASessionWhoseEstablishFailed(t *testing.T) {
 	if dialed[failures].closed.Load() {
 		t.Error("the adopted session was closed")
 	}
-	if want := failures * wtRedialBackoff; elapsed < want {
+	if want := failures * retryBackoff; elapsed < want {
 		t.Errorf("%d failed establishes took %v, want at least %v: the retry is not paced", failures, elapsed, want)
 	}
 }
@@ -490,7 +490,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 
 func runWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 	host := &wtStageSession{sess: liveWTSession(t)}
-	ctx, cancel := context.WithTimeout(t.Context(), 2*wtLaneProgressWindow+300*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*redialWindow+300*time.Millisecond)
 	defer cancel()
 	entries := 0
 	err := runWTLane(ctx, host, func(laneCtx context.Context, _ *wtSession) (bool, error) {
@@ -498,7 +498,7 @@ func runWTLaneBoundsSlowZeroByteFailures(t *testing.T) {
 		select {
 		case <-laneCtx.Done():
 			return false, laneCtx.Err()
-		case <-time.After(wtLaneProgressWindow + 50*time.Millisecond):
+		case <-time.After(redialWindow + 50*time.Millisecond):
 			return false, errors.New("stream failed before carrying a byte")
 		}
 	})
@@ -519,7 +519,7 @@ func runWTLaneBoundsMixedZeroByteFailures(t *testing.T) {
 		entries++
 		pause := 10 * time.Millisecond
 		if entries%2 == 0 {
-			pause = wtRedialBackoff + 100*time.Millisecond
+			pause = retryBackoff + 100*time.Millisecond
 		}
 		select {
 		case <-laneCtx.Done():

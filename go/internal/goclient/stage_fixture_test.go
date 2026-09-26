@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"context"
+	"net/http/httptest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -19,7 +20,8 @@ func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 		Connection: connection,
 		config:     cfg,
 	}
-	return runSelection(ctx, nil, cfg, &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}, emit)
+	prepared := &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}
+	return runSelection(ctx, context.WithoutCancel(ctx), cfg, prepared, emit)
 }
 
 func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Duration) error {
@@ -38,13 +40,15 @@ func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Du
 	} {
 		*d = duration
 	}
-	target := wire.ThroughputTarget{Origin: cfg.BaseURL, Transport: r.targetTransport()}
-	if r.target != nil {
-		target = *r.target
+	if r.target == nil {
+		r.target = fetchTarget(cfg.BaseURL)
+	}
+	if r.teardown == nil {
+		r.teardown = context.WithoutCancel(ctx)
 	}
 	prepared := PreparedServer{
 		Server:     wire.ServerEntry{ID: "self", Name: "fixture", URL: cfg.BaseURL},
-		Connection: &PreparedConnection{ThroughputTarget: target, LatencyTarget: r.latencyTarget},
+		Connection: &PreparedConnection{ThroughputTarget: *r.target, LatencyTarget: r.latencyTarget},
 		config:     cfg,
 	}
 	c := &coordinator{
@@ -71,4 +75,18 @@ func (r *runner) testTransferResult(ctx context.Context, stage Stage, duration t
 	defer func() { r.emit = emit }()
 	err := r.runTestStage(ctx, stage, duration)
 	return result, err
+}
+
+func testRunner(srv *httptest.Server) *runner {
+	return &runner{
+		cfg:     Config{BaseURL: srv.URL}.normalized(),
+		http:    srv.Client(),
+		target:  fetchTarget(srv.URL),
+		streams: streamCounts{down: 1, up: 1},
+		emit:    func(Event) {},
+	}
+}
+
+func fetchTarget(origin string) *wire.ThroughputTarget {
+	return &wire.ThroughputTarget{Origin: origin, Transport: wire.TransportFetchStream, Routes: wire.DefaultThroughputRoutes()}
 }

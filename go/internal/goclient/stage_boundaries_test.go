@@ -453,7 +453,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 				defer cancel()
 				started := time.Now()
 				result, err := r.testTransferResult(ctx, stage, duration)
-				if duration > busRedialWindow {
+				if duration > redialWindow {
 					if !errors.Is(err, errNoSurvivors) ||
 						details == nil ||
 						len(details.Failures) != 1 ||
@@ -469,7 +469,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 				if result.TotalBytes != 0 || result.MeanBps != 0 {
 					t.Fatalf("zero progress invented data: %+v", result)
 				}
-				wantUnavailable := duration < minimumSurvivorEvidence || duration > busRedialWindow
+				wantUnavailable := duration < minimumSurvivorEvidence || duration > redialWindow
 				if result.Unavailable != wantUnavailable {
 					t.Fatalf("evidence availability: %+v", result)
 				}
@@ -579,7 +579,7 @@ func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := r.coordinated.download(); got != preparationBytes {
+		if got := r.coordinated.down.Load(); got != preparationBytes {
 			t.Fatalf("preparation fixture carried %d bytes", got)
 		}
 		if measuredAt.Sub(preparedAt) != r.cfg.Warmup ||

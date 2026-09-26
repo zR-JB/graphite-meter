@@ -84,9 +84,7 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 		return wire.ServerCatalog{}, err
 	}
 	var catalog wire.ServerCatalog
-	_, err = jsonHTTPClient{hc}.requestJSON(ctx, http.MethodGet, target, nil,
-		http.Header{"Cache-Control": {"no-store"}}, &catalog, httpStatusError("server catalogue"))
-	if err != nil {
+	if _, err := controlJSON(ctx, hc, http.MethodGet, target, "server catalogue", &catalog); err != nil {
 		return catalog, err
 	}
 	if err := catalog.Validate(); err != nil {

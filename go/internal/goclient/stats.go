@@ -1,70 +1,10 @@
 package goclient
 
 import (
-	"context"
 	"math"
 	"slices"
-	"sync"
 	"time"
 )
-
-type laneGroup struct {
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	errs   chan error
-	ready  chan struct{}
-}
-
-func (r *runner) startLanes(
-	ctx context.Context,
-	streams int,
-	body func(ctx context.Context, lane int, ready func()) error,
-) *laneGroup {
-	laneCtx, cancel := context.WithCancel(ctx)
-	g := &laneGroup{cancel: cancel, errs: make(chan error, streams), ready: make(chan struct{}, streams)}
-	stagger := r.laneStaggerStep(streams)
-	for lane := range streams {
-		g.wg.Go(func() {
-			if !staggerSleep(laneCtx, lane, stagger) {
-				return
-			}
-			if err := body(laneCtx, lane, sync.OnceFunc(func() { g.ready <- struct{}{} })); err != nil {
-				select {
-				case g.errs <- err:
-				default:
-				}
-			}
-		})
-	}
-	return g
-}
-
-func (g *laneGroup) waitReady(ctx context.Context) error {
-	for range cap(g.ready) {
-		if err := g.waitStart(ctx, g.ready, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}, stageErr <-chan error) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-g.errs:
-		return err
-	case err := <-stageErr:
-		return err
-	case <-start:
-		return nil
-	}
-}
-
-func (g *laneGroup) stop() {
-	g.cancel()
-	g.wg.Wait()
-}
 
 type latencyStats struct {
 	values                             []time.Duration

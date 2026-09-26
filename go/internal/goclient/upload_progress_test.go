@@ -82,7 +82,7 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 			})
 		}()
 		r := &runner{emit: func(Event) {}}
-		p, err := r.readUploadProgress(t.Context(), testUploadFeed(live), "http://127.0.0.1/upload/progress")
+		p, err := r.readUploadProgress(t.Context(), "id", "http://127.0.0.1/upload/progress", testUploadFeed(live))
 		if err != nil {
 			t.Fatalf("readUploadProgress: %v", err)
 		}
@@ -258,7 +258,7 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), http: srv.Client(), emit: func(Event) {}}
 	ctx, cancel := context.WithTimeout(t.Context(), window)
 	defer cancel()
-	p, err := r.openUploadProgress(ctx, srv.URL+"/upload/progress")
+	p, err := r.openUploadProgress(ctx, "id", srv.URL+"/upload/progress")
 	if err != nil {
 		t.Fatalf("openUploadProgress: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
 			recordsPerFeed,
 		)
 	}
-	if paced := int64(window/wtRedialBackoff) + 2; gets.Load() > paced {
+	if paced := int64(window/retryBackoff) + 2; gets.Load() > paced {
 		t.Errorf("issued %d progress GETs in %v, want at most %d: the reopen is not paced", gets.Load(), window, paced)
 	}
 }
@@ -294,7 +294,7 @@ func TestUploadProgressPermanentLossFails(t *testing.T) {
 		}, nil
 	})}, emit: func(Event) {}}
 	go r.reattachUploadProgress(progress, "http://progress.invalid/upload/progress")
-	err := waitCoordinatedTransfer(t.Context(), nil, progress.errs)
+	err := <-progress.errs
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok || requests.Load() != 1 {
 		t.Fatalf(
 			"permanent auth refusal = %v after %d requests, want AuthRequiredError after one",
@@ -350,10 +350,10 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 	t.Run("reader owns its body", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			body := &ownedProgressBody{started: make(chan struct{}), stop: make(chan struct{})}
-			progress, err := (&runner{}).readUploadProgress(t.Context(), &uploadFeed{
+			progress, err := (&runner{}).readUploadProgress(t.Context(), "id", "", &uploadFeed{
 				ReadCloser: body,
 				interrupt:  sync.OnceFunc(func() { close(body.stop) }),
-			}, "")
+			})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -380,10 +380,11 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 				stop:    make(chan struct{}),
 				release: make(chan struct{}),
 			}
-			progress, err := (&runner{http: &http.Client{}}).readUploadProgress(t.Context(), &uploadFeed{
-				ReadCloser: body,
-				interrupt:  sync.OnceFunc(func() { close(body.stop) }),
-			}, "http://fixture.invalid/upload/progress")
+			progress, err := (&runner{http: &http.Client{}}).readUploadProgress(t.Context(), "id",
+				"http://fixture.invalid/upload/progress", &uploadFeed{
+					ReadCloser: body,
+					interrupt:  sync.OnceFunc(func() { close(body.stop) }),
+				})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -424,7 +425,7 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 				<-release
 				return nil, req.Context().Err()
 			})}}
-			progress, err := r.openUploadProgress(t.Context(), "http://fixture.invalid/upload/progress")
+			progress, err := r.openUploadProgress(t.Context(), "id", "http://fixture.invalid/upload/progress")
 			if err != nil {
 				t.Fatal(err)
 			}

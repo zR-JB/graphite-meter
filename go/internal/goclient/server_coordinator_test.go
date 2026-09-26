@@ -195,7 +195,7 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	var phases []Phase
 	var results []Result
 	var details *RunDetails
-	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+	err := runSelection(t.Context(), context.Background(), cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch e.Kind {
@@ -254,7 +254,7 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	var measureEventLag time.Duration
 	var details *RunDetails
 	var mu sync.Mutex
-	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+	err := runSelection(t.Context(), context.Background(), cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
@@ -318,7 +318,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			var details *RunDetails
 			var result Result
 			var timer *time.Timer
-			err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+			err := runSelection(t.Context(), context.Background(), cfg, prepared, func(e Event) {
 				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 					timer = time.AfterFunc(scenario.at, func() {
 						a.failed.Store(true)
@@ -370,7 +370,7 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 		})
 	}
 	var upload Result
-	err = runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+	err = runSelection(t.Context(), context.Background(), cfg, prepared, func(e Event) {
 		switch {
 		case e.Kind == EventStage && e.Phase == PhaseWarmup:
 			refuse(0)

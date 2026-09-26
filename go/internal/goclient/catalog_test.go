@@ -130,7 +130,7 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 	defer cancel()
 	var details *RunDetails
 	doneCount := 0
-	err = runSelection(ctx, nil, cfg, prepared, func(e Event) {
+	err = runSelection(ctx, context.Background(), cfg, prepared, func(e Event) {
 		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 			time.AfterFunc(time.Second, cancel)
 		}
@@ -168,7 +168,7 @@ func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var details *RunDetails
 	var upload Result
-	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+	err := runSelection(t.Context(), context.Background(), cfg, prepared, func(e Event) {
 		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == PhaseFinished {
 			a.checkpointFailed.Store(true)
 		}

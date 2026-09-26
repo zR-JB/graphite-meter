@@ -344,36 +344,9 @@ type runner struct {
 	teardown      context.Context
 }
 
-const laneStagger = 75 * time.Millisecond
-
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
-	const ceil = 4 * time.Second
-	w := min(max(slowStartRTTs*rtt, base), ceil)
-	return w
-}
-
-func (r *runner) laneStaggerStep(streams int) time.Duration {
-	if streams <= 1 {
-		return 0
-	}
-	step := min(adaptiveWarmup(r.cfg.Warmup, r.idleRTT)/2/time.Duration(streams-1), laneStagger)
-	return step
-}
-
-func staggerSleep(ctx context.Context, lane int, step time.Duration) bool {
-	delay := time.Duration(lane) * step
-	if delay <= 0 {
-		return true
-	}
-	t := time.NewTimer(delay)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
+	return min(max(slowStartRTTs*rtt, base), 4*time.Second)
 }
 
 func (r *runner) measureDirection(ctx context.Context, dir Direction, gate *stageGate) error {
@@ -394,21 +367,7 @@ type stageGate struct {
 }
 
 func (r *runner) endpoint(path string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("empty endpoint path")
-	}
-	base := r.cfg.BaseURL
-	if r.target != nil {
-		base = r.target.Origin
-	}
-	return httpEndpoint(base, path)
-}
-
-func (r *runner) targetTransport() string {
-	if r.target == nil {
-		return wire.TransportFetchStream
-	}
-	return r.target.Transport
+	return httpEndpoint(r.target.Origin, path)
 }
 
 func transportOrder(selection string, preferred, fallback string) []string {

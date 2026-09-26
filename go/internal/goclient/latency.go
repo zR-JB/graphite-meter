@@ -2,7 +2,6 @@ package goclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"maps"
@@ -31,12 +30,7 @@ func (b wsBus) Recv(ctx context.Context) (string, error) {
 	return string(msg), err
 }
 
-func (b wsBus) Close() {
-	b.conn.Close(
-		websocket.StatusNormalClosure,
-		"",
-	)
-} //nolint:errcheck // the samples are already collected
+func (b wsBus) Close() { _ = b.conn.Close(websocket.StatusNormalClosure, "") }
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	if r.latencyTarget.Transport == wire.TransportWebTransport {
@@ -63,37 +57,14 @@ func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	return wsBus{conn: conn}, nil
 }
 
-const busRedialWindow = 2 * time.Second
-
 func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, error) {
-	redialCtx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	var lastErr error
-	for {
-		dialCtx, dialCancel := context.WithTimeout(redialCtx, 3*time.Second)
-		bus, err := r.dialPingBus(dialCtx)
-		dialCancel()
-		if err == nil {
-			return bus, nil
-		}
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
-			return nil, err
-		}
-		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
-			lastErr = err
-		}
-		select {
-		case <-redialCtx.Done():
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			if lastErr != nil {
-				return nil, fmt.Errorf("latency channel not reconnected within %v: %w", busRedialWindow, lastErr)
-			}
-			return nil, redialCtx.Err()
-		case <-time.After(wtRedialBackoff):
-		}
-	}
+	var bus pingBus
+	err := restore(ctx, deadline, "latency channel", func(ctx context.Context) error {
+		var err error
+		bus, err = r.dialPingBus(ctx)
+		return err
+	})
+	return bus, err
 }
 
 func (r *runner) measureLatency(
@@ -264,7 +235,7 @@ func (r *runner) measureLatency(
 			stats.breakContinuity()
 			mu.Unlock()
 			conn.Close()
-			redialDeadline := time.Now().Add(busRedialWindow)
+			redialDeadline := time.Now().Add(redialWindow)
 			if measuring.Load() && measuredUntil.Before(redialDeadline) {
 				redialDeadline = measuredUntil
 			}

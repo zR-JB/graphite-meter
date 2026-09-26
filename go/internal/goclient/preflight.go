@@ -3,7 +3,7 @@ package goclient
 import (
 	"context"
 	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,61 +14,41 @@ import (
 )
 
 func getPreflight(ctx context.Context, hc *http.Client, base string) (wire.Preflight, error) {
-	u, err := url.JoinPath(strings.TrimRight(base, "/"), "/preflight")
+	u, err := httpEndpoint(base, "/preflight")
 	if err != nil {
 		return wire.Preflight{}, err
 	}
 	var pf wire.Preflight
-	response, err := (jsonHTTPClient{hc}).requestJSON(ctx, http.MethodGet, u, nil, http.Header{
-		"Cache-Control": {"no-store"},
-	}, &pf, httpStatusError("preflight"))
+	response, err := controlJSON(ctx, hc, http.MethodGet, u, "preflight", &pf)
 	if err != nil {
 		return wire.Preflight{}, err
 	}
 	if err := pf.Validate(); err != nil {
 		return wire.Preflight{}, err
 	}
-	baseOrigin := response.Request.URL.Clone()
-	baseOrigin.Path, baseOrigin.RawQuery, baseOrigin.Fragment = "", "", ""
-	resolveSelfOrigins(&pf, baseOrigin.String())
-	return pf, nil
-}
-
-func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
+	self := response.Request.URL.Clone()
+	self.Path, self.RawQuery, self.Fragment = "", "", ""
+	origin := self.String()
 	for i := range pf.Capabilities.ThroughputTargets {
-		if pf.Capabilities.ThroughputTargets[i].Origin == "." {
-			normalizeThroughputTarget(&pf.Capabilities.ThroughputTargets[i], resolved)
+		if t := &pf.Capabilities.ThroughputTargets[i]; t.Origin == "." {
+			t.ID, t.Origin, t.TLS, t.Routes = origin, origin, self.Scheme == "https", wire.DefaultThroughputRoutes()
 		}
 	}
 	for i := range pf.Capabilities.LatencyTargets {
-		if pf.Capabilities.LatencyTargets[i].Origin == "." {
-			normalizeLatencyTarget(&pf.Capabilities.LatencyTargets[i], resolved)
+		if t := &pf.Capabilities.LatencyTargets[i]; t.Origin == "." {
+			t.ID, t.Origin, t.TLS, t.Routes = origin, origin, self.Scheme == "https", wire.DefaultLatencyRoutes()
 		}
 	}
+	return pf, nil
 }
 
-func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
-	t.ID, t.Origin = origin, strings.TrimRight(origin, "/")
-}
-func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
-	t.ID, t.Origin = origin, strings.TrimRight(origin, "/")
-}
-
-func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPrefix string) (wire.Probe, string, error) {
+func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, what string) (wire.Probe, string, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
 		return wire.Probe{}, "", err
 	}
 	var p wire.Probe
-	response, err := (jsonHTTPClient{hc}).requestJSON(
-		ctx,
-		http.MethodGet,
-		u,
-		nil,
-		nil,
-		&p,
-		httpStatusError(statusPrefix),
-	)
+	response, err := controlJSON(ctx, hc, http.MethodGet, u, what, &p)
 	if err != nil {
 		return wire.Probe{}, "", err
 	}
@@ -120,11 +100,7 @@ func endpointWithQuery(base string, query url.Values) (string, error) {
 		return "", err
 	}
 	values := u.Query()
-	for key, list := range query {
-		if len(list) > 0 {
-			values.Set(key, list[0])
-		}
-	}
+	maps.Copy(values, query)
 	u.RawQuery = values.Encode()
 	return u.String(), nil
 }

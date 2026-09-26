@@ -283,7 +283,7 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 
 	r := &runner{cfg: DefaultConfig(), emit: func(Event) {}}
 	attachTestLatencyTarget(r, srv.URL)
-	_, err := r.redialPingBus(t.Context(), time.Now().Add(busRedialWindow))
+	_, err := r.redialPingBus(t.Context(), time.Now().Add(redialWindow))
 	if _, ok := errors.AsType[*AuthRequiredError](err); !ok {
 		t.Fatalf("redial error = %v, want AuthRequiredError", err)
 	}
