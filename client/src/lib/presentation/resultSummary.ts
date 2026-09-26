@@ -26,7 +26,6 @@ export interface SummaryRow {
   stage?: TransportRole;
   note?: string;
 }
-/** A headline with its grouped secondary values; `details` opens behind the card. */
 export interface SummaryCard {
   key: TransportRole;
   label: string;
