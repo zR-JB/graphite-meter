@@ -41,8 +41,8 @@ const arc = (
   phase: "download" | "upload" | "bidirectional",
   label: string,
   bytesPerSec: number,
-  dashed = false,
-) => ({ phase, label, bytesPerSec, dashed });
+  direction: "download" | "upload" | "bidirectional" = phase,
+) => ({ phase, direction, label, bytesPerSec, dashed: direction !== phase });
 
 test("terminal gauge enumerates every complete throughput phase", () => {
   expect(
@@ -65,7 +65,7 @@ test("one-sided bidirectional evidence stays partial", () => {
     resultGaugeArcs(
       result({ bidirectional: { down: throughput(30), up: null } }),
     ),
-  ).toEqual([arc("bidirectional", "Bidirectional download", 30, true)]);
+  ).toEqual([arc("bidirectional", "Bidirectional download", 30, "download")]);
 });
 
 test("terminal gauge skips unavailable stages in every combination", () => {
@@ -103,14 +103,14 @@ test("terminal gauge skips unavailable stages in every combination", () => {
     resultGaugeArcs(
       result({ bidirectional: { down: null, up: throughput(40) } }),
     ),
-  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, true)]);
+  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, "upload")]);
 });
 
 test("layer ordering paints highest throughput first and preserves ties", () => {
   const layers = sortResultGaugeArcs([
     arc("download", "Download", 20),
     arc("upload", "Upload", 80),
-    arc("bidirectional", "Bidirectional upload", 80, true),
+    arc("bidirectional", "Bidirectional upload", 80, "upload"),
   ]);
   expect(layers.map((arc) => arc.phase)).toEqual([
     "upload",
@@ -198,6 +198,6 @@ test("headline prefers download then upload then bidirectional regardless of spe
   expect(primaryResultGaugeArc([bidi, upload])).toBe(upload);
   expect(primaryResultGaugeArc([bidi])).toBe(bidi);
   expect(primaryResultGaugeArc([])).toBeNull();
-  const partial = arc("bidirectional", "Bidirectional upload", 5, true);
+  const partial = arc("bidirectional", "Bidirectional upload", 5, "upload");
   expect(primaryResultGaugeArc([partial])).toBe(partial);
 });

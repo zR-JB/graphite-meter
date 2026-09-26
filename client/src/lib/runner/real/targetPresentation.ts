@@ -5,6 +5,7 @@ import type {
 } from "../../api/endpoints";
 import type { ProtocolTarget, TransportDiscovery } from "../contract";
 import { httpProtocolLabel } from "../protocol";
+import { TRANSPORT } from "../../presentation/vocabulary";
 
 interface TargetPresentation {
   /** Compact chip text. */
@@ -24,8 +25,8 @@ export function describeTarget(
   const security = target.tls ? "TLS" : "clear";
   if (target.transport === "webtransport-datagram") {
     return {
-      label: `WebTransport datagrams · ${security}`,
-      summary: `WebTransport datagrams · ${httpProtocolLabel("http3")} · ${security}`,
+      label: `${TRANSPORT["webtransport-datagram"]} · ${security}`,
+      summary: `${TRANSPORT["webtransport-datagram"]} · ${httpProtocolLabel("http3")} · ${security}`,
       advertisedDetail: `Experimental unreliable-datagram flood over ${httpProtocolLabel("http3")} · ${target.origin}`,
     };
   }
@@ -35,7 +36,7 @@ export function describeTarget(
     if ("wtDownload" in target.routes) {
       return {
         label: `${mechanism} · ${security}`,
-        summary: `WebTransport streams · ${httpProtocolLabel("http3")} · ${security}`,
+        summary: `${TRANSPORT.webtransport} · ${httpProtocolLabel("http3")} · ${security}`,
         advertisedDetail: `QUIC stream session over ${httpProtocolLabel("http3")} · ${target.origin}`,
       };
     }
@@ -66,7 +67,7 @@ export function describeTarget(
       : target.protocol;
   return {
     label: `${httpProtocolLabel(protocol)} · ${security}`,
-    summary: `Fetch stream · ${httpProtocolLabel(protocol)} · ${security}`,
+    summary: `${TRANSPORT["fetch-stream"]} · ${httpProtocolLabel(protocol)} · ${security}`,
     advertisedDetail:
       target.protocol === "negotiated"
         ? `Browser negotiates the available HTTP version · ${target.origin}`

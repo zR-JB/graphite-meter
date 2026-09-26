@@ -4,22 +4,13 @@
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
-    type ChartLabelPhase,
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
   import { fmtDuration, fmtSpeed, fmtMs } from "../format";
-  import { STAGE } from "../presentation/vocabulary";
+  import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
-
-  const PHASE_LABEL: Record<ChartLabelPhase, string> = {
-    warmup: "Warmup",
-    latency: STAGE.latency.label,
-    download: STAGE.download.label,
-    upload: STAGE.upload.label,
-    bidirectional: STAGE.bidirectional.short,
-  };
 
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
@@ -376,7 +367,10 @@
           <span
             class="phase-label"
             style:left={`${label.x}px`}
-            style:top={`${label.y}px`}>{PHASE_LABEL[label.phase]}</span
+            style:top={`${label.y}px`}
+            >{label.phase === "bidirectional"
+              ? STAGE.bidirectional.short
+              : phaseLabel(label.phase)}</span
           >
         {/each}
         {#each presentation.phaseStats as stat (stat.lane)}
@@ -443,7 +437,7 @@
         {#if chartPresentation.latencyEnabled}
           <div class="chip-row">
             <span>RTT median</span><b
-              >{hover.rtt == null ? "—" : `${fmtMs(hover.rtt)} ms`}</b
+              >{hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`}</b
             >
           </div>
         {/if}

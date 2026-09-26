@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tooltip, JARGON } from "../actions/tooltip";
   import { ICON } from "../constants";
+  import { MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs } from "../format";
   import {
     entries,
@@ -64,12 +65,6 @@
     scale.min + scale.span / 2,
     scale.min + scale.span,
   ]);
-  const laneIcons = {
-    latency: ICON.ping,
-    download: ICON.download,
-    upload: ICON.upload,
-    bidirectional: ICON.bidirectional,
-  } as const;
 
   let hover = $state<{
     key: LatencyProfileViewLane["key"];
@@ -199,7 +194,7 @@
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="tone-icon lane-icon" aria-hidden="true"
-          >{@html laneIcons[lane.key]}</span
+          >{@html STAGE[lane.key].icon}</span
         >
         <span class="caps lane-label">{lane.label}</span>
         <strong
@@ -218,7 +213,7 @@
         {/if}
         <em class="range-label">
           {lane.min == null || lane.max == null
-            ? "range —"
+            ? `range ${MISSING}`
             : `${fmtMs(lane.min)} – ${fmtMs(lane.max)}`}
         </em>
         <span class="accounting-slot">

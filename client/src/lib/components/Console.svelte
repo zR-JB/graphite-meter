@@ -20,6 +20,7 @@
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
   import { ICON } from "../constants";
+  import { resolvedPhase, THEME } from "../presentation/vocabulary";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -149,7 +150,6 @@
     const next = panelsForLayout(currentRoute);
     if (next !== currentRoute) routeTo(next, true);
   });
-  const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
     if (measurementOpen) return null;
     const recovering = store.phaseStage
@@ -179,16 +179,6 @@
   const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
-  const THEME_ICON: Record<(typeof THEME_CYCLE)[number], string> = {
-    light: ICON.sun,
-    dark: ICON.moon,
-    auto: ICON.contrast,
-  };
-  const THEME_LABEL: Record<(typeof THEME_CYCLE)[number], string> = {
-    light: "Light",
-    dark: "Dark",
-    auto: "Auto",
-  };
 
   function toggleTheme() {
     const next =
@@ -522,7 +512,7 @@
         e.preventDefault();
         break;
       case "r":
-        if (measurementOpen && RESOLVED_PHASES.includes(store.phase)) {
+        if (measurementOpen && resolvedPhase(store.phase)) {
           toggleRun();
           e.preventDefault();
         }
@@ -654,13 +644,13 @@
       >{/if}
     <button
       class="btn btn-icon direct-theme"
-      aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
-      use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
-      onclick={toggleTheme}>{@html THEME_ICON[store.theme]}</button
+      aria-label={`Theme: ${THEME[store.theme].label}`}
+      use:tooltip={`Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`}
+      onclick={toggleTheme}>{@html THEME[store.theme].icon}</button
     >
     <button
       class="btn btn-icon direct-endpoint"
-      aria-label="Toggle Details"
+      aria-label="Details"
       aria-expanded={telemetryOpen}
       use:tooltip={"Details — server and connection (D)"}
       onclick={(event) =>

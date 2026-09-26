@@ -61,16 +61,7 @@ export function gaugeReadout(input: GaugeReadoutInput) {
         ? { value: input.rate(input.measuredBytesPerSec), unit: input.unit }
         : display;
   const arc = phase === "complete" ? input.headline : null;
-  const terminal = arc && {
-    ...arc,
-    value: input.rate(arc.bytesPerSec),
-    direction:
-      arc.phase === "download" || arc.label.endsWith("download")
-        ? ("download" as const)
-        : arc.phase === "upload" || arc.label.endsWith("upload")
-          ? ("upload" as const)
-          : ("bidirectional" as const),
-  };
+  const terminal = arc && { ...arc, value: input.rate(arc.bytesPerSec) };
   const preparationLabel =
     preparation.status === "authenticating"
       ? "Checking sign-in"

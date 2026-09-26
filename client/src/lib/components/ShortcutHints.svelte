@@ -1,15 +1,10 @@
 <script lang="ts">
-  // Mirrors Console's shortcuts and the Run button's label; R is an alias for Space.
+  // Mirrors Console's shortcuts; R is an alias for Space.
   import { store } from "../state/store.svelte";
+  import { runActionLabel } from "../presentation/vocabulary";
 
   const primary = $derived(
-    store.preparing
-      ? "Cancel"
-      : store.isRunning
-        ? "Stop test"
-        : store.phase === "idle"
-          ? "Start test"
-          : "Run again",
+    runActionLabel(store.preparing, store.isRunning, store.phase),
   );
 </script>
 

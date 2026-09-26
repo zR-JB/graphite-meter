@@ -6,24 +6,13 @@
   const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
+  import { fmtDuration } from "../format";
+  import { resolvedPhase, runActionLabel } from "../presentation/vocabulary";
 
-  // A resolved run relabels the button "Run again", pairing with the R key
-  // and the ShortcutHints strip.
   const pending = $derived(store.preparing);
-  const resolved = $derived(
-    store.phase === "complete" ||
-      store.phase === "aborted" ||
-      store.phase === "error",
-  );
-  const label = $derived(
-    pending
-      ? "Cancel"
-      : store.isRunning
-        ? "Stop test"
-        : resolved
-          ? "Run again"
-          : "Start test",
-  );
+  const resolved = $derived(resolvedPhase(store.phase));
+  const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
+  const eta = $derived(fmtDuration(store.totalEtaMs, 0));
 </script>
 
 <button
@@ -52,15 +41,11 @@
     </span>
   {/key}
   {#if !store.isRunning && !pending}
-    <span class="duration" aria-hidden="true"
-      >~{Math.round(store.totalEtaMs / 1000)}s</span
-    >
+    <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
 </button>
 {#if !store.isRunning && !pending}
-  <span id="run-duration" class="sr-only"
-    >Estimated duration {Math.round(store.totalEtaMs / 1000)} seconds</span
-  >
+  <span id="run-duration" class="sr-only">Estimated duration {eta}</span>
 {/if}
 
 <style>

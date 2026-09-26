@@ -1,10 +1,13 @@
 import type { RunResult } from "../runner/contract";
 import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
+import { STAGE } from "../presentation/vocabulary";
 
 export type ResultArcPhase = "download" | "upload" | "bidirectional";
 
 export interface ResultGaugeArc {
   phase: ResultArcPhase;
+  /** The measured direction; a one-sided bidirectional arc names its survivor. */
+  direction: ResultArcPhase;
   label: string;
   bytesPerSec: number;
   dashed: boolean;
@@ -104,29 +107,35 @@ export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
   const arcs: ResultGaugeArc[] = [];
   const add = (
     phase: ResultArcPhase,
-    label: string,
     bytesPerSec: number,
-    dashed = false,
-  ) => arcs.push({ phase, label, bytesPerSec, dashed });
-  for (const { phase, label } of [
-    { phase: "download", label: "Download" },
-    { phase: "upload", label: "Upload" },
-  ] as const) {
+    direction: ResultArcPhase = phase,
+  ) =>
+    arcs.push({
+      phase,
+      direction,
+      label:
+        phase === direction
+          ? STAGE[phase].label
+          : `${STAGE[phase].label} ${direction}`,
+      bytesPerSec,
+      dashed: phase !== direction,
+    });
+  for (const phase of ["download", "upload"] as const) {
     const value = result[phase];
-    if (value) add(phase, label, value.reportedBytesPerSec);
+    if (value) add(phase, value.reportedBytesPerSec);
   }
   const bidi = bidirectionalResultPresentation(
     result.bidirectional?.down?.reportedBytesPerSec,
     result.bidirectional?.up?.reportedBytesPerSec,
   );
   if (bidi.combinedBytesPerSec != null) {
-    add("bidirectional", "Bidirectional", bidi.combinedBytesPerSec);
+    add("bidirectional", bidi.combinedBytesPerSec);
   } else if (bidi.survivingDirection) {
     const value = bidi[bidi.survivingDirection];
     if (value != null) {
       const direction =
         bidi.survivingDirection === "down" ? "download" : "upload";
-      add("bidirectional", `Bidirectional ${direction}`, value, true);
+      add("bidirectional", value, direction);
     }
   }
   return sortResultGaugeArcs(arcs);

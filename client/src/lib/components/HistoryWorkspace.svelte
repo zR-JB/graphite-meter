@@ -25,6 +25,7 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
     LATENCY_POPULATION,
+    MISSING,
     OUTCOME,
     STAGE,
   } from "../presentation/vocabulary";
@@ -232,7 +233,7 @@
         ? formatLatency(stages.latency.result.reportedMs)
         : stageStatusLabel(stages.latency.status);
     if (record.bufferbloat) return formatLatency(record.bufferbloat.loadedMs);
-    return stages.latency.status === "not-run" ? "Skipped" : "—";
+    return stages.latency.status === "not-run" ? "Skipped" : MISSING;
   }
 
   function historyRow(record: HistoryRecord) {

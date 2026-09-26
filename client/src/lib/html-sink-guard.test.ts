@@ -22,13 +22,15 @@ const ALLOWED = new Set([
   "ICON.trash",
   "ICON.upload",
   "ICON[awayRunIndicator.icon]",
-  "THEME_ICON[store.theme]",
+  "THEME[store.theme].icon",
+  "THEME[theme].icon",
+  "STAGE[lane.key].icon",
+  "STAGE[readout.terminal.direction].icon",
   // Loop variables below hold ICON.* values from static component tables.
   "s.icon",
   "c.icon",
   "card.icon",
   "lane.icon",
-  "laneIcons[lane.key]",
   "COLUMN[column].icon",
 ]);
 

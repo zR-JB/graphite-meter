@@ -3,6 +3,7 @@
   // container queries reveal the ones its direct buttons no longer show.
   import { tick } from "svelte";
   import { ICON } from "../constants";
+  import { THEME } from "../presentation/vocabulary";
   import type { ThemePref } from "../state/persistence";
   import MoreMenu from "./MoreMenu.svelte";
 
@@ -65,11 +66,7 @@
       onclick={() => select(onEndpoint)}
     >
       <span>{@html ICON.info}</span>
-      <span
-        ><strong>{endpointActive ? "Close Details" : "Details"}</strong><small
-          >Server and connection</small
-        ></span
-      >
+      <span><strong>Details</strong><small>Server and connection</small></span>
     </button>
     <button
       type="button"
@@ -78,10 +75,11 @@
       data-more="theme"
       onclick={() => select(chooseTheme)}
     >
-      <span>
-        {#if theme === "light"}{@html ICON.sun}{:else if theme === "dark"}{@html ICON.moon}{:else}{@html ICON.contrast}{/if}
-      </span>
-      <span><strong>Theme: {theme}</strong><small>Cycle appearance</small></span
+      <span>{@html THEME[theme].icon}</span>
+      <span
+        ><strong>Theme: {THEME[theme].label}</strong><small
+          >Cycle appearance</small
+        ></span
       >
     </button>
   {/snippet}

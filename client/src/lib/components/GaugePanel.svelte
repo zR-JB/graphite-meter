@@ -25,7 +25,7 @@
   } from "../canvas/presentation";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
-  import { ICON } from "../constants";
+  import { STAGE } from "../presentation/vocabulary";
   import { tooltip } from "../actions/tooltip";
 
   const indicatedServers = $derived(
@@ -322,19 +322,9 @@
                   class="tone-icon terminal-icon"
                   data-tone={readout.terminal.direction}
                 >
-                  {#if readout.terminal.direction === "download"}
-                    {@html ICON.download}
-                  {:else if readout.terminal.direction === "upload"}
-                    {@html ICON.upload}
-                  {:else}
-                    {@html ICON.bidirectional}
-                  {/if}
+                  {@html STAGE[readout.terminal.direction].icon}
                 </span>
-                {readout.terminal.direction === "download"
-                  ? "Download"
-                  : readout.terminal.direction === "upload"
-                    ? "Upload"
-                    : "Bidirectional"}
+                {STAGE[readout.terminal.direction].label}
               </span>
               <span class="terminal-number">{readout.terminal.value}</span>
               <span class="terminal-unit">{gaugeUnit}</span>

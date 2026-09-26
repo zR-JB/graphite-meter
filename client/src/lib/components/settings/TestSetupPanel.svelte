@@ -17,7 +17,11 @@
   import { serverTransportOptions } from "../../servers/transportOptions";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
-  import { PING_CADENCE } from "../../presentation/vocabulary";
+  import {
+    phaseLabel,
+    PING_CADENCE,
+    STAGE,
+  } from "../../presentation/vocabulary";
   import { fmtDuration } from "../../format";
   import { untrack } from "svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
@@ -158,11 +162,11 @@
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
   const DURATION_FIELDS = [
-    ["warmupMs", "Warmup"],
-    ["latencyMs", "Latency"],
-    ["downloadMs", "Download"],
-    ["uploadMs", "Upload"],
-    ["bidirectionalMs", "Bidirectional"],
+    ["warmupMs", phaseLabel("warmup")],
+    ["latencyMs", STAGE.latency.label],
+    ["downloadMs", STAGE.download.label],
+    ["uploadMs", STAGE.upload.label],
+    ["bidirectionalMs", STAGE.bidirectional.label],
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   function sameDuration(

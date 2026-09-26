@@ -14,7 +14,14 @@
   import type { HistoryRecord } from "../../history/types";
   import { latencyLanes } from "../../runner/latencySummary";
   import { store } from "../../state/store.svelte";
-  import { OUTCOME, STAGE, MISSING } from "../../presentation/vocabulary";
+  import {
+    OUTCOME,
+    STAGE,
+    MISSING,
+    TRANSPORT,
+    transportLabel,
+  } from "../../presentation/vocabulary";
+  import type { TransportKind } from "../../runner/contract";
   import {
     serverEvidence,
     summaryCards,
@@ -136,17 +143,15 @@
   );
 
   function path(
+    role: "throughput" | "latency",
     kind: string | null | undefined,
     protocol?: string | null,
     browserProtocol?: string,
   ): string {
     const mechanism =
-      {
-        "fetch-stream": "Fetch stream",
-        webtransport: "WebTransport",
-        "webtransport-datagram": "WebTransport datagrams",
-        websocket: "WebSocket",
-      }[kind ?? ""] ?? "Not recorded";
+      kind && kind in TRANSPORT
+        ? transportLabel(kind as TransportKind, role)
+        : "Not recorded";
     const observed = browserProtocol && httpProtocolLabel(browserProtocol);
     const endpoint = protocol && httpProtocolLabel(protocol);
     return [
@@ -176,13 +181,14 @@
             latency: formatLatency(measured?.latency?.reportedMs),
             throughputPath: measured
               ? path(
+                  "throughput",
                   measured.throughput.transport,
                   measured.throughput.protocol,
                   measured.throughput.browserProtocol,
                 )
               : "Not measured",
             latencyPath: measured?.latencyTarget
-              ? path(measured.latencyTarget.transport)
+              ? path("latency", measured.latencyTarget.transport)
               : "Not measured",
           };
         })
@@ -198,10 +204,12 @@
             up: rate(record.stages.upload.result?.reportedBytesPerSec),
             latency: formatLatency(record.stages.latency.result?.reportedMs),
             throughputPath: path(
+              "throughput",
               record.transport.throughput.kind,
               record.transport.throughput.protocol,
             ),
             latencyPath: path(
+              "latency",
               record.transport.latency.kind,
               record.transport.latency.protocol,
             ),

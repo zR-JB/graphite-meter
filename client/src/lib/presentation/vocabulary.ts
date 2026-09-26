@@ -4,8 +4,10 @@ import type {
   Phase,
   PingCadence,
   RunResult,
+  TransportKind,
   TransportRole,
 } from "../runner/contract";
+import type { ThemePref } from "../state/persistence";
 
 export const MISSING = "—";
 
@@ -58,6 +60,42 @@ export const OUTCOME: Record<Outcome, string> = {
 
 export const phaseLabel = (phase: Phase, outcome: Outcome = "complete") =>
   phase === "complete" ? OUTCOME[outcome] : PHASE[phase];
+
+/** Bare "webtransport" names the session: streams carry throughput, datagrams latency. */
+export const TRANSPORT: Record<TransportKind, string> = {
+  "fetch-stream": "Fetch streams",
+  websocket: "WebSocket",
+  webtransport: "WebTransport streams",
+  "webtransport-datagram": "WebTransport datagrams",
+};
+export const transportLabel = (
+  kind: TransportKind,
+  role: "throughput" | "latency",
+) =>
+  TRANSPORT[
+    kind === "webtransport" && role === "latency"
+      ? "webtransport-datagram"
+      : kind
+  ];
+
+export const THEME: Record<ThemePref, { label: string; icon: string }> = {
+  light: { label: "Light", icon: ICON.sun },
+  dark: { label: "Dark", icon: ICON.moon },
+  auto: { label: "Auto", icon: ICON.contrast },
+};
+
+export const resolvedPhase = (phase: Phase) =>
+  phase === "complete" || phase === "aborted" || phase === "error";
+
+export function runActionLabel(
+  preparing: boolean,
+  running: boolean,
+  phase: Phase,
+) {
+  if (preparing) return "Cancel";
+  if (running) return "Stop test";
+  return resolvedPhase(phase) ? "Run again" : "Start test";
+}
 
 export const PING_CADENCE: Record<PingCadence, string> = {
   "reply-driven": "Reply-driven",

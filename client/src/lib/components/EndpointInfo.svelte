@@ -16,7 +16,7 @@
     serverLoadSummary,
     endpointPathStatus,
   } from "./endpointInfo";
-  import type { TransportKind } from "../runner/contract";
+  import { MISSING, transportLabel } from "../presentation/vocabulary";
   import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
@@ -96,27 +96,11 @@
     return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
   }
 
-  // One vocabulary throughout: TransportKind. Bare "webtransport" names the
-  // session, whose throughput half is streams and whose latency half is the
-  // datagram bus.
-  function capability(value: TransportKind, role: PathRole) {
-    const labels: Record<TransportKind, string> = {
-      "fetch-stream": "Fetch streams",
-      websocket: "WebSocket",
-      "webtransport-datagram": "WebTransport datagrams",
-      webtransport:
-        role === "throughput"
-          ? "WebTransport streams"
-          : "WebTransport datagrams",
-    };
-    return labels[value] ?? value;
-  }
-
   function capabilities(role: PathRole) {
     const advertised = advertisedServerCapabilities(discovery, role);
     if (!advertised) return "Checking server";
     const values = advertised.transports.map((value) =>
-      capability(value, role),
+      transportLabel(value, role),
     );
     if (!values.length) return "None advertised";
     return `${values.join(" · ")}${
@@ -305,7 +289,7 @@
                   ? `${fmtMs(connection.preTestPingMs)} ms`
                   : latencyRequested
                     ? "Pending"
-                    : "—"}
+                    : MISSING}
               </dd>
             </div>
           {/if}
@@ -348,19 +332,19 @@
       <dl class="kv">
         <div>
           <dt>Server instance</dt>
-          <dd>{discovery?.generation || "—"}</dd>
+          <dd>{discovery?.generation || MISSING}</dd>
         </div>
         <div>
           <dt>Server version</dt>
-          <dd>{discovery?.engineVersion ?? "—"}</dd>
+          <dd>{discovery?.engineVersion ?? MISSING}</dd>
         </div>
         <div>
           <dt>Runner</dt>
-          <dd>{engine?.name ?? "—"}</dd>
+          <dd>{engine?.name ?? MISSING}</dd>
         </div>
         <div>
           <dt>Client version</dt>
-          <dd>{BUILD.version ? `v${BUILD.version}` : "—"}</dd>
+          <dd>{BUILD.version ? `v${BUILD.version}` : MISSING}</dd>
         </div>
         <div>
           <dt>Build profile</dt>
@@ -372,7 +356,7 @@
         </div>
         <div>
           <dt>Throughput origin</dt>
-          <dd>{connections.throughput.target?.origin ?? "—"}</dd>
+          <dd>{connections.throughput.target?.origin ?? MISSING}</dd>
         </div>
         <div>
           <dt>Throughput client</dt>
@@ -386,7 +370,7 @@
         {/if}
         <div>
           <dt>Latency origin</dt>
-          <dd>{connections.latency.target?.origin ?? "—"}</dd>
+          <dd>{connections.latency.target?.origin ?? MISSING}</dd>
         </div>
         <div>
           <dt>Latency client</dt>
