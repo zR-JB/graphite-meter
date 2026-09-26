@@ -1,284 +1,147 @@
 # Measurement definitions
 
-Graphite Meter measures an application path. Browser or native-client scheduling,
-server work, protocol queues, and the network all affect that path. Results do not
-isolate ICMP latency, directional IP loss, or a physical link's capacity.
+Graphite Meter measures an application path: client scheduling, server work, protocol queues and the network all
+contribute. Results do not isolate ICMP latency, directional IP loss or a physical link's capacity.
 
 ## Reading a result
 
-| Result                 | Unit and population                                                                                         | When evidence is missing                                                   |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Download / upload      | Payload bytes per second over a receiver measurement window, displayed in your chosen rate unit.            | No valid receiver window means no rate.                                    |
-| Idle / loaded latency  | Milliseconds for successful in-window replies, separately for each stage.                                   | No eligible replies means no RTT descriptor.                               |
-| RTT variation (jitter) | Mean absolute change between consecutive comparable replies, in milliseconds.                               | Fewer than two comparable replies means no estimate.                       |
-| Probe timeouts         | Expired probes divided by replies plus timeouts, shown as a percentage.                                     | No resolved probes means unavailable; unresolved attempts remain separate. |
-| Paired server timing   | Raw RTT, server handling, and adjusted RTT means over the same valid pairs, in milliseconds in the browser. | No valid pair means no diagnostic.                                         |
+| Result | Unit and population | Missing evidence |
+| --- | --- | --- |
+| Download / upload | Payload bytes per second over a receiver window, in the chosen rate unit. | No valid receiver window: no rate. |
+| Peak | Highest mean over any window of at least 500 ms in the measured stage. | Shorter evidence: no peak. |
+| Latency | Median (p50) RTT of in-window replies, per server and stage; p95 secondary. | No eligible reply: "—". |
+| Added latency | Loaded median − idle median, per stage and server, in ms; negative values are kept. | Either median missing: "—". |
+| Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
+| Probe timeouts | `timeouts / (replies + timeouts)`, as a percentage. | No resolved probe: "—", not zero. |
+| Paired server timing | Mean raw RTT, server handling and adjusted RTT over the same valid pairs. | No valid pair: absent. |
 
-Start with throughput and the difference between idle and loaded latency. Use counts and
-completeness to judge the available evidence. Full definitions follow:
-[throughput](#throughput), [browser summaries](#browser-summaries-version-2),
-[server timing](#paired-server-timing-diagnostics), and [native summaries](#native-summaries).
+Definitions used throughout:
+
+- **Percentiles** cover replies received within the stage's measured window. P50 is the midpoint median; P10, P90
+  and P95 use nearest rank.
+- **Jitter** (RTT variation) takes successful replies in receive order within one continuous segment. Timeouts are
+  skipped; a stage boundary or reconnect breaks adjacency. Identical replies give zero.
+- **Probe timeout**: the reply deadline expired. A late reply cannot erase it. Interrupted probes (no verdict) and
+  local send failures are counted separately and excluded from the ratio. Timeouts are application observations on
+  WebSocket (reliable, so retransmission and head-of-line blocking delay replies) or WebTransport datagrams (which
+  queues may delay or drop); neither is TCP/IP packet loss.
 
 ## Throughput
 
-Download counts payload bytes consumed by the receiving client. Upload counts
-bytes and elapsed receiver time at the server. Sender-queued bytes are not proof
-of delivery. Full-window average and an adaptive stable-window headline remain
-distinct results; chart smoothing does not determine either.
+Download counts payload bytes consumed by the client. Upload counts bytes and elapsed time at the server's receiver
+(receiver-timed); sender-queued bytes are not delivery. The headline is an adaptive stable window where configured,
+otherwise the full-window mean; both and the peak stay distinct results, and chart smoothing affects none of them.
+Warmup bytes are excluded.
 
-### Coordinated server windows
+### Coordinated servers
 
-A selection contains one to four explicitly chosen servers. A single selected
-server uses the ordinary direct runner. For multiple servers, one coordinator owns
-the stage schedule, readiness, warmup, measurement boundaries, cancellation, and
-membership changes. Server resources and credentials remain separate. Per-server
-contributions describe those paths while sharing the client connection; they are
-not independent server-capacity tests. The browser uses adaptive completion where
-configured; the native client retains its full-window duration policy.
+One coordinator owns the stage schedule, readiness, warmup, boundaries, cancellation and membership for one to
+four servers; each server keeps its own resources and credentials. Per-server contributions share the client's
+connection and are not independent capacity tests. The browser uses adaptive completion where configured; the
+native client measures the full window.
 
-Each aggregation interval has fixed membership. Downloads sum client-consumed
-payload-byte deltas over a common client monotonic window. Uploads take fresh
-`POST /upload/checkpoint` snapshots concurrently at common boundary requests, retain
-each server's byte/time pair, divide each byte delta by that receiver's elapsed
-seconds, then add the resulting bytes-per-second rates. This is a sum of coordinated
-receiver-window means. It is not an exactly synchronized global-clock sample:
-each actual receiver duration remains in the result, and the browser also retains each
-checkpoint's request/response timing.
-Receiver durations are never added.
+- **Intervals** have fixed membership. Downloads sum client-consumed byte deltas over a common client monotonic
+  window. Uploads take fresh `POST /upload/checkpoint` snapshots concurrently at each boundary, divide each
+  receiver's byte delta by its own elapsed time and add the rates. Receiver durations are never added; each stays
+  in the result.
+- **Headline and peak** come from the combined boundary samples, never from independently chosen per-server
+  windows. Per-server headlines must not be summed to rebuild the aggregate.
+- **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
+  zero-duration component skips that boundary; the next valid boundary spans the gap on each receiver's clock. A
+  replaced or regressing receiver starts a fresh interval.
+- **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, a terminal throughput failure
+  after bounded recovery, or a refused grant remove that server. A missed final boundary alone never does. The
+  interval ends, survivors start a new one and stability resets. A latency-only failure keeps throughput.
+- **Final headline** needs at least 800 ms of client evidence in the latest interval and, for upload, 800 ms in
+  every receiver clock; otherwise it is unavailable. Earlier intervals and failed servers' measurements remain in
+  per-server results.
+- **Byte ledgers** count unique measured bytes once, independent of window selection.
+- **Wire-rate estimates** are computed per component from the chosen window's protocol and IP-family evidence;
+  missing evidence makes the estimate unavailable.
 
-Browser stable-window boundaries are chosen centrally. A headline never adds
-independently selected stable windows or independent per-server peaks. Peak rates
-are taken from the combined boundary samples. Presentation buckets, smoothing and
-latency focus cannot change any of these reductions. Mixed transport wire estimates
-are computed component by component from the chosen window's protocol and IP-family
-evidence; missing evidence makes the estimate unavailable.
-
-Advancing receiver time with unchanged bytes establishes measured zero delivery.
-A missing, stale, or zero-duration component does not establish a zero rate. That
-boundary is skipped: the interval keeps its previous valid boundary, and the next
-valid boundary spans the gap in each receiver's own clock. A replaced receiver
-cannot be spanned and starts a fresh interval and stability confirmation. After
-measurement has started, a server whose checkpoints fail at three consecutive
-boundaries is removed; a refused grant removes it at once and asks for sign-in.
-Unique measured-byte ledgers are
-independent of headline-window selection and do not count overlapping checkpoints,
-feed reports or interval boundaries twice. Warmup bytes are excluded.
-
-Before any measurement, all selected servers must be ready. After measurement has
-started, a terminal throughput failure removes that server for the remaining run
-after bounded transport recovery. Healthy connections keep running. The current
-interval ends, fresh survivor baselines start a new interval, and stability resets.
-The final headline requires the latest interval to contain at least 800 ms of client
-evidence and, for upload, at least 800 ms in every component's receiver clock. If it
-does not, the headline is unavailable. Earlier valid intervals and failed-server
-measurements remain available in the affected server's individual results. All servers failing
-ends with an incomplete result. A latency-only failure does not remove throughput.
-
-Latency remains keyed by both server and stage. Added latency compares a loaded
-population only with that server's idle baseline. The named latency focus selects
-one population for presentation; there is no averaged multi-server ping or blended
-responsiveness grade. The browser can probe one explicitly selected primary server
-(the default) or every selected server. Primary selection is fixed before the run;
-other servers still generate throughput load, and their unmeasured latency fields
-remain null. The headline latency and grade come from the primary server, or with
-All from the server with the lowest preparation RTT, fixed before the run.
-Switching the displayed server never starts, stops or retargets probes and never
-changes saved statistics. [Server controls and deployment](SERVERS.md) describe selection,
-authorization, shared-origin stream budgets and result details.
+Latency stays keyed by server and stage. The browser probes one chosen **Latency server** (default: the first
+selected) or **Every server**; the choice is fixed before the run, and unprobed servers have no latency, not zero.
+With Every server, the headline comes from the server with the lowest preparation RTT. Switching the displayed
+server never retargets probes or changes saved statistics. The native client probes every server.
 
 ### Hidden pages
 
-A run continues while its page is hidden. Workers keep moving and timing bytes and
-probes; the page's own timers may be throttled or suspended. The stage schedule
-still enters every warmup and stage in order: one timer tick never advances past
-the current segment's end, so a long gap shortens only the segment it occurred in.
-A timer gap longer than 1.5 seconds also restarts stability confirmation, so an
-adaptive early finish never relies on evidence across the gap. Rates always divide
-by the elapsed time of their own byte counters.
+A hidden run continues: workers keep timing bytes and probes while page timers may be throttled. The schedule still
+enters every warmup and stage in order; one late tick never skips past the current segment. A timer gap over 1.5 s
+restarts stability confirmation, so early finish never relies on evidence across the gap.
 
-## Round-trip latency and probe timeouts
+## Latency probing
 
-An RTT is the client's monotonic send-to-receive interval for a matched probe.
-Warmup probes do not enter measurement results. Idle, download, upload, and
-bidirectional stages have separate populations, even when they use the same server.
+An RTT is the client's monotonic send-to-receive interval for a matched probe. Warmup probes are excluded. Idle,
+download, upload and bidirectional stages keep separate populations.
 
-A probe timeout means its reply deadline expired. The timeout percentage is
-`timeouts / (replies + timeouts)`. Interrupted probes without a verdict and local
-send failures are separate counts and are excluded from that denominator. With
-no resolved probes the percentage is unavailable, not zero. Timeouts have no RTT.
-A late reply cannot erase an already recorded timeout.
+| Behaviour | Both clients |
+| --- | --- |
+| Cadence | Idle default reply-driven; loaded default Medium. Fast 80 ms, Medium 250 ms, Slow 600 ms are start-to-start. |
+| Reply-driven | The next probe goes out on the reply; a backup timer covers a missing reply (browser: RTT-based, 8 ms–1 s; native: the probe deadline). |
+| In-flight window | 16 idle at a fixed cadence, 4 reply-driven, 2 under load. A full window leaves an unsent opportunity, never a timeout. |
+| Deadline | Fixed at send: `SRTT + 4 × RTTVAR` (RFC 6298), clamped to 250 ms–10 s; 250 ms before the first reply. |
+| Stage end | Sending stops; in-window probes drain to their deadlines. Replies after the boundary resolve timeouts but do not enter RTT or jitter. |
+| Interruptions | Disconnects leave pending probes unresolved; local send failures are separate; neither is a timeout. |
 
-WebSocket runs over a reliable stream, so retransmission and head-of-line blocking
-can delay replies. WebTransport uses unreliable datagrams; network or endpoint
-queues can delay or drop them. Neither outcome identifies physical or directional
-packet loss. Transport labels describe how the application probe travelled.
+Cadence is a scheduling policy, not an observed sampling rate: reply-driven density depends on RTT, and no coverage
+percentage is inferred from cadence and elapsed time.
 
-## Browser summaries, version 2
+**Browser.** Live summaries update at most once per second and are final once the stage's terminal outcomes are in.
+The drain lasts at most ten seconds; a fixed cadence waits for a free slot without a catch-up burst. The worker
+flushes outcomes before acknowledging its stop; if it crashes or misses the bounded wait, the stage keeps
+`accountingComplete: false` rather than inventing outcomes. The idle headline is the median over an adaptive stable
+window; full-stage descriptors never fall back to loaded RTTs or preflight hints.
 
-The runner reduces raw outcomes into stage summaries. The UI and saved history
-consume those summaries; graph buckets are presentation data only. Live summaries
-update at most once per second and are finalized after the stage's terminal probe
-outcomes have been collected.
+**Native.** Raw RTT ends when the adapter receives the reply, before decoding. A fixed cadence skips a send when the
+window is full. A failed stage keeps its measured population with an incomplete marker; a failure before any probe
+produces an error without a summary.
 
-At the stage boundary, the browser stops submitting probes and ends the transfer
-load. The worker drains probes submitted on or before that boundary to their
-original deadlines, with a maximum of ten seconds. Deadlines are fixed when each
-probe is submitted using the current adaptive RTT estimate, with a 250 ms floor
-and a ten-second ceiling. A reply received at or after its deadline remains a
-timeout, even if the periodic timeout sweep has not yet run.
+Saved browser results also carry an A–F grade from the largest loaded-median increase clamped at zero (A ≤ 5,
+B ≤ 30, C ≤ 60, D ≤ 200 ms, else F).
 
-Replies received after the stage boundary resolve probes for the timeout
-percentage but do not enter that stage's RTT or jitter population: their RTT may
-include time after the transfer load ended. Probes submitted after the boundary
-while a stop message was in transit are excluded. The boundary uses comparable
-worker/window performance-clock coordinates, so batching cannot change membership.
+## Paired server timing
 
-Disconnects leave pending probes unresolved. Rejected local sends are recorded as
-send failures. Neither becomes timeout evidence. Buffered replies are delivered
-before a later interruption so RTT variation never crosses that interruption.
-The worker flushes resolved outcomes and interruption counts before acknowledging its stop; only then does
-the owner terminate it and finalize the stage. Cancellation can stop this drain
-immediately. If the worker crashes or fails to acknowledge within the bounded
-wait, the owner reports an interruption without inventing outcomes for the
-unknown pending population.
-Its stage summary retains `accountingComplete: false`, including when no known
-outcome was delivered, so the missing population cannot look like a complete
-zero-timeout measurement. A failed stage that must discard its active worker
-reports incomplete accounting before reducing the stage's retained partial result.
+Every reply carries the server's handling time in nanoseconds, from just after its receive call to just before reply
+encoding ([wire protocol](../api/wire.md#reflector-handling-time)). The paired population is successful in-window
+replies with a valid handling time; timeouts, interrupted, failed, late and post-cutoff outcomes are excluded. A
+handling time above that reply's raw RTT, or one the client cannot represent exactly, omits the pair but keeps the
+raw reply; values are never clamped. Malformed fields invalidate the reply.
 
-Configured probe cadence is a scheduling policy, not an observed sampling rate.
-Fixed cadence does not send early after a reply; a saturated in-flight window
-waits for a slot without a catch-up burst. Reply-driven mode has RTT-dependent
-sampling density. Pauses, scheduler delays, and saturation leave unsent
-opportunities that are neither timeout nor unresolved attempts. Reported counts
-cover actual attempted probes; no coverage percentage is inferred from requested
-cadence and elapsed time alone.
+Adjusted RTT subtracts only the instrumented handling interval and keeps network delay, queues outside it and client
+scheduling. Raw RTT stays primary for latency, jitter, deadlines and added latency. Browser stages expose
+`reflectorTiming` (`sampleCount`, `meanRawRttMs`, `meanHandlingMs`, `meanAdjustedRttMs`); native stages expose
+`ReflectorTiming` durations.
 
-- Min, max, mean, and percentiles cover replies received within the measured stage.
-- P50 is the midpoint median. P10, P90, and P95 use nearest rank.
-- RTT variation (jitter) is the mean absolute difference of consecutive successful
-  replies in observation order within a continuous measurement segment. Timeouts
-  are skipped; stage or connection interruptions break adjacency. Fewer than two
-  comparable replies gives no variation estimate; identical replies give zero.
-- The unloaded headline may use an adaptive stable window. Its full-stage
-  descriptors remain separate and never fall back to loaded RTTs or preflight hints.
-- Added latency under load compares each available transfer-stage median with the
-  full idle median. The largest increase determines the summary grade, so a good
-  download stage cannot hide an impaired upload stage. The increase is clamped at
-  zero; thresholds are A ≤5 ms, B ≤30 ms, C ≤60 ms, D ≤200 ms, otherwise F. This is
-  an application responsiveness descriptor, not proof of a particular queueing cause.
+## Native stages
+
+Stage readiness is bounded to ten seconds: every download lane has a response or WebTransport stream, every upload
+lane has sent headers or opened its stream with the progress feed advancing, and the latency channel can send. A
+reply is not required, so silent paths still yield timeouts. Warmup then lasts the configured value or ten idle
+RTTs, whichever is longer, up to 4 s. The measured phase opens on fresh upload checkpoints; the coordinator samples
+about every 250 ms, each checkpoint batch bounded to 1.5 s (500 ms at the final boundary), retrying refusals every
+100 ms. A lane with no bytes for two seconds ends with its last error; a lost progress feed is reopened within two
+seconds. Before the next stage, upload waits until the receiver is quiet (250 ms, at most 4 s). Cleanup joins all
+resources before the outcome is emitted.
+
+## Run outcomes
+
+| Outcome | Meaning |
+| --- | --- |
+| Complete | Every stage finished with every server. |
+| Partial | Every stage finished after a server or latency population left. |
+| Incomplete | A planned result is missing after measurement began, including every server failing. |
+| Stopped | Cancelled by the user. |
+| Failed | Nothing was measured. |
 
 ## Saved history
 
-Saved history accepts only schema version 4 and wire estimates version 2.
-Unsupported or malformed records remain in browser storage but are skipped and
-reported. Existing databases must use the current database version; older or newer
-databases are refused without changing their data or schema. Nothing is migrated
-or reinterpreted. Clearing history remains an explicit user action. New results
-retain the usual 2,000-entry limit.
+The browser accepts only history schema 4 with wire estimates version 2. Other or malformed records stay in storage
+but are skipped and reported; a database of another version is refused unchanged. Nothing is migrated. Up to 2,000
+results are kept; Complete, Partial and Incomplete runs are saved when saving is on.
 
-Version 4 adds selected server identities, actual surviving participants, per-server
-transport evidence, stage latency populations, aggregate and component windows,
-structured failures, unique byte totals and the presentation-only latency focus.
-The live result and history detail consume the same summaries. At most 128 recent
-aggregation intervals are retained; an omitted count is explicit and byte ledgers
-still cover the full measured run. An incomplete all-server failure is also saved
-when result saving is enabled; user-aborted runs are not saved. Grants and socket
-tickets never enter history or saved preferences.
-
-Each result stores one selected throughput headline, `reportedBytesPerSec`, alongside
-the distinct full-window average and peak. Each saved latency lane requires exact
-known probe counts and accounting-completeness metadata. Missing measurements stay
-null; incomplete accounting remains explicit. Optional paired reflector timing is
-absent when no valid diagnostic pairs were measured.
-
-## Paired server timing diagnostics
-
-Version 0.7 requires reflector handling time on every valid wire reply, in nanoseconds.
-The measured server interval runs from immediately after its message receive call
-to immediately before reply encoding. Browser clients convert an exactly
-representable duration to milliseconds and reject diagnostics that exceed that
-reply's raw RTT. Malformed wire fields invalidate the reply. A clock-quantized or unrepresentable
-pair is omitted from the diagnostic, never corrected
-by clamping the adjusted value to zero.
-
-Each stage may expose `reflectorTiming` with `sampleCount`, `meanRawRttMs`,
-`meanHandlingMs`, and `meanAdjustedRttMs`. All three means use the **same paired
-population**: successful replies received within the measurement window with valid
-handling time. Timeout, interrupted, failed-send, late, post-cutoff,
-and invalid clock-pair outcomes do not enter this diagnostic population. A measured
-zero duration is valid. No valid pairs means the entire diagnostic is absent.
-The paired raw mean may differ from the stage's full-population mean or median.
-
-Adjusted RTT subtracts only this instrumented server handling interval. It retains
-network delays, receive and send queues outside that interval, browser scheduling,
-and other endpoint delays. Raw application RTT remains primary for latency,
-variation, confidence, loaded responsiveness, and timeout estimation. History retains the paired summary when valid pairs are available.
-
-## Native summaries
-
-Native stages separate transport preparation, warmup, and measurement. Preparation
-is bounded to ten seconds. Every download lane must have an accepted HTTP response
-or WebTransport receive stream; upload lanes must have written request headers or
-opened their streams, with the receiver progress feed subscribed and advancing.
-The latency bus must be open and able to send. A successful latency reply is not a
-readiness requirement, so silent paths can still produce timeout observations.
-All selected directions and loaded-latency participants pass this gate before the
-configured/adaptive warmup starts. Warmup data is excluded from every result.
-
-The shared gate opens the measured phase after fresh initial upload checkpoints.
-Download and latency use client monotonic time; uploads use each server's own
-receiver checkpoints, with each concurrent checkpoint batch bounded to 1.5 seconds.
-Within that bound a refused checkpoint is retried every 100 ms; each snapshot is the
-reply to its own request, so a late success never stands in for an earlier boundary.
-A boundary without every participant's evidence, or whose receiver clock did not
-advance, is skipped rather than read as zero; the next valid boundary spans the gap.
-A replaced or regressing receiver counter starts a new interval. Three consecutive
-missed checkpoints, or a refused grant, remove that server; a missed final
-boundary alone never does. A lane that moves no bytes for two seconds ends with
-its last error, and a server refusal ends it at once. A lost upload progress feed
-is reopened within two seconds or ends that server's upload; the feed only paces
-readiness and liveness, never the reported receiver bytes.
-The native client runs one server through the same coordinator as several.
-The coordinator samples boundaries about every 250 ms. Full-window means follow
-the component rules above. A terminal direction failure stops that participant's
-resources and leaves survivors running; caller cancellation stops all resources.
-Setup-only bytes never become a partial result. Earlier measured bytes and windows
-remain in details when the final headline lacks evidence. Cleanup joins resources
-and checkpoint requests before the run's terminal outcome is emitted. That outcome is
-Complete (every stage with every server), Partial (every stage finished after a server
-or latency population left), Incomplete (a stage ended without its result after
-measurement began), Stopped (cancelled), or Failed (nothing was measured).
-
-Native latency summaries use received application replies within each measured stage. P50 is the
-midpoint median; P10/P90/P95 use nearest rank. RTT variation is the mean absolute difference between
-consecutive successful replies in receive order, skipping timeout outcomes and starting a new
-sequence after a reconnect. One reply cannot establish variation; repeated identical replies can
-establish zero variation.
-
-Native probes use a fixed start-to-start cadence, 250 ms by default, for idle and loaded stages; the
-browser's reply-driven idle cadence is not offered natively. Probe deadlines follow an RFC 6298
-estimate, `SRTT + 4 * RTTVAR` clamped to 250 ms..10 s (250 ms before the first reply), measured
-from the client send attempt. Late replies still refine
-the estimate but count as probe timeouts. At most 16 probes are in flight idle and 2 under load; a
-full window skips that send opportunity rather than recording a timeout. After the measured window,
-in-window probes drain until they reply or reach their deadline. Timeout ratios use only successful
-replies plus expired probes. A channel interruption or cancellation reports the still-pending
-probes as unresolved; local send failures are separate. An empty resolved population has no
-timeout ratio, and timeout-only loaded stages still produce a result.
-Failed stages retain their measured latency population with an incomplete marker and the original
-failure; the elapsed window records only the measured portion. Failures before any probe was measured
-produce an error without a numeric summary. These are application probe observations over WebSocket
-or WebTransport, not TCP/IP packet loss.
-
-Native raw RTT ends immediately after the message adapter receives the reply,
-before wire decoding, so metadata parsing cannot inflate it. A stage's
-`ReflectorTiming` contains paired count and mean raw RTT, server handling, and
-adjusted RTT as nanosecond-resolution durations. Only successful in-window
-replies with valid clock pairs enter those means; the native cutoff policy above
-remains unchanged. Unrepresentable or greater-than-RTT durations leave the raw
-result intact and omit only the paired diagnostic. Missing or malformed wire
-fields invalidate the reply as a protocol error. Version 0.6 and 0.7 peers must
-not be mixed.
-
-Return to the [project overview](../README.md) or [deployment guide](DEPLOYMENT.md).
+A record holds the selected servers and survivors, per-server transport evidence, stage latency populations with
+exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent intervals,
+with an explicit omitted count), structured failures, unique byte totals, the headline (`reportedBytesPerSec`) with
+the full-window average and peak, and the latency focus. Missing measurements stay null. Grants and socket tickets
+never enter history or preferences.
