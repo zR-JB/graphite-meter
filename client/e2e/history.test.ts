@@ -183,7 +183,9 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
 
   await history(page, id(2_000));
   await expect(page.locator(".result-detail")).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator(".result-detail")).not.toContainText("Grade");
+  expect(await page.locator(".result-detail").textContent()).not.toContain(
+    "Grade",
+  );
   await expect(heading).toContainText("2000 results");
 });
 
@@ -196,13 +198,13 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
     record(4, 1e20),
   ];
   const broken = record(5);
-  Object.assign(broken.stages.latency.result, { jitterMs: "fast" });
+  Object.assign(broken.stages.latency.result, { reportedMs: "fast" });
   await seed(page, { records: [current, broken, ...old] });
   const before = await stored(page);
   await history(page);
-  await expect(page.locator(".result-row")).toHaveCount(2);
+  await expect(page.locator(".result-row")).toHaveCount(1);
   await expect(page.locator(".history-workspace")).toContainText(
-    "3 unsupported or malformed records were ignored.",
+    "4 unsupported or malformed records were ignored.",
   );
   const unreadable = page.getByRole("heading", {
     name: "Unreadable saved result",
