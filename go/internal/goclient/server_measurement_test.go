@@ -3,10 +3,16 @@ package goclient
 import (
 	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"os"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -333,17 +339,50 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	}
 }
 
-func TestAClientStallResumesEvidence(t *testing.T) {
+func TestOnlyALateTickResumesEvidence(t *testing.T) {
 	t.Parallel()
-	var a aggregateMeasurements
-	a.beginStage(StageDownload, []string{"a"}, 0)
-	for _, at := range []int{0, 250, 500, 2500, 2750, 3000} {
-		a.observe(nativeBoundary(at, map[string]uint64{"a": uint64(at)}, nil))
-	}
-	if len(a.intervals) != 2 || a.intervals[0].Complete || a.intervals[0].End != 500*time.Millisecond ||
-		a.intervals[1].Reason != "evidence-resumed" || a.intervals[1].Start != 2500*time.Millisecond {
-		t.Fatalf("a %v gap between boundaries stayed in one window: %+v", 2*time.Second, a.intervals)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		begun, slow := time.Now(), atomic.Bool{}
+		transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if slow.Swap(false) {
+				time.Sleep(1400 * time.Millisecond)
+			}
+			nanos := time.Since(begun).Nanoseconds() + 1
+			body := fmt.Sprintf(`{"bytes":%d,"nanos":%d}`, nanos/1000, nanos)
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)),
+				Request: req}, nil
+		})
+		r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test"),
+			coordinated: &participantCounters{}}
+		r.coordinated.upload.Store(newUploadProgress(t.Context(), "u"))
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}, transport: r}
+		co := &coordinator{servers: []*participant{p}, started: begun, emit: func(Event) {}}
+		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
+		s := &stageRun{c: co, plan: StagePlan{Name: StageUpload, Directions: []Direction{Up}}, ctx: t.Context(),
+			servers: own}
+		initial, _ := s.collect(t.Context(), co.active(), checkpointBudget)
+		co.aggregate.beginStage(StageUpload, []string{"a"}, initial.at)
+		co.aggregate.observe(initial)
+		s.beginSampling(time.Now(), initial)
+		s.startSampler()
+		defer func() { s.sampler.cancel(); s.sampling.Wait() }()
+		observe := func(n int) {
+			for range n {
+				s.observe(<-s.results())
+			}
+		}
+		observe(3)
+		slow.Store(true)
+		observe(4)
+		if len(co.aggregate.intervals) != 1 {
+			t.Fatalf("a slow checkpoint resumed evidence: %+v", co.aggregate.intervals)
+		}
+		time.Sleep(3 * time.Second)
+		observe(2)
+		if len(co.aggregate.intervals) != 2 || co.aggregate.intervals[1].Reason != ReasonEvidenceResumed {
+			t.Fatalf("a stalled client kept one window: %+v", co.aggregate.intervals)
+		}
+	})
 }
 
 func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {

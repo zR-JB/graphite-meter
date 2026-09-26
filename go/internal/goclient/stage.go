@@ -30,8 +30,14 @@ type resourceOutcome struct {
 type sampledBoundary struct {
 	boundary measurementBoundary
 	misses   map[string]error
-	epoch    int
 	final    bool
+}
+
+// sampler collects one interval's boundaries on its own clock; a restart replaces it.
+type sampler struct {
+	results chan sampledBoundary
+	finish  chan struct{}
+	cancel  context.CancelFunc
 }
 
 type stageRun struct {
@@ -49,11 +55,8 @@ type stageRun struct {
 	seen      map[readyResource]bool
 	measuring bool
 
-	samples      chan sampledBoundary
+	sampler      *sampler
 	sampling     sync.WaitGroup
-	stopSample   context.CancelFunc
-	epoch        int
-	inFlight     bool
 	ending       bool
 	lastBytes    map[string]byDirection[uint64]
 	lastMovement map[string]*byDirection[time.Time]
@@ -81,7 +84,7 @@ func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
 	}
 	stageCtx, cancel := context.WithCancelCause(ctx)
 	s := &stageRun{c: c, plan: plan, ctx: stageCtx, cancel: cancel, start: make(chan struct{}),
-		seen: map[readyResource]bool{}, samples: make(chan sampledBoundary, 1)}
+		seen: map[readyResource]bool{}}
 	for _, dir := range plan.Directions {
 		s.roles = append(s.roles, string(dir))
 	}
@@ -118,8 +121,8 @@ func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
 func (s *stageRun) transfer() bool { return len(s.plan.Directions) > 0 }
 
 func (s *stageRun) close(err error, handover bool) {
-	if s.stopSample != nil {
-		s.stopSample()
+	if s.sampler != nil {
+		s.sampler.cancel()
 	}
 	s.sampling.Wait()
 	if err == nil {
@@ -261,12 +264,9 @@ func (s *stageRun) window() error {
 	close(s.start)
 	end := time.NewTimer(time.Until(started.Add(s.plan.Duration)))
 	defer end.Stop()
-	var tick <-chan time.Time
 	if s.transfer() {
-		ticker := time.NewTicker(sampleInterval)
-		defer ticker.Stop()
-		tick = ticker.C
 		s.beginSampling(started, initial)
+		s.startSampler()
 	}
 	for {
 		select {
@@ -276,9 +276,7 @@ func (s *stageRun) window() error {
 			if err := s.handle(outcome); err != nil {
 				return err
 			}
-		case <-tick:
-			s.sample(false)
-		case sample := <-s.samples:
+		case sample := <-s.results():
 			if _, err := s.observe(sample); err != nil {
 				return err
 			}
@@ -288,9 +286,16 @@ func (s *stageRun) window() error {
 	}
 }
 
+func (s *stageRun) results() <-chan sampledBoundary {
+	if s.sampler == nil {
+		return nil
+	}
+	return s.sampler.results
+}
+
 func (s *stageRun) final() error {
 	s.ending = true
-	s.sample(true)
+	close(s.sampler.finish)
 	for {
 		select {
 		case <-s.ctx.Done():
@@ -299,7 +304,7 @@ func (s *stageRun) final() error {
 			if err := s.handle(outcome); err != nil {
 				return err
 			}
-		case sample := <-s.samples:
+		case sample := <-s.results():
 			if done, err := s.observe(sample); done {
 				return err
 			}
@@ -355,33 +360,52 @@ func (s *stageRun) beginSampling(started time.Time, initial measurementBoundary)
 	}
 }
 
-func (s *stageRun) sample(final bool) {
-	if s.inFlight {
-		return
-	}
-	s.inFlight = true
+// startSampler collects a boundary every tick and, once finished, a last one on the final budget. A tick read
+// late means the client itself stalled, so that boundary resumes evidence.
+func (s *stageRun) startSampler() {
 	ctx, cancel := context.WithCancel(s.ctx)
-	s.stopSample = cancel
-	participants, epoch := s.c.active(), s.epoch
-	budget := checkpointBudget
-	if final {
-		budget = finalCheckpointBudget
+	own := &sampler{results: make(chan sampledBoundary), finish: make(chan struct{}), cancel: cancel}
+	s.sampler = own
+	participants := s.c.active()
+	send := func(sample sampledBoundary) bool {
+		select {
+		case own.results <- sample:
+			return true
+		case <-ctx.Done():
+			return false
+		}
 	}
 	s.sampling.Go(func() {
-		defer cancel()
-		boundary, misses := s.collect(ctx, participants, budget)
-		s.samples <- sampledBoundary{boundary, misses, epoch, final}
+		ticker := time.NewTicker(sampleInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-own.finish:
+				boundary, misses := s.collect(ctx, participants, finalCheckpointBudget)
+				send(sampledBoundary{boundary: boundary, misses: misses, final: true})
+				return
+			case tick := <-ticker.C:
+				stalled := time.Since(tick) > clientStall
+				boundary, misses := s.collect(ctx, participants, checkpointBudget)
+				boundary.stalled = stalled
+				if !send(sampledBoundary{boundary: boundary, misses: misses}) {
+					return
+				}
+			}
+		}
 	})
 }
 
 func (s *stageRun) reset() {
-	s.epoch++
-	if s.stopSample != nil {
-		s.stopSample()
-	}
+	s.sampler.cancel()
 	s.c.aggregate.restart(s.c.ids(), time.Since(s.c.started), ReasonDropout)
 	s.emitRates(nil)
-	s.sample(s.ending)
+	s.startSampler()
+	if s.ending {
+		close(s.sampler.finish)
+	}
 }
 
 func (s *stageRun) dropsServer(id string, err error, final bool) bool {
@@ -396,11 +420,6 @@ func (s *stageRun) dropsServer(id string, err error, final bool) bool {
 
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	c := s.c
-	s.inFlight = false
-	if sample.epoch != s.epoch {
-		s.sample(s.ending)
-		return false, nil
-	}
 	removed, stalled := false, false
 	for _, server := range s.servers {
 		if server.removed {
@@ -446,8 +465,6 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 		s.reset()
 	case sample.final:
 		return true, nil
-	case s.ending:
-		s.sample(true)
 	}
 	return false, nil
 }

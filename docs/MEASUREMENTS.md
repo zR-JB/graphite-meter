@@ -133,9 +133,10 @@ reply is not required, so silent paths still yield timeouts. Warmup then lasts t
 RTTs, whichever is longer, up to 4 s. The measured phase opens on fresh upload checkpoints; the coordinator samples
 about every 250 ms, each checkpoint batch bounded to 1.5 s (500 ms at the final boundary), retrying refusals every
 100 ms. A final boundary where any server's direction moved no bytes is skipped, so the result ends at the last good
-one; a gap over 1.75 s between sampled boundaries starts a new interval. A lane with no bytes for two seconds ends
-with its last error; a lost progress feed is reopened within two seconds. Before the next stage, upload waits until
-the receiver is quiet (250 ms, at most 4 s). Cleanup joins all resources before the outcome is emitted.
+one; a sampler tick read over 1.5 s late starts a new interval, while a slow checkpoint does not. A lane with no
+bytes for two seconds ends with its last error; a lost progress feed is reopened within two seconds. Before the next
+stage, upload waits until the receiver is quiet (250 ms, at most 4 s). Cleanup joins all resources before the outcome
+is emitted.
 
 ## Run outcomes
 

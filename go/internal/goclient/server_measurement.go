@@ -74,6 +74,7 @@ type ServerFailure struct {
 
 type measurementBoundary struct {
 	at         time.Duration
+	stalled    bool
 	down       map[string]uint64
 	up         map[string]*ReceiverSnapshot
 	observedUp map[string]uploadLedger
@@ -99,7 +100,6 @@ type aggregateMeasurements struct {
 	stage                 Stage
 	servers               map[string]*serverLedger
 	first, last, peakFrom *measurementBoundary
-	seen                  time.Duration
 	peak                  byDirection[float64]
 	samples               int
 }
@@ -193,10 +193,9 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 		return nil, false
 	}
 	a.credit(b)
-	if a.first != nil && b.at-a.seen > maximumBoundaryGap {
+	if a.first != nil && b.stalled {
 		return nil, a.resume(interval, b)
 	}
-	a.seen = b.at
 	if len(interval.Participants) == 0 || slices.ContainsFunc(interval.Participants, func(id string) bool {
 		_, down := b.down[id]
 		return a.stage != StageUpload && !down || a.stage != StageDownload && b.up[id] == nil

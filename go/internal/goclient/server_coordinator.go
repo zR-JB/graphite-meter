@@ -57,8 +57,7 @@ const (
 	sampleInterval        = 250 * time.Millisecond
 	checkpointBudget      = 1500 * time.Millisecond
 	finalCheckpointBudget = 500 * time.Millisecond
-	// A longer gap between sampled boundaries means the client itself stalled.
-	maximumBoundaryGap = sampleInterval + checkpointBudget
+	clientStall           = 1500 * time.Millisecond
 )
 
 var errHandover = errors.New("stage handed over")
