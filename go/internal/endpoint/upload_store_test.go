@@ -186,6 +186,33 @@ func TestUploadIDTTLOutlastsTheWebTransportIdleBound(t *testing.T) {
 	if want := 2 * wire.WTIdleBound; uploadIDTTL < want {
 		t.Fatalf("uploadIDTTL = %v, want at least %v: detecting the stall alone takes up to 1.5 idle bounds", uploadIDTTL, want)
 	}
+	if uploadIDTTL < uploadTokenTTL {
+		t.Fatalf("uploadIDTTL = %v, want at least token validity %v", uploadIDTTL, uploadTokenTTL)
+	}
+}
+
+func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
+	store := NewUploadStore()
+	id := store.Mint()
+	agg, access := store.getOrCreateFor(id, "original")
+	if access != uploadAccessOK {
+		t.Fatal(access)
+	}
+	if access := store.finishFor(id, "original"); access != uploadAccessOK {
+		t.Fatal(access)
+	}
+	// Reproduce the final valid-token window without a two-minute sleep.
+	agg.lastTouchMono.Store(monoNanos() - int64(uploadTokenTTL) + int64(time.Second))
+	store.sweep(uploadIDTTL)
+	if retained, ok := store.get(id); !ok || retained != agg {
+		t.Fatal("finished aggregate was swept while its token could still create state")
+	}
+	if _, access := store.joinPostFor(id, "original"); access != uploadAccessInvalid {
+		t.Fatalf("finished owner rejoined with access %v", access)
+	}
+	if _, access := store.joinPostFor(id, "other"); access != uploadAccessOwnerMismatch {
+		t.Fatalf("ownership was lost with access %v", access)
+	}
 }
 
 func TestUploadStoreSweepPreservesActivePost(t *testing.T) {
