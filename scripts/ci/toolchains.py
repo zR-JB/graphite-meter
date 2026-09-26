@@ -23,6 +23,8 @@ PIN_PATTERNS = {
         "gitleaks": r"ghcr\.io/gitleaks/gitleaks@sha256:[0-9a-f]{64}",
         "skopeo": r"quay\.io/containers/skopeo:v\d+\.\d+\.\d+(?:-immutable)?@sha256:[0-9a-f]{64}",
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
+        "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+        "golang": r"docker\.io/library/golang:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
     },
 }
 
@@ -53,6 +55,9 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
                 raise ValueError(f"mise.toml {section}.{name} must be an exact version or image digest")
             pins[section][name] = value
     pins["runtime"] = {name: pins["tools"][name] for name in ("bun", "python", "go")}
+    for name, runtime in (("bun", "bun"), ("golang", "go")):
+        if pins["images"][name].split(":")[1].split("@")[0] != pins["runtime"][runtime]:
+            raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
     return pins
 
 
@@ -75,8 +80,9 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
     replacements = {
         "go/go.mod": [(r"(?m)^go \S+$", f"go {runtimes['go']}")],
         "container/Dockerfile": [
-            (r"(?m)^ARG BUN_VERSION=\S+$", f"ARG BUN_VERSION={runtimes['bun']}"),
-            (r"(?m)^FROM docker.io/library/golang:\S+ AS server$", f"FROM docker.io/library/golang:{runtimes['go']} AS server"),
+            (r"(?m)^FROM docker\.io/oven/bun:\S+ AS client$", f"FROM {pins['images']['bun']} AS client"),
+            (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
+             f"FROM {pins['images']['golang']} AS server"),
         ],
         ".github/actions/build-oci/action.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),

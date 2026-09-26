@@ -240,6 +240,10 @@ def check_repository(root: Path = ROOT) -> None:
         check_toolchain_literals(root)
     except (ValueError, OSError) as exc:
         fail(str(exc))
+    dockerfile = read(root, "container/Dockerfile")
+    if unpinned := [image for image in re.findall(r"(?m)^FROM (\S+)", dockerfile)
+                    if image != "scratch" and "@sha256:" not in image]:
+        fail(f"container/Dockerfile base images must be digest-pinned: {unpinned}")
     check_actions(root)
     check_workflows(root)
     check_ci(root)

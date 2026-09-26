@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import shutil
 import tempfile
 import unittest
@@ -20,17 +21,21 @@ class ToolchainBoundaryTests(unittest.TestCase):
         shutil.copytree(ROOT / ".github", root / ".github")
         return root
 
-    def test_runtime_change_requires_matching_direct_docker_default(self) -> None:
+    def test_runtime_change_requires_lock_image_and_dockerfile_updates(self) -> None:
         root = self.copy_pins()
         check(root)
-        path = root / "mise.toml"
-        major, minor, patch = runtime_pins(root)["bun"].split(".")
-        version = f"{major}.{minor}.{int(patch) + 1}"
-        path.write_text(path.read_text().replace(f'bun = "{runtime_pins(root)["bun"]}"', f'bun = "{version}"'))
+        path, lock = root / "mise.toml", root / "mise.lock"
+        old = runtime_pins(root)["bun"]
+        major, minor, patch = old.split(".")
+        new = f"{major}.{minor}.{int(patch) + 1}"
+        path.write_text(path.read_text().replace(f'bun = "{old}"', f'bun = "{new}"'))
         with self.assertRaisesRegex(ValueError, "mise.lock"):
             check(root)
-        lock = root / "mise.lock"
-        lock.write_text(lock.read_text().replace(f'version = "{major}.{minor}.{patch}"', f'version = "{version}"'))
+        lock.write_text(lock.read_text().replace(f'version = "{old}"', f'version = "{new}"'))
+        with self.assertRaisesRegex(ValueError, "images.bun must use the tools.bun version"):
+            check(root)
+        image = f"docker.io/oven/bun:{new}@sha256:" + "a" * 64
+        path.write_text(re.sub(r"docker\.io/oven/bun:[^\"]+", image, path.read_text()))
         with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
         updates = literal_updates(root)
@@ -38,7 +43,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
         for path, content in updates.items():
             path.write_text(content)
         check(root)
-        self.assertIn(f"ARG BUN_VERSION={version}", (root / "container/Dockerfile").read_text())
+        self.assertIn(f"FROM {image} AS client", (root / "container/Dockerfile").read_text())
 
     def test_publication_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()

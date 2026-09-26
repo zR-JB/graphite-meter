@@ -19,6 +19,8 @@ browser_chrome = "153.0.8010.52"
 
 image_gitleaks = "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 image_skopeo = "quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4"
+image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
+image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 
 [env]
@@ -459,10 +461,9 @@ run = '''
 #!/usr/bin/env sh
 set -eu
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
-bun_version=$(python3 scripts/ci/toolchains.py get runtime.bun)
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
-"$engine" build -f container/Dockerfile -t "$usage_tag" --build-arg BUN_VERSION="$bun_version" \
-  --build-arg VERSION="${VERSION:-$revision}" --build-arg CLIENT_VERSION="${VERSION:-}" \
+"$engine" build -f container/Dockerfile -t "$usage_tag" --build-arg VERSION="${VERSION:-$revision}" \
+  --build-arg CLIENT_VERSION="${VERSION:-}" \
   --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
   --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
 '''
