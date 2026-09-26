@@ -30,16 +30,14 @@ import (
 )
 
 const (
-	downloadBlockSize                = 256 * 1024
-	h3MaxTransferStreamsPerDirection = 128
-	h3UploadProgressStreams          = 1
-	h3MaxIncomingStreams             = 2*h3MaxTransferStreamsPerDirection + h3UploadProgressStreams
-	browserH3UniStreams              = 3
-	wtLaneCreditHeadroom             = 4
-	h2ReceiveWindowPerConnection     = 16 << 20
-	h2ReceiveWindowPerStream         = 8 << 20
+	downloadBlockSize            = 256 * 1024
+	h3ControlStreams             = 4
+	browserH3UniStreams          = 3
+	wtLaneCreditHeadroom         = 4
+	h2ReceiveWindowPerConnection = 16 << 20
+	h2ReceiveWindowPerStream     = 8 << 20
 	// Each open request stream may hold a HEADERS buffer this large before any deadline applies.
-	h3MaxHeaderBytes = 8 << 10
+	h3MaxHeaderBytes = 4 << 10
 	// A client's QUIC connections each carry that many request streams, so they have their own small share.
 	maxClientQUICConnections = 8
 	// controlTimeout bounds an idle connection, a handshake and every exchange outside measurement admission.
@@ -294,18 +292,19 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-func h3QUICConfig() *quic.Config {
-	cfg := transport.NewQUICConfig()
-	cfg.HandshakeIdleTimeout = 5 * time.Second
-	cfg.MaxIdleTimeout = 30 * time.Second
-	cfg.MaxIncomingStreams = h3MaxIncomingStreams
+func h3QUICConfig(cfg *config.Config) *quic.Config {
+	q := transport.NewQUICConfig()
+	q.HandshakeIdleTimeout = 5 * time.Second
+	q.MaxIdleTimeout = wire.WTIdleBound
+	// A request stream past the client's admission shares would pin its headers only to be refused.
+	q.MaxIncomingStreams = int64(cfg.MaxActiveMeasurementsPerClient + cfg.MaxSessionsPerClient + h3ControlStreams)
 	// Credit past the lane cap, so an excess lane is reset rather than parked (api/wire.md).
-	cfg.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
-	return cfg
+	q.MaxIncomingUniStreams = browserH3UniStreams + wire.WTMaxStreams + wtLaneCreditHeadroom
+	return q
 }
 
 func (b *listenerBuild) addH3() error {
-	quicConfig := h3QUICConfig()
+	quicConfig := h3QUICConfig(b.cfg)
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig,
 		IdleTimeout: b.e.controlTimeout}
 	// Enforce has already bound a CONNECT's origin to its principal.

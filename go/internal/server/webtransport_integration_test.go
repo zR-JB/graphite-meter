@@ -489,6 +489,18 @@ func TestHTTP3BoundsClientConnectionsAndHeaders(t *testing.T) {
 		_ = conn.CloseWithError(0, "")
 		t.Fatalf("connection %d from one client was admitted", maxClientQUICConnections+1)
 	}
+	// Request streams past the client's admission shares and a little control would only pin header buffers.
+	cfg := config.Default()
+	shares := cfg.MaxActiveMeasurementsPerClient + cfg.MaxSessionsPerClient
+	opened := 0
+	for ; opened <= shares+h3ControlStreams; opened++ {
+		if _, err := held[0].OpenStream(); err != nil {
+			break
+		}
+	}
+	if opened != shares+h3ControlStreams {
+		t.Fatalf("one connection opened %d request streams, want %d", opened, shares+h3ControlStreams)
+	}
 	for _, conn := range held {
 		_ = conn.CloseWithError(0, "")
 	}
@@ -510,7 +522,7 @@ func TestHTTP3BoundsClientConnectionsAndHeaders(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if status, err := probe(12 << 10); err == nil && status == http.StatusOK {
+	if status, err := probe(6 << 10); err == nil && status == http.StatusOK {
 		t.Fatal("a header block over the limit was served")
 	}
 }

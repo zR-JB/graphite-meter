@@ -340,19 +340,6 @@ func TestPublicH3Port(t *testing.T) {
 	}
 }
 
-func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
-	cfg := h3QUICConfig()
-	if want := int64(257); cfg.MaxIncomingStreams != want {
-		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)",
-			cfg.MaxIncomingStreams, want)
-	}
-	// The literal, not the production expression: repeating that expression here asserts only that it equals itself.
-	if want := int64(23); cfg.MaxIncomingUniStreams != want {
-		t.Fatalf("incoming unidirectional streams = %d, want %d (3 HTTP/3 control + 16 lanes + 4 headroom)",
-			cfg.MaxIncomingUniStreams, want)
-	}
-}
-
 // Services drain concurrently: each has the whole shutdown budget rather than what the ones before it left.
 func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
