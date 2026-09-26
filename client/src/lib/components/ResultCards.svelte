@@ -44,15 +44,14 @@
   }
   const dash = "—";
   const stages = [
-    { key: "download", icon: ICON.download, accent: "dl", label: "Download" },
-    { key: "upload", icon: ICON.upload, accent: "ul", label: "Upload" },
+    { key: "download", icon: ICON.download, label: "Download" },
+    { key: "upload", icon: ICON.upload, label: "Upload" },
     {
       key: "bidirectional",
       icon: ICON.bidirectional,
-      accent: "bd",
       label: "Bi-dir",
     },
-    { key: "latency", icon: ICON.ping, accent: "pg", label: "Ping" },
+    { key: "latency", icon: ICON.ping, label: "Ping" },
   ] as const;
   const bidirectionalEvidence = $derived(
     scoped
@@ -218,9 +217,9 @@
 </script>
 
 {#snippet resultCard(c: (typeof cards)[number])}
-  <article class="result-card">
+  <article class="surface result-card">
     <header>
-      <span class="ico {c.accent}">{@html c.icon}</span>
+      <span class="tone-icon" data-tone={c.key}>{@html c.icon}</span>
       {#if c.key === "latency"}
         <span class="label term" use:tooltip={JARGON.ping}>{c.label}</span>
       {:else}
@@ -228,19 +227,24 @@
       {/if}
       {#if c.hasValue && c.status === "complete"}
         <span
-          class="pip pip-{c.band}"
+          class="badge"
+          data-tone={c.band === "high"
+            ? "ok"
+            : c.band === "medium"
+              ? "warn"
+              : "err"}
           use:tooltip={`Measurement stability: ${Math.round(c.score * 100)}%`}
           aria-label={`Measurement stability: ${Math.round(c.score * 100)}%, ${c.band}`}
           >{c.band}</span
         >
       {/if}
       {#if c.status === "partial"}
-        <span class="partial">Partial</span>
+        <span class="badge" data-tone="err">Partial</span>
       {:else if c.status === "failed"}
-        <span class="partial">Failed</span>
+        <span class="badge" data-tone="err">Failed</span>
       {/if}
     </header>
-    {#key selectedServer}<div class="result-readout">
+    {#key selectedServer}<div class="result-readout enter">
         <div class="val">
           <span class="num">{c.num}</span>
           <span class="unit">{c.unit}</span>
@@ -251,7 +255,7 @@
               >{c.jitterMs === null ? dash : fmtMs(c.jitterMs)}
               <span class="jitter-unit">ms</span></span
             >
-            <span class="jitter-term" use:tooltip={JARGON.jitter}>jitter</span>
+            <span class="term" use:tooltip={JARGON.jitter}>jitter</span>
             {#if c.key === "latency" && details && details.selection.length > 1}
               <div class="result-source">
                 <ServerTag
@@ -266,7 +270,7 @@
         {#if c.wire}
           <div class="est">
             <span class="est-num">{c.wire.num}</span>
-            <span class="est-tag" use:tooltip={c.wire.tooltip}
+            <span class="term" use:tooltip={c.wire.tooltip}
               >wire {c.wire.pct}</span
             >
           </div>
@@ -281,8 +285,8 @@
 {/snippet}
 
 {#snippet resultChip(c: (typeof readouts)[number])}
-  <div class="result-chip" class:active={c.active}>
-    <span class="ico {c.accent}">{@html c.icon}</span>
+  <div class="result-chip enter" class:active={c.active}>
+    <span class="tone-icon" data-tone={c.key}>{@html c.icon}</span>
     <span class="chip-label">{c.label}</span>
     <span class="chip-val" aria-hidden={c.active ? "true" : undefined}>
       <span class="num">{c.num}</span>
@@ -322,8 +326,8 @@
 
 <style>
   .result-bank {
-    container: results / inline-size;
     margin-inline: auto;
+    container: results / inline-size;
   }
   .result-context {
     margin-bottom: var(--space-2);
@@ -332,10 +336,7 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: var(--space-2);
-    min-height: 64px;
-    margin-inline: auto;
   }
-
   @container results (max-width: 452px) {
     .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -351,22 +352,25 @@
   }
 
   .result-card {
-    min-width: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
     align-content: start;
     gap: 6px;
+    min-width: 0;
     min-height: 64px;
     padding: 10px var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
   }
-  .result-card header,
-  .result-readout,
-  .sub {
-    grid-column: 1 / -1;
+  header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  header .badge {
+    margin-left: auto;
+  }
+  .label {
+    font-size: var(--type-sm);
+    font-weight: 700;
+    letter-spacing: -0.01em;
   }
   .result-readout {
     display: flex;
@@ -374,205 +378,54 @@
     gap: 5px;
     min-width: 0;
   }
-  .partial {
-    margin-left: auto;
-    color: var(--err);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .result-chip {
-      animation: quick-content-enter var(--dur-hover) var(--ease-out) both;
-    }
-    .result-readout {
-      animation: reading-change 160ms ease-out;
-    }
-  }
-  @keyframes reading-change {
-    from {
-      transform: translateY(1px);
-    }
-    to {
-      transform: translateY(0);
-    }
-  }
-  @keyframes quick-content-enter {
-    from {
-      opacity: 0.65;
-      transform: translateY(2px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .ico {
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border-radius: var(--r-well);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-  }
-  .ico :global(svg) {
-    width: 13px;
-    height: 13px;
-  }
-  .ico.dl {
-    color: var(--phase-download);
-    border-color: color-mix(in srgb, var(--phase-download) 34%, var(--border));
-  }
-  .ico.ul {
-    color: var(--phase-upload);
-    border-color: color-mix(in srgb, var(--phase-upload) 34%, var(--border));
-  }
-  .ico.pg {
-    color: var(--phase-latency);
-    border-color: color-mix(in srgb, var(--phase-latency) 34%, var(--border));
-  }
-  .ico.bd {
-    color: var(--phase-bidirectional);
-    border-color: color-mix(
-      in srgb,
-      var(--phase-bidirectional) 34%,
-      var(--border)
-    );
-  }
-  .label {
-    font-size: var(--type-sm);
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--text);
-  }
-  .label.term {
-    cursor: help;
-    text-decoration: underline dotted
-      color-mix(in srgb, var(--text-soft) 70%, transparent);
-    text-underline-offset: 3px;
-  }
-  .label.term:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: var(--r-well);
-  }
-
-  .result-source {
-    min-width: 0;
-    margin-left: auto;
-    max-width: 40%;
-    font-size: 10px;
-  }
-  .result-source :global(.server-tag) {
-    font-size: 10px;
-  }
-  .pip {
-    margin-left: auto;
-    padding: 2px 7px;
-    border-radius: var(--r-full);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .pip-high {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  .pip-medium {
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .pip-low {
-    background: var(--err-soft);
-    color: var(--err);
-  }
-
-  .val {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-  }
-  .num {
-    font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    font-size: var(--type-xl);
-    font-weight: 600;
-    letter-spacing: var(--track-tight);
-    color: var(--text);
-    line-height: 1;
-  }
-  .unit {
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    color: var(--text-soft);
-  }
-
-  .sub {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 11px;
-    color: var(--text-soft);
-    letter-spacing: 0.01em;
-  }
-
+  .val,
   .est,
   .jitter {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    min-height: 16px;
-    font-family: var(--font-mono);
+  }
+  .num {
+    font: 600 var(--type-xl) / 1 var(--font-display);
     font-variant-numeric: tabular-nums;
-    font-size: 12px;
+    letter-spacing: var(--track-tight);
+  }
+  .unit {
+    color: var(--text-soft);
+    font: 700 var(--type-xs) var(--font-mono);
+  }
+  .est,
+  .jitter {
+    min-height: 16px;
+    font: var(--type-sm) var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
   .est-num,
   .jitter-num {
-    font-weight: 700;
     color: var(--brand-strong);
+    font-weight: 700;
   }
-  .jitter-unit {
+  .jitter-unit,
+  .result-readout .term {
     color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 600;
+    font-size: var(--type-2xs);
   }
-  .est-tag,
-  .jitter-term {
-    cursor: help;
+  .result-source {
+    min-width: 0;
+    max-width: 40%;
+    margin-left: auto;
+  }
+  .sub {
     color: var(--text-soft);
-    font-size: 10px;
-    letter-spacing: 0.02em;
-    text-decoration: underline dotted
-      color-mix(in srgb, var(--text-soft) 70%, transparent);
-    text-underline-offset: 3px;
+    font: var(--type-xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
   }
-  .est-tag:focus-visible,
-  .jitter-term:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: var(--r-well);
-  }
-  /* Compact strip: one slim row per finished or active stage, carrying icon,
-     label, and number. Earlier stages stay visible while the next one runs.
-     No card chrome, confidence verdict, or wire-estimate line. */
+
+  /* Compact strip: one slim row per finished or active stage. Earlier stages
+     stay visible while the next one runs; no card chrome or verdicts. */
   .result-chips {
-    display: flex;
-    flex-direction: column;
+    display: grid;
     gap: var(--space-1);
-    width: 100%;
     max-width: 600px;
     margin-inline: auto;
   }
@@ -589,47 +442,29 @@
   .result-chip.active {
     border-color: color-mix(in srgb, var(--brand) 46%, var(--border));
   }
-  .result-chip .ico {
-    display: grid;
-    place-items: center;
+  .result-chip .tone-icon {
     width: 20px;
     height: 20px;
-    border-radius: var(--r-well);
-    border: 1px solid var(--border);
-    background: var(--surface-2);
-    flex: none;
-  }
-  .result-chip .ico :global(svg) {
-    width: 12px;
-    height: 12px;
   }
   .chip-label {
     flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    color: var(--text-soft);
     font-size: var(--type-xs);
     font-weight: 700;
-    color: var(--text-soft);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .chip-val {
-    flex: none;
     display: flex;
     align-items: baseline;
     gap: var(--space-1);
   }
   .chip-val .num {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: var(--type-sm);
-    font-weight: 700;
-    color: var(--text);
+    font: 700 var(--type-sm) var(--font-mono);
   }
   .chip-val .unit {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--text-soft);
+    font-size: var(--type-2xs);
   }
 </style>

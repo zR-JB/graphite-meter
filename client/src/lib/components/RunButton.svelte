@@ -42,7 +42,7 @@
         : "Start the test (Space)"}
 >
   {#key label}
-    <span class="run-button-content">
+    <span class="run-button-content enter">
       {#if pending}
         CANCEL
       {:else if store.isRunning}
@@ -67,19 +67,8 @@
 {/if}
 
 <style>
-  .duration {
-    position: absolute;
-    inset-inline-end: var(--space-3);
-    top: 50%;
-    transform: translateY(-50%);
-    padding: var(--space-1) 6px;
-    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, currentColor 8%, transparent);
-    font: 500 10px/1 var(--font-mono);
-    letter-spacing: 0;
-    white-space: nowrap;
-  }
+  /* The one pill: the faceplate's single bold element, centred under the
+     gauge. Its lit top edge keeps the primary action distinct. */
   .run-button {
     position: relative;
     isolation: isolate;
@@ -87,90 +76,65 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--space-2);
-    /* The one pill: the faceplate's single bold element, centered under the
-       gauge. Its lit top edge keeps the primary action distinct. */
     width: 100%;
     max-width: 320px;
-    align-self: center;
-    height: 46px;
     min-height: 46px;
-    box-sizing: border-box;
-    border-radius: var(--r-pill);
-    font-family: var(--font-display);
-    font-weight: 600;
-    letter-spacing: var(--track-wide);
-    background: linear-gradient(180deg, var(--brand-strong), var(--brand));
-    color: var(--text-inverse);
+    align-self: center;
     border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+    border-radius: var(--r-pill);
+    background: linear-gradient(180deg, var(--brand-strong), var(--brand));
     box-shadow:
       inset 0 1px 0 var(--edge-highlight),
       0 2px 8px color-mix(in srgb, var(--brand) 10%, transparent);
-    cursor: pointer;
+    color: var(--text-inverse);
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: var(--track-wide);
     transition:
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
-  .run-button:hover {
-    transform: translateY(-1px);
-    filter: brightness(1.04);
+  @media (hover: hover) {
+    .run-button:hover:not(.pending) {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
   }
   .run-button:active {
-    transform: translateY(0) scale(0.985);
-  }
-  .run-button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
+    transform: scale(0.985);
   }
   .run-button.running {
-    background: var(--err-soft);
-    color: var(--err);
     border-color: color-mix(in srgb, var(--err) 40%, var(--border));
+    background: var(--err-soft);
     box-shadow: none;
+    color: var(--err);
   }
   .run-button.pending {
-    cursor: pointer;
     filter: saturate(0.7);
-  }
-  .run-button.pending:hover {
-    transform: none;
-    filter: saturate(0.7);
-  }
-  .stop-sq {
-    width: 12px;
-    height: 12px;
-    background: currentColor;
-    border-radius: var(--r-well);
-  }
-  .ico {
-    display: inline-grid;
-    place-items: center;
-    width: 18px;
-    height: 18px;
-  }
-  .ico :global(svg) {
-    width: 18px;
-    height: 18px;
   }
   .run-button-content {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: var(--space-2);
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .run-button-content {
-      animation: control-content-enter var(--dur-hover) var(--ease-out) both;
-    }
+  .run-button-content :global(svg) {
+    width: 18px;
+    height: 18px;
   }
-  @keyframes control-content-enter {
-    from {
-      opacity: 0.7;
-      transform: translateY(1px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .stop-sq {
+    width: 12px;
+    height: 12px;
+    border-radius: var(--r-well);
+    background: currentColor;
+  }
+  .duration {
+    position: absolute;
+    inset-inline-end: var(--space-3);
+    padding: var(--space-1) 6px;
+    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+    border-radius: var(--r-well);
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    font: var(--w-normal) var(--type-2xs) / 1 var(--font-mono);
+    letter-spacing: 0;
   }
 </style>

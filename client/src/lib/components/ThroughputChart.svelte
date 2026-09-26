@@ -12,11 +12,11 @@
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   const PHASE_LABEL: Record<ChartLabelPhase, string> = {
-    warmup: "WARM-UP",
-    latency: "PING",
-    download: "DOWNLOAD",
-    upload: "UPLOAD",
-    bidirectional: "BI-DIR",
+    warmup: "Warm-up",
+    latency: "Ping",
+    download: "Download",
+    upload: "Upload",
+    bidirectional: "Bi-dir",
   } as const;
 
   let canvasEl = $state<HTMLCanvasElement>();
@@ -462,43 +462,34 @@
     flex-direction: column;
     min-height: 142px;
   }
-  /* Secondary to the gauge hero: a shallow recess in the tile, filling the
-     granted height down to the compact floor. */
+  /* Secondary to the gauge hero: a shallow recess filling the granted height. */
   .plot {
     position: relative;
     flex: 1 1 auto;
     min-height: 140px;
+    overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
-    overflow: hidden;
   }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  .plot:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .canvas {
+  .canvas,
+  .chart-labels {
     position: absolute;
     inset: 0;
-    display: block;
     width: 100%;
     height: 100%;
+  }
+  .chart-labels,
+  .inspection-guide,
+  .inspection-dot,
+  .chip {
+    pointer-events: none;
   }
   .inspection-guide,
   .inspection-dot {
     position: absolute;
     left: 0;
-    pointer-events: none;
     will-change: transform;
   }
   .inspection-guide {
@@ -513,12 +504,8 @@
     border-radius: var(--r-full);
   }
   .chart-labels {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    font-family: var(--font-mono);
-    font-size: 10px;
     color: var(--text-soft);
+    font: var(--type-2xs) var(--font-mono);
   }
   .axis-label,
   .time-label,
@@ -528,18 +515,19 @@
     white-space: nowrap;
   }
   .axis-label {
-    transform: translateY(-50%);
+    translate: 0 -50%;
   }
   .axis-label-right {
-    transform: translate(-100%, -50%);
+    translate: -100% -50%;
   }
   .time-label {
-    transform: translate(-50%, -100%);
+    translate: -50% -100%;
   }
   .phase-label {
-    transform: translateY(-100%);
-    font-size: 9px;
+    translate: 0 -100%;
     font-weight: 700;
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
     opacity: 0.62;
   }
   .stat-label {
@@ -549,41 +537,33 @@
     border: 1px solid color-mix(in srgb, var(--text-soft) 55%, transparent);
     border-radius: var(--r-well);
     background: var(--surface-1);
-    color: var(--text-soft);
-    font-size: 9px;
     font-weight: 700;
     text-overflow: ellipsis;
   }
-
   .chip {
-    left: 0;
-    will-change: transform;
     position: absolute;
     top: 0;
+    left: 0;
     width: 224px;
-    max-width: calc(100% - 2 * var(--space-2));
-    box-sizing: border-box;
-    pointer-events: none;
     min-width: 112px;
+    max-width: calc(100% - 2 * var(--space-2));
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
     box-shadow: var(--elev-float);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
+    font: var(--type-xs) / 1.5 var(--font-mono);
+    will-change: transform;
   }
   .chip-row {
     display: flex;
     justify-content: space-between;
     gap: var(--space-3);
-    line-height: 1.5;
   }
   .chip-row span {
     color: var(--text-soft);
   }
   .chip-row b {
-    color: var(--text);
     font-weight: 600;
   }
 </style>

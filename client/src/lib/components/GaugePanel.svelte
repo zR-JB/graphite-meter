@@ -401,7 +401,7 @@
   <!-- One container-query grid switches the complete instrument layout and
        keeps the gauge track stable when the latency panel is toggled. -->
   <div class="instrument">
-    <div class="stage">
+    <div class="well stage">
       {#if indicatedServers.length > 1}
         <div
           class="server-indicator"
@@ -441,12 +441,15 @@
         <div class="metric-wrap">
           {#if terminalPrimary}
             <div
-              class="terminal-readout {terminalPrimary.phase}"
+              class="terminal-readout"
               class:partial={terminalPrimary.dashed}
               aria-hidden="true"
             >
               <span class="terminal-direction">
-                <span class="terminal-icon">
+                <span
+                  class="tone-icon terminal-icon"
+                  data-tone={terminalPrimary.direction}
+                >
                   {#if terminalPrimary.direction === "download"}
                     {@html ICON.download}
                   {:else if terminalPrimary.direction === "upload"}
@@ -510,7 +513,7 @@
     </div>
 
     {#if store.latencyEnabled}
-      <div class="latency-panel">
+      <div class="well latency-panel">
         <LatencyServerSelector />
         <LatencyProfile />
       </div>
@@ -527,43 +530,36 @@
 </section>
 
 <style>
-  /* Faceplate: the gauge panel is flat and transparent, part of the instrument
-     surface. The gauge and latency panels are the wells milled into it
-     (--elev-inset), and the controls sit on the faceplate below them. */
+  /* Faceplate: the panel is flat and transparent. The gauge and latency
+     panels are wells milled into it; the controls sit on the faceplate. */
   .gauge-panel {
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    padding: 0;
-    background: transparent;
     /* Query context for .instrument, so a docked panel shrinking this column
        restyles it. It sits here: a container query only styles descendants. */
-    container-type: inline-size;
-    container-name: viz;
+    container: viz / inline-size;
   }
   /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
+    /* One readable gauge size across live and completed states. The profile
+       contributes its intrinsic height instead of a nested scroller. */
+    --gauge-well-height: clamp(280px, 35svh, 360px);
     display: grid;
     gap: var(--space-3) var(--space-2);
-    flex: 0 0 auto;
-    min-height: 0;
-    /* One readable gauge size across live and completed states. The profile
-       contributes its intrinsic height instead of acquiring a nested scroller. */
-    --gauge-well-height: clamp(280px, 35svh, 360px);
     grid-template:
       "gauge" var(--gauge-well-height)
       "controls" auto
       "latency" auto
       / 1fr;
   }
-  /* No latency panel: its row disappears at every width. */
   .instrument:not(:has(.latency-panel)) {
     grid-template:
       "gauge" var(--gauge-well-height)
       "controls" auto
       / 1fr;
   }
-  /* Wide instruments pair the two readings and their controls in two columns. */
+  /* Wide instruments pair the two readings above their controls. */
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
@@ -586,10 +582,10 @@
   }
   @media (max-width: 759px) and (orientation: portrait) {
     .instrument {
-      /* A phone retains a readable dial while the document carries the results. */
+      /* A phone retains a readable dial while the document carries results. */
       --gauge-well-height: clamp(280px, 32svh, 320px);
     }
-    .instrument .stage {
+    .stage {
       min-height: 280px;
     }
   }
@@ -601,12 +597,16 @@
     flex-direction: column;
     min-width: 240px;
     min-height: 220px;
-    height: 100%;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-inset);
     overflow: hidden;
+  }
+  .latency-panel {
+    grid-area: latency;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 240px;
+    min-height: 220px;
+    padding: var(--space-2);
   }
   .server-indicator {
     position: absolute;
@@ -616,7 +616,7 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font: 500 var(--type-xs)/1.4 var(--font-sans);
+    font: var(--w-normal) var(--type-xs) / 1.4 var(--font-sans);
   }
   .server-indicator svg {
     width: 14px;
@@ -630,23 +630,25 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
-    /* Size container so the hero number scales with cqmin, the same smaller
-       dimension that sizes the ring. cqw overflows a wide, short well. */
+    /* Size container so the hero number scales with cqmin, the dimension
+       that sizes the ring. cqw overflows a wide, short well. */
     container-type: size;
   }
   .instrument-controls {
     --stage-controls-width: 540px;
     grid-area: controls;
     display: grid;
+    align-items: center;
+    justify-self: center;
     gap: var(--space-3);
     width: 100%;
     padding-block: var(--space-2);
-    justify-self: center;
-    align-items: center;
   }
   .instrument-controls:has(:global(.quad)) {
     --stage-controls-width: 700px;
   }
+  /* Short wide windows share a control row; taller screens keep the action
+     above its stages. */
   @media (max-height: 800px) {
     .instrument-controls {
       padding-block: var(--space-1);
@@ -660,7 +662,6 @@
       }
     }
   }
-  /* Short wide windows share a control row; taller screens keep the action above its stages. */
   .run-slot {
     display: flex;
     flex-direction: column;
@@ -668,107 +669,73 @@
     justify-content: center;
     min-height: 46px;
   }
-  /* Latency rows remain fully visible; the instrument owns their height. */
-  .latency-panel {
-    grid-area: latency;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    min-width: 240px;
-    min-height: 220px;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-inset);
-    overflow: visible;
+  .stage-head {
+    width: 100%;
+    max-width: var(--stage-controls-width);
+    justify-self: center;
   }
-  .gauge-ticks {
+
+  .gauge-ticks,
+  .metric-wrap {
     position: absolute;
     inset: 0;
     pointer-events: none;
   }
   .gauge-tick {
+    --x: -50%;
+    --y: -50%;
     position: absolute;
-    transform: translate(-50%, -50%);
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: 9.5px;
-    font-weight: 600;
+    translate: var(--x) var(--y);
     color: var(--text-soft);
-    opacity: 0.75;
+    font: 600 var(--type-2xs) / 1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    line-height: 1;
+    opacity: 0.75;
   }
   .gauge-tick[data-anchor-x="end"] {
-    transform: translate(-100%, -50%);
+    --x: -100%;
   }
   .gauge-tick[data-anchor-x="start"] {
-    transform: translate(0, -50%);
+    --x: 0;
   }
   .gauge-tick[data-anchor-y="end"] {
-    transform: translate(-50%, -100%);
+    --y: -100%;
   }
   .gauge-tick[data-anchor-y="start"] {
-    transform: translate(-50%, 0);
-  }
-  .gauge-tick[data-anchor-x="end"][data-anchor-y="end"] {
-    transform: translate(-100%, -100%);
-  }
-  .gauge-tick[data-anchor-x="end"][data-anchor-y="start"] {
-    transform: translate(-100%, 0);
-  }
-  .gauge-tick[data-anchor-x="start"][data-anchor-y="end"] {
-    transform: translate(0, -100%);
-  }
-  .gauge-tick[data-anchor-x="start"][data-anchor-y="start"] {
-    transform: translate(0, 0);
+    --y: 0;
   }
   .metric-wrap {
-    position: absolute;
-    inset: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* Keeps the number clear of the gauge ring's sides. The inline padding
-       also bounds how wide the value grows until cqmin sizing reins it in. */
+    /* Keeps the number clear of the ring's sides; the inline padding also
+       bounds how wide the value grows until cqmin sizing reins it in. */
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
-    pointer-events: none;
   }
-  /* The hero number: the display face with tabular figures, so a live value
-     never shifts layout. Sized in cqmin against the gauge well so large numbers
-     shrink to fit a narrow gauge, clamped so it stays legible. */
-  .gauge-value {
-    font-family: var(--font-display);
-    font-variant-numeric: tabular-nums;
-    font-feature-settings: "tnum" 1;
-    font-size: clamp(20px, 14cqmin, 64px);
-    font-weight: 600;
-    letter-spacing: var(--track-tight);
-    color: var(--text);
-    line-height: 0.95;
+  /* The hero number: tabular figures so a live value never shifts layout,
+     sized in cqmin so large numbers shrink to fit a narrow gauge. */
+  .gauge-value,
+  .terminal-number {
     max-width: 100%;
+    color: var(--text);
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-variant-numeric: lining-nums tabular-nums;
+    letter-spacing: var(--track-tight);
     white-space: nowrap;
   }
+  .gauge-value {
+    font-size: clamp(20px, 14cqmin, 64px);
+    line-height: 0.95;
+  }
   .terminal-readout {
-    --result-accent: var(--text-soft);
     position: relative;
     display: grid;
     justify-items: center;
     gap: var(--space-1);
     max-width: 72%;
-    color: var(--text);
-  }
-  .terminal-readout.download {
-    --result-accent: var(--phase-download);
-  }
-  .terminal-readout.upload {
-    --result-accent: var(--phase-upload);
-  }
-  .terminal-readout.bidirectional {
-    --result-accent: var(--phase-bidirectional);
   }
   .terminal-direction {
     position: absolute;
@@ -777,120 +744,71 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: clamp(11px, 3.6cqmin, 13px);
+    font-size: clamp(var(--type-xs), 3.6cqmin, 13px);
     font-weight: 600;
     line-height: 1;
     white-space: nowrap;
   }
   .terminal-icon {
-    display: grid;
-    place-items: center;
     width: 20px;
     height: 20px;
-    border: 1px solid
-      color-mix(in srgb, var(--result-accent) 24%, var(--border-subtle));
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, var(--result-accent) 10%, var(--surface-2));
-    color: var(--result-accent);
-  }
-  .terminal-icon :global(svg) {
-    width: 13px;
-    height: 13px;
   }
   .terminal-number {
-    font-family: var(--font-display);
-    font-variant-numeric: lining-nums tabular-nums;
-    font-feature-settings:
-      "lnum" 1,
-      "tnum" 1;
     font-size: clamp(28px, 15.5cqmin, 62px);
-    font-weight: 600;
-    letter-spacing: var(--track-tight);
     line-height: 1;
-    white-space: nowrap;
+  }
+  /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
+  .terminal-unit,
+  .gauge-unit {
+    color: var(--text-soft);
+    font-family: var(--font-mono);
+    line-height: 1;
   }
   .terminal-unit {
-    font-family: var(--font-mono);
     font-size: clamp(var(--type-xs), 3.8cqmin, var(--type-md));
-    font-weight: 500;
-    color: var(--text-soft);
-    line-height: 1;
-  }
-  .terminal-partial {
-    font-size: var(--type-xs);
-    color: var(--text-muted);
+    font-weight: var(--w-normal);
   }
   .gauge-unit {
     margin-top: var(--space-1);
-    font-family: var(--font-mono);
     font-size: var(--type-sm);
     font-weight: 600;
     letter-spacing: 0.02em;
-    color: var(--text-soft);
-    /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   }
-  /* Reserve a separate footer so transient notes cannot overlap the dial. */
+  .terminal-partial {
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+  }
+  /* A separate footer keeps transient notes from overlapping the dial. */
   .gauge-footer {
-    flex: 0 0 auto;
-    min-height: 44px;
     display: grid;
     align-items: center;
+    min-height: 44px;
     padding: var(--space-2) var(--space-3) var(--space-3);
   }
   .gauge-notes {
-    display: flex;
-    flex-direction: column;
+    display: grid;
     gap: var(--space-1);
-    width: 100%;
     text-align: center;
   }
   .gauge-hint {
+    color: var(--text-muted);
     font-size: var(--type-sm);
     font-weight: 600;
     line-height: 1.35;
-    color: var(--text-muted);
   }
-  /* Terminal-state headline (aborted / error) above the softer action line.
-     Error is err-tinted. A user abort stays neutral at full text strength, so
-     the state is unmissable. */
+  /* Aborted / error headline above the softer action line. A user abort
+     stays neutral at full text strength so the state is unmissable. */
   .gauge-status {
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
     color: var(--text);
+    font: 700 var(--type-xs) var(--font-mono);
+    letter-spacing: var(--track-wide);
+    text-transform: uppercase;
   }
   .gauge-status.error {
     color: var(--err);
   }
   .gauge-status.preparation {
     color: var(--brand-strong);
-  }
-
-  /* Narrow layouts stack the action and stages in their natural reading order. */
-  .stage-head {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    width: 100%;
-    max-width: var(--stage-controls-width);
-    justify-self: center;
-  }
-  /* The instrument has an explicit well height, so result content no longer
-     needs a phantom reserve to keep it stable. Let cards occupy only their
-     real height; otherwise the empty reserve becomes a visual gulf above the
-     chart. */
-  .results-slot {
-    flex: 0 0 auto;
-    width: 100%;
-    max-width: none;
-    align-self: center;
-    min-height: 0;
-  }
-  .results-slot :global(.server-results) {
-    max-width: 1120px;
-    margin: var(--space-3) auto 0;
   }
   .results-slot:empty {
     display: none;

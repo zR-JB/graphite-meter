@@ -233,14 +233,17 @@
 </script>
 
 <div class="setup-grid">
-  <h2 class="tier-label">Test</h2>
-
-  <section class="panel wide primary">
+  <h2 class="caps tier-label">Test</h2>
+  <section class="surface-inset panel wide primary">
     <div class="section-heading">
-      <h3>Connection paths</h3>
+      <h3 class="caps">Connection paths</h3>
       <span
-        class="readiness-badge"
-        data-state={readiness}
+        class="badge"
+        data-tone={readiness === "verified"
+          ? "ok"
+          : readiness === "failed"
+            ? "err"
+            : "warn"}
         aria-live="polite"
         use:tooltip={readiness === "verified"
           ? "Recent successful checks are reused while the required server and path are unchanged. Expired checks are refreshed before a test starts."
@@ -261,14 +264,12 @@
       locked={running || store.preparing}
     />
   </section>
-
-  <section class="panel">
-    <h3>Duration &amp; stages</h3>
-    <div class="seg" role="group" aria-label="Duration preset">
+  <section class="surface-inset panel">
+    <h3 class="caps">Duration &amp; stages</h3>
+    <div class="segmented presets" role="group" aria-label="Duration preset">
       {#each PRESETS as preset}
         <button
           type="button"
-          class:active={durationMode === preset}
           aria-pressed={durationMode === preset}
           disabled={store.preparing}
           onclick={() => setPreset(preset)}>{preset}</button
@@ -285,7 +286,7 @@
     {#if durationMode === "custom"}
       <div class="duration-fields">
         {#each activeDurationFields as [key, label]}
-          <label>
+          <label class="field">
             <span>{label} ms</span>
             <input
               type="number"
@@ -302,7 +303,7 @@
       <div class="dur-summary">
         {#each presetCells as cell}
           <div class="dur-cell">
-            <span>{cell.label}</span>
+            <span class="caps">{cell.label}</span>
             <strong>{cell.value}</strong>
           </div>
         {/each}
@@ -314,25 +315,21 @@
       </p>
     {/if}
   </section>
-
-  <h2 class="tier-label">Results</h2>
-
-  <section class="panel">
-    <h3>Display units</h3>
+  <h2 class="caps tier-label">Results</h2>
+  <section class="surface-inset panel">
+    <h3 class="caps">Display units</h3>
     <div class="two">
       <div class="field">
         <span>Rate</span>
-        <div class="seg" role="group" aria-label="Rate unit">
+        <div class="segmented" role="group" aria-label="Rate unit">
           <button
             type="button"
-            class:active={store.unitKind === "bits"}
             aria-pressed={store.unitKind === "bits"}
             use:tooltip={JARGON.unitBits}
             onclick={() => (store.unitKind = "bits")}>Bits</button
           >
           <button
             type="button"
-            class:active={store.unitKind === "bytes"}
             aria-pressed={store.unitKind === "bytes"}
             use:tooltip={JARGON.unitBytes}
             onclick={() => (store.unitKind = "bytes")}>Bytes</button
@@ -341,17 +338,15 @@
       </div>
       <div class="field">
         <span>Prefix</span>
-        <div class="seg" role="group" aria-label="Prefix scale">
+        <div class="segmented" role="group" aria-label="Prefix scale">
           <button
             type="button"
-            class:active={store.unitBase === "base10"}
             aria-pressed={store.unitBase === "base10"}
             use:tooltip={JARGON.unitDecimal}
             onclick={() => (store.unitBase = "base10")}>Decimal</button
           >
           <button
             type="button"
-            class:active={store.unitBase === "base2"}
             aria-pressed={store.unitBase === "base2"}
             use:tooltip={JARGON.unitBinary}
             onclick={() => (store.unitBase = "base2")}>Binary</button
@@ -361,9 +356,8 @@
     </div>
     <p class="hint">Applies to all displayed rates.</p>
   </section>
-
-  <section class="panel wide">
-    <h3>Result history</h3>
+  <section class="surface-inset panel wide">
+    <h3 class="caps">Result history</h3>
     <Switch
       checked={store.savingResults}
       onToggle={(enabled) =>
@@ -371,7 +365,7 @@
       label="Save completed results on this device"
     />
     <a
-      class="history-link"
+      class="btn-link"
       href="#/history"
       onclick={(event) => {
         if (!onOpenHistory) return;
@@ -380,9 +374,8 @@
       }}>View History</a
     >
   </section>
-
-  <section class="panel wide">
-    <h3>Wire-rate estimates</h3>
+  <section class="surface-inset panel wide">
+    <h3 class="caps">Wire-rate estimates</h3>
     <Switch
       bind:checked={store.showWireEstimates}
       label="Show estimated wire rate"
@@ -393,16 +386,15 @@
       connection details.
     </p>
   </section>
-
-  <section class="panel">
-    <h3>Gauge scale</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Gauge scale</h3>
     <Switch
       checked={vizAuto}
       onToggle={setVizAuto}
       label="Scale throughput automatically"
     />
     {#if !vizAuto}
-      <label>
+      <label class="field">
         <span>Maximum {store.unitLabel}</span>
         <input
           type="number"
@@ -421,11 +413,9 @@
       {/if}
     </p>
   </section>
-
-  <h2 class="tier-label">Advanced</h2>
-
-  <section class="panel">
-    <h3>Early finish</h3>
+  <h2 class="caps tier-label">Advanced</h2>
+  <section class="surface-inset panel">
+    <h3 class="caps">Early finish</h3>
     <Switch
       checked={store.config.adaptive.enabled}
       onToggle={setAdaptiveEnabled}
@@ -433,10 +423,9 @@
       label="Finish stable stages early"
     />
   </section>
-
-  <section class="panel">
-    <h3>Latency timing</h3>
-    <label>
+  <section class="surface-inset panel">
+    <h3 class="caps">Latency timing</h3>
+    <label class="field">
       <span>Unloaded ping cadence</span>
       <select
         bind:value={store.config.pingCadence}
@@ -448,7 +437,7 @@
         <option value="slow">Slow (600 ms)</option>
       </select>
     </label>
-    <label>
+    <label class="field">
       <span>Loaded ping cadence</span>
       <select
         bind:value={store.config.loadedPingCadence}
@@ -466,15 +455,14 @@
       label="Skip loaded latency when latency is off"
     />
   </section>
-
-  <section class="panel">
-    <h3>Datagram throughput</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Datagram throughput</h3>
     {#if store.config.experimentalDatagramThroughput || datagramSelected}
       <!-- Above the toggle: this panel ends a long scroll, and a note past the
            control that summoned it is a note nobody reads. Announced as a
            status rather than an alert — nothing has gone wrong — and its point
            is carried by the leading sentence, not only by the warn colour. -->
-      <p class="caution" role="status">
+      <p class="notice" data-tone="warn" role="status">
         <strong>Measures application datagram delivery.</strong> Datagrams are not
         retransmitted. Missing deliveries can come from network or endpoint queues;
         they do not identify physical packet loss. Expect a lower received rate than
@@ -490,9 +478,8 @@
       Adds the WebTransport datagram card to the connection picker.
     </p>
   </section>
-
-  <section class="panel">
-    <h3>Transfer streams</h3>
+  <section class="surface-inset panel">
+    <h3 class="caps">Transfer streams</h3>
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
       onToggle={setForcedStreams}
@@ -500,7 +487,7 @@
       label="Force exact stream count"
       tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
     />
-    <label>
+    <label class="field">
       <span
         >{store.config.transferStreams.mode === "forced"
           ? "Streams per server and direction"
@@ -541,21 +528,14 @@
       minmax(min(100%, var(--settings-card-min)), 1fr)
     );
     gap: var(--space-3);
-    container-type: inline-size;
-    container-name: settings-grid;
+    container: settings-grid / inline-size;
   }
   .panel {
     display: grid;
     align-content: start;
     gap: var(--space-3);
     min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(180deg, var(--surface-2), transparent),
-      var(--surface-inset);
     padding: var(--space-3);
-    box-shadow: var(--elev-recess);
   }
   .wide,
   .tier-label {
@@ -565,23 +545,10 @@
     border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
   }
   .tier-label {
-    margin: 4px 0 -4px;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
+    margin-top: var(--space-1);
   }
   .tier-label:first-child {
     margin-top: 0;
-  }
-  h3 {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
   }
   .section-heading {
     display: flex;
@@ -589,129 +556,17 @@
     justify-content: space-between;
     gap: var(--space-3);
   }
-  .readiness-badge {
-    flex: none;
-    padding: 3px 7px;
-    border-radius: var(--r-full);
-    background: var(--warn-soft);
-    color: var(--warn);
-    font-size: 9px;
-    font-weight: 750;
-  }
-  .readiness-badge[data-state="verified"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  .readiness-badge[data-state="failed"] {
-    background: var(--err-soft);
-    color: var(--err);
-  }
-  label,
-  .field {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
-  }
-  label > span,
-  .field > span {
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  input[type="number"],
-  select {
-    width: 100%;
-    min-height: 36px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 7px 9px;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    outline: none;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      box-shadow var(--dur-hover) var(--ease-out);
-  }
-  input:focus-visible,
-  select:focus-visible {
-    border-color: color-mix(in srgb, var(--brand) 56%, var(--border));
-    box-shadow: 0 0 0 3px var(--brand-soft);
-  }
-  .seg {
-    display: flex;
-    gap: 3px;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-  }
-  button {
-    flex: 1;
-    min-height: 30px;
-    border: 0;
-    border-radius: var(--r-well);
-    background: transparent;
-    color: var(--text-soft);
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
+  .presets > button {
     text-transform: capitalize;
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
   }
-  .seg button {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .btn-link {
+    justify-self: start;
   }
-  button:hover {
-    color: var(--text);
-  }
-  button.active {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-  .two {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-    gap: 10px;
-  }
-  .hint {
-    margin: 0;
-    color: var(--text-soft);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.55;
-  }
-  .history-link {
-    color: var(--brand-strong);
-    font-size: 12px;
-  }
-  .caution {
-    margin: 0;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
-    border-radius: var(--r-well);
-    background: var(--warn-soft);
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    line-height: 1.55;
-  }
-  .caution strong {
-    color: var(--warn);
-  }
+  .two,
   .duration-fields {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 10px;
+    gap: var(--space-2) var(--space-3);
   }
   .dur-summary {
     display: grid;
@@ -722,31 +577,18 @@
     display: grid;
     gap: 2px;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 6px var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-1);
   }
   .dur-cell span {
     overflow: hidden;
-    color: var(--text-soft);
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.06em;
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .dur-cell strong {
-    color: var(--text);
-    font-family: var(--font-mono);
-    font-size: 12px;
+    font: var(--w-strong) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
-  }
-  @container (max-width: 360px) {
-    .two {
-      grid-template-columns: 1fr;
-      gap: var(--space-1);
-    }
   }
 </style>

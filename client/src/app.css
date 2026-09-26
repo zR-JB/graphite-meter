@@ -404,6 +404,13 @@
     text-transform: uppercase;
   }
 
+  /* Secondary explanatory copy under a control or section. */
+  .hint {
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+    line-height: 1.5;
+  }
+
   /* A term with a tooltip definition. */
   .term {
     cursor: help;
@@ -531,6 +538,8 @@
   /* Tone-tinted inline message. */
   .notice {
     --tone: var(--signal);
+    --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
+    --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
