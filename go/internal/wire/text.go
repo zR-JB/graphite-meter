@@ -11,8 +11,7 @@ func SafeText(s string) bool {
 	return utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
 }
 
-// CleanText makes untrusted text displayable: controls become spaces, invalid UTF-8 is replaced,
-// and the result keeps at most limit runes.
+// CleanText blanks controls, replaces invalid UTF-8 and keeps at most limit runes.
 func CleanText(s string, limit int) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {

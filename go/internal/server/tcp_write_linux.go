@@ -6,9 +6,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Keep download bytes waiting for the network in the HTTP/2 scheduler, where
-// control responses can still be interleaved. Unlike SO_SNDBUF, this preserves
-// the kernel's send-buffer autotuning and the space for bytes already in flight.
+// configureHTTP2TCP holds unsent downloads in the HTTP/2 scheduler, where control replies interleave.
 func configureHTTP2TCP(c *net.TCPConn) {
 	raw, err := c.SyscallConn()
 	if err != nil {

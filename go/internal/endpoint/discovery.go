@@ -150,8 +150,7 @@ func websocketOrigin(target string) string {
 	return ""
 }
 
-// preflightFor lists the targets host's clients reach: each advertised native listener with its fixed
-// protocol, then the proxied public origins, merging a fetch origin offered under different protocols.
+// preflightFor lists native listeners, then proxied origins, merging one fetch origin's protocols.
 func (d *Discovery) preflightFor(host string) wire.Preflight {
 	throughput, latency := []wire.ThroughputTarget{}, []wire.LatencyTarget{}
 	fetch := func(base, protocol string) {

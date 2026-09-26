@@ -65,8 +65,7 @@ func requestHostname(host string) string {
 	return u.Hostname()
 }
 
-// clientBucket is the budget key of the client a request stands for; a trusted proxy's ambiguous
-// evidence is not resolved, so the request is refused rather than charged to the proxy.
+// clientBucket keys a request's client; a trusted proxy's ambiguous evidence refuses it instead.
 func (s *Service) clientBucket(r *http.Request) (string, bool) {
 	client, ok := transport.ResolveClientAddress(r, s.trusted)
 	return transport.AddressBucket(client.Addr), ok

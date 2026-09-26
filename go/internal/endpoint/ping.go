@@ -6,8 +6,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// ServePing echoes each probe with its handling time, measured from recv's return to before
-// encoding, until recv or send fails. recv may reuse its buffer; send must not retain its argument.
+// ServePing echoes probes with their handling time from recv's return to encoding; send must not retain.
 func ServePing(recv func() ([]byte, error), send func([]byte) error) {
 	var reply [wire.MaxPongLen]byte
 	for {
