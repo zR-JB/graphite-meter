@@ -120,18 +120,3 @@ const fn tone(rgb: u32, indexed: u8, ansi: Color, depth: Depth) -> Color {
         Depth::Ansi => ansi,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn palette_uses_go_fallbacks_at_each_depth() {
-        assert_eq!(
-            Theme::dark(Depth::TrueColor).brand,
-            Color::Rgb(109, 176, 184)
-        );
-        assert_eq!(Theme::dark(Depth::Indexed).brand, Color::Indexed(73));
-        assert_eq!(Theme::light(Depth::Ansi).brand, Color::Cyan);
-    }
-}

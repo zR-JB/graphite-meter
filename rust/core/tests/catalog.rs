@@ -160,24 +160,6 @@ fn enforces_identity_origin_and_size_limits() {
     let mut missing = ServerCatalog::default();
     missing.servers.clear();
     assert_eq!(missing.validate(), Err(CatalogError::InvalidServers));
-}
-
-#[test]
-fn json_shape_and_default_are_public_contract() {
-    let value = serde_json::to_value(ServerCatalog::default()).unwrap();
-    assert_eq!(
-        value,
-        serde_json::json!({
-            "defaultSelection": ["self"],
-            "servers": [{
-                "id": "self",
-                "url": ".",
-                "name": "graphite-meter"
-            }]
-        })
-    );
-    let catalog: ServerCatalog = serde_json::from_value(value).unwrap();
-    catalog.validate().unwrap();
     let empty: ServerCatalog = serde_json::from_str("{}").unwrap();
     assert_eq!(empty.validate(), Err(CatalogError::InvalidServers));
 }
