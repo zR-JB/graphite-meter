@@ -16,10 +16,10 @@ import (
 )
 
 func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
-	store := NewUploadStore()
+	store := NewUpload(nil, nil)
 	mint := func() string {
 		rec := httptest.NewRecorder()
-		NewUpload(nil, store, nil).ServeSession(rec, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
+		store.ServeSession(rec, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
 		var body struct {
 			UploadID string `json:"uploadId"`
 		}
@@ -29,25 +29,25 @@ func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
 		return body.UploadID
 	}
 	a, b := mint(), mint()
-	if a == b || !store.validID(a) || !store.validID(b) || store.live.Load() != 0 {
+	if a == b || !store.validID(a) || !store.validID(b) || store.live() != 0 {
 		t.Fatalf("minted %q and %q with %d live receivers, want two distinct authenticated ids and no state",
-			a, b, store.live.Load())
+			a, b, store.live())
 	}
 }
 
 // A checkpoint observes an existing, owned receiver without allocating state or extending its lifetime.
 func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
 		checkpoint := func(owner string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(http.MethodPost, "/upload/checkpoint?id="+id, nil)
 			r.RemoteAddr = owner + ":1234"
 			w := httptest.NewRecorder()
-			NewUpload(nil, store, nil).ServeCheckpoint(w, r)
+			store.ServeCheckpoint(w, r)
 			return w
 		}
-		if w := checkpoint("192.0.2.1"); w.Code != http.StatusBadRequest || store.live.Load() != 0 {
+		if w := checkpoint("192.0.2.1"); w.Code != http.StatusBadRequest || store.live() != 0 {
 			t.Fatal("checkpoint allocated state for an unused id")
 		}
 		agg, _ := store.getOrCreateFor(id, "192.0.2.1")
@@ -77,8 +77,8 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 }
 
 func TestUploadCountsEchoesAndAggregates(t *testing.T) {
-	store := NewUploadStore()
-	srv := httptest.NewServer(NewUpload(nil, store, nil))
+	store := NewUpload(nil, nil)
+	srv := httptest.NewServer(store)
 	defer srv.Close()
 	for _, n := range []int64{3*1024*1024 + 123, 0} {
 		id := store.Mint()
@@ -95,7 +95,7 @@ func TestUploadCountsEchoesAndAggregates(t *testing.T) {
 			res.Header.Get("Cache-Control") != "no-store" {
 			t.Fatalf("echo = %d %v with headers %v, want %d bytes", echo.Bytes, err, res.Header, n)
 		}
-		if agg, ok := store.get(id); !ok || agg.bytes.Load() != n || agg.posts.Load() != 0 {
+		if agg, ok := store.get(id); !ok || agg.bytes.Load() != n || store.lanesOf(agg) != 0 {
 			t.Fatalf("aggregate for %d bytes = %v, want the count with no lane left", n, agg)
 		}
 	}
@@ -107,7 +107,7 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 		want int
 	}{{"", 400}, {"forged", 400}, {"another-owner", 403}, {"over-cap", 503}} {
 		t.Run(tc.id, func(t *testing.T) {
-			store := NewUploadStore()
+			store := NewUpload(nil, nil)
 			id := tc.id
 			switch id {
 			case "another-owner":
@@ -117,12 +117,12 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 				fillStore(store)
 				id = store.Mint()
 			}
-			live := store.live.Load()
+			live := store.live()
 			body := strings.NewReader("must not be drained")
 			rec := httptest.NewRecorder()
-			NewUpload(nil, store, nil).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
-			if rec.Code != tc.want || body.Len() != len("must not be drained") || store.live.Load() != live {
-				t.Fatalf("refusal = %d, unread = %d, live %d -> %d", rec.Code, body.Len(), live, store.live.Load())
+			store.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
+			if rec.Code != tc.want || body.Len() != len("must not be drained") || store.live() != live {
+				t.Fatalf("refusal = %d, unread = %d, live %d -> %d", rec.Code, body.Len(), live, store.live())
 			}
 		})
 	}
@@ -141,15 +141,15 @@ func (r *errReader) Read(p []byte) (int, error) {
 }
 
 func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
-	store := NewUploadStore()
+	store := NewUpload(nil, nil)
 	id := store.Mint()
 	rec := httptest.NewRecorder()
-	NewUpload(nil, store, nil).ServeHTTP(rec,
+	store.ServeHTTP(rec,
 		httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096}))
 	if rec.Body.Len() != 0 {
 		t.Fatalf("aborted upload published response %q", rec.Body.String())
 	}
-	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || agg.posts.Load() != 0 {
+	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || store.lanesOf(agg) != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
 	}
 }
@@ -159,16 +159,16 @@ func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		owner string
-		setup func(*UploadStore, string)
+		setup func(*Upload, string)
 		want  uploadAccess
 	}{
-		{"another client's lane", "other-owner", func(*UploadStore, string) {}, uploadAccessOwnerMismatch},
-		{"after finish", "owner", func(s *UploadStore, id string) { s.finishFor(id, "owner") }, uploadAccessInvalid},
-		{"over the global cap", "owner", func(s *UploadStore, _ string) { fillStore(s) }, uploadAccessGlobalFull},
+		{"another client's lane", "other-owner", func(*Upload, string) {}, uploadAccessOwnerMismatch},
+		{"after finish", "owner", func(s *Upload, id string) { s.finishFor(id, "owner") }, uploadAccessInvalid},
+		{"over the global cap", "owner", func(s *Upload, _ string) { fillStore(s) }, uploadAccessGlobalFull},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := NewUploadStore()
-			upload := NewUpload(nil, store, nil)
+			store := NewUpload(nil, nil)
+			upload := store
 			id := store.Mint()
 			if tc.want != uploadAccessGlobalFull {
 				if n, err := upload.Receive(t.Context(), id, "owner", strings.NewReader("first")); err != nil ||
@@ -184,8 +184,8 @@ func TestUploadStreamRefusalsLeaveTheReceiverUnchanged(t *testing.T) {
 				!strings.Contains(err.Error(), uploadAccessInfos[tc.want].message) {
 				t.Fatalf("refused lane = %d, %v; unread bytes = %d", n, err, body.Len())
 			}
-			if agg, ok := store.get(id); ok && (agg.bytes.Load() != 5 || agg.posts.Load() != 0) {
-				t.Fatalf("refusal changed the receiver: bytes=%d posts=%d", agg.bytes.Load(), agg.posts.Load())
+			if agg, ok := store.get(id); ok && (agg.bytes.Load() != 5 || store.lanesOf(agg) != 0) {
+				t.Fatalf("refusal changed the receiver: bytes=%d posts=%d", agg.bytes.Load(), store.lanesOf(agg))
 			}
 		})
 	}
@@ -213,9 +213,9 @@ func TestUploadBoundsItsBodyRead(t *testing.T) {
 				defer cancel()
 			}
 			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
-			store := NewUploadStore()
+			store := NewUpload(nil, nil)
 			before := time.Now()
-			NewUpload(nil, store, nil).ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+			store.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
 			if remaining != 0 && remaining < uploadReadTimeout {
 				if !rec.read.Equal(want) {
@@ -236,7 +236,7 @@ func BenchmarkUploadBufferSize(b *testing.B) {
 		b.Run(strconv.Itoa(bufferSize), func(b *testing.B) {
 			buffer := make([]byte, bufferSize)
 			reader := bytes.NewReader(source)
-			sink := discardSink{agg: new(uploadAgg), store: NewUploadStore()}
+			sink := discardSink{upload: NewUpload(nil, nil), agg: new(uploadAgg)}
 			b.SetBytes(size)
 			b.ReportAllocs()
 			for b.Loop() {

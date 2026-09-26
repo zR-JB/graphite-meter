@@ -129,7 +129,8 @@ func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 	srv.EnableHTTP2 = true
 	srv.StartTLS()
 	defer srv.Close()
-	conn, err := tls.Dial("tcp", srv.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec // test certificate
+	conn, err := tls.Dial("tcp", srv.Listener.Addr().String(),
+		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec // test certificate
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +162,8 @@ func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
 		}
 	}
 	if streamWindow != h2ReceiveWindowPerStream || connectionWindow != h2ReceiveWindowPerConnection {
-		t.Fatalf("advertised stream/connection windows %d/%d, want %d/%d", streamWindow, connectionWindow, h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection)
+		t.Fatalf("advertised stream/connection windows %d/%d, want %d/%d", streamWindow, connectionWindow,
+			h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection)
 	}
 }
 
@@ -229,9 +231,10 @@ func TestH2MountsOnlyMeasurementHTTPRoutes(t *testing.T) {
 
 func TestH1MountsSPAAndDiscovery(t *testing.T) {
 	e := testEndpoints(t)
-	mux := publicMux(t, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
+	mux := publicMux(t, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true},
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
 	for _, path := range []string{"/", "/preflight"} {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -273,9 +276,12 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 		path     string
 		proto    int
 	}{
-		{"h1-ui", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/", 1},
-		{"h1-static", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/asset.js", 1},
-		{"h1-upload", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/upload", 1},
+		{"h1-ui", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true}, "/",
+			1},
+		{"h1-static", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true},
+			"/asset.js", 1},
+		{"h1-upload", muxTopology{spa: true, discovery: true, latency: true, transfers: true}, auth.Listener{UI: true},
+			"/upload", 1},
 		{"h2", muxTopology{transfers: true, requiredProto: 2}, auth.Listener{}, "/download", 2},
 		{"h3-bootstrap", muxTopology{bootstrap: true}, auth.Listener{}, "/probe", 1},
 		{"h3", muxTopology{transfers: true}, auth.Listener{}, "/upload", 3},
@@ -284,7 +290,8 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			body := &observedBody{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
-			mux := newMux(t.Context(), e, test.topology, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
+			mux := newMux(t.Context(), e, test.topology,
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("SPA dispatched") }), authn)
 			handler := authn.Enforce(mux, test.listener)
 			req := httptest.NewRequest(http.MethodPost, "https://meter.example"+test.path, body)
 			req.Host = "meter.example"
@@ -304,7 +311,8 @@ func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 
 func TestH1MountsLatencyAndH3MountsProgress(t *testing.T) {
 	e := testEndpoints(t)
-	h1 := publicMux(t, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1}, static.Handler())
+	h1 := publicMux(t, e, muxTopology{discovery: true, latency: true, transfers: true, requiredProto: 1},
+		static.Handler())
 	rec := httptest.NewRecorder()
 	h1.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ws/ping", nil))
 	if rec.Code == http.StatusNotFound {
@@ -337,11 +345,13 @@ func TestPublicH3Port(t *testing.T) {
 func TestH3QUICConfigCarriesTheSupportedTransferEnvelope(t *testing.T) {
 	cfg := h3QUICConfig()
 	if want := int64(257); cfg.MaxIncomingStreams != want {
-		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)", cfg.MaxIncomingStreams, want)
+		t.Fatalf("incoming request streams = %d, want %d (128 download + 128 upload + progress)",
+			cfg.MaxIncomingStreams, want)
 	}
 	// The literal, not the production expression: repeating that expression here asserts only that it equals itself.
 	if want := int64(23); cfg.MaxIncomingUniStreams != want {
-		t.Fatalf("incoming unidirectional streams = %d, want %d (3 HTTP/3 control + 16 lanes + 4 headroom)", cfg.MaxIncomingUniStreams, want)
+		t.Fatalf("incoming unidirectional streams = %d, want %d (3 HTTP/3 control + 16 lanes + 4 headroom)",
+			cfg.MaxIncomingUniStreams, want)
 	}
 }
 
@@ -386,8 +396,10 @@ func TestRunServicesStopsEveryServiceOnCancel(t *testing.T) {
 	blockA, blockB := make(chan struct{}), make(chan struct{})
 	stoppedA, stoppedB := false, false
 	services := []service{
-		{name: "a", addr: ":1", network: "tcp", run: func() error { <-blockA; return nil }, stop: func(context.Context) error { stoppedA = true; close(blockA); return nil }},
-		{name: "b", addr: ":2", network: "tcp", run: func() error { <-blockB; return nil }, stop: func(context.Context) error { stoppedB = true; close(blockB); return nil }},
+		{name: "a", addr: ":1", network: "tcp", run: func() error { <-blockA; return nil },
+			stop: func(context.Context) error { stoppedA = true; close(blockA); return nil }},
+		{name: "b", addr: ":2", network: "tcp", run: func() error { <-blockB; return nil },
+			stop: func(context.Context) error { stoppedB = true; close(blockB); return nil }},
 	}
 
 	done := make(chan error, 1)
@@ -412,8 +424,10 @@ func TestRunServicesReturnsAndStopsOnListenerError(t *testing.T) {
 	block := make(chan struct{})
 	survivorStopped := false
 	services := []service{
-		{name: "bad", addr: ":1", network: "tcp", run: func() error { return boom }, stop: func(context.Context) error { return nil }},
-		{name: "good", addr: ":2", network: "tcp", run: func() error { <-block; return nil }, stop: func(context.Context) error { survivorStopped = true; close(block); return nil }},
+		{name: "bad", addr: ":1", network: "tcp", run: func() error { return boom },
+			stop: func(context.Context) error { return nil }},
+		{name: "good", addr: ":2", network: "tcp", run: func() error { <-block; return nil },
+			stop: func(context.Context) error { survivorStopped = true; close(block); return nil }},
 	}
 
 	done := make(chan error, 1)
@@ -442,12 +456,15 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 	defer release()
 	h := publicMux(t, e, muxTopology{discovery: true, latency: true, transfers: true, wt: &webtransport.Server{}}, nil)
 	for _, route := range []struct{ method, path string }{
-		{http.MethodGet, "/download"}, {http.MethodPost, "/upload"}, {http.MethodGet, "/upload/progress"}, {http.MethodDelete, "/upload/progress"},
-		{http.MethodGet, "/ws/ping"}, {http.MethodConnect, "/wt/download"}, {http.MethodConnect, "/wt/upload"}, {http.MethodConnect, "/wt/ping"},
+		{http.MethodGet, "/download"}, {http.MethodPost, "/upload"}, {http.MethodGet, "/upload/progress"},
+		{http.MethodDelete, "/upload/progress"},
+		{http.MethodGet, "/ws/ping"}, {http.MethodConnect, "/wt/download"}, {http.MethodConnect, "/wt/upload"},
+		{http.MethodConnect, "/wt/ping"},
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
-		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" || w.Header().Get("Access-Control-Allow-Origin") != "*" {
+		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" ||
+			w.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Errorf("saturated %s %s = %d, want a readable admission refusal", route.method, route.path, w.Code)
 		}
 	}

@@ -62,9 +62,9 @@ func ended(done <-chan struct{}) bool {
 
 func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
-		h := http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress)
+		h := http.HandlerFunc(store.ServeProgress)
 		rec, done := startFeed(t.Context(), h, id)
 		if !strings.Contains(rec.text(), `{"type":"ready"}`) {
 			t.Fatalf("feed opened with %q, want ready", rec.text())
@@ -73,11 +73,10 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 			rec.Header().Get("Cache-Control") != "no-store, no-transform" {
 			t.Fatalf("feed headers = %v", rec.Header())
 		}
-		agg, ok := store.get(id)
-		if !ok {
+		agg, access := store.accessFor(id, "192.0.2.1", true)
+		if access != uploadAccessOK {
 			t.Fatal("aggregate not created by progress GET")
 		}
-		agg.beginPost()
 		agg.recordChunk(store.now(), 4096)
 		time.Sleep(uploadProgressTick)
 		synctest.Wait()
@@ -95,7 +94,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 		if ended(done) {
 			t.Fatal("the feed completed while a lane was still delivering")
 		}
-		agg.endPost()
+		store.leave(agg)
 		synctest.Wait()
 		if !ended(done) || !strings.Contains(rec.text(), `"type":"complete","bytes":4096`) {
 			t.Fatalf("feed after the last lane = %s, want a terminal complete record", rec.text())
@@ -113,9 +112,9 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 // A reconnecting client re-dials long before its dead transport's idle timeout releases the old feed.
 func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
-		h := http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress)
+		h := http.HandlerFunc(store.ServeProgress)
 		_, first := startFeed(t.Context(), h, id)
 		ctx, cancel := context.WithCancel(t.Context())
 		takeover, second := startFeed(ctx, h, id)
@@ -130,11 +129,11 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 // A superseded feed must abandon the terminal wait rather than sit on it until its transport dies.
 func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
-		agg.beginPost()
+		store := NewUpload(nil, nil)
+		agg, _ := store.accessFor(store.Mint(), "", true)
 		superseded := make(chan struct{})
 		done := make(chan bool, 1)
-		go func() { done <- waitForUploadPosts(make(chan struct{}), superseded, agg) }()
+		go func() { done <- store.waitDrained(make(chan struct{}), superseded, agg) }()
 		close(superseded)
 		synctest.Wait()
 		select {
@@ -151,13 +150,13 @@ func TestSupersededFeedLeavesTheTerminalWait(t *testing.T) {
 // Every tick reports receiver time whether or not bytes moved, so zero delivery differs from a missing feed.
 func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{})}
 		agg.recordChunk(store.now(), 4096)
 		done := make(chan struct{})
 		var mu sync.Mutex
 		var records []wire.UploadProgress
-		go runProgress(done, make(chan struct{}), agg, store.now, func(e wire.UploadProgress) bool {
+		go store.runProgress(done, make(chan struct{}), agg, func(e wire.UploadProgress) bool {
 			mu.Lock()
 			defer mu.Unlock()
 			records = append(records, e)
@@ -181,18 +180,18 @@ func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 }
 
 func TestUploadProgressRefusalResponses(t *testing.T) {
-	serve := func(store *UploadStore, method, id, remote string) *httptest.ResponseRecorder {
+	serve := func(store *Upload, method, id, remote string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/upload/progress?id="+id, nil)
 		if remote != "" {
 			req.RemoteAddr = remote + ":1234"
 		}
 		rec := httptest.NewRecorder()
-		NewUpload(nil, store, nil).ServeProgress(rec, req)
+		store.ServeProgress(rec, req)
 		return rec
 	}
 	t.Run("an unknown id is a 400", func(t *testing.T) {
 		for _, method := range []string{http.MethodGet, http.MethodDelete} {
-			rec := serve(NewUploadStore(), method, "forged", "")
+			rec := serve(NewUpload(nil, nil), method, "forged", "")
 			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown upload id") {
 				t.Fatalf("%s = %d %q, want 400 naming the unknown id", method, rec.Code, rec.Body.String())
 			}
@@ -200,7 +199,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	})
 
 	t.Run("client cap is a retryable 429", func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		const owner = "192.0.2.1"
 		for i := range maxLiveUploadsPerClient {
 			if _, access := store.getOrCreateFor(store.Mint(), owner); access != uploadAccessOK {
@@ -214,7 +213,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 	})
 
 	t.Run("another client's id is a 403", func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
 		if _, access := store.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
 			t.Fatalf("create = %v", access)
@@ -226,10 +225,10 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 
 	// GET's route also carries HEAD, which must neither create a receiver nor claim its feed.
 	t.Run("HEAD is a 405", func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		rec := serve(store, http.MethodHead, store.Mint(), "")
-		if rec.Code != http.StatusMethodNotAllowed || store.live.Load() != 0 {
-			t.Fatalf("status = %d with %d receivers, want 405 and none", rec.Code, store.live.Load())
+		if rec.Code != http.StatusMethodNotAllowed || store.live() != 0 {
+			t.Fatalf("status = %d with %d receivers, want 405 and none", rec.Code, store.live())
 		}
 	})
 }
@@ -237,9 +236,9 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 // Watching is not upload activity: an untouched receiver is reaped at its TTL and its feed ends with it.
 func TestUploadProgressDoesNotRefreshAggregateTTL(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
-		_, done := startFeed(t.Context(), http.HandlerFunc(NewUpload(nil, store, nil).ServeProgress), id)
+		_, done := startFeed(t.Context(), http.HandlerFunc(store.ServeProgress), id)
 		time.Sleep(uploadIDTTL + time.Second)
 		store.sweep(uploadIDTTL)
 		synctest.Wait()

@@ -44,7 +44,8 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 	r.RemoteAddr = "192.0.2.10:5678"
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
-	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" || w.Header().Get("Access-Control-Allow-Origin") != "*" {
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "1" ||
+		w.Header().Get("Access-Control-Allow-Origin") != "*" {
 		t.Fatalf("rejection = %d headers %v, want 429 with Retry-After 1 and a wildcard origin", w.Code, w.Header())
 	}
 	close(release)
@@ -66,9 +67,8 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			a := newRequestAdmission(1, 1, 1, 4, 50*time.Millisecond, time.Hour)
-			store := endpoint.NewUploadStore()
-			upload := endpoint.NewUpload(nil, store, nil)
-			id := store.Mint()
+			upload := endpoint.NewUpload(nil, nil)
+			id := upload.Mint()
 			finished := make(chan struct{})
 			h := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if (r.ProtoMajor == 2) != http2 {
@@ -155,13 +155,15 @@ func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
 			lifetime = time.Until(deadline)
 			_, sessions := a.stats()
 			heldSession = sessions.active == 1
-		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		}), routeSpec(path), nil, publicAuth(t)).ServeHTTP(httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, path, nil))
 		want := time.Minute
 		if session {
 			want = time.Hour
 		}
 		if lifetime <= want-time.Second || lifetime > want || heldSession != session {
-			t.Errorf("%s lifetime = %v holding a session = %v, want %v and %v", path, lifetime, heldSession, want, session)
+			t.Errorf("%s lifetime = %v holding a session = %v, want %v and %v", path, lifetime, heldSession, want,
+				session)
 		}
 	}
 }
@@ -224,7 +226,8 @@ func TestRequestAdmissionBoundsSessionsGlobally(t *testing.T) {
 	release()
 	second()
 	// The refusal came from the session budget with the pool half empty, so it is counted there.
-	if requests, sessions := a.stats(); requests.active != 0 || sessions.rejectedGlobal != 1 || requests.rejectedGlobal != 0 {
+	if requests, sessions := a.stats(); requests.active != 0 || sessions.rejectedGlobal != 1 ||
+		requests.rejectedGlobal != 0 {
 		t.Fatalf("stats = %+v / %+v, want no active measurements and 1 session-budget rejection", requests, sessions)
 	}
 }
@@ -242,7 +245,8 @@ func TestSessionBudgetIsACeilingNotAReservation(t *testing.T) {
 		defer release()
 	}
 	if _, status := a.acquire("client-c", "login-c"); status != http.StatusServiceUnavailable {
-		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status, http.StatusServiceUnavailable)
+		t.Fatalf("session against a pool held by request-shaped routes = %d, want %d", status,
+			http.StatusServiceUnavailable)
 	}
 	if _, sessions := a.stats(); sessions.active != 0 || sessions.rejectedGlobal != 0 {
 		t.Fatalf("sessions = %+v, want the refusal to come from the pool, not the session budget", sessions)
@@ -263,7 +267,8 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	}
 	requests, sessions := a.stats()
 	if sessions.rejectedGlobal != 1 || requests.rejectedGlobal != 0 || sessions.active != 1 || sessions.limit != 1 {
-		t.Errorf("stats = %+v / %+v, want the refusal counted against a 1-of-1 session budget and not the pool", requests, sessions)
+		t.Errorf("stats = %+v / %+v, want the refusal counted against a 1-of-1 session budget and not the pool",
+			requests, sessions)
 	}
 	// Fill the rest of the pool with request-shaped routes and prove the other counter is the one that moves.
 	for i := range 3 {
@@ -276,7 +281,8 @@ func TestAdmissionStatsSeparateTheSessionBudgetFromThePool(t *testing.T) {
 	if _, status := a.acquire("client-d", ""); status != http.StatusServiceUnavailable {
 		t.Fatalf("request against a full pool = %d, want %d", status, http.StatusServiceUnavailable)
 	}
-	if requests, sessions := a.stats(); requests.rejectedGlobal != 1 || sessions.rejectedGlobal != 1 || requests.active != 4 {
+	if requests, sessions := a.stats(); requests.rejectedGlobal != 1 || sessions.rejectedGlobal != 1 ||
+		requests.active != 4 {
 		t.Errorf("stats = %+v / %+v, want a full pool and one refusal on each counter", requests, sessions)
 	}
 }
@@ -325,7 +331,8 @@ func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
 	}
 	for _, path := range []string{route.Ping, route.WTPing, route.WTDownload, route.WTUpload} {
 		if got := armedFor(path); got != 0 {
-			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request", path, got)
+			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request",
+				path, got)
 		}
 	}
 	// The control: a request-shaped route still gets its deadlines.

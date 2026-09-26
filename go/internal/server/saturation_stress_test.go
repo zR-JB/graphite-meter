@@ -34,7 +34,8 @@ func TestSaturationEnvelope(t *testing.T) {
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
-	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s", "cpu")
+	t.Logf("%-28s %8s %8s %8s %6s %8s %8s %10s %6s", "scenario", "p50", "p95", "p99", "loss", "down", "up", "pings/s",
+		"cpu")
 
 	// A second server whose sessions die every few seconds, so one scenario drives the redial and progress-handover paths.
 	_, redialBase := wtTestOrigins(t, func(c *config.Config) {
@@ -98,7 +99,8 @@ func TestSaturationEnvelope(t *testing.T) {
 			}
 			// Without this the row prints as a measurement taken under load when the load had in fact given up.
 			if exits := loaderExits.Load(); exits > 0 {
-				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names", name, bus.label, exits)
+				t.Errorf("%s/%s: %d loader(s) stopped early, so this row was not measured under the load it names",
+					name, bus.label, exits)
 			}
 			t.Logf("%-28s %8s %8s %8s %5.1f%% %5.1f Gb %5.1f Gb %9.0f/s %5.0f%%",
 				name+"/"+bus.label, pct(rtts, 50), pct(rtts, 95), pct(rtts, 99), loss*100,
@@ -240,7 +242,8 @@ func wtPingSpam(ctx context.Context, origin string, pings *atomic.Uint64) error 
 		})
 }
 
-func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error, receive func(context.Context) (string, error)) error {
+func pingSpam(ctx context.Context, pings *atomic.Uint64, send func() error,
+	receive func(context.Context) (string, error)) error {
 	if err := send(); err != nil {
 		return err
 	}

@@ -22,17 +22,21 @@ func writeCertificate(t *testing.T, dir, name, host string, notBefore, notAfter 
 	if err != nil {
 		t.Fatal(err)
 	}
-	tpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: host}, DNSNames: []string{host}, NotBefore: notBefore, NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: host},
+		DNSNames: []string{host}, NotBefore: notBefore, NotAfter: notAfter, KeyUsage: x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
 	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	certPath, keyPath := filepath.Join(dir, name+".crt"), filepath.Join(dir, name+".key")
-	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644); err != nil {
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		0644); err != nil {
 		t.Fatal(err)
 	}
 	keyDER, _ := x509.MarshalPKCS8PrivateKey(key)
-	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}), 0600); err != nil {
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+		0600); err != nil {
 		t.Fatal(err)
 	}
 	return certPath, keyPath
@@ -49,7 +53,8 @@ func tlsTestConfig(cert, key string) *config.Config {
 func TestCertificateValidation(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
-	validCert, validKey := writeCertificate(t, dir, "valid", "meter.example", now.Add(-time.Hour), now.Add(24*time.Hour))
+	validCert,
+		validKey := writeCertificate(t, dir, "valid", "meter.example", now.Add(-time.Hour), now.Add(24*time.Hour))
 	if _, err := newCertificateManager(tlsTestConfig(validCert, validKey)); err != nil {
 		t.Fatalf("valid certificate: %v", err)
 	}

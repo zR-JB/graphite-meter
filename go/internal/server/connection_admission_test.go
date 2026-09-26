@@ -177,7 +177,9 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 			defer ln.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			conn, err := quic.DialAddr(ctx, pc.LocalAddr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"gm-test"}}, transport.NewQUICConfig()) //nolint:gosec // test certificate
+			conn, err := quic.DialAddr(ctx, pc.LocalAddr().String(),
+				&tls.Config{InsecureSkipVerify: true, NextProtos: []string{"gm-test"}},
+				transport.NewQUICConfig()) //nolint:gosec // test certificate
 			if err != nil {
 				t.Fatalf("dial: %v", err)
 			}

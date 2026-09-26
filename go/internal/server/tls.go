@@ -29,7 +29,8 @@ func newCertificateManager(cfg *config.Config) (*certificateManager, error) {
 		return nil, err
 	}
 	if info, err := os.Stat(cfg.TLSKey); err == nil && info.Mode().Perm()&0077 != 0 {
-		log.Printf("[gm:tls] warning: private key %s permissions are %04o; remove group/other access", cfg.TLSKey, info.Mode().Perm())
+		log.Printf("[gm:tls] warning: private key %s permissions are %04o; remove group/other access", cfg.TLSKey,
+			info.Mode().Perm())
 	}
 	return m, nil
 }

@@ -2,6 +2,8 @@ package endpoint
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -15,11 +17,16 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Upload counts client bytes into owner-bound receivers, the authority on bytes and timing, and serves their routes.
+// Upload is the receiver store and its routes: owner-bound receivers are the authority on uploaded
+// bytes and time.
 type Upload struct {
-	meter   *Meter // optional verbose per-second logger; nil unless -verbose
-	store   *UploadStore
-	trusted []netip.Prefix
+	meter     *Meter // optional verbose per-second logger; nil unless -verbose
+	trusted   []netip.Prefix
+	epoch     time.Time
+	tokenKey  [sha256.Size]byte
+	mu        sync.Mutex
+	receivers map[string]*uploadAgg
+	byOwner   map[string]int
 }
 
 const (
@@ -31,22 +38,24 @@ const (
 	uploadProgressHeartbeat = time.Second
 )
 
-func NewUpload(meter *Meter, store *UploadStore, trusted []netip.Prefix) *Upload {
-	return &Upload{meter: meter, store: store, trusted: trusted}
+func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
+	u := &Upload{meter: meter, trusted: trusted, epoch: time.Now(), receivers: map[string]*uploadAgg{},
+		byOwner: map[string]int{}}
+	_, _ = rand.Read(u.tokenKey[:])
+	return u
 }
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
 // discardSink records chunks on the receiver; it has no ReadFrom, so io.CopyBuffer uses the pooled buffer.
 type discardSink struct {
-	meter *Meter
-	agg   *uploadAgg
-	store *UploadStore
+	upload *Upload
+	agg    *uploadAgg
 }
 
 func (s discardSink) Write(p []byte) (int, error) {
-	s.meter.Add(len(p))
-	s.agg.recordChunk(s.store.now(), len(p))
+	s.upload.meter.Add(len(p))
+	s.agg.recordChunk(s.upload.now(), len(p))
 	return len(p), nil
 }
 
@@ -70,16 +79,16 @@ func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // Receive joins the owner's receiver before reading and records each chunk.
 func (u *Upload) Receive(_ context.Context, id, owner string, src io.Reader) (int64, error) {
-	agg, access := u.store.accessFor(id, owner, true)
+	agg, access := u.accessFor(id, owner, true)
 	if access != uploadAccessOK {
 		return 0, &uploadRefusalError{access: access}
 	}
-	defer agg.endPost()
+	defer u.leave(agg)
 	bufp := scratchPool.Get().(*[]byte)
 	defer scratchPool.Put(bufp)
 	u.meter.Open()
 	defer u.meter.Close()
-	return io.CopyBuffer(discardSink{meter: u.meter, agg: agg, store: u.store}, src, *bufp)
+	return io.CopyBuffer(discardSink{upload: u, agg: agg}, src, *bufp)
 }
 
 // ServeSession mints an upload id without storing state.
@@ -87,12 +96,12 @@ func (u *Upload) ServeSession(w http.ResponseWriter, _ *http.Request) {
 	noStoreJSON(w)
 	_ = json.MarshalWrite(w, struct {
 		UploadID string `json:"uploadId"`
-	}{u.store.Mint()})
+	}{u.Mint()})
 }
 
 // ServeCheckpoint reports an existing receiver's counter without keeping it alive.
 func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
-	agg, found := u.store.get(r.URL.Query().Get("id"))
+	agg, found := u.get(r.URL.Query().Get("id"))
 	if !found {
 		writeUploadAccessError(w, uploadAccessInvalid)
 		return
@@ -105,7 +114,7 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 	_ = json.MarshalWrite(w, struct {
 		Bytes int64 `json:"bytes"`
 		Nanos int64 `json:"nanos"`
-	}{agg.bytes.Load(), agg.elapsedNanos(u.store.now())})
+	}{agg.bytes.Load(), agg.elapsedNanos(u.now())})
 }
 
 // ServeProgress streams the receiver's counter as NDJSON on GET and finishes it on DELETE.
@@ -113,7 +122,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	id, owner := r.URL.Query().Get("id"), UploadOwner(r, u.trusted)
 	switch r.Method {
 	case http.MethodDelete:
-		if access := u.store.finishFor(id, owner); access != uploadAccessOK {
+		if access := u.finishFor(id, owner); access != uploadAccessOK {
 			writeUploadAccessError(w, access)
 			return
 		}
@@ -130,7 +139,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	agg, access := u.store.accessFor(id, owner, false)
+	agg, access := u.accessFor(id, owner, false)
 	if access != uploadAccessOK {
 		writeUploadAccessError(w, access)
 		return
@@ -138,7 +147,7 @@ func (u *Upload) ServeProgress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/x-ndjson")
 	w.Header().Set("Cache-Control", "no-store, no-transform")
 	w.Header().Set("X-Accel-Buffering", "no")
-	streamProgress(r.Context(), agg, u.store.now, flushWriter{w, flusher})
+	u.streamProgress(r.Context(), agg, flushWriter{w, flusher})
 }
 
 type flushWriter struct {
@@ -153,15 +162,15 @@ func (w flushWriter) Write(p []byte) (int, error) {
 }
 
 // streamProgress owns the feed's claim and lifecycle: NDJSON records and a bare-newline heartbeat.
-func streamProgress(ctx context.Context, agg *uploadAgg, now func() int64, w io.Writer) {
+func (u *Upload) streamProgress(ctx context.Context, agg *uploadAgg, w io.Writer) {
 	enc := jsontext.NewEncoder(w)
 	emit := func(event wire.UploadProgress) bool { return json.MarshalEncode(enc, event) == nil }
-	claim := agg.claimProgress()
-	defer agg.releaseProgress(claim)
+	claim := u.claimFeed(agg)
+	defer u.releaseFeed(agg, claim)
 	if !emit(wire.UploadProgress{Type: "ready"}) {
 		return
 	}
-	runProgress(ctx.Done(), claim, agg, now, emit, func() bool {
+	u.runProgress(ctx.Done(), claim, agg, emit, func() bool {
 		_, err := w.Write([]byte("\n"))
 		return err == nil
 	})
@@ -173,13 +182,13 @@ func writeRefusalRecord(w io.Writer, access uploadAccess) {
 		wire.UploadProgress{Type: "error", Message: info.message, Code: info.code})
 }
 
-func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, now func() int64,
-	emit func(wire.UploadProgress) bool, heartbeat func() bool) {
+func (u *Upload) runProgress(done, superseded <-chan struct{}, agg *uploadAgg, emit func(wire.UploadProgress) bool,
+	heartbeat func() bool) {
 	tick := time.Tick(uploadProgressTick)
 	beat := time.Tick(uploadProgressHeartbeat)
 	counters := func(kind string) wire.UploadProgress {
-		n := uint64(agg.bytes.Load())              //nosec G115 -- byte count is non-negative
-		elapsed := uint64(agg.elapsedNanos(now())) //nosec G115 -- elapsed nanos is non-negative
+		n := uint64(agg.bytes.Load())                //nosec G115 -- byte count is non-negative
+		elapsed := uint64(agg.elapsedNanos(u.now())) //nosec G115 -- elapsed nanos is non-negative
 		return wire.UploadProgress{Type: kind, Bytes: n, Nanos: elapsed}
 	}
 	for {
@@ -191,7 +200,7 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, now func() in
 		case <-agg.expired:
 			return
 		case <-agg.finished:
-			if waitForUploadPosts(done, superseded, agg) {
+			if u.waitDrained(done, superseded, agg) {
 				emit(counters("complete"))
 			}
 			return
@@ -207,13 +216,20 @@ func runProgress(done, superseded <-chan struct{}, agg *uploadAgg, now func() in
 	}
 }
 
-func waitForUploadPosts(done, superseded <-chan struct{}, agg *uploadAgg) bool {
+// waitDrained waits for a finished receiver's last lane, registering before each read of the count so a lane
+// leaving in between still wakes it.
+func (u *Upload) waitDrained(done, superseded <-chan struct{}, agg *uploadAgg) bool {
 	for {
-		// Register before reading the count: a lane finishing in between still closes this exact channel.
-		changed := agg.postsWaiter()
-		if agg.posts.Load() == 0 {
+		u.mu.Lock()
+		if agg.lanes == 0 {
+			u.mu.Unlock()
 			return true
 		}
+		if agg.lanesChanged == nil {
+			agg.lanesChanged = make(chan struct{})
+		}
+		changed := agg.lanesChanged
+		u.mu.Unlock()
 		select {
 		case <-done:
 			return false

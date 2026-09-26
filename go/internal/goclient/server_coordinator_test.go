@@ -66,8 +66,7 @@ type serverFixture struct {
 func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	t.Helper()
 	f := &serverFixture{}
-	store := endpoint.NewUploadStore()
-	upload := endpoint.NewUpload(nil, store, nil)
+	upload := endpoint.NewUpload(nil, nil)
 	registry := fixtureRoutes{}
 	registry.RegisterHTTP(route.UploadSession, http.HandlerFunc(upload.ServeSession))
 	registry.RegisterHTTP(route.UploadProgress, http.HandlerFunc(upload.ServeProgress))

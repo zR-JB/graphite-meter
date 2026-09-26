@@ -19,7 +19,8 @@ import (
 // mintWTToken asks /wt/session for one CONNECT token as the browser does.
 func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+route.WTPing), nil)
+	req, _ := http.NewRequest(http.MethodPost,
+		s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+route.WTPing), nil)
 	req.Header.Set("Origin", s.origin)
 	req.Header.Set("X-CSRF-Token", s.csrf.Value)
 	req.AddCookie(s.session)
@@ -52,7 +53,8 @@ func (s *authenticatedStack) wtTransport(t *testing.T) *webtransport.Transport {
 }
 
 // connectPing dials the ping bus, retrying only while the listener comes up.
-func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string, hdr http.Header) (*webtransport.Session, int) {
+func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string,
+	hdr http.Header) (*webtransport.Session, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()

@@ -83,10 +83,11 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		go downloadMeter.Run(ctx)
 		go uploadMeter.Run(ctx)
 	}
-	store := endpoint.NewUploadStore()
-	go store.RunSweeper(ctx)
-	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient, cfg.MaxActiveSessions, cfg.MaxSessionsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
-	download, upload := endpoint.NewDownload(block, downloadMeter), endpoint.NewUpload(uploadMeter, store, cfg.TrustedProxies)
+
+	admission := newRequestAdmission(cfg.MaxActiveMeasurements, cfg.MaxActiveMeasurementsPerClient,
+		cfg.MaxActiveSessions, cfg.MaxSessionsPerClient, cfg.MaxOperationDuration, cfg.MaxSessionDuration)
+	download, upload := endpoint.NewDownload(block, downloadMeter), endpoint.NewUpload(uploadMeter, cfg.TrustedProxies)
+	go upload.RunSweeper(ctx)
 	return &endpoints{
 		discovery:      endpoint.NewDiscovery(cfg),
 		probe:          endpoint.NewProbe(cfg.TrustedProxies, "", admission.load),
@@ -111,27 +112,28 @@ func publicH3Port(cfg *config.Config) string {
 }
 
 func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
-	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
-		// Bound upload DATA frames so control requests can share a saturated connection.
-		MaxReadFrameSize: 16 << 10,
-		// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
-		MaxReceiveBufferPerConnection: h2ReceiveWindowPerConnection,
-		MaxReceiveBufferPerStream:     h2ReceiveWindowPerStream,
-	}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-		if encrypted, ok := c.(*tls.Conn); ok {
-			c = encrypted.NetConn()
-		}
-		if admitted, ok := c.(*admittedConn); ok {
-			c = admitted.Conn
-		}
-		if tc, ok := c.(*net.TCPConn); ok {
-			_ = tc.SetNoDelay(true)
-			if protocols != nil && protocols.HTTP2() {
-				configureHTTP2TCP(tc)
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second,
+		MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
+			// Bound upload DATA frames so control requests can share a saturated connection.
+			MaxReadFrameSize: 16 << 10,
+			// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
+			MaxReceiveBufferPerConnection: h2ReceiveWindowPerConnection,
+			MaxReceiveBufferPerStream:     h2ReceiveWindowPerStream,
+		}, ConnContext: func(ctx context.Context, c net.Conn) context.Context {
+			if encrypted, ok := c.(*tls.Conn); ok {
+				c = encrypted.NetConn()
 			}
-		}
-		return ctx
-	}}
+			if admitted, ok := c.(*admittedConn); ok {
+				c = admitted.Conn
+			}
+			if tc, ok := c.(*net.TCPConn); ok {
+				_ = tc.SetNoDelay(true)
+				if protocols != nil && protocols.HTTP2() {
+					configureHTTP2TCP(tc)
+				}
+			}
+			return ctx
+		}}
 }
 
 // Run validates the config and certificate, binds every configured listener.
@@ -170,7 +172,8 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	var spa http.Handler
 	if authn.Enabled() {
 		spa = static.AuthenticatedHandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
-		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()), cfg.ServerCatalog.ConnectSources()))
+		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
+			cfg.ServerCatalog.ConnectSources()))
 	} else {
 		// Public pages use the same configured destination boundary as authenticated pages.
 		page := static.HandlerWithResultHistoryDefault(cfg.ResultHistoryDefault)
@@ -183,7 +186,8 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 	if cfg.Verbose {
 		go runAdmissionLog(ctx, e.admission, connections)
 	}
-	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa, sockets: sockets}, nil
+	return &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, connections: connections, spa: spa,
+		sockets: sockets}, nil
 }
 
 type listenerBuild struct {
@@ -205,7 +209,8 @@ func (b *listenerBuild) closeOpened() {
 	}
 }
 
-func (b *listenerBuild) addTCP(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology, handler http.Handler, alpn string) error {
+func (b *listenerBuild) addTCP(name, addr string, proto *http.Protocols, l auth.Listener, topo muxTopology,
+	handler http.Handler, alpn string) error {
 	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, topo, handler, b.authn), l), proto)
 	ln, err := b.sockets.listenTCP(addr)
 	if err != nil {
@@ -236,19 +241,24 @@ func (b *listenerBuild) assemble() error {
 	if b.authn.Enabled() {
 		h1Name = "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
 	}
-	if err := b.addTCP(h1Name, b.cfg.Native.H1, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, ""); err != nil {
+	if err := b.addTCP(h1Name, b.cfg.Native.H1, h1Protocols(), auth.Listener{UI: true},
+		muxTopology{spa: true, discovery: true, latency: true, transfers: true}, spa, ""); err != nil {
 		return err
 	}
 
 	if b.cfg.Native.H1TLS != "" {
-		if err := b.addTCP("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS, h1Protocols(), auth.Listener{UI: true}, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa, "http/1.1"); err != nil {
+		if err := b.addTCP("HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets", b.cfg.Native.H1TLS,
+			h1Protocols(), auth.Listener{UI: true},
+			muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, spa,
+			"http/1.1"); err != nil {
 			return err
 		}
 	}
 	if b.cfg.Native.H2 != "" {
 		p := &http.Protocols{}
 		p.SetHTTP2(true)
-		if err := b.addTCP("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p, auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, nil, "h2"); err != nil {
+		if err := b.addTCP("HTTPS HTTP/2: measurement probe, transfers, progress only", b.cfg.Native.H2, p,
+			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}, nil, "h2"); err != nil {
 			return err
 		}
 	}
@@ -283,14 +293,16 @@ func h3QUICConfig() *quic.Config {
 }
 
 func (b *listenerBuild) assembleH3() error {
-	if err := b.addTCP("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(), auth.Listener{}, muxTopology{bootstrap: true}, nil, "http/1.1"); err != nil {
+	if err := b.addTCP("HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", b.cfg.Native.H3, h1Protocols(),
+		auth.Listener{}, muxTopology{bootstrap: true}, nil, "http/1.1"); err != nil {
 		return err
 	}
 	quicConfig := h3QUICConfig()
 	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
 	wt := &webtransport.Server{H3: h3, CheckOrigin: wtOriginCheck(b.authn)}
 	webtransport.ConfigureHTTP3Server(h3)
-	h3.Handler = b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil, b.authn), auth.Listener{WebTransport: true})
+	h3.Handler = b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil, b.authn),
+		auth.Listener{WebTransport: true})
 	h3.MaxHeaderBytes = 32 << 10
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
@@ -304,19 +316,21 @@ func (b *listenerBuild) assembleH3() error {
 		b.closeOpened()
 		return err
 	}
-	b.services = append(b.services, service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
-		run: func() error {
-			err := serveWebTransport(b.ctx, wt, quicListener)
-			if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) {
-				return nil
-			}
-			return err
-		}, stop: func(context.Context) error {
-			err := wt.Close()
-			_ = quicListener.Close()
-			_ = quicTransport.Close()
-			return err
-		}})
+	b.services = append(b.services,
+		service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
+			run: func() error {
+				err := serveWebTransport(b.ctx, wt, quicListener)
+				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) ||
+					errors.Is(err, context.Canceled) {
+					return nil
+				}
+				return err
+			}, stop: func(context.Context) error {
+				err := wt.Close()
+				_ = quicListener.Close()
+				_ = quicTransport.Close()
+				return err
+			}})
 	return nil
 }
 

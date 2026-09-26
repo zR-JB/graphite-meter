@@ -202,7 +202,7 @@ func TestDatagramSourceYieldsWholeDatagrams(t *testing.T) {
 }
 
 func TestStreamProgressReportsTheCounter(t *testing.T) {
-	store := NewUploadStore()
+	store := NewUpload(nil, nil)
 	id := store.Mint()
 	agg, access := store.getOrCreateFor(id, "owner")
 	if access != uploadAccessOK {
@@ -212,7 +212,7 @@ func TestStreamProgressReportsTheCounter(t *testing.T) {
 
 	r, w := io.Pipe()
 	go func() {
-		streamProgress(t.Context(), agg, store.now, w)
+		store.streamProgress(t.Context(), agg, w)
 		_ = w.Close()
 	}()
 

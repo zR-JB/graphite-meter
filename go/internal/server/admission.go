@@ -76,7 +76,8 @@ type requestAdmission struct {
 	requestLifetime, sessionLifetime time.Duration
 }
 
-func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int, requestLifetime, sessionLifetime time.Duration) *requestAdmission {
+func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int, requestLifetime,
+	sessionLifetime time.Duration) *requestAdmission {
 	return &requestAdmission{
 		requests: newBudget(globalMax, clientMax), sessions: newBudget(sessionMax, sessionClientMax),
 		requestLifetime: requestLifetime, sessionLifetime: sessionLifetime,
@@ -121,7 +122,8 @@ func (a *requestAdmission) stats() (requests, sessions budget) {
 }
 
 // wrap admits requests under spec's budget and lifetime; refusals carry the route's CORS answer.
-func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []netip.Prefix, authn *auth.Service) http.Handler {
+func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []netip.Prefix,
+	authn *auth.Service) http.Handler {
 	session := spec.Admission == route.Session
 	lifetime := a.requestLifetime
 	if session {

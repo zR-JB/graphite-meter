@@ -12,11 +12,23 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
+func (s *Upload) lanesOf(a *uploadAgg) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return a.lanes
+}
+
+func (s *Upload) live() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.receivers)
+}
+
+func (s *Upload) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
 	return s.accessFor(id, owner, false)
 }
 
-func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
+func (s *Upload) getOrCreate(id string) (*uploadAgg, bool) {
 	agg, access := s.getOrCreateFor(id, "")
 	return agg, access == uploadAccessOK
 }
@@ -24,7 +36,7 @@ func (s *UploadStore) getOrCreate(id string) (*uploadAgg, bool) {
 // Only an id this store signed within the token lifetime may create state.
 func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := NewUploadStore()
+		s := NewUpload(nil, nil)
 		id := s.Mint()
 		raw, err := base64.RawURLEncoding.DecodeString(id[4:])
 		if err != nil {
@@ -37,14 +49,14 @@ func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
 			"forged":   "never-minted",
 			"tampered": "gmu_" + base64.RawURLEncoding.EncodeToString(raw),
 			"expired":  expiring,
-			"foreign":  NewUploadStore().Mint(),
+			"foreign":  NewUpload(nil, nil).Mint(),
 		} {
 			if agg, ok := s.getOrCreate(id); ok || agg != nil {
 				t.Errorf("%s id created a receiver", name)
 			}
 		}
-		if s.live.Load() != 0 {
-			t.Fatalf("live = %d after rejected creates, want 0", s.live.Load())
+		if s.live() != 0 {
+			t.Fatalf("live = %d after rejected creates, want 0", s.live())
 		}
 		if _, ok := s.getOrCreate(s.Mint()); !ok {
 			t.Fatal("a fresh id was refused")
@@ -53,7 +65,7 @@ func TestUploadStoreRejectsForgedTamperedAndExpiredIDs(t *testing.T) {
 }
 
 func TestUploadStoreCreateIsIdempotent(t *testing.T) {
-	s := NewUploadStore()
+	s := NewUpload(nil, nil)
 	id := s.Mint()
 	a, ok := s.getOrCreate(id)
 	if !ok || a == nil {
@@ -63,13 +75,13 @@ func TestUploadStoreCreateIsIdempotent(t *testing.T) {
 	if !ok || b != a {
 		t.Fatalf("second getOrCreate returned a different aggregate (%p vs %p)", b, a)
 	}
-	if got, ok := s.get(id); !ok || got != a || s.live.Load() != 1 {
-		t.Fatalf("get = (%p, %v) with %d live, want the one aggregate", got, ok, s.live.Load())
+	if got, ok := s.get(id); !ok || got != a || s.live() != 1 {
+		t.Fatalf("get = (%p, %v) with %d live, want the one aggregate", got, ok, s.live())
 	}
 }
 
 func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
-	s := NewUploadStore()
+	s := NewUpload(nil, nil)
 	owner := "192.0.2.1"
 	var first string
 	for i := range maxLiveUploadsPerClient {
@@ -94,7 +106,7 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 
 // Delegated owners share their subject's retention budget while keeping distinct access rights.
 func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
-	store := NewUploadStore()
+	store := NewUpload(nil, nil)
 	for i := range maxLiveUploadsPerClient {
 		owner := "principal:subject\x00browser-grant:first"
 		if i%2 == 1 {
@@ -114,37 +126,36 @@ func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
 // never while a lane is live, and releases its owner's budget when it goes.
 func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := NewUploadStore()
+		s := NewUpload(nil, nil)
 		const owner = "192.0.2.1"
 		carried, _ := s.getOrCreateFor(s.Mint(), owner)
 		carried.recordChunk(s.now(), 1<<20)
-		active, _ := s.getOrCreateFor(s.Mint(), owner)
-		active.beginPost()
+		active, _ := s.accessFor(s.Mint(), owner, true)
 		for range maxLiveUploadsPerClient - 2 {
 			s.getOrCreateFor(s.Mint(), owner)
 		}
 		time.Sleep(wire.WTIdleBound)
 		s.sweep(uploadIDTTL)
-		if s.live.Load() != maxLiveUploadsPerClient {
+		if s.live() != maxLiveUploadsPerClient {
 			t.Fatalf("live = %d within the transport's idle bound, want every receiver kept for a re-dial",
-				s.live.Load())
+				s.live())
 		}
 		if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessClientFull {
 			t.Fatalf("owner at its cap created another receiver: %v", access)
 		}
 		time.Sleep(uploadIDTTL)
 		s.sweep(uploadIDTTL)
-		if s.live.Load() != 1 {
-			t.Fatalf("live = %d past the TTL, want only the receiver with a live lane", s.live.Load())
+		if s.live() != 1 {
+			t.Fatalf("live = %d past the TTL, want only the receiver with a live lane", s.live())
 		}
 		if _, access := s.getOrCreateFor(s.Mint(), owner); access != uploadAccessOK {
 			t.Fatalf("reaped receivers kept their owner's capacity: %v", access)
 		}
-		active.endPost()
+		s.leave(active)
 		time.Sleep(uploadIDTTL + time.Second)
 		s.sweep(uploadIDTTL)
-		if s.live.Load() != 0 {
-			t.Fatalf("live = %d after the last lane ended and the TTL passed, want 0", s.live.Load())
+		if s.live() != 0 {
+			t.Fatalf("live = %d after the last lane ended and the TTL passed, want 0", s.live())
 		}
 	})
 }
@@ -152,7 +163,7 @@ func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 // A finished receiver keeps its completion and owner for as long as its token could recreate state.
 func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		store := NewUploadStore()
+		store := NewUpload(nil, nil)
 		id := store.Mint()
 		agg, _ := store.getOrCreateFor(id, "original")
 		if access := store.finishFor(id, "original"); access != uploadAccessOK {
@@ -176,10 +187,10 @@ func TestFinishedUploadKeepsOwnershipUntilTokenExpires(t *testing.T) {
 // open feeds cannot hold the cap; receivers with bytes or a finish are never displaced.
 func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := NewUploadStore()
+		s := NewUpload(nil, nil)
 		fill := func(keep func(*uploadAgg)) []*uploadAgg {
 			var aggs []*uploadAgg
-			for i := range maxLiveUploads - int(s.live.Load()) {
+			for i := range maxLiveUploads - int(s.live()) {
 				id := s.Mint()
 				agg, access := s.getOrCreateFor(id, fmt.Sprint("watcher-", i%50))
 				if access != uploadAccessOK {
@@ -192,7 +203,7 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 			return aggs
 		}
 		watchers := fill(func(*uploadAgg) {})
-		upload := NewUpload(nil, s, nil)
+		upload := s
 		if n, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err != nil || n != 4 {
 			t.Fatalf("lane at a cap of empty receivers = %d, %v", n, err)
 		}
@@ -204,7 +215,9 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 		for _, agg := range watchers[2:] {
 			agg.recordChunk(s.now(), 1)
 		}
-		watchers[1].finish()
+		s.mu.Lock()
+		close(watchers[1].finished)
+		s.mu.Unlock()
 		if _, err := upload.Receive(t.Context(), s.Mint(), "client", strings.NewReader("lane")); err == nil {
 			t.Fatal("a receiver holding bytes or a finish was displaced")
 		}
@@ -217,8 +230,8 @@ func TestUploadStoreCapDisplacesOnlyEmptyReceivers(t *testing.T) {
 }
 
 // fillStore holds the global cap with receivers that each accepted a byte.
-func fillStore(s *UploadStore) {
-	for range maxLiveUploads - int(s.live.Load()) {
+func fillStore(s *Upload) {
+	for range maxLiveUploads - int(s.live()) {
 		agg, _ := s.getOrCreate(s.Mint())
 		agg.recordChunk(s.now(), 1)
 	}
@@ -226,7 +239,7 @@ func fillStore(s *UploadStore) {
 
 func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := NewUploadStore()
+		s := NewUpload(nil, nil)
 		agg, _ := s.getOrCreate(s.Mint())
 		agg.recordChunk(s.now(), 1)
 		time.Sleep(uploadIDTTL + time.Second)
@@ -236,15 +249,15 @@ func TestUploadStoreCapAllowsCreateAfterSweepFreesSpace(t *testing.T) {
 			t.Fatal("create at the cap unexpectedly succeeded")
 		}
 		s.sweep(uploadIDTTL)
-		if _, ok := s.getOrCreate(blocked); !ok || s.live.Load() != maxLiveUploads {
-			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted", ok, s.live.Load())
+		if _, ok := s.getOrCreate(blocked); !ok || s.live() != maxLiveUploads {
+			t.Fatalf("create after the sweep freed a slot = %v with %d live, want it admitted", ok, s.live())
 		}
 	})
 }
 
 func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := NewUploadStore()
+		s := NewUpload(nil, nil)
 		const n = 200
 		ids := make([]string, n)
 		for i := range ids {
@@ -278,12 +291,8 @@ func TestUploadStoreConcurrentGetAndSweep(t *testing.T) {
 		readers.Wait()
 		close(stop)
 		wg.Wait()
-		var counted int32
-		for i := range s.shards {
-			counted += int32(len(s.shards[i].m))
-		}
-		if live := s.live.Load(); live < 0 || counted != live {
-			t.Fatalf("live = %d, but shards contain %d receivers", live, counted)
+		if live := s.live(); live > n {
+			t.Fatalf("live = %d receivers from %d ids", live, n)
 		}
 	})
 }

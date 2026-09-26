@@ -75,7 +75,8 @@ func wtTestConfig(t *testing.T, tune func(*config.Config)) (config.Config, *test
 }
 
 // wtTestServerWithIdleBound is wtTestServerTuned for the tests that turn on the WebTransport idle bound.
-func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*config.Config)) (string, string, *testWTTransport) {
+func wtTestServerWithIdleBound(t *testing.T, bound time.Duration, tune func(*config.Config)) (string, string,
+	*testWTTransport) {
 	t.Helper()
 	h3Base, httpBase, _ := wtShapedServer(t, tune, func(e *endpoints) { e.wtIdleBound = bound })
 	return h3Base, httpBase, &testWTTransport{Transport: insecureWTTransport(), owner: t}
@@ -287,7 +288,8 @@ func TestWebTransportUploadClampsTheLaneCount(t *testing.T) {
 	}
 	wg.Wait()
 	if got := writable.Load(); got != wire.WTMaxStreams {
-		t.Fatalf("%d of %d lanes stayed writable, want the %d cap with the excess reset", got, opened, wire.WTMaxStreams)
+		t.Fatalf("%d of %d lanes stayed writable, want the %d cap with the excess reset", got, opened,
+			wire.WTMaxStreams)
 	}
 }
 
@@ -582,7 +584,9 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	s := newAuthenticatedStack(t)
 
 	foreign := http.Header{"Origin": {"https://attacker.example"}}
-	res, sess, err := dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
+	res, sess,
+		err := dialWTUntilAnswered(t, s.wtTransport(t),
+		s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), foreign)
 	if err == nil {
 		_ = sess.CloseWithError(0, "")
 		t.Fatal("a CONNECT carrying a foreign Origin opened a session")
@@ -595,7 +599,9 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 	}
 
 	// The control: the same credential, the same wtTransport and the same header, and only the origin canonical.
-	res, sess, err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)), http.Header{"Origin": {s.origin}})
+	res, sess,
+		err = dialWTUntilAnswered(t, s.wtTransport(t), s.h3URL+route.WTPing+"?token="+url.QueryEscape(s.mintWTToken(t)),
+		http.Header{"Origin": {s.origin}})
 	if err != nil {
 		t.Fatalf("CONNECT from the canonical origin was refused with status=%v: %v", res, err)
 	}
@@ -603,7 +609,8 @@ func TestWebTransportConnectRefusesAForeignOrigin(t *testing.T) {
 }
 
 // dialWTUntilAnswered dials until the listener answers, so a QUIC listener still coming up is not read as a refusal.
-func dialWTUntilAnswered(t *testing.T, d *webtransport.Transport, target string, hdr http.Header) (*http.Response, *webtransport.Session, error) {
+func dialWTUntilAnswered(t *testing.T, d *webtransport.Transport, target string, hdr http.Header) (*http.Response,
+	*webtransport.Session, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -959,9 +966,11 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	}
 	result := downloadResults[0]
 	if result.Err != err || result.TotalBytes == 0 || !result.Unavailable || result.ReceiverTimed() {
-		t.Fatalf("all servers failing must retain bytes and error with an unavailable headline: %+v; run error: %v", result, err)
+		t.Fatalf("all servers failing must retain bytes and error with an unavailable headline: %+v; run error: %v",
+			result, err)
 	}
-	if details == nil || len(details.Failures) != 1 || len(details.Intervals) < 2 || details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
+	if details == nil || len(details.Failures) != 1 || len(details.Intervals) < 2 ||
+		details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
 		t.Fatalf("earlier receiver window lost: %+v", details)
 	}
 }
@@ -1003,7 +1012,8 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 				t.Fatalf("%s at %d lanes ran on %d WebTransport sessions, want exactly 1", name, streams, len(observed))
 			}
 			if observed[0].peak != streams {
-				t.Errorf("the server saw %d concurrent %s lanes at --streams %d, want %d", observed[0].peak, name, streams, streams)
+				t.Errorf("the server saw %d concurrent %s lanes at --streams %d, want %d", observed[0].peak, name,
+					streams, streams)
 			}
 			if got := results[name].TotalBytes; got == 0 {
 				t.Errorf("%s at %d lanes moved no bytes", name, streams)
@@ -1050,7 +1060,8 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 		t.Fatalf("a single reset lane failed the whole upload stage: %v", err)
 	}
 	if cuts.Load() != 1 {
-		t.Fatalf("the server reset %d lanes, want exactly 1: nothing about a single lane's fault was tested", cuts.Load())
+		t.Fatalf("the server reset %d lanes, want exactly 1: nothing about a single lane's fault was tested",
+			cuts.Load())
 	}
 
 	observed := up.observed()
@@ -1059,7 +1070,8 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 	}
 	// The reset lane reopened on that same session: the original lanes plus at least one replacement.
 	if observed[0].lanes < lanes+1 {
-		t.Errorf("the session ran %d lanes in total, want at least %d: the reset lane never came back", observed[0].lanes, lanes+1)
+		t.Errorf("the session ran %d lanes in total, want at least %d: the reset lane never came back",
+			observed[0].lanes, lanes+1)
 	}
 	if observed[0].peak != lanes {
 		t.Errorf("the server saw %d concurrent lanes, want %d", observed[0].peak, lanes)

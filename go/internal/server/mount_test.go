@@ -48,7 +48,8 @@ func TestMeasurementRoutesDispatchOnlyTheirMethods(t *testing.T) {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("not an upload")))
 		if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != tc.allow {
-			t.Errorf("%s %s = %d Allow %q, want 405 Allow %q", tc.method, tc.path, rec.Code, rec.Header().Get("Allow"), tc.allow)
+			t.Errorf("%s %s = %d Allow %q, want 405 Allow %q", tc.method, tc.path, rec.Code, rec.Header().Get("Allow"),
+				tc.allow)
 		}
 	}
 	if requests, _ := e.admission.stats(); requests.peak != 0 {

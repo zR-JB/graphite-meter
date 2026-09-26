@@ -54,7 +54,8 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 
 	h1p := &http.Protocols{}
 	h1p.SetHTTP1(true)
-	uiMux := newMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1}, http.NotFoundHandler(), authn)
+	uiMux := newMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1},
+		http.NotFoundHandler(), authn)
 	ui := baseServer(authn.Enforce(uiMux, auth.Listener{UI: true}), h1p)
 	go serve(tls.NewListener(uiLn, cm.tlsConfig("http/1.1")), ui)
 	t.Cleanup(func() { _ = ui.Close() })
@@ -81,11 +82,14 @@ func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 
 	uiProtocols := &http.Protocols{}
 	uiProtocols.SetHTTP1(true)
-	uiTransport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: uiProtocols} //nolint:gosec
+	uiTransport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: uiProtocols} //nolint:gosec
 	h2Protocols := &http.Protocols{}
 	h2Protocols.SetHTTP2(true)
-	h2Transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: h2Protocols}                 //nolint:gosec
-	h3Transport := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	h2Transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: h2Protocols} //nolint:gosec
+	h3Transport := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
 	t.Cleanup(func() {
 		uiTransport.CloseIdleConnections()
 		h2Transport.CloseIdleConnections()
@@ -292,7 +296,9 @@ func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			conn, res, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers})
+			conn, res,
+				err := websocket.Dial(ctx, wsURL,
+				&websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers})
 			if err != nil {
 				status := 0
 				if res != nil {
@@ -361,10 +367,12 @@ func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if origin == s.origin {
-			if w.Code != http.StatusTooManyRequests || w.Header().Get("Access-Control-Allow-Origin") != s.origin || w.Header().Get("Access-Control-Allow-Credentials") != "true" {
+			if w.Code != http.StatusTooManyRequests || w.Header().Get("Access-Control-Allow-Origin") != s.origin ||
+				w.Header().Get("Access-Control-Allow-Credentials") != "true" {
 				t.Fatalf("allowed origin admission: status=%d headers=%v", w.Code, w.Header())
 			}
-		} else if w.Header().Get("Access-Control-Allow-Origin") != "" || w.Header().Get("Access-Control-Allow-Credentials") != "" {
+		} else if w.Header().Get("Access-Control-Allow-Origin") != "" ||
+			w.Header().Get("Access-Control-Allow-Credentials") != "" {
 			t.Fatalf("untrusted origin %q exposed by headers=%v", origin, w.Header())
 		}
 	}

@@ -211,7 +211,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 		id := query.Get("id")
 		// The CONNECT identifies the owner of every lane.
 		owner := UploadOwner(r, upload.trusted)
-		agg, access := upload.store.accessFor(id, owner, false)
+		agg, access := upload.accessFor(id, owner, false)
 		if access != uploadAccessOK {
 			// Report the refusal and release the session slot.
 			serveRefusal(ctx, sess, access)
@@ -227,7 +227,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 		wg.Go(func() {
 			str, err := sess.OpenUniStreamSync(ctx)
 			if err == nil {
-				withWTWriteStream(ctx, str, func() { streamProgress(ctx, agg, upload.store.now, str) })
+				withWTWriteStream(ctx, str, func() { upload.streamProgress(ctx, agg, str) })
 			}
 		})
 		if wtDatagramMode(query) {

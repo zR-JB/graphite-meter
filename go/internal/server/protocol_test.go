@@ -40,7 +40,9 @@ func testPasswordAuth(t *testing.T, origin string) *auth.Service {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := auth.New(t.Context(), config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil, false)
+	service, err := auth.New(t.Context(),
+		config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil,
+		false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,8 @@ func nativeAuthHTTP(t *testing.T, protocol string) (*http.Client, string, *atomi
 	origin := "https://" + ln.Addr().String()
 	authn := testPasswordAuth(t, origin)
 	var dispatched atomic.Int32
-	handler := authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})
+	handler := authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }),
+		auth.Listener{})
 	serverProtocols, clientProtocols := &http.Protocols{}, &http.Protocols{}
 	var alpn string
 	switch protocol {
@@ -75,7 +78,8 @@ func nativeAuthHTTP(t *testing.T, protocol string) (*http.Client, string, *atomi
 	srv := baseServer(handler, serverProtocols)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: clientProtocols} //nolint:gosec
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: clientProtocols} //nolint:gosec
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr}, origin, &dispatched
 }
@@ -90,10 +94,13 @@ func nativeAuthHTTP3(t *testing.T) (*http.Client, string, *atomic.Int32) {
 	origin := "https://" + pc.LocalAddr().String()
 	authn := testPasswordAuth(t, origin)
 	var dispatched atomic.Int32
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }), auth.Listener{})}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(),
+		Handler: authn.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { dispatched.Add(1) }),
+			auth.Listener{})}
 	go h3.Serve(pc)
 	t.Cleanup(func() { _ = h3.Close(); _ = pc.Close() })
-	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
 	t.Cleanup(func() { _ = tr.Close() })
 	return &http.Client{Transport: tr}, origin, &dispatched
 }
@@ -102,7 +109,8 @@ type zeroReader struct{}
 
 func (*zeroReader) Read([]byte) (int, error) { return 0, io.EOF }
 
-func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, body io.Reader, dispatched *atomic.Int32) {
+func assertNativeAuthRejects(t *testing.T, client *http.Client, origin string, body io.Reader,
+	dispatched *atomic.Int32) {
 	t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, origin+"/upload", body)
 	res, err := client.Do(req)
@@ -134,7 +142,8 @@ func TestRealWebSocketHandshakeRejectsBeforeDispatch(t *testing.T) {
 	client, origin, dispatched := nativeAuthHTTP(t, "http1")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	_, res, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(origin, "https")+"/ws/ping", &websocket.DialOptions{HTTPClient: client})
+	_, res, err := websocket.Dial(ctx, "wss"+strings.TrimPrefix(origin, "https")+"/ws/ping",
+		&websocket.DialOptions{HTTPClient: client})
 	if err == nil {
 		t.Fatal("unauthenticated WebSocket handshake succeeded")
 	}
@@ -170,7 +179,8 @@ func nativeHTTP(t *testing.T, protocol string, topology muxTopology) (*http.Clie
 	srv := baseServer(publicMux(t, e, topology, static.Handler()), p)
 	go serve(tls.NewListener(ln, cm.tlsConfig(alpn)), srv)
 	t.Cleanup(func() { _ = srv.Close(); _ = ln.Close() })
-	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, Protocols: clientProtocols} //nolint:gosec
+	tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		Protocols: clientProtocols} //nolint:gosec
 	t.Cleanup(tr.CloseIdleConnections)
 	return &http.Client{Transport: tr}, "https://" + ln.Addr().String()
 }
@@ -183,10 +193,12 @@ func nativeHTTP3(t *testing.T) (*http.Client, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(), Handler: publicMux(t, e, muxTopology{transfers: true}, nil)}
+	h3 := &http3.Server{TLSConfig: cm.tlsConfig(), QUICConfig: transport.NewQUICConfig(),
+		Handler: publicMux(t, e, muxTopology{transfers: true}, nil)}
 	go h3.Serve(pc)
 	t.Cleanup(func() { _ = h3.Close(); _ = pc.Close() })
-	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: transport.NewQUICConfig()} //nolint:gosec
+	tr := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
 	t.Cleanup(func() { _ = tr.Close() })
 	return &http.Client{Transport: tr}, "https://" + pc.LocalAddr().String()
 }
@@ -219,7 +231,8 @@ func assertProbeAndDownload(t *testing.T, client *http.Client, base, wantProtoco
 
 func TestNativeHTTP1TLSProbeAndTransfer(t *testing.T) {
 	t.Parallel()
-	client, base := nativeHTTP(t, "http1", muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1})
+	client, base := nativeHTTP(t, "http1",
+		muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1})
 	res, err := client.Get(base + "/preflight")
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +292,8 @@ func TestHTTP2HeldRoutesRefuseARequestBody(t *testing.T) {
 			t.Fatalf("GET %s with a body = %d, want the stream refused", target, res.StatusCode)
 		}
 	}
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodDelete, base+"/upload/progress?id="+session.UploadID, nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodDelete, base+"/upload/progress?id="+session.UploadID,
+		nil)
 	res, err = client.Do(req)
 	if err != nil {
 		t.Fatal(err)
