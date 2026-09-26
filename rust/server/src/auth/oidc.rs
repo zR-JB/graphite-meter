@@ -327,7 +327,7 @@ impl Oidc {
         .unwrap_or("OIDC user");
         let mut name: String = name
             .chars()
-            .filter(|character| !character.is_control())
+            .filter(|character| graphite_meter_core::text::display_character(*character))
             .collect();
         name.truncate(name.floor_char_boundary(256));
         if name.is_empty() {

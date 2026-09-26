@@ -124,6 +124,13 @@ impl Preflight {
         if self.server.name.len() > 256
             || self.server.location.len() > 256
             || self.engine_version.len() > 256
+            || !self
+                .server
+                .name
+                .chars()
+                .chain(self.server.location.chars())
+                .chain(self.engine_version.chars())
+                .all(crate::text::display_character)
             || self
                 .implementation
                 .as_deref()

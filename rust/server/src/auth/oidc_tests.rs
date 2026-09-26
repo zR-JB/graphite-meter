@@ -434,13 +434,14 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
         );
     }
     *provider.twist.lock().unwrap() = Twist {
-        signed_userinfo: Some(json!({"iss": provider.issuer, "aud": "meter"})),
+        signed_userinfo: Some(
+            json!({"iss": provider.issuer, "aud": "meter", "name": "\u{009b}München \u{202e}العربية\u{2069} 👩\u{200d}💻"}),
+        ),
         ..Twist::default()
     };
-    assert_eq!(
-        provider.login(Claims::default()).await.unwrap().subject,
-        "oidc:operator"
-    );
+    let identity = provider.login(Claims::default()).await.unwrap();
+    assert_eq!(identity.subject, "oidc:operator");
+    assert_eq!(identity.name, "München العربية 👩\u{200d}💻");
     let before = provider.jwks_requests.load(Ordering::SeqCst);
     assert_eq!(before, 2);
     *provider.twist.lock().unwrap() = Twist {

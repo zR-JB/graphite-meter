@@ -15,6 +15,7 @@ use crossterm::{
     execute,
 };
 use futures_util::StreamExt;
+use graphite_meter_core::text::terminal_character as safe_character;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout, Margin, Rect},
@@ -499,10 +500,6 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         width,
         height,
     )
-}
-fn safe_character(c: char) -> bool {
-    !c.is_control()
-        && !matches!(c,'\u{061c}'|'\u{200b}'..='\u{200f}'|'\u{2028}'..='\u{202e}'|'\u{2060}'..='\u{206f}'|'\u{feff}')
 }
 fn safe_text(value: &str, limit: usize) -> String {
     value

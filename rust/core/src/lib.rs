@@ -10,4 +10,5 @@ pub mod measurement;
 pub mod origin;
 pub mod route;
 pub mod socket;
+pub mod text;
 pub mod wire;

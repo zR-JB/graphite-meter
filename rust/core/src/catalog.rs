@@ -90,15 +90,14 @@ impl ServerCatalog {
                     .id
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
-            let has_control_characters = entry
-                .name
-                .bytes()
-                .chain(entry.location.bytes())
-                .any(|byte| byte < 32 || byte == 127);
             if !valid_id
                 || entry.name.len() > 256
                 || entry.location.len() > 256
-                || has_control_characters
+                || !entry
+                    .name
+                    .chars()
+                    .chain(entry.location.chars())
+                    .all(crate::text::display_character)
             {
                 return Err(CatalogError::InvalidIdentity);
             }

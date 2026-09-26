@@ -148,12 +148,7 @@ fn safe(value: &str) -> String {
         .chars()
         .take(4096)
         .map(|character| {
-            let formatting_control = matches!(
-                character,
-                '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}'
-                    | '\u{2060}'..='\u{206f}' | '\u{feff}'
-            );
-            if character.is_control() || formatting_control {
+            if !graphite_meter_core::text::terminal_character(character) {
                 '�'
             } else {
                 character
