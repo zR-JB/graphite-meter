@@ -493,6 +493,20 @@ test("burst flushes cannot raise the peak above the fastest 500 ms", () => {
   expect(m.serverResult("download", "down", "a")!.peakBytesPerSec).toBe(2_000);
 });
 
+test("a fast tail after the last half-second window still bounds the peak from below", () => {
+  const m = new ThroughputAggregate();
+  m.begin("download", ["a"], 0);
+  m.observe(boundary(0, { a: 0 }));
+  m.observe(boundary(500, { a: 500 }));
+  m.observe(boundary(1_000, { a: 1_000 }));
+  m.observe(boundary(1_400, { a: 3_000 }), true);
+  const down = m.result("download", false).down!;
+  expect(down.reportedBytesPerSec).toBeCloseTo(3_000 / 1.4, 6);
+  expect(down.peakBytesPerSec).toBe(down.reportedBytesPerSec);
+  const own = m.serverResult("download", "down", "a")!;
+  expect(own.peakBytesPerSec).toBe(own.reportedBytesPerSec);
+});
+
 test("overlapping evidence never double counts bytes across intervals or stages", () => {
   const m = new ThroughputAggregate();
   m.begin("upload", ["a"], 0);

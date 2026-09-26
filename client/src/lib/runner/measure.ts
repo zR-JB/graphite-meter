@@ -873,7 +873,7 @@ export class ThroughputAggregate {
         return {
           reportedBytesPerSec: rate,
           totalBytes: this.#stageTotal(stage, dir),
-          peakBytesPerSec: open.peaks.get(COMBINED)?.[dir] ?? null,
+          peakBytesPerSec: Math.max(open.peaks.get(COMBINED)?.[dir] ?? 0, rate),
           stabilityPct: stabilityPct(open.total[dir].rates),
         };
       }
@@ -916,7 +916,10 @@ export class ThroughputAggregate {
       return {
         reportedBytesPerSec: component.bytesPerSec,
         totalBytes: this.#stageTotal(stage, dir, id),
-        peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
+        peakBytesPerSec: Math.max(
+          open.peaks.get(id)?.[dir] ?? 0,
+          component.bytesPerSec,
+        ),
         stabilityPct: stabilityPct(open.servers.get(id)![dir].rates),
       };
     }
