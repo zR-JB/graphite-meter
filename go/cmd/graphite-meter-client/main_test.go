@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -145,17 +146,6 @@ func TestFormatting(t *testing.T) {
 	capped, automatic := goclient.TransferStreamPolicy{Forced: 99}, goclient.TransferStreamPolicy{AutomaticMax: 6}
 	wt := wire.TransportWebTransport
 	for got, want := range map[string]string{
-		fmtRate(0):                                 "0.00 bit/s",
-		fmtRate(1500):                              "12.00 kbit/s",
-		fmtRate(12_500_000):                        "100.0 Mbit/s",
-		fmtRate(137_500_000):                       "1100 Mbit/s",
-		fmtRate(162_500_000):                       "1.30 Gbit/s",
-		fmtBytes(999):                              "999 B",
-		fmtBytes(1_500):                            "1.5 kB",
-		fmtBytes(2_340_000_000):                    "2.3 GB",
-		fmtMs(12345 * time.Microsecond):            "12.3 ms",
-		fmtMs(123456 * time.Microsecond):           "123 ms",
-		fmtMs(99960 * time.Microsecond):            "100 ms",
 		fmtAdded(-1200 * time.Microsecond):         "−1.2 ms",
 		fmtAdded(7800 * time.Microsecond):          "+7.8 ms",
 		fmtSetting(800 * time.Millisecond):         "800 ms",
@@ -168,6 +158,40 @@ func TestFormatting(t *testing.T) {
 		if got != want {
 			t.Errorf("got %q, want %q", got, want)
 		}
+	}
+}
+
+func TestFormatMatchesTheSharedVectors(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../../api/format.testvectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type vector struct {
+		In          float64
+		BytesPerSec float64
+		Out         string
+	}
+	var vectors struct{ Ms, Speed, Rate, Bytes []vector }
+	if err := json.Unmarshal(data, &vectors, json.MatchCaseInsensitiveNames(true)); err != nil {
+		t.Fatal(err)
+	}
+	check := func(kind string, got, want string) {
+		if got != want {
+			t.Errorf("%s: got %q, want %q", kind, got, want)
+		}
+	}
+	for _, v := range vectors.Ms {
+		check("ms", fmtMs(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
+	}
+	for _, v := range vectors.Speed {
+		check("speed", fmtSpeed(v.In), v.Out)
+	}
+	for _, v := range vectors.Rate {
+		check("rate", fmtRate(v.BytesPerSec), v.Out)
+	}
+	for _, v := range vectors.Bytes {
+		check("bytes", fmtBytes(uint64(v.In)), v.Out)
 	}
 }
 

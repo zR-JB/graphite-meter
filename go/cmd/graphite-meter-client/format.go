@@ -35,9 +35,9 @@ func fmtRate(bytesPerSec float64) string {
 
 func fmtSpeed(value float64) string {
 	switch {
-	case value >= 1000:
+	case math.Round(value*10) >= 10_000:
 		return strconv.FormatFloat(value, 'f', 0, 64)
-	case value >= 100:
+	case math.Round(value*100) >= 10_000:
 		return strconv.FormatFloat(value, 'f', 1, 64)
 	}
 	return strconv.FormatFloat(value, 'f', 2, 64)
