@@ -9,7 +9,7 @@
   } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { READINESS } from "../presentation/vocabulary";
+  import { JARGON, READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
   let retrying = $state<string[]>([]);
@@ -85,13 +85,7 @@
             };
           }}
           use:tooltip={[server.name, server.location, new URL(server.url).host]
-            .concat(
-              preflightMs == null
-                ? []
-                : [
-                    "Preflight request time includes connection setup and the response. It is not a latency measurement.",
-                  ],
-            )
+            .concat(preflightMs == null ? [] : [JARGON.preflight])
             .filter(Boolean)
             .join("\n")}
           class:checked

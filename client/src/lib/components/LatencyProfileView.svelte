@@ -151,6 +151,13 @@
     ].filter((value): value is string => value !== null);
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
   }
+
+  const accountingText = (lane: LatencyProfileViewLane) =>
+    (lane.accountingComplete === false
+      ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} `
+      : "") + probeAccountingDetails(lane);
+  const spanTransform = (from: number, to: number) =>
+    `translateX(${pos(from, scale)}%) scaleX(${rangeWidth(from, to, scale) / 100})`;
 </script>
 
 <div
@@ -163,7 +170,9 @@
   aria-label={label}
 >
   {#each lanes as lane (lane.key)}
-    {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
+    {@const accounting = hasProbeAccountingNotice(lane)
+      ? accountingText(lane)
+      : ""}
     {@const metrics = entries(lane)}
     {@const selected =
       hover?.key === lane.key
@@ -198,12 +207,14 @@
               class="timing-info"
               class:accounting-warning={hasProbeAccountingNotice(lane)}
               role="note"
-              aria-label={`${lane.label}: measurement details${hasProbeAccountingNotice(lane) ? `. ${accounting}` : ""}`}
+              aria-label={[`${lane.label}: measurement details`, accounting]
+                .filter(Boolean)
+                .join(". ")}
               use:tooltip={[
                 lane.reflectorTiming
                   ? reflectorTimingDescription(lane.reflectorTiming)
                   : "",
-                hasProbeAccountingNotice(lane) ? accounting : "",
+                accounting,
               ]
                 .filter(Boolean)
                 .join("\n\n")}><Icon name="info" /></span
@@ -239,7 +250,7 @@
           {#if lane.min != null && lane.max != null}
             <span
               class="range"
-              style:transform={`translateX(${pos(lane.min, scale)}%) scaleX(${rangeWidth(lane.min, lane.max, scale) / 100})`}
+              style:transform={spanTransform(lane.min, lane.max)}
             ></span>
             <span
               class="position"
@@ -255,7 +266,7 @@
           {#if lane.p10 != null && lane.p90 != null}
             <span
               class="band"
-              style:transform={`translateX(${pos(lane.p10, scale)}%) scaleX(${rangeWidth(lane.p10, lane.p90, scale) / 100})`}
+              style:transform={spanTransform(lane.p10, lane.p90)}
             ></span>
           {/if}
           {#if lane.center != null}

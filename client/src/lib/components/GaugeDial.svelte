@@ -98,8 +98,7 @@
         : index === 1
           ? Math.max(0, angle - 180)
           : angle + 135;
-    // The compositor follows one sampled ease for all three surfaces. Include
-    // the exact half-ring crossing so both clips meet without a gap.
+    // One sampled ease drives all three surfaces, with the half-ring crossing so both clips meet.
     const offsets = Array.from({ length: 31 }, (_, i) => i / 30);
     const crossing = (180 - current) / (next - current);
     if (crossing > 0 && crossing < 1) offsets.push(1 - Math.cbrt(1 - crossing));
@@ -118,6 +117,10 @@
       if (index === 2) flight!.animation = animation;
     });
   });
+  const halfRing = (sweep: number) => {
+    const r = layout.radius;
+    return `M ${extent} ${extent - r} A ${r} ${r} 0 0 ${sweep} ${extent} ${extent + r}`;
+  };
   const track = $derived.by(() => {
     const { center, radius, arcStart, arcSweep } = layout;
     const start = {
@@ -328,7 +331,7 @@
               viewBox={`0 0 ${diameter} ${diameter}`}
             >
               <path
-                d={`M ${extent} ${extent - layout.radius} A ${layout.radius} ${layout.radius} 0 0 ${half} ${extent} ${extent + layout.radius}`}
+                d={halfRing(half)}
                 fill="none"
                 stroke={accent}
                 stroke-width={layout.arcWidth}

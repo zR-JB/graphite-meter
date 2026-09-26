@@ -298,8 +298,7 @@ export class ChartEngine {
   invalidateTheme(): void {
     if (!this.#canvas || !this.#ctx) return;
     this.#dpr = canvasPixelRatio();
-    // Entry transforms do not resize the layout box or trigger ResizeObserver.
-    // Keep the bitmap and DOM axes in the same untransformed coordinate space.
+    // Entry transforms leave the layout box alone, so the bitmap and DOM axes share its size.
     this.#w = Math.max(1, this.#canvas.clientWidth);
     this.#h = Math.max(1, this.#canvas.clientHeight);
     this.#canvas.width = Math.round(this.#w * this.#dpr);
@@ -378,8 +377,7 @@ export class ChartEngine {
     return data.throughput.length || data.latency.length ? info : null;
   }
   #resolveColors(): void {
-    // Palette tokens are light-dark() pairs, so the canvas's own computed
-    // colour resolves each one for the active colour scheme.
+    // Palette tokens are light-dark() pairs; the canvas's computed colour resolves the active scheme.
     const probe = this.#canvas?.style ? this.#canvas : null;
     const cs = probe && getComputedStyle(probe);
     const g = (v: string, fb: string) => {

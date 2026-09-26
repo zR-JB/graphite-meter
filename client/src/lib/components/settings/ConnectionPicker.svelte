@@ -44,6 +44,12 @@
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
   );
+  const offerAutomatic = $derived(
+    selected !== "auto" &&
+      !locked &&
+      (validation === "failed" ||
+        !!options.find((option) => option.value === selected)?.disabled),
+  );
   function select(value: string) {
     controller.selectConnection(role, value);
   }
@@ -74,7 +80,7 @@
       </label>
     {/each}
   </div>
-  {#if selected !== "auto" && !locked && (options.find((option) => option.value === selected)?.disabled || validation === "failed")}
+  {#if offerAutomatic}
     <button class="btn" type="button" onclick={() => select("auto")}
       >Use Automatic</button
     >

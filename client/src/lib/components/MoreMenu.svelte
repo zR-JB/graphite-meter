@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Action menu on a native auto popover: light dismiss, Escape and the top
-  // layer come from the platform; the menu keeps roving arrow-key focus.
+  // A native auto popover gives light dismiss, Escape and the top layer; the menu roves focus.
   import type { Snippet } from "svelte";
   import { focusMenuItem, navigateMenu } from "../actions/menu";
   import { tooltip } from "../actions/tooltip";

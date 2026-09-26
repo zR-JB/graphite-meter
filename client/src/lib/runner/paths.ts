@@ -264,7 +264,7 @@ function originPreference(
   );
 }
 
-/** Automatic candidates in preference order: HTTP/1.1 bulk streams and datagram latency first; datagram throughput is always explicit. */
+/** Automatic candidates by preference: HTTP/1.1 bulk and datagram latency first; datagram throughput stays explicit. */
 export function candidates<R extends ConnectionRole>(
   discovery: TransportDiscovery,
   role: R,

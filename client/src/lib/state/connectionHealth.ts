@@ -20,8 +20,7 @@ export function connectionQuality(
   );
   const variationThreshold = Math.max(20, median(replies) * 0.3);
 
-  // A sustained clean tail supersedes an old spike or timeout burst. Requiring
-  // elapsed evidence as well as replies makes recovery independent of cadence.
+  // A clean tail of replies and elapsed time supersedes an old spike at any cadence.
   let cleanReplies = 0;
   for (let i = recent.length - 1; i >= 0; i--) {
     const bucket = recent[i];
@@ -43,8 +42,7 @@ export function connectionQuality(
 
   const timeouts = recent.reduce((sum, bucket) => sum + bucket.timeoutCount, 0);
   const count = recent.reduce((sum, bucket) => sum + bucket.pingCount, 0);
-  // One timeout is insufficient evidence for a quality warning, especially
-  // on the sparse idle cadence where it otherwise means 25–100% timeouts.
+  // One timeout is too little evidence, above all at the sparse idle cadence.
   if (timeouts >= 2 && timeouts / count >= 0.2) return "unstable";
   if (timeouts >= 2 && timeouts / count >= 0.02) return "degraded";
   const changes = replies.slice(1).map((rtt, i) => Math.abs(rtt - replies[i]));

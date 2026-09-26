@@ -123,6 +123,17 @@ export const JARGON = {
   unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
   unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",
   unitBinary: "Binary prefixes: 1,024 per step (Kibit/s, Mibit/s, Gibit/s).",
+  preflight:
+    "Preflight request time includes connection setup and the response. It is not a latency measurement.",
+  checkReuse:
+    "Recent successful checks are reused while the required server and path are unchanged. " +
+    "Expired checks are refreshed before a test starts.",
+  forcedStreams:
+    "Automatic chooses concurrency for each protocol. Forced uses the exact count per server and " +
+    "direction within shared connection limits.",
+  resetSettings:
+    "Restore test, display, and history-saving settings to their defaults? " +
+    "Your theme, panel layout, and saved results will be kept.",
 } as const;
 
 export type Outcome = NonNullable<RunResult["outcome"]>;

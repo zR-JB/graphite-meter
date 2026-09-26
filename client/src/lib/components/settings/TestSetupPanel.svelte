@@ -227,7 +227,7 @@
         data-readiness={readiness}
         data-tone={READINESS[readiness].tone}
         use:tooltip={readiness === "verified"
-          ? "Recent successful checks are reused while the required server and path are unchanged. Expired checks are refreshed before a test starts."
+          ? JARGON.checkReuse
           : READINESS[readiness].label}
       >
         {READINESS[readiness].label}
@@ -466,7 +466,7 @@
       onToggle={(forced) => streams({ mode: forced ? "forced" : "auto" })}
       disabled={running || store.preparing}
       label="Force exact stream count"
-      tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
+      tooltip={JARGON.forcedStreams}
     />
     <label class="field">
       <span
@@ -524,7 +524,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description="Restore test, display, and history-saving settings to their defaults? Your theme, panel layout, and saved results will be kept."
+  description={JARGON.resetSettings}
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}

@@ -100,8 +100,6 @@ export function primaryResultGaugeArc(
   );
 }
 
-/** Completion animation is always bounded to the gauge's normalized domain. */
-
 export function resultGaugeArcs(result: RunResult | null): ResultGaugeArc[] {
   if (!result) return [];
   const arcs: ResultGaugeArc[] = [];

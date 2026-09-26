@@ -120,7 +120,7 @@ export class LatencyChannel {
     const replyDriven = fixedIntervalMs == null;
     // Reply-driven uses this only for its deadline sweep; PONGs and the adaptive backup drive its sends.
     const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE_FLOOR_MS;
-    // A loaded stage shares the link with the transfer, so its depth is the same either way; the idle stage goes.
+    // A loaded stage shares the link with its transfer, so its depth stays low at any cadence.
     const maxInFlight = !isLatencyStage
       ? PING_LOADED_MAX_IN_FLIGHT
       : replyDriven
@@ -404,7 +404,7 @@ export class IdleKeepalive {
         finish(new Error("latency channel validation aborted"));
       const timer = setTimeout(
         () => finish(new Error("latency channel did not become ready")),
-        // The worker's own establish deadline plus its mint sit inside this one, so without the margin the owner.
+        // The margin lets the worker's own establish deadline and mint report before this timeout.
         PING_ESTABLISH_TIMEOUT_MS,
       );
       this.#probeReady = { finish };

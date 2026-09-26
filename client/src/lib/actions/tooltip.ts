@@ -113,8 +113,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     if (event.pointerType !== "mouse") return;
     hide();
   }
-  // Keyboard focus asks for the tip; focus landing from a click does not.
-  // Focus restored inside another popover's hide may not show one yet.
+  // Only :focus-visible shows the tip, a microtask later, once a closing popover has restored focus.
   function onFocus(event: FocusEvent) {
     const target = event.target as HTMLElement;
     queueMicrotask(() => {

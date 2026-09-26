@@ -8,7 +8,6 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 
-/* ---------- Lifecycle ---------- */
 /* Phase sequence, all stages on. */
 export type Phase =
   | "idle"
@@ -44,8 +43,6 @@ export type ConnectivityState =
   | "unstable" // frequent probe timeouts
   | "offline";
 
-/* Automatic wire estimates ---------- Forward-direction physical link occupancy from application bytes. */
-
 /** Browser-facing wire transport, detected from Resource Timing and security. */
 export type CompensationTransport =
   | "http1-clear" // HTTP/1.1, no TLS
@@ -59,7 +56,6 @@ export interface TransferStreamPolicy {
   count: number;
 }
 
-/* ---------- Configuration passed INTO the runner ---------- */
 export interface RunnerConfig {
   /** Enabled measured stages. */
   stages: {
@@ -96,7 +92,6 @@ export interface RunnerConfig {
   visualization: { throughputMaxBytesPerSec: number | "auto" };
 }
 
-/* ---------- Raw samples emitted DURING a run ---------- */
 /** Authoritative in-run latency outcome in the window realm's monotonic clock domain. */
 export interface LatencyObservation {
   rttMs: number;
@@ -155,7 +150,6 @@ interface PhaseTransition {
   startedAt?: number;
 }
 
-/* ---------- Aggregate result (emitted on complete) ---------- */
 export const FAILURE_REASONS = [
   "preparation-failed",
   "connection-lost",
@@ -197,8 +191,7 @@ export interface ThroughputResult {
   reportedBytesPerSec: number;
 }
 
-/** Diagnostic means over the same successful, in-window replies with valid
- * negotiated timing. Missing timing is omitted from this population only. */
+/** Diagnostic means over in-window replies with negotiated timing; replies without it are left out. */
 export interface ReflectorTimingSummary {
   sampleCount: number;
   meanRawRttMs: number;
@@ -241,7 +234,6 @@ export interface BufferbloatGrade {
   grade: "A" | "B" | "C" | "D" | "F";
 }
 
-/* ---------- Transport negotiation ---------- */
 /* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =
   "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
@@ -341,7 +333,6 @@ export interface TransportDiscovery {
   latency: Record<string, DiscoveredLatency>;
 }
 
-/* ---------- The event union the UI listens to ---------- */
 export type RunnerEvent =
   | { type: "serverLatency"; serverId: string; sample: LatencyBucket }
   | {
@@ -385,5 +376,3 @@ export type LiveRunConfig = Pick<
   RunnerConfig,
   "stages" | "duration" | "adaptive"
 >;
-
-/* Stage lifecycle & warmup contract ---------- Connections belong to the STAGE, not the phase label. */

@@ -22,7 +22,6 @@ export const DEFAULT_CONFIG: RunnerConfig = {
   visualization: { throughputMaxBytesPerSec: "auto" },
 };
 
-type DurationKey = keyof RunnerConfig["duration"];
 /** Bounds in ms, as in the native client; a stage leaves room for the 800 ms evidence floor. */
 export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   warmupMs: [0, 4_000],
@@ -31,6 +30,7 @@ export const DURATION_LIMITS: Record<DurationKey, readonly [number, number]> = {
   uploadMs: [1_000, 300_000],
   bidirectionalMs: [1_000, 300_000],
 };
+type DurationKey = keyof RunnerConfig["duration"];
 
 export function clampDuration(key: DurationKey, value: unknown): number {
   const [min, max] = DURATION_LIMITS[key];
