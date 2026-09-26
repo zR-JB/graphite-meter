@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -88,6 +89,8 @@ type idleDeadline struct {
 	limit time.Time
 	live  *Activity
 	armed time.Time
+	mu    sync.Mutex
+	ended bool
 }
 
 func (d *idleDeadline) moved(now time.Time) {
@@ -99,8 +102,31 @@ func (d *idleDeadline) moved(now time.Time) {
 	if !d.limit.IsZero() && d.limit.Before(deadline) {
 		deadline = d.limit
 	}
-	_ = d.set(deadline)
+	d.mu.Lock()
+	if !d.ended {
+		_ = d.set(deadline)
+	}
+	d.mu.Unlock()
 	d.armed = now
+}
+
+// endWith cuts the lane's blocked read or write once ctx ends, so a later move cannot re-arm it. Its release
+// returns only once no cut can follow, since a response controller must not outlive its handler.
+func (d *idleDeadline) endWith(ctx context.Context) (release func()) {
+	stop := context.AfterFunc(ctx, func() {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if !d.ended {
+			d.ended = true
+			_ = d.set(time.Now())
+		}
+	})
+	return func() {
+		stop()
+		d.mu.Lock()
+		d.ended = true
+		d.mu.Unlock()
+	}
 }
 
 // idleWriter moves in pieces a slow but draining peer takes well within the idle bound.

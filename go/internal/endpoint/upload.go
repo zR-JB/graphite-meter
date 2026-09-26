@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -46,21 +47,28 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
-// ServeHTTP answers an idle lane 408; one at its lifetime has no writable answer. Its bytes count either way.
+// ServeHTTP answers a revoked lane 403 and an idle one 408; one at its lifetime has no writable answer.
+// Its bytes count either way.
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	limit, _ := r.Context().Deadline()
 	idle := &idleDeadline{set: http.NewResponseController(w).SetReadDeadline, limit: limit}
+	defer idle.endWith(r.Context())()
 	n, err := u.Receive(r.URL.Query().Get("id"), uploadClientOf(r, u.trusted), r.Body, idle)
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		writeUploadAccessError(w, refusal.access)
 		return
 	}
-	if errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)) {
+	switch {
+	case err != nil && auth.SessionEnded(r.Context()):
+		auth.SignInRequired(w.Header())
+		w.Header().Set("X-Graphite-Upload-Refusal", "revoked")
+		http.Error(w, endRevoked.Reason, http.StatusForbidden)
+		return
+	case errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)):
 		w.Header().Set("X-Graphite-Upload-Refusal", endIdle.Reason)
 		http.Error(w, endIdle.Reason, http.StatusRequestTimeout)
 		return
-	}
-	if err != nil {
+	case err != nil:
 		return
 	}
 	noStoreJSON(w)

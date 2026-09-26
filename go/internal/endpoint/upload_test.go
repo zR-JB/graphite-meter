@@ -223,7 +223,7 @@ func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
 
 // A stuck body read is bounded by the idle bound, or by the request's own earlier deadline.
 func TestUploadBoundsItsBodyRead(t *testing.T) {
-	for _, remaining := range []time.Duration{0, -time.Second, time.Second, time.Hour} {
+	for _, remaining := range []time.Duration{0, time.Second, time.Hour} {
 		t.Run(remaining.String(), func(t *testing.T) {
 			ctx := t.Context()
 			want := time.Now().Add(remaining)

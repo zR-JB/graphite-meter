@@ -154,18 +154,7 @@ func TestEndingTheAuthSessionUnwindsALiveWebTransportSession(t *testing.T) {
 		t.Fatalf("minted CONNECT status=%d, want a session", status)
 	}
 	answersPing(t, sess)
-
-	form := url.Values{"csrf": {s.csrf.Value}}.Encode()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+"/auth/logout", strings.NewReader(form))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", s.origin)
-	req.AddCookie(s.session)
-	res, err := s.uiClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-
+	s.signOut(t)
 	select {
 	case <-sess.Context().Done():
 	case <-time.After(5 * time.Second):

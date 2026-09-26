@@ -184,7 +184,7 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {
 	securityHeaders(w.Header())
 	s.MeasurementCORS(w.Header(), r)
-	w.Header().Set("Graphite-Meter-Auth", "required")
+	SignInRequired(w.Header())
 	w.Header().Set("Graphite-Meter-Browser-Auth", "1")
 	w.Header().Set("Graphite-Meter-Auth-URL", s.origin+"/login")
 	if r.ProtoMajor == 1 && r.Body != nil {
@@ -223,6 +223,9 @@ func (s *Service) sessionFormPrincipal(r *http.Request) (Principal, bool) {
 	return p, ok && p.session != nil &&
 		r.Header.Get("Origin") == s.origin && constantEqual(p.session.csrf, r.FormValue("csrf"))
 }
+
+// SignInRequired marks a refusal both clients answer by signing in again.
+func SignInRequired(h http.Header) { h.Set("Graphite-Meter-Auth", "required") }
 
 func SessionEnded(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), errSessionEnded)

@@ -31,6 +31,7 @@ func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		limit, _ := r.Context().Deadline()
 		sink := &idleWriter{w: w, idle: idleDeadline{set: http.NewResponseController(w).SetWriteDeadline, limit: limit}}
 		sink.idle.moved(time.Now())
+		defer sink.idle.endWith(r.Context())()
 		d.Stream(r.Context(), n, sink)
 	}
 }
