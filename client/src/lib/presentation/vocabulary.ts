@@ -15,6 +15,7 @@ import type { ThemePref } from "../state/persistence";
 import type { PreparationState } from "../state/store.svelte";
 
 export const MISSING = "—";
+export const RECEIVER_TIMED = "Receiver-timed";
 
 export const STAGE: Record<
   TransportRole,

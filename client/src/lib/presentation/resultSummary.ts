@@ -8,15 +8,9 @@ import type {
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
-import { MISSING, STAGE } from "./vocabulary";
+import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
 
-type Band = "low" | "medium" | "high";
 export type SummaryStatus = "complete" | "partial" | "failed";
-export interface WireView {
-  bytesPerSec: number;
-  pct: string | null;
-  tooltip: string;
-}
 export interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
@@ -25,19 +19,23 @@ export interface SummaryEvidence extends Pick<
   added: AddedLatency | null;
   latencySource?: string;
 }
+export interface SummaryRow {
+  label: string;
+  value: string;
+  /** The stage a row belongs to, drawn as its icon. */
+  stage?: TransportRole;
+  note?: string;
+}
+/** A headline with its grouped secondary values; `details` opens behind the card. */
 export interface SummaryCard {
   key: TransportRole;
   label: string;
   icon: IconName;
   status: SummaryStatus;
-  quality: { band: Band; pct: number } | null;
   num: string;
   unit: string;
-  detail: string;
-  jitter: string | null;
-  /** Signed added latency of a loaded stage. */
-  added: string | null;
-  wire: (WireView & { num: string }) | null;
+  rows: SummaryRow[];
+  details: SummaryRow[];
 }
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
@@ -47,28 +45,12 @@ export const CARD_ORDER = [
   "bidirectional",
   "latency",
 ] as const;
+const LOADED = ["download", "upload", "bidirectional"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
 const shownStatus = (stages: Record<TransportRole, string>) =>
   Object.fromEntries(
     Object.entries(stages).filter(([, value]) => SHOWN_STATUS.has(value)),
   ) as SummaryEvidence["status"];
-
-const wireOverhead = (multiplier: number) =>
-  multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
-
-function wireView(
-  wire: WireModel | null | undefined,
-  measuredBytesPerSec: number,
-): WireView | null {
-  const pct = wire && wireOverhead(wire.totalMultiplier);
-  return pct
-    ? {
-        bytesPerSec: measuredBytesPerSec * wire.totalMultiplier,
-        pct,
-        tooltip: compensationTooltip(wire),
-      }
-    : null;
-}
 
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
@@ -89,18 +71,108 @@ export function summaryEvidence(
     }
   );
 }
-const inUnit = (rate: Rate, bytesPerSec: number, shown: string) => {
+
+const withUnit = (rate: Rate, bytesPerSec: number) => {
   const { num, unit } = rate(bytesPerSec);
-  return unit === shown ? num : `${num} ${unit}`;
+  return `${num} ${unit}`;
 };
-/** One pip for every stage: 100 × (1 − relative variation), banded at 90 and 75. */
-const quality = (pct: number | null) =>
-  pct === null
-    ? null
-    : {
-        band: (pct >= 90 ? "high" : pct >= 75 ? "medium" : "low") as Band,
-        pct,
-      };
+const stability = (pct: number | null): SummaryRow[] =>
+  pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
+
+/** From half a percent of overhead the estimate joins the transferred data, and its breakdown the details. */
+function wire(
+  model: WireModel | null | undefined,
+  bytesPerSec: number,
+  rate: Rate,
+): [face: SummaryRow[], details: SummaryRow[]] {
+  if (!model || model.totalMultiplier < 1.005) return [[], []];
+  const overhead = `+${((model.totalMultiplier - 1) * 100).toFixed(1)}%`;
+  const note = compensationTooltip(model).split("\n").join(" · ");
+  return [
+    [
+      {
+        label: "Wire",
+        value: withUnit(rate, bytesPerSec * model.totalMultiplier),
+      },
+    ],
+    [{ label: "Wire overhead", value: overhead, note }],
+  ];
+}
+
+function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
+  const latency = evidence.latency;
+  if (!latency) return card;
+  const { reportedMs, jitterMs } = latency;
+  const added = LOADED.flatMap((stage): SummaryRow[] => {
+    const ms = evidence.added?.[stage];
+    return ms == null || evidence.status[stage] === "failed"
+      ? []
+      : [
+          {
+            label: "Added",
+            value: `${fmtAddedMs(ms)} ms`,
+            stage,
+          },
+        ];
+  });
+  const jitter = jitterMs == null ? MISSING : `${fmtMs(jitterMs)} ms`;
+  const steady =
+    card.status === "complete" && jitterMs != null
+      ? Math.max(0, 100 * (1 - jitterMs / Math.max(reportedMs, 1)))
+      : null;
+  return {
+    ...card,
+    num: fmtMs(reportedMs),
+    unit: "ms",
+    rows: [{ label: "Jitter", value: jitter }, ...added],
+    details: [
+      ...stability(steady),
+      ...(evidence.latencySource
+        ? [{ label: "Server", value: evidence.latencySource }]
+        : []),
+    ],
+  };
+}
+
+function bidirectionalCard(
+  card: SummaryCard,
+  evidence: SummaryEvidence,
+  rate: Rate,
+  showWire: boolean,
+) {
+  const lanes = evidence.bidirectional;
+  const model = bidirectionalResultPresentation(
+    lanes?.down?.reportedBytesPerSec,
+    lanes?.up?.reportedBytesPerSec,
+  );
+  const lane = (stage: "download" | "upload", bytesPerSec: number | null) => ({
+    label: STAGE[stage].short,
+    value: bytesPerSec === null ? "unavailable" : withUnit(rate, bytesPerSec),
+    stage,
+  });
+  const value = model.combinedBytesPerSec;
+  const rows =
+    value === null && !model.survivingDirection
+      ? []
+      : [lane("download", model.down), lane("upload", model.up)];
+  if (value === null) return { ...card, rows };
+  const complete = card.status === "complete";
+  const [face, details] =
+    showWire && complete ? wire(lanes?.wire, value, rate) : [[], []];
+  return {
+    ...card,
+    ...rate(value),
+    rows: [...rows, ...face],
+    details: [
+      ...stability(
+        complete && lanes?.down && lanes.up
+          ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
+          : null,
+      ),
+      ...details,
+    ],
+  };
+}
 
 export function summaryCards(
   evidence: SummaryEvidence,
@@ -118,84 +190,37 @@ export function summaryCards(
       status,
       num: MISSING,
       unit: "",
-      detail: "",
-      jitter: null,
-      added: null,
-      quality: null,
-      wire: null,
+      rows: [],
+      details: [],
     };
-    if (key === "latency") {
-      const latency = evidence.latency;
-      if (!latency) return [card];
-      return [
-        {
-          ...card,
-          num: fmtMs(latency.reportedMs),
-          unit: "ms",
-          jitter: latency.jitterMs == null ? MISSING : fmtMs(latency.jitterMs),
-          detail: evidence.latencySource
-            ? `from ${evidence.latencySource}`
-            : "",
-          quality:
-            status === "complete" && latency.jitterMs != null
-              ? quality(
-                  Math.max(
-                    0,
-                    100 *
-                      (1 - latency.jitterMs / Math.max(latency.reportedMs, 1)),
-                  ),
-                )
-              : null,
-        },
-      ];
-    }
-    let value: number | null;
-    let stabilityPct: number | null;
-    let wire: WireModel | null | undefined;
-    if (key === "bidirectional") {
-      const lanes = evidence.bidirectional;
-      const model = bidirectionalResultPresentation(
-        lanes?.down?.reportedBytesPerSec,
-        lanes?.up?.reportedBytesPerSec,
-      );
-      value = model.combinedBytesPerSec;
-      wire = lanes?.wire;
-      stabilityPct =
-        lanes?.down && lanes.up
-          ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
-          : null;
-      const unit = value === null ? "" : rate(value).unit;
-      const down = inUnit(rate, model.down ?? 0, unit);
-      const up = inUnit(rate, model.up ?? 0, unit);
-      card.detail =
-        value !== null
-          ? `↓ ${down} ↑ ${up}`
-          : model.survivingDirection === "down"
-            ? `↓ ${down} · upload unavailable`
-            : model.survivingDirection === "up"
-              ? `↑ ${up} · download unavailable`
-              : "";
-    } else {
-      const result = evidence[key];
-      value = result?.reportedBytesPerSec ?? null;
-      stabilityPct = result?.stabilityPct ?? null;
-      wire = result?.wire;
-      if (result)
-        card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
-    }
-    const added = evidence.added?.[key];
-    if (added != null && status !== "failed") card.added = fmtAddedMs(added);
-    if (value === null) return [card];
-    const shown = rate(value);
-    const view = showWire && status === "complete" && wireView(wire, value);
+    if (key === "latency") return [latencyCard(card, evidence)];
+    if (key === "bidirectional")
+      return [bidirectionalCard(card, evidence, rate, showWire)];
+    const result = evidence[key];
+    if (!result) return [card];
+    const value = result.reportedBytesPerSec;
+    const complete = status === "complete";
+    const [face, details] =
+      showWire && complete ? wire(result.wire, value, rate) : [[], []];
+    const peak = result.peakBytesPerSec;
     return [
       {
         ...card,
-        ...shown,
-        quality: status === "complete" ? quality(stabilityPct) : null,
-        wire: view
-          ? { ...view, num: inUnit(rate, view.bytesPerSec, shown.unit) }
-          : null,
+        ...rate(value),
+        rows: [
+          { label: "Transferred", value: fmtBytes(result.totalBytes, base) },
+          ...face,
+        ],
+        details: [
+          ...stability(complete ? result.stabilityPct : null),
+          ...(peak == null
+            ? []
+            : [{ label: "Peak", value: withUnit(rate, peak) }]),
+          ...(key === "upload"
+            ? [{ label: "Timing", value: RECEIVER_TIMED }]
+            : []),
+          ...details,
+        ],
       },
     ];
   });

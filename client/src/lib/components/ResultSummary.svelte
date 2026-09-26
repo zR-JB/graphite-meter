@@ -1,10 +1,10 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { tooltip } from "../actions/tooltip";
-  import type { SummaryCard } from "../presentation/resultSummary";
+  import Disclosure from "./Disclosure.svelte";
+  import type { SummaryCard, SummaryRow } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
-  import { JARGON, STATUS } from "../presentation/vocabulary";
+  import { JARGON, STAGE, STATUS } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -17,8 +17,23 @@
     scope?: string;
     onscope?: (id: string) => void;
   } = $props();
-  const QUALITY_TONE = { high: "ok", medium: "warn", low: "err" } as const;
+  // One state for every card, so the row of cards opens and closes together.
+  let open = $state(false);
 </script>
+
+{#snippet line({ label, value, stage, note }: SummaryRow)}
+  <span class="line">
+    <span class="line-label">
+      {#if stage}<span class="line-icon" data-tone={stage}
+          ><Icon name={STAGE[stage].icon} /></span
+        >{#if label !== STAGE[stage].short}<span class="sr-only"
+            >{STAGE[stage].short}</span
+          >{/if}{/if}{label}
+    </span>
+    <span class="line-value">{value}</span>
+    {#if note}<span class="line-note">{note}</span>{/if}
+  </span>
+{/snippet}
 
 <div class="result-summary" style:--cards={Math.min(4, cards.length)}>
   {#if details && details.selection.length > 1 && onscope}
@@ -37,67 +52,44 @@
     </div>
   {/if}
   <div class="result-cards">
-    {#each cards as card, index (card.key)}
-      <article
-        class="surface result-card enter"
-        data-tone={card.key}
-        style:--i={index}
-      >
-        <header>
-          <span class="tone-icon" aria-hidden="true"
-            ><Icon name={card.icon} /></span
-          >
-          {#if card.key === "latency"}
-            <span class="label" {@attach tooltip(() => JARGON.latency)}
-              >{card.label}</span
+    {#each cards as card (card.key)}
+      <Disclosure class="surface result-card enter" tone={card.key} bind:open>
+        {#snippet summary()}
+          <span class="head">
+            <span class="tone-icon" aria-hidden="true"
+              ><Icon name={card.icon} /></span
             >
-          {:else}
             <span class="label">{card.label}</span>
-          {/if}
-          {#if card.quality}
-            {@const pct = `Measurement stability: ${Math.round(card.quality.pct)}%`}
-            <span
-              class="badge"
-              data-tone={QUALITY_TONE[card.quality.band]}
-              {@attach tooltip(() => pct)}
-              >{card.quality.band}<span class="sr-only">, {pct}</span></span
-            >
-          {:else if card.status !== "complete"}
-            <span class="badge" data-tone="err">{STATUS[card.status]}</span>
-          {/if}
-        </header>
-        {#key scope}
-          <div class="readout enter">
-            <p class="val">
-              <span class="num">{card.num}</span>
-              <span class="unit">{card.unit}</span>
-            </p>
-            {#if card.jitter !== null}
-              <p class="line">
-                <strong>{card.jitter} <small>ms</small></strong>
-                <span {@attach tooltip(() => JARGON.jitter)}>jitter</span>
-              </p>
+            {#if card.status !== "complete"}
+              <span class="badge" data-tone="err">{STATUS[card.status]}</span>
             {/if}
-            {#if card.added !== null}
-              <p class="line">
-                <strong>{card.added} <small>ms</small></strong>
-                <span {@attach tooltip(() => JARGON.addedLatency)}
-                  >added latency</span
-                >
-              </p>
-            {/if}
-            {#if card.wire}
-              <p class="line">
-                <strong>{card.wire.num}</strong>
-                <span {@attach tooltip(() => card.wire?.tooltip ?? "")}
-                  >wire{card.wire.pct ? ` ${card.wire.pct}` : ""}</span
-                >
-              </p>
-            {/if}
-            {#if card.detail}<p class="detail">{card.detail}</p>{/if}
-          </div>
-        {/key}
-      </article>
+          </span>
+          {#key scope}
+            <span class="readout enter">
+              <span class="val">
+                <span class="num">{card.num}</span>
+                <span class="unit">{card.unit}</span>
+              </span>
+              {#each card.rows as row (row.label + row.stage)}
+                {@render line(row)}
+              {/each}
+            </span>
+          {/key}
+        {/snippet}
+        <div class="readout details">
+          {#each card.details as row (row.label)}
+            {@render line(row)}
+          {:else}
+            <p class="hint">No further measurements.</p>
+          {/each}
+        </div>
+        {#if card.key === "latency"}
+          <p class="hint">{JARGON.jitter}</p>
+          {#if card.rows.length > 1}<p class="hint">
+              {JARGON.addedLatency}
+            </p>{/if}
+        {/if}
+      </Disclosure>
     {/each}
   </div>
 </div>
@@ -120,36 +112,32 @@
   }
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
     gap: var(--space-2);
   }
-  @container results (max-width: 452px) {
+  @container results (max-width: 540px) {
     .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .result-card:last-child:nth-child(odd) {
+    .result-cards > :global(:last-child:nth-child(odd)) {
       grid-column: 1 / -1;
     }
   }
-  @container results (max-width: 301px) {
+  @container results (max-width: 330px) {
     .result-cards {
       grid-template-columns: minmax(0, 1fr);
     }
   }
-  .result-card {
-    display: grid;
-    align-content: start;
-    gap: 6px;
-    min-width: 0;
-    padding: 10px var(--space-3);
-    transition-delay: calc(var(--i) * 40ms);
+  .result-cards > :global(.result-card) {
+    --disclosure-pad: var(--space-3);
   }
-  header {
+  .head {
     display: flex;
     align-items: center;
     gap: var(--space-2);
+    min-width: 0;
   }
-  header .badge {
+  .head .badge {
     margin-left: auto;
   }
   .label {
@@ -158,14 +146,18 @@
   }
   .readout {
     display: grid;
-    gap: 5px;
+    gap: 3px;
     min-width: 0;
   }
-  .val,
-  .line {
+  .details {
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+  }
+  .val {
     display: flex;
     align-items: baseline;
     gap: 6px;
+    margin: 2px 0 var(--space-1);
   }
   .num {
     font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
@@ -177,20 +169,37 @@
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
   .line {
-    font: var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0 var(--space-2);
+    min-width: 0;
   }
-  .line strong {
-    color: var(--brand-strong);
-  }
-  .line small,
-  .line > span {
+  .line-label {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
     color: var(--text-soft);
-    font-size: var(--type-2xs);
+    font-size: var(--type-xs);
   }
-  .detail {
+  .line-icon {
+    display: inline-grid;
+    color: var(--tone);
+  }
+  .line-icon :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  .line-note {
+    flex-basis: 100%;
     color: var(--text-soft);
-    font: var(--type-xs) var(--font-mono);
+    font-size: var(--type-xs);
+  }
+  .line-value {
+    margin-left: auto;
+    font: var(--w-strong) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
+    text-align: end;
   }
 </style>

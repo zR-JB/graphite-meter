@@ -58,10 +58,13 @@ test("a saved wire overhead shows from half a percent and only when chosen", () 
       rate,
       "base10",
       show,
-    )[0].wire;
-  expect(wire(1.004)).toBeNull();
-  expect(wire(1.05)).toMatchObject({ pct: "+5.0%", num: "105" });
-  expect(wire(1.05, false)).toBeNull();
+    )[0];
+  const face = (card: ReturnType<typeof wire>) =>
+    card.rows.find((row) => row.label === "Wire")?.value;
+  expect(face(wire(1.004))).toBeUndefined();
+  expect(face(wire(1.05))).toBe("105 B/s");
+  expect(wire(1.05).details.at(-1)?.value).toBe("+5.0%");
+  expect(face(wire(1.05, false))).toBeUndefined();
 });
 
 test("a one-lane bidirectional result has no combined value, only its surviving lane", () => {
@@ -78,14 +81,12 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
     "base10",
     true,
   );
-  expect(card).toMatchObject({
-    num: "—",
-    quality: null,
-    detail: "↓ 40 B/s · upload unavailable",
-  });
+  expect(card.num).toBe("—");
+  expect(card.details).toEqual([]);
+  expect(card.rows.map((row) => row.value)).toEqual(["40 B/s", "unavailable"]);
 });
 
-test("loaded cards show signed added latency and every card one pip rule", () => {
+test("the latency card groups signed added latency; details show stability as a value", () => {
   const cards = summaryCards(
     {
       status: {
@@ -104,10 +105,12 @@ test("loaded cards show signed added latency and every card one pip rule", () =>
     "base10",
     true,
   );
-  expect(cards.map((card) => [card.added, card.quality?.band])).toEqual([
-    ["+8.3", "high"],
-    ["+0.0", "medium"],
-    [null, undefined],
-    [null, "high"],
+  const added = cards.at(-1)!.rows.filter((row) => row.label === "Added");
+  expect(added.map((row) => [row.stage, row.value])).toEqual([
+    ["download", "+8.3 ms"],
+    ["upload", "+0.0 ms"],
   ]);
+  const stability = (card: (typeof cards)[number]) =>
+    card.details.find((row) => row.label === "Stability")?.value;
+  expect(cards.map(stability)).toEqual(["95%", "80%", undefined, "92%"]);
 });
