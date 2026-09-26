@@ -59,6 +59,7 @@ const (
 	OutcomeFailed     Outcome = "failed"
 )
 
+// EventKind orders a run's stream: EventServers first, then any others, and EventDone exactly once, last.
 type EventKind int
 
 const (

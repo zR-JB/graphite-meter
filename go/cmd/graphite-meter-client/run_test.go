@@ -756,6 +756,18 @@ func TestGrantsFollowTheCatalogueOrigin(t *testing.T) {
 	}
 }
 
+func TestEventsBeforeTheServersLeaveThePreviousRunAlone(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	previous := m.run
+	m.next = newRunState(m.cfg, "", time.Now())
+	stage := goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring}
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{stage}}))
+	if m.run != previous || m.next == nil || previous.stage != "" {
+		t.Fatalf("an event before EventServers reached the previous run: %+v", m.run)
+	}
+}
+
 func TestFailedRunShowsNoActivity(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)

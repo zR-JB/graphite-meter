@@ -263,6 +263,8 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 		case m.next != nil && event.Kind == goclient.EventServers:
 			m.run, m.next, m.notice = m.next, nil, "Test started. Press esc to stop."
 			m.body.SetYOffset(0)
+		case m.next != nil:
+			continue
 		case event.Kind == goclient.EventDone:
 			return m.finishRun(event)
 		}
