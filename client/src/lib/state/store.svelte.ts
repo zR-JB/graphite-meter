@@ -38,10 +38,10 @@ import {
   rawRateFrom,
 } from "../format";
 import { gaugeScaleForPeak } from "../components/gaugeScale";
+import type { LatencyProfileViewLane } from "../components/latencyProfile";
 import { buildSegments } from "../runner/schedule";
 import {
   latencyLanes,
-  type LatencyLaneSnapshot,
   type MultiServerResult,
   type ServerFailure,
 } from "../runner/measure";
@@ -120,25 +120,23 @@ const TERMINAL_PHASES: readonly Phase[] = [
   "error",
 ];
 
-export interface LatencyLane {
-  reflectorTiming?: LatencyLaneSnapshot["reflectorTiming"];
-  key: TransportRole;
-  min: number | null;
-  max: number | null;
-  p10: number | null;
-  p90: number | null;
-  p95: number | null;
-  center: number | null;
-  current: number | null;
-  jitter: number | null;
-  timeoutRatio: number | null;
-  accountingComplete: boolean | null;
-  timeoutCount: number | null;
-  unresolvedCount: number | null;
-  sendFailureCount: number | null;
-  count: number;
-  active: boolean;
-}
+export type LatencyLane = Omit<LatencyProfileViewLane, "label" | "tone">;
+/** A stage without a summary shows no statistics. */
+const EMPTY_LANE = {
+  min: null,
+  max: null,
+  p10: null,
+  p90: null,
+  p95: null,
+  center: null,
+  jitter: null,
+  timeoutRatio: null,
+  accountingComplete: null,
+  timeoutCount: null,
+  unresolvedCount: null,
+  sendFailureCount: null,
+  count: 0,
+};
 
 /** The bidirectional lanes' latest presented rates, newest sample per direction. */
 function bidirectionalLanes(samples: readonly ThroughputSample[]) {
@@ -881,32 +879,17 @@ class AppStore {
 
   latencyLanes = $derived.by<LatencyLane[]>(() => {
     const lanes = latencyLanes(this.latencySummaries);
-    return STAGE_ORDER.map((key) => {
-      const lane = lanes[key];
-      return {
-        ...lane,
-        key,
-        min: lane?.min ?? null,
-        max: lane?.max ?? null,
-        p10: lane?.p10 ?? null,
-        p90: lane?.p90 ?? null,
-        p95: lane?.p95 ?? null,
-        center: lane?.center ?? null,
-        current:
-          this.latency.findLast((sample) => sample.phase === key)
-            ?.medianRttMs ?? null,
-        jitter: lane?.jitter ?? null,
-        timeoutRatio: lane?.timeoutRatio ?? null,
-        accountingComplete: lane?.accountingComplete ?? null,
-        timeoutCount: lane?.timeoutCount ?? null,
-        unresolvedCount: lane?.unresolvedCount ?? null,
-        sendFailureCount: lane?.sendFailureCount ?? null,
-        count: lane?.count ?? 0,
-        active: ["active", "recovering"].includes(
-          this.stagePresentation[key].status,
-        ),
-      };
-    });
+    return STAGE_ORDER.map((key) => ({
+      ...EMPTY_LANE,
+      ...lanes[key],
+      key,
+      current:
+        this.latency.findLast((sample) => sample.phase === key)?.medianRttMs ??
+        null,
+      active: ["active", "recovering"].includes(
+        this.stagePresentation[key].status,
+      ),
+    }));
   });
 }
 
