@@ -37,6 +37,10 @@ on:
         required: false
         default: ''
         type: string
+    outputs:
+      digest:
+        description: Manifest digest of the verified archive now published as the tag
+        value: ${{ jobs.publish.outputs.digest }}
 
 # Serialize the check-then-copy transaction for one immutable destination tag.
 concurrency:
@@ -55,6 +59,8 @@ jobs:
       checks: read
       security-events: read
       packages: write
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
     env:
       SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.2@sha256:093db3c35ae8bc8569d1cc034a503ff00abb6f4adac1cf7bab561881e3de94d4
     steps:
@@ -75,6 +81,16 @@ jobs:
             exit 1
           }
           echo "::notice::verified OCI handoff sha256:$actual"
+
+      - id: digest
+        name: Read the verified archive's manifest digest
+        run: |
+          set -euo pipefail
+          digest=$(docker run --rm --network none -v "$RUNNER_TEMP/image:/work:ro" \
+            --entrypoint skopeo "$SKOPEO_IMAGE" inspect --format "{{.Digest}}" \
+            oci-archive:/work/graphite-meter.oci.tar)
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid archive digest" >&2; exit 1; }
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
 
       - name: Publish exact tag idempotently
         env:

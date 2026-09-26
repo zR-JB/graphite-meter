@@ -11,6 +11,10 @@ on:
         description: Stable major.minor alias
         required: true
         type: string
+      digest:
+        description: Verified manifest digest published as the exact version
+        required: true
+        type: string
 
 # Alias moves are globally serialized and then guarded by published SemVer order.
 concurrency:
@@ -35,8 +39,10 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ inputs.version }}
           SERIES: ${{ inputs.series }}
+          DIGEST: ${{ inputs.digest }}
         run: |
           set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid verified digest" >&2; exit 1; }
           [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "invalid stable version" >&2; exit 1; }
           [[ "$SERIES" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo "invalid stable series" >&2; exit 1; }
           requested="v$VERSION"
@@ -71,6 +77,7 @@ jobs:
           REGISTRY_ACTOR: ${{ github.actor }}
           VERSION: ${{ inputs.version }}
           SERIES: ${{ inputs.series }}
+          DIGEST: ${{ inputs.digest }}
           PROMOTE_SERIES: ${{ steps.order.outputs.series }}
           PROMOTE_LATEST: ${{ steps.order.outputs.latest }}
         run: |
@@ -82,6 +89,7 @@ jobs:
             -e IMAGE="$image" \
             -e VERSION="$VERSION" \
             -e SERIES="$SERIES" \
+            -e DIGEST="$DIGEST" \
             -e PROMOTE_SERIES="$PROMOTE_SERIES" \
             -e PROMOTE_LATEST="$PROMOTE_LATEST" \
             "$SKOPEO_IMAGE" -ec '
@@ -95,23 +103,21 @@ jobs:
               export REGISTRY_AUTH_FILE="$auth_dir/auth.json"
 
               printf "%s" "$REGISTRY_TOKEN" | skopeo login ghcr.io --username "$REGISTRY_ACTOR" --password-stdin
-              source_tag="docker://$IMAGE:$VERSION"
-              source_digest=$(skopeo inspect --format "{{.Digest}}" "$source_tag")
-              if ! printf "%s\n" "$source_digest" | grep -Eq "^sha256:[0-9a-f]{64}\$"; then
-                echo "source tag returned an invalid digest: $source_digest" >&2
+              version_digest=$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$VERSION")
+              [ "$version_digest" = "$DIGEST" ] || {
+                echo "$VERSION resolves to $version_digest, not the verified $DIGEST" >&2
                 exit 1
-              fi
-              source="docker://$IMAGE@$source_digest"
+              }
 
               promote() {
                 alias=$1
-                skopeo copy --all --preserve-digests "$source" "docker://$IMAGE:$alias"
+                skopeo copy --all --preserve-digests "docker://$IMAGE@$DIGEST" "docker://$IMAGE:$alias"
                 alias_digest=$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$alias")
-                [ "$alias_digest" = "$source_digest" ] || {
-                  echo "$alias digest $alias_digest does not match $VERSION digest $source_digest" >&2
+                [ "$alias_digest" = "$DIGEST" ] || {
+                  echo "$alias digest $alias_digest does not match the verified $DIGEST" >&2
                   exit 1
                 }
-                echo "promoted $IMAGE:$alias -> $source_digest"
+                echo "promoted $IMAGE:$alias -> $DIGEST"
               }
 
               [ "$PROMOTE_SERIES" = true ] && promote "$SERIES"

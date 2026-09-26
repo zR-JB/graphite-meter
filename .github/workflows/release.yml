@@ -191,7 +191,7 @@ jobs:
   promote:
     name: Promote stable aliases without rollback
     if: needs.verify.outputs.stable == 'true'
-    needs: [verify, publish-release]
+    needs: [verify, publish-image, publish-release]
     uses: ./.github/workflows/_promote-oci.yml
     permissions:
       contents: read
@@ -199,3 +199,4 @@ jobs:
     with:
       version: ${{ needs.verify.outputs.version }}
       series: ${{ needs.verify.outputs.series }}
+      digest: ${{ needs.publish-image.outputs.digest }}

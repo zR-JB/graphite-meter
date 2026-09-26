@@ -199,7 +199,7 @@ published=$(wait_for_release_published "test convergence")
 
 
 class PromotionTests(unittest.TestCase):
-    def promote(self, digest: str, series: str, latest: str) -> subprocess.CompletedProcess[str]:
+    def promote(self, version_digest: str, latest: str) -> tuple[int, str, str]:
         text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
         step = text.split("name: Promote verified stable image without rollback", 1)[1]
         script = textwrap.dedent(step.split("run: |\n", 1)[1])
@@ -207,28 +207,41 @@ class PromotionTests(unittest.TestCase):
                 ' sh -ec "$2"; }\n')
         with tempfile.TemporaryDirectory() as directory:
             skopeo = pathlib.Path(directory) / "skopeo"
-            skopeo.write_text('#!/bin/sh\n[ "$1" = inspect ] && printf "%s\\n" "$FAKE_DIGEST"\nexit 0\n')
+            skopeo.write_text('#!/bin/sh\necho "$*" >>"$SKOPEO_LOG"\n'
+                              '[ "$1" = inspect ] && case "$4" in *:1.2.3) echo "$VERSION_DIGEST" ;;'
+                              ' *) echo "$DIGEST" ;; esac\nexit 0\n')
             skopeo.chmod(0o755)
+            log = pathlib.Path(directory) / "skopeo.log"
             env = os.environ | {
-                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "FAKE_DIGEST": digest,
+                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "SKOPEO_LOG": str(log),
+                "DIGEST": "sha256:" + "a" * 64, "VERSION_DIGEST": version_digest,
                 "REGISTRY_TOKEN": "token", "REPOSITORY": "Owner/Repo", "REGISTRY_ACTOR": "owner",
-                "VERSION": "1.2.3", "SERIES": "1.2", "PROMOTE_SERIES": series,
+                "VERSION": "1.2.3", "SERIES": "1.2", "PROMOTE_SERIES": "true",
                 "PROMOTE_LATEST": latest, "SKOPEO_IMAGE": "skopeo",
             }
-            return subprocess.run(["bash", "-c", shim + script], env=env, capture_output=True,
-                                  text=True)
+            result = subprocess.run(["bash", "-c", shim + script], env=env, capture_output=True,
+                                    text=True)
+            return result.returncode, result.stdout + result.stderr, log.read_text()
 
-    def test_promotion_rejects_a_source_digest_with_trailing_data(self) -> None:
-        result = self.promote("sha256:" + "a" * 64 + "evil", "true", "true")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("source tag returned an invalid digest", result.stderr)
-        self.assertNotIn("promoted", result.stdout)
+    def test_aliases_copy_only_the_verified_digest(self) -> None:
+        verified = "sha256:" + "a" * 64
+        status, output, log = self.promote(verified, "true")
+        self.assertEqual(status, 0, output)
+        for alias in ("1.2", "latest"):
+            self.assertIn(f"copy --all --preserve-digests docker://ghcr.io/owner/repo@{verified} "
+                          f"docker://ghcr.io/owner/repo:{alias}", log)
 
-    def test_promotion_of_an_older_series_succeeds_without_latest(self) -> None:
-        result = self.promote("sha256:" + "a" * 64, "true", "false")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("promoted ghcr.io/owner/repo:1.2", result.stdout)
-        self.assertNotIn(":latest", result.stdout)
+    def test_a_moved_version_tag_stops_promotion(self) -> None:
+        status, output, log = self.promote("sha256:" + "b" * 64, "true")
+        self.assertNotEqual(status, 0)
+        self.assertIn("not the verified", output)
+        self.assertNotIn("copy", log)
+
+    def test_an_older_series_is_promoted_without_latest(self) -> None:
+        status, output, log = self.promote("sha256:" + "a" * 64, "false")
+        self.assertEqual(status, 0, output)
+        self.assertIn("promoted ghcr.io/owner/repo:1.2", output)
+        self.assertNotIn(":latest", log)
 
 
 if __name__ == "__main__":
