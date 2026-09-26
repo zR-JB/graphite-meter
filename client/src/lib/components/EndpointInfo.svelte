@@ -51,12 +51,12 @@
   const discovery = $derived(
     activePaths?.discovery ??
       (selectedServer
-        ? (store.serverDiscoveries.get(selectedServer.id) ?? null)
+        ? (store.servers.get(selectedServer.id)?.discovery ?? null)
         : store.transportDiscovery),
   );
   const validation = $derived(
     selectedServer
-      ? (store.serverValidation.get(selectedServer.id) ??
+      ? (store.servers.get(selectedServer.id)?.validation ??
           emptyConnectionValidation())
       : store.connectionValidation,
   );

@@ -16,18 +16,20 @@ const servers = [
 const discoveries = new Map(
   servers.map((server, index) => [
     server.id,
-    classifyTransportDiscovery(
-      [
-        {
-          baseUrl: server.url,
-          transport: "fetch-stream",
-          protocol: index ? "http2" : "http1",
-        },
-      ],
-      [{ baseUrl: server.url, transport: "websocket" }],
-      server.url,
-      true,
-    ),
+    {
+      discovery: classifyTransportDiscovery(
+        [
+          {
+            baseUrl: server.url,
+            transport: "fetch-stream",
+            protocol: index ? "http2" : "http1",
+          },
+        ],
+        [{ baseUrl: server.url, transport: "websocket" }],
+        server.url,
+        true,
+      ),
+    },
   ]),
 );
 test("automatic may use different reliable protocols while explicit compatibility covers every server", () => {
@@ -75,7 +77,7 @@ test("server transport options name the browser's IPv6 configuration remedy", ()
   const options = serverTransportOptions(
     "throughput",
     [{ id: "ipv6", name: "IPv6 meter", url: origin }],
-    new Map([["ipv6", discovery]]),
+    new Map([["ipv6", { discovery }]]),
     false,
     "auto",
     false,
@@ -213,7 +215,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
 });
 
 test("switching servers carries a transport preference without the previous origin", () => {
-  const discovery = discoveries.get("a")!;
+  const { discovery } = discoveries.get("a")!;
   expect(
     portableTransportSelection("throughput", servers[0].url, discovery),
   ).toBe("protocol:http1");

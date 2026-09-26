@@ -1,14 +1,6 @@
-// Contracts of the connection model, its owner, and the application controller that drives them.
+// Contracts of the connection model and the application controller that owns it.
 import "../state/runes.testutil";
-import {
-  afterAll,
-  afterEach,
-  beforeAll,
-  beforeEach,
-  expect,
-  spyOn,
-  test,
-} from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
 import type {
   FetchThroughputTarget,
   WebSocketLatencyTarget,
@@ -30,7 +22,12 @@ import {
   CONNECTION_FRESH_MS,
   emptyConnectionValidation,
   type ConnectionValidation,
+  type ServerView,
 } from "./connectionModel";
+import type {
+  ApplicationController,
+  createApplicationController,
+} from "./controller.svelte";
 import {
   classifyTransportDiscovery,
   fetchViewOfOrigin,
@@ -39,21 +36,14 @@ import {
   ROUTES,
 } from "./real/backendPure";
 import type { ConnectionPreparation } from "./real/prepare";
-import {
-  PreflightUnavailableError,
-  TransportUnavailableError,
-} from "./real/transportError";
-import {
-  ServerConnections,
-  type ServerConnectionView,
-} from "../servers/connections";
+import { PreflightUnavailableError } from "./real/transportError";
+import type { ServerEntry } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { stubGlobals } from "../test-helpers.testutil";
 import {
   TEST_BUILD_TOKENS,
   testPreparedPaths,
-  testServerCatalog,
   testServerDiscovery,
 } from "./test-helpers.testutil";
 
@@ -91,21 +81,14 @@ function config(): RunnerConfig {
     transferStreams: { mode: "auto", count: 6 },
   };
 }
-function makeDiscovery(
-  options: {
-    throughput?: Parameters<typeof classifyTransportDiscovery>[0];
-    latency?: Parameters<typeof classifyTransportDiscovery>[1];
-    pageOrigin?: string;
-    pageProtocol?: string;
-  } = {},
-): TransportDiscovery {
+function makeDiscovery(): TransportDiscovery {
   return {
     ...classifyTransportDiscovery(
-      options.throughput ?? [throughput],
-      options.latency ?? [latency],
-      options.pageOrigin ?? throughput.origin,
+      [throughput],
+      [latency],
+      throughput.origin,
       true,
-      options.pageProtocol ?? "h2",
+      "h2",
     ),
     uploadCheckpoint: true,
     generation: "generation-a",
@@ -244,22 +227,12 @@ test("participant role summaries never borrow another role's failure or checking
   const a = makeValidation(paths);
   const b = makeValidation(paths);
   b.throughput = { selection: "auto", state: "failed", path: null };
-  const discoveries = new Map([
-    ["a", paths.discovery],
-    ["b", paths.discovery],
+  const servers = new Map([
+    ["a", { discovery: paths.discovery, validation: a }],
+    ["b", { discovery: paths.discovery, validation: b }],
   ]);
-  const validations = new Map([
-    ["a", a],
-    ["b", b],
-  ]);
-  const summary = (role: "throughput" | "latency") =>
-    summarizeRoleValidation(
-      config(),
-      role,
-      ["a", "b"],
-      discoveries,
-      validations,
-    );
+  const summary = (role: "throughput" | "latency", ids = ["a", "b"]) =>
+    summarizeRoleValidation(config(), role, ids, servers);
   expect(summary("throughput")).toEqual({
     state: "failed",
     verified: 1,
@@ -273,17 +246,16 @@ test("participant role summaries never borrow another role's failure or checking
   b.throughput.state = "checking";
   expect(summary("throughput").state).toBe("checking");
   expect(summary("latency").state).toBe("verified");
-  discoveries.set("b", { ...paths.discovery, generation: "new" });
+  servers.set("b", {
+    discovery: { ...paths.discovery, generation: "new" },
+    validation: b,
+  });
   expect(summary("latency")).toEqual({ state: "stale", verified: 1, total: 2 });
-  expect(
-    summarizeRoleValidation(
-      config(),
-      "latency",
-      ["a", "missing"],
-      discoveries,
-      validations,
-    ),
-  ).toEqual({ state: "stale", verified: 1, total: 2 });
+  expect(summary("latency", ["a", "missing"])).toEqual({
+    state: "stale",
+    verified: 1,
+    total: 2,
+  });
 });
 
 test("upload capability blocks prepared paths and throughput presentation without erasing probe evidence", () => {
@@ -312,21 +284,15 @@ test("upload capability blocks prepared paths and throughput presentation withou
     uploadCapabilityFailure(cfg, paths.discovery),
   );
   expect(view.latency.validation).toBe("verified");
-  const discoveries = new Map([["self", paths.discovery]]);
-  const validations = new Map([["self", validation]]);
-  expect(
-    summarizeRoleValidation(
-      cfg,
-      "throughput",
-      ["self"],
-      discoveries,
-      validations,
-    ),
-  ).toEqual({ state: "failed", verified: 0, total: 1 });
-  expect(
-    summarizeRoleValidation(cfg, "latency", ["self"], discoveries, validations)
-      .state,
-  ).toBe("verified");
+  const servers = new Map([
+    ["self", { discovery: paths.discovery, validation }],
+  ]);
+  expect(summarizeRoleValidation(cfg, "throughput", ["self"], servers)).toEqual(
+    { state: "failed", verified: 0, total: 1 },
+  );
+  expect(summarizeRoleValidation(cfg, "latency", ["self"], servers).state).toBe(
+    "verified",
+  );
   expect(validation.throughput.state).toBe("verified");
   cfg.stages.upload = false;
   expect(connectionDraftRoleKey(cfg, "throughput")).toBe(initialKey);
@@ -340,536 +306,81 @@ test("upload capability blocks prepared paths and throughput presentation withou
   expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
 });
 
-/* ---------- Connection owner ---------- */
-let restore: () => void;
-beforeEach(() => {
-  restore = stubGlobals({ location: new URL("http://meter.test") });
-});
-afterEach(() => restore());
+/* ---------- Application controller ---------- */
+type Dependencies = NonNullable<
+  Parameters<typeof createApplicationController>[1]
+>;
+type Store = typeof import("../state/store.svelte").store;
+interface Harness {
+  controller: ApplicationController;
+  store: Store;
+  runner: TestRunner;
+  idle: ReturnType<typeof idleMonitors>;
+  setVisibility: (state: "hidden" | "visible") => void;
+  view: (id?: string) => ServerView;
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
+  const promise = new Promise<T>((done) => (resolve = done));
   return { promise, resolve };
 }
-async function settle() {
-  for (let i = 0; i < 40; i++) await Promise.resolve();
+async function until(done: () => boolean, turns = 100): Promise<void> {
+  for (let turn = 0; turn < turns && !done(); turn++)
+    await new Promise((resolve) => setTimeout(resolve, 0));
 }
-function preparation(): ConnectionPreparation {
+const settle = () => until(() => false, 10);
+function evidence(generation = "gen-a"): PreparedPaths {
   const paths = testPreparedPaths();
+  paths.discovery.generation = generation;
+  paths.throughput.generation = generation;
+  paths.latency!.generation = generation;
+  return paths;
+}
+function preparation(
+  config: RunnerConfig = DEFAULT_CONFIG,
+  paths = evidence(),
+): ConnectionPreparation {
   return {
     discovery: paths.discovery,
     validation: {
       throughput: {
-        selection: "auto",
+        selection: config.transports.throughputTarget,
         state: "verified",
         path: paths.throughput,
       },
-      latency: { selection: "auto", state: "verified", path: paths.latency },
-    },
-  };
-}
-function fixture(
-  prepare: ConstructorParameters<typeof ServerConnections>[0]["prepare"],
-  discover: ConstructorParameters<
-    typeof ServerConnections
-  >[0]["discover"] = async () => testPreparedPaths().discovery,
-) {
-  const views = new Map<string, ServerConnectionView>();
-  const manager = new ServerConnections({
-    discover,
-    prepare,
-    changed: (changed) => {
-      for (const view of changed) views.set(view.server.id, view);
-    },
-    idleEvent() {},
-  });
-  manager.reset(
-    ["self", "peer"].map((id) => ({ id, name: id, url: "http://meter.test" })),
-  );
-  const config = structuredClone(DEFAULT_CONFIG);
-  manager.select([
-    { id: "self", config },
-    { id: "peer", config },
-  ]);
-  return { manager, views, config };
-}
-
-test("a failed role preserves the independently verified role", async () => {
-  const { manager, views } = fixture(async (_config, _previous, roles) => {
-    if (roles.includes("latency")) throw new Error("offline");
-    return preparation();
-  });
-  try {
-    await expect(manager.check({ ids: ["self"] })).rejects.toThrow();
-    expect(views.get("self")!.validation.throughput.state).toBe("verified");
-    expect(views.get("self")!.validation.latency.state).toBe("failed");
-    expect(manager.paths("self")).toBeNull();
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("wrapped remote authentication retains actionable sign-in details", async () => {
-  const { manager, views } = fixture(
-    async () => preparation(),
-    async (_signal, context) => {
-      throw new PreflightUnavailableError("preflight unavailable", {
-        cause: new ServerAuthenticationRequired(context!.server),
-      });
-    },
-  );
-  try {
-    await expect(manager.check({ ids: ["peer"] })).rejects.toThrow(
-      "Sign in to peer",
-    );
-    expect(views.get("peer")!.readiness).toMatchObject({
-      state: "sign-in",
-      message: "Sign in to peer",
-    });
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("fresh equivalent selections reuse evidence, but expired reselections refresh discovery and both roles", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
-  const checked: string[] = [];
-  const refreshed = deferred<void>();
-  let discoveries = 0;
-  const { manager, views, config } = fixture(
-    async (_config, _previous, roles) => {
-      checked.push(...roles);
-      if (checked.length === 4) refreshed.resolve();
-      return preparation();
-    },
-    async () => {
-      discoveries++;
-      return testPreparedPaths().discovery;
-    },
-  );
-  try {
-    manager.select([{ id: "self", config }]);
-    await manager.check();
-    const equivalent = structuredClone(config);
-    equivalent.transports.throughputTarget =
-      preparation().validation.throughput.path!.target.origin;
-    equivalent.transports.latencyTarget =
-      preparation().validation.latency.path!.target.origin;
-    manager.select([{ id: "self", config: equivalent }]);
-    await manager.check();
-    expect(checked).toEqual(["throughput", "latency"]);
-    expect(manager.ready()).toBe(true);
-    manager.select([]);
-    clock.mockReturnValue(1000 + CONNECTION_FRESH_MS + 1);
-    manager.select([{ id: "self", config: equivalent }]);
-    expect(manager.ready()).toBe(false);
-    expect(views.get("self")!.readiness.state).toBe("unchecked");
-    manager.activity(true, null);
-    await refreshed.promise;
-    await settle();
-    expect(discoveries).toBe(2);
-    expect(checked).toEqual(["throughput", "latency", "throughput", "latency"]);
-    expect(manager.ready()).toBe(true);
-  } finally {
-    manager.dispose();
-    clock.mockRestore();
-  }
-});
-
-test("a generation change cancels an in-flight role before accepting replacement evidence", async () => {
-  const held = deferred<ConnectionPreparation>();
-  let generation = "gen-a";
-  let block = false;
-  let oldSignal: AbortSignal | undefined;
-  const { manager, views } = fixture(
-    async (_config, _previous, roles, signal) => {
-      if (block && roles.includes("latency")) {
-        oldSignal = signal;
-        return held.promise;
-      }
-      const result = preparation();
-      result.validation.throughput.path!.generation = generation;
-      result.validation.latency.path!.generation = generation;
-      return result;
-    },
-    async () => ({ ...testPreparedPaths().discovery, generation }),
-  );
-  try {
-    await manager.check({ ids: ["self"] });
-    block = true;
-    const old = manager
-      .check({ ids: ["self"], role: "latency", force: true })
-      .catch((error) => error);
-    await settle();
-    expect(oldSignal?.aborted).toBe(false);
-    generation = "gen-b";
-    block = false;
-    await manager.check({ ids: ["self"], role: "throughput", force: true });
-    expect((await old).name).toBe("AbortError");
-    expect(oldSignal?.aborted).toBe(true);
-    expect(manager.ready(["self"])).toBe(true);
-    held.resolve(preparation());
-    await settle();
-    expect(views.get("self")!.validation.latency.path!.generation).toBe(
-      "gen-b",
-    );
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("changing the latency participant cancels its probe and cannot adopt late evidence when re-enabled", async () => {
-  const held = deferred<ConnectionPreparation>();
-  let latencyChecks = 0;
-  let stopped = 0;
-  const { manager, views, config } = fixture(
-    async (_config, _previous, roles) => {
-      if (roles.includes("latency") && ++latencyChecks === 1)
-        return held.promise;
-      return preparation();
-    },
-  );
-  try {
-    manager.select([{ id: "self", config }]);
-    const old = manager.check().catch((error) => error);
-    await settle();
-    expect(views.get("self")!.validation.throughput.state).toBe("verified");
-    const noLatency = structuredClone(config);
-    noLatency.stages.latency = false;
-    noLatency.skipLoadedLatencyWhenStageOff = true;
-    manager.select([{ id: "self", config: noLatency }]);
-    expect((await old).name).toBe("AbortError");
-    expect(manager.ready()).toBe(true);
-    manager.select([{ id: "self", config }]);
-    expect(manager.ready()).toBe(false);
-    await manager.check();
-    const current = views.get("self")!.validation.latency.path;
-    held.resolve({
-      ...preparation(),
-      idle: {
-        start() {},
-        stop() {
-          stopped++;
-        },
-        onEvent() {},
+      latency: {
+        selection: config.transports.latencyTarget,
+        state: "verified",
+        path: paths.latency,
       },
-    });
-    await settle();
-    expect(latencyChecks).toBe(2);
-    expect(stopped).toBe(1);
-    expect(views.get("self")!.validation.latency.path).toBe(current);
-    expect(manager.ready()).toBe(true);
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("expired grants cannot reuse fresh prepared paths on immediate reselection", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
-  const { manager, config, views } = fixture(async () => preparation());
-  try {
-    manager.select([{ id: "peer", config }]);
-    manager.authorize({
-      ...manager.credentials("peer")!,
-      kind: "grant",
-      token: "test-only",
-      expiresAt: 2000,
-    });
-    await manager.check();
-    expect(manager.ready()).toBe(true);
-    manager.select([]);
-    clock.mockReturnValue(2001);
-    manager.select([{ id: "peer", config }]);
-    expect(manager.ready()).toBe(false);
-    expect(views.get("peer")!.readiness).toMatchObject({
-      state: "sign-in",
-      message: "Sign in to node-a",
-    });
-  } finally {
-    manager.dispose();
-    clock.mockRestore();
-  }
-});
-
-test("cancelling Start aborts its probes without blocking a later check", async () => {
-  const held = deferred<ConnectionPreparation>();
-  const signals: AbortSignal[] = [];
-  let block = true;
-  const { manager } = fixture(async (_config, _previous, _roles, signal) => {
-    signals.push(signal!);
-    return block ? held.promise : preparation();
-  });
-  try {
-    const start = new AbortController();
-    const pending = manager
-      .check({ ids: ["self"], signal: start.signal })
-      .catch((error) => error);
-    await settle();
-    expect(signals.length).toBe(2);
-    start.abort();
-    expect((await pending).name).toBe("AbortError");
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
-    block = false;
-    await settle();
-    await manager.check({ ids: ["self"] });
-    expect(manager.ready(["self"])).toBe(true);
-    held.resolve(preparation());
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("renewed authorization discards old work and resumes only the affected server", async () => {
-  const held = deferred<ConnectionPreparation>();
-  let block = true;
-  const checked: string[] = [];
-  const { manager, views } = fixture(
-    async (_config, _previous, _roles, _signal, credentials) => {
-      checked.push(credentials!.server.id);
-      return block ? held.promise : preparation();
     },
-  );
-  try {
-    const old = manager.check({ ids: ["self"] }).catch((error) => error);
-    await settle();
-    manager.requireAuthentication("self", "Sign in again");
-    expect(views.get("self")!.readiness.state).toBe("sign-in");
-    expect((await old).name).toBe("AbortError");
-    const credentials = manager.credentials("self")!;
-    manager.authorize({
-      ...credentials,
-      kind: "grant",
-      token: "test-only",
-      expiresAt: Date.now() + 60000,
-    });
-    block = false;
-    await manager.check({ ids: ["self"] });
-    expect(manager.ready(["self"])).toBe(true);
-    expect(checked.every((id) => id === "self")).toBe(true);
-    held.resolve(preparation());
-    await settle();
-    expect(views.get("self")!.readiness.state).toBe("ready");
-  } finally {
-    manager.dispose();
-  }
-});
-
-test("slow background discovery leaves capacity for a newly selected server", async () => {
-  const background = deferred<void>();
-  const started: string[] = [];
-  const { manager, config } = fixture(
-    async () => preparation(),
-    async (_signal, credentials) => {
-      started.push(credentials!.server.id);
-      if (credentials!.server.id !== "selected") await background.promise;
-      return testPreparedPaths().discovery;
-    },
-  );
-  try {
-    manager.reset(
-      ["slow-a", "slow-b", "selected"].map((id) => ({
-        id,
-        name: id,
-        url: "http://meter.test",
-      })),
-    );
-    manager.metadata(true);
-    manager.activity(true, null);
-    for (let i = 0; i < 100 && !started.length; i++) await Bun.sleep(5);
-    expect(started).toEqual(["slow-a"]);
-    manager.select([{ id: "selected", config }]);
-    await manager.check();
-    expect(manager.paths("selected")).not.toBeNull();
-    expect(started).toEqual(["slow-a", "selected"]);
-  } finally {
-    background.resolve();
-    manager.dispose();
-    await settle();
-  }
-});
-
-test("operations publish changed views once, without reentrant churn", async () => {
-  const batches: string[][] = [];
-  const manager: ServerConnections = new ServerConnections({
-    discover: async () => testPreparedPaths().discovery,
-    prepare: async () => preparation(),
-    changed: (views) => {
-      batches.push(views.map((view) => view.server.id));
-      // A consumer reacting to a publication may call back into the owner.
-      manager.activity(true, null);
-    },
-    idleEvent() {},
-  });
-  manager.reset(
-    ["self", "peer"].map((id) => ({ id, name: id, url: "http://meter.test" })),
-  );
-  expect(batches).toEqual([["self", "peer"]]);
-  const config = structuredClone(DEFAULT_CONFIG);
-  const selection = [
-    { id: "self", config },
-    { id: "peer", config },
-  ];
-  manager.select(selection);
-  await manager.check();
-  await settle();
-  const published = batches.length;
-  manager.select(selection);
-  manager.activity(true, null);
-  expect(batches).toHaveLength(published);
-  expect(manager.ready()).toBe(true);
-  manager.dispose();
-});
-
-/* ---------- Application controller ---------- */
-function stubEngineGlobals(): () => void {
-  return stubGlobals({ ...TEST_BUILD_TOKENS, window: undefined });
+  };
 }
-async function yieldUntil(done: () => boolean, turns = 10): Promise<void> {
-  for (let turn = 0; turn < turns && !done(); turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
-}
-async function withBootRunner(
-  run: (
-    engine: import("./engine.svelte").ApplicationController,
-  ) => Promise<void>,
-  setup: () => () => void = () => stubBootEnvironment("visible"),
-): Promise<void> {
-  const restoreGlobals = stubEngineGlobals();
-  const restoreEnvironment = setup();
-  const { createApplicationController } = await import("./engine.svelte");
-  const { store } = await import("../state/store.svelte");
-  const { prepareConnections } = await import("./real/prepare");
-  const engine = createApplicationController(store, {
-    loadCatalog: testServerCatalog,
-    prepare: prepareConnections,
-  });
-  try {
-    await engine.boot();
-    await run(engine);
-  } finally {
-    engine.dispose();
-    restoreEnvironment();
-    restoreGlobals();
-  }
-}
-function stubGlobal(key: string, value: unknown): () => void {
-  return stubGlobals({ [key]: value });
-}
-function stubBootEnvironment(visibility: "hidden" | "visible"): () => void {
-  const origin = new URL("https://meter.test/");
-  const restores = [
-    stubGlobal("location", origin),
-    stubGlobal("window", {
-      location: origin,
-      addEventListener() {},
-      removeEventListener() {},
+function idleMonitors() {
+  let active = false;
+  let stops = 0;
+  let onEvent: (event: RunnerEvent) => void = () => {};
+  return {
+    active: () => active,
+    stops: () => stops,
+    emit: (event: RunnerEvent) => onEvent(event),
+    create: (): NonNullable<ConnectionPreparation["idle"]> => ({
+      start() {
+        active = true;
+      },
+      stop() {
+        active = false;
+        stops++;
+      },
+      get onEvent() {
+        return onEvent;
+      },
+      set onEvent(value) {
+        onEvent = value;
+      },
     }),
-    stubGlobal("document", {
-      visibilityState: visibility,
-      querySelector: () => null,
-      addEventListener() {},
-      removeEventListener() {},
-    }),
-    stubGlobal("fetch", () => Promise.reject(new Error("no network"))),
-  ];
-  return () => {
-    for (const restore of restores.reverse()) restore();
   };
-}
-function eventTarget() {
-  const listeners = new Map<string, (event: Event) => void>();
-  return {
-    addEventListener(type: string, listener: (event: Event) => void) {
-      listeners.set(type, listener);
-    },
-    removeEventListener(type: string) {
-      listeners.delete(type);
-    },
-    emit(type: string) {
-      listeners.get(type)?.(new Event(type));
-    },
-  };
-}
-function stubEventBootEnvironment(
-  visibility: "hidden" | "visible",
-  online: boolean,
-) {
-  const windowListeners = eventTarget();
-  const documentListeners = eventTarget();
-  const documentState = {
-    visibilityState: visibility,
-    querySelector: () => null,
-    addEventListener: documentListeners.addEventListener,
-    removeEventListener: documentListeners.removeEventListener,
-  };
-  const windowValue = {
-    addEventListener: windowListeners.addEventListener,
-    removeEventListener: windowListeners.removeEventListener,
-  };
-  const restores = [
-    stubGlobal("location", new URL("http://meter.test/")),
-    stubGlobal("window", windowValue),
-    stubGlobal("document", documentState),
-    stubGlobal("navigator", { onLine: online }),
-  ];
-  return {
-    emit(type: string) {
-      windowListeners.emit(type);
-    },
-    setVisibility(next: "hidden" | "visible") {
-      documentState.visibilityState = next;
-      documentListeners.emit("visibilitychange");
-    },
-    restore() {
-      for (const restore of restores.reverse()) restore();
-    },
-  };
-}
-async function settleValidation(): Promise<void> {
-  await yieldUntil(() => false);
-}
-function stubValidationTimers() {
-  const realNow = Date.now;
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
-  let now = realNow();
-  let nextId = 1;
-  const timers = new Map<number, { at: number; run: () => void }>();
-  Date.now = () => now;
-  globalThis.setTimeout = ((run: () => void, delay = 0) => {
-    const id = nextId++;
-    timers.set(id, { at: now + delay, run });
-    return id as unknown as ReturnType<typeof setTimeout>;
-  }) as typeof setTimeout;
-  globalThis.clearTimeout = ((id: ReturnType<typeof setTimeout>) => {
-    timers.delete(id as unknown as number);
-  }) as typeof clearTimeout;
-  return {
-    delays: () => [...timers.values()].map(({ at }) => at - now),
-    advance(milliseconds: number) {
-      now += milliseconds;
-      for (;;) {
-        const due = [...timers.entries()]
-          .filter(([, timer]) => timer.at <= now)
-          .sort((a, b) => a[1].at - b[1].at)[0];
-        if (!due) return;
-        timers.delete(due[0]);
-        due[1].run();
-      }
-    },
-    size: () => timers.size,
-    restore() {
-      Date.now = realNow;
-      globalThis.setTimeout = realSetTimeout;
-      globalThis.clearTimeout = realClearTimeout;
-    },
-  };
-}
-async function settleMicrotasks(): Promise<void> {
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
 }
 class TestRunner implements NetworkRunner {
   phase: NetworkRunner["phase"] = "idle";
@@ -900,564 +411,636 @@ class TestRunner implements NetworkRunner {
     };
   }
 }
-type ValidationContext = {
-  engine: import("./engine.svelte").ApplicationController;
-  runner: TestRunner;
-  emit: (event: RunnerEvent) => void;
-  environment: ReturnType<typeof stubEventBootEnvironment>;
-  probeCalls: () => number;
-  idleStops: () => number;
-  idleActive: () => boolean;
-};
-async function withValidationRunner(
-  probe: (serverId?: string) => Promise<PreparedPaths>,
-  run: (context: ValidationContext) => Promise<void>,
-  adoptionState: () => "connected" | "offline" | undefined = () => undefined,
-  loadCatalog = testServerCatalog,
-  discover = testServerDiscovery,
-): Promise<void> {
-  const restoreGlobals = stubEngineGlobals();
-  const environment = stubEventBootEnvironment("visible", true);
-  const { createApplicationController } = await import("./engine.svelte");
-  const { store } = await import("../state/store.svelte");
-  let calls = 0;
-  let stops = 0;
-  let idleActive = false;
-  let onEvent: (event: RunnerEvent) => void = () => {};
-  const runner = new TestRunner();
-  const engine = createApplicationController(store, {
-    loadCatalog,
-    discover,
-    createRunner: () => runner,
-    prepare: async (config, previous, roles, _signal, credentials) => {
-      calls++;
-      try {
-        const paths = await probe(credentials?.server.id);
-        paths.throughput.verifiedAt = Date.now();
-        if (paths.latency) paths.latency.verifiedAt = Date.now();
-        return {
-          discovery: paths.discovery,
-          validation: {
-            throughput: {
-              selection: config.transports.throughputTarget,
-              state: "verified",
-              path: paths.throughput,
-            },
-            latency: {
-              selection: config.transports.latencyTarget,
-              state: "verified",
-              path: paths.latency,
-            },
-          },
-          idle: roles.includes("latency")
-            ? {
-                start() {
-                  idleActive = true;
-                },
-                stop() {
-                  idleActive = false;
-                  stops++;
-                },
-                get onEvent() {
-                  return onEvent;
-                },
-                set onEvent(value) {
-                  onEvent = value;
-                  const state = adoptionState();
-                  if (state) value({ type: "connectivity", state });
-                },
-              }
-            : undefined,
-        };
-      } catch (cause) {
-        if (!(cause instanceof TransportUnavailableError) || !cause.role)
-          throw cause;
-        return {
-          discovery: PROBE_EVIDENCE.discovery,
-          validation: {
-            ...previous,
-            [cause.role]: {
-              selection:
-                config.transports[
-                  cause.role === "throughput"
-                    ? "throughputTarget"
-                    : "latencyTarget"
-                ],
-              state: "failed",
-              path: null,
-            },
-          },
-          failure: cause,
-        };
-      }
+function listeners() {
+  const handlers = new Map<string, (event: Event) => void>();
+  return {
+    addEventListener(type: string, handler: (event: Event) => void) {
+      handlers.set(type, handler);
     },
+    removeEventListener(type: string) {
+      handlers.delete(type);
+    },
+    dispatchEvent: () => true,
+    emit: (type: string) => handlers.get(type)?.(new Event(type)),
+  };
+}
+async function withController(
+  options: Partial<Dependencies> & {
+    origin?: string;
+    servers?: (string | ServerEntry)[];
+    selected?: string[];
+    hidden?: boolean;
+  },
+  run: (harness: Harness) => Promise<void>,
+): Promise<void> {
+  const origin = new URL(options.origin ?? "http://meter.test/");
+  const documentEvents = listeners();
+  const document = {
+    ...documentEvents,
+    visibilityState: options.hidden ? "hidden" : "visible",
+    querySelector: () => null,
+  };
+  const restore = stubGlobals({
+    location: origin,
+    window: { ...listeners(), location: origin, open: () => null },
+    document,
+    navigator: { onLine: true },
+    fetch: () => Promise.reject(new Error("no network")),
+  });
+  const { createApplicationController } = await import("./controller.svelte");
+  const { store } = await import("../state/store.svelte");
+  store.restoreTestDisplayDefaults();
+  const servers = (options.servers ?? ["self"]).map((server) =>
+    typeof server === "string"
+      ? { id: server, name: server, url: origin.origin }
+      : server,
+  );
+  const idle = idleMonitors();
+  const runner = new TestRunner();
+  const controller = createApplicationController(store, {
+    loadCatalog: async () => ({
+      servers,
+      defaultSelection: options.selected ?? [servers[0].id],
+    }),
+    discover: testServerDiscovery,
+    prepare: async (config, _previous, roles) => ({
+      ...preparation(config),
+      idle: roles.includes("latency") ? idle.create() : undefined,
+    }),
+    createRunner: () => runner,
+    ...options,
   });
   try {
-    await engine.boot();
+    await controller.boot();
     await run({
-      engine,
+      controller,
+      store,
       runner,
-      emit: (event) => onEvent(event),
-      environment,
-      probeCalls: () => calls,
-      idleStops: () => stops,
-      idleActive: () => idleActive,
+      idle,
+      setVisibility(state) {
+        document.visibilityState = state;
+        documentEvents.emit("visibilitychange");
+      },
+      view: (id = "self") => store.servers.get(id)!,
     });
   } finally {
-    engine.dispose();
-    environment.restore();
-    restoreGlobals();
+    controller.dispose();
+    restore();
   }
 }
-const PROBE_EVIDENCE = testPreparedPaths();
-
-test("switching servers carries transport preferences and clears the old server's paths immediately", async () => {
-  const { store } = await import("../state/store.svelte");
-  const previous = JSON.parse(JSON.stringify(store.config));
+/** Completes a browser approval whose token exchange answers at once. */
+async function approve(harness: Harness, id: string, remainingMs: number) {
+  const restore = stubGlobals({
+    fetch: async () => Response.json({ token: "a".repeat(43), remainingMs }),
+  });
   try {
-    await withValidationRunner(
-      async () => testPreparedPaths(),
-      async ({ engine }) => {
-        const paths = testPreparedPaths();
-        engine.selectConnection("throughput", paths.throughput.target.id);
-        engine.selectConnection("latency", paths.latency!.target.id);
-        expect(engine.applyServers(["peer"])).toBe(true);
-        expect(store.config.transports).toEqual({
-          throughputTarget: "protocol:http1",
-          latencyTarget: "transport:websocket",
-        });
-        expect(store.transportDiscovery).toBeNull();
-        expect(store.connectionValidation.throughput.path).toBeNull();
-        expect(store.connectionValidation.latency.path).toBeNull();
+    await harness.controller.signInServer(id);
+  } finally {
+    restore();
+  }
+}
+const remote = (id: string): ServerEntry => ({
+  id,
+  name: id,
+  url: `https://${id}.example`,
+});
+
+test("a failed role preserves the independently verified role", async () => {
+  await withController(
+    {
+      hidden: true,
+      prepare: async (config, _previous, roles) => {
+        if (roles.includes("latency")) throw new Error("offline");
+        return preparation(config);
       },
-      undefined,
-      async () => {
-        const catalog = await testServerCatalog();
-        catalog.servers.push({
-          id: "peer",
-          name: "Peer",
-          url: "https://peer.test",
+    },
+    async ({ controller, view }) => {
+      await expect(controller.validateConnections()).rejects.toThrow();
+      expect(view().validation.throughput.state).toBe("verified");
+      expect(view().validation.latency.state).toBe("failed");
+      expect(view().readiness).toBe("failed");
+    },
+  );
+});
+
+test("wrapped remote authentication retains actionable sign-in details", async () => {
+  await withController(
+    {
+      hidden: true,
+      servers: ["self", "peer"],
+      selected: ["peer"],
+      discover: async (_signal, context) => {
+        throw new PreflightUnavailableError("preflight unavailable", {
+          cause: new ServerAuthenticationRequired(context!.server),
         });
-        return catalog;
+      },
+    },
+    async ({ controller, view }) => {
+      await expect(controller.validateConnections()).rejects.toThrow(
+        "Sign in to peer",
+      );
+      expect(view("peer")).toMatchObject({
+        readiness: "sign-in",
+        message: "Sign in to peer",
+      });
+    },
+  );
+});
+
+test("equivalent selections keep their view; an expired reselection refreshes discovery and both roles", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  const checked: string[] = [];
+  let discoveries = 0;
+  try {
+    await withController(
+      {
+        hidden: true,
+        servers: ["self", "peer"],
+        discover: async () => {
+          discoveries++;
+          return evidence().discovery;
+        },
+        prepare: async (config, _previous, roles) => {
+          checked.push(...roles);
+          return preparation(config);
+        },
+      },
+      async ({ controller, setVisibility, view }) => {
+        await controller.validateConnections();
+        const ready = view();
+        const { throughput, latency } = evidence();
+        controller.selectConnection("throughput", throughput.target.origin);
+        controller.selectConnection("latency", latency!.target.origin);
+        await controller.validateConnections();
+        expect(checked).toEqual(["throughput", "latency"]);
+        expect(view().readiness).toBe("ready");
+        expect(view().validation.throughput.path).toBe(
+          ready.validation.throughput.path,
+        );
+        const equivalent = view();
+        controller.selectConnection("latency", latency!.target.origin);
+        expect(view()).toBe(equivalent);
+        controller.applyServers(["peer"]);
+        clock.mockReturnValue(1000 + CONNECTION_FRESH_MS + 1);
+        controller.applyServers(["self"]);
+        expect(view().readiness).toBe("unchecked");
+        setVisibility("visible");
+        await until(() => view().readiness === "ready");
+        expect(discoveries).toBe(2);
+        expect(checked).toEqual([
+          "throughput",
+          "latency",
+          "throughput",
+          "latency",
+        ]);
       },
     );
   } finally {
-    store.config = previous;
+    clock.mockRestore();
   }
 });
 
-test("superseding start validation cannot leave the application stuck preparing", async () => {
-  let calls = 0;
-  let release!: () => void;
-  const held = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  await withValidationRunner(
-    async () => {
-      if (++calls === 3) await held;
-      return testPreparedPaths();
+test("a generation change cancels an in-flight role before accepting replacement evidence", async () => {
+  const held = deferred<ConnectionPreparation>();
+  let generation = "gen-a";
+  let block = false;
+  let oldSignal: AbortSignal | undefined;
+  await withController(
+    {
+      hidden: true,
+      discover: async () => evidence(generation).discovery,
+      prepare: async (config, _previous, roles, signal) => {
+        if (block && roles.includes("latency")) {
+          oldSignal = signal;
+          return held.promise;
+        }
+        return preparation(config, evidence(generation));
+      },
     },
-    async ({ engine, runner }) => {
-      const { store } = await import("../state/store.svelte");
-      store.serverValidation.get("self")!.throughput.path!.verifiedAt =
-        Date.now() - CONNECTION_FRESH_MS - 1;
-      engine.toggleRun();
-      await yieldUntil(() => calls === 3);
+    async ({ controller, view }) => {
+      await controller.validateConnections();
+      block = true;
+      const old = controller
+        .validateConnections(true, "latency")
+        .catch((error) => error);
+      await settle();
+      expect(oldSignal?.aborted).toBe(false);
+      generation = "gen-b";
+      block = false;
+      await controller.validateConnections(true, "throughput");
+      expect((await old).name).toBe("AbortError");
+      expect(oldSignal?.aborted).toBe(true);
+      expect(view().readiness).toBe("ready");
+      held.resolve(preparation());
+      await settle();
+      expect(view().validation.latency.path!.generation).toBe("gen-b");
+    },
+  );
+});
+
+test("dropping latency cancels its probe, and re-enabling cannot adopt the late evidence", async () => {
+  const held = deferred<ConnectionPreparation>();
+  let latencyChecks = 0;
+  let stopped = 0;
+  await withController(
+    {
+      hidden: true,
+      prepare: async (config, _previous, roles) => {
+        if (roles.includes("latency") && ++latencyChecks === 1)
+          return held.promise;
+        return preparation(config);
+      },
+    },
+    async ({ controller, store, view }) => {
+      const stages = { ...store.config.stages };
+      const old = controller.validateConnections().catch((error) => error);
+      await settle();
+      expect(view().validation.throughput.state).toBe("verified");
+      controller.configureRun({ stages: { ...stages, latency: false } });
+      expect((await old).name).toBe("AbortError");
+      expect(view().readiness).toBe("ready");
+      controller.configureRun({ stages });
+      expect(view().readiness).not.toBe("ready");
+      await controller.validateConnections();
+      const current = view().validation.latency.path;
+      held.resolve({
+        ...preparation(),
+        idle: {
+          start() {},
+          stop: () => void stopped++,
+          onEvent() {},
+        },
+      });
+      await settle();
+      expect(latencyChecks).toBe(2);
+      expect(stopped).toBe(1);
+      expect(view().validation.latency.path).toBe(current);
+      expect(view().readiness).toBe("ready");
+    },
+  );
+});
+
+test("an expired grant needs a new approval even when its paths are fresh", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  try {
+    await withController(
+      {
+        hidden: true,
+        origin: "https://ui.example",
+        servers: [remote("home"), remote("peer")],
+        selected: ["peer"],
+      },
+      async (harness) => {
+        const { controller, view } = harness;
+        await approve(harness, "peer", 1000);
+        await controller.validateConnections();
+        expect(view("peer").readiness).toBe("ready");
+        controller.applyServers(["home"]);
+        clock.mockReturnValue(2001);
+        controller.applyServers(["peer"]);
+        expect(view("peer")).toMatchObject({
+          readiness: "sign-in",
+          message: "Sign in to node-a",
+        });
+        await approve(harness, "peer", 60_000);
+        await controller.validateConnections();
+        expect(view("peer").readiness).toBe("ready");
+      },
+    );
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("slow background discovery leaves capacity for a newly selected server", async () => {
+  const background = deferred<void>();
+  const started: string[] = [];
+  try {
+    await withController(
+      {
+        servers: ["slow-a", "slow-b", "selected"],
+        selected: ["slow-a"],
+        hidden: true,
+        discover: async (_signal, credentials) => {
+          started.push(credentials!.server.id);
+          if (credentials!.server.id !== "selected") await background.promise;
+          return evidence().discovery;
+        },
+      },
+      async ({ controller, setVisibility, view }) => {
+        controller.applyServers(["selected"]);
+        controller.loadServerMetadata();
+        setVisibility("visible");
+        await until(() => started.length > 1);
+        expect(started).toEqual(["slow-a", "selected"]);
+        await controller.validateConnections();
+        expect(view("selected").readiness).toBe("ready");
+        expect(view("slow-a").metadataChecking).toBe(true);
+      },
+    );
+  } finally {
+    background.resolve();
+  }
+});
+
+test("switching servers carries transport preferences and clears the old server's paths", async () => {
+  await withController(
+    { servers: ["self", remote("peer")] },
+    async ({ controller, store }) => {
+      const { throughput, latency } = evidence();
+      controller.selectConnection("throughput", throughput.target.id);
+      controller.selectConnection("latency", latency!.target.id);
+      expect(controller.applyServers(["peer"])).toBe(true);
+      expect(store.config.transports).toEqual({
+        throughputTarget: "protocol:http1",
+        latencyTarget: "transport:websocket",
+      });
+      expect(store.transportDiscovery).toBeNull();
+      expect(store.connectionValidation.throughput.path).toBeNull();
+    },
+  );
+});
+
+test("a second Start click cancels its checks without blocking a later check", async () => {
+  const held = deferred<ConnectionPreparation>();
+  const signals: AbortSignal[] = [];
+  let block = true;
+  await withController(
+    {
+      hidden: true,
+      prepare: async (config, _previous, _roles, signal) => {
+        signals.push(signal!);
+        return block ? held.promise : preparation(config);
+      },
+    },
+    async ({ controller, store, runner, view }) => {
+      controller.toggleRun();
+      expect(controller.hasPendingStart()).toBe(true);
       expect(store.preparing).toBe(true);
-      await engine.validateConnections(true);
-      release();
-      await yieldUntil(() => !engine.hasPendingStart());
-      expect(store.preparing).toBe(false);
+      await until(() => signals.length === 2);
+      controller.toggleRun();
+      expect(controller.hasPendingStart()).toBe(false);
+      expect(store.preparationStatus).toBe("idle");
+      expect(store.startError).toBe("");
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
+      block = false;
+      await controller.validateConnections();
+      expect(view().readiness).toBe("ready");
+      held.resolve(preparation());
+      expect(runner.starts).toBe(0);
+      expect(store.phase).toBe("idle");
+    },
+  );
+});
+
+test("a failed Start check stays idle instead of manufacturing a run error", async () => {
+  await withController(
+    {
+      hidden: true,
+      discover: async () => {
+        throw new Error("offline");
+      },
+    },
+    async ({ controller, store }) => {
+      controller.toggleRun();
+      await until(() => !store.preparing);
+      expect(store.phase).toBe("idle");
+      expect(store.startError).toBe("Connection check failed");
+      expect(store.preparationStatus).toBe("failed");
+    },
+  );
+});
+
+test("superseding a Start's check cannot leave the application preparing", async () => {
+  let calls = 0;
+  const held = deferred<void>();
+  await withController(
+    {
+      prepare: async (config) => {
+        if (++calls === 3) await held.promise;
+        return preparation(config);
+      },
+    },
+    async ({ controller, store, runner }) => {
+      const { throughput } = store.servers.get("self")!.validation;
+      throughput.path!.verifiedAt = Date.now() - CONNECTION_FRESH_MS - 1;
+      controller.toggleRun();
+      await until(() => calls === 3);
+      expect(store.preparing).toBe(true);
+      await controller.validateConnections(true);
+      held.resolve();
+      await until(() => !controller.hasPendingStart());
       expect(store.preparationStatus).toBe("idle");
       expect(runner.starts).toBe(0);
-      engine.toggleRun();
-      await yieldUntil(() => runner.starts > 0);
+      controller.toggleRun();
+      await until(() => runner.starts > 0);
       expect(runner.starts).toBe(1);
     },
   );
 });
 
-test("an explicit second start click cancels a pending preflight", async () => {
-  await withBootRunner(async ({ hasPendingStart, toggleRun }) => {
-    const { store } = await import("../state/store.svelte");
-    let pendingSignal: AbortSignal | undefined;
-    const restorePendingFetch = stubGlobal(
-      "fetch",
-      (_input: RequestInfo | URL, init?: RequestInit) => {
-        pendingSignal = init?.signal ?? undefined;
-        return new Promise<Response>(() => {});
-      },
-    );
-    store.reset();
-    toggleRun();
-    expect(hasPendingStart()).toBe(true);
-    expect(store.preparing).toBe(true);
-    await yieldUntil(() => pendingSignal !== undefined);
-    toggleRun();
-    expect(hasPendingStart()).toBe(false);
-    expect(store.preparing).toBe(false);
-    expect(pendingSignal?.aborted).toBe(true);
-    expect(store.phase).toBe("idle");
-    expect(store.startError).toBe("");
-    expect(store.preparation.status).toBe("idle");
-    restorePendingFetch();
-  });
-});
-
-test("a preflight failure stays idle instead of manufacturing a run error", async () => {
-  await withBootRunner(async ({ toggleRun }) => {
-    const { store } = await import("../state/store.svelte");
-    const restoreFetch = stubGlobal("fetch", () =>
-      Promise.reject(new Error("offline")),
-    );
-    store.reset();
-    toggleRun();
-    await yieldUntil(() => !store.preparing);
-    expect(store.phase).toBe("idle");
-    expect(store.startError).toBe("Connection check failed");
-    expect(store.preparation.status).toBe("failed");
-    restoreFetch();
-  });
-});
-
 test("visibility resume reuses fresh checks and refreshes expired discovery after a server restart", async () => {
-  const timers = stubValidationTimers();
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
   let generation = "gen-a";
   let discoveries = 0;
-  const evidence = () => {
-    const paths = testPreparedPaths();
-    paths.discovery.generation = generation;
-    paths.throughput.generation = generation;
-    paths.latency!.generation = generation;
-    return paths;
-  };
+  let probes = 0;
   try {
-    await withValidationRunner(
-      async () => evidence(),
-      async ({ environment, probeCalls }) => {
-        const { store } = await import("../state/store.svelte");
-        expect(store.serverReadiness.get("self")!.state).toBe("ready");
-        environment.setVisibility("hidden");
-        timers.advance(90000);
-        environment.setVisibility("visible");
-        timers.advance(0);
-        await settleMicrotasks();
-        expect(probeCalls()).toBe(2);
-        expect(discoveries).toBe(1);
-        expect(timers.size()).toBe(0);
-        environment.setVisibility("hidden");
-        timers.advance(CONNECTION_FRESH_MS + 1);
-        generation = "gen-b";
-        expect(probeCalls()).toBe(2);
-        environment.setVisibility("visible");
-        expect(store.serverReadiness.get("self")!.state).not.toBe("ready");
-        for (let turn = 0; turn < 5; turn++) {
-          timers.advance(0);
-          await settleMicrotasks();
-        }
-        expect(discoveries).toBe(2);
-        expect(probeCalls()).toBe(4);
-        expect(store.serverReadiness.get("self")!.state).toBe("ready");
-        expect(store.serverDiscoveries.get("self")!.generation).toBe("gen-b");
-        expect(
-          store.serverValidation.get("self")!.latency.path!.generation,
-        ).toBe("gen-b");
-        expect(timers.size()).toBe(0);
+    await withController(
+      {
+        discover: async () => {
+          discoveries++;
+          return evidence(generation).discovery;
+        },
+        prepare: async (config) => {
+          probes++;
+          return preparation(config, evidence(generation));
+        },
       },
-      undefined,
-      testServerCatalog,
-      async () => {
-        discoveries++;
-        return evidence().discovery;
+      async ({ setVisibility, view }) => {
+        expect(view().readiness).toBe("ready");
+        setVisibility("hidden");
+        clock.mockReturnValue(91_000);
+        setVisibility("visible");
+        await settle();
+        expect([discoveries, probes]).toEqual([1, 2]);
+        setVisibility("hidden");
+        clock.mockReturnValue(92_000 + CONNECTION_FRESH_MS);
+        generation = "gen-b";
+        setVisibility("visible");
+        expect(view().readiness).not.toBe("ready");
+        await until(() => view().readiness === "ready");
+        expect([discoveries, probes]).toEqual([2, 4]);
+        expect(view().discovery!.generation).toBe("gen-b");
+        expect(view().validation.latency.path!.generation).toBe("gen-b");
       },
     );
   } finally {
-    timers.restore();
+    clock.mockRestore();
   }
 });
 
-test("a disposed validation cannot restore discovery or evidence", async () => {
-  let release: ((info: PreparedPaths) => void) | undefined;
+test("disposal discards a pending check and its evidence", async () => {
+  const held = deferred<ConnectionPreparation>();
   let defer = false;
-  await withValidationRunner(
-    () =>
-      defer
-        ? new Promise((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve(PROBE_EVIDENCE),
-    async ({ engine }) => {
-      const { store } = await import("../state/store.svelte");
+  await withController(
+    {
+      prepare: async (config) => (defer ? held.promise : preparation(config)),
+    },
+    async ({ controller, store }) => {
       defer = true;
-      const pending = engine.validateConnections(true);
-      await yieldUntil(() => release !== undefined);
-      engine.dispose();
-      release!(PROBE_EVIDENCE);
+      const pending = controller.validateConnections(true);
+      await settle();
+      controller.dispose();
+      held.resolve(preparation());
       await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+      expect(store.servers.size).toBe(0);
       expect(store.connectionValidation).toEqual(emptyConnectionValidation());
       expect(store.transportDiscovery).toBeNull();
     },
   );
 });
 
-test("live configuration rejects invalid plans before changing draft or runner", async () => {
-  await withValidationRunner(
-    async () => PROBE_EVIDENCE,
-    async ({ engine, runner }) => {
-      const { store } = await import("../state/store.svelte");
-      const previous = JSON.parse(JSON.stringify(store.config)) as RunnerConfig;
-      let reconfigured = 0;
-      runner.reconfigure = () => {
-        reconfigured++;
-      };
-      engine.toggleRun();
-      await yieldUntil(() => runner.starts === 1);
-      expect(
-        engine.configureRun({
-          duration: { ...previous.duration, uploadMs: -1 },
-        }),
-      ).toBe(false);
-      expect(
-        engine.configureRun({
-          stages: {
-            latency: false,
-            download: false,
-            upload: false,
-            bidirectional: false,
-          },
-        }),
-      ).toBe(false);
-      expect(store.config).toEqual(previous);
-      expect(store.activeConfig).toEqual(previous);
-      expect(reconfigured).toBe(0);
-      const duration = {
-        ...previous.duration,
-        uploadMs: previous.duration.uploadMs + 1000,
-      };
-      expect(engine.configureRun({ duration })).toBe(true);
-      expect(store.config.duration).toEqual(duration);
-      expect(store.activeConfig?.duration).toEqual(duration);
-      expect(reconfigured).toBe(1);
-      store.config = previous;
+test("superseded preparation never replaces newer evidence and disposes its monitor", async () => {
+  const held = deferred<ConnectionPreparation>();
+  let defer = false;
+  let stopped = 0;
+  await withController(
+    {
+      prepare: async (config, _previous, roles) =>
+        defer && roles.includes("latency") ? held.promise : preparation(config),
     },
-  );
-});
-
-test("superseded preparation never replaces newer evidence and disposes its provisional monitor", async () => {
-  let release: ((paths: PreparedPaths) => void) | undefined;
-  let deferred = false;
-  await withValidationRunner(
-    () =>
-      deferred
-        ? new Promise((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve(testPreparedPaths()),
-    async ({ engine, idleStops }) => {
-      const { store } = await import("../state/store.svelte");
-      deferred = true;
-      const stale = engine.validateConnections(true);
-      await yieldUntil(() => release !== undefined);
-      deferred = false;
-      await engine.validateConnections(true);
+    async ({ controller, store }) => {
+      defer = true;
+      const stale = controller.validateConnections(true);
+      await settle();
+      defer = false;
+      await controller.validateConnections(true);
       const committed = store.connectionValidation.throughput.path;
-      const stopped = idleStops();
-      const outdated = testPreparedPaths();
-      outdated.discovery.generation = "outdated";
-      release!(outdated);
+      held.resolve({
+        ...preparation(DEFAULT_CONFIG, evidence("outdated")),
+        idle: { start() {}, stop: () => void stopped++, onEvent() {} },
+      });
       await expect(stale).rejects.toMatchObject({ name: "AbortError" });
-      await settleMicrotasks();
+      await settle();
       expect(store.transportDiscovery?.generation).toBe("gen-a");
       expect(store.connectionValidation.throughput.path).toBe(committed);
-      expect(idleStops()).toBe(stopped + 1);
+      expect(stopped).toBe(1);
     },
   );
 });
 
-test("idle latency is stopped before the measurement runner starts and resumes after abort", async () => {
-  await withValidationRunner(
-    async () => testPreparedPaths(),
-    async ({ engine, runner, idleActive }) => {
-      expect(idleActive()).toBe(true);
-      const start = runner.start.bind(runner);
-      runner.start = () => {
-        expect(idleActive()).toBe(false);
-        start();
-      };
-      engine.toggleRun();
-      await yieldUntil(() => runner.starts === 1);
-      expect(idleActive()).toBe(false);
-      engine.toggleRun();
-      await settleValidation();
-      expect(idleActive()).toBe(true);
-    },
-  );
+test("live configuration rejects invalid plans before changing draft or runner", async () => {
+  await withController({}, async ({ controller, store, runner }) => {
+    const previous: RunnerConfig = JSON.parse(JSON.stringify(store.config));
+    let reconfigured = 0;
+    runner.reconfigure = () => void reconfigured++;
+    controller.toggleRun();
+    await until(() => runner.starts === 1);
+    const stages = { ...previous.stages };
+    for (const stage of Object.keys(stages) as (keyof typeof stages)[])
+      stages[stage] = false;
+    const negative = { ...previous.duration, uploadMs: -1 };
+    expect(controller.configureRun({ duration: negative })).toBe(false);
+    expect(controller.configureRun({ stages })).toBe(false);
+    expect(store.config).toEqual(previous);
+    expect(store.activeConfig).toEqual(previous);
+    expect(reconfigured).toBe(0);
+    const duration = { ...previous.duration, uploadMs: 11_000 };
+    expect(controller.configureRun({ duration })).toBe(true);
+    expect(store.activeConfig?.duration).toEqual(duration);
+    expect(reconfigured).toBe(1);
+  });
+});
+
+test("idle latency stops before the run starts and resumes after abort", async () => {
+  await withController({}, async ({ controller, runner, idle }) => {
+    expect(idle.active()).toBe(true);
+    const start = runner.start.bind(runner);
+    runner.start = () => {
+      expect(idle.active()).toBe(false);
+      start();
+    };
+    controller.toggleRun();
+    await until(() => runner.starts === 1);
+    expect(idle.active()).toBe(false);
+    controller.toggleRun();
+    expect(idle.active()).toBe(true);
+  });
 });
 
 test("returning to start releases the run so late events cannot reach the fresh store", async () => {
-  await withValidationRunner(
-    async () => testPreparedPaths(),
-    async ({ engine, runner }) => {
-      const { store } = await import("../state/store.svelte");
-      engine.toggleRun();
-      await yieldUntil(() => runner.starts === 1);
-      const late = runner.listener;
-      engine.returnToStart();
-      expect(store.phase).toBe("idle");
-      late({
-        type: "serverLatencySummary",
-        serverId: "self",
-        stage: "download",
-        summary: null,
-      });
-      runner.listener({
-        type: "stageSkipped",
-        failure: {
-          stage: "download",
-          reason: "connection-lost",
-          message: "late",
+  await withController({}, async ({ controller, store, runner }) => {
+    controller.toggleRun();
+    await until(() => runner.starts === 1);
+    const late = runner.listener;
+    controller.returnToStart();
+    expect(store.phase).toBe("idle");
+    late({
+      type: "stageSkipped",
+      failure: { stage: "download", reason: "connection-lost", message: "" },
+    });
+    expect(store.stageFailures).toEqual({});
+  });
+});
+
+test("an approval in flight blocks Start; cancellation or a new catalogue ignores its grant", async () => {
+  let peerUrl = "https://peer.example";
+  const discovered: string[] = [];
+  const exchanges: { url: string; signal: AbortSignal }[] = [];
+  const responses: ((value: Response) => void)[] = [];
+  const grant = () =>
+    responses.shift()!(
+      Response.json({ token: "a".repeat(43), remainingMs: 60_000 }),
+    );
+  await withController(
+    {
+      hidden: true,
+      origin: "https://ui.example",
+      loadCatalog: async () => ({
+        defaultSelection: ["peer"],
+        servers: [{ id: "peer", name: "Private", url: peerUrl }],
+      }),
+      discover: async (_signal, credentials) => {
+        discovered.push(`${credentials!.kind} ${credentials!.server.url}`);
+        throw new Error("Sign-in is required");
+      },
+    },
+    async ({ controller, store }) => {
+      const restore = stubGlobals({
+        fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+          exchanges.push({ url: String(input), signal: init!.signal! });
+          return new Promise<Response>((resolve) => responses.push(resolve));
         },
       });
-      expect(store.summariesByServer.size).toBe(0);
-      expect(store.stageFailures).toEqual({});
+      try {
+        let pending = controller.signInServer("peer");
+        await until(() => exchanges.length === 1);
+        expect(store.serverApproval?.code).toMatch(/^[A-Z2-7]{8}$/);
+        controller.toggleRun();
+        expect(store.preparationStatus).toBe("blocked");
+        expect(store.startError).toContain("Finish signing in");
+        expect(controller.hasPendingStart()).toBe(false);
+        controller.cancelServerApproval();
+        expect(exchanges[0].signal.aborted).toBe(true);
+        grant();
+        await pending;
+        expect(store.serverApproval).toBeNull();
+        expect(discovered).toEqual([]);
+        pending = controller.signInServer("peer");
+        await until(() => exchanges.length === 2);
+        peerUrl = "https://replacement.example";
+        await controller.retryCatalogue();
+        expect(exchanges[1]).toMatchObject({
+          url: "https://peer.example/auth/browser/token",
+          signal: { aborted: true },
+        });
+        grant();
+        await pending;
+        expect(store.serverApproval).toBeNull();
+        expect(discovered).toEqual(["public https://replacement.example"]);
+      } finally {
+        restore();
+      }
     },
   );
-});
-
-test("canceling an approval ignores a grant returned by an already pending exchange", async () => {
-  const origin = new URL("https://ui.example/");
-  let response: ((value: Response) => void) | undefined;
-  let signal: AbortSignal | undefined;
-  let discoveries = 0;
-  const restore = stubGlobals({
-    ...TEST_BUILD_TOKENS,
-    location: origin,
-    window: {
-      location: origin,
-      addEventListener() {},
-      removeEventListener() {},
-      dispatchEvent() {},
-    },
-    document: {
-      visibilityState: "visible",
-      addEventListener() {},
-      removeEventListener() {},
-    },
-    navigator: { onLine: true },
-    fetch: (_input: RequestInfo | URL, init?: RequestInit) => {
-      signal = init?.signal ?? undefined;
-      // A response already in flight may finish after cancellation.
-      return new Promise<Response>((resolve) => (response = resolve));
-    },
-  });
-  const { createApplicationController } = await import("./engine.svelte");
-  const { store } = await import("../state/store.svelte");
-  const catalog = store.serverCatalog;
-  const selection = store.selectedServers;
-  store.reset();
-  store.serverCatalog = {
-    defaultSelection: ["peer"],
-    servers: [{ id: "peer", name: "Private", url: "https://peer.example" }],
-  };
-  store.selectedServers = ["peer"];
-  const engine = createApplicationController(store, {
-    discover: async () => {
-      discoveries++;
-      return testServerDiscovery();
-    },
-  });
-  try {
-    const pending = engine.signInServer("peer");
-    while (!response) await Bun.sleep(1);
-    expect(store.serverApproval?.code).toMatch(/^[A-Z2-7]{8}$/);
-    engine.cancelServerApproval();
-    expect(signal?.aborted).toBe(true);
-    response(Response.json({ token: "a".repeat(43), remainingMs: 60_000 }));
-    await pending;
-    expect(store.serverApproval).toBeNull();
-    expect(discoveries).toBe(0);
-    expect(store.isRunning).toBe(false);
-  } finally {
-    engine.dispose();
-    store.serverCatalog = catalog;
-    store.selectedServers = selection;
-    store.reset();
-    restore();
-  }
-});
-
-test("pending approval excludes Start and catalogue replacement cancels its old-origin exchange", async () => {
-  const origin = new URL("https://ui.example/");
-  let response: ((value: Response) => void) | undefined;
-  let signal: AbortSignal | undefined;
-  let peerUrl = "https://peer.example";
-  const discovered: { url: string; kind: string }[] = [];
-  const restore = stubGlobals({
-    ...TEST_BUILD_TOKENS,
-    location: origin,
-    window: {
-      location: origin,
-      open: () => null,
-      addEventListener() {},
-      removeEventListener() {},
-      dispatchEvent() {},
-    },
-    document: {
-      visibilityState: "visible",
-      querySelector: () => null,
-      addEventListener() {},
-      removeEventListener() {},
-    },
-    navigator: { onLine: true },
-    fetch: (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(String(input)).toBe("https://peer.example/auth/browser/token");
-      signal = init?.signal ?? undefined;
-      return new Promise<Response>((resolve) => (response = resolve));
-    },
-  });
-  const { createApplicationController } = await import("./engine.svelte");
-  const { store } = await import("../state/store.svelte");
-  const catalog = store.serverCatalog;
-  const selection = store.selectedServers;
-  store.reset();
-  const engine = createApplicationController(store, {
-    loadCatalog: async () => ({
-      defaultSelection: ["peer"],
-      servers: [
-        { id: "self", name: "Home", url: origin.origin },
-        { id: "peer", name: "Private", url: peerUrl },
-      ],
-    }),
-    discover: async (_signal, credentials) => {
-      discovered.push({
-        url: credentials!.server.url,
-        kind: credentials!.kind,
-      });
-      throw new Error("Sign-in is required");
-    },
-  });
-  try {
-    await engine.boot();
-    const pending = engine.signInServer("peer");
-    while (!response) await Bun.sleep(1);
-    engine.toggleRun();
-    expect(store.preparationStatus).toBe("blocked");
-    expect(store.startError).toContain("Finish signing in");
-    expect(engine.hasPendingStart()).toBe(false);
-    peerUrl = "https://replacement.example";
-    await engine.retryCatalogue();
-    expect(signal?.aborted).toBe(true);
-    response(Response.json({ token: "a".repeat(43), remainingMs: 60_000 }));
-    await pending;
-    expect(store.serverApproval).toBeNull();
-    await engine.validateConnections(true).catch(() => {});
-    expect(discovered.at(-1)).toEqual({ url: peerUrl, kind: "public" });
-    expect(store.preparing).toBe(false);
-  } finally {
-    engine.dispose();
-    store.serverCatalog = catalog;
-    store.selectedServers = selection;
-    store.reset();
-    restore();
-  }
 });

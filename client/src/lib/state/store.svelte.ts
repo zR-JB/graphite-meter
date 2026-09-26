@@ -6,7 +6,6 @@ import type {
   Phase,
   ConnectivityState,
   PreparedPaths,
-  TransportDiscovery,
   EngineInfo,
   RunResult,
   RunnerConfig,
@@ -25,6 +24,7 @@ import {
   presentConnections,
   emptyConnectionValidation,
   type ConnectionValidation,
+  type ServerView,
 } from "../runner/connectionModel";
 import {
   combineCompensationEstimates,
@@ -177,22 +177,15 @@ class AppStore {
   serverCatalog = $state<ServerCatalog | null>(null);
   selectedServers = $state<string[]>(["self"]);
   unresolvedServers = $state.raw<SavedSelection[]>([]);
-  readonly serverReadiness = new SvelteMap<
-    string,
-    {
-      state: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
-      message?: string;
-      checkedAt?: number;
-    }
-  >();
-  readonly serverDiscoveries = new SvelteMap<string, TransportDiscovery>();
-  readonly serverValidation = new SvelteMap<string, ConnectionValidation>();
-  serverMetadataLoading = $state(false);
+  readonly servers = new SvelteMap<string, ServerView>();
+  serverMetadataLoading = $derived(
+    [...this.servers.values()].some((view) => view.metadataChecking),
+  );
   catalogLoading = $state(false);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
       const states = this.selectedServers.map(
-        (id) => this.serverReadiness.get(id)?.state ?? "unchecked",
+        (id) => this.servers.get(id)?.readiness ?? "unchecked",
       );
       if (this.unresolvedServers.length || !states.length) return "failed";
       if (states.includes("checking")) return "checking";
@@ -334,15 +327,14 @@ class AppStore {
     return (selected.find((server) => server.id === preferred) ?? selected[0])
       .id;
   });
-  transportDiscovery = $derived(
-    (this.representativeServerId &&
-      this.serverDiscoveries.get(this.representativeServerId)) ||
-      null,
+  #representative = $derived(
+    this.representativeServerId
+      ? this.servers.get(this.representativeServerId)
+      : undefined,
   );
+  transportDiscovery = $derived(this.#representative?.discovery ?? null);
   connectionValidation = $derived(
-    (this.representativeServerId &&
-      this.serverValidation.get(this.representativeServerId)) ||
-      UNCHECKED,
+    this.#representative?.validation ?? UNCHECKED,
   );
   engineInfo = $state.raw<EngineInfo | null>(null);
   result = $state.raw<RunResult | null>(null);
@@ -453,7 +445,7 @@ class AppStore {
         return "checking";
       if (this.selectionValidation === "failed")
         return this.selectedServers.some(
-          (id) => this.serverReadiness.get(id)?.state === "ready",
+          (id) => this.servers.get(id)?.readiness === "ready",
         )
           ? "degraded"
           : "offline";

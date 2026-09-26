@@ -3,7 +3,7 @@
   import { mountHistoryPersistence } from "./lib/history/persistence.svelte";
   import Console from "./lib/components/Console.svelte";
   import { store, mountStoreEffects } from "./lib/state/store.svelte";
-  import { createApplicationController } from "./lib/runner/engine.svelte";
+  import { createApplicationController } from "./lib/runner/controller.svelte";
   import { setApplicationController } from "./lib/runner/controllerContext";
 
   const controller = setApplicationController(

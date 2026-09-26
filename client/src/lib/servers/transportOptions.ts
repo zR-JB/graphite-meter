@@ -18,7 +18,7 @@ interface ServerTransportOption {
 export function serverTransportOptions(
   role: "throughput" | "latency",
   servers: readonly ServerIdentity[],
-  discoveries: ReadonlyMap<string, TransportDiscovery>,
+  views: ReadonlyMap<string, { discovery: TransportDiscovery | null }>,
   datagrams: boolean,
   selected: string,
   webTransport = typeof WebTransport !== "undefined",
@@ -43,22 +43,19 @@ export function serverTransportOptions(
   if (!candidates.some(([value]) => value === selected))
     candidates.push([selected, "Selected origin"]);
   return candidates.map(([value, label]) => {
-    const missing = servers.filter((server) => !discoveries.has(server.id));
+    const discovery = (id: string) => views.get(id)?.discovery;
+    const missing = servers.filter((server) => !discovery(server.id));
     const incompatible = servers.filter((server) => {
-      const discovery = discoveries.get(server.id);
+      const known = discovery(server.id);
       return (
-        discovery &&
+        known &&
         !(role === "throughput"
-          ? selectThroughputTarget(discovery, value, webTransport)
-          : selectLatencyTarget(discovery, value, webTransport))
+          ? selectThroughputTarget(known, value, webTransport)
+          : selectLatencyTarget(known, value, webTransport))
       );
     });
     const restrictions = incompatible.flatMap((server) => {
-      const reason = blockedSelectionReason(
-        discoveries.get(server.id)!,
-        role,
-        value,
-      );
+      const reason = blockedSelectionReason(discovery(server.id)!, role, value);
       return reason ? [`${server.name}: ${reason}`] : [];
     });
     const detail = restrictions.length

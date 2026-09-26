@@ -21,6 +21,7 @@ import {
   selectThroughputTarget,
 } from "./real/backendPure";
 import { describeTarget } from "./real/targetPresentation";
+import type { ServerEntry } from "../servers/catalog";
 
 export type ConnectionValidationState =
   "checking" | "verified" | "failed" | "stale";
@@ -35,6 +36,15 @@ export interface ConnectionValidation {
   throughput: RoleValidation<VerifiedThroughputPath>;
   latency: RoleValidation<VerifiedLatencyPath>;
 }
+export interface ServerView {
+  readonly server: ServerEntry;
+  readonly discovery: TransportDiscovery | null;
+  readonly validation: ConnectionValidation;
+  readonly readiness: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
+  readonly message?: string;
+  readonly metadataChecking: boolean;
+}
+type ServerEvidence = Pick<ServerView, "discovery" | "validation">;
 export const emptyConnectionValidation = (): ConnectionValidation => ({
   throughput: { selection: "auto", state: "stale", path: null },
   latency: { selection: "auto", state: "stale", path: null },
@@ -289,20 +299,24 @@ export function summarizeRoleValidation(
   config: RunnerConfig,
   role: ConnectionRole,
   ids: readonly string[],
-  discoveries: ReadonlyMap<string, TransportDiscovery>,
-  validations: ReadonlyMap<string, ConnectionValidation>,
+  servers: ReadonlyMap<string, ServerEvidence>,
 ): { state: ConnectionValidationState; verified: number; total: number } {
   const states = ids.map((id): ConnectionValidationState => {
+    const server = servers.get(id);
+    if (!server) return "stale";
     if (
       role === "throughput" &&
-      uploadCapabilityFailure(config, discoveries.get(id))
+      uploadCapabilityFailure(config, server.discovery)
     )
       return "failed";
-    const validation = validations.get(id);
-    if (!validation) return "stale";
-    const check = validation[role];
+    const check = server.validation[role];
     if (check.state === "verified")
-      return roleNeedsValidation(config, validation, role, discoveries.get(id))
+      return roleNeedsValidation(
+        config,
+        server.validation,
+        role,
+        server.discovery,
+      )
         ? "stale"
         : "verified";
     return check.selection === connectionSelection(config, role)

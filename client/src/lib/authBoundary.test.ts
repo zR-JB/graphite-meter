@@ -143,7 +143,7 @@ test("the application cancels preparation before navigating once and relinquishe
     ),
   );
   const { createApplicationController } =
-    await import("./runner/engine.svelte");
+    await import("./runner/controller.svelte");
   const { store } = await import("./state/store.svelte");
   let preparing: AbortSignal | null = null;
   const engine = createApplicationController(store, {

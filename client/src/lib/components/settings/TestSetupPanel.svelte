@@ -59,7 +59,7 @@
       ? serverTransportOptions(
           "throughput",
           selectedServers,
-          store.serverDiscoveries,
+          store.servers,
           store.config.experimentalDatagramThroughput,
           store.config.transports.throughputTarget,
         )
@@ -69,7 +69,7 @@
             ? serverTransportOptions(
                 "throughput",
                 selectedServers,
-                store.serverDiscoveries,
+                store.servers,
                 store.config.experimentalDatagramThroughput,
                 store.config.transports.throughputTarget,
               ).filter(
@@ -107,7 +107,7 @@
                 (server) => server.id === store.primaryLatencyServer,
               )
             : selectedServers,
-          store.serverDiscoveries,
+          store.servers,
           false,
           store.config.transports.latencyTarget,
         )
@@ -117,7 +117,7 @@
             ? serverTransportOptions(
                 "latency",
                 selectedServers,
-                store.serverDiscoveries,
+                store.servers,
                 false,
                 store.config.transports.latencyTarget,
               ).filter(

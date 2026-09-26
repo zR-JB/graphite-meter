@@ -8,6 +8,10 @@ import {
 import { singleLatencyBucket } from "../runner/latencyBuckets";
 import { LatencyAccumulator } from "../runner/latencySummary";
 import { parseCatalog } from "../servers/catalog";
+import {
+  emptyConnectionValidation,
+  type ServerView,
+} from "../runner/connectionModel";
 
 const ids = ["constructor", "toString", "__proto__"];
 
@@ -111,41 +115,33 @@ test("valid prototype-named servers retain isolated latency populations through 
   }
 });
 
-test("readiness and discovery updates keep prototype-named server identities separate", async () => {
+test("selection readiness follows each prototype-named server's view", async () => {
   const restore = stubGlobals(TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousSelection = [...store.selectedServers];
+  const view = (
+    id: string,
+    readiness: ServerView["readiness"],
+  ): ServerView => ({
+    server: { id, name: id, url: "https://meter.test" },
+    discovery: testPreparedPaths().discovery,
+    validation: emptyConnectionValidation(),
+    readiness,
+    metadataChecking: false,
+  });
   try {
     store.selectedServers = ids;
-    store.serverReadiness.clear();
-    store.serverDiscoveries.clear();
+    store.servers.clear();
     expect(store.selectionValidation).toBe("stale");
-    for (const [index, id] of ids.entries()) {
-      store.serverReadiness.set(id, { state: "ready" });
-      store.serverDiscoveries.set(id, {
-        ...testPreparedPaths().discovery,
-        server: { name: `Server ${index}` },
-      });
-    }
+    for (const id of ids) store.servers.set(id, view(id, "ready"));
     expect(store.selectionValidation).toBe("verified");
-    store.serverReadiness.set("__proto__", { state: "checking" });
+    store.servers.set("__proto__", view("__proto__", "checking"));
     expect(store.selectionValidation).toBe("checking");
-    store.serverReadiness.set("__proto__", { state: "failed" });
+    store.servers.set("__proto__", view("__proto__", "failed"));
     expect(store.selectionValidation).toBe("failed");
-    expect(store.serverReadiness.get("constructor")?.state).toBe("ready");
-    expect(store.serverDiscoveries.get("__proto__")?.server.name).toBe(
-      "Server 2",
-    );
-    store.serverDiscoveries.delete("toString");
-    expect(store.serverDiscoveries.has("toString")).toBe(false);
-    expect(store.serverDiscoveries.get("constructor")?.server.name).toBe(
-      "Server 0",
-    );
-    store.serverReadiness.clear();
-    expect(store.selectionValidation).toBe("stale");
+    expect(store.servers.get("constructor")?.readiness).toBe("ready");
   } finally {
-    store.serverReadiness.clear();
-    store.serverDiscoveries.clear();
+    store.servers.clear();
     store.selectedServers = previousSelection;
     restore();
   }

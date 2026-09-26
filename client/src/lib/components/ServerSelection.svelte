@@ -16,7 +16,7 @@
       await controller.retryServer(serverId);
     } finally {
       if (
-        store.serverReadiness.get(serverId)?.state === "ready" &&
+        store.servers.get(serverId)?.readiness === "ready" &&
         document.activeElement === button
       ) {
         const choice = choices.get(serverId);
@@ -39,10 +39,10 @@
       (server) =>
         store.selectedServers.includes(server.id) &&
         ((store.serverCatalog?.servers.length ?? 0) > 1 ||
-          store.serverReadiness.get(server.id)?.state === "sign-in") &&
+          store.servers.get(server.id)?.readiness === "sign-in") &&
         (retrying.includes(server.id) ||
           ["failed", "sign-in"].includes(
-            store.serverReadiness.get(server.id)?.state ?? "unchecked",
+            store.servers.get(server.id)?.readiness ?? "unchecked",
           )),
     ),
   );
@@ -62,7 +62,7 @@
     >
       {#each store.serverCatalog!.servers as server (server.id)}
         {@const checked = store.selectedServers.includes(server.id)}
-        {@const readiness = store.serverReadiness.get(server.id)?.state}
+        {@const readiness = store.servers.get(server.id)?.readiness}
         {@const status =
           readiness === "checking"
             ? "Checking…"
@@ -73,9 +73,8 @@
                 : readiness === "ready" && checked
                   ? "Ready"
                   : ""}
-        {@const preflightMs = store.serverDiscoveries.get(
-          server.id,
-        )?.preflightMs}
+        {@const preflightMs = store.servers.get(server.id)?.discovery
+          ?.preflightMs}
         {@const unavailable =
           locked || (checked ? selected.length === 1 : selected.length >= 4)}
         <label
@@ -197,10 +196,10 @@
       {#key pending}<span class="enter"
           >{pending
             ? `Checking ${server.name}…`
-            : store.serverReadiness.get(server.id)?.message}</span
+            : store.servers.get(server.id)?.message}</span
         >{/key}
     </p>
-    {#if store.serverReadiness.get(server.id)?.state === "sign-in"}
+    {#if store.servers.get(server.id)?.readiness === "sign-in"}
       <button
         class="btn"
         type="button"
