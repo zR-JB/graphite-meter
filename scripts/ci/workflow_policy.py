@@ -7,9 +7,8 @@ import re
 import subprocess
 import tomllib
 from pathlib import Path
-from typing import NoReturn
 
-from github_api import PEM, TLS_NAME
+from github_api import PEM, TLS_NAME, ControlPlaneError, fail
 from toolchains import check as check_toolchain_literals, pin
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -81,14 +80,6 @@ FORBIDDEN = {
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
     ),
 }
-
-
-class PolicyError(RuntimeError):
-    pass
-
-
-def fail(message: str) -> NoReturn:
-    raise PolicyError(message)
 
 
 def read(root: Path, name: str) -> str:
@@ -242,7 +233,7 @@ def check_repository(root: Path = ROOT) -> None:
 def main() -> None:
     try:
         check_repository()
-    except PolicyError as exc:
+    except ControlPlaneError as exc:
         raise SystemExit(f"workflow policy: {exc}") from exc
     print("workflow policy: ok")
 

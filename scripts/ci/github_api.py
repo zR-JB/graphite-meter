@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Protocol, TypeAlias, cast
+from typing import NoReturn, Protocol, TypeAlias, cast
 from urllib.parse import urlencode
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -28,12 +29,8 @@ class ControlPlaneError(RuntimeError):
     pass
 
 
-class GitHubAPIError(ControlPlaneError):
-    pass
-
-
-class JsonShapeError(ControlPlaneError):
-    pass
+def fail(message: str) -> NoReturn:
+    raise ControlPlaneError(message)
 
 
 class APICall(Protocol):
@@ -43,13 +40,13 @@ class APICall(Protocol):
 
 def api(path: str, *, paginate: bool = False) -> JsonValue:
     if not os.environ.get("GH_TOKEN"):
-        raise GitHubAPIError("GH_TOKEN is required")
+        fail("GH_TOKEN is required")
     pages = ["--paginate", "--slurp"] if paginate else []
     result = subprocess.run(["gh", "api", *pages, path], capture_output=True, text=True,
                             check=False)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
-        raise GitHubAPIError(f"gh api {path}: {detail}")
+        fail(f"gh api {path}: {detail}")
     text = result.stdout.strip()
     return decode_json(text, f"gh api {path}") if text else None
 
@@ -62,18 +59,18 @@ def decode_json(text: str, context: str) -> JsonValue:
     try:
         return cast(JsonValue, json.loads(text))
     except json.JSONDecodeError as exc:
-        raise JsonShapeError(f"{context} is not valid JSON: {exc}") from exc
+        raise ControlPlaneError(f"{context} is not valid JSON: {exc}") from exc
 
 
 def expect_object(value: JsonValue, context: str) -> JsonObject:
     if not isinstance(value, dict):
-        raise JsonShapeError(f"{context} must be a JSON object")
+        fail(f"{context} must be a JSON object")
     return value
 
 
 def expect_array(value: JsonValue, context: str) -> JsonArray:
     if not isinstance(value, list):
-        raise JsonShapeError(f"{context} must be a JSON array")
+        fail(f"{context} must be a JSON array")
     return value
 
 
@@ -84,14 +81,14 @@ def object_field(value: Mapping[str, JsonValue], key: str, context: str) -> Json
 def str_field(value: Mapping[str, JsonValue], key: str, context: str) -> str:
     item = value.get(key)
     if not isinstance(item, str):
-        raise JsonShapeError(f"{context}.{key} must be a string")
+        fail(f"{context}.{key} must be a string")
     return item
 
 
 def int_field(value: Mapping[str, JsonValue], key: str, context: str) -> int:
     item = value.get(key)
     if not isinstance(item, int) or isinstance(item, bool):
-        raise JsonShapeError(f"{context}.{key} must be an integer")
+        fail(f"{context}.{key} must be an integer")
     return item
 
 
@@ -122,3 +119,8 @@ def append_output(**values: object) -> None:
 def append_summary(text: str) -> None:
     with runner_path("GITHUB_STEP_SUMMARY").open("a", encoding="utf-8") as handle:
         handle.write(text.rstrip() + "\n")
+
+
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()

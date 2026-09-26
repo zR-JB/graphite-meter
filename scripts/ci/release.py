@@ -22,6 +22,8 @@ from github_api import (
     append_summary,
     expect_array,
     expect_object,
+    fail,
+    file_sha256,
     int_field,
     object_field,
     runner_path,
@@ -35,7 +37,6 @@ from trust import (
     env_sha,
     exact_files,
     read_record,
-    refuse,
     require_check_run,
     require_checkout,
     require_ci_gate,
@@ -74,11 +75,6 @@ class Release:
         return self.tag[1:]
 
 
-def file_sha256(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
-
-
 def assets_sha256(directory: Path) -> str:
     """Hash the sorted name and SHA-256 of every regular file in `directory`."""
     entries = sorted(directory.iterdir())
@@ -90,9 +86,9 @@ def assets_sha256(directory: Path) -> str:
 def parse_release(tag: str, sha: str, pr: int) -> Release:
     match = TAG_RE.fullmatch(tag)
     if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
-        refuse("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
+        fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
     if SHA_RE.fullmatch(sha) is None:
-        refuse("release source must be a 40-character commit SHA")
+        fail("release source must be a 40-character commit SHA")
     return Release(tag, sha, pr)
 
 
@@ -116,15 +112,15 @@ def require_compatible_release_tag(
     if not exact:
         return
     if len(exact) != 1:
-        refuse(f"multiple exact refs unexpectedly match {tag}")
+        fail(f"multiple exact refs unexpectedly match {tag}")
     target = object_field(exact[0], "object", tag)
     if target.get("type") == "tag":
         annotated = api(f"repos/{repository}/git/tags/{str_field(target, 'sha', tag)}")
         target = object_field(expect_object(annotated, tag), "object", tag)
     if target.get("type") != "commit":
-        refuse(f"{tag} does not reference a commit")
+        fail(f"{tag} does not reference a commit")
     if (sha := str_field(target, "sha", tag)) != expected_sha:
-        refuse(f"{tag} already exists at {sha}, expected {expected_sha}")
+        fail(f"{tag} already exists at {sha}, expected {expected_sha}")
 
 
 def require_publishable(
@@ -155,18 +151,18 @@ def command_prepare() -> None:
     repository, owner = env("REPOSITORY"), env("REPOSITORY_OWNER")
     main = env_sha("EVENT_SHA")
     if env("EVENT_NAME") != "workflow_dispatch" or env("REF") != "refs/heads/main":
-        refuse("release requests must be dispatched from main")
+        fail("release requests must be dispatched from main")
     if env("WORKFLOW_REF") != main_workflow(repository, "release-request.yml"):
-        refuse("workflow is not the release request workflow on main")
+        fail("workflow is not the release request workflow on main")
     if env("ACTOR") != owner or env("TRIGGERING_ACTOR") != owner:
-        refuse("only the repository owner may request a release")
+        fail("only the repository owner may request a release")
     if env_int("REQUEST_RUN_ATTEMPT") != 1:
-        refuse("workflow reruns are not valid requests; start a fresh dispatch")
+        fail("workflow reruns are not valid requests; start a fresh dispatch")
     if (mode := env("MODE")) not in ("validate", "publish"):
-        refuse("mode must be validate or publish")
+        fail("mode must be validate or publish")
     pr = env_int("PR") if os.environ.get("PR") else 0
     if not pr and os.environ.get("SHA"):
-        refuse("stable releases build current main; leave sha empty")
+        fail("stable releases build current main; leave sha empty")
     release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
     out = runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
@@ -189,7 +185,7 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
     publisher = env_sha("PUBLISHER_SHA")
     run_id = env_int("REQUEST_RUN_ID")
     if env("WORKFLOW_REF") != main_workflow(repository, "release.yml"):
-        refuse("release consumer is not the trusted main workflow")
+        fail("release consumer is not the trusted main workflow")
     require_exact_current_main(repository, publisher, api=api)
     require_checkout(publisher)
     candidate = request_dir / f"release-request-{run_id}"
@@ -202,9 +198,9 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
                             str_field(request, "sourceSha", "request"),
                             int_field(request, "pr", "request"))
     if request["mode"] not in ("validate", "publish"):
-        refuse("request mode must be validate or publish")
+        fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
-        refuse("a stable release must build the trusted main commit")
+        fail("a stable release must build the trusted main commit")
     artifacts = {candidate.name: OCI_LIMIT + 1024 * 1024}
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
@@ -212,7 +208,7 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts, api=api)
     if (downloaded := {path.name for path in request_dir.iterdir()}) != set(artifacts):
-        refuse(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
+        fail(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
     return release, request["mode"] == "publish"
 
 
@@ -223,17 +219,17 @@ def command_verify() -> None:
         require_protected_environment(env("REPOSITORY"))
     candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
     if (candidate / OCI).stat().st_size > OCI_LIMIT:
-        refuse(f"OCI archive exceeds {OCI_LIMIT} bytes")
+        fail(f"OCI archive exceeds {OCI_LIMIT} bytes")
     digest = file_sha256(candidate / OCI)
     if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
-        refuse("OCI archive does not match the request checksum")
+        fail("OCI archive does not match the request checksum")
     manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
     assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
     if release.stable:
         verify_release_assets.verify_artifacts(release.version, assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
-        refuse("main moved during verification; start a fresh request")
+        fail("main moved during verification; start a fresh request")
 
     (handoff / "image").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
@@ -262,12 +258,12 @@ def command_recheck() -> None:
     handoff = runner_path("HANDOFF_DIR")
     exact_files(handoff / "image", {OCI})
     if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
-        refuse("approved OCI handoff does not match the verified archive")
+        fail("approved OCI handoff does not match the verified archive")
     if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
-        refuse("approved asset handoff does not match the verified assets")
+        fail("approved asset handoff does not match the verified assets")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
-        refuse("main moved after verification; start a fresh request")
+        fail("main moved after verification; start a fresh request")
     append_summary(
         f"### Final release recheck passed\n\n`{release.tag}` from `{release.sha}` is still "
         f"authorized on main `{main}` after approval: CI run `{ci_run_id}`, "

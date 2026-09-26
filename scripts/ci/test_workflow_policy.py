@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from workflow_policy import PolicyError, check_repository
+from github_api import ControlPlaneError
+from workflow_policy import check_repository
 
 ROOT = Path(__file__).resolve().parents[2]
 W = ".github/workflows/"
@@ -144,7 +145,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                     text = text.replace(old, new, 1)
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(text)
-                with self.assertRaisesRegex(PolicyError, error):
+                with self.assertRaisesRegex(ControlPlaneError, error):
                     check_repository(root)
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
@@ -157,7 +158,7 @@ class WorkflowPolicyTests(unittest.TestCase):
                     root = self.tree()
                     rebound = re.sub(rf"(?m)^( +{variable}): .*$", r"\1: ${{ github.job }}", step)
                     (root / name).write_text(text.replace(step, rebound))
-                    with self.assertRaisesRegex(PolicyError, f" {variable} must be exactly"):
+                    with self.assertRaisesRegex(ControlPlaneError, f" {variable} must be exactly"):
                         check_repository(root)
 
 

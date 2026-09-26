@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import platform
 import re
@@ -15,7 +14,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import TLS_NAME, ControlPlaneError, confined_path, decode_json
+from github_api import TLS_NAME, ControlPlaneError, confined_path, decode_json, fail, file_sha256
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -23,40 +22,31 @@ TARGETS = Path("scripts/tui-targets.txt")
 TUI_FILES = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
 
 
-class VerificationError(ControlPlaneError):
-    pass
-
-
-def sha256_file(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
-
-
 def require_same(label: str, expected: set[str], actual: set[str]) -> None:
     if actual != expected:
-        raise VerificationError(
+        fail(
             f"{label}: missing={sorted(expected - actual)} unexpected={sorted(actual - expected)}")
 
 
 def verify_checksums(dist: Path) -> set[str]:
     path = dist / "checksums.txt"
     if path.is_symlink() or not path.is_file():
-        raise VerificationError("checksums.txt is missing or not a regular file")
+        fail("checksums.txt is missing or not a regular file")
     names: set[str] = set()
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if (match := CHECKSUM_LINE.fullmatch(line)) is None:
-            raise VerificationError(f"invalid checksums.txt line {number}: {line!r}")
+            fail(f"invalid checksums.txt line {number}: {line!r}")
         name = match.group(2)
         if SAFE_NAME.fullmatch(name) is None or name in names:
-            raise VerificationError(f"unsafe or duplicate release artifact name: {name!r}")
+            fail(f"unsafe or duplicate release artifact name: {name!r}")
         names.add(name)
         artifact = dist / name
         if artifact.is_symlink() or not artifact.is_file():
-            raise VerificationError(f"checksummed artifact is not a regular file: {name}")
-        if sha256_file(artifact) != match.group(1).lower():
-            raise VerificationError(f"checksum mismatch for {name}")
+            fail(f"checksummed artifact is not a regular file: {name}")
+        if file_sha256(artifact) != match.group(1).lower():
+            fail(f"checksum mismatch for {name}")
     if not names:
-        raise VerificationError("checksums.txt is empty")
+        fail("checksums.txt is empty")
     return names
 
 
@@ -64,7 +54,7 @@ def verify_release_file_set(dist: Path, checksummed: set[str]) -> None:
     entries = list(dist.iterdir())
     names = {entry.name for entry in entries}
     if irregular := sorted(e.name for e in entries if e.is_symlink() or not e.is_file()):
-        raise VerificationError(f"release directory contains non-regular entries: {irregular}")
+        fail(f"release directory contains non-regular entries: {irregular}")
     require_same("release files", {*checksummed, "checksums.txt"}, names)
 
 
@@ -73,7 +63,7 @@ def tui_archives(version: str, targets: Path) -> dict[str, tuple[str, str]]:
     archives: dict[str, tuple[str, str]] = {}
     for target in targets.read_text(encoding="utf-8").split():
         if re.fullmatch(r"[a-z0-9]+/[a-z0-9]+", target) is None:
-            raise VerificationError(f"invalid TUI target: {target!r}")
+            fail(f"invalid TUI target: {target!r}")
         goos, goarch = target.split("/")
         base = f"graphite-meter-client_{version}_{goos}_{goarch}"
         if goos == "windows":
@@ -95,24 +85,24 @@ def archive_names(path: Path) -> set[str]:
                 members = [(item.filename, stat.S_IFMT(item.external_attr >> 16) in regular)
                            for item in archive.infolist()]
         else:
-            raise VerificationError(f"unsupported release archive type: {path}")
+            fail(f"unsupported release archive type: {path}")
     except (OSError, tarfile.TarError, zipfile.BadZipFile) as exc:
-        raise VerificationError(f"cannot inspect {path}: {exc}") from exc
+        raise ControlPlaneError(f"cannot inspect {path}: {exc}") from exc
     names: set[str] = set()
     for name, regular in members:
         if not name or "\\" in name or name.startswith("/") or ".." in PurePosixPath(name).parts:
-            raise VerificationError(f"{path.name} contains unsafe archive path: {name!r}")
+            fail(f"{path.name} contains unsafe archive path: {name!r}")
         if not regular:
-            raise VerificationError(f"{path.name} contains a link or special entry: {name!r}")
+            fail(f"{path.name} contains a link or special entry: {name!r}")
         if (normalized := name.rstrip("/")) in names:
-            raise VerificationError(f"{path.name} contains duplicate archive entry: {name!r}")
+            fail(f"{path.name} contains duplicate archive entry: {name!r}")
         names.add(normalized)
     return names
 
 
 def member(archive: tarfile.TarFile, name: str) -> bytes:
     if (handle := archive.extractfile(name)) is None:
-        raise VerificationError(f"cannot read {name}")
+        fail(f"cannot read {name}")
     return handle.read()
 
 
@@ -126,16 +116,16 @@ def verify_third_party_source_archive(dist: Path, version: str) -> None:
     manual = f"{root}/third_party/manual/"
     sources = {name for name in names if name.startswith((*upstream, manual))}
     if missing := sorted(metadata - names):
-        raise VerificationError(f"{source.name} is missing source-offer metadata: {missing}")
+        fail(f"{source.name} is missing source-offer metadata: {missing}")
     if unexpected := sorted(names - metadata - sources):
-        raise VerificationError(
+        fail(
             f"{source.name} contains unexpected non-third-party source paths: {unexpected[:5]}")
     if not sources:
-        raise VerificationError(f"{source.name} contains no third-party source material")
+        fail(f"{source.name} contains no third-party source material")
     # Upstream Go and npm sources may ship test keys; manually provided sources may not.
     if keys := sorted(name for name in sources
                       if TLS_NAME.search(name) and not name.startswith(upstream)):
-        raise VerificationError(
+        fail(
             f"{source.name} contains certificate/key material outside upstream dependency source: "
             f"{keys[:5]}")
     try:
@@ -144,26 +134,26 @@ def verify_third_party_source_archive(dist: Path, version: str) -> None:
             provenance = decode_json(member(archive, f"{root}/PROVENANCE.json").decode(), root)
             readme = member(archive, f"{root}/README.txt").decode()
     except (OSError, UnicodeDecodeError, tarfile.TarError) as exc:
-        raise VerificationError(f"cannot read {source.name} metadata: {exc}") from exc
+        raise ControlPlaneError(f"cannot read {source.name} metadata: {exc}") from exc
     components = ("server", "tui", "container")
     if not isinstance(inventory, dict) or set(inventory) != set(components) or not all(
             isinstance(inventory[key], list) for key in components):
-        raise VerificationError(f"{source.name} has an invalid LEGAL_INVENTORY.json")
+        fail(f"{source.name} has an invalid LEGAL_INVENTORY.json")
     if not isinstance(provenance, list):
-        raise VerificationError(f"{source.name} has an invalid PROVENANCE.json")
+        fail(f"{source.name} has an invalid PROVENANCE.json")
     for phrase in ("Source code (tar.gz)", "Source code (zip)",
                    "does not duplicate Graphite Meter's own repository source"):
         if phrase not in readme:
-            raise VerificationError(f"{source.name} README does not describe the source offer")
+            fail(f"{source.name} README does not describe the source offer")
 
 
 def verify_client_archives(dist: Path, version: str, targets: Path) -> None:
     for name, (base, binary) in tui_archives(version, targets).items():
         names = archive_names(dist / name)
         if missing := sorted({f"{base}/{file}" for file in (binary, *TUI_FILES)} - names):
-            raise VerificationError(f"{name} is missing: {missing}")
+            fail(f"{name} is missing: {missing}")
         if keys := sorted(entry for entry in names if TLS_NAME.search(entry)):
-            raise VerificationError(f"{name} contains certificate/key material: {keys[:5]}")
+            fail(f"{name} contains certificate/key material: {keys[:5]}")
 
 
 def verify_tui_version(version: str, dist: Path) -> None:
@@ -174,7 +164,7 @@ def verify_tui_version(version: str, dist: Path) -> None:
     archives = [(name, binary) for name, (base, binary) in tui_archives(version, TARGETS).items()
                 if base == host]
     if not archives:
-        raise VerificationError(f"no TUI archive runs on this host: {host}")
+        fail(f"no TUI archive runs on this host: {host}")
     name, binary = archives[0]
     with tempfile.TemporaryDirectory() as directory:
         executable = Path(directory) / binary
@@ -188,7 +178,7 @@ def verify_tui_version(version: str, dist: Path) -> None:
         result = subprocess.run([executable, "--version"], capture_output=True, text=True,
                                 check=False)
     if result.stdout.strip() != f"graphite-meter-client {version}":
-        raise VerificationError(f"{name} reports {result.stdout.strip()!r} {result.stderr.strip()}")
+        fail(f"{name} reports {result.stdout.strip()!r} {result.stderr.strip()}")
 
 
 def verify_artifacts(version: str, dist: Path) -> None:

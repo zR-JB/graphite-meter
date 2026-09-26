@@ -26,14 +26,12 @@ from fixtures import (
     write_tar,
 )
 from verify_oci import (
-    VerificationError as OCIError,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
 )
 from github_api import ControlPlaneError
 from verify_release_assets import (
-    VerificationError,
     archive_names,
     release_dist,
     tui_archives,
@@ -62,12 +60,12 @@ class ReleaseAssetTests(unittest.TestCase):
         (self.dist / "checksums.txt").write_text(f"{digest}  artifact.bin\n")
         verify_release_file_set(self.dist, verify_checksums(self.dist))
         (self.dist / "extra.bin").write_bytes(b"not checksummed")
-        with self.assertRaisesRegex(VerificationError, r"unexpected=\['extra.bin'\]"):
+        with self.assertRaisesRegex(ControlPlaneError, r"unexpected=\['extra.bin'\]"):
             verify_release_file_set(self.dist, {"artifact.bin"})
         (self.dist / "extra.bin").unlink()
         (self.dist / "link.bin").symlink_to(payload)
         (self.dist / "directory").mkdir()
-        with self.assertRaisesRegex(VerificationError, r"non-regular entries: \['directory', 'l"):
+        with self.assertRaisesRegex(ControlPlaneError, r"non-regular entries: \['directory', 'l"):
             verify_release_file_set(self.dist, {"artifact.bin", "link.bin", "directory"})
         for line, error in ((f"{digest}  ../artifact.bin", "unsafe"),
                             (f"{digest}  artifact\tname.bin", "unsafe"),
@@ -77,7 +75,7 @@ class ReleaseAssetTests(unittest.TestCase):
                             ("0" * 64 + "  artifact.bin", "checksum mismatch"),
                             ("", "empty")):
             (self.dist / "checksums.txt").write_text(line + "\n" if line else "")
-            with self.subTest(line=line), self.assertRaisesRegex(VerificationError, error):
+            with self.subTest(line=line), self.assertRaisesRegex(ControlPlaneError, error):
                 verify_checksums(self.dist)
 
     def test_archives_reject_traversal_links_and_special_files(self) -> None:
@@ -98,7 +96,7 @@ class ReleaseAssetTests(unittest.TestCase):
             else:
                 with zipfile.ZipFile(path, "w") as archive:
                     archive.writestr("..\\escape" if name == "escape.zip" else device, b"")
-            with self.subTest(name=name), self.assertRaisesRegex(VerificationError, error):
+            with self.subTest(name=name), self.assertRaisesRegex(ControlPlaneError, error):
                 archive_names(path)
 
     def test_third_party_source_offer_excludes_project_source_and_manual_keys(self) -> None:
@@ -116,7 +114,7 @@ class ReleaseAssetTests(unittest.TestCase):
                 if error is None:
                     verify_third_party_source_archive(self.dist, "1.2.3")
                 else:
-                    with self.assertRaisesRegex(VerificationError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         verify_third_party_source_archive(self.dist, "1.2.3")
 
     def test_tui_archives_follow_targets_and_require_the_binary(self) -> None:
@@ -131,7 +129,7 @@ class ReleaseAssetTests(unittest.TestCase):
         targets.write_text("linux/amd64\n")
         legal = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
         write_tar(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
-        with self.assertRaisesRegex(VerificationError, "graphite-meter-client"):
+        with self.assertRaisesRegex(ControlPlaneError, "graphite-meter-client"):
             verify_client_archives(self.dist, "1.2.3", targets)
 
     def test_release_is_exactly_the_checksummed_source_offer_and_tui_archives(self) -> None:
@@ -171,14 +169,14 @@ class ReleaseAssetTests(unittest.TestCase):
                 if error is None:
                     verify_artifacts("1.2.3", dist)
                 else:
-                    with self.assertRaisesRegex(VerificationError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         verify_artifacts("1.2.3", dist)
 
     def test_the_host_tui_archive_reports_the_release_version(self) -> None:
         write_release_assets(self.dist / "valid", "1.2.3")
         verify_release("1.2.3", self.dist / "valid")
         write_release_assets(self.dist / "stale", "1.2.3", reported="1.2.2")
-        with self.assertRaisesRegex(VerificationError, "reports 'graphite-meter-client 1.2.2'"):
+        with self.assertRaisesRegex(ControlPlaneError, "reports 'graphite-meter-client 1.2.2'"):
             verify_release("1.2.3", self.dist / "stale")
 
     def test_release_dist_stays_in_the_checkout_or_a_temporary_directory(self) -> None:
@@ -215,12 +213,12 @@ class OCITests(unittest.TestCase):
             ((*RUNNABLE, *ATTESTED, RUNNABLE[0]), "duplicate"),
             ((RUNNABLE[0], ATTESTED[0]), "linux/amd64 and linux/arm64"),
         ):
-            with self.subTest(error=error), self.assertRaisesRegex(OCIError, error):
+            with self.subTest(error=error), self.assertRaisesRegex(ControlPlaneError, error):
                 validate_index_descriptors(index(*manifests))
         for key, value in (("schemaVersion", 1), ("mediaType", "application/json")):
             valid = index(*RUNNABLE, *ATTESTED)
             valid[key] = value
-            with self.subTest(key=key), self.assertRaisesRegex(OCIError, "schemaVersion 2"):
+            with self.subTest(key=key), self.assertRaisesRegex(ControlPlaneError, "schemaVersion 2"):
                 validate_index_descriptors(valid)
 
     def test_verification_runs_offline_with_only_the_archive_mounted_read_only(self) -> None:
@@ -246,7 +244,7 @@ class OCITests(unittest.TestCase):
                     if error is None:
                         self.assertEqual(verify_oci(version, "f" * 40, archive), AMD)
                     else:
-                        with self.assertRaisesRegex(OCIError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             verify_oci(version, "f" * 40, archive)
                 log = (root / "engine.log").read_text()
                 for call in (line.split() for line in log.splitlines()):
@@ -276,7 +274,7 @@ class OCITests(unittest.TestCase):
                     if error is None:
                         verify_oci("1.2.3", "f" * 40, archive)
                     else:
-                        with self.assertRaisesRegex(OCIError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             verify_oci("1.2.3", "f" * 40, archive)
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
@@ -291,7 +289,7 @@ class OCITests(unittest.TestCase):
                     if error is None:
                         self.assertEqual(select_engine(), "docker")
                     else:
-                        with self.assertRaisesRegex(OCIError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             select_engine()
 
     def test_symlinked_or_empty_archive_is_refused_before_the_engine_runs(self) -> None:
@@ -299,7 +297,7 @@ class OCITests(unittest.TestCase):
             archive = Path(directory) / "image.oci.tar"
             for make in (lambda: archive.symlink_to(directory), archive.touch):
                 make()
-                with self.assertRaisesRegex(OCIError, "not a regular file"):
+                with self.assertRaisesRegex(ControlPlaneError, "not a regular file"):
                     verify_oci("1.2.3", "f" * 40, archive)
                 archive.unlink()
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError, JsonObject, confined_path, runner_path
+from github_api import ControlPlaneError, JsonObject, confined_path, file_sha256, runner_path
 from fixtures import (
     AMD, Answers, engine, fake, gh, git_head, pages, write_oci, write_release_assets,
 )
@@ -19,7 +19,6 @@ from release import (
     OCI,
     Release,
     assets_sha256,
-    file_sha256,
     command_prepare,
     command_recheck,
     command_verify,
@@ -30,7 +29,6 @@ from release import (
     verify_request,
 )
 from trust import (
-    TrustError,
     exact_files,
     require_check_run,
     require_ci_gate,
@@ -152,7 +150,7 @@ class MainBindingTests(unittest.TestCase):
                 if ok:
                     self.assertEqual(require_current_main(REPO, 101, HEAD, api=api), MAIN)
                 else:
-                    with self.assertRaisesRegex(TrustError, "behind current main"):
+                    with self.assertRaisesRegex(ControlPlaneError, "behind current main"):
                         require_current_main(REPO, 101, HEAD, api=api)
 
     def test_current_main_is_an_exact_commit(self) -> None:
@@ -164,7 +162,7 @@ class MainBindingTests(unittest.TestCase):
                 if error is None:
                     self.assertEqual(require_exact_current_main(REPO, sha, api=api), main)
                 else:
-                    with self.assertRaisesRegex(TrustError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         require_exact_current_main(REPO, sha, api=api)
 
     def test_prerelease_pr_is_open_same_repository_against_main_at_head(self) -> None:
@@ -180,7 +178,7 @@ class MainBindingTests(unittest.TestCase):
                 if error is None:
                     self.assertEqual(require_pr(REPO, 101, HEAD, api=api), "fix/test")
                 else:
-                    with self.assertRaisesRegex(TrustError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         require_pr(REPO, 101, HEAD, api=api)
 
     def test_prerelease_control_plane_must_match_main(self) -> None:
@@ -196,7 +194,7 @@ class MainBindingTests(unittest.TestCase):
                     if path not in control:
                         require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
                     else:
-                        with self.assertRaisesRegex(TrustError, f"PR changes {re.escape(path)};"):
+                        with self.assertRaisesRegex(ControlPlaneError, f"PR changes {re.escape(path)};"):
                             require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
 
     def test_release_tag_preflight_accepts_only_the_expected_commit(self) -> None:
@@ -208,7 +206,7 @@ class MainBindingTests(unittest.TestCase):
         require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=annotated)
         moved = fake({TAG_REFS: [{"ref": "refs/tags/v1.2.3",
                                   "object": {"type": "commit", "sha": HEAD}}]})
-        with self.assertRaisesRegex(TrustError, "already exists"):
+        with self.assertRaisesRegex(ControlPlaneError, "already exists"):
             require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=moved)
 
     def test_stable_tags_have_no_pr_and_prerelease_tags_need_one(self) -> None:
@@ -222,10 +220,10 @@ class MainBindingTests(unittest.TestCase):
                 if ok:
                     self.assertEqual(parse_release(tag, MAIN, pr), Release(tag, MAIN, pr))
                 else:
-                    with self.assertRaisesRegex(TrustError, "stable tags"):
+                    with self.assertRaisesRegex(ControlPlaneError, "stable tags"):
                         parse_release(tag, MAIN, pr)
         for sha in ("main", "A" * 40, MAIN[:39], MAIN + "1"):
-            with self.subTest(sha=sha), self.assertRaisesRegex(TrustError, "40-character"):
+            with self.subTest(sha=sha), self.assertRaisesRegex(ControlPlaneError, "40-character"):
                 parse_release("v0.5.2", sha, 0)
 
 
@@ -243,7 +241,7 @@ class EnvironmentTests(unittest.TestCase):
                 if error is None:
                     require_protected_environment(REPO, api=api)
                 else:
-                    with self.assertRaisesRegex(TrustError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         require_protected_environment(REPO, api=api)
 
 
@@ -260,7 +258,7 @@ class GateTests(unittest.TestCase):
                 if error is None:
                     require_main_codeql(REPO, MAIN, api=api)
                 else:
-                    with self.assertRaisesRegex(TrustError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         require_main_codeql(REPO, MAIN, api=api)
 
     def test_ci_gate_uses_newest_run_of_this_commit_pr_and_event_and_its_gate(self) -> None:
@@ -288,7 +286,7 @@ class GateTests(unittest.TestCase):
                 if isinstance(result, int):
                     self.assertEqual(gate(), result)
                 else:
-                    with self.assertRaisesRegex(TrustError, result):
+                    with self.assertRaisesRegex(ControlPlaneError, result):
                         gate()
 
     def test_newest_pr_codeql_check_from_the_security_app_decides(self) -> None:
@@ -311,7 +309,7 @@ class GateTests(unittest.TestCase):
                     return require_check_run(REPO, HEAD, name="CodeQL", app_slug=APP["slug"],
                                              pr_number=101, api=api)
                 if allowed is None:
-                    self.assertRaises(TrustError, check)
+                    self.assertRaises(ControlPlaneError, check)
                 else:
                     self.assertEqual(check(), allowed)
 
@@ -350,7 +348,7 @@ class RequestTests(unittest.TestCase):
                 if error is None:
                     bind()
                 else:
-                    with self.assertRaisesRegex(TrustError, error):
+                    with self.assertRaisesRegex(ControlPlaneError, error):
                         bind()
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
@@ -359,12 +357,12 @@ class RequestTests(unittest.TestCase):
             (root / "request.json").write_text("{}")
             exact_files(root, {"request.json"})
             (root / "extra").write_text("x")
-            with self.assertRaisesRegex(TrustError, "files are"):
+            with self.assertRaisesRegex(ControlPlaneError, "files are"):
                 exact_files(root, {"request.json"})
             (root / "extra").unlink()
             (root / "request.json").unlink()
             (root / "request.json").symlink_to(root)
-            with self.assertRaisesRegex(TrustError, "not a regular file"):
+            with self.assertRaisesRegex(ControlPlaneError, "not a regular file"):
                 exact_files(root, {"request.json"})
 
     def test_runner_paths_stay_inside_the_runner_temporary_directory(self) -> None:
@@ -409,7 +407,7 @@ class RequestTests(unittest.TestCase):
                                        "RUNNER_TEMP": tempfile.gettempdir()}
                 with patch.dict(os.environ, env):
                     if error is not None:
-                        with self.assertRaisesRegex(TrustError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             command_prepare()
                         continue
                     command_prepare()
@@ -435,7 +433,7 @@ class RequestTests(unittest.TestCase):
             (prerelease, {tree(HEAD): {"tree": []}}, "PR changes scripts"),
         ):
             api = fake(trusted(release.stable) | change)
-            with self.subTest(error=error), self.assertRaisesRegex(TrustError, error):
+            with self.subTest(error=error), self.assertRaisesRegex(ControlPlaneError, error):
                 require_publishable(REPO, release, api=api)
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
@@ -485,7 +483,7 @@ class RequestTests(unittest.TestCase):
                         expected = (request | change)["sourceSha"]
                         self.assertEqual((release.sha, publish), (expected, True))
                     else:
-                        with self.assertRaisesRegex(TrustError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             verify_request(root, api=api)
 
 
@@ -605,7 +603,7 @@ class CommandTests(unittest.TestCase):
                         self.assertIn(f"authorized on main `{MAIN}`",
                                       (Path(directory) / "summary").read_text())
                     else:
-                        with self.assertRaisesRegex(TrustError, error):
+                        with self.assertRaisesRegex(ControlPlaneError, error):
                             command_recheck()
 
 
