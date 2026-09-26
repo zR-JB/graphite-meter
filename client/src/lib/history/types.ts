@@ -27,7 +27,7 @@ const MAX_HISTORY_TEXT_LENGTH = 256;
 
 export interface ThroughputSnapshot {
   reportedBytesPerSec: number;
-  peakBytesPerSec: number;
+  peakBytesPerSec: number | null;
   fullAverageBytesPerSec: number;
   method: "stable-window" | "full-average";
   totalBytes: number;
@@ -319,10 +319,10 @@ const throughputShape = (value: unknown): boolean =>
   (object(value) &&
     numbers(value, [
       "reportedBytesPerSec",
-      "peakBytesPerSec",
       "fullAverageBytesPerSec",
       "totalBytes",
-    ]));
+    ]) &&
+    numbers(value, ["peakBytesPerSec"], true));
 const wireShape = (value: unknown): boolean => {
   if (!object(value) || !object(value.breakdown)) return false;
   const breakdown = value.breakdown;

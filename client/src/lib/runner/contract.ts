@@ -193,7 +193,8 @@ export interface RunResult {
 type ResultMethod = "stable-window" | "full-average";
 
 export interface ThroughputResult {
-  peakBytesPerSec: number;
+  /** The fastest disjoint window of at least 500 ms on every clock; null without one. */
+  peakBytesPerSec: number | null;
   /** Fixed-time-bucket coefficient-of-variation descriptor (0..100). */
   stabilityPct: number;
   totalBytes: number;

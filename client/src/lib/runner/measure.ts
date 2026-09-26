@@ -22,7 +22,7 @@ export const BUCKET_MS = 250;
 const WINDOW_MS = 4_000;
 const WINDOW_BUCKETS = WINDOW_MS / BUCKET_MS;
 const INTERVAL_LIMIT = 128;
-const PEAK_WINDOW_BUCKETS = 2;
+const PEAK_WINDOW_MS = 500;
 export const STAGES = [
   "latency",
   "download",
@@ -104,14 +104,6 @@ export function transferConfidence(rates: readonly number[]): ConfidenceScore {
     avg;
   const score = clamp01(1 - varianceRatio * 2.2 - slopeRatio * 1.4);
   return { score, varianceRatio, slopeRatio, sampleCount: values.length };
-}
-
-/** The fastest 500 ms of fixed-time buckets, never below the reported rate; one burst flush cannot set it. */
-export function peakRate(rates: readonly number[], reported: number): number {
-  let peak = reported;
-  for (let i = PEAK_WINDOW_BUCKETS; i <= rates.length; i++)
-    peak = Math.max(peak, mean(rates.slice(i - PEAK_WINDOW_BUCKETS, i)));
-  return peak;
 }
 
 /** Descriptive 0..100 steadiness of fixed-time rate buckets. */
@@ -612,6 +604,10 @@ interface OpenInterval {
   combined: RateBuckets;
   total: Series;
   servers: Map<string, Series>;
+  /** Peaks come from disjoint windows of at least 500 ms on every clock, from this boundary on. */
+  peakFrom: Boundary | null;
+  /** Per server id, and "" for the combined rate. */
+  peaks: Map<string, Partial<Record<FlowDirection, number>>>;
 }
 type Totals = Record<FlowDirection, number>;
 
@@ -678,6 +674,8 @@ export class ThroughputAggregate {
       combined: new RateBuckets(WINDOW_BUCKETS),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
+      peakFrom: null,
+      peaks: new Map(),
     };
   }
 
@@ -751,7 +749,7 @@ export class ThroughputAggregate {
       );
     if (!valid) return null;
     if (!open.first || !open.last) {
-      open.first = open.last = boundary;
+      open.first = open.last = open.peakFrom = boundary;
       record.startMs = record.endMs = boundary.atMs;
       return null;
     }
@@ -800,6 +798,15 @@ export class ThroughputAggregate {
       ms,
     );
     open.last = boundary;
+    const span = window(open.peakFrom!, boundary, record);
+    if (span && shortestMs(span) >= PEAK_WINDOW_MS) {
+      open.peakFrom = boundary;
+      for (const dir of dirs) {
+        raise(open.peaks, "", dir, rateOf(span, dir)!);
+        for (const c of span[dir]!)
+          raise(open.peaks, c.serverId, dir, c.bytesPerSec);
+      }
+    }
     record.full = full;
     record.endMs = boundary.atMs;
     record.headline = open.stable
@@ -864,7 +871,7 @@ export class ThroughputAggregate {
         reportedBytesPerSec: rate,
         fullAverageBytesPerSec: rateOf(record.full!, dir)!,
         totalBytes: this.#stageTotal(stage, dir),
-        peakBytesPerSec: peakRate(open.total[dir].rates, rate),
+        peakBytesPerSec: open.peaks.get("")?.[dir] ?? null,
         stabilityPct: stabilityPct(open.total[dir].rates),
         method: window === record.full ? "full-average" : "stable-window",
         stabilityScore: open.score,
@@ -896,7 +903,7 @@ export class ThroughputAggregate {
       reportedBytesPerSec: component.bytesPerSec,
       fullAverageBytesPerSec: component.bytesPerSec,
       totalBytes: this.#stageTotal(stage, dir, id),
-      peakBytesPerSec: peakRate(rates, component.bytesPerSec),
+      peakBytesPerSec: open.peaks.get(id)?.[dir] ?? null,
       stabilityPct: stabilityPct(rates),
       method: "full-average",
       stabilityScore: 0,
@@ -904,6 +911,23 @@ export class ThroughputAggregate {
       serverAuthoritative: dir === "up" || undefined,
     };
   }
+}
+
+const shortestMs = (window: AggregateWindow) =>
+  Math.min(
+    window.endMs - window.startMs,
+    ...(window.up ?? []).map((c) => c.durationMs),
+  );
+
+function raise(
+  peaks: OpenInterval["peaks"],
+  id: string,
+  dir: FlowDirection,
+  rate: number,
+): void {
+  const peak = peaks.get(id) ?? {};
+  peak[dir] = Math.max(peak[dir] ?? 0, rate);
+  peaks.set(id, peak);
 }
 
 /** A reportable window spans the evidence floor in the client clock and in every receiver clock. */
