@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"io"
-	"net"
 	"net/http"
-	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -14,53 +12,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
-
-// pipeListener serves in-memory connections, so a synctest bubble can run real HTTP exchanges on fake time.
-type pipeListener struct {
-	conns     chan net.Conn
-	done      chan struct{}
-	closeOnce sync.Once
-}
-
-// pipeConn reports a client address, as a socket does.
-type pipeConn struct{ net.Conn }
-
-func (pipeConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv4(192, 0, 2, 1), Port: 1} }
-
-func (l *pipeListener) Accept() (net.Conn, error) {
-	select {
-	case c := <-l.conns:
-		return c, nil
-	case <-l.done:
-		return nil, net.ErrClosed
-	}
-}
-
-func (l *pipeListener) Close() error {
-	l.closeOnce.Do(func() { close(l.done) })
-	return nil
-}
-
-func (l *pipeListener) Addr() net.Addr { return pipeConn{}.RemoteAddr() }
-
-func newPipeListener() *pipeListener {
-	return &pipeListener{conns: make(chan net.Conn), done: make(chan struct{})}
-}
-
-// client dials l until the test ends.
-func (l *pipeListener) client(t *testing.T) *http.Client {
-	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		client, server := net.Pipe()
-		select {
-		case l.conns <- pipeConn{server}:
-			return client, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}}
-	t.Cleanup(tr.CloseIdleConnections)
-	return &http.Client{Transport: tr}
-}
 
 // laneServer serves the transfer routes over pipes and returns a client for them.
 func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client) {
@@ -78,12 +29,6 @@ func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client
 	return e, ln.client(t)
 }
 
-// pipeSockets serves the clear listener over ln.
-type pipeSockets struct{ ln *pipeListener }
-
-func (s pipeSockets) listenTCP(string) (net.Listener, error) { return s.ln, nil }
-func (pipeSockets) listenUDP(string) (net.PacketConn, error) { return nil, net.ErrClosed }
-
 // Shutdown drains measurements for its grace period, then cuts the ones still open.
 func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -91,7 +36,7 @@ func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
 		cfg := config.Default()
 		ln := newPipeListener()
 		stopped := make(chan error)
-		go func() { stopped <- runWithSockets(ctx, &cfg, pipeSockets{ln}) }()
+		go func() { stopped <- runWithSockets(ctx, &cfg, pipeSockets{cfg.Native.H1: ln}) }()
 		client := ln.client(t)
 		session, err := client.Post("http://meter/upload/session", "", nil)
 		if err != nil {

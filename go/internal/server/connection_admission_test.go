@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -141,24 +142,21 @@ func TestAdmittedListenerSkipsRefusedConnections(t *testing.T) {
 }
 
 func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
-	a := newConnectionAdmission(1, 1, nil)
-	ctx, cancel := context.WithCancel(t.Context())
-	if _, err := a.connContext(ctx, &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.1:1")}); err != nil {
-		t.Fatalf("first connContext: %v", err)
-	}
-	if _, err := a.connContext(t.Context(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
-		t.Fatal("second connContext admitted past the global limit")
-	}
-
-	// Cancelling the first connection's context frees its slot asynchronously.
-	cancel()
-	deadline := time.Now().Add(2 * time.Second)
-	for a.stats().active != 0 {
-		if time.Now().After(deadline) {
+	synctest.Test(t, func(t *testing.T) {
+		a := newConnectionAdmission(1, 1, nil)
+		ctx, cancel := context.WithCancel(t.Context())
+		if _, err := a.connContext(ctx, &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.1:1")}); err != nil {
+			t.Fatalf("first connContext: %v", err)
+		}
+		if _, err := a.connContext(t.Context(), &quic.ClientInfo{RemoteAddr: testAddr("192.0.2.2:1")}); err == nil {
+			t.Fatal("second connContext admitted past the global limit")
+		}
+		cancel()
+		synctest.Wait()
+		if a.stats().active != 0 {
 			t.Fatal("cancelled connection never released its slot")
 		}
-		time.Sleep(time.Millisecond)
-	}
+	})
 }
 
 // Under load a QUIC Initial holds a connection slot only once Retry has validated its source address.
@@ -213,7 +211,6 @@ func TestDefaultSessionShareFitsAClientsQUICConnections(t *testing.T) {
 // A peer that stalls a control exchange, or idles between exchanges, gives its connection slot back within the
 // control deadline on every native listener.
 func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
-	t.Parallel()
 	const timeout = 200 * time.Millisecond
 	send := func(request string) func(*testing.T, net.Conn) {
 		return func(t *testing.T, c net.Conn) {
@@ -246,104 +243,76 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 			}()
 		},
 	}
-	dialers := map[string]func(*testing.T, *config.Config) net.Conn{
-		"h1": func(t *testing.T, cfg *config.Config) net.Conn { return dialTCP(t, cfg.Native.H1) },
-		"h1 tls": func(t *testing.T, cfg *config.Config) net.Conn {
-			return dialTLS(t, cfg.Native.H1TLS, "http/1.1")
-		},
-		"h3 companion": func(t *testing.T, cfg *config.Config) net.Conn {
-			return dialTLS(t, cfg.Native.H3, "http/1.1")
-		},
+	// Unbuffered pipes stall an answer until its deadline, then a TLS close offers close_notify for five seconds.
+	const released = 10 * time.Second
+	slots := func(t *testing.T, build *listenerBuild, want int, after time.Duration) {
+		t.Helper()
+		time.Sleep(after)
+		synctest.Wait()
+		if got := build.connections.stats().active; got != want {
+			t.Fatalf("%d connection slots held after %v, want %d", got, after, want)
+		}
 	}
-	for listener, dial := range dialers {
+	shape := func(e *endpoints) { e.controlTimeout = timeout }
+	for _, alpn := range []string{"", "http/1.1"} {
 		for stall, hold := range stalls {
-			t.Run(listener+" "+stall, func(t *testing.T) {
-				t.Parallel()
-				cfg, build := slotServer(t, timeout)
-				hold(t, dial(t, cfg))
-				awaitSlots(t, build.connections, 1)
-				awaitSlots(t, build.connections, 0)
+			t.Run(alpn+" "+stall, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					cfg := config.Default()
+					cfg.Native.H1TLS = ":7247"
+					build, sockets := pipeServer(t, &cfg, shape)
+					var conn net.Conn
+					if alpn == "" {
+						conn, _ = sockets[cfg.Native.H1].dial(t.Context())
+					} else {
+						conn = sockets[cfg.Native.H1TLS].dialTLS(t, alpn)
+					}
+					hold(t, conn)
+					slots(t, build, 1, 0)
+					slots(t, build, 0, released)
+				})
 			})
 		}
 	}
 	t.Run("h2 idle", func(t *testing.T) {
-		t.Parallel()
-		cfg, build := slotServer(t, timeout)
-		protocols := &http.Protocols{}
-		protocols.SetHTTP2(true)
-		tr := &http.Transport{Protocols: protocols,
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // test certificate
-		defer tr.CloseIdleConnections()
-		getOnce(t, &http.Client{Transport: tr}, "https://"+cfg.Native.H2+"/probe")
-		awaitSlots(t, build.connections, 1)
-		awaitSlots(t, build.connections, 0)
+		synctest.Test(t, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.Native.H2 = ":7248"
+			build, sockets := pipeServer(t, &cfg, shape)
+			protocols := &http.Protocols{}
+			protocols.SetHTTP2(true)
+			tr := &http.Transport{Protocols: protocols, DialTLSContext: func(context.Context, string,
+				string) (net.Conn, error) {
+				return sockets[cfg.Native.H2].dialTLS(t, "h2"), nil
+			}}
+			defer tr.CloseIdleConnections()
+			res, err := (&http.Client{Transport: tr}).Get("https://meter/probe")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			res.Body.Close()
+			slots(t, build, 1, 0)
+			slots(t, build, 0, released)
+		})
 	})
+	// QUIC needs real UDP, so this case alone polls.
 	t.Run("h3 idle", func(t *testing.T) {
-		t.Parallel()
-		cfg, build := slotServer(t, timeout)
+		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+		}, shape)
 		tr := &http3.Transport{QUICConfig: transport.NewQUICConfig(),
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}} //nolint:gosec // test certificate
 		defer tr.Close()
-		getOnce(t, &http.Client{Transport: tr}, "https://"+cfg.Native.H3+"/probe")
-		awaitSlots(t, build.connections, 1)
-		awaitSlots(t, build.connections, 0)
-	})
-}
-
-func slotServer(t *testing.T, timeout time.Duration) (*config.Config, *listenerBuild) {
-	t.Helper()
-	return startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
-		cfg.Native.H1, cfg.Native.H1TLS = sockets.reserveTCP(), sockets.reserveTCP()
-		cfg.Native.H2, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
-	}, func(e *endpoints) { e.controlTimeout = timeout })
-}
-
-// dialTCP opens a client socket whose small receive buffer lets unread responses back up quickly.
-func dialTCP(t *testing.T, addr string) net.Conn {
-	t.Helper()
-	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = conn.(*net.TCPConn).SetReadBuffer(4096)
-	t.Cleanup(func() { _ = conn.Close() })
-	return conn
-}
-
-func dialTLS(t *testing.T, addr, alpn string) net.Conn {
-	t.Helper()
-	conn := tls.Client(dialTCP(t, addr), &tls.Config{InsecureSkipVerify: true, //nolint:gosec // test certificate
-		NextProtos: []string{alpn}})
-	if err := conn.HandshakeContext(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	return conn
-}
-
-func getOnce(t *testing.T, client *http.Client, url string) {
-	t.Helper()
-	res, err := client.Get(url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = io.Copy(io.Discard, res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("GET %s = %d", url, res.StatusCode)
-	}
-}
-
-// awaitSlots polls, since a server-side close reaches the count only after the peer could observe it. A TLS close
-// may first spend five seconds offering close_notify to a peer that stopped reading.
-func awaitSlots(t *testing.T, connections *connectionAdmission, want int) {
-	t.Helper()
-	// A TLS close waits up to 5 s to send close_notify to a peer that stopped reading.
-	const bound = 5*time.Second + 5*time.Second
-	start := time.Now()
-	for connections.stats().active != want {
-		if time.Since(start) > bound {
-			t.Fatalf("%d connection slots held after %v, want %d", connections.stats().active, time.Since(start), want)
+		res, err := (&http.Client{Transport: tr}).Get("https://" + cfg.Native.H3 + "/probe")
+		if err != nil {
+			t.Fatal(err)
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		res.Body.Close()
+		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
+			if time.Since(start) > released {
+				t.Fatal("an idle HTTP/3 connection held its slot")
+			}
+		}
+	})
 }
