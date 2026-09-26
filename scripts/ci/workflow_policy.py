@@ -24,45 +24,42 @@ STEP = re.compile(r"(?m)^(?=\s*- )")
 TRIGGERS = {
     "ci.yml": {"pull_request", "push"},
     "release-request.yml": {"workflow_dispatch"},
-    "prerelease-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
-    "prerelease-publish.yml": {"workflow_run"},
     "_publish-oci.yml": {"workflow_call"},
     "_publish-release.yml": {"workflow_call"},
     "_promote-oci.yml": {"workflow_call"},
 }
 WRITERS = {
     "release.yml": {"contents", "packages"},
-    "prerelease-publish.yml": {"packages"},
     "_publish-oci.yml": {"packages"},
     "_publish-release.yml": {"contents"},
     "_promote-oci.yml": {"packages"},
 }
 ALLOWED_USES = {
+    "release-request.yml": {
+        "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
+        "./.github/actions/build-oci", "actions/upload-artifact",
+    },
+    "release.yml": {
+        "actions/checkout", "jdx/mise-action", "actions/download-artifact",
+        "actions/upload-artifact", "./.github/workflows/_publish-oci.yml",
+        "./.github/workflows/_publish-release.yml", "./.github/workflows/_promote-oci.yml",
+    },
     "_publish-oci.yml": {"actions/download-artifact"},
     "_publish-release.yml": {"actions/download-artifact"},
     "_promote-oci.yml": set(),
-    "release-request.yml": {"actions/upload-artifact"},
-    "prerelease-request.yml": {
-        "actions/checkout", "jdx/mise-action", "./.github/actions/build-oci",
-        "actions/upload-artifact",
-    },
 }
 ORDERED = {
-    "workflows/prerelease-request.yml": (
+    "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
-        "run: python3 scripts/ci/prerelease.py request-prepare",
-        "source-sha: ${{ steps.request.outputs.sha }}",
-    ),
-    "workflows/release-request.yml": ("permissions: {}", '[[ "$REF" == refs/heads/main ]]'),
-    "workflows/prerelease-publish.yml": (
-        "approval:", "environment: ghcr-release", "recheck:", "prerelease.py publish-recheck",
-        "publish:",
+        "run: python3 scripts/ci/release.py prepare",
+        "uses: ./.github/actions/build-oci",
+        "source-sha: ${{ steps.request.outputs.remote_sha }}",
     ),
     "workflows/release.yml": (
-        "group: stable-release-${{ github.repository }}", "verify_release_assets.py",
-        "uses: ./.github/actions/build-oci", "approval:", "environment: ghcr-release",
-        "recheck:", "release.py recheck", "publish-image:", "publish-release:", "promote:",
+        "run: python3 scripts/ci/release.py verify", "approval:", "environment: ghcr-release",
+        "recheck:", "run: python3 scripts/ci/release.py recheck", "publish-image:",
+        "publish-release:", "target_sha: ${{ github.sha }}", "promote:",
     ),
     "workflows/_publish-oci.yml": (
         "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}",
@@ -83,8 +80,7 @@ ORDERED = {
     ),
 }
 FORBIDDEN = {
-    "workflows/release.yml": ("needs.guard.outputs.sha",),
-    "workflows/prerelease-publish.yml": ("head_sha", "pull_request.head"),
+    "workflows/release.yml": ("head_sha", "pull_request.head", "mise run"),
     "workflows/_publish-oci.yml": ("environment:",),
     "workflows/_publish-release.yml": (
         "environment:", "--location", "gh release upload", "releases/tags/$TAG",
@@ -189,11 +185,12 @@ def check_workflows(root: Path) -> None:
             actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
-    request = (workflows / "prerelease-request.yml").read_text(encoding="utf-8")
-    runs = set(re.findall(r"(?m)^\s+(?:- )?run: (.+)$", request))
-    helper = "python3 scripts/ci/prerelease.py request-"
-    if request.count("${{ inputs.sha }}") != 1 or runs != {helper + "prepare", helper + "finalize"}:
-        fail("prerelease-request.yml: the raw SHA may reach only the trusted request helpers")
+    request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    for step in STEP.split(request.split("\njobs:", 1)[1]):
+        if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
+            fail("release-request.yml: dispatch inputs may reach only the request validator")
+        if "setup-project" in step and step.count("cache: 'false'") != 3:
+            fail("release-request.yml: the untrusted build must disable every cache")
 
 
 def check_ci(root: Path) -> None:

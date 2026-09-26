@@ -161,10 +161,10 @@ def require_control_plane_matches_main(
 
 
 def require_dispatch_run(
-    repository: str, owner: str, main_sha: str, run_id: int, workflow: str, artifact: str,
-    *, max_size: int, api: APICall = default_api,
+    repository: str, owner: str, main_sha: str, run_id: int, workflow: str,
+    artifacts: dict[str, int], *, api: APICall = default_api,
 ) -> None:
-    """Bind a request run to its workflow, current main, one attempt, the owner and one artifact."""
+    """Bind a request run to its workflow, current main, one attempt, the owner and artifacts."""
     workflow_id = int_field(expect_object(api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
     run = expect_object(api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
@@ -183,12 +183,12 @@ def require_dispatch_run(
             refuse("request was not initiated by the repository owner")
     pages = api(query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
                 paginate=True)
-    matches = [item for item in _objects(pages, "artifacts")
-               if item.get("name") == artifact and item.get("expired") is False]
-    if len(matches) != 1:
-        refuse(f"expected one unexpired artifact {artifact}, found {len(matches)}")
-    if not 0 <= int_field(matches[0], "size_in_bytes", artifact) <= max_size:
-        refuse(f"artifact {artifact} exceeds {max_size} bytes")
+    unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
+    for name, limit in artifacts.items():
+        if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
+            refuse(f"expected one unexpired artifact {name}, found {len(matches)}")
+        if not 0 <= int_field(matches[0], "size_in_bytes", name) <= limit:
+            refuse(f"artifact {name} exceeds {limit} bytes")
 
 
 def require_ci_gate(

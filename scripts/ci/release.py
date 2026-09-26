@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Trusted stable-release request validation and post-approval recheck."""
+"""Validate release requests, then authorize stable releases and PR prereleases."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import os
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+import verify_oci
+import verify_release_assets
 from github_api import (
     APICall,
     ControlPlaneError,
@@ -16,44 +22,67 @@ from github_api import (
     append_summary,
     expect_array,
     expect_object,
+    int_field,
     object_field,
     str_field,
 )
 from trust import (
     SEMVER_NUMBER,
+    SHA_RE,
     env,
     env_int,
     env_sha,
     exact_files,
     read_record,
     refuse,
+    require_check_run,
     require_checkout,
     require_ci_gate,
+    require_control_plane_matches_main,
+    require_current_main,
     require_dispatch_run,
     require_exact_current_main,
     require_main_codeql,
+    require_pr,
 )
 
-STABLE_SEMVER_RE = re.compile(rf"v{SEMVER_NUMBER}\.{SEMVER_NUMBER}\.{SEMVER_NUMBER}")
+N = SEMVER_NUMBER
+TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
+OCI = "graphite-meter.oci.tar"
+OCI_LIMIT = 1024 * 1024 * 1024
+ASSETS_LIMIT = 2 * OCI_LIMIT
 REQUEST_KEYS = {
-    "schemaVersion", "repository", "sourceSha", "version", "mode", "requestRunId",
+    "schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId",
     "requestRunAttempt",
 }
 
 
 @dataclass(frozen=True)
-class ReleaseContext:
-    repository: str
-    sha: str
+class Release:
     tag: str
-    ci_run_id: int
-    publish: bool
-    request_run_id: int
+    sha: str
+    pr: int
+
+    @property
+    def stable(self) -> bool:
+        return self.pr == 0
+
+    @property
+    def version(self) -> str:
+        return self.tag[1:]
 
 
-def require_stable_tag(tag: str) -> None:
-    if STABLE_SEMVER_RE.fullmatch(tag) is None:
-        refuse("stable release version must be vMAJOR.MINOR.PATCH")
+def parse_release(tag: str, sha: str, pr: int) -> Release:
+    match = TAG_RE.fullmatch(tag)
+    if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
+        refuse("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
+    if SHA_RE.fullmatch(sha) is None:
+        refuse("release source must be a 40-character commit SHA")
+    return Release(tag, sha, pr)
+
+
+def main_workflow(repository: str, name: str) -> str:
+    return f"{repository}/.github/workflows/{name}@refs/heads/main"
 
 
 def require_compatible_release_tag(
@@ -77,72 +106,153 @@ def require_compatible_release_tag(
         refuse(f"{tag} already exists at {sha}, expected {expected_sha}")
 
 
-def validate_request_context(*, api: APICall = default_api) -> ReleaseContext:
-    repository = env("REPOSITORY")
-    sha = env_sha("PUBLISHER_SHA")
-    run_id = env_int("REQUEST_RUN_ID")
-    if env("WORKFLOW_REF") != f"{repository}/.github/workflows/release.yml@refs/heads/main":
-        refuse("stable release consumer is not the trusted main workflow")
-    require_exact_current_main(repository, sha, api=api)
-    require_checkout(sha)
-    require_dispatch_run(
-        repository, env("REPOSITORY_OWNER"), sha, run_id, "release-request.yml",
-        f"stable-release-request-{run_id}", max_size=64 * 1024, api=api,
+def require_publishable(
+    repository: str, release: Release, *, api: APICall = default_api,
+) -> tuple[str, int, str]:
+    """Return current main, the CI run and the PR CodeQL check that authorize `release`."""
+    sha = release.sha
+    if release.stable:
+        main = require_exact_current_main(repository, sha, api=api)
+        require_compatible_release_tag(repository, release.tag, sha, api=api)
+        ci_run_id = require_ci_gate(repository, sha, event="push", branch="main", api=api)
+        require_main_codeql(repository, sha, api=api)
+        return main, ci_run_id, ""
+    pr = release.pr
+    branch = require_pr(repository, pr, sha, api=api)
+    main = require_current_main(repository, pr, sha, api=api)
+    require_control_plane_matches_main(repository, sha, main, api=api)
+    ci_run_id = require_ci_gate(
+        repository, sha, event="pull_request", branch=branch, pr_number=pr, api=api,
     )
-    directory = Path(env("REQUEST_DIR"))
-    exact_files(directory, {"request.json"})
-    request = read_record(directory / "request.json", REQUEST_KEYS, {
-        "schemaVersion": 1, "repository": repository, "sourceSha": sha,
-        "requestRunId": run_id, "requestRunAttempt": 1,
-    })
-    tag = str_field(request, "version", "request")
-    require_stable_tag(tag)
-    if request["mode"] not in ("validate", "publish"):
-        refuse("stable release mode must be validate or publish")
-    require_compatible_release_tag(repository, tag, sha, api=api)
-    ci_run_id = require_ci_gate(repository, sha, event="push", branch="main", api=api)
-    require_main_codeql(repository, sha, api=api)
-    return ReleaseContext(repository, sha, tag, ci_run_id, request["mode"] == "publish", run_id)
+    codeql_id = require_check_run(
+        repository, sha, name="CodeQL", app_slug="github-advanced-security", pr_number=pr, api=api,
+    )
+    return main, ci_run_id, str(codeql_id)
 
 
-def command_guard() -> None:
-    context = validate_request_context()
-    version = context.tag[1:]
+def command_prepare() -> None:
+    repository, owner = env("REPOSITORY"), env("REPOSITORY_OWNER")
+    main = env_sha("EVENT_SHA")
+    if env("EVENT_NAME") != "workflow_dispatch" or env("REF") != "refs/heads/main":
+        refuse("release requests must be dispatched from main")
+    if env("WORKFLOW_REF") != main_workflow(repository, "release-request.yml"):
+        refuse("workflow is not the release request workflow on main")
+    if env("ACTOR") != owner or env("TRIGGERING_ACTOR") != owner:
+        refuse("only the repository owner may request a release")
+    if env_int("REQUEST_RUN_ATTEMPT") != 1:
+        refuse("workflow reruns are not valid requests; start a fresh dispatch")
+    if (mode := env("MODE")) not in ("validate", "publish"):
+        refuse("mode must be validate or publish")
+    pr = env_int("PR") if os.environ.get("PR") else 0
+    if not pr and os.environ.get("SHA"):
+        refuse("stable releases build current main; leave sha empty")
+    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
+    out = Path(env("OUT_DIR"))
+    out.mkdir(parents=True, exist_ok=True)
+    request = {
+        "schemaVersion": 2, "repository": repository, "tag": release.tag,
+        "sourceSha": release.sha, "pr": pr, "mode": mode,
+        "requestRunId": env_int("REQUEST_RUN_ID"), "requestRunAttempt": 1,
+    }
+    (out / "request.json").write_text(json.dumps(request, indent=2, sort_keys=True) + "\n")
     append_output(
-        tag=context.tag, version=version, series=version.rsplit(".", 1)[0],
-        publish=str(context.publish).lower(),
+        tag=release.tag, version=release.version, sha=release.sha,
+        stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
+        client_validate="0" if release.stable else "1",
+    )
+
+
+def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Release, bool]:
+    """Bind the untrusted request artifact to its run, current main and the release rules."""
+    repository = env("REPOSITORY")
+    publisher = env_sha("PUBLISHER_SHA")
+    run_id = env_int("REQUEST_RUN_ID")
+    if env("WORKFLOW_REF") != main_workflow(repository, "release.yml"):
+        refuse("release consumer is not the trusted main workflow")
+    require_exact_current_main(repository, publisher, api=api)
+    require_checkout(publisher)
+    candidate = request_dir / f"release-request-{run_id}"
+    exact_files(candidate, {"request.json", OCI, f"{OCI}.sha256"})
+    request = read_record(candidate / "request.json", REQUEST_KEYS, {
+        "schemaVersion": 2, "repository": repository, "requestRunId": run_id,
+        "requestRunAttempt": 1,
+    })
+    release = parse_release(str_field(request, "tag", "request"),
+                            str_field(request, "sourceSha", "request"),
+                            int_field(request, "pr", "request"))
+    if request["mode"] not in ("validate", "publish"):
+        refuse("request mode must be validate or publish")
+    if release.stable and release.sha != publisher:
+        refuse("a stable release must build the trusted main commit")
+    artifacts = {candidate.name: OCI_LIMIT + 1024 * 1024}
+    if release.stable:
+        artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
+    require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
+                         "release-request.yml", artifacts, api=api)
+    if (downloaded := {path.name for path in request_dir.iterdir()}) != set(artifacts):
+        refuse(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
+    return release, request["mode"] == "publish"
+
+
+def command_verify() -> None:
+    request_dir, handoff = Path(env("REQUEST_DIR")), Path(env("HANDOFF_DIR"))
+    release, publish = verify_request(request_dir)
+    candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
+    if (candidate / OCI).stat().st_size > OCI_LIMIT:
+        refuse(f"OCI archive exceeds {OCI_LIMIT} bytes")
+    with (candidate / OCI).open("rb") as handle:
+        digest = hashlib.file_digest(handle, "sha256").hexdigest()
+    if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
+        refuse("OCI archive does not match the request checksum")
+    verify_oci.verify(release.version, release.sha, candidate / OCI)
+    assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
+    if release.stable:
+        verify_release_assets.verify_artifacts(release.version, assets)
+    main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
+    if main != env("PUBLISHER_SHA"):
+        refuse("main moved during verification; start a fresh request")
+
+    (handoff / "image").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
+    if release.stable:
+        shutil.copytree(assets, handoff / "assets")
+    append_output(
+        tag=release.tag, version=release.version, series=release.version.rsplit(".", 1)[0],
+        stable=str(release.stable).lower(), publish=str(publish).lower(), sha=release.sha,
+        main_sha=main, pr=release.pr or "", oci_sha256=digest,
     )
     append_summary(
-        f"### Stable release request accepted\n\n"
-        f"Request run `{context.request_run_id}` binds `{context.tag}` to current main "
-        f"`{context.sha}` with CI run `{context.ci_run_id}` and current CodeQL. "
-        + ("Publication still requires `ghcr-release` approval." if context.publish
+        f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
+        f"\n\n`{release.tag}` from `{release.sha}` on main `{main}`: CI run `{ci_run_id}`, "
+        f"CodeQL {codeql_id or 'on main'}, OCI SHA-256 `{digest}`. "
+        + ("Publication still requires `ghcr-release` approval." if publish
            else "Validation mode cannot reach a write-permission job.")
     )
 
 
 def command_recheck() -> None:
-    repository = env("REPOSITORY")
-    sha = env_sha("SOURCE_SHA")
-    tag = env("REQUESTED_VERSION")
-    require_stable_tag(tag)
-    require_checkout(sha)
-    require_exact_current_main(repository, sha)
-    require_compatible_release_tag(repository, tag, sha)
-    ci_run_id = require_ci_gate(repository, sha, event="push", branch="main")
-    require_main_codeql(repository, sha)
-    append_output(ci_run_id=ci_run_id)
+    main = env_sha("MAIN_SHA")
+    pr = env_int("PR") if os.environ.get("PR") else 0
+    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
+    require_checkout(main)
+    current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
+    if current != main:
+        refuse("main moved after verification; start a fresh request")
+    append_output(ci_run_id=ci_run_id, codeql_check_id=codeql_id)
     append_summary(
-        f"### Final release trust recheck passed\n\n`{tag}` is still current main `{sha}` "
-        f"after approval, with CI run `{ci_run_id}` and current CodeQL."
+        f"### Final release recheck passed\n\n`{release.tag}` from `{release.sha}` is still "
+        f"authorized on main `{main}` after approval, with CI run `{ci_run_id}`."
     )
+
+
+COMMANDS = {"prepare": command_prepare, "verify": command_verify, "recheck": command_recheck}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("guard", "recheck"))
+    parser.add_argument("command", choices=COMMANDS)
     try:
-        {"guard": command_guard, "recheck": command_recheck}[parser.parse_args().command]()
+        COMMANDS[parser.parse_args().command]()
     except (ControlPlaneError, OSError) as exc:
         raise SystemExit(f"Release refused: {exc}") from exc
 

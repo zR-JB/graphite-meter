@@ -188,7 +188,7 @@ def verify_server_version(version: str) -> None:
             f"{result.stderr.strip()}")
 
 
-def verify(version: str, dist: Path) -> None:
+def verify_artifacts(version: str, dist: Path) -> None:
     source = f"graphite-meter_{version}_third-party-source.tar.gz"
     checksummed = verify_checksums(dist)
     require_same("checksummed release artifacts", {source, *tui_archives(version, TARGETS)},
@@ -196,6 +196,10 @@ def verify(version: str, dist: Path) -> None:
     verify_release_file_set(dist, checksummed)
     verify_third_party_source_archive(dist, version)
     verify_client_archives(dist, version, TARGETS)
+
+
+def verify(version: str, dist: Path) -> None:
+    verify_artifacts(version, dist)
     verify_client_version(version)
     verify_server_version(version)
     print(f"release asset verification passed: {version}")

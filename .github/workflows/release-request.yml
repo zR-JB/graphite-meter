@@ -1,82 +1,134 @@
-name: Request stable release
-run-name: Stable release request · ${{ inputs.mode }} · ${{ inputs.version }} · ${{ github.sha }}
+name: Request release
+run-name: Release request · ${{ inputs.mode }} · ${{ inputs.tag }} · ${{ github.sha }}
 
-# LOW AUTHORITY: this manual entrypoint may be dispatched against a selected ref.
-# It never checks out repository code and has no GITHUB_TOKEN permissions. A
-# separate workflow_run consumer on the default branch treats this artifact as
-# untrusted input and is the only workflow that can reach publication jobs.
+# LOW AUTHORITY: dispatch may select any ref, so this build has read-only access,
+# no secrets or caches, and no path to publication. Release accepts its output
+# only from a main run and treats it as untrusted data.
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Stable SemVer tag, e.g. v0.5.2
+      tag:
+        description: vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-{alpha,beta,rc}.N with a PR
         required: true
+        type: string
+      pr:
+        description: Same-repository PR number for a prerelease; empty for a stable release
+        required: false
+        default: ''
+        type: string
+      sha:
+        description: Exact PR head SHA for a prerelease; empty for a stable release
+        required: false
+        default: ''
         type: string
       mode:
         description: Validate only, or publish after protected-environment approval
         required: true
         default: validate
         type: choice
-        options:
-          - validate
-          - publish
+        options: [validate, publish]
 
-permissions: {}
+permissions:
+  contents: read
 
 concurrency:
-  group: stable-release-request-${{ github.repository }}-${{ github.run_id }}
+  group: release-request-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
-  request:
-    name: Record untrusted stable release request
+  build:
+    name: Build untrusted release candidate
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 60
     steps:
-      - name: Validate request shape and write handoff
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
+        with:
+          version: 2026.9.14
+          install_args: --locked python
+          cache: false
+
+      - id: request
+        name: Validate and record the request
         env:
           REPOSITORY: ${{ github.repository }}
           REPOSITORY_OWNER: ${{ github.repository_owner }}
           ACTOR: ${{ github.actor }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SHA: ${{ github.sha }}
           REF: ${{ github.ref }}
-          SOURCE_SHA: ${{ github.sha }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_ATTEMPT: ${{ github.run_attempt }}
-          VERSION: ${{ inputs.version }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          REQUEST_RUN_ID: ${{ github.run_id }}
+          REQUEST_RUN_ATTEMPT: ${{ github.run_attempt }}
+          TAG: ${{ inputs.tag }}
+          PR: ${{ inputs.pr }}
+          SHA: ${{ inputs.sha }}
           MODE: ${{ inputs.mode }}
+          OUT_DIR: ${{ runner.temp }}/release-request
+        run: python3 scripts/ci/release.py prepare
+
+      - name: Set up the stable build toolchain without caches
+        if: steps.request.outputs.stable == 'true'
+        uses: ./.github/actions/setup-project
+        with:
+          go: 'true'
+          go-cache: 'false'
+          bun: 'true'
+          client-deps: 'true'
+          bun-cache: 'false'
+          cache: 'false'
+
+      - name: Build and verify stable native artifacts and third-party source
+        if: steps.request.outputs.stable == 'true'
+        env:
+          VERSION: ${{ steps.request.outputs.version }}
+          RELEASE_DIST: ${{ runner.temp }}/release-assets
         run: |
-          set -euo pipefail
-          [[ "$REF" == refs/heads/main ]] || { echo "stable release requests must be dispatched from main" >&2; exit 1; }
-          [[ "$ACTOR" == "$REPOSITORY_OWNER" && "$TRIGGERING_ACTOR" == "$REPOSITORY_OWNER" ]] || {
-            echo "stable release requests must be initiated by the repository owner" >&2
-            exit 1
-          }
-          [[ "$RUN_ATTEMPT" == 1 ]] || { echo "rerun requests are not accepted; start a fresh dispatch" >&2; exit 1; }
-          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid request source SHA" >&2; exit 1; }
-          [[ "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo "stable release version must be vMAJOR.MINOR.PATCH" >&2
-            exit 1
-          }
-          [[ "$MODE" == validate || "$MODE" == publish ]] || { echo "invalid release mode" >&2; exit 1; }
+          mise run legal-generate
+          mise run release-build "$VERSION"
+          mise run release-artifacts "$VERSION"
+          python3 scripts/ci/verify_release_assets.py "$VERSION"
 
-          out="$RUNNER_TEMP/stable-release-request"
-          mkdir -p "$out"
-          jq -nc \
-            --arg repository "$REPOSITORY" \
-            --arg sourceSha "$SOURCE_SHA" \
-            --arg version "$VERSION" \
-            --arg mode "$MODE" \
-            --argjson requestRunId "$RUN_ID" \
-            --argjson requestRunAttempt "$RUN_ATTEMPT" \
-            '{schemaVersion:1,repository:$repository,sourceSha:$sourceSha,version:$version,mode:$mode,requestRunId:$requestRunId,requestRunAttempt:$requestRunAttempt}' \
-            >"$out/request.json"
+      # A prerelease never checks PR files out here: BuildKit fetches that exact
+      # commit remotely and receives no GitHub credential.
+      - name: Build linux/amd64 + linux/arm64 OCI archive
+        uses: ./.github/actions/build-oci
+        with:
+          version: ${{ steps.request.outputs.version }}
+          revision: ${{ steps.request.outputs.sha }}
+          output: ${{ runner.temp }}/release-request/graphite-meter.oci.tar
+          source-sha: ${{ steps.request.outputs.remote_sha }}
+          client-validate: ${{ steps.request.outputs.client_validate }}
 
-      - name: Upload untrusted stable release request
+      - name: Record the OCI checksum
+        working-directory: ${{ runner.temp }}/release-request
+        run: sha256sum graphite-meter.oci.tar >graphite-meter.oci.tar.sha256
+
+      - name: Upload untrusted request and OCI archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: stable-release-request-${{ github.run_id }}
-          path: ${{ runner.temp }}/stable-release-request/request.json
+          name: release-request-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-request/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Upload untrusted stable assets
+        if: steps.request.outputs.stable == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets-${{ github.run_id }}
+          path: ${{ runner.temp }}/release-assets/
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
