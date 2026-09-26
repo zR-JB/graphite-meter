@@ -806,7 +806,6 @@ export class Run {
         run.#stallLatency(server, detail);
       },
       resumeLatency() {
-        server.gaps++;
         server.latencyStall = null;
         run.#updateStalled();
       },

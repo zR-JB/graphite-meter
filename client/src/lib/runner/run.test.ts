@@ -229,6 +229,27 @@ test("warmup probes never enter a measured population", async () => {
   });
 });
 
+test("replies delivered in separate batches stay adjacent for jitter", async () => {
+  const h = await harness(
+    [
+      {
+        id: "self",
+        measure: (host) => {
+          for (const rttMs of [10, 20, 10]) {
+            probe(rttMs)(host);
+            host.resumeLatency();
+          }
+        },
+      },
+    ],
+    { latency: true },
+    { latencyMs: 400 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.latencyByStage.latency).toMatchObject({ jitterMs: 10 });
+});
+
 test("an aborted latency stage keeps its summary after the run releases its replies", async () => {
   const h = await harness(
     [{ id: "self", measure: probe(10, 4) }],
