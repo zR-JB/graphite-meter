@@ -28,6 +28,13 @@ export function retainNewest(
     .slice(0, HISTORY_LIMIT);
 }
 
+const clearCount = (row: unknown): number => {
+  const value = (row as { value?: unknown } | undefined)?.value;
+  return Number.isSafeInteger(value) && (value as number) > 0
+    ? (value as number)
+    : 0;
+};
+
 function request<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -93,18 +100,25 @@ export class HistoryRepository {
     );
   }
 
-  /** Writes a result unless history was cleared after it completed; false when skipped. */
-  async put(record: HistoryRecord): Promise<boolean> {
+  /** How many times history was cleared; a result queued before a later clear is never written. */
+  async clears(): Promise<number> {
+    const tx = await this.#transaction("readonly");
+    const value = await request(
+      tx.objectStore(HISTORY_DB.metadataStore).get(HISTORY_DB.clearsKey),
+    );
+    return clearCount(value);
+  }
+
+  /** Writes a result queued after `clears` clears unless history was cleared since; false when skipped. */
+  async put(record: HistoryRecord, clears: number): Promise<boolean> {
     const tx = await this.#transaction("readwrite");
     const results = tx.objectStore(HISTORY_DB.resultsStore);
-    const watermark = tx
+    const current = tx
       .objectStore(HISTORY_DB.metadataStore)
-      .get(HISTORY_DB.clearedAtKey);
+      .get(HISTORY_DB.clearsKey);
     let written = false;
-    watermark.onsuccess = () => {
-      const clearedAt = watermark.result?.value;
-      if (typeof clearedAt === "number" && record.completedAt <= clearedAt)
-        return;
+    current.onsuccess = () => {
+      if (clearCount(current.result) > clears) return;
       written = true;
       results.put(record);
       const keys = results.index(HISTORY_DB.completedAtIndex).getAllKeys();
@@ -160,14 +174,17 @@ export class HistoryRepository {
     await done(tx);
   }
 
-  /** Clears every raw value; results completed before now are never written again. */
+  /** Clears every raw value and counts the clear, independent of the wall clock. */
   async clear(): Promise<void> {
     const tx = await this.#transaction("readwrite");
+    const meta = tx.objectStore(HISTORY_DB.metadataStore);
     tx.objectStore(HISTORY_DB.resultsStore).clear();
-    tx.objectStore(HISTORY_DB.metadataStore).put({
-      key: HISTORY_DB.clearedAtKey,
-      value: Date.now(),
-    });
+    const current = meta.get(HISTORY_DB.clearsKey);
+    current.onsuccess = () =>
+      meta.put({
+        key: HISTORY_DB.clearsKey,
+        value: clearCount(current.result) + 1,
+      });
     await done(tx);
   }
 

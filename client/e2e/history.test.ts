@@ -81,14 +81,14 @@ function record(index: number, completedAt = base - index * 60_000) {
 
 interface Archive {
   records: unknown[];
-  clearedAt?: unknown;
+  clears?: unknown;
   version?: number;
 }
 
 // Writes raw rows as another tab or an older build would have left them.
 function seed(page: Page, archive: Archive) {
   return page.evaluate(
-    ({ db, records, clearedAt, version }) =>
+    ({ db, records, clears, version }) =>
       new Promise<void>((resolve, reject) => {
         const opening = indexedDB.open(db.name, version ?? db.version);
         opening.onupgradeneeded = () => {
@@ -108,10 +108,10 @@ function seed(page: Page, archive: Archive) {
           const tx = database.transaction(stores, "readwrite");
           for (const value of records)
             tx.objectStore(db.resultsStore).put(value);
-          if (clearedAt !== undefined)
+          if (clears !== undefined)
             tx.objectStore(db.metadataStore).put({
-              key: db.clearedAtKey,
-              value: clearedAt,
+              key: db.clearsKey,
+              value: clears,
             });
           tx.oncomplete = () => {
             database.close();
@@ -136,13 +136,13 @@ function stored(page: Page) {
           const tx = database.transaction(stores);
           const rows = tx.objectStore(db.resultsStore).getAll();
           const meta = stores.includes(db.metadataStore)
-            ? tx.objectStore(db.metadataStore).get(db.clearedAtKey)
+            ? tx.objectStore(db.metadataStore).get(db.clearsKey)
             : null;
           tx.oncomplete = () => {
             database.close();
             resolve({
               records: rows.result,
-              clearedAt: meta?.result?.value,
+              clears: meta?.result?.value,
               version: database.version,
             });
           };
@@ -232,12 +232,12 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
   expect((await stored(page)).records).toEqual([]);
 });
 
-test("a save ignores corrupt clear metadata, keeps raw rows, and a later clear refuses older results", async (page) => {
+test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears over the clock", async (page) => {
   await fixturePage(page);
   const malformed = { id: id(9), completedAt: base, unexpected: "raw row" };
   await seed(page, {
     records: [record(1), malformed],
-    clearedAt: { corrupt: true },
+    clears: { corrupt: true },
   });
   await page.goto(home.url);
   await page.evaluate(() => {
@@ -252,19 +252,20 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and a later clear r
   expect(saved.records).toHaveLength(3);
   expect(saved.records).toContainEqual(malformed);
   expect(await page.evaluate(() => (window as any).saves)).toBe(1);
-  // Another tab cleared history after this run completed: the result is not written back.
-  await seed(page, { records: [], clearedAt: Date.now() + 3_600_000 });
+  // A result after another tab's clear saves even when the clock stepped back a day.
+  await seed(page, { records: [], clears: 2 });
   await page.reload();
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() - 86_400_000;
+  });
   await ready(page);
   await runButton(page, /^(Start test|Run again)$/).click();
-  await expect(page.locator('#console[data-phase="complete"]')).toHaveCount(1, {
-    timeout: 20_000,
-  });
-  await Bun.sleep(300);
-  expect((await stored(page)).records).toHaveLength(3);
-  await seed(page, { records: [], clearedAt: 0 });
+  await expect
+    .poll(async () => (await stored(page)).records.length, { timeout: 20_000 })
+    .toBe(4);
   await history(page);
-  await expect(page.locator(".result-row")).toHaveCount(2);
+  await expect(page.locator(".result-row")).toHaveCount(3);
   await expect(page.locator(".history-workspace")).toContainText(
     "1 unsupported or malformed record was ignored.",
   );

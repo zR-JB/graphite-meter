@@ -8,9 +8,9 @@ export function mountHistoryPersistence(
 ): () => void {
   let disposed = false;
   let draining = false;
-  let permanent = false;
   const repository = new HistoryRepository();
-  const pending: HistoryRecord[] = [];
+  // Each result remembers the clear count it was queued under; unreadable storage counts as none.
+  const pending: { record: HistoryRecord; clears: Promise<number> }[] = [];
   const settle = (record: HistoryRecord) => {
     pending.shift();
     if (store.historyCandidate?.id === record.id) store.historyCandidate = null;
@@ -20,12 +20,12 @@ export function mountHistoryPersistence(
     draining = true;
     try {
       while (!disposed && pending.length) {
-        const record = pending[0];
+        const { record, clears } = pending[0];
         try {
-          const written = await repository.put(record);
+          const written = await repository.put(record, await clears);
           if (disposed) return;
           settle(record);
-          if (!permanent) store.historyWarning = "";
+          store.historyWarning = "";
           if (written) announceHistoryChanged();
         } catch (error) {
           if (disposed) return;
@@ -38,7 +38,6 @@ export function mountHistoryPersistence(
             return;
           }
           settle(record);
-          permanent = true;
           store.historyWarning =
             "This result could not be saved in browser storage.";
         }
@@ -50,9 +49,15 @@ export function mountHistoryPersistence(
   const disposeEffects = $effect.root(() => {
     $effect(() => {
       const candidate = store.historyCandidate;
-      if (!candidate || pending.some((record) => record.id === candidate.id))
+      if (
+        !candidate ||
+        pending.some((entry) => entry.record.id === candidate.id)
+      )
         return;
-      pending.push(candidate);
+      pending.push({
+        record: candidate,
+        clears: repository.clears().catch(() => 0),
+      });
       void drain();
     });
   });

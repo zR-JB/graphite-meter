@@ -6,5 +6,5 @@ export const HISTORY_DB = {
   completedAtIndex: "completedAt",
   metadataStore: "meta",
   metadataKeyPath: "key",
-  clearedAtKey: "clearedAt",
+  clearsKey: "clears",
 } as const;
