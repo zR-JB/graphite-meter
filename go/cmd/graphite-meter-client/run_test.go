@@ -258,22 +258,12 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 		event goclient.Event
 		want  string
 	}{
-		{
-			goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: goclient.PhasePreparing},
-			"Checking paths",
-		},
-		{
-			goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseWarmup},
-			"Warmup",
-		},
-		{
-			goclient.Event{
-				Kind:  goclient.EventStage,
-				Stage: goclient.StageBidirectional,
-				Phase: goclient.PhaseMeasuring,
-			},
-			"Bidirectional",
-		},
+		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageLatency, Phase: goclient.PhasePreparing},
+			"Checking paths"},
+		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseWarmup},
+			"Warmup"},
+		{goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageBidirectional, Phase: goclient.PhaseMeasuring},
+			"Bidirectional"},
 	} {
 		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{c.event}}))
 		if got := m.statusLabel(); got != c.want {
@@ -284,20 +274,12 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 		done goclient.Event
 		want string
 	}{
-		{
-			goclient.Event{Kind: goclient.EventDone, Servers: &goclient.RunDetails{Outcome: goclient.OutcomePartial}},
-			"Partial",
-		},
+		{goclient.Event{Kind: goclient.EventDone, Servers: &goclient.RunDetails{Outcome: goclient.OutcomePartial}},
+			"Partial"},
 		{goclient.Event{Kind: goclient.EventDone, Err: fmt.Errorf("stage: %w", context.Canceled)}, "Stopped"},
 		{goclient.Event{Kind: goclient.EventDone, Err: errors.New("server said context canceled")}, "Failed"},
-		{
-			goclient.Event{
-				Kind:    goclient.EventDone,
-				Err:     errors.New("lost"),
-				Servers: &goclient.RunDetails{Outcome: goclient.OutcomeIncomplete},
-			},
-			"Incomplete",
-		},
+		{goclient.Event{Kind: goclient.EventDone, Err: errors.New("lost"),
+			Servers: &goclient.RunDetails{Outcome: goclient.OutcomeIncomplete}}, "Incomplete"},
 	} {
 		finished := runModel(t, "a")
 		finished, _ = modelAndCmd(finished.Update(eventsMsg{seq: finished.runSeq, events: []goclient.Event{c.done}}))
@@ -493,24 +475,12 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m := runModel(t, "a")
 	start := time.Now()
 	m.now = start.Add(2500 * time.Millisecond)
-	m.apply(goclient.Event{
-		Kind:  goclient.EventStage,
-		Stage: goclient.StageLatency,
-		Phase: goclient.PhaseFinished,
-		At:    start,
-	})
-	m.apply(goclient.Event{
-		Kind:  goclient.EventStage,
-		Stage: goclient.StageDownload,
-		Phase: goclient.PhaseMeasuring,
-		At:    start,
-	})
-	m.apply(goclient.Event{
-		Kind:  goclient.EventStage,
-		Stage: goclient.StageUpload,
-		Phase: goclient.Phase(99),
-		At:    start,
-	})
+	stage := func(stage goclient.Stage, phase goclient.Phase) goclient.Event {
+		return goclient.Event{Kind: goclient.EventStage, Stage: stage, Phase: phase, At: start}
+	}
+	m.apply(stage(goclient.StageLatency, goclient.PhaseFinished))
+	m.apply(stage(goclient.StageDownload, goclient.PhaseMeasuring))
+	m.apply(stage(goclient.StageUpload, goclient.Phase(99)))
 	track := ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
 	for _, want := range []string{"✓ 4 s", "2.5 s / 10 s", "○ 10 s"} {
 		if !strings.Contains(track, want) {
@@ -522,9 +492,9 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	}
 	unavailable := goclient.Result{Stage: goclient.StageDownload, Direction: goclient.Down, Unavailable: true}
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: goclient.StageDownload, Result: &unavailable})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseFinished})
+	m.apply(stage(goclient.StageDownload, goclient.PhaseFinished))
 	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageUpload, Phase: goclient.PhaseFinished})
+	m.apply(stage(goclient.StageUpload, goclient.PhaseFinished))
 	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
 	for _, want := range []string{"✓ 4 s", "Download      ✗ Failed", "Upload        ! Partial"} {
 		if !strings.Contains(track, want) {
@@ -646,22 +616,7 @@ func TestServerChooserFlow(t *testing.T) {
 	if m.popup != popupServers {
 		t.Fatal("the chooser did not open after the check")
 	}
-	for _, k := range []string{
-		"space",
-		"down",
-		"space",
-		"down",
-		"space",
-		"down",
-		"space",
-		"down",
-		"space",
-		"up",
-		"up",
-		"up",
-		"up",
-		"space",
-	} {
+	for _, k := range strings.Fields("space down space down space down space down space up up up up space") {
 		m, _ = modelAndCmd(m.Update(press(k)))
 	}
 	if len(m.serverDraft) != 4 || !strings.Contains(m.notice, "At most four") {

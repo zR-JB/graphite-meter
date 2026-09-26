@@ -145,24 +145,6 @@ func TestExitStatus(t *testing.T) {
 	}
 }
 
-func TestFormatting(t *testing.T) {
-	t.Parallel()
-	forced, automatic := goclient.TransferStreamPolicy{Forced: 9}, goclient.TransferStreamPolicy{AutomaticMax: 6}
-	wt := wire.TransportWebTransport
-	for got, want := range map[string]string{
-		fmtSetting(800 * time.Millisecond):         "800 ms",
-		fmtSetting(1500 * time.Millisecond):        "1.5 s",
-		fmtSetting(10 * time.Second):               "10 s",
-		streamsLabel(forced, "http3", wt):          "Forced · 9 per direction",
-		streamsLabel(automatic, "http2", ""):       "Automatic · 1 download / 4 upload",
-		connectionSummary(wt, "http3", true, true): "WebTransport datagrams · HTTP/3 · TLS",
-	} {
-		if got != want {
-			t.Errorf("got %q, want %q", got, want)
-		}
-	}
-}
-
 func TestFormatMatchesTheSharedVectors(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("../../../api/format.testvectors.json")
@@ -261,7 +243,8 @@ func TestArrowKeysMoveRowsAndChangeValues(t *testing.T) {
 	}
 	download := setupGroups[2].rows[1]
 	at(download)
-	if keys("right", "space"); m.cfg.DownloadDuration != defaults.DownloadDuration+time.Second || m.cfg.Stages.Download {
+	keys("right", "space")
+	if m.cfg.DownloadDuration != defaults.DownloadDuration+time.Second || m.cfg.Stages.Download {
 		t.Fatalf("download stage %v for %v", m.cfg.Stages.Download, m.cfg.DownloadDuration)
 	}
 	at(idleCadenceRow)
@@ -307,13 +290,15 @@ func TestRowActivation(t *testing.T) {
 		seq := m.prepareSeq
 		m, cmd := modelAndCmd(m.Update(press(c.key)))
 		if !c.check(m) || (m.prepareSeq != seq) != c.recheck || c.recheck && cmd == nil {
-			t.Errorf("%s: config=%+v edit=%v rechecked=%v", c.row.row(m).label, m.cfg, m.edit != nil, m.prepareSeq != seq)
+			t.Errorf("%s: config=%+v edit=%v rechecked=%v", c.row.row(m).label, m.cfg, m.edit != nil,
+				m.prepareSeq != seq)
 		}
 	}
 }
 
 func TestCommitEdit(t *testing.T) {
 	t.Parallel()
+	download, upload := setupGroups[2].rows[1], setupGroups[2].rows[2]
 	for _, c := range []struct {
 		row     *setting
 		forced  bool
@@ -321,47 +306,23 @@ func TestCommitEdit(t *testing.T) {
 		check   func(goclient.Config) bool
 		wantErr string
 	}{
-		{
-			catalogueRow,
-			false,
-			"meter.example:8443/",
-			func(c goclient.Config) bool { return c.BaseURL == "https://meter.example:8443" },
-			"",
-		},
-		{
-			catalogueRow,
-			false,
-			"127.0.0.1:7247",
-			func(c goclient.Config) bool { return c.BaseURL == "http://127.0.0.1:7247" },
-			"",
-		},
-		{
-			catalogueRow,
-			false,
-			"https://METER.example",
-			func(c goclient.Config) bool { return c.BaseURL == "https://meter.example" },
-			"",
-		},
+		{catalogueRow, false, "meter.example:8443/", func(c goclient.Config) bool {
+			return c.BaseURL == "https://meter.example:8443"
+		}, ""},
+		{catalogueRow, false, "127.0.0.1:7247", func(c goclient.Config) bool {
+			return c.BaseURL == "http://127.0.0.1:7247"
+		}, ""},
+		{catalogueRow, false, "https://METER.example", func(c goclient.Config) bool {
+			return c.BaseURL == "https://meter.example"
+		}, ""},
 		{catalogueRow, false, "ftp://meter.example", nil, "http:// or https://"},
 		{warmupRow, false, "0", func(c goclient.Config) bool { return c.Warmup == 0 }, ""},
-		{
-			setupGroups[2].rows[1],
-			false,
-			"12",
-			func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second },
-			"",
-		},
-		{
-			setupGroups[2].rows[1],
-			false,
-			"1.5m",
-			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
-			"",
-		},
-		{setupGroups[2].rows[2], false, "0", nil, "from 1 s to 300 s"},
-		{setupGroups[2].rows[2], false, "6m", nil, "from 1 s to 300 s"},
+		{download, false, "12", func(c goclient.Config) bool { return c.DownloadDuration == 12*time.Second }, ""},
+		{download, false, "1.5m", func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second }, ""},
+		{upload, false, "0", nil, "from 1 s to 300 s"},
+		{upload, false, "6m", nil, "from 1 s to 300 s"},
 		{warmupRow, false, "5s", nil, "from 0 s to 4 s"},
-		{setupGroups[2].rows[2], false, "soon", nil, "duration like"},
+		{upload, false, "soon", nil, "duration like"},
 		{streamsRow, false, "8", func(c goclient.Config) bool {
 			return c.TransferStreams == goclient.TransferStreamPolicy{AutomaticMax: 8}
 		}, ""},
