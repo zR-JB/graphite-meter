@@ -58,8 +58,7 @@ func main() {
 		"maximum H1 streams per direction")
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
 		fmt.Sprintf("force exact streams per server and direction (0 = automatic; at most %d)", goclient.MaxStreams))
-	cadence := "reply-driven, fast, medium, slow, or a duration (up to " + goclient.MaxPingInterval.String() +
-		" over the WebTransport latency path)"
+	cadence := "reply-driven, fast, medium, slow, or a duration up to " + goclient.MaxPingInterval.String()
 	flag.StringVar(&ping, "ping", "", "idle ping cadence (default reply-driven): "+cadence)
 	flag.StringVar(&loadedPing, "loaded-ping", "", "loaded ping cadence (default medium): "+cadence)
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,

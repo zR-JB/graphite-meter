@@ -83,9 +83,9 @@ func TestConfigValidate(t *testing.T) {
 		{"WebTransport at bound", func(c *Config) {
 			c.LatencyTransport, c.PingInterval = wire.TransportWebTransport, MaxPingInterval
 		}, ""},
-		{"WebSocket unbounded", func(c *Config) {
+		{"WebSocket bound", func(c *Config) {
 			c.LatencyTransport, c.PingInterval = wire.TransportWebSocket, 45*time.Second
-		}, ""},
+		}, MaxPingInterval.String()},
 		{"no stage", func(c *Config) { c.Stages = StageSet{} }, "select at least one stage"},
 		{"warmup", func(c *Config) { c.Warmup = -time.Second }, "warmup must be from 0 s to 4 s"},
 		{"short stage", func(c *Config) { c.DownloadDuration = 999 * time.Millisecond }, "download duration must be"},
@@ -152,7 +152,7 @@ func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	cfg := DefaultConfig()
-	cfg.BaseURL, cfg.PingInterval = srv.URL, MaxPingInterval+5*time.Second
+	cfg.BaseURL = srv.URL
 	prepared, err := prepareOne(t.Context(), cfg)
 	if err != nil || prepared.LatencyTarget.Transport != wire.TransportWebSocket {
 		t.Fatalf("automatic path after an unreachable WebTransport bus = %+v, %v; want WebSocket", prepared, err)

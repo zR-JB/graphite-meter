@@ -280,11 +280,6 @@ func prepareLatency(ctx context.Context, cfg Config, cred credential, prepared *
 	if err != nil {
 		return err
 	}
-	if target.Transport == wire.TransportWebTransport {
-		if err := validatePingInterval(cfg); err != nil {
-			return err
-		}
-	}
 	prepared.LatencyTarget, prepared.WarmRTT = target, rtt
 	return nil
 }

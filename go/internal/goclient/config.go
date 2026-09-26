@@ -116,14 +116,6 @@ func (p TransferStreamPolicy) Lanes(protocol, transport string) (down, up int) {
 
 const MaxPingInterval = wire.WTIdleBound / 2
 
-func validatePingInterval(c Config) error {
-	if max(c.PingInterval, c.LoadedPingInterval) > MaxPingInterval {
-		return fmt.Errorf("ping interval must be at most %v, half the server's %v WebTransport idle bound",
-			MaxPingInterval, wire.WTIdleBound)
-	}
-	return nil
-}
-
 type DurationBound struct{ Min, Max time.Duration }
 
 // The stage minimum leaves room above the 800 ms of evidence every headline needs.
@@ -175,8 +167,9 @@ func (c Config) checkPaths() error {
 		return fmt.Errorf("invalid throughput transport %q: use auto, %s, or %s", c.ThroughputTransport, fetch, wt)
 	case !slices.Contains([]string{"auto", ws, wt}, c.LatencyTransport):
 		return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", c.LatencyTransport, ws, wt)
-	case c.LatencyTransport == wire.TransportWebTransport:
-		return validatePingInterval(c)
+	case max(c.PingInterval, c.LoadedPingInterval) > MaxPingInterval:
+		return fmt.Errorf("ping interval must be at most %v, half the server's %v lane idle bound",
+			MaxPingInterval, wire.WTIdleBound)
 	}
 	return nil
 }
