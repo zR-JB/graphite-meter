@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net"
 	"net/url"
 	"strings"
 	"testing"
@@ -77,6 +78,28 @@ func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
 		synctest.Wait()
 		if !errors.Is(context.Cause(ctx), errIdle) {
 			t.Fatalf("a session quiet for two bounds ended with %v", context.Cause(ctx))
+		}
+	})
+}
+
+// A peer draining one block slower than the idle bound keeps its session, since every piece counts as activity.
+func TestSlowlyDrainedLaneStaysActive(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		const bound = time.Second
+		ctx, live := WatchIdle(t.Context(), bound)
+		client, server := net.Pipe()
+		defer client.Close()
+		lane := &idleWriter{w: server, idle: idleDeadline{live: live}}
+		go func() {
+			_, _ = lane.Write(make([]byte, 256<<10))
+			server.Close()
+		}()
+		piece := make([]byte, 16<<10)
+		for i := range 16 {
+			time.Sleep(bound * 2 / 5)
+			if _, err := io.ReadFull(client, piece); err != nil || ctx.Err() != nil {
+				t.Fatalf("piece %d after %v: %v, session %v", i, time.Duration(i+1)*bound*2/5, err, ctx.Err())
+			}
 		}
 	})
 }

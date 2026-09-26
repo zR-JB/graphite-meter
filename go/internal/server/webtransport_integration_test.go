@@ -421,16 +421,19 @@ func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 
 // A stream download's liveness is the peer draining its lanes, and that is the only thing keeping the session open.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real QUIC over two idle bounds")
+	}
 	t.Parallel()
-	const bound = 300 * time.Millisecond
+	const bound = 2 * time.Second
 	base, _, wtTransport := wtTestServer(t, nil, idleBound(bound))
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=262144&streams=1")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	start := time.Now()
-	// Reaping takes at most 1.5 bounds, so surviving four proves draining is what kept it.
-	deadline := start.Add(4 * bound)
+	// Reaping takes at most 1.5 bounds, so surviving two proves draining is what kept it.
+	deadline := start.Add(2 * bound)
 	var total int64
 	for time.Now().Before(deadline) {
 		str, err := sess.AcceptUniStream(ctx)
