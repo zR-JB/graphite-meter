@@ -87,11 +87,13 @@ type model struct {
 	auth         *signIn
 	openApproval func(*goclient.PendingAuthorization)
 
-	runSeq     int
-	events     <-chan goclient.Event
-	run        *runState
-	stopPrompt bool
-	quitting   bool
+	runSeq      int
+	events      <-chan goclient.Event
+	run         *runState
+	stopPrompt  bool
+	quitting    bool
+	interrupted bool
+	last        goclient.Outcome
 }
 
 func newModel(cfg goclient.Config) model {
@@ -161,6 +163,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
 		m.close()
+		m.interrupted = true
 		return m, tea.Quit
 	case m.edit != nil:
 		return m.handleEditKey(msg)

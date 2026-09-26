@@ -347,14 +347,47 @@ func (m *model) commitEdit() error {
 		raw = fmt.Sprintf("%gs", n)
 	}
 	d, err := time.ParseDuration(raw)
-	switch {
-	case err != nil || d < 0:
+	if err != nil {
 		return errors.New("use a duration like 800ms, 4s, or 1m; a bare number is seconds")
-	case d == 0 && s != warmupRow:
-		return errors.New(s.label + " must be greater than zero")
+	}
+	if err := s.inBounds(d); err != nil {
+		return err
 	}
 	*s.span(&m.cfg) = d
 	m.notice = s.label + " " + fmtSetting(d) + "."
+	return nil
+}
+
+const (
+	maxWarmup   = 4 * time.Second
+	minMeasured = 500 * time.Millisecond
+	maxMeasured = 5 * time.Minute
+)
+
+func (s *setting) inBounds(d time.Duration) error {
+	lo, hi := minMeasured, maxMeasured
+	if s == warmupRow {
+		lo, hi = 0, maxWarmup
+	}
+	if d < lo || d > hi {
+		return fmt.Errorf("%s must be from %s to %s", s.label, fmtSetting(lo), fmtSetting(hi))
+	}
+	return nil
+}
+
+func checkSettings(cfg goclient.Config) error {
+	if len(cfg.Plan()) == 0 {
+		return errors.New("-stages selects no stage: use latency, download, upload, or bidirectional")
+	}
+	for _, section := range sections {
+		for _, s := range section.rows {
+			if s.span != nil {
+				if err := s.inBounds(*s.span(&cfg)); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	return nil
 }
 

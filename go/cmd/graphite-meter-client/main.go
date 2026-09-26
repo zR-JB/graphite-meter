@@ -2,14 +2,19 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/term"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
 )
@@ -22,7 +27,7 @@ func main() {
 
 	cfg := goclient.DefaultConfig()
 	var stages, ping string
-	var showVersion bool
+	var showVersion, report bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
 	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)",
 		func(id string) error {
@@ -60,11 +65,16 @@ func main() {
 		"measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
+	flag.BoolVar(&report, "report", false, "run once without the interface and print the final report "+
+		"(automatic when stdout is not a terminal)")
 	flag.Parse()
 
 	if showVersion {
 		fmt.Println("graphite-meter-client " + goclient.Version)
 		return
+	}
+	if flag.NArg() > 0 {
+		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
 	}
 	cfg.Stages = parseStages(stages)
 	if ping != "" {
@@ -74,19 +84,79 @@ func main() {
 		}
 		cfg.PingInterval = interval
 	}
+	if err := checkSettings(cfg); err != nil {
+		fail(2, err)
+	}
 	if err := cfg.Validate(); err != nil {
 		fail(2, err)
 	}
 
+	var caught atomic.Value
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	m := newModel(cfg)
-	final, err := tea.NewProgram(m, tea.WithFPS(30)).Run()
-	m.controller.Close()
-	if err != nil {
-		fail(1, err)
+	if report || !term.IsTerminal(os.Stdout.Fd()) {
+		go func() {
+			caught.Store(<-signals)
+			m.controller.CancelRun()
+		}()
+		m = runHeadless(m)
+	} else {
+		program := tea.NewProgram(m, tea.WithFPS(30), tea.WithoutSignalHandler())
+		go func() {
+			caught.Store(<-signals)
+			program.Quit()
+		}()
+		final, err := program.Run()
+		m.controller.Close()
+		if err != nil {
+			fail(1, err)
+		}
+		m = final.(model)
 	}
-	if report := final.(model).finalReport(); report != "" {
+	if report := m.finalReport(); report != "" {
 		fmt.Println(report)
 	}
+	os.Exit(exitStatus(m, caught.Load()))
+}
+
+func exitStatus(m model, caught any) int {
+	switch {
+	case caught == syscall.SIGTERM:
+		return 143
+	case caught != nil || m.interrupted:
+		return 130
+	case m.last == "" || m.last == goclient.OutcomeComplete:
+		return 0
+	}
+	return 1
+}
+
+func runHeadless(m model) model {
+	defer m.controller.Close()
+	m.width = 100
+	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
+		m.width = w
+	}
+	next, _ := m.startRun()
+	m = next.(model)
+	for m.running() {
+		msg, ok := waitEvents(m.runSeq, m.events)().(eventsMsg)
+		if !ok {
+			break
+		}
+		for _, e := range msg.events {
+			if e.Kind == goclient.EventStage && e.Phase == goclient.PhaseMeasuring {
+				fmt.Fprintf(os.Stderr, "%s…\n", stageLabels[e.Stage])
+			}
+		}
+		next, _ = m.Update(msg)
+		m = next.(model)
+	}
+	if m.run == nil {
+		fail(1, errors.New("sign-in required; run graphite-meter-client in a terminal to sign in"))
+	}
+	return m
 }
 
 func fail(code int, err error) {
@@ -117,8 +187,8 @@ func parsePing(raw string) (time.Duration, error) {
 		return cadences[i].interval, nil
 	}
 	d, err := time.ParseDuration(name)
-	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("use fast, medium, slow, or a positive duration such as 400ms")
+	if err != nil || d < goclient.PingFast {
+		return 0, fmt.Errorf("use fast, medium, slow, or a duration of at least %v such as 400ms", goclient.PingFast)
 	}
 	return d, nil
 }

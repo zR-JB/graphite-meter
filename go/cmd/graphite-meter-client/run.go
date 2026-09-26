@@ -253,6 +253,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	r := m.run
 	r.adopt(done.Servers)
 	r.outcome = done.Outcome()
+	m.last = r.outcome
 	if done.Err != nil && !errors.Is(done.Err, context.Canceled) {
 		r.err = done.Err
 	}

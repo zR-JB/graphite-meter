@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -98,12 +100,58 @@ func TestParsePing(t *testing.T) {
 		"Slow":    600 * time.Millisecond,
 		"medium":  goclient.PingMedium,
 		"1500ms":  1500 * time.Millisecond,
+		"80ms":    goclient.PingFast,
+		"79ms":    0,
 		"instant": 0,
 		"0s":      0,
 	} {
 		got, err := parsePing(raw)
 		if got != want || (err != nil) != (want == 0) {
 			t.Errorf("parsePing(%q) = %v, %v; want %v", raw, got, err, want)
+		}
+	}
+}
+
+func TestCommandLineSettingsAndExitStatus(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		edit func(*goclient.Config)
+		want string
+	}{
+		{func(*goclient.Config) {}, ""},
+		{func(c *goclient.Config) { c.Stages = goclient.StageSet{} }, "selects no stage"},
+		{func(c *goclient.Config) { c.Warmup = -time.Second }, "Warmup must be"},
+		{func(c *goclient.Config) { c.DownloadDuration = 0 }, "Download duration must be"},
+		{func(c *goclient.Config) { c.BidirectionalDuration = time.Hour }, "Bidirectional duration must be"},
+	} {
+		cfg := goclient.DefaultConfig()
+		c.edit(&cfg)
+		if err := checkSettings(cfg); c.want == "" && err != nil || c.want != "" &&
+			(err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("checkSettings = %v, want %q", err, c.want)
+		}
+	}
+	m := testModel(t)
+	for _, c := range []struct {
+		last        goclient.Outcome
+		interrupted bool
+		caught      any
+		want        int
+	}{
+		{"", false, nil, 0},
+		{goclient.OutcomeComplete, false, nil, 0},
+		{goclient.OutcomePartial, false, nil, 1},
+		{goclient.OutcomeIncomplete, false, nil, 1},
+		{goclient.OutcomeStopped, false, nil, 1},
+		{goclient.OutcomeFailed, false, nil, 1},
+		{goclient.OutcomeComplete, true, nil, 130},
+		{goclient.OutcomeComplete, false, os.Interrupt, 130},
+		{goclient.OutcomeComplete, false, syscall.SIGTERM, 143},
+	} {
+		m.last, m.interrupted = c.last, c.interrupted
+		if got := exitStatus(m, c.caught); got != c.want {
+			t.Errorf("exit status after %q (interrupted %v, %v) = %d, want %d", c.last, c.interrupted, c.caught,
+				got, c.want)
 		}
 	}
 }
@@ -253,7 +301,9 @@ func TestCommitEdit(t *testing.T) {
 			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
 			"",
 		},
-		{sections[1].rows[8], false, "0", nil, "greater than zero"},
+		{sections[1].rows[8], false, "0", nil, "from 500 ms to 300 s"},
+		{sections[1].rows[8], false, "6m", nil, "from 500 ms to 300 s"},
+		{warmupRow, false, "5s", nil, "from 0 ms to 4 s"},
 		{sections[1].rows[8], false, "soon", nil, "duration like"},
 		{streamsRow, false, "8", func(c goclient.Config) bool {
 			return c.TransferStreams == goclient.TransferStreamPolicy{AutomaticMax: 8}
