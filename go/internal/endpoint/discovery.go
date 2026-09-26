@@ -34,7 +34,7 @@ type hostDiscovery struct {
 	csp        string
 }
 
-// Request hostnames are untrusted, so the cache is bounded and cleared when full.
+// Request hostnames are untrusted: one that is not a valid host is read as localhost, and the cache is bounded.
 const maxDiscoveryHosts = 64
 
 func NewDiscovery(cfg *config.Config) *Discovery {
@@ -44,13 +44,19 @@ func NewDiscovery(cfg *config.Config) *Discovery {
 func RequestHost(r *http.Request) string { return (&url.URL{Host: r.Host}).Hostname() }
 
 func (d *Discovery) forHost(host string) *hostDiscovery {
+	if _, err := wire.CanonicalOrigin("http://" + net.JoinHostPort(host, "1")); err != nil {
+		host = "localhost"
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if h, ok := d.hosts[host]; ok {
 		return h
 	}
-	if len(d.hosts) >= maxDiscoveryHosts {
-		clear(d.hosts)
+	for evicted := range d.hosts {
+		if len(d.hosts) < maxDiscoveryHosts {
+			break
+		}
+		delete(d.hosts, evicted)
 	}
 	h := d.build(host)
 	d.hosts[host] = h

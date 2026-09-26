@@ -104,3 +104,21 @@ func TestPublicConnectionPolicyKeepsSelfAndDNSSourcesForIPv6Page(t *testing.T) {
 		t.Fatalf("unexpected public connection policy: %s", policy)
 	}
 }
+
+// An invalid request host neither reaches the published targets nor breaks the catalogue.
+func TestDiscoveryReadsAnInvalidHostAsLocalhost(t *testing.T) {
+	cfg := config.Default()
+	d := NewDiscovery(&cfg)
+	for _, serve := range []func(http.ResponseWriter, *http.Request){d.ServePreflight, d.ServeServers} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Host = "evil;host:7246"
+		rec := httptest.NewRecorder()
+		serve(rec, r)
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "evil") {
+			t.Fatalf("%d %s", rec.Code, rec.Body.String())
+		}
+	}
+	if origins := d.ConnectOrigins("evil;host"); !slices.Equal(origins, d.ConnectOrigins("localhost")) {
+		t.Fatalf("connect origins for an invalid host = %v", origins)
+	}
+}
