@@ -52,7 +52,13 @@ const result: RunResult = {
       timeoutCount: 1,
     },
   },
-  bufferbloat: { grade: "B", idleMs: 12, loadedMs: 20, increaseMs: 8 },
+  bufferbloat: {
+    addedMs: { download: 8, upload: -2, bidirectional: null },
+    grade: "B",
+    idleMs: 12,
+    loadedMs: 20,
+    increaseMs: 8,
+  },
   multiServer: {
     selection: [{ id: "a", name: "edge", url: "https://a.example" }],
     participants: ["a"],

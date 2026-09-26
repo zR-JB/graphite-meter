@@ -87,6 +87,10 @@ export interface HistoryRecord {
     };
   };
   bufferbloat: {
+    /** Signed per-stage added latency; records saved before it lack the field. */
+    addedMs?: Partial<
+      Record<"download" | "upload" | "bidirectional", number | null>
+    >;
     idleMs: number;
     loadedMs: number;
     increaseMs: number;
@@ -216,7 +220,7 @@ export function buildHistoryRecord(
         up: bidiUp,
       },
     },
-    bufferbloat: result.bufferbloat && { ...result.bufferbloat },
+    bufferbloat: result.bufferbloat && structuredClone(result.bufferbloat),
     totalBytes: result.multiServer.servers.reduce(
       (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
       0,

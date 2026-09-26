@@ -21,6 +21,7 @@ test("run evidence keeps only stages with a result and names no single source", 
       upload: null,
       bidirectional: null,
       latency: null,
+      added: null,
       wire: {},
     },
     null,
@@ -52,6 +53,7 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
       upload: null,
       bidirectional: { down: lane(40), up: null },
       latency: null,
+      added: null,
       latencyMeasured: true,
       wire: {},
     },
@@ -116,4 +118,44 @@ test("a server's own failures decide its statuses; a server without a latency pa
     num: "—",
     detail: "Not measured",
   });
+});
+
+test("loaded stages show signed added latency and latency shows the grade second", () => {
+  const cards = summaryCards(
+    {
+      status: { download: "complete", upload: "complete", latency: "complete" },
+      download: lane(40),
+      upload: lane(20),
+      bidirectional: null,
+      latency: { reportedMs: 12, jitterMs: 1, stabilityScore: 1, band: "high" },
+      added: { addedMs: { download: 8.25, upload: -2 }, grade: "B" },
+      latencyMeasured: true,
+      wire: {},
+    },
+    rate,
+    "base10",
+  );
+  expect(cards.map(({ key, added, grade }) => [key, added, grade])).toEqual([
+    ["download", "+8.3", null],
+    ["upload", "−2.0", null],
+    ["latency", null, "Grade B"],
+  ]);
+});
+
+test("records saved before per-stage added latency show only the grade", () => {
+  const [latency] = summaryCards(
+    {
+      status: { latency: "complete" },
+      download: null,
+      upload: null,
+      bidirectional: null,
+      latency: { reportedMs: 12, jitterMs: 1, stabilityScore: 1, band: "high" },
+      added: { grade: "C" },
+      latencyMeasured: true,
+      wire: {},
+    },
+    rate,
+    "base10",
+  );
+  expect(latency.grade).toBe("Grade C");
 });

@@ -170,6 +170,8 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   };
 }
 export const JARGON = {
+  addedLatency:
+    "Added latency: loaded median RTT minus idle median RTT for the same server. Negative values are kept. The grade labels the worst stage: A ≤5 ms, B ≤30, C ≤60, D ≤200, otherwise F.",
   jitter:
     "RTT variation: average absolute change between consecutive successful replies in one segment. Lower is steadier; timeouts are excluded.",
   wireRate:

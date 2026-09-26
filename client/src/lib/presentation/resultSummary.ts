@@ -21,6 +21,10 @@ type Latency = {
   band: Band;
 };
 type WireStage = "download" | "upload" | "bidirectional";
+type Added = {
+  addedMs?: Partial<Record<WireStage, number | null>>;
+  grade: string;
+};
 export type SummaryStatus = "complete" | "partial" | "failed";
 export interface WireView {
   bytesPerSec: number;
@@ -33,6 +37,7 @@ export interface SummaryEvidence {
   upload: Throughput | null;
   bidirectional: { down: Throughput | null; up: Throughput | null } | null;
   latency: Latency | null;
+  added: Added | null;
   latencyMeasured: boolean;
   latencySource?: string;
   wire: Partial<Record<WireStage, WireView | null>>;
@@ -47,12 +52,18 @@ export interface SummaryCard {
   unit: string;
   detail: string;
   jitter: string | null;
+  /** Signed added latency for a loaded stage, or the latency card's secondary grade. */
+  added: string | null;
+  grade: string | null;
   wire: (WireView & { num: string }) | null;
 }
 type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
 const ORDER = ["download", "upload", "bidirectional", "latency"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
+
+const signedMs = (ms: number) =>
+  `${ms < 0 ? "−" : "+"}${Math.abs(ms).toFixed(Math.abs(ms) < 100 ? 1 : 0)}`;
 
 export const wireOverhead = (multiplier: number) =>
   `+${((multiplier - 1) * 100).toFixed(1)}%`;
@@ -106,7 +117,7 @@ export function summaryCards(
   return ORDER.flatMap((key): SummaryCard[] => {
     const status = evidence.status[key];
     if (!status) return [];
-    const card = {
+    const card: SummaryCard = {
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
@@ -115,6 +126,8 @@ export function summaryCards(
       unit: "",
       detail: "",
       jitter: null,
+      added: null,
+      grade: null,
       quality: null,
       wire: null,
     };
@@ -129,6 +142,7 @@ export function summaryCards(
           num: fmtMs(latency.reportedMs),
           unit: "ms",
           jitter: latency.jitterMs == null ? MISSING : fmtMs(latency.jitterMs),
+          grade: evidence.added ? `Grade ${evidence.added.grade}` : null,
           detail: evidence.latencySource
             ? `from ${evidence.latencySource}`
             : "",
@@ -170,6 +184,8 @@ export function summaryCards(
       if (result)
         card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
+    const added = evidence.added?.addedMs?.[key];
+    if (added != null) card.added = signedMs(added);
     if (value === null) return [card];
     const shown = rate(value);
     const wire = evidence.wire[key];
@@ -225,6 +241,7 @@ export function serverEvidence(
     upload: server.upload,
     bidirectional: server.bidirectional,
     latency: server.latency,
+    added: server.bufferbloat,
     latencyMeasured: !!server.latencyTarget,
     wire: {},
   };

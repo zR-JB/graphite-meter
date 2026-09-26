@@ -70,6 +70,7 @@
         upload: upload.result,
         bidirectional,
         latency: latency.result,
+        added: record.bufferbloat,
         wire: {
           download: wire("download"),
           upload: wire("upload"),

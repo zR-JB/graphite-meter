@@ -237,12 +237,15 @@ export interface LatencyResult {
   band: StabilityBand;
 }
 
+/** Added latency: loaded median − full idle median, signed, in ms. */
 export interface BufferbloatGrade {
-  grade: "A" | "B" | "C" | "D" | "F";
+  /** Per transfer stage; null without that stage's median. */
+  addedMs: Record<"download" | "upload" | "bidirectional", number | null>;
   idleMs: number;
+  /** The worst stage's median and its increase, which the secondary A–F grade labels. */
   loadedMs: number;
-  /** Signed: loaded − idle. */
   increaseMs: number;
+  grade: "A" | "B" | "C" | "D" | "F";
 }
 
 /* ---------- Structured termination ---------- */

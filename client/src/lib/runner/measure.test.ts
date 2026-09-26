@@ -141,6 +141,7 @@ test("stage populations stay separate and added latency is the signed worst load
     reportedMs: 15,
   });
   expect(latency.bufferbloat()).toEqual({
+    addedMs: { download: 5, upload: 285, bidirectional: null },
     grade: "F",
     idleMs: 15,
     loadedMs: 300,
@@ -150,7 +151,11 @@ test("stage populations stay separate and added latency is the signed worst load
   const faster = new ServerLatency();
   faster.observe("latency", reply(30), 0, 0);
   faster.observe("download", reply(20), 0, 0);
-  expect(faster.bufferbloat()).toMatchObject({ grade: "A", increaseMs: -10 });
+  expect(faster.bufferbloat()).toMatchObject({
+    addedMs: { download: -10 },
+    grade: "A",
+    increaseMs: -10,
+  });
   const loadedOnly = new ServerLatency();
   loadedOnly.observe("download", reply(30), 0, 0);
   expect(loadedOnly.result(DEFAULT_CONFIG)).toBeNull();

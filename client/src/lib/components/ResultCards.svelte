@@ -51,6 +51,7 @@
           store.error?.partial?.bidirectional ??
           null,
         latency: store.stageResults.latency,
+        added: store.result?.bufferbloat ?? null,
         wire: {
           download: wire(store.downloadCompensation),
           upload: wire(store.uploadCompensation),

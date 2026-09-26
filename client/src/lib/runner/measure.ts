@@ -410,17 +410,18 @@ export class ServerLatency {
     };
   }
 
-  /** The worst loaded median against the full idle median; a negative difference stays negative. */
+  /** Each loaded median against the full idle median; a negative difference stays negative. */
   bufferbloat(): BufferbloatGrade | null {
-    const loaded = (["download", "upload", "bidirectional"] as const).flatMap(
-      (stage) => {
-        const p50 = this.stages[stage].summary()?.p50Ms;
-        return p50 == null ? [] : [p50];
-      },
+    const loaded = (["download", "upload", "bidirectional"] as const).map(
+      (stage) => [stage, this.stages[stage].summary()?.p50Ms ?? null] as const,
     );
-    if (!this.stages.latency.rtts.length || !loaded.length) return null;
+    const medians = loaded.flatMap(([, p50]) => (p50 == null ? [] : [p50]));
+    if (!this.stages.latency.rtts.length || !medians.length) return null;
     const idleMs = median(this.stages.latency.rtts);
-    const loadedMs = Math.max(...loaded);
+    const addedMs = Object.fromEntries(
+      loaded.map(([stage, p50]) => [stage, p50 == null ? null : p50 - idleMs]),
+    ) as BufferbloatGrade["addedMs"];
+    const loadedMs = Math.max(...medians);
     const increaseMs = loadedMs - idleMs;
     const grade =
       increaseMs <= 5
@@ -432,7 +433,7 @@ export class ServerLatency {
             : increaseMs <= 200
               ? "D"
               : "F";
-    return { grade, idleMs, loadedMs, increaseMs };
+    return { addedMs, idleMs, loadedMs, increaseMs, grade };
   }
 }
 

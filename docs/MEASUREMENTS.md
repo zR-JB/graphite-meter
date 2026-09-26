@@ -101,8 +101,9 @@ window; full-stage descriptors never fall back to loaded RTTs or preflight hints
 window is full. A failed stage keeps its measured population with an incomplete marker; a failure before any probe
 produces an error without a summary.
 
-Saved browser results also carry an A–F grade from the largest loaded-median increase clamped at zero (A ≤ 5,
-B ≤ 30, C ≤ 60, D ≤ 200 ms, else F).
+Browser results show and save the signed added latency of each loaded stage as "Added latency", with an A–F
+grade of the largest increase as a secondary label (A ≤ 5, B ≤ 30, C ≤ 60, D ≤ 200 ms, else F; a negative
+increase grades A). Records saved before per-stage values show only their grade.
 
 ## Paired server timing
 

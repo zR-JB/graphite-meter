@@ -76,6 +76,22 @@
                 <span class="term" use:tooltip={JARGON.jitter}>jitter</span>
               </p>
             {/if}
+            {#if card.added !== null}
+              <p class="line">
+                <strong>{card.added} <small>ms</small></strong>
+                <span class="term" use:tooltip={JARGON.addedLatency}
+                  >added latency</span
+                >
+              </p>
+            {/if}
+            {#if card.grade !== null}
+              <p class="line">
+                <strong>{card.grade}</strong>
+                <span class="term" use:tooltip={JARGON.addedLatency}
+                  >added latency</span
+                >
+              </p>
+            {/if}
             {#if card.wire}
               <p class="line">
                 <strong>{card.wire.num}</strong>
