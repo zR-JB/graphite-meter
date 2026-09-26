@@ -125,8 +125,12 @@ async function http(options: { checkpoint?: () => Response } = {}) {
   const receivers: ReceiverCheckpoint[] = [];
   const failures: string[] = [];
   const stalls: (string | undefined)[] = [];
+  const downloads: number[] = [];
+  const hints: number[] = [];
   const host = testParticipantHost(config, {
     now: () => 42,
+    download: (bytes) => downloads.push(bytes),
+    uploadHint: (_lane, bytes) => hints.push(bytes),
     receiver: (checkpoint) => receivers.push(checkpoint),
     fail: (_reason, message) => failures.push(message),
     stall: (info) => stalls.push(info.recoveryCause ?? info.detail),
@@ -147,6 +151,8 @@ async function http(options: { checkpoint?: () => Response } = {}) {
     receivers,
     failures,
     stalls,
+    downloads,
+    hints,
     async open(index: number, id: string) {
       await until(() => mints.length > index);
       mints[index].resolve(Response.json({ uploadId: id }));
@@ -156,7 +162,7 @@ async function http(options: { checkpoint?: () => Response } = {}) {
   };
 }
 
-test("HTTP upload lanes start after the receiver feed opens and report only measured receiver evidence", async () => {
+test("HTTP upload lanes start after the receiver feed opens; only receiver evidence, never sender bytes, is measured", async () => {
   const h = await http();
   const stage = h.stage(activity("upload"));
   const preparing = stage.prepare();
@@ -175,7 +181,10 @@ test("HTTP upload lanes start after the receiver feed opens and report only meas
   feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
   feed.write({ type: "progress", bytes: 90, nanos: 3e9 });
   feed.write({ type: "progress", bytes: 300, nanos: 2e9 });
+  workers("upload")[0].emit({ type: "alive", bytes: 5_000, elapsedMs: 10 });
   await until(() => h.receivers.length === 2);
+  expect(h.hints).toEqual([5_000]);
+  expect(h.downloads).toEqual([]);
   expect(
     h.receivers.map(({ id, bytes, nanos }) => ({ id, bytes, nanos })),
   ).toEqual([

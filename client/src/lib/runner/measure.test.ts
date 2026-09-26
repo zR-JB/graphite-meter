@@ -439,6 +439,31 @@ test("opposite fluctuations use aggregate stability, simultaneous peaks and one 
   expect(windows[0].startNanos).toBe(windows[1].startNanos);
 });
 
+test("a replaced receiver id never spans a window; evidence resumes in a new interval", () => {
+  const m = new ThroughputAggregate();
+  m.begin("upload", ["a"], 0);
+  m.observe(boundary(0, {}, { a: receiver("first", 0, 1) }));
+  expect(
+    m.observe(boundary(1_000, {}, { a: receiver("second", 500, 1e9) })),
+  ).toBeNull();
+  expect(m.intervals.map((interval) => interval.reason)).toEqual([
+    "stage-start",
+    "evidence-resumed",
+  ]);
+  expect(m.intervals[0].complete).toBe(false);
+  expect(m.intervals[1].full).toBeNull();
+});
+
+test("idle confidence uses only in-window idle replies", () => {
+  const server = new ServerLatency();
+  for (let t = 0; t < 10; t++) server.observe("latency", reply(10), t * 100, 0);
+  const idle = server.confidence();
+  server.observe("download", reply(900), 1_000, 0);
+  server.observe("latency", reply(900, false, false), 1_100, 0);
+  expect(server.confidence()).toEqual(idle);
+  expect(idle.sampleCount).toBe(10);
+});
+
 test("burst flushes cannot raise the peak above the fastest 500 ms", () => {
   const m = new ThroughputAggregate();
   m.begin("download", ["a"], 0);

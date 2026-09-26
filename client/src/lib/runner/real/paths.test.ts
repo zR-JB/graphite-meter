@@ -582,7 +582,9 @@ test("Automatic falls back to a verified advertised path, while explicit HTTP1 r
     expect(paths.throughput.target.origin).toBe("https://meter.test:7248");
     requests.length = 0;
     config.transports.throughputTarget = "protocol:http1";
-    await expect(harness.check(config, ["throughput"])).rejects.toThrow();
+    await expect(harness.check(config, ["throughput"])).rejects.toThrow(
+      "http1 transport unavailable",
+    );
     expect(requests).toEqual(["http://meter.test:7246"]);
   } finally {
     restore();
@@ -800,7 +802,9 @@ test("Automatic stops at an authentication failure instead of probing another en
         },
         ["throughput"],
       ),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({
+      cause: expect.any(ServerAuthenticationRequired),
+    });
     expect(requests).toHaveLength(1);
   } finally {
     restore();

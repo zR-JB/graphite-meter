@@ -224,6 +224,43 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   channel.teardown();
 });
 
+test("a stage timeout reaches the population as a timeout and does not resume recovery", () => {
+  const outcomes: boolean[] = [];
+  let resumes = 0;
+  const channel = new LatencyChannel({
+    host: host({
+      latency: (sample) => outcomes.push(sample.timedOut),
+      resumeLatency: () => resumes++,
+    }),
+    target,
+  });
+  channel.prime("medium", true);
+  channel.measure();
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [{ rtt: 250, timedOut: true, observedAtEpochMs: 1_000 }],
+  });
+  expect(outcomes).toEqual([true]);
+  expect(resumes).toBe(0);
+  channel.teardown();
+});
+
+test("path preparation collects only replies, never timeouts", async () => {
+  const keepalive = new IdleKeepalive(target, 0);
+  const collecting = keepalive.collectRtts();
+  const reply = (rtt: number, timedOut = false) => ({
+    rtt,
+    timedOut,
+    observedAtEpochMs: 1,
+  });
+  TestWorker.last!.emit({
+    type: "samples",
+    samples: [reply(9_999, true), ...[1, 2, 3, 4, 5].map((rtt) => reply(rtt))],
+  });
+  expect(await collecting).toEqual([1, 2, 3, 4, 5]);
+  keepalive.stop();
+});
+
 test("a matched-probe ready event cancels the warmup establishment deadline", () => {
   let deadline: (() => void) | null = null;
   let deadlineActive = false;

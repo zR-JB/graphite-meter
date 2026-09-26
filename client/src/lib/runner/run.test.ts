@@ -35,7 +35,10 @@ interface Peer {
   /** Bytes per millisecond in each direction. */
   rate?: number;
   latency?: boolean;
-  prepare?(activity: PhaseActivity): void | Promise<void>;
+  prepare?(
+    activity: PhaseActivity,
+    host: ParticipantHost,
+  ): void | Promise<void>;
   measure?(host: ParticipantHost, activity: PhaseActivity): void;
   finish?(host: ParticipantHost): void | Promise<void>;
   discard?(host: ParticipantHost, incomplete: boolean): void;
@@ -92,7 +95,7 @@ async function harness(
       const stage: StageTransport = {
         async prepare() {
           calls.push(`begin:${tag}`);
-          await peer.prepare?.(activity);
+          await peer.prepare?.(activity, host);
         },
         async ready() {},
         measure() {
@@ -183,6 +186,27 @@ const probe =
     for (let i = 0; i < count; i++)
       host.latency({ rttMs, timedOut: false, observedAtMs: performance.now() });
   };
+
+test("warmup probes never enter a measured population", async () => {
+  const h = await harness(
+    [
+      {
+        id: "self",
+        prepare: (_activity, host) =>
+          void setTimeout(() => probe(900, 5)(host), 50),
+        measure: probe(10, 4),
+      },
+    ],
+    { latency: true },
+    { warmupMs: 200, latencyMs: 400 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.latencyByStage.latency).toMatchObject({
+    probeCount: 4,
+    maxMs: 10,
+  });
+});
 
 test("one server runs every stage in order and its saved record describes the run", async () => {
   const h = await harness(
