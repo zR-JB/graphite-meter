@@ -109,9 +109,8 @@ loaded RTTs or preflight hints.
 window is full. A failed stage keeps its measured population with an incomplete marker; a failure before any probe
 produces an error without a summary.
 
-Browser results show and save the signed added latency of each loaded stage as "Added latency", with an A–F
-grade of the largest increase as a secondary label (A ≤ 5, B ≤ 30, C ≤ 60, D ≤ 200 ms, else F; a negative
-increase grades A). Records saved before per-stage values show only their grade.
+Both clients show the signed added latency of each loaded stage as "Added latency", a plain value in ms; the
+browser also saves it. No result is graded.
 
 ## Paired server timing
 
