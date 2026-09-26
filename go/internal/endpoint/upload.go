@@ -104,7 +104,7 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 		writeUploadAccessError(w, uploadAccessInvalid)
 		return
 	}
-	if agg.owner != "" && agg.owner != UploadOwner(r, u.trusted) {
+	if agg.owner != UploadOwner(r, u.trusted) {
 		writeUploadAccessError(w, uploadAccessOwnerMismatch)
 		return
 	}

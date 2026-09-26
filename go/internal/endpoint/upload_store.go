@@ -173,7 +173,7 @@ func (u *Upload) accessFor(id, owner string, join bool) (*uploadAgg, uploadAcces
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if agg, ok := u.receivers[id]; ok {
-		if agg.owner != "" && owner != agg.owner {
+		if owner != agg.owner {
 			return nil, uploadAccessOwnerMismatch
 		}
 		if join {
@@ -243,7 +243,7 @@ func (u *Upload) finishFor(id, owner string) uploadAccess {
 	switch {
 	case !ok:
 		return uploadAccessInvalid
-	case agg.owner != "" && owner != agg.owner:
+	case owner != agg.owner:
 		return uploadAccessOwnerMismatch
 	case !agg.isFinished():
 		close(agg.finished)

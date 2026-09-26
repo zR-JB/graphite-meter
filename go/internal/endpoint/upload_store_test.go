@@ -104,6 +104,23 @@ func TestUploadStorePerOwnerCapAndOwnership(t *testing.T) {
 	}
 }
 
+// A receiver answers only its own owner, including one created without an owner key.
+func TestUploadOwnershipFailsClosed(t *testing.T) {
+	s := NewUpload(nil, nil)
+	for _, owner := range []string{"", "192.0.2.1"} {
+		id := s.Mint()
+		if _, access := s.getOrCreateFor(id, owner); access != uploadAccessOK {
+			t.Fatal(access)
+		}
+		if _, access := s.accessFor(id, "198.51.100.9", true); access != uploadAccessOwnerMismatch {
+			t.Fatalf("owner %q: another client joined with %v", owner, access)
+		}
+		if access := s.finishFor(id, "198.51.100.9"); access != uploadAccessOwnerMismatch {
+			t.Fatalf("owner %q: another client finished with %v", owner, access)
+		}
+	}
+}
+
 // Delegated owners share their subject's retention budget while keeping distinct access rights.
 func TestDelegatedUploadOwnersShareTheParentRetentionBudget(t *testing.T) {
 	store := NewUpload(nil, nil)
