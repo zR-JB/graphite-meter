@@ -115,5 +115,5 @@ jobs:
               }
 
               [ "$PROMOTE_SERIES" = true ] && promote "$SERIES"
-              [ "$PROMOTE_LATEST" = true ] && promote latest
+              if [ "$PROMOTE_LATEST" = true ]; then promote latest; fi
             '

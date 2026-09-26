@@ -934,6 +934,12 @@ class PipelineTests(unittest.TestCase):
         self.assertIn("source tag returned an invalid digest", result.stderr)
         self.assertNotIn("promoted", result.stdout)
 
+    def test_promotion_of_an_older_series_succeeds_without_latest(self) -> None:
+        result = self._run_promotion("sha256:" + "a" * 64, "true", "false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("promoted ghcr.io/owner/repo:1.2", result.stdout)
+        self.assertNotIn(":latest", result.stdout)
+
     def test_skopeo_version_parser_accepts_supported_output_shapes(self) -> None:
         self.assertEqual(parse_skopeo_version("skopeo version 1.22.2"), "1.22.2")
         self.assertEqual(
