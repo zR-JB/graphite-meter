@@ -41,40 +41,38 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 
 func (r *runner) downloadLane(ctx context.Context, base string, lane int, total *atomic.Uint64, ready func()) error {
 	buf := make([]byte, 1<<20)
-	for ctx.Err() == nil {
+	return persist(ctx, func(ctx context.Context) (bool, error) {
 		u, err := endpointWithQuery(base, url.Values{
 			"bytes": {strconv.FormatInt(transferBytesPerStream, 10)},
 			"lane":  {strconv.Itoa(lane)},
 			"cb":    {strconv.FormatInt(time.Now().UnixNano(), 10)},
 		})
 		if err != nil {
-			return err
+			return false, refusal{err}
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
-			return err
+			return false, refusal{err}
 		}
 		res, err := r.http.Do(req)
 		if err != nil {
-			pause(ctx, retryBackoff)
-			continue
+			return false, err
 		}
+		defer res.Body.Close()
 		if res.StatusCode != http.StatusOK {
-			_ = res.Body.Close()
-			return unexpectedStatus(res)
+			return false, refusal{unexpectedStatus(res)}
 		}
 		ready()
-		for ctx.Err() == nil {
+		moved := false
+		for {
 			n, err := res.Body.Read(buf)
 			total.Add(uint64(n))
-			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					pause(ctx, retryBackoff)
-				}
-				break
+			moved = moved || n > 0
+			if errors.Is(err, io.EOF) {
+				return moved, nil
+			} else if err != nil {
+				return moved, err
 			}
 		}
-		_ = res.Body.Close()
-	}
-	return nil
+	})
 }

@@ -62,30 +62,28 @@ func runWTLaneSurfacesAPersistentRedialFailure(t *testing.T) {
 
 func TestRunWTLaneFastFailureCeiling(t *testing.T) {
 	t.Parallel()
-	if wtLaneMaxFastFailures != 5 {
-		t.Fatalf("wtLaneMaxFastFailures = %d, want 5", wtLaneMaxFastFailures)
-	}
+	const fastFailures = int64(redialWindow/retryBackoff) + 1
 	const slowFailure = retryBackoff + 20*time.Millisecond
 	cases := []fastFailureCase{
 		{
 			name:     "one short of the ceiling is absorbed",
-			failures: wtLaneMaxFastFailures - 1, budget: 3 * time.Second,
-			wantErr: false, wantEntries: int64(wtLaneMaxFastFailures), wantDials: int64(wtLaneMaxFastFailures) - 1,
+			failures: int(fastFailures) - 1, budget: 3 * time.Second,
+			wantErr: false, wantEntries: fastFailures, wantDials: fastFailures,
 		},
 		{
 			name:     "the ceiling reports the failure",
-			failures: wtLaneMaxFastFailures, budget: 3 * time.Second,
-			wantErr: true, wantEntries: int64(wtLaneMaxFastFailures), wantDials: int64(wtLaneMaxFastFailures) - 1,
+			failures: int(fastFailures), budget: 3 * time.Second,
+			wantErr: true, wantEntries: fastFailures, wantDials: fastFailures,
 		},
 		{
 			name:     "a lane that carried bytes before it failed is never reported",
-			failures: 4 * wtLaneMaxFastFailures, pause: slowFailure, progress: true, budget: 3 * slowFailure,
+			failures: 4 * int(fastFailures), pause: slowFailure, progress: true, budget: 3 * slowFailure,
 			wantErr: false, wantEntries: -1, wantDials: -1,
 		},
 		{
 			name:     "a live session is not re-dialled for one lane's error",
-			failures: wtLaneMaxFastFailures, alive: true, budget: 3 * time.Second,
-			wantErr: true, wantEntries: int64(wtLaneMaxFastFailures), wantDials: 0,
+			failures: int(fastFailures), alive: true, budget: 3 * time.Second,
+			wantErr: true, wantEntries: fastFailures, wantDials: 0,
 		},
 		{
 			name:     "a live session survives a lane that fails slowly and then runs",
@@ -181,7 +179,6 @@ func TestWebTransportRecoveryInVirtualTime(t *testing.T) {
 	for name, test := range map[string]func(*testing.T){
 		"persistent redial failure":            runWTLaneSurfacesAPersistentRedialFailure,
 		"concurrent redials dedupe":            wtStageSessionDedupesConcurrentRedials,
-		"close is final":                       wtStageSessionCloseIsFinal,
 		"failed establish closes its session":  wtStageSessionClosesASessionWhoseEstablishFailed,
 		"auth refusal is not retried":          wtStageSessionDoesNotRetryPermanentAuthenticationFailure,
 		"cancelled stage is a stop":            runWTLaneReportsACancelledStageAsAStop,
@@ -229,29 +226,6 @@ func wtStageSessionDedupesConcurrentRedials(t *testing.T) {
 	}
 	if _, got := host.current(); got != gen+1 {
 		t.Errorf("generation = %d, want %d: the replacement must be published exactly once", got, gen+1)
-	}
-}
-
-func wtStageSessionCloseIsFinal(t *testing.T) {
-	sess := deadWTSession()
-	var dials atomic.Int64
-	host := &wtStageSession{
-		sess: sess,
-		dial: func(context.Context) (*wtSession, error) {
-			dials.Add(1)
-			return liveWTSession(t), nil
-		},
-	}
-
-	host.close()
-	if !sess.closed.Load() {
-		t.Error("closing the stage host left its session open")
-	}
-	if err := host.redial(t.Context(), 0); err == nil {
-		t.Error("a redial after the stage host closed reported success")
-	}
-	if got := dials.Load(); got != 0 {
-		t.Errorf("dialled %d times after the stage host closed, want 0", got)
 	}
 }
 

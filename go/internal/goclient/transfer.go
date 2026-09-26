@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -36,7 +37,7 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 		if err == nil {
 			return nil
 		}
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
+		if final(err) {
 			return err
 		}
 		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
@@ -47,6 +48,45 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 				return ctx.Err()
 			}
 			return fmt.Errorf("%s lost and not replaced within %v: %w", what, redialWindow, lastErr)
+		}
+	}
+}
+
+// refusal is a server's answer that no retry can change.
+type refusal struct{ error }
+
+func (r refusal) Unwrap() error { return r.error }
+
+func final(err error) bool {
+	_, refused := errors.AsType[refusal](err)
+	_, auth := errors.AsType[*AuthRequiredError](err)
+	return refused || auth
+}
+
+var errNoBytes = errors.New("no bytes moved")
+
+// persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
+func persist(ctx context.Context, attempt func(context.Context) (progressed bool, err error)) error {
+	var failingSince time.Time
+	for {
+		started := time.Now()
+		progressed, err := attempt(ctx)
+		if ctx.Err() != nil {
+			return nil
+		}
+		if final(err) {
+			return err
+		}
+		if progressed {
+			failingSince = time.Time{}
+		} else if failingSince.IsZero() {
+			failingSince = started
+		}
+		if !progressed && time.Since(failingSince) >= redialWindow {
+			return cmp.Or(err, errNoBytes)
+		}
+		if (err != nil || !progressed) && time.Since(started) < retryBackoff && !pause(ctx, retryBackoff) {
+			return nil
 		}
 	}
 }

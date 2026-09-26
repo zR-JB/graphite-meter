@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -126,6 +128,42 @@ func TestLanesFailOnAdmissionRejection(t *testing.T) {
 		if err == nil {
 			t.Errorf("%s lane ignored HTTP 503", dir)
 		}
+	}
+}
+
+func TestLanesThatMoveNothingEndWithTheLastError(t *testing.T) {
+	t.Parallel()
+	refused := errors.New("connection refused")
+	for _, c := range []struct {
+		name string
+		dir  Direction
+		fail error
+		want string
+	}{
+		{"download refused", Down, refused, "connection refused"},
+		{"download empty", Down, nil, errNoBytes.Error()},
+		{"upload refused", Up, refused, "connection refused"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				requests := 0
+				transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					requests++
+					if c.fail != nil {
+						return nil, c.fail
+					}
+					return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: req}, nil
+				})
+				r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
+				err := lane(r, c.dir, "http://meter.test/download")(t.Context())
+				if err == nil || !strings.Contains(err.Error(), c.want) {
+					t.Fatalf("lane ended with %v, want %q", err, c.want)
+				}
+				if paced := int(redialWindow/retryBackoff) + 1; requests > paced {
+					t.Errorf("%d requests before giving up, want at most %d", requests, paced)
+				}
+			})
+		})
 	}
 }
 

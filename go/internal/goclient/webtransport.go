@@ -3,7 +3,6 @@ package goclient
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
@@ -95,15 +94,12 @@ func (b wtBus) Recv(ctx context.Context) (string, error) {
 
 func (b wtBus) Close() { b.sess.close() }
 
-var errWTStageClosed = errors.New("webtransport stage session closed")
-
 type wtStageSession struct {
 	dial      func(ctx context.Context) (*wtSession, error)
 	establish func(ctx context.Context, sess *wtSession) error
 	mu        sync.Mutex
 	sess      *wtSession
 	gen       int
-	closed    bool
 }
 
 func newWTStageSession(
@@ -138,12 +134,10 @@ func (w *wtStageSession) current() (*wtSession, int) {
 	return w.sess, w.gen
 }
 
+// redial holds the lock while dialling so other lanes wait for the replacement instead of the dead session.
 func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if w.closed {
-		return errWTStageClosed
-	}
 	if w.gen > gen {
 		return nil
 	}
@@ -158,56 +152,24 @@ func (w *wtStageSession) redial(ctx context.Context, gen int) error {
 	})
 }
 
-func (w *wtStageSession) close() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.closed = true
-	w.sess.close()
-}
-
-const wtLaneMaxFastFailures = 5
+// close runs after every lane has stopped.
+func (w *wtStageSession) close() { w.sess.close() }
 
 func runWTLane(
 	ctx context.Context,
 	host *wtStageSession,
 	lane func(ctx context.Context, sess *wtSession) (bool, error),
 ) error {
-	fastFailures := 0
-	var failingSince time.Time
-	for ctx.Err() == nil {
+	return persist(ctx, func(ctx context.Context) (bool, error) {
 		sess, gen := host.current()
-		started := time.Now()
-		progressed, err := lane(ctx, sess)
-		if err == nil || ctx.Err() != nil {
-			return nil
-		}
-		if progressed {
-			fastFailures = 0
-			failingSince = time.Time{}
-		} else if time.Since(started) >= retryBackoff {
-			fastFailures = 0
-			if failingSince.IsZero() {
-				failingSince = started
+		if !sess.alive() {
+			if err := host.redial(ctx, gen); err != nil {
+				return false, err
 			}
-			if time.Since(failingSince) >= redialWindow {
-				return err
-			}
-		} else if fastFailures++; fastFailures >= wtLaneMaxFastFailures {
-			return err
-		} else if !pause(ctx, retryBackoff) {
-			return nil
+			sess, _ = host.current()
 		}
-		if sess.alive() {
-			continue
-		}
-		if redialErr := host.redial(ctx, gen); redialErr != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
-			return redialErr
-		}
-	}
-	return nil
+		return lane(ctx, sess)
+	})
 }
 
 func (r *runner) wtDownloadQuery() url.Values {

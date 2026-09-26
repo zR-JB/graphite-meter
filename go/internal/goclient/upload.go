@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -90,34 +91,33 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 	if err != nil {
 		return err
 	}
-	for ctx.Err() == nil {
+	return persist(ctx, func(ctx context.Context) (bool, error) {
 		u, err := endpointWithQuery(base, url.Values{
 			"id":   {id},
 			"lane": {strconv.Itoa(lane)},
 			"cb":   {strconv.FormatInt(time.Now().UnixNano(), 10)},
 		})
 		if err != nil {
-			return err
+			return false, refusal{err}
 		}
 		body := &cyclingBody{ctx: ctx, block: block, remaining: transferBytesPerStream}
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, body)
 		if err != nil {
-			return err
+			return false, refusal{err}
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
 		req.ContentLength = transferBytesPerStream
 		res, err := r.http.Do(req)
 		if err != nil {
-			pause(ctx, retryBackoff)
-			continue
+			return body.moved.Load(), err
 		}
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
 		if res.StatusCode != http.StatusOK {
-			return unexpectedStatus(res)
+			return false, refusal{unexpectedStatus(res)}
 		}
-	}
-	return nil
+		return body.moved.Load(), nil
+	})
 }
 
 type cyclingBody struct {
@@ -125,6 +125,7 @@ type cyclingBody struct {
 	block     []byte
 	off       int
 	remaining int64
+	moved     atomic.Bool
 }
 
 func (b *cyclingBody) Read(p []byte) (int, error) {
@@ -141,6 +142,7 @@ func (b *cyclingBody) Read(p []byte) (int, error) {
 		b.off = (b.off + copied) % len(b.block)
 	}
 	b.remaining -= int64(len(p))
+	b.moved.Store(true)
 	return len(p), nil
 }
 
