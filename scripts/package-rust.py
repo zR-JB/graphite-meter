@@ -27,6 +27,13 @@ def release_directory(requested: Path) -> Path:
     return Path(output)
 
 
+def child(directory: Path, name: str) -> Path:
+    path = os.path.realpath(directory / name)
+    if not path.startswith(os.path.realpath(directory) + os.sep):
+        raise ValueError(f"{name!r} does not name an entry of {directory}")
+    return Path(path)
+
+
 def build(version: str, output: Path, supplement: Path) -> None:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", version):
         raise ValueError("invalid release version")
@@ -48,7 +55,7 @@ def build(version: str, output: Path, supplement: Path) -> None:
             "--reviews", "legal/rust-reviewed-components.json", "--supplement", str(supplement.resolve()),
         ], cwd=REPO, env=environment, check=True)
         binary = REPO / "rust/target" / TARGET / "release/graphite-meter-client"
-        package = stage / base
+        package = child(stage, base)
         package.mkdir()
         shutil.copy2(binary, package / binary.name)
         actual = subprocess.check_output([str(binary), "--version"], text=True).strip()
@@ -80,12 +87,12 @@ def build(version: str, output: Path, supplement: Path) -> None:
             "and targets have not been established as compatible.\n"
         )
         # Finish both staged files before replacing either destination.
-        archive_path = stage / f"{base}.tar.gz"
+        archive_path = child(stage, f"{base}.tar.gz")
         with tarfile.open(archive_path, "w:gz") as archive:
             archive.add(package, arcname=base)
-        shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", stage / source_name)
+        shutil.copyfile(legal / "THIRD_PARTY_SOURCE.tar.gz", child(stage, source_name))
         for filename in (archive_path.name, source_name):
-            os.replace(stage / filename, output / filename)
+            os.replace(child(stage, filename), child(output, filename))
 
 
 
