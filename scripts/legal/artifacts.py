@@ -11,7 +11,7 @@ from pathlib import Path
 from .model import Component, Json, LegalError, Project, Provenance, Review, marshal
 from .review import component_key, find_review, validate_review
 
-RELEASE_VERSION = re.compile(r'v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?')
+RELEASE_VERSION = re.compile(r'^v?[0-9]+\.[0-9]+\.[0-9]+(?:-(?:alpha|beta|rc)\.[0-9]+)?')
 
 
 def notices(components: list[Component]) -> str:
