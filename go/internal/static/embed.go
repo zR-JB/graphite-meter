@@ -61,7 +61,8 @@ func pagePolicy(script, style string, connect []string) string {
 	}, "; ")
 }
 
-// Handler serves the shell, marked with the auth mode and history default, and embedded files.
+// Handler serves the client shell at / and otherwise only embedded files. The shell carries the
+// authentication marker and the operator's result-history default.
 func Handler(authenticated, resultHistoryDefault bool) http.Handler {
 	dist, _ := fs.Sub(distFS, "dist")
 	return handler(dist, authenticated, resultHistoryDefault)
