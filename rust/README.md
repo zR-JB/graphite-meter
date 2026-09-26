@@ -48,6 +48,15 @@ Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,
 including allowed and denied group membership. Other deployments remain untested.
 
+Origins require ASCII hosts; use punycode for international names. Empty host
+labels, host punctuation other than hyphens and underscores, IPv4 shorthand,
+leading-zero IPv4 octets, and trailing-dot IPv4 addresses are rejected. Domain
+trailing dots remain supported. Existing HTTP URL validation still rejects
+malformed punycode until the HTTP stack replacement. OIDC issuer paths must be
+ASCII; percent-encode other characters.
+The planned proxy replacement will use absolute-form requests for cleartext HTTP
+and CONNECT tunnels for HTTPS.
+
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
 

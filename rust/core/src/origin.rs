@@ -33,7 +33,7 @@ impl Origin {
     pub fn key(&self) -> String {
         let mut normalized = self.clone();
         normalized.scheme.make_ascii_lowercase();
-        normalized.host = normalized.host.to_lowercase();
+        normalized.host.make_ascii_lowercase();
         if matches!(
             (normalized.scheme.as_str(), normalized.port.as_deref()),
             ("http", Some("80")) | ("https", Some("443"))
@@ -61,8 +61,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     if !matches!(scheme.as_str(), "http" | "https") || authority.contains(['/', '@']) {
         return Err(OriginError);
     }
-    // Validate with the standard URL implementation, but do not adopt WHATWG
-    // normalization for saved catalog identities (e.g. :0443 or expanded IPv6).
+    // Keep URL validation until the HTTP clients stop using WHATWG host parsing.
     let parsed = url::Url::parse(raw).map_err(|_| OriginError)?;
     if parsed.host_str().is_none() {
         return Err(OriginError);
@@ -81,9 +80,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
         let (host, port) = authority
             .split_once(':')
             .map_or((authority, None), |(host, port)| (host, Some(port)));
-        // Percent-encoded names have a different interpretation across URL
-        // implementations and are not safe authentication audience identities.
-        if host.contains(['%', '[', ']']) {
+        if !ascii_name(host) {
             return Err(OriginError);
         }
         (host, port)
@@ -110,6 +107,39 @@ pub fn canonical_origin(raw: &str) -> Result<String, OriginError> {
         return Err(OriginError);
     }
     Ok(origin.key())
+}
+
+fn ascii_name(host: &str) -> bool {
+    let name = host.strip_suffix('.').unwrap_or(host);
+    let last = name.rsplit('.').next().unwrap_or_default();
+    let numeric = last.bytes().all(|c| c.is_ascii_digit())
+        || last
+            .strip_prefix("0x")
+            .or_else(|| last.strip_prefix("0X"))
+            .is_some_and(|hex| hex.bytes().all(|c| c.is_ascii_hexdigit()));
+    name.split('.').all(|label| {
+        !label.is_empty()
+            && label
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+    }) && (!numeric || host.parse::<std::net::Ipv4Addr>().is_ok())
+}
+
+pub fn split_url(raw: &str) -> Result<(Origin, &str), OriginError> {
+    let start = raw.find("://").ok_or(OriginError)? + 3;
+    let end = raw[start..]
+        .find(['/', '?'])
+        .map_or(raw.len(), |index| start + index);
+    let origin = target_origin(&raw[..end])?.ok_or(OriginError)?;
+    let rest = &raw[end..];
+    if rest.len() > 2048
+        || rest
+            .bytes()
+            .any(|c| c <= b' ' || c >= 127 || matches!(c, b'#' | b'\\'))
+    {
+        return Err(OriginError);
+    }
+    Ok((origin, rest))
 }
 
 pub fn key(raw: &str) -> String {

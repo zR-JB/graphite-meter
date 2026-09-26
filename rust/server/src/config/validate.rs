@@ -1,5 +1,5 @@
 use super::{AuthConfig, AuthMode, Config, ConfigError, NativeKind};
-use graphite_meter_core::origin::{Origin, key, target_origin};
+use graphite_meter_core::origin::{Origin, key, split_url, target_origin};
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -301,21 +301,8 @@ impl AuthConfig {
     }
 
     fn validate_oidc_issuer(&self) -> Result<(), ConfigError> {
-        let issuer = url::Url::parse(&self.oidc_issuer).ok();
-        let authority = self
-            .oidc_issuer
-            .split_once("://")
-            .map(|(_, rest)| rest.split('/').next().unwrap_or_default());
-        if self.oidc_issuer.chars().any(char::is_control)
-            || authority.is_none_or(|authority| authority.contains('@'))
-            || !issuer.is_some_and(|url| {
-                url.scheme() == "https"
-                    && url.host_str().is_some()
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && url.query().is_none()
-                    && url.fragment().is_none()
-            })
+        if !split_url(&self.oidc_issuer)
+            .is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'))
         {
             return Err(
                 "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"

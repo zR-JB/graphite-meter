@@ -441,6 +441,40 @@ mod tests {
     }
 
     #[test]
+    fn request_destinations_preserve_validated_ascii_host_identity() {
+        let http = http(false);
+        for origin in [
+            "https://xn--bcher-kva.example",
+            "https://meter.example.",
+            "https://127.0.0.1",
+        ] {
+            let request = http
+                .builder(Method::GET, &format!("{origin}/probe"), Protocol::Http1)
+                .unwrap()
+                .build()
+                .unwrap();
+            assert_eq!(
+                request.url().host_str(),
+                Some(target_origin(origin).unwrap().unwrap().host.as_str())
+            );
+        }
+        for origin in [
+            "https://1.2.3",
+            "https://0x7f.1",
+            "https://127.000.0.1",
+            "https://127.0.0.1.",
+            "https://BÜCHER.example",
+            "https://xn--a.example",
+        ] {
+            assert!(
+                http.builder(Method::GET, &format!("{origin}/probe"), Protocol::Http1)
+                    .is_err(),
+                "accepted {origin}"
+            );
+        }
+    }
+
+    #[test]
     fn approval_urls_require_verified_same_host_canonical_https() {
         for raw in [
             "https://evil.example/login",
