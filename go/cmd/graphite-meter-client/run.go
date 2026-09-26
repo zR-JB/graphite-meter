@@ -244,7 +244,7 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
 	m.next = newRunState(m.cfg, focus, m.now)
-	m.stopPrompt, m.popup = false, popupNone
+	m.stopPrompt, m.popup, m.waiting = false, popupNone, true
 	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
@@ -253,7 +253,7 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.runSeq || !m.running() {
 		return m, nil
 	}
-	m.now = time.Now()
+	m.waiting = false
 	for _, event := range msg.events {
 		switch {
 		case m.next != nil && event.Kind == goclient.EventDone:
@@ -268,7 +268,7 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 		}
 		m.apply(event)
 	}
-	return m, waitEvents(m.runSeq, m.events)
+	return m, nil
 }
 
 func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {

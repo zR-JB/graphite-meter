@@ -91,6 +91,7 @@ type model struct {
 
 	runSeq      int
 	events      <-chan goclient.Event
+	waiting     bool
 	run         *runState
 	next        *runState
 	stopPrompt  bool
@@ -304,6 +305,10 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.spin, cmd = m.spin.Update(msg)
+	if m.running() && !m.waiting {
+		m.waiting = true
+		cmd = tea.Batch(cmd, waitEvents(m.runSeq, m.events))
+	}
 	return m, cmd
 }
 
