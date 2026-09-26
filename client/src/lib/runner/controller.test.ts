@@ -244,6 +244,34 @@ test("idle latency stops before the run starts and resumes after abort", async (
   });
 });
 
+test("a cancelled start keeps the previous result on screen", async () => {
+  let hold: Promise<void> | undefined;
+  await withController(
+    {
+      discover: async () => {
+        await hold;
+        return evidence().discovery;
+      },
+    },
+    async ({ controller, store, runner }) => {
+      controller.toggleRun();
+      await until(() => runner.starts === 1);
+      runner.listener({ type: "complete", result: testRunResult() });
+      const previous = store.result;
+      expect(previous).not.toBeNull();
+      const gate = deferred<void>();
+      hold = gate.promise;
+      controller.toggleRun();
+      await until(() => store.preparationStatus === "checking");
+      controller.toggleRun();
+      gate.resolve();
+      await settle();
+      expect(store.result).toBe(previous);
+      expect(runner.starts).toBe(1);
+    },
+  );
+});
+
 test("returning to start releases the run so late events cannot reach the fresh store", async () => {
   await withController({}, async ({ controller, store, runner }) => {
     controller.toggleRun();

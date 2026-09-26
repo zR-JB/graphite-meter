@@ -556,7 +556,6 @@ export function createApplicationController(
         };
     }
     sessionBudget = budget;
-    store.reset();
     store.preparationStatus = "checking";
     await Promise.all(
       servers.map((connection) => connection.check({ fresh: true, signal })),
@@ -588,6 +587,7 @@ export function createApplicationController(
           ? next
           : best,
       );
+    store.reset();
     store.preparationStatus = "launching";
     store.latencyFocus = focus.server.id;
     releaseRunner();
