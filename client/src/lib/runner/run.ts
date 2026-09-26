@@ -555,7 +555,7 @@ export class Run {
 
   #observe(boundary: Boundary, final = false): boolean {
     const interval = this.#aggregate.current?.id;
-    const sample = this.#aggregate.observe(boundary);
+    const sample = this.#aggregate.observe(boundary, final);
     if (interval !== this.#aggregate.current?.id) this.#resetStability();
     if (!sample) return false;
     for (const dir of ["down", "up"] as const) {

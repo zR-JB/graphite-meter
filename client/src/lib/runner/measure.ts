@@ -732,7 +732,7 @@ export class ThroughputAggregate {
   }
 
   /** A boundary missing any component is skipped; the next valid one spans the gap. */
-  observe(boundary: Boundary): AggregateWindow | null {
+  observe(boundary: Boundary, final = false): AggregateWindow | null {
     const open = this.#open;
     if (!open) return null;
     const { record } = open;
@@ -758,6 +758,17 @@ export class ThroughputAggregate {
       return null;
     }
     const last = open.last;
+    // A final boundary where any direction stood still ends the result at the last one, as natively.
+    const stood = (id: string, dir: FlowDirection) =>
+      dir === "down"
+        ? boundary.down[id] === last.down[id]
+        : boundary.up[id]!.id === last.up[id]!.id &&
+          boundary.up[id]!.bytes === last.up[id]!.bytes;
+    if (
+      final &&
+      record.participants.some((id) => dirs.some((dir) => stood(id, dir)))
+    )
+      return null;
     const continuous = record.participants.every((id) =>
       dirs.every((dir) => {
         if (dir === "down") return boundary.down[id] >= last.down[id];

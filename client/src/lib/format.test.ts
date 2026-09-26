@@ -2,6 +2,7 @@ import { test, expect } from "bun:test";
 import {
   chartThroughputScale,
   fixedMs,
+  fmtAddedMs,
   fmtBytes,
   fmtDuration,
   fmtMs,
@@ -107,7 +108,7 @@ test("sub-resolution latency reads as below the browser timer resolution", () =>
 });
 
 const vectors: Record<
-  "ms" | "speed" | "bytes",
+  "ms" | "speed" | "bytes" | "added",
   { in: number; out: string }[]
 > & { rate: { bytesPerSec: number; out: string }[] } = await Bun.file(
   new URL("../../../api/format.testvectors.json", import.meta.url),
@@ -119,6 +120,7 @@ test("formatting matches the shared vectors", () => {
     expect(fmtSpeed(value)).toBe(out);
   for (const { in: bytes, out } of vectors.bytes)
     expect(fmtBytes(bytes, "base10")).toBe(out);
+  for (const { in: ms, out } of vectors.added) expect(fmtAddedMs(ms)).toBe(out);
   for (const { bytesPerSec, out } of vectors.rate)
     expect(
       formatHistoryRate(bytesPerSec, { base: "base10", kind: "bits" }),

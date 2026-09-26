@@ -142,7 +142,7 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
   ]);
   expect(shown).toEqual([
     ["+8.3", null, "high"],
-    ["0.0", null, "medium"],
+    ["+0.0", null, "medium"],
     [null, "Grade B", "high"],
   ]);
 });

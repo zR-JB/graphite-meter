@@ -13,6 +13,14 @@ import {
 } from "./measure";
 import { DURATION_PRESETS } from "../state/defaults";
 import { fixedPingIntervalMs } from "./pingCadence";
+import {
+  INITIAL_RTT_ESTIMATE,
+  observeRtt,
+  probeDeadline,
+  PROBE_DEADLINE,
+  type RttEstimate,
+} from "./workers/rttEstimator";
+import { PING_TIMEOUT_CEIL_MS } from "./workers/pingSample";
 
 const reply = (
   rttMs: number,
@@ -530,9 +538,7 @@ const vectors: Vector[] = await Bun.file(
   new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
 ).json();
 
-// The browser has not adopted the skipped stalled final boundary yet.
-const adopted = vectors.filter((v) => !v.boundaries.some((b) => b.final));
-for (const vector of adopted)
+for (const vector of vectors)
   test(`aggregation conformance: ${vector.name}`, () => {
     const m = new ThroughputAggregate();
     m.begin(vector.stage, vector.participants, vector.boundaries[0].atMs);
@@ -542,16 +548,19 @@ for (const vector of adopted)
         live = live.filter((id) => !b.dropout!.includes(id));
         m.begin(vector.stage, live, b.atMs, "dropout");
       }
-      m.observe({
-        atMs: b.atMs,
-        down: b.down,
-        up: Object.fromEntries(
-          Object.entries(b.up).map(([id, r]) => [
-            id,
-            r && receiver(r.id, r.bytes, r.nanos),
-          ]),
-        ),
-      });
+      m.observe(
+        {
+          atMs: b.atMs,
+          down: b.down,
+          up: Object.fromEntries(
+            Object.entries(b.up).map(([id, r]) => [
+              id,
+              r && receiver(r.id, r.bytes, r.nanos),
+            ]),
+          ),
+        },
+        b.final,
+      );
     }
     const intervals: Vector["intervals"] = m.intervals.map((interval) => ({
       reason: interval.reason,
@@ -573,6 +582,7 @@ for (const vector of adopted)
 const latencyVectors: {
   name: string;
   outcomes: { rttMs?: number; timeout?: boolean; break?: boolean }[];
+  deadlineMs?: number[];
   expect: Record<string, number | null>;
 }[] = await Bun.file(
   new URL("../../../../api/latency.testvectors.json", import.meta.url),
@@ -600,4 +610,20 @@ for (const vector of latencyVectors)
       jitterPairs: s?.jitterPairs ?? 0,
     };
     expect(actual).toEqual(vector.expect);
+    if (!vector.deadlineMs) return;
+    const deadline = (estimate: RttEstimate) =>
+      probeDeadline(
+        estimate,
+        PROBE_DEADLINE.k,
+        PROBE_DEADLINE.floorMs,
+        PING_TIMEOUT_CEIL_MS,
+      );
+    let estimate = INITIAL_RTT_ESTIMATE;
+    const deadlines = [deadline(estimate)];
+    for (const { rttMs } of vector.outcomes)
+      if (rttMs !== undefined) {
+        estimate = observeRtt(estimate, rttMs);
+        deadlines.push(deadline(estimate));
+      }
+    expect(deadlines).toEqual(vector.deadlineMs);
   });

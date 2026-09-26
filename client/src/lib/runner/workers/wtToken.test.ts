@@ -1,5 +1,11 @@
 import { test, expect, jest } from "bun:test";
-import { mintWtToken, spendWtToken, withWtToken } from "./wtToken";
+import {
+  mintWtToken,
+  SESSION_REVOKED,
+  SOCKET_REVOKED,
+  spendWtToken,
+  withWtToken,
+} from "./wtToken";
 import { ESTABLISH_BUDGET_MS, LANE_RESTART_BACKOFF_MS } from "../real/budgets";
 import { stubFetch } from "./test-helpers.testutil";
 
@@ -303,4 +309,19 @@ test("expiry-free mint responses are rejected", async () => {
   } finally {
     restore();
   }
+});
+
+test("the browser reads the revoked lane ending as pinned for both transports", async () => {
+  const pin = await Bun.file(
+    `${import.meta.dir}/../../../../../api/laneendings.txt`,
+  ).text();
+  const rows = pin
+    .split("\n")
+    .filter((line) => line.trim() && !line.startsWith("#"))
+    .map((line) => line.split("|").map((cell) => cell.trim()));
+  const [, socket, session, reason] = rows.find(
+    ([name]) => name === "revoked",
+  )!;
+  expect(SOCKET_REVOKED).toEqual({ code: Number(socket), reason });
+  expect(SESSION_REVOKED).toBe(Number(session));
 });

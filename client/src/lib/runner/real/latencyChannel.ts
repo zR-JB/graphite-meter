@@ -17,6 +17,7 @@ import { httpToWs, ROUTES } from "../paths";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../series";
 import { fixedPingIntervalMs } from "../pingCadence";
+import { PROBE_DEADLINE } from "../workers/rttEstimator";
 import {
   pingSampleContextTime,
   PING_STOP_MARGIN_MS,
@@ -25,8 +26,6 @@ import {
 } from "../workers/pingSample";
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PROBE_DEADLINE_K = 4;
-const PROBE_DEADLINE_FLOOR_MS = 250;
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
@@ -62,8 +61,8 @@ function startPingWorker(
     transport: target.transport,
     mint: socketMint(credentials, target.origin, route, wt ? "wt" : "ws"),
     ...pacing,
-    deadlineK: PROBE_DEADLINE_K,
-    deadlineFloorMs: PROBE_DEADLINE_FLOOR_MS,
+    deadlineK: PROBE_DEADLINE.k,
+    deadlineFloorMs: PROBE_DEADLINE.floorMs,
     checkAuthentication: credentials
       ? credentials.kind === "session"
       : authEnabled(),
@@ -119,7 +118,7 @@ export class LatencyChannel {
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
     // Reply-driven uses this only for its deadline sweep; PONGs and the adaptive backup drive its sends.
-    const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE_FLOOR_MS;
+    const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE.floorMs;
     // A loaded stage shares the link with its transfer, so its depth stays low at any cadence.
     const maxInFlight = !isLatencyStage
       ? PING_LOADED_MAX_IN_FLIGHT

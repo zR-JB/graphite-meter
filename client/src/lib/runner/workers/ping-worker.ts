@@ -10,6 +10,7 @@ import {
 import {
   mintWtToken,
   SESSION_REVOKED,
+  SOCKET_REVOKED,
   sessionReady,
   spendWtToken,
   withWtToken,
@@ -267,7 +268,10 @@ function dialWebSocket(dialUrl: string, opened: () => void): PingLink {
   // A WebSocket always follows onerror with onclose. Reconnect from onclose only, to avoid a double schedule.
   ws.onclose = (event: CloseEvent): void => {
     if (link !== connection) return;
-    if (event.code === 1008 && event.reason === "authentication required")
+    if (
+      event.code === SOCKET_REVOKED.code &&
+      event.reason === SOCKET_REVOKED.reason
+    )
       stopForSignIn();
     else if (checkAuthentication && stopCutoff === null && event.code === 1006)
       void checkSessionThenReconnect("websocket closed");

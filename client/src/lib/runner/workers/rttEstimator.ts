@@ -22,6 +22,9 @@ export function observeRtt(prev: RttEstimate, rttMs: number): RttEstimate {
   };
 }
 
+/** The latency channel's probe deadline; its ceiling is the ping timeout ceiling. */
+export const PROBE_DEADLINE = { k: 4, floorMs: 250 } as const;
+
 /* Adaptive probe deadline: RTO = SRTT + K·RTTVAR, clamped to [deadlineFloorMs, deadlineCeilMs]. */
 export function probeDeadline(
   est: RttEstimate,

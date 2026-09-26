@@ -52,7 +52,8 @@ native client measures the full window.
   windows. Per-server headlines must not be summed to rebuild the aggregate.
 - **Zero vs missing:** advancing receiver time with unchanged bytes is measured zero. A missing, stale or
   zero-duration component skips that boundary; the next valid boundary spans the gap on each receiver's clock. A
-  replaced or regressing receiver starts a fresh interval.
+  replaced or regressing receiver starts a fresh interval. A final boundary where any server's direction moved no
+  bytes is skipped, so the result ends at the last good one (both clients, pinned by the aggregation vectors).
 - **Dropouts:** a single missed checkpoint is tolerated; three consecutive misses, measured evidence that stops
   for 1.5 s (browser) or 2 s (native), or a refused grant (which asks for sign-in) remove that server in the stage
   where it happened. A missed final boundary alone never does. The interval ends, survivors start a new one and
@@ -132,8 +133,7 @@ lane has sent headers or opened its stream with the progress feed advancing, and
 reply is not required, so silent paths still yield timeouts. Warmup then lasts the configured value or ten idle
 RTTs, whichever is longer, up to 4 s. The measured phase opens on fresh upload checkpoints; the coordinator samples
 about every 250 ms, each checkpoint batch bounded to 1.5 s (500 ms at the final boundary), retrying refusals every
-100 ms. A final boundary where any server's direction moved no bytes is skipped, so the result ends at the last good
-one; a sampler tick read over 1.5 s late starts a new interval, while a slow checkpoint does not. A lane with no
+100 ms. A sampler tick read over 1.5 s late starts a new interval, while a slow checkpoint does not. A lane with no
 bytes for two seconds ends with its last error; a lost progress feed is reopened within two seconds. Before the next
 stage, upload waits until the receiver is quiet (250 ms, at most 4 s). Cleanup joins all resources before the outcome
 is emitted.

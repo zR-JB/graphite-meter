@@ -14,11 +14,9 @@ export function fixedMs(ms: number): string {
     : ms.toFixed(0);
 }
 
-/** Signed added latency; the sign follows the rounded value, so zero has none. */
-export function fmtAddedMs(ms: number): string {
-  const text = fixedMs(Math.abs(ms));
-  return Number(text) === 0 ? text : `${ms < 0 ? "−" : "+"}${text}`;
-}
+/** Signed added latency; the sign follows the rounded value, so a tiny negative reads +0.0. */
+export const fmtAddedMs = (ms: number): string =>
+  `${Number(fixedMs(ms)) < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`;
 
 /** Browser timers resolve 0.1 ms, so a smaller measured value is shown as below it. */
 export function fmtMs(ms: number): string {
