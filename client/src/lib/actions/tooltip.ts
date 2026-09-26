@@ -114,8 +114,12 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     hide();
   }
   // Keyboard focus asks for the tip; focus landing from a click does not.
+  // Focus restored inside another popover's hide may not show one yet.
   function onFocus(event: FocusEvent) {
-    if ((event.target as HTMLElement).matches(":focus-visible")) show();
+    const target = event.target as HTMLElement;
+    queueMicrotask(() => {
+      if (target.matches(":focus-visible")) show();
+    });
   }
   // A tap on a control runs the control, so only inert jargon shows a tip on touch.
   function onPointerUp(event: PointerEvent) {

@@ -88,8 +88,8 @@
     event.preventDefault();
     cancel();
   }}
-  onclose={() => {
-    if (open && !dialog.open) cancel();
+  onclose={(event) => {
+    if (open && !event.currentTarget.open) cancel();
   }}
   onclick={backdropClick}
 >
