@@ -66,6 +66,9 @@ test("current snapshots show their saved percentage and identify nullable breakd
   expect(historyWirePresentation(record, "download")?.tooltip).toContain(
     "Per-part breakdown unavailable",
   );
+  // Like the live card, an overhead under 0.5% is not shown.
+  record.stages.download.result!.reportedBytesPerSec = 1_060_000;
+  expect(historyWirePresentation(record, "download")).toBeNull();
   record.stages.download.result!.reportedBytesPerSec = 0;
   expect(historyWirePresentation(record, "download")?.pct).toBeNull();
 });

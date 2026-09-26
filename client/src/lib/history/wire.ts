@@ -69,6 +69,7 @@ export function historyWirePresentation(
   const multiplier =
     measured && bytesPerSec >= measured ? bytesPerSec / measured : null;
   const pct = multiplier == null ? null : wireOverhead(multiplier);
+  if (multiplier != null && !pct) return null;
   const breakdown = wire?.breakdown[stage];
   return {
     bytesPerSec,

@@ -66,16 +66,18 @@ const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
 const signedMs = (ms: number) =>
   `${ms < 0 ? "−" : "+"}${Math.abs(ms).toFixed(Math.abs(ms) < 100 ? 1 : 0)}`;
 
+/** Live and saved estimates share one rule: an overhead under 0.5% is not shown. */
 export const wireOverhead = (multiplier: number) =>
-  `+${((multiplier - 1) * 100).toFixed(1)}%`;
+  multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
 
 export function liveWire(
   estimate: CompensationEstimate | null,
 ): WireView | null {
-  if (!estimate || estimate.totalMultiplier < 1.005) return null;
+  const pct = estimate && wireOverhead(estimate.totalMultiplier);
+  if (!estimate || !pct) return null;
   return {
     bytesPerSec: estimate.estimatedBytesPerSec,
-    pct: wireOverhead(estimate.totalMultiplier),
+    pct,
     tooltip: compensationTooltip(estimate),
   };
 }
