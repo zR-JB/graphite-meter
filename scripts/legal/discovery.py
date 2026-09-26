@@ -112,6 +112,8 @@ def source_for(name: str, upstream: str = '') -> str:
             return 'https://' + '/'.join(parts[:3])
         if parts[:2] == ['golang.org', 'x'] and len(parts) == 3:
             return 'https://go.googlesource.com/' + parts[2]
+        if parts[0] == 'charm.land':
+            return 'https://github.com/charmbracelet/' + parts[1]
     return ''
 
 

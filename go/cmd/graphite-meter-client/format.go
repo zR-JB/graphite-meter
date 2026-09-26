@@ -104,6 +104,13 @@ func populationLabel(stage goclient.Stage) string {
 	return "Loaded latency · " + compactStage(stage)
 }
 
+func compactPopulation(stage goclient.Stage) string {
+	if stage == goclient.StageLatency {
+		return "Idle"
+	}
+	return "Loaded " + strings.ToLower(compactStage(stage))
+}
+
 func directionLabel(r goclient.Result) string {
 	if r.Stage != goclient.StageBidirectional {
 		return stageLabels[r.Stage]
@@ -114,37 +121,54 @@ func directionLabel(r goclient.Result) string {
 	return "Bi-dir ↓"
 }
 
-func latencyParts(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
-	median := missing
+// latencyCells gives median, added latency, p95, jitter, and probe timeouts; missing data stays "—".
+func latencyCells(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
+	cells := []string{missing, "", missing, missing, missing}
 	if s.Count > 0 {
-		median = fmtMs(s.P50)
-	}
-	parts := []string{"median " + median}
-	if idle != nil && s.Count > 0 && idle.Count > 0 {
-		parts = append(parts, fmtAdded(s.P50-idle.P50)+" added")
-	}
-	p95, jitter := missing, missing
-	if s.Count > 0 {
-		p95 = fmtMs(s.P95)
+		cells[0], cells[2] = fmtMs(s.P50), fmtMs(s.P95)
+		if idle != nil && idle.Count > 0 {
+			cells[1] = fmtAdded(s.P50 - idle.P50)
+		}
 	}
 	if s.JitterPairs > 0 {
-		jitter = fmtMs(s.Jitter)
+		cells[3] = fmtMs(s.Jitter)
 	}
-	timeouts := missing
 	if ratio, ok := s.TimeoutRatio(); ok {
-		timeouts = fmt.Sprintf("%d/%d (%.1f%%)", s.Timeouts, s.Count+s.Timeouts, ratio*100)
+		cells[4] = fmt.Sprintf("%d/%d (%.1f%%)", s.Timeouts, s.Count+s.Timeouts, ratio*100)
 	}
-	parts = append(parts, "p95 "+p95, "jitter "+jitter, "probe timeouts "+timeouts, fmt.Sprintf("%d replies", s.Count))
+	return cells
+}
+
+func latencyFacts(s goclient.LatencyStats) []string {
+	facts := []string{fmt.Sprintf("%d replies", s.Count)}
 	if s.Elapsed > 0 {
-		parts = append(parts, fmtClock(s.Elapsed))
+		facts = append(facts, fmtClock(s.Elapsed))
 	}
 	if s.Unresolved > 0 {
-		parts = append(parts, fmt.Sprintf("unfinished probes %d", s.Unresolved))
+		facts = append(facts, fmt.Sprintf("unfinished probes %d", s.Unresolved))
 	}
 	if s.SendFailures > 0 {
-		parts = append(parts, fmt.Sprintf("failed sends %d", s.SendFailures))
+		facts = append(facts, fmt.Sprintf("failed sends %d", s.SendFailures))
 	}
-	return parts
+	return facts
+}
+
+func throughputFacts(r goclient.Result) []string {
+	var facts []string
+	if r.PeakBps > 0 {
+		facts = append(facts, "peak "+fmtRate(r.PeakBps))
+	}
+	facts = append(facts, fmtBytes(r.TotalBytes))
+	if r.Elapsed > 0 {
+		facts = append(facts, fmtClock(r.Elapsed))
+	}
+	if r.Samples > 0 {
+		facts = append(facts, fmt.Sprintf("%d samples", r.Samples))
+	}
+	if r.ReceiverTimed() {
+		facts = append(facts, "receiver-timed")
+	}
+	return facts
 }
 
 func wrapParts(parts []string, w int) []string {
@@ -181,7 +205,7 @@ func protocolChoiceLabel(protocol string) string {
 
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
-func renderBar(value, scale float64, width int) string {
+func (s styles) bar(value, scale float64, width int) string {
 	cells := 0.0
 	if scale > 0 {
 		cells = min(max(value/scale*float64(width), 0), float64(width))
@@ -192,16 +216,16 @@ func renderBar(value, scale float64, width int) string {
 	if part != "" {
 		rest--
 	}
-	return accentStyle.Render(strings.Repeat("█", full)+part) + mutedStyle.Render(strings.Repeat("░", rest))
+	return s.accent.Render(strings.Repeat("█", full)+part) + s.muted.Render(strings.Repeat("░", rest))
 }
 
 func pad(s string, w int) string {
 	return s + strings.Repeat(" ", max(0, w-len([]rune(s))))
 }
 
-func checkbox(on bool) string {
+func (s styles) checkbox(on bool) string {
 	if on {
-		return accentStyle.Render("●")
+		return s.accent.Render("●")
 	}
-	return mutedStyle.Render("○")
+	return s.muted.Render("○")
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -14,17 +14,20 @@ import (
 
 func modelAndCmd(next tea.Model, cmd tea.Cmd) (model, tea.Cmd) { return next.(model), cmd }
 
-func press(name string) tea.KeyMsg {
-	types := map[string]tea.KeyType{
-		"enter": tea.KeyEnter, "esc": tea.KeyEsc, "space": tea.KeySpace, "tab": tea.KeyTab,
-		"shift+tab": tea.KeyShiftTab, "up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft,
-		"right": tea.KeyRight, "ctrl+c": tea.KeyCtrlC,
+func press(name string) tea.KeyPressMsg {
+	codes := map[string]tea.Key{
+		"enter": {Code: tea.KeyEnter}, "esc": {Code: tea.KeyEscape}, "space": {Code: tea.KeySpace, Text: " "},
+		"tab": {Code: tea.KeyTab}, "shift+tab": {Code: tea.KeyTab, Mod: tea.ModShift}, "up": {Code: tea.KeyUp},
+		"down": {Code: tea.KeyDown}, "left": {Code: tea.KeyLeft}, "right": {Code: tea.KeyRight},
+		"ctrl+c": {Code: 'c', Mod: tea.ModCtrl},
 	}
-	if t, ok := types[name]; ok {
-		return tea.KeyMsg{Type: t}
+	if k, ok := codes[name]; ok {
+		return tea.KeyPressMsg(k)
 	}
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
+	return tea.KeyPressMsg{Code: []rune(name)[0], Text: name}
 }
+
+func view(m model) string { return m.View().Content }
 
 func quits(cmd tea.Cmd) bool {
 	if cmd == nil {
@@ -136,27 +139,19 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 	for _, c := range []struct {
 		stats goclient.LatencyStats
 		idle  *goclient.LatencyStats
-		want  []string
+		want  string
 	}{
-		{goclient.LatencyStats{}, nil, []string{"median —", "p95 —", "jitter —", "probe timeouts —", "0 replies"}},
-		{goclient.LatencyStats{Timeouts: 3}, nil, []string{"probe timeouts 3/3 (100.0%)"}},
-		{
-			goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
-			&idle,
-			[]string{"median 12.0 ms", "+2.0 ms added", "p95 20.0 ms", "jitter 0.0 ms"},
-		},
-		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, []string{"−2.0 ms added"}},
-		{
-			goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second},
-			nil,
-			[]string{"4.0 s", "unfinished probes 2", "failed sends 1"},
-		},
+		{goclient.LatencyStats{}, nil, "— |  | — | — | — | 0 replies"},
+		{goclient.LatencyStats{Timeouts: 3}, nil, "— |  | — | — | 3/3 (100.0%) | 0 replies"},
+		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
+			&idle, "12.0 ms | +2.0 ms | 20.0 ms | 0.0 ms | 0/2 (0.0%) | 2 replies"},
+		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms"},
+		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil,
+			"0 replies | 4.0 s | unfinished probes 2 | failed sends 1"},
 	} {
-		got := strings.Join(latencyParts(c.stats, c.idle), " · ")
-		for _, want := range c.want {
-			if !strings.Contains(got, want) || strings.Contains(strings.ToLower(got), "loss") {
-				t.Errorf("summary %q, want %q", got, want)
-			}
+		got := strings.Join(append(latencyCells(c.stats, c.idle), latencyFacts(c.stats)...), " | ")
+		if !strings.Contains(got, c.want) {
+			t.Errorf("summary %q, want %q", got, c.want)
 		}
 	}
 }
@@ -188,11 +183,11 @@ func TestRowActivation(t *testing.T) {
 	}{
 		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, true},
 		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, true},
-		{1, 7, func(m model) bool { return m.edit.row != nil && *m.edit.row == rowDownloadDuration }, false},
+		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == rowDownloadDuration }, false},
 		{2, 0, func(m model) bool { return m.cfg.PingInterval == 600*time.Millisecond }, true},
 		{2, 1, func(m model) bool { return m.cfg.TransferStreams.Forced == 6 }, true},
 		{2, 3, func(m model) bool { return m.cfg.InsecureSkipTLSVerify }, true},
-		{0, 0, func(m model) bool { return m.edit.row != nil && *m.edit.row == rowCatalogue }, false},
+		{0, 0, func(m model) bool { return m.edit != nil && m.edit.row == rowCatalogue }, false},
 	} {
 		m := testModel(t)
 		m.section, m.row = c.section, c.row
@@ -203,7 +198,7 @@ func TestRowActivation(t *testing.T) {
 				"%s: config=%+v edit=%v rechecked=%v",
 				m.setupRow(sections[c.section].rows[c.row]).label,
 				m.cfg,
-				m.edit.row != nil,
+				m.edit != nil,
 				m.prepareSeq != seq,
 			)
 		}
@@ -269,13 +264,13 @@ func TestCommitEdit(t *testing.T) {
 		}
 		m, _ = modelAndCmd(m.Update(press("enter")))
 		if c.wantErr != "" {
-			if m.edit.row == nil || !strings.Contains(m.edit.err, c.wantErr) || m.edit.input.Value() != c.typed {
+			if m.edit == nil || !strings.Contains(m.edit.err, c.wantErr) || m.edit.input.Value() != c.typed {
 				t.Errorf("%q: edit=%+v, want it open with %q", c.typed, m.edit, c.wantErr)
 			}
 			continue
 		}
-		if m.edit.row != nil || !c.check(m.cfg) {
-			t.Errorf("%q: edit open=%v config=%+v", c.typed, m.edit.row != nil, m.cfg)
+		if m.edit != nil || !c.check(m.cfg) {
+			t.Errorf("%q: edit open=%v config=%+v", c.typed, m.edit != nil, m.cfg)
 		}
 	}
 }
@@ -285,7 +280,7 @@ func TestEditKeysDiscardAndQuit(t *testing.T) {
 	m := testModel(t)
 	m.beginEdit(rowCatalogue, m.cfg.BaseURL)
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit.row != nil ||
+	if m, _ = modelAndCmd(m.Update(press("esc"))); m.edit != nil ||
 		m.cfg.BaseURL != goclient.DefaultConfig().BaseURL {
 		t.Fatal("esc applied the edit")
 	}
@@ -303,21 +298,23 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	m := testModel(t)
 	opened := 0
 	m.openApproval = func(*goclient.PendingAuthorization) { opened++ }
-	m.auth = &goclient.PendingAuthorization{Code: "ABCD", BrowserURL: "https://meter.example/auth/cli"}
+	pending := &goclient.PendingAuthorization{Code: "ABCD", BrowserURL: "https://meter.example/auth/cli"}
+	m.auth = &signIn{pending: pending, since: time.Now()}
 	m.prepare = prepareSignIn
 	for _, k := range []string{"enter", "space", "o", "enter"} {
 		m, _ = modelAndCmd(m.Update(press(k)))
 	}
-	if opened != 4 || m.edit.row != nil || m.auth == nil || !m.authOpened {
-		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit.row != nil, m.auth)
+	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened {
+		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit != nil, m.auth)
 	}
 	for _, binding := range m.ShortHelp() {
 		if binding.Help().Desc == keys.change.Help().Desc {
 			t.Fatal("footer offered enter to a row while sign-in owns it")
 		}
 	}
-	if !strings.Contains(m.View(), "Waiting for approval…") || !strings.Contains(m.View(), "Open sign-in page") {
-		t.Fatalf("sign-in panel: %q", m.View())
+	if screen := view(m); !strings.Contains(screen, "Waiting for approval…") ||
+		!strings.Contains(screen, "Open sign-in page") || !strings.Contains(screen, "ABCD") {
+		t.Fatalf("sign-in popup: %q", screen)
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
@@ -330,7 +327,7 @@ func TestStaleRepliesAreDropped(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
 	m.prepareSeq, m.runSeq = 5, 3
-	before := m.View()
+	before := view(m)
 	for _, msg := range []tea.Msg{
 		preparationMsg{seq: 4, err: errors.New("stale")},
 		authChallengeMsg{seq: 4, pending: &goclient.PendingAuthorization{}},
@@ -339,7 +336,7 @@ func TestStaleRepliesAreDropped(t *testing.T) {
 		prepareDueMsg{seq: 4},
 	} {
 		next, cmd := modelAndCmd(m.Update(msg))
-		if cmd != nil || next.View() != before || next.auth != nil || next.run != nil {
+		if cmd != nil || view(next) != before || next.auth != nil || next.run != nil {
 			t.Fatalf("stale %T changed the model", msg)
 		}
 	}
@@ -352,7 +349,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	m.prepareSeq = 1
 	failed, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, err: remote}))
 	partial, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, run: preparedFixture(nil, remote), err: remote}))
-	m.run = newRunState(m.cfg, "")
+	m.run = newRunState(m.cfg, "", time.Now())
 	m.run.err, m.run.outcome = remote, goclient.OutcomeFailed
 	multi := runModel(t, "a", "b")
 	failure := goclient.ServerFailure{ServerID: "b", Scope: "throughput", Err: remote}
@@ -360,7 +357,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	multi, _ = modelAndCmd(multi.Update(eventsMsg{seq: multi.runSeq, events: []goclient.Event{
 		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
 	}}))
-	views := []string{failed.View(), partial.View(), m.View(), m.finalReport(), multi.View(), multi.detailsView(120)}
+	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120)}
 	for _, view := range views {
 		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
 			strings.Contains(view, "\x1b]") {
@@ -373,8 +370,7 @@ func TestAuthTokenIsBoundToTheChallengingIssuer(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
 	m.preparedRun = preparedFixture(nil, &goclient.AuthRequiredError{})
-	m.authServerID = "b"
-	m.auth = &goclient.PendingAuthorization{}
+	m.auth = &signIn{pending: &goclient.PendingAuthorization{}}
 	m, cmd := modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "grant", origin: "https://a.example"}))
 	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(m.notice, "discarded") {
 		t.Fatalf("a grant from another issuer was accepted: %q", m.notice)

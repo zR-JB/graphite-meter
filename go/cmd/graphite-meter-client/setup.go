@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -151,7 +150,7 @@ type setupRow struct {
 
 func (m model) setupRow(id rowID) setupRow {
 	if toggle, label, note := stageToggle(&m.cfg, id); toggle != nil {
-		return setupRow{label: label, value: checkbox(*toggle), note: note}
+		return setupRow{label: label, value: m.st.checkbox(*toggle), note: note}
 	}
 	if value, label := durationSetting(&m.cfg, id); value != nil {
 		note := "measured window"
@@ -204,7 +203,7 @@ func (m model) setupRow(id rowID) setupRow {
 	case rowForceStreams:
 		return setupRow{
 			label: "Force exact stream count",
-			value: checkbox(m.cfg.TransferStreams.Forced > 0),
+			value: m.st.checkbox(m.cfg.TransferStreams.Forced > 0),
 			note:  "per server and direction",
 		}
 	case rowStreams:
@@ -223,7 +222,7 @@ func (m model) setupRow(id rowID) setupRow {
 	case rowSkipTLS:
 		return setupRow{
 			label: "Skip TLS verify",
-			value: checkbox(m.cfg.InsecureSkipTLSVerify),
+			value: m.st.checkbox(m.cfg.InsecureSkipTLSVerify),
 			note:  "unsafe; refuses sign-in",
 		}
 	case rowReset:
@@ -312,7 +311,7 @@ func (m model) recheckIfPathsChanged(before goclient.Config) (tea.Model, tea.Cmd
 }
 
 type editState struct {
-	row   *rowID
+	row   rowID
 	input textinput.Model
 	err   string
 }
@@ -320,41 +319,51 @@ type editState struct {
 func (m *model) beginEdit(id rowID, value string) {
 	in := textinput.New()
 	in.Prompt = ""
-	in.TextStyle = valueStyle
-	in.Cursor.SetMode(cursor.CursorStatic)
+	styles := in.Styles()
+	styles.Focused.Text = m.st.value
+	in.SetStyles(styles)
+	in.SetVirtualCursor(false)
 	in.SetValue(value)
 	in.Focus()
-	m.edit = editState{row: &id, input: in}
+	m.edit = &editState{row: id, input: in}
 	m.notice = "Enter applies, esc cancels."
 }
 
-func (m model) handleEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
 		m.close()
 		return m, tea.Quit
 	case key.Matches(msg, keys.discard):
-		m.edit = editState{}
+		m.edit = nil
 		m.notice = "Edit canceled."
 		return m, nil
 	case key.Matches(msg, keys.apply):
 		before := m.cfg
 		if err := m.commitEdit(); err != nil {
-			m.edit.err, m.notice = err.Error(), err.Error()
+			m.edit = &editState{row: m.edit.row, input: m.edit.input, err: err.Error()}
+			m.notice = err.Error()
 			return m, nil
 		}
-		m.edit = editState{}
+		m.edit = nil
 		return m.recheckIfPathsChanged(before)
 	}
-	m.edit.err = ""
+	return m.updateEdit(msg)
+}
+
+// updateEdit copies the edit state so earlier models keep their own input.
+func (m model) updateEdit(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next := *m.edit
+	next.err = ""
 	var cmd tea.Cmd
-	m.edit.input, cmd = m.edit.input.Update(msg)
+	next.input, cmd = next.input.Update(msg)
+	m.edit = &next
 	return m, cmd
 }
 
 func (m *model) commitEdit() error {
 	raw := strings.TrimSpace(m.edit.input.Value())
-	id := *m.edit.row
+	id := m.edit.row
 	if value, label := durationSetting(&m.cfg, id); value != nil {
 		if n, err := strconv.ParseFloat(raw, 64); err == nil {
 			raw = fmt.Sprintf("%gs", n)

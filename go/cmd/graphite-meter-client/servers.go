@@ -5,8 +5,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -132,7 +134,7 @@ func (m model) openServerChooser() (tea.Model, tea.Cmd) {
 		m.notice = "This catalogue offers one server."
 		return m, nil
 	}
-	m.serverChooser, m.serverRow, m.serverDraft = true, 0, nil
+	m.popup, m.serverRow, m.serverDraft = popupServers, 0, nil
 	ids := m.cfg.ServerIDs
 	if len(ids) == 0 {
 		ids = m.preparedRun.Catalog.DefaultSelection
@@ -146,14 +148,14 @@ func (m model) openServerChooser() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleServerChooserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleServerChooserKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	servers := m.preparedRun.Catalog.Servers
 	switch {
 	case key.Matches(msg, keys.quit):
 		m.close()
 		return m, tea.Quit
 	case key.Matches(msg, keys.discard):
-		m.serverChooser = false
+		m.popup = popupNone
 		m.notice = "Server selection unchanged."
 	case key.Matches(msg, keys.rows):
 		step := 1
@@ -177,90 +179,76 @@ func (m model) handleServerChooserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cfg.ServerIDs = slices.Clone(m.serverDraft)
-		m.serverChooser = false
+		m.popup = popupNone
 		m.notice = "Checking the selected servers…"
 		return m.reprepare()
 	}
 	return m, nil
 }
 
-func (m model) serverChooserView(w int) string {
+func (m model) serverChooserView(w, h int) (string, string) {
 	catalog := m.preparedRun.Catalog
-	lines := []string{
-		accentStyle.Render(fmt.Sprintf("Test servers · %d selected", len(m.serverDraft))),
-		mutedStyle.Render("Choose up to 4. Their speeds are combined."),
-		"",
-	}
-	capacity := max(3, min(12, (max(m.height, 20)-10)/2))
+	lines := []string{m.st.muted.Render("Choose up to 4. Their speeds are combined."), ""}
+	capacity := max(2, (h-6)/2)
 	start := min(max(m.serverRow-capacity/2, 0), max(0, len(catalog.Servers)-capacity))
+	states := m.readiness()
 	for i := start; i < min(len(catalog.Servers), start+capacity); i++ {
 		server := catalog.Servers[i]
-		label := server.Name
-		if server.Location != "" {
-			label += " · " + server.Location
+		label := serverLabel(server.Name, server.Location)
+		if r := slices.IndexFunc(states, func(r readiness) bool { return r.server.ID == server.ID }); r >= 0 {
+			label += " · " + states[r].label
 		}
-		if r := slices.IndexFunc(m.readiness(), func(r readiness) bool { return r.server.ID == server.ID }); r >= 0 {
-			label += " · " + m.readiness()[r].label
-		}
-		line := checkbox(slices.Contains(m.serverDraft, server.ID)) + " " + label
+		line := m.st.checkbox(slices.Contains(m.serverDraft, server.ID)) + " " + label
 		if i == m.serverRow {
-			line = "› " + selectedStyle.Render(line)
+			line = "› " + m.st.selected.Render(line)
 		} else {
 			line = "  " + line
 		}
-		lines = append(lines, line, "    "+mutedStyle.Render(server.URL))
+		lines = append(lines, line, "    "+m.st.muted.Render(server.URL))
 	}
-	return fitBlock(strings.Join(append(lines, "", m.notice), "\n"), w)
+	return fmt.Sprintf("Test servers · %d selected", len(m.serverDraft)), fit(strings.Join(lines, "\n"), w)
 }
 
-func (m model) handleDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.quit):
 		m.close()
 		return m, tea.Quit
 	case key.Matches(msg, keys.setup), key.Matches(msg, keys.details):
-		m.detailsOpen = false
-	case key.Matches(msg, keys.scroll):
-		step := 1
-		if reverse(msg) {
-			step = -1
-		}
-		lines := len(strings.Split(m.detailsView(m.innerWidth()), "\n"))
-		m.detailsScroll = min(max(m.detailsScroll+step, 0), max(0, lines-m.detailsCapacity()))
+		m.popup = popupNone
+		return m, nil
 	}
-	return m, nil
+	vp, cmd := m.detailsViewport().Update(msg)
+	m.details = vp
+	return m, cmd
 }
 
-func (m model) detailsCapacity() int { return max(3, m.height-9) }
-
-func (m model) detailsOverlay(w int) string {
-	lines := strings.Split(m.detailsView(w), "\n")
-	start := min(m.detailsScroll, max(0, len(lines)-m.detailsCapacity()))
-	return strings.Join(lines[start:min(len(lines), start+m.detailsCapacity())], "\n") +
-		"\n\n" +
-		mutedStyle.Render("↑/↓ scroll · esc closes details")
+func (m model) detailsViewport() viewport.Model {
+	vp := m.details
+	content := m.detailsView(m.popupWidth() - 4)
+	_, h := m.size()
+	vp.SetWidth(m.popupWidth() - 4)
+	vp.SetHeight(min(lipgloss.Height(content), h-4))
+	vp.SetContent(content)
+	return vp
 }
 
 func (m model) detailsView(w int) string {
 	r := m.run
 	if r == nil || r.details == nil {
-		return ""
+		return m.st.muted.Render("Waiting for the first server report…")
 	}
 	details := r.details
+	headers := []string{"Server"}
 	var columns []goclient.Result
 	for _, stage := range r.plan {
 		for _, dir := range stage.Directions {
 			columns = append(columns, goclient.Result{Stage: stage.Name, Direction: dir})
+			headers = append(headers, directionLabel(columns[len(columns)-1]))
 		}
 	}
-	const nameWidth, cell = 16, 15
-	header := pad("", nameWidth)
-	for _, column := range columns {
-		header += pad(directionLabel(column), cell)
-	}
-	lines := []string{accentStyle.Render("Details · " + m.outcomeNotice()), mutedStyle.Render(header)}
-	row := func(name string, results []goclient.Result) string {
-		line := pad(name, nameWidth)
+	row := func(name string, results []goclient.Result) []string {
+		cells := []string{name}
 		for _, column := range columns {
 			value := missing
 			for _, r := range results {
@@ -268,65 +256,68 @@ func (m model) detailsView(w int) string {
 					value = fmtRate(r.MeanBps)
 				}
 			}
-			line += pad(value, cell)
+			cells = append(cells, value)
 		}
-		return line
+		return cells
 	}
-	lines = append(lines, valueStyle.Render(row("Combined", r.results)))
+	rows := [][]string{row("Combined", r.results)}
+	latency := [][]string{}
 	for _, server := range details.Servers {
 		name := server.Server.Name
 		if !slices.Contains(details.Participants, server.Server.ID) {
 			name += " ✗"
 		}
-		lines = append(lines, row(name, server.Results))
-	}
-	lines = append(lines, "", mutedStyle.Render("Latency median by server"))
-	for _, server := range details.Servers {
-		var parts []string
-		for _, result := range server.Results {
-			if result.Direction == "" && result.Latency.Count > 0 {
-				parts = append(parts, populationLabel(result.Stage)+" "+fmtMs(result.Latency.P50))
+		rows = append(rows, row(name, server.Results))
+		cells := []string{server.Server.Name}
+		for _, stage := range r.plan {
+			value := missing
+			for _, result := range server.Results {
+				if result.Stage == stage.Name && result.Direction == "" && result.Latency.Count > 0 {
+					value = fmtMs(result.Latency.P50)
+				}
 			}
+			cells = append(cells, value)
 		}
-		text := missing
-		if len(parts) > 0 {
-			text = strings.Join(parts, " · ")
-		}
-		lines = append(lines, pad(server.Server.Name, nameWidth)+text)
+		latency = append(latency, cells)
 	}
+	populations := []string{"Server"}
+	for _, stage := range r.plan {
+		populations = append(populations, compactPopulation(stage.Name))
+	}
+	lines := []string{m.st.heading.Render(m.outcomeNotice()), m.st.grid(headers, rows, w), "",
+		m.st.heading.Render("Latency median by server"), m.st.grid(populations, latency, w)}
 	if len(details.Failures) > 0 {
-		lines = append(lines, "", mutedStyle.Render("Left the test"))
+		lines = append(lines, "", m.st.heading.Render("Left the test"))
 		for _, f := range details.Failures {
 			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s",
 				r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), errorText(f.Err)))
 		}
 	}
 	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
-		lines = append(lines, "", mutedStyle.Render("Aggregation intervals (debug)"))
+		lines = append(lines, "", m.st.heading.Render("Aggregation intervals"))
 		for _, interval := range details.Intervals {
 			state := "incomplete evidence"
 			if interval.Complete && interval.Window != nil {
 				state = "measured window"
 			}
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s",
+			lines = append(lines, m.st.muted.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s",
 				compactStage(interval.Stage), interval.Start.Seconds(), interval.End.Seconds(),
 				strings.Join(interval.Participants, ", "), state)))
 		}
 		if details.OmittedIntervals > 0 {
-			lines = append(lines, mutedStyle.Render(fmt.Sprintf(
+			lines = append(lines, m.st.muted.Render(fmt.Sprintf(
 				"%d older intervals omitted; byte totals retain the full run", details.OmittedIntervals)))
 		}
 	}
-	return fitBlock(strings.Join(lines, "\n"), w)
+	return fit(strings.Join(lines, "\n"), w)
 }
 
 func (m model) outcomeNotice() string {
 	details := m.run.details
-	if details == nil {
-		return ""
-	}
 	remaining, selected := len(details.Participants), len(details.Servers)
 	switch {
+	case selected == 1:
+		return m.statusLabel()
 	case m.run.outcome == goclient.OutcomeRunning && remaining < selected:
 		return fmt.Sprintf("%d of %d servers remaining", remaining, selected)
 	case m.run.outcome == goclient.OutcomeRunning:

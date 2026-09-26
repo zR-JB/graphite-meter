@@ -3,11 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -29,7 +30,6 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil
-	m.authOpened = false
 }
 
 func (m model) reprepare() (tea.Model, tea.Cmd) {
@@ -48,16 +48,9 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		m.cfg.ServerIDs = msg.run.SelectedIDs()
 	}
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
-		m.authServerID = ""
-		if msg.run != nil {
-			challenged := func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) }
-			if i := slices.IndexFunc(msg.run.Servers, challenged); i >= 0 {
-				m.authServerID = msg.run.Servers[i].Server.ID
-			}
-		}
 		m.prepare, m.prepareErr = prepareSignIn, ""
 		m.notice = "Sign-in required. Preparing the sign-in page…"
-		preparation, seq, serverID := m.preparation, m.prepareSeq, m.authServerID
+		preparation, seq, serverID := m.preparation, m.prepareSeq, m.challengedServer()
 		return m, func() tea.Msg {
 			pending, err := preparation.BeginAuthorization(serverID, authErr.URL)
 			return authChallengeMsg{seq: seq, pending: pending, err: err}
@@ -86,6 +79,17 @@ func isAuthRequired(err error) bool {
 	return ok
 }
 
+func (m model) challengedServer() string {
+	if m.preparedRun == nil {
+		return ""
+	}
+	i := slices.IndexFunc(m.preparedRun.Servers, func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) })
+	if i < 0 {
+		return ""
+	}
+	return m.preparedRun.Servers[i].Server.ID
+}
+
 func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
@@ -94,8 +98,8 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
 		return m, nil
 	}
-	m.auth, m.authOpened = msg.pending, false
-	m.authSince, m.now = time.Now(), time.Now()
+	m.auth = &signIn{pending: msg.pending, since: time.Now()}
+	m.now = m.auth.since
 	m.notice = "Check the code, then press enter to open the sign-in page."
 	preparation, pending, seq := m.preparation, msg.pending, msg.seq
 	return m, tea.Batch(m.spin.Tick, func() tea.Msg {
@@ -109,13 +113,13 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.auth = nil
+	expected := m.cfg.BaseURL
+	if server, ok := m.catalogServer(m.challengedServer()); ok {
+		expected = server.URL
+	}
 	if msg.err != nil {
 		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
 		return m, nil
-	}
-	expected := m.cfg.BaseURL
-	if server, ok := m.catalogServer(m.authServerID); ok {
-		expected = server.URL
 	}
 	if issuer, err := wire.CanonicalOrigin(expected); err != nil || !strings.EqualFold(issuer, msg.origin) {
 		m.notice = "The server changed while sign-in was pending, so the approval was discarded."
@@ -129,21 +133,26 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	return m.reprepare()
 }
 
+const historyPoints = 480
+
 type runState struct {
-	plan          []goclient.StagePlan
-	stages        []stageProgress
-	stage         goclient.Stage
-	phase         goclient.Phase
-	details       *goclient.RunDetails
-	results       []goclient.Result
-	rates         map[goclient.Direction]goclient.ThroughputSample
-	displayRates  map[goclient.Direction]float64
-	peaks         map[goclient.Direction]float64
-	latest        map[string]goclient.LatencySample
-	timeoutStreak map[string]int
-	focus         string
-	outcome       goclient.Outcome
-	err           error
+	plan     []goclient.StagePlan
+	stages   []stageProgress
+	started  time.Time
+	stage    goclient.Stage
+	phase    goclient.Phase
+	details  *goclient.RunDetails
+	results  []goclient.Result
+	rates    map[goclient.Direction]goclient.ThroughputSample
+	shown    map[goclient.Direction]float64
+	history  map[goclient.Direction][]point
+	rtt      map[string][]point
+	latest   map[string]goclient.LatencySample
+	timeouts map[string]int
+	marks    []mark
+	focus    string
+	outcome  goclient.Outcome
+	err      error
 }
 
 type stageState int
@@ -164,16 +173,18 @@ type stageProgress struct {
 	since    time.Time
 }
 
-func newRunState(cfg goclient.Config, focus string) *runState {
+func newRunState(cfg goclient.Config, focus string, started time.Time) *runState {
 	r := &runState{
-		plan:          cfg.Plan(),
-		rates:         map[goclient.Direction]goclient.ThroughputSample{},
-		displayRates:  map[goclient.Direction]float64{},
-		peaks:         map[goclient.Direction]float64{},
-		latest:        map[string]goclient.LatencySample{},
-		timeoutStreak: map[string]int{},
-		focus:         focus,
-		outcome:       goclient.OutcomeRunning,
+		plan:     cfg.Plan(),
+		started:  started,
+		rates:    map[goclient.Direction]goclient.ThroughputSample{},
+		shown:    map[goclient.Direction]float64{},
+		history:  map[goclient.Direction][]point{},
+		rtt:      map[string][]point{},
+		latest:   map[string]goclient.LatencySample{},
+		timeouts: map[string]int{},
+		focus:    focus,
+		outcome:  goclient.OutcomeRunning,
 	}
 	for _, stage := range r.plan {
 		r.stages = append(r.stages, stageProgress{name: stage.Name, duration: stage.Duration})
@@ -214,10 +225,10 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 		focus = m.latencyChoice
 	}
 	m.runSeq++
-	m.events = m.controller.Start(m.cfg, m.preparedRun)
-	m.run = newRunState(m.cfg, focus)
-	m.stopPrompt, m.detailsOpen = false, false
 	m.now = time.Now()
+	m.events = m.controller.Start(m.cfg, m.preparedRun)
+	m.run = newRunState(m.cfg, focus, m.now)
+	m.stopPrompt, m.popup = false, popupNone
 	m.notice = "Test started. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
@@ -261,6 +272,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 
 func (m *model) apply(e goclient.Event) {
 	r := m.run
+	at := e.At.Sub(r.started).Seconds()
 	switch e.Kind {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
@@ -278,22 +290,43 @@ func (m *model) apply(e goclient.Event) {
 		if i >= 0 && state != stagePending {
 			r.stages[i].state, r.stages[i].since = state, e.At
 		}
+		if e.Phase == goclient.PhaseMeasuring {
+			r.marks = append(r.marks, mark{at, compactStage(e.Stage)})
+			gap := point{at, math.NaN()}
+			for dir := range r.history {
+				r.history[dir] = appendPoint(r.history[dir], gap)
+			}
+			for id := range r.rtt {
+				r.rtt[id] = appendPoint(r.rtt[id], gap)
+			}
+		}
 	case goclient.EventThroughput:
 		r.rates[e.Direction] = e.Throughput
+		v := e.Throughput.BytesPerSec
 		if e.Throughput.Unavailable {
-			r.displayRates[e.Direction] = 0
+			r.shown[e.Direction], v = 0, math.NaN()
 		}
-		r.peaks[e.Direction] = max(r.peaks[e.Direction], e.Throughput.BytesPerSec)
+		r.history[e.Direction] = appendPoint(r.history[e.Direction], point{at, v})
 	case goclient.EventLatency:
+		v := math.NaN()
 		if e.Latency.TimedOut {
-			r.timeoutStreak[e.ServerID]++
+			r.timeouts[e.ServerID]++
 		} else {
-			r.timeoutStreak[e.ServerID] = 0
+			r.timeouts[e.ServerID] = 0
 			r.latest[e.ServerID] = e.Latency
+			v = float64(e.Latency.RTT)
 		}
+		r.rtt[e.ServerID] = appendPoint(r.rtt[e.ServerID], point{at, v})
 	case goclient.EventResult:
 		r.results = append(r.results, *e.Result)
 	}
+}
+
+func appendPoint(points []point, p point) []point {
+	if len(points) >= historyPoints {
+		points = slices.Delete(points, 0, len(points)-historyPoints+1)
+	}
+	return append(points, p)
 }
 
 func (r *runState) adopt(details *goclient.RunDetails) {
@@ -318,9 +351,6 @@ func (r *runState) serverName(id string) string {
 }
 
 func (r *runState) nextFocus() {
-	if r.details == nil || len(r.details.Servers) < 2 {
-		return
-	}
 	i := slices.IndexFunc(r.details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus })
 	r.focus = r.details.Servers[(i+1)%len(r.details.Servers)].Server.ID
 }

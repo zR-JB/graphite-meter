@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 )
 
 type keymap struct {
@@ -18,13 +18,13 @@ var keys = keymap{
 		key.WithHelp("tab/←/→", "section"),
 	),
 	rows:          key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "row")),
-	change:        key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("enter", "change")),
+	change:        key.NewBinding(key.WithKeys("enter", "space"), key.WithHelp("enter", "change")),
 	start:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "start test")),
 	recheck:       key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "recheck paths")),
 	servers:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "test servers")),
 	automatic:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "automatic paths")),
 	available:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "use available servers")),
-	openSignIn:    key.NewBinding(key.WithKeys("enter", " ", "o"), key.WithHelp("enter", "open sign-in page")),
+	openSignIn:    key.NewBinding(key.WithKeys("enter", "space", "o"), key.WithHelp("enter", "open sign-in page")),
 	cancelSignIn:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel sign-in")),
 	stop:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop test")),
 	confirmStop:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "confirm stop")),
@@ -33,7 +33,7 @@ var keys = keymap{
 	latencyServer: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "latency server")),
 	details:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "details")),
 	scroll:        key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "scroll")),
-	toggleServer:  key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "select")),
+	toggleServer:  key.NewBinding(key.WithKeys("space"), key.WithHelp("space", "select")),
 	apply:         key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "apply")),
 	discard:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	cursor:        key.NewBinding(key.WithKeys("left", "right", "home", "end"), key.WithHelp("←/→", "move")),
@@ -42,7 +42,7 @@ var keys = keymap{
 	abort:         key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 }
 
-func reverse(msg tea.KeyMsg) bool {
+func reverse(msg tea.KeyPressMsg) bool {
 	switch msg.String() {
 	case "shift+tab", "left", "up", "k":
 		return true
@@ -52,11 +52,11 @@ func reverse(msg tea.KeyMsg) bool {
 
 func (m model) ShortHelp() []key.Binding {
 	switch {
-	case m.detailsOpen:
+	case m.popup == popupDetails:
 		return []key.Binding{keys.scroll, keys.setup, keys.quit}
-	case m.serverChooser:
+	case m.popup == popupServers:
 		return []key.Binding{keys.rows, keys.toggleServer, keys.apply, keys.discard, keys.quit}
-	case m.edit.row != nil:
+	case m.edit != nil:
 		return []key.Binding{keys.cursor, keys.apply, keys.discard, keys.abort}
 	case m.stopPrompt:
 		return []key.Binding{keys.confirmStop, keys.quit}
@@ -66,8 +66,9 @@ func (m model) ShortHelp() []key.Binding {
 			bindings = []key.Binding{keys.setup, keys.runAgain}
 		}
 		if m.multipleRunServers() {
-			bindings = append(bindings, keys.latencyServer, keys.details)
+			bindings = append(bindings, keys.latencyServer)
 		}
+		bindings = append(bindings, keys.details)
 		return append(bindings, keys.help, keys.quit)
 	case m.auth != nil:
 		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.sections, keys.rows, keys.help, keys.quit}

@@ -4,10 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
@@ -43,66 +44,78 @@ const (
 	prepareFailed
 )
 
+type popup int
+
+const (
+	popupNone popup = iota
+	popupServers
+	popupDetails
+)
+
+type signIn struct {
+	pending *goclient.PendingAuthorization
+	since   time.Time
+	opened  bool
+}
+
 type model struct {
 	controller *goclient.Controller
 	cfg        goclient.Config
 	width      int
 	height     int
 	now        time.Time
+	st         styles
 	spin       spinner.Model
 	help       help.Model
 	notice     string
 
 	section       int
 	row           int
-	edit          editState
+	edit          *editState
 	latencyChoice string
-	serverChooser bool
+	popup         popup
 	serverDraft   []string
 	serverRow     int
 	openChooser   bool
+	details       viewport.Model
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
 	prepare      prepareState
 	prepareErr   string
 	preparedRun  *goclient.PreparedRun
-	auth         *goclient.PendingAuthorization
-	authServerID string
-	authSince    time.Time
-	authOpened   bool
+	auth         *signIn
 	openApproval func(*goclient.PendingAuthorization)
 
-	runSeq        int
-	events        <-chan goclient.Event
-	run           *runState
-	stopPrompt    bool
-	detailsOpen   bool
-	detailsScroll int
+	runSeq     int
+	events     <-chan goclient.Event
+	run        *runState
+	stopPrompt bool
 }
-
-const animationFPS = 20
 
 func newModel(cfg goclient.Config) model {
 	controller := goclient.NewController(context.Background())
+	st := newStyles(true)
 	dial := spinner.MiniDot
-	dial.FPS = time.Second / animationFPS
-	spin := spinner.New(spinner.WithSpinner(dial))
-	spin.Style = accentStyle
+	dial.FPS = time.Second / 30
+	h := help.New()
+	h.Styles = st.helpStyles()
 	return model{
 		controller:   controller,
 		preparation:  controller.NewPreparation(cfg),
 		cfg:          cfg,
+		st:           st,
 		openApproval: (*goclient.PendingAuthorization).Open,
 		prepareSeq:   1,
-		spin:         spin,
-		help:         newHelp(),
+		spin:         spinner.New(spinner.WithSpinner(dial), spinner.WithStyle(st.accent)),
+		help:         h,
+		details:      viewport.New(),
 		now:          time.Now(),
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.prepareAfter(0), m.spin.Tick)
+	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 
 func (m model) running() bool  { return m.run != nil && m.run.outcome == goclient.OutcomeRunning }
@@ -114,9 +127,12 @@ func (m model) animating() bool {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.BackgroundColorMsg:
+		m.st = newStyles(msg.IsDark())
+		m.help.Styles, m.spin.Style = m.st.helpStyles(), m.st.accent
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case spinner.TickMsg:
 		return m.handleTick(msg)
@@ -133,22 +149,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsMsg:
 		return m.handleEvents(msg)
 	default:
-		if m.edit.row != nil {
-			var cmd tea.Cmd
-			m.edit.input, cmd = m.edit.input.Update(msg)
-			return m, cmd
+		if m.edit != nil {
+			return m.updateEdit(msg)
 		}
 	}
 	return m, nil
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case m.detailsOpen:
+	case m.popup == popupDetails:
 		return m.handleDetailsKey(msg)
-	case m.serverChooser:
+	case m.popup == popupServers:
 		return m.handleServerChooserKey(msg)
-	case m.edit.row != nil:
+	case m.edit != nil:
 		return m.handleEditKey(msg)
 	case key.Matches(msg, keys.quit):
 		m.close()
@@ -173,10 +187,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m.handleSetupKey(msg)
 }
 
-func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case m.multipleRunServers() && key.Matches(msg, keys.details):
-		m.detailsOpen, m.detailsScroll = true, 0
+	case key.Matches(msg, keys.details):
+		m.popup = popupDetails
+		m.details.GotoTop()
 	case m.multipleRunServers() && key.Matches(msg, keys.latencyServer):
 		m.run.nextFocus()
 	case m.running() && key.Matches(msg, keys.stop):
@@ -191,11 +206,11 @@ func (m model) handleRunKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleSignInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.openSignIn):
-		m.openApproval(m.auth)
-		m.authOpened = true
+		m.openApproval(m.auth.pending)
+		m.auth.opened = true
 		m.notice = "Sign-in page opened in the browser."
 	case key.Matches(msg, keys.cancelSignIn):
 		m.invalidatePreparation()
@@ -207,7 +222,7 @@ func (m model) handleSignInKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.sections), key.Matches(msg, keys.rows):
 		m.navigate(msg)
@@ -230,7 +245,7 @@ func (m model) handleSetupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) navigate(msg tea.KeyMsg) {
+func (m *model) navigate(msg tea.KeyPressMsg) {
 	step := 1
 	if reverse(msg) {
 		step = -1
@@ -250,7 +265,7 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	m.now = msg.Time
 	if m.run != nil {
 		for dir, sample := range m.run.rates {
-			m.run.displayRates[dir] += (sample.BytesPerSec - m.run.displayRates[dir]) * 0.35
+			m.run.shown[dir] += (sample.BytesPerSec - m.run.shown[dir]) * 0.35
 		}
 	}
 	var cmd tea.Cmd
@@ -261,13 +276,4 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 func (m *model) close() {
 	m.invalidatePreparation()
 	m.controller.Close()
-}
-
-func newHelp() help.Model {
-	h := help.New()
-	h.Styles.ShortKey, h.Styles.FullKey = labelStyle, labelStyle
-	h.Styles.ShortDesc, h.Styles.FullDesc = mutedStyle, mutedStyle
-	h.Styles.ShortSeparator, h.Styles.FullSeparator = subtleRuleStyle, subtleRuleStyle
-	h.Styles.Ellipsis = subtleRuleStyle
-	return h
 }

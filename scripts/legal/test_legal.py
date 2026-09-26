@@ -185,6 +185,7 @@ class LegalTests(unittest.TestCase):
         self.assertEqual(repository_url(None, 'golang.org/x/net'), 'https://go.googlesource.com/net')
         self.assertEqual(source_for('github.com/example/module'), 'https://github.com/example/module')
         self.assertEqual(source_for('anything', 'explicit'), 'explicit')
+        self.assertEqual(source_for('charm.land/lipgloss/v2'), 'https://github.com/charmbracelet/lipgloss')
 
     def test_go_targets_and_replacements_preserve_scope(self) -> None:
         targets = go_discovery_targets(ROOT)

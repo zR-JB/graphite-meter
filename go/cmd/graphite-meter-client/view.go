@@ -4,57 +4,89 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 )
 
-const (
-	shellMargin      = 2
-	panelBorderWidth = 2
-	gutterWidth      = 2
-	twoColumnMin     = 115
-)
+const twoColumnMin = 100
 
-func (m model) View() string {
-	w := m.innerWidth()
-	var body string
+func (m model) View() tea.View {
+	content, cursor := m.render()
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.WindowTitle = "Graphite Meter · " + m.statusLabel()
+	v.Cursor = cursor
+	if m.running() {
+		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarDefault, m.progress())
+	}
+	return v
+}
+
+func (m model) size() (int, int) { return max(m.width, 40), max(m.height, 16) }
+
+func (m model) popupWidth() int {
+	w, _ := m.size()
+	return min(w-4, 84)
+}
+
+func (m model) render() (string, *tea.Cursor) {
+	w, h := m.size()
+	inner := w - 2
+	header, footer := m.header(inner), m.footer(inner)
+	bodyH := h - lipgloss.Height(header) - lipgloss.Height(footer) - 2
+	body := m.setupView(inner)
+	if m.run != nil {
+		body = m.runView(inner, bodyH)
+	}
+	body = lipgloss.PlaceVertical(bodyH, lipgloss.Top, clip(body, bodyH))
+	screen := lipgloss.NewStyle().Padding(0, 1).Render(header + "\n\n" + body + "\n" + footer)
+	pw := m.popupWidth()
+	var title, content string
 	switch {
-	case m.detailsOpen:
-		body = m.detailsOverlay(w)
-	case m.serverChooser:
-		body = m.serverChooserView(w)
-	case m.run != nil:
-		body = m.runView(w)
+	case m.popup == popupDetails:
+		title, content = "Details", m.detailsViewport().View()
+	case m.popup == popupServers:
+		title, content = m.serverChooserView(pw-4, h-4)
+	case m.edit != nil:
+		title, content = m.editView()
+	case m.auth != nil && m.run == nil:
+		title, content = m.signInView(pw - 4)
 	default:
-		body = m.setupView(w)
+		return screen, nil
 	}
-	return shellStyle.Render(m.header(w) + "\n\n" + body + "\n" + m.helpView())
+	box := m.st.panel(title, content, pw, min(lipgloss.Height(content)+2, h))
+	screen, x, y := overlay(screen, box, w, h)
+	if m.edit == nil || m.popup != popupNone {
+		return screen, nil
+	}
+	cursor := m.edit.input.Cursor()
+	if cursor != nil {
+		cursor.X, cursor.Y = cursor.X+x+2, y+1
+	}
+	return screen, cursor
 }
 
-func (m model) innerWidth() int {
-	return max(m.width-2*shellMargin, 40)
-}
-
-func fitLine(s string, w int) string {
-	if lipgloss.Width(s) <= w {
-		return s
+func (m model) progress() int {
+	var done, total float64
+	for _, s := range m.run.stages {
+		total += s.duration.Seconds()
+		switch s.state {
+		case stageDone:
+			done += s.duration.Seconds()
+		case stageMeasuring:
+			done += min(m.now.Sub(s.since), s.duration).Seconds()
+		}
 	}
-	return lipgloss.NewStyle().MaxWidth(w).Render(s)
-}
-
-func fitBlock(s string, w int) string {
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = fitLine(line, w)
-	}
-	return strings.Join(lines, "\n")
+	return int(done / max(total, 1) * 100)
 }
 
 func (m model) header(w int) string {
-	left := titleStyle.Render("Graphite Meter")
-	right := pillStyle.Render(m.statusLabel())
+	left := m.st.title.Render("Graphite Meter")
+	right := m.st.pill.Render(m.statusLabel())
 	spacer := strings.Repeat(" ", max(1, w-lipgloss.Width(left)-lipgloss.Width(right)))
 	context := m.cfg.BaseURL
 	if m.run != nil && m.run.details != nil {
@@ -64,52 +96,57 @@ func (m model) header(w int) string {
 		}
 		context = strings.Join(names, ", ")
 	}
-	return fitLine(left+spacer+right, w) + "\n" +
-		fitLine(mutedStyle.Render("native client "+goclient.Version+"  ")+accentStyle.Render(context), w)
+	line := m.st.muted.Render("native client "+goclient.Version+"  ") + m.st.accent.Render(context)
+	return fit(left+spacer+right+"\n"+line, w)
 }
 
-func panels(w int, left func(int) string, right func(int) string) string {
-	if w < twoColumnMin {
-		inner := w - panelBorderWidth
-		return panelStyle.Width(inner).Render(fitBlock(left(inner-4), inner-4)) + "\n\n" +
-			panelStyle.Width(inner).Render(fitBlock(right(inner-4), inner-4))
+func (m model) footer(w int) string {
+	notice := m.st.muted.Render(m.notice)
+	if m.run != nil && m.run.err != nil {
+		notice = m.st.err.Render(errorText(m.run.err))
 	}
-	inner := w - gutterWidth - 2*panelBorderWidth
-	leftW := inner * 12 / 20
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		panelStyle.Width(leftW).Render(fitBlock(left(leftW-4), leftW-4)), "  ",
-		panelStyle.Width(inner-leftW).Render(fitBlock(right(inner-leftW-4), inner-leftW-4)))
+	h := m.help
+	h.SetWidth(w)
+	return fit(notice+"\n"+h.View(m), w)
+}
+
+func columns(w int) (int, int, bool) {
+	if w < twoColumnMin {
+		return w, w, false
+	}
+	left := (w - 1) * 3 / 5
+	return left, w - 1 - left, true
+}
+
+func join(left, right string, side bool) string {
+	if side {
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", right)
+	}
+	return left + "\n" + right
 }
 
 func (m model) setupView(w int) string {
-	var b strings.Builder
-	b.WriteString(m.tabBar(w))
-	b.WriteString("\n\n")
-	if auth := m.signInView(); auth != "" {
-		b.WriteString(panelStyle.Width(w - panelBorderWidth).Render(fitBlock(auth, w-6)))
-		b.WriteString("\n\n")
+	lw, rw, side := columns(w)
+	rows, plan := m.sectionView(lw-4), m.planView(rw-4)
+	panelH := 0
+	if side {
+		panelH = max(lipgloss.Height(rows), lipgloss.Height(plan)) + 2
 	}
-	b.WriteString(panels(w, m.sectionView, m.planView))
-	if m.notice != "" {
-		b.WriteString("\n\n" + fitLine(mutedStyle.Render(m.notice), w))
-	}
-	return b.String()
+	sections := m.st.panel(sections[m.section].label, rows, lw, panelH)
+	return m.tabBar(w) + "\n\n" + join(sections, m.st.panel("Test plan", plan, rw, panelH), side)
 }
 
 func (m model) tabBar(w int) string {
 	parts := make([]string, len(sections))
 	for i, s := range sections {
-		style := tabStyle
+		style := m.st.tab
 		if i == m.section {
-			style = activeTabStyle
+			style = m.st.activeTab
 		}
 		parts[i] = style.Render(s.label)
 	}
 	line := lipgloss.JoinHorizontal(lipgloss.Left, parts...)
-	if lipgloss.Width(line) < w {
-		line += subtleRuleStyle.Render(strings.Repeat("─", w-lipgloss.Width(line)))
-	}
-	return fitLine(line, w)
+	return fit(line+m.st.border.Render(strings.Repeat("─", max(w-lipgloss.Width(line), 0))), w)
 }
 
 func (m model) sectionView(w int) string {
@@ -118,22 +155,16 @@ func (m model) sectionView(w int) string {
 	for _, id := range rows {
 		labelWidth = max(labelWidth, len(m.setupRow(id).label))
 	}
-	lines := []string{accentStyle.Render(sections[m.section].label)}
+	var lines []string
 	for i, id := range rows {
 		row := m.setupRow(id)
-		value, note := valueStyle.Render(row.value), mutedStyle.Render(row.note)
+		value := m.st.value.Render(row.value)
 		if row.inert {
-			value = mutedStyle.Render(row.value)
+			value = m.st.muted.Render(row.value)
 		}
-		if m.edit.row != nil && *m.edit.row == id {
-			value, note = m.edit.input.View(), mutedStyle.Render("enter applies · esc cancels")
-			if m.edit.err != "" {
-				note = errorStyle.Render(m.edit.err)
-			}
-		}
-		line := labelStyle.Render(pad(row.label, labelWidth)) + "  " + value + "  " + note
+		line := m.st.text.Render(pad(row.label, labelWidth)) + "  " + value + "  " + m.st.muted.Render(row.note)
 		if i == m.row {
-			line = "› " + selectedStyle.Render(fitLine(line, w-2))
+			line = "› " + m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
 		} else {
 			line = "  " + line
 		}
@@ -143,9 +174,9 @@ func (m model) sectionView(w int) string {
 }
 
 func (m model) planView(w int) string {
-	lines := []string{accentStyle.Render("Test plan")}
+	var lines []string
 	if m.prepare == prepareChecking && m.preparedRun == nil {
-		lines = append(lines, m.spin.View()+" "+mutedStyle.Render("Checking paths…"))
+		lines = append(lines, m.spin.View()+" "+m.st.muted.Render("Checking paths…"))
 	}
 	rows := m.readiness()
 	nameWidth := 0
@@ -153,36 +184,35 @@ func (m model) planView(w int) string {
 		nameWidth = max(nameWidth, len([]rune(serverLabel(r.server.Name, r.server.Location))))
 	}
 	for _, r := range rows {
-		glyph := successStyle.Render("●")
+		glyph := m.st.ok.Render("●")
 		switch r.label {
 		case "Checking…":
 			glyph = m.spin.View()
 		case "Sign in":
-			glyph = warnStyle.Render("○")
+			glyph = m.st.warn.Render("○")
 		case "Unavailable":
-			glyph = errorStyle.Render("✗")
+			glyph = m.st.err.Render("✗")
 		}
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
-		lines = append(lines, glyph+" "+name+"  "+labelStyle.Render(r.label))
+		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(r.label))
 		if r.detail != "" {
-			detail := lipgloss.NewStyle().MarginLeft(4).Width(max(1, w-4))
-			lines = append(lines, detail.Render(warnStyle.Render(r.detail)))
+			lines = append(lines, m.st.warn.PaddingLeft(2).Width(max(w, 4)).Render(r.detail))
 		}
 	}
 	if m.prepareErr != "" {
-		lines = append(lines, warnStyle.Render(m.prepareErr))
+		lines = append(lines, m.st.warn.Width(max(w, 4)).Render(m.prepareErr))
 	}
 	if m.canUseAvailable() {
-		lines = append(lines, mutedStyle.Render("u Use available servers"))
+		lines = append(lines, m.st.muted.Render("u Use available servers"))
 	}
 	throughput, latency := m.pathSummaries()
-	lines = append(lines, "", labelStyle.Render(pad("Throughput", 11))+throughput,
-		labelStyle.Render(pad("Latency", 11))+latency, "", labelStyle.Render("Stages"))
+	lines = append(lines, "", m.st.text.Render(pad("Throughput", 11))+throughput,
+		m.st.text.Render(pad("Latency", 11))+latency, "", m.st.text.Render("Stages"))
 	for _, stage := range m.cfg.Plan() {
-		lines = append(lines, "  "+pad(stageLabels[stage.Name], 14)+mutedStyle.Render(fmtSetting(stage.Duration)))
+		lines = append(lines, "  "+pad(stageLabels[stage.Name], 14)+m.st.muted.Render(fmtSetting(stage.Duration)))
 	}
 	if len(m.cfg.Plan()) == 0 {
-		lines = append(lines, "  "+warnStyle.Render("No stages selected"))
+		lines = append(lines, "  "+m.st.warn.Render("No stages selected"))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -206,11 +236,11 @@ func (m model) pathSummaries() (throughput, latency string) {
 	}
 	value := func(summaries []string) string {
 		if len(summaries) == 0 {
-			return mutedStyle.Render(missing)
+			return m.st.muted.Render(missing)
 		}
-		style := valueStyle
+		style := m.st.value
 		if !m.preparedRun.FreshFor(m.cfg) {
-			style = mutedStyle
+			style = m.st.muted
 		}
 		return style.Render(strings.Join(summaries, " / "))
 	}
@@ -224,57 +254,74 @@ func appendUnique(list []string, value string) []string {
 	return append(list, value)
 }
 
-func (m model) signInView() string {
-	if m.auth == nil {
-		return ""
-	}
-	issuer := m.serverName(m.authServerID)
-	if m.authServerID == "" {
+func (m model) signInView(w int) (string, string) {
+	issuer := m.serverName(m.challengedServer())
+	if issuer == "" {
 		issuer = m.cfg.BaseURL
 	}
-	waited := m.now.Sub(m.authSince)
 	status := "Open sign-in page"
-	if m.authOpened {
+	if m.auth.opened {
 		status = "Waiting for approval…"
 	}
-	code := lipgloss.JoinHorizontal(lipgloss.Center,
-		labelStyle.Render("Match this code ")+codeStyle.Render(m.auth.Code),
-		mutedStyle.Render(fmt.Sprintf("  waited %s · expires in %s",
-			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))))
-	return strings.Join([]string{
-		m.spin.View() + " " + accentStyle.Render("Sign in to "+issuer+" · "+status),
-		"",
-		code,
-		mutedStyle.Render("enter Open sign-in page · esc Cancel sign-in"),
-		mutedStyle.Render(m.auth.BrowserURL),
-	}, "\n")
+	waited := m.now.Sub(m.auth.since)
+	lines := []string{
+		m.spin.View() + " " + m.st.accent.Render(status), "",
+		m.st.text.Render("Match this code ") + m.st.title.Render(m.auth.pending.Code),
+		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s",
+			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))),
+		m.st.text.Render("enter Open sign-in page · esc Cancel sign-in"), "",
+		m.st.muted.Width(w).Render(m.auth.pending.BrowserURL),
+	}
+	return "Sign in to " + issuer, strings.Join(lines, "\n")
 }
 
-func (m model) runView(w int) string {
-	var b strings.Builder
-	b.WriteString(panels(w, m.testView, m.liveView))
-	if lines := m.resultLines(w - 6); len(lines) > 0 {
-		b.WriteString("\n\n")
-		b.WriteString(panelStyle.Width(w - panelBorderWidth).Render(fitBlock(strings.Join(lines, "\n"), w-6)))
+func (m model) editView() (string, string) {
+	note := m.st.muted.Render("enter applies · esc cancels")
+	if m.edit.err != "" {
+		note = m.st.err.Render(m.edit.err)
 	}
+	return m.setupRow(m.edit.row).label, m.edit.input.View() + "\n" + note
+}
+
+func (m model) runView(w, h int) string {
+	results := m.resultsView(w - 4)
+	resultsH := 0
+	if results != "" {
+		resultsH = min(lipgloss.Height(results)+2, h/2)
+	}
+	lw, rw, side := columns(w)
+	if side {
+		lw, rw = w*2/5, w-1-w*2/5
+	}
+	test := m.testView(lw-4, !side)
+	liveH := h - resultsH - 1
+	testH := liveH
+	if !side {
+		testH = lipgloss.Height(test) + 2
+		liveH -= testH
+	}
+	live := m.st.panel("Live · "+m.statusLabel(), m.liveView(rw-4, liveH-2), rw, liveH)
+	top := join(m.st.panel("Test", test, lw, testH), live, side)
+	if results == "" {
+		return top
+	}
+	title := "Results"
 	if m.multipleRunServers() {
-		b.WriteString("\n\n" + fitLine(m.outcomeNotice()+mutedStyle.Render(" · d Details"), w))
+		title += " · Combined throughput · latency to " + m.run.serverName(m.run.focus)
 	}
-	if m.run.err != nil {
-		b.WriteString("\n\n" + fitLine(errorStyle.Render(errorText(m.run.err)), w))
-	} else if m.notice != "" {
-		b.WriteString("\n\n" + fitLine(mutedStyle.Render(m.notice), w))
-	}
-	return b.String()
+	return top + "\n" + m.st.panel(title, results, w, resultsH)
 }
 
-func (m model) testView(w int) string {
+func (m model) testView(w int, compact bool) string {
 	r := m.run
-	lines := []string{accentStyle.Render("Test")}
-	field := func(label, value string) { lines = append(lines, labelStyle.Render(pad(label, 11))+value) }
-	if r.details == nil {
-		field("Servers", m.spin.View()+mutedStyle.Render(" Checking paths…"))
-	} else {
+	var lines []string
+	field := func(label, value string) { lines = append(lines, m.st.text.Render(pad(label, 11))+value) }
+	switch {
+	case compact:
+		return strings.Join(m.stageTrack(w), "\n")
+	case r.details == nil:
+		field("Servers", m.spin.View()+m.st.muted.Render(" Checking paths…"))
+	default:
 		var names, throughputs []string
 		streams, latency := "", missing
 		for _, server := range r.details.Servers {
@@ -283,204 +330,190 @@ func (m model) testView(w int) string {
 			throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
 			streams = m.cfg.TransferStreams.Label(t.Protocol, t.Transport)
 			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
-				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS())
-				if len(r.details.Servers) > 1 {
-					latency = server.Server.Name + " · " + latency
-				}
+				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS)
 			}
 		}
 		servers := strings.Join(names, ", ")
 		if len(names) > 1 {
-			servers += mutedStyle.Render(" · Combined")
+			servers += m.st.muted.Render(" · Combined")
 			streams = "per server · " + streams
 		}
-		field("Servers", valueStyle.Render(servers))
-		field("Throughput", valueStyle.Render(strings.Join(throughputs, " / ")))
-		field("Latency", valueStyle.Render(latency))
-		field("Streams", valueStyle.Render(streams))
+		field("Servers", m.st.value.Render(servers))
+		field("Throughput", m.st.value.Render(strings.Join(throughputs, " / ")))
+		field("Latency", m.st.value.Render(latency))
+		field("Streams", m.st.value.Render(streams))
 		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · ping " + cadenceLabel(m.cfg.PingInterval)
-		field("Timing", valueStyle.Render(timing))
+		field("Timing", m.st.value.Render(timing))
 	}
 	lines = append(lines, "")
 	return strings.Join(append(lines, m.stageTrack(w)...), "\n")
 }
 
 func (m model) stageTrack(w int) []string {
-	barW := min(max(w-34, 8), 40)
+	barW := min(max(w-34, 6), 30)
 	var lines []string
 	for _, s := range m.run.stages {
-		name := labelStyle.Render(pad(stageLabels[s.name], 14))
+		name := m.st.text.Render(pad(stageLabels[s.name], 14))
 		elapsed := m.now.Sub(s.since)
 		switch s.state {
 		case stagePreparing:
-			lines = append(lines, name+m.spin.View()+mutedStyle.Render(" checking paths"))
+			lines = append(lines, name+m.spin.View()+m.st.muted.Render(" checking paths"))
 		case stageWarmup:
-			lines = append(lines, name+m.spin.View()+mutedStyle.Render(" warmup ")+valueStyle.Render(fmtClock(elapsed)))
+			lines = append(lines, name+m.spin.View()+m.st.muted.Render(" warmup ")+m.st.value.Render(fmtClock(elapsed)))
 		case stageMeasuring:
-			lines = append(lines, name+renderBar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+
-				valueStyle.Render(fmtClock(min(elapsed, s.duration)))+mutedStyle.Render(" / "+fmtSetting(s.duration)))
+			clock := m.st.value.Render(fmtClock(min(elapsed, s.duration)))
+			clock += m.st.muted.Render(" / " + fmtSetting(s.duration))
+			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
-			lines = append(lines, name+successStyle.Render("✓ ")+mutedStyle.Render(fmtSetting(s.duration)))
+			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
 		case stageStopped:
-			lines = append(lines, name+errorStyle.Render("✗ ")+mutedStyle.Render("stopped"))
+			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
 		default:
-			lines = append(lines, name+mutedStyle.Render("○ "+fmtSetting(s.duration)))
+			lines = append(lines, name+m.st.muted.Render("○ "+fmtSetting(s.duration)))
 		}
 	}
 	return lines
 }
 
-func (m model) liveView(w int) string {
+func (m model) liveView(w, h int) string {
 	r := m.run
-	lines := []string{accentStyle.Render("Live")}
 	i := slices.IndexFunc(r.plan, func(s goclient.StagePlan) bool { return s.Name == r.stage })
 	if i < 0 || r.phase == goclient.PhasePreparing && m.running() {
-		return strings.Join(append(lines, m.spin.View()+mutedStyle.Render(" Checking paths…")), "\n")
+		return m.spin.View() + m.st.muted.Render(" Checking paths…")
 	}
 	stage := r.plan[i]
-	scale := max(r.peaks[goclient.Down], r.peaks[goclient.Up])
+	loaded := len(stage.Directions) > 0 && m.cfg.LoadedLatency
+	var readings []string
+	var lines []series
 	for _, dir := range stage.Directions {
-		label := map[goclient.Direction]string{goclient.Down: "Download", goclient.Up: "Upload"}[dir]
-		value := valueStyle.Render(fmt.Sprintf("%13s", fmtRate(r.displayRates[dir])))
+		label := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[dir]
+		value := m.st.value.Render(fmtRate(r.shown[dir]))
 		if r.rates[dir].Unavailable {
-			value = mutedStyle.Render(fmt.Sprintf("%13s", missing) + "  window restarting")
+			value = m.st.muted.Render(missing + " window restarting")
 		}
-		bar := renderBar(r.displayRates[dir], scale, max(12, w-26))
-		lines = append(lines, labelStyle.Render(pad(label, 9))+bar+value)
+		readings = append(readings, m.st.text.Render(label)+value)
+		style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
+		lines = append(lines, series{style, r.history[dir]})
 	}
-	if len(stage.Directions) == 0 || m.cfg.LoadedLatency {
-		label := "Loaded latency"
+	if len(stage.Directions) == 0 || loaded {
+		label := "Loaded latency "
 		if len(stage.Directions) == 0 {
-			label = "Idle latency"
+			label = "Idle latency "
 		}
-		value := mutedStyle.Render("waiting")
+		value := m.st.muted.Render("waiting")
 		if sample, ok := r.latest[r.focus]; ok {
-			value = valueStyle.Render(fmtMs(sample.RTT))
+			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeoutStreak[r.focus]; streak > 0 {
-			style := warnStyle
+		if streak := r.timeouts[r.focus]; streak > 0 {
+			style := m.st.warn
 			if streak >= 3 {
-				style = errorStyle
+				style = m.st.err
 			}
 			value += style.Render(fmt.Sprintf("  probe timeout ×%d", streak))
 		}
-		lines = append(lines, labelStyle.Render(pad(label, 16))+value)
+		readings = append(readings, m.st.text.Render(label)+value)
 	}
+	out := []string{strings.Join(readings, "   ")}
 	if m.multipleRunServers() {
-		lines = append(lines, mutedStyle.Render("Latency to "+r.serverName(r.focus)+" · l switches server"))
+		out = append(out, m.st.muted.Render("Latency to "+r.serverName(r.focus)+" · l switches server"))
 	}
-	return strings.Join(lines, "\n")
+	chartH := h - len(out)
+	span := m.now.Sub(r.started).Seconds()
+	rtt := []series{{m.st.rtt, r.rtt[r.focus]}}
+	msLabel := func(v float64) string { return fmtMs(time.Duration(v)) }
+	switch {
+	case chartH < 5:
+	case len(lines) == 0:
+		out = append(out, m.st.chart(rtt, r.marks, msLabel, span, w, chartH))
+	case loaded && chartH >= 12:
+		out = append(out, m.st.chart(lines, r.marks, fmtRate, span, w, chartH-5),
+			m.st.chart(rtt, nil, msLabel, span, w, 5))
+	default:
+		out = append(out, m.st.chart(lines, r.marks, fmtRate, span, w, chartH))
+	}
+	return strings.Join(out, "\n")
 }
 
-func (m model) resultLines(w int) []string {
+func (m model) resultsView(w int) string {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
 	if population, ok := latency[goclient.StageLatency]; ok && population.Latency.Count > 0 {
 		idle = &population.Latency
 	}
-	var scale float64
-	for _, result := range r.results {
-		scale = max(scale, result.MeanBps, result.PeakBps)
-	}
-	title := "Results"
-	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + r.serverName(r.focus)
-	}
-	lines := []string{accentStyle.Render(title)}
-	barW := min(max(w-78, 8), 32)
-	for _, stage := range r.plan {
-		for _, result := range r.results {
-			if result.Stage == stage.Name {
-				lines = append(lines, throughputLines(result, scale, barW, w)...)
+	var rows [][]string
+	var notes []string
+	note := func(label string, facts []string) {
+		for i, line := range wrapParts(facts, w-len([]rune(label))-2) {
+			if i == 0 {
+				line = label + ": " + line
+			} else {
+				line = strings.Repeat(" ", len([]rune(label))+2) + line
 			}
+			notes = append(notes, m.st.muted.Render(line))
+		}
+	}
+	failed := func(label string, err error) {
+		if err != nil {
+			notes = append(notes, m.st.err.Render(label+" incomplete: "+errorText(err)))
+		}
+	}
+	for _, stage := range r.plan {
+		row := []string{compactStage(stage.Name), "", "", "", "", "", "", ""}
+		found := false
+		for _, result := range r.results {
+			if result.Stage != stage.Name {
+				continue
+			}
+			found = true
+			rate := missing
+			if !result.Unavailable {
+				rate = fmtRate(result.MeanBps)
+			}
+			row[map[goclient.Direction]int{goclient.Down: 1, goclient.Up: 2}[result.Direction]] = rate
+			note(directionLabel(result), throughputFacts(result))
+			failed(directionLabel(result), result.Err)
 		}
 		if population, ok := latency[stage.Name]; ok {
+			found = true
 			base := idle
 			if stage.Name == goclient.StageLatency {
-				base = nil
+				base, row[0] = nil, "Idle latency"
 			}
-			lines = append(lines, latencyLines(population, base, w)...)
+			copy(row[3:], latencyCells(population.Latency, base))
+			label := populationLabel(stage.Name)
+			note(label, latencyFacts(population.Latency))
+			if timing := reflectorTimingSummary(population.Latency.ReflectorTiming); timing != "" {
+				notes = append(notes, m.st.muted.Width(max(w, 4)).Render(timing))
+			}
+			failed(label, population.Err)
+		}
+		if found {
+			rows = append(rows, row)
 		}
 	}
-	if len(lines) == 1 {
-		return nil
+	if len(rows) == 0 {
+		return ""
 	}
-	return lines
-}
-
-func throughputLines(result goclient.Result, scale float64, barW, w int) []string {
-	rate := missing
-	if !result.Unavailable {
-		rate = fmtRate(result.MeanBps)
-	}
-	var facts []string
-	if result.PeakBps > 0 {
-		facts = append(facts, "peak "+fmtRate(result.PeakBps))
-	}
-	facts = append(facts, fmtBytes(result.TotalBytes))
-	if result.Elapsed > 0 {
-		facts = append(facts, fmtClock(result.Elapsed))
-	}
-	if result.Samples > 0 {
-		facts = append(facts, fmt.Sprintf("%d samples", result.Samples))
-	}
-	if result.ReceiverTimed() {
-		facts = append(facts, "receiver-timed")
-	}
-	head := labelStyle.Render(pad(directionLabel(result), 14)) + renderBar(result.MeanBps, scale, barW) + "  " +
-		valueStyle.Render(fmt.Sprintf("%13s", rate)) + "  "
-	indent := strings.Repeat(" ", lipgloss.Width(head))
-	var lines []string
-	for i, line := range wrapParts(facts, w-len(indent)) {
-		if i == 0 {
-			lines = append(lines, head+mutedStyle.Render(line))
-		} else {
-			lines = append(lines, indent+mutedStyle.Render(line))
-		}
-	}
-	if result.Err != nil {
-		lines = append(lines, errorStyle.Render("  Incomplete: "+errorText(result.Err)))
-	}
-	return lines
-}
-
-func latencyLines(result goclient.Result, idle *goclient.LatencyStats, w int) []string {
-	const labelWidth = 27
-	var lines []string
-	for i, line := range wrapParts(latencyParts(result.Latency, idle), w-labelWidth) {
-		label := strings.Repeat(" ", labelWidth)
-		if i == 0 {
-			label = labelStyle.Render(pad(populationLabel(result.Stage), labelWidth))
-		}
-		lines = append(lines, label+valueStyle.Render(line))
-	}
-	if timing := reflectorTimingSummary(result.Latency.ReflectorTiming); timing != "" {
-		lines = append(lines, mutedStyle.Width(max(1, w-2)).MarginLeft(2).Render(timing))
-	}
-	if result.Err != nil {
-		lines = append(lines, errorStyle.Render("  Incomplete: "+errorText(result.Err)))
-	}
-	return lines
+	headers := []string{"Stage", "Download", "Upload", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
+	return m.st.grid(headers, rows, w) + "\n" + strings.Join(notes, "\n")
 }
 
 func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
 	}
-	w := m.innerWidth()
-	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome]}
-	lines = append(lines, m.resultLines(w)...)
+	w, _ := m.size()
+	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome], m.resultsView(w)}
 	if m.multipleRunServers() {
 		lines = append(lines, "", m.detailsView(w))
 	}
 	if m.run.err != nil {
 		lines = append(lines, "", errorText(m.run.err))
 	}
-	return ansi.Strip(strings.Join(lines, "\n"))
-}
-
-func (m model) helpView() string {
-	m.help.Width = m.innerWidth()
-	return fitBlock(m.help.View(m), m.innerWidth())
+	report := strings.Split(ansi.Strip(strings.Join(lines, "\n")), "\n")
+	for i, line := range report {
+		report[i] = strings.TrimRight(line, " ")
+	}
+	return strings.Join(report, "\n")
 }

@@ -1,4 +1,4 @@
-// Command graphite-meter-client is a native Bubble Tea speedtest client for the Graphite Meter server.
+// Command graphite-meter-client is a native terminal speedtest client for the Graphite Meter server.
 package main
 
 import (
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
 )
@@ -76,7 +76,7 @@ func main() {
 	}
 
 	m := newModel(cfg)
-	final, err := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(m, tea.WithFPS(30)).Run()
 	m.controller.Close()
 	if err != nil {
 		fail(1, err)
