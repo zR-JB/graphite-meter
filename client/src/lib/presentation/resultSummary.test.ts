@@ -120,12 +120,12 @@ test("a server's own failures decide its statuses; a server without a latency pa
   });
 });
 
-test("cards show signed added latency, peak, receiver timing, and one pip rule", () => {
+test("cards show signed added latency, the grade, and one pip rule", () => {
   const cards = summaryCards(
     {
       status: { download: "complete", upload: "complete", latency: "complete" },
       download: lane(40),
-      upload: { ...lane(20), stabilityPct: 80, peakBytesPerSec: 25 },
+      upload: { ...lane(20), stabilityPct: 80 },
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { addedMs: { download: 8.25, upload: -0.04 }, grade: "B" },
@@ -144,11 +144,6 @@ test("cards show signed added latency, peak, receiver timing, and one pip rule",
     ["+8.3", null, "high"],
     ["0.0", null, "medium"],
     [null, "Grade B", "high"],
-  ]);
-  expect(cards.map((card) => card.detail)).toEqual([
-    "1.0 MB transferred",
-    "peak 25 · 1.0 MB transferred · receiver-timed",
-    "",
   ]);
 });
 

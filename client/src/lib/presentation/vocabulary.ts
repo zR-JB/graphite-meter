@@ -106,8 +106,6 @@ const FAILURE: Record<FailureReason, string> = {
 export const reasonLabel = (reason: FailureReason) =>
   FAILURE[reason] ?? "Measurement issue";
 
-export const RECEIVER_TIMED = "receiver-timed";
-
 export const JARGON = {
   addedLatency:
     "Added latency: loaded median minus idle median for the same server, signed. " +

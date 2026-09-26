@@ -7,12 +7,11 @@ import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
-import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
+import { MISSING, STAGE } from "./vocabulary";
 
 type Band = "low" | "medium" | "high";
 type Throughput = {
   reportedBytesPerSec: number;
-  peakBytesPerSec?: number | null;
   totalBytes: number;
   stabilityPct: number;
 };
@@ -188,15 +187,8 @@ export function summaryCards(
       const result = evidence[key];
       value = result?.reportedBytesPerSec ?? null;
       stabilityPct = result?.stabilityPct ?? null;
-      if (result) {
-        const { unit } = rate(result.reportedBytesPerSec);
-        const peak = result.peakBytesPerSec;
-        card.detail = [
-          ...(peak == null ? [] : [`peak ${inUnit(rate, peak, unit)}`]),
-          `${fmtBytes(result.totalBytes, base)} transferred`,
-          ...(key === "upload" ? [RECEIVER_TIMED] : []),
-        ].join(" · ");
-      }
+      if (result)
+        card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
     const added = evidence.added?.addedMs?.[key];
     if (added != null) card.added = fmtAddedMs(added);
