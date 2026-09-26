@@ -156,9 +156,14 @@ var (
 		},
 	}
 	resetRow = &setting{label: "Reset settings", note: "keeps the catalogue and servers", act: func(m *model) {
+		if !m.resetPrompt {
+			m.resetPrompt = true
+			m.notice = "Press enter again to reset every setting; any other key keeps them."
+			return
+		}
 		defaults := goclient.DefaultConfig()
 		defaults.BaseURL, defaults.ServerIDs = m.cfg.BaseURL, m.cfg.ServerIDs
-		m.cfg = defaults
+		m.cfg, m.resetPrompt = defaults, false
 		m.notice = "Settings reset to defaults."
 	}}
 )

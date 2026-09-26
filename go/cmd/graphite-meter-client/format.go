@@ -1,20 +1,28 @@
 package main
 
 import (
-	"charm.land/lipgloss/v2"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const missing = "—"
 
-func errorText(err error) string { return wire.CleanText(err.Error(), 320) }
+func errorText(err error) string {
+	text := wire.CleanText(err.Error(), 320)
+	if _, untrusted := errors.AsType[*tls.CertificateVerificationError](err); untrusted {
+		text += " Turn on Skip TLS verify (-insecure) only for a server you trust."
+	}
+	return text
+}
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
 
@@ -94,14 +102,12 @@ func populationLabel(stage goclient.Stage) string {
 	if stage == goclient.StageLatency {
 		return "Idle latency"
 	}
-	return "Loaded latency · " + compactStage(stage)
+	return "Loaded latency · " + stageLabels[stage]
 }
 
 func compactPopulation(stage goclient.Stage) string {
-	if stage == goclient.StageLatency {
-		return "Idle"
-	}
-	return "Loaded " + strings.ToLower(compactStage(stage))
+	return map[goclient.Stage]string{goclient.StageLatency: "Idle", goclient.StageDownload: "Loaded down",
+		goclient.StageUpload: "Loaded up", goclient.StageBidirectional: "Loaded bi-dir"}[stage]
 }
 
 func directionLabel(r goclient.Result) string {
@@ -184,12 +190,10 @@ func wrapParts(parts []string, w int) []string {
 	return append(lines, line)
 }
 
-func reflectorTimingSummary(s *goclient.ReflectorTimingStats) string {
-	if s == nil {
-		return ""
-	}
-	const summary = "Server timing (%d paired replies, means): raw %s · handling %s · adjusted %s (handling removed)."
-	return fmt.Sprintf(summary, s.Count, fmtMs(s.MeanRawRTT), fmtMs(s.MeanHandling), fmtMs(s.MeanAdjustedRTT))
+func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
+	label := fmt.Sprintf("Server timing (%d paired replies, means)", s.Count)
+	return label, []string{"raw " + fmtMs(s.MeanRawRTT), "handling " + fmtMs(s.MeanHandling),
+		"adjusted " + fmtMs(s.MeanAdjustedRTT) + " (handling removed)"}
 }
 
 func protocolChoiceLabel(protocol string) string {

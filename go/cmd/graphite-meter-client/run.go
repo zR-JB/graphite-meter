@@ -294,6 +294,8 @@ func (m *model) apply(e goclient.Event) {
 		if e.Phase == goclient.PhasePreparing {
 			clear(r.latest)
 			clear(r.timeouts)
+			clear(r.rates)
+			clear(r.shown)
 		}
 		state := map[goclient.Phase]stageState{
 			goclient.PhasePreparing: stagePreparing,

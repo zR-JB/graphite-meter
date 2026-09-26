@@ -78,6 +78,7 @@ type model struct {
 	serverRow     int
 	openChooser   bool
 	details       viewport.Model
+	scroll        int
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
@@ -93,6 +94,7 @@ type model struct {
 	stopPrompt  bool
 	quitting    bool
 	interrupted bool
+	resetPrompt bool
 	last        goclient.Outcome
 }
 
@@ -185,6 +187,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.help):
 		m.help.ShowAll = !m.help.ShowAll
 		return m, nil
+	case key.Matches(msg, keys.page), m.run != nil && key.Matches(msg, keys.scroll):
+		m.scrollBody(msg)
+		return m, nil
 	case m.run != nil:
 		return m.handleRunKey(msg)
 	case m.auth != nil:
@@ -231,6 +236,11 @@ func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleSetupKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.resetPrompt && !(key.Matches(msg, keys.change) && m.currentRow() == resetRow) {
+		m.resetPrompt = false
+		m.notice = "Settings kept."
+		return m, nil
+	}
 	switch {
 	case key.Matches(msg, keys.sections), key.Matches(msg, keys.rows):
 		m.navigate(msg)
@@ -258,6 +268,7 @@ func (m *model) navigate(msg tea.KeyPressMsg) {
 	if reverse(msg) {
 		step = -1
 	}
+	m.scroll = 0
 	if key.Matches(msg, keys.sections) {
 		m.section = (m.section + step + len(sections)) % len(sections)
 	} else {

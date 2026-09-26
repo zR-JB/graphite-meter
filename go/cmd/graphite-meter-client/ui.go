@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -37,23 +36,52 @@ func (s styles) panel(title, body string, w, h int) string {
 	return top + "\n" + box.Render(fit(body, inner))
 }
 
-func overlay(base, box string, w, h int) (string, int, int) {
+func overlay(base, box string, w, top, h int) (string, int, int) {
 	x := max((w-lipgloss.Width(box))/2, 0)
-	y := max((h-lipgloss.Height(box))/2, 0)
+	y := top + max((h-lipgloss.Height(box))/2, 0)
 	layers := lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(box).X(x).Y(y).Z(1))
 	return layers.Render(), x, y
 }
 
 func (s styles) grid(headers []string, rows [][]string, w int) string {
-	return table.New().Headers(headers...).Rows(rows...).Width(w).Wrap(true).
-		Border(lipgloss.HiddenBorder()).BorderTop(false).BorderBottom(false).
-		BorderLeft(false).BorderRight(false).BorderColumn(false).BorderHeader(false).
-		StyleFunc(func(row, _ int) lipgloss.Style {
-			if row == table.HeaderRow {
-				return s.muted.PaddingRight(2)
+	widths := make([]int, len(headers))
+	for _, row := range append([][]string{headers}, rows...) {
+		for i, cell := range row {
+			widths[i] = max(widths[i], lipgloss.Width(cell))
+		}
+	}
+	total := 0
+	for _, width := range widths {
+		total += width + 2
+	}
+	var lines []string
+	if total-2 <= w {
+		for r, row := range append([][]string{headers}, rows...) {
+			style := s.text
+			if r == 0 {
+				style = s.muted
 			}
-			return s.text.PaddingRight(2)
-		}).Render()
+			cells := make([]string, len(row))
+			for i, cell := range row {
+				cells[i] = pad(cell, widths[i])
+			}
+			lines = append(lines, strings.TrimRight(style.Render(strings.Join(cells, "  ")), " "))
+		}
+		return strings.Join(lines, "\n")
+	}
+	for _, row := range rows {
+		var facts []string
+		for i, cell := range row[1:] {
+			if cell != "" {
+				facts = append(facts, headers[i+1]+" "+cell)
+			}
+		}
+		lines = append(lines, s.text.Render(row[0]))
+		for _, line := range wrapParts(facts, w-2) {
+			lines = append(lines, "  "+s.muted.Render(line))
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 type point struct{ t, v float64 }

@@ -28,7 +28,7 @@ func (m model) View() tea.View {
 	return v
 }
 
-const minWidth, minHeight = 44, 16
+const minWidth, minHeight = 40, 12
 
 func (m model) size() (int, int) { return max(m.width, minWidth), max(m.height, minHeight) }
 
@@ -37,29 +37,62 @@ func (m model) popupWidth() int {
 	return min(w-4, 84)
 }
 
+type frame struct {
+	top, footer string
+	body        []string
+	bodyH       int
+	offset      int
+}
+
+func (m model) layout() frame {
+	w, h := m.size()
+	inner := w - 2
+	gap := h >= 20
+	top := m.header(inner)
+	if gap {
+		top += "\n"
+	}
+	if m.run == nil {
+		top += "\n" + m.tabBar(inner)
+		if gap {
+			top += "\n"
+		}
+	}
+	f := frame{top: top}
+	f.bodyH = max(h-lipgloss.Height(top)-lipgloss.Height(m.footer(inner, false)), 1)
+	if m.run != nil {
+		f.body = strings.Split(m.runView(inner, f.bodyH), "\n")
+	} else {
+		f.body = strings.Split(m.setupView(inner), "\n")
+	}
+	limit := max(len(f.body)-f.bodyH, 0)
+	f.offset = m.scroll
+	if m.run == nil && m.scroll == 0 {
+		f.offset = m.row + 3 - f.bodyH
+	}
+	f.offset = min(max(f.offset, 0), limit)
+	f.footer = m.footer(inner, limit > 0)
+	return f
+}
+
 func (m model) render() (string, *tea.Cursor) {
 	if m.width > 0 && (m.width < minWidth || m.height < minHeight) {
 		notice := fmt.Sprintf("Enlarge the terminal to at least %d×%d.", minWidth, minHeight)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
 			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice)), nil
 	}
-	w, h := m.size()
-	inner := w - 2
-	header, footer := m.header(inner), m.footer(inner)
-	bodyH := h - lipgloss.Height(header) - lipgloss.Height(footer) - 2
-	body := m.setupView(inner)
-	if m.run != nil {
-		body = m.runView(inner, bodyH)
-	}
-	body = lipgloss.PlaceVertical(bodyH, lipgloss.Top, clip(body, bodyH))
-	screen := lipgloss.NewStyle().Padding(0, 1).Render(header + "\n\n" + body + "\n" + footer)
+	w, _ := m.size()
+	f := m.layout()
+	body := strings.Join(f.body[f.offset:min(f.offset+f.bodyH, len(f.body))], "\n")
+	body = lipgloss.PlaceVertical(f.bodyH, lipgloss.Top, body)
+	screen := lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + body + "\n" + f.footer)
 	pw := m.popupWidth()
 	var title, content string
 	switch {
 	case m.popup == popupDetails:
 		title, content = "Details", m.detailsViewport().View()
 	case m.popup == popupServers:
-		title, content = m.serverChooserView(pw-4, h-4)
+		title, content = m.serverChooserView(pw-4, f.bodyH-2)
 	case m.edit != nil:
 		title, content = m.editView()
 	case m.auth != nil && m.run == nil:
@@ -67,8 +100,8 @@ func (m model) render() (string, *tea.Cursor) {
 	default:
 		return screen, nil
 	}
-	box := m.st.panel(title, content, pw, min(lipgloss.Height(content)+2, h))
-	screen, x, y := overlay(screen, box, w, h)
+	box := m.st.panel(title, content, pw, min(lipgloss.Height(content)+2, f.bodyH))
+	screen, x, y := overlay(screen, box, w, lipgloss.Height(f.top), f.bodyH)
 	if m.edit == nil || m.popup != popupNone {
 		return screen, nil
 	}
@@ -77,6 +110,21 @@ func (m model) render() (string, *tea.Cursor) {
 		cursor.X, cursor.Y = cursor.X+x+2, y+1
 	}
 	return screen, cursor
+}
+
+func (m *model) scrollBody(msg tea.KeyPressMsg) {
+	f := m.layout()
+	step := 1
+	switch msg.String() {
+	case "pgup", "pgdown":
+		step = max(f.bodyH-1, 1)
+	case "home", "end":
+		step = len(f.body)
+	}
+	if reverse(msg) || msg.String() == "pgup" || msg.String() == "home" {
+		step = -step
+	}
+	m.scroll = min(max(f.offset+step, 0), max(len(f.body)-f.bodyH, 0))
 }
 
 func (m model) progress() int {
@@ -109,14 +157,24 @@ func (m model) header(w int) string {
 	return fit(left+spacer+right+"\n"+line, w)
 }
 
-func (m model) footer(w int) string {
+func (m model) footer(w int, overflow bool) string {
 	notice := m.st.muted.Render(m.notice)
 	if m.run != nil && m.run.err != nil {
 		notice = m.st.err.Render(errorText(m.run.err))
 	}
-	h := m.help
-	h.SetWidth(w)
-	return fit(notice+"\n"+h.View(m), w)
+	if m.help.ShowAll {
+		return fit(notice+"\n"+m.help.FullHelpView(m.FullHelp()), w)
+	}
+	bindings := m.ShortHelp()
+	if overflow && m.popup == popupNone && m.edit == nil && m.auth == nil {
+		bindings = slices.Insert(bindings, 1, keys.page)
+	}
+	line := m.help.ShortHelpView(bindings)
+	for len(bindings) > 2 && lipgloss.Width(line) > w {
+		bindings = slices.Delete(bindings, len(bindings)-3, len(bindings)-2)
+		line = m.help.ShortHelpView(bindings)
+	}
+	return fit(notice+"\n"+line, w)
 }
 
 func columns(w int) (int, int, bool) {
@@ -142,7 +200,7 @@ func (m model) setupView(w int) string {
 		panelH = max(lipgloss.Height(rows), lipgloss.Height(plan)) + 2
 	}
 	sections := m.st.panel(sections[m.section].label, rows, lw, panelH)
-	return m.tabBar(w) + "\n\n" + join(sections, m.st.panel("Test plan", plan, rw, panelH), side)
+	return join(sections, m.st.panel("Test plan", plan, rw, panelH), side)
 }
 
 func (m model) tabBar(w int) string {
@@ -164,6 +222,7 @@ func (m model) sectionView(w int) string {
 	for _, s := range rows {
 		labelWidth = max(labelWidth, len(s.row(m).label))
 	}
+	labelWidth = min(labelWidth, max(w/2, 12))
 	var lines []string
 	for i, s := range rows {
 		row := s.row(m)
@@ -171,7 +230,8 @@ func (m model) sectionView(w int) string {
 		if row.inert {
 			value = m.st.muted.Render(row.value)
 		}
-		line := m.st.text.Render(pad(row.label, labelWidth)) + "  " + value + "  " + m.st.muted.Render(row.note)
+		label := pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)
+		line := m.st.text.Render(label) + "  " + value + "  " + m.st.muted.Render(row.note)
 		if i == m.row {
 			line = "› " + m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
 		} else {
@@ -300,18 +360,18 @@ func (m model) runView(w, h int) string {
 	results := m.resultsView(w - 4)
 	resultsH := 0
 	if results != "" {
-		resultsH = min(lipgloss.Height(results)+2, h/2)
+		resultsH = lipgloss.Height(results) + 2
 	}
 	lw, rw, side := columns(w)
 	if side {
 		lw, rw = w*2/5, w-1-w*2/5
 	}
 	test := m.testView(lw-4, !side)
-	liveH := h - resultsH - 1
+	liveH := max(h-resultsH, 9)
 	testH := liveH
 	if !side {
 		testH = lipgloss.Height(test) + 2
-		liveH -= testH
+		liveH = max(h-resultsH-testH, 7)
 	}
 	live := m.st.panel("Live · "+m.statusLabel(), m.liveView(rw-4, liveH-2), rw, liveH)
 	top := join(m.st.panel("Test", test, lw, testH), live, side)
@@ -411,8 +471,12 @@ func (m model) liveView(w, h int) string {
 	var lines []series
 	for _, dir := range stage.Directions {
 		label := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[dir]
+		sample, sampled := r.rates[dir]
 		value := m.st.value.Render(fmtRate(r.shown[dir]))
-		if r.rates[dir].Unavailable {
+		switch {
+		case !sampled || !m.running() || r.phase != goclient.PhaseMeasuring:
+			value = m.st.muted.Render(missing)
+		case sample.Unavailable:
 			value = m.st.muted.Render(missing + " window restarting")
 		}
 		readings = append(readings, m.st.text.Render(label)+value)
@@ -424,11 +488,11 @@ func (m model) liveView(w, h int) string {
 		if len(stage.Directions) == 0 {
 			label = "Idle latency "
 		}
-		value := m.st.muted.Render("waiting")
-		if sample, ok := r.latest[r.focus]; ok {
+		value := m.st.muted.Render(missing)
+		if sample, ok := r.latest[r.focus]; ok && m.running() {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 {
+		if streak := r.timeouts[r.focus]; streak > 0 && m.running() {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -465,14 +529,18 @@ func (m model) resultsView(w int) string {
 	if population, ok := latency[goclient.StageLatency]; ok && population.Latency.Count > 0 {
 		idle = &population.Latency
 	}
-	var rows [][]string
+	var throughput, latencyRows [][]string
 	var notes []string
 	note := func(label string, facts []string) {
-		for i, line := range wrapParts(facts, w-len([]rune(label))-2) {
+		for i, line := range wrapParts(facts, w-2) {
 			if i == 0 {
 				line = label + ": " + line
+				if lipgloss.Width(line) > w {
+					notes = append(notes, m.st.muted.Render(label+":"))
+					line = "  " + strings.TrimPrefix(line, label+": ")
+				}
 			} else {
-				line = strings.Repeat(" ", len([]rune(label))+2) + line
+				line = "  " + line
 			}
 			notes = append(notes, m.st.muted.Render(line))
 		}
@@ -485,48 +553,56 @@ func (m model) resultsView(w int) string {
 			notes = append(notes, m.st.err.Render(label+" incomplete: "+errorText(err)))
 		}
 	}
+	unmeasured := func(i int) string {
+		if r.stages[i].state == stageStopped {
+			return "Stopped"
+		}
+		return missing
+	}
 	added, measured := false, false
 	for i, stage := range r.plan {
-		row := []string{compactStage(stage.Name), "", "", "", "", "", "", ""}
-		found := false
-		for _, result := range r.results {
-			if result.Stage != stage.Name {
-				continue
+		if len(stage.Directions) > 0 {
+			row, found := []string{compactStage(stage.Name), "", ""}, false
+			for _, result := range r.results {
+				if result.Stage != stage.Name {
+					continue
+				}
+				found = true
+				rate := missing
+				if !result.Unavailable {
+					rate = fmtRate(result.MeanBps)
+				}
+				row[map[goclient.Direction]int{goclient.Down: 1, goclient.Up: 2}[result.Direction]] = rate
+				note(directionLabel(result), throughputFacts(result))
+				failed(directionLabel(result), result.Err)
 			}
-			found = true
-			rate := missing
-			if !result.Unavailable {
-				rate = fmtRate(result.MeanBps)
+			measured = measured || found
+			if !found && !m.running() {
+				row[1], found = unmeasured(i), true
 			}
-			row[map[goclient.Direction]int{goclient.Down: 1, goclient.Up: 2}[result.Direction]] = rate
-			note(directionLabel(result), throughputFacts(result))
-			failed(directionLabel(result), result.Err)
+			if found {
+				throughput = append(throughput, row)
+			}
 		}
-		if population, ok := latency[stage.Name]; ok {
-			found = true
+		population, ok := latency[stage.Name]
+		switch {
+		case ok:
+			measured = true
 			base := idle
 			if stage.Name == goclient.StageLatency {
-				base, row[0] = nil, "Idle latency"
+				base = nil
 			}
-			copy(row[3:], latencyCells(population.Latency, base))
-			added = added || row[4] != ""
+			cells := latencyCells(population.Latency, base)
+			added = added || cells[1] != ""
+			latencyRows = append(latencyRows, append([]string{compactPopulation(stage.Name)}, cells...))
 			label := populationLabel(stage.Name)
 			note(label, latencyFacts(population.Latency))
-			if timing := reflectorTimingSummary(population.Latency.ReflectorTiming); timing != "" {
-				notes = append(notes, m.st.muted.Width(max(w, 4)).Render(timing))
+			if timing := population.Latency.ReflectorTiming; timing != nil {
+				note(reflectorTimingFacts(timing))
 			}
 			failed(label, population.Err)
-		}
-		measured = measured || found
-		if !found && !m.running() {
-			row[1] = missing
-			if r.stages[i].state == stageStopped {
-				row[1] = "Stopped"
-			}
-			found = true
-		}
-		if found {
-			rows = append(rows, row)
+		case len(stage.Directions) == 0 && !m.running():
+			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), unmeasured(i)})
 		}
 	}
 	if !measured {
@@ -535,8 +611,18 @@ func (m model) resultsView(w int) string {
 	if added {
 		notes = append(notes, m.st.muted.Render("Added: loaded median minus idle median."))
 	}
-	headers := []string{"Stage", "Download", "Upload", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
-	return m.st.grid(headers, rows, w) + "\n" + strings.Join(notes, "\n")
+	var parts []string
+	if len(throughput) > 0 {
+		parts = append(parts, m.st.grid([]string{"Throughput", "Download", "Upload"}, throughput, w))
+	}
+	if len(latencyRows) > 0 {
+		headers := []string{"Latency", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
+		for i, row := range latencyRows {
+			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
+		}
+		parts = append(parts, m.st.grid(headers, latencyRows, w))
+	}
+	return strings.Join(append(parts, strings.Join(notes, "\n")), "\n")
 }
 
 func (m model) finalReport() string {
@@ -549,7 +635,7 @@ func (m model) finalReport() string {
 		lines = append(lines, results)
 	}
 	if m.multipleRunServers() {
-		lines = append(lines, "", m.detailsView(w))
+		lines = append(lines, "", m.detailsView(w, false))
 	}
 	if m.run.err != nil {
 		lines = append(lines, errorText(m.run.err))

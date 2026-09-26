@@ -192,8 +192,8 @@ func (m model) handleServerChooserKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 func (m model) serverChooserView(w, h int) (string, string) {
 	catalog := m.preparedRun.Catalog
-	lines := []string{m.st.muted.Render("Choose up to 4. Their speeds are combined."), ""}
-	capacity := max(2, (h-6)/2)
+	var lines []string
+	capacity := max(2, (h-4)/2)
 	start := min(max(m.serverRow-capacity/2, 0), max(0, len(catalog.Servers)-capacity))
 	states := m.readiness()
 	for i := start; i < min(len(catalog.Servers), start+capacity); i++ {
@@ -215,7 +215,7 @@ func (m model) serverChooserView(w, h int) (string, string) {
 
 func (m model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, keys.setup), key.Matches(msg, keys.details):
+	case key.Matches(msg, keys.close), key.Matches(msg, keys.details):
 		m.popup = popupNone
 		return m, nil
 	}
@@ -226,15 +226,14 @@ func (m model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 func (m model) detailsViewport() viewport.Model {
 	vp := m.details
-	content := m.detailsView(m.popupWidth() - 4)
-	_, h := m.size()
+	content := m.detailsView(m.popupWidth()-4, true)
 	vp.SetWidth(m.popupWidth() - 4)
-	vp.SetHeight(min(lipgloss.Height(content), h-4))
+	vp.SetHeight(min(lipgloss.Height(content), m.layout().bodyH-2))
 	vp.SetContent(content)
 	return vp
 }
 
-func (m model) detailsView(w int) string {
+func (m model) detailsView(w int, intervals bool) string {
 	r := m.run
 	if r == nil || r.details == nil {
 		return m.st.muted.Render("Waiting for the first server report…")
@@ -294,16 +293,20 @@ func (m model) detailsView(w int) string {
 				m.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), errorText(f.Err)))
 		}
 	}
-	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
+	if intervals && details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
 		lines = append(lines, "", m.st.heading.Render("Aggregation intervals"))
 		for _, interval := range details.Intervals {
 			state := "incomplete evidence"
 			if interval.Complete && interval.Window != nil {
 				state = "measured window"
 			}
+			names := make([]string, len(interval.Participants))
+			for i, id := range interval.Participants {
+				names[i] = m.serverName(id)
+			}
 			lines = append(lines, m.st.muted.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s",
 				compactStage(interval.Stage), interval.Start.Seconds(), interval.End.Seconds(),
-				strings.Join(interval.Participants, ", "), state)))
+				strings.Join(names, ", "), state)))
 		}
 		if details.OmittedIntervals > 0 {
 			lines = append(lines, m.st.muted.Render(fmt.Sprintf(

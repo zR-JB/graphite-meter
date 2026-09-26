@@ -356,7 +356,7 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	screen := view(m)
 	for _, want := range []string{
 		"Bi-dir ↓ incomplete: transfer failed",
-		"Loaded latency · Bi-dir",
+		"Loaded latency · Bidirectional",
 		"unfinished probes 2",
 		"Bi-dir ↓",
 		missing,
@@ -473,7 +473,7 @@ func TestIdleReadingHoldsTheLastReplyThroughTimeouts(t *testing.T) {
 		{"timeouts hold the reply", []goclient.Event{timeout, timeout}, "12.0 ms  probe timeout ×2", ""},
 		{"a reply ends the streak", []goclient.Event{reply}, "12.0 ms", "probe timeout"},
 		{"a new stage starts empty", []goclient.Event{stage(goclient.PhasePreparing), stage(goclient.PhaseMeasuring)},
-			"waiting", "12.0 ms"},
+			"Idle latency —", "12.0 ms"},
 	} {
 		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: c.events}))
 		live := ansi.Strip(m.liveView(60, 16))
@@ -671,6 +671,17 @@ func TestViewFitsTheTerminal(t *testing.T) {
 			if len(lines) > height {
 				t.Errorf("%s at %dx%d: %d lines", name, width, height, len(lines))
 			}
+			if !strings.Contains(lines[0], "Graphite Meter") ||
+				!strings.HasSuffix(strings.TrimSpace(ansi.Strip(lines[len(lines)-1])), "quit") {
+				t.Errorf("%s at %dx%d lost its chrome:\n%s", name, width, height, ansi.Strip(frame))
+			}
+			for _, line := range lines {
+				line = strings.TrimSpace(ansi.Strip(line))
+				if strings.HasPrefix(line, "│") && !strings.HasSuffix(line, "│") ||
+					strings.HasPrefix(line, "╭") && !strings.HasSuffix(line, "╮") {
+					t.Errorf("%s at %dx%d: a panel lost its right border: %q", name, width, height, line)
+				}
+			}
 			for i, line := range lines {
 				if got := lipgloss.Width(line); got > width {
 					t.Errorf("%s at %dx%d: line %d spans %d cells: %q", name, width, height, i, got, line)
@@ -723,5 +734,57 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 	}
 	if !strings.Contains(screen, "not run") || !strings.HasSuffix(report, "refused") {
 		t.Errorf("failed run hides its unrun stages or error:\n%s\n%s", screen, report)
+	}
+}
+
+func TestScrollingRevealsTheWholeBody(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a", "b")
+	m.width, m.height = 80, 24
+	m.run.outcome = goclient.OutcomeComplete
+	for _, stage := range []goclient.Stage{goclient.StageDownload, goclient.StageUpload, goclient.StageBidirectional} {
+		m.run.results = append(m.run.results, goclient.Result{Stage: stage, Direction: goclient.Down, MeanBps: 1e9})
+	}
+	if f := m.layout(); len(f.body) <= f.bodyH || !strings.Contains(ansi.Strip(f.footer), "pgdn more") {
+		t.Fatalf("a %d-line body in %d rows offers no scrolling: %q", len(f.body), f.bodyH, f.footer)
+	}
+	m.width, m.height = minWidth, minHeight
+	f := m.layout()
+	if len(f.body) <= f.bodyH {
+		t.Fatalf("a %d-line body in %d rows offers no scrolling: %q", len(f.body), f.bodyH, f.footer)
+	}
+	seen := map[string]bool{}
+	for range len(f.body) {
+		for _, line := range strings.Split(ansi.Strip(view(m)), "\n") {
+			seen[strings.TrimSpace(line)] = true
+		}
+		m, _ = modelAndCmd(m.Update(press("down")))
+	}
+	if m.layout().offset != len(f.body)-f.bodyH {
+		t.Fatalf("scrolling stopped at %d of %d", m.layout().offset, len(f.body)-f.bodyH)
+	}
+	for _, line := range f.body {
+		if want := strings.TrimSpace(ansi.Strip(line)); !seen[want] {
+			t.Errorf("line never shown: %q", want)
+		}
+	}
+}
+
+func TestResetAsksFirst(t *testing.T) {
+	t.Parallel()
+	m := testModel(t)
+	m.cfg.Warmup, m.section, m.row = time.Second, 2, 4
+	m, _ = modelAndCmd(m.Update(press("enter")))
+	if m.cfg.Warmup != time.Second || !m.resetPrompt {
+		t.Fatal("reset did not ask first")
+	}
+	m, _ = modelAndCmd(m.Update(press("x")))
+	if m.cfg.Warmup != time.Second || m.resetPrompt || m.notice != "Settings kept." {
+		t.Fatal("another key did not keep the settings")
+	}
+	m, _ = modelAndCmd(m.Update(press("enter")))
+	m, _ = modelAndCmd(m.Update(press("enter")))
+	if m.cfg.Warmup != goclient.DefaultConfig().Warmup || m.resetPrompt {
+		t.Fatal("confirmed reset kept the settings")
 	}
 }

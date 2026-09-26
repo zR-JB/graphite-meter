@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -372,7 +375,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 		}
 	}
 	if screen := view(m); !strings.Contains(screen, "Waiting for approval…") ||
-		!strings.Contains(screen, "open sign-in page") || !strings.Contains(screen, "ABCD") {
+		!strings.Contains(screen, "open page") || !strings.Contains(screen, "ABCD") {
 		t.Fatalf("sign-in popup: %q", screen)
 	}
 	seq := m.prepareSeq
@@ -424,7 +427,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	multi, _ = modelAndCmd(multi.Update(eventsMsg{seq: multi.runSeq, events: []goclient.Event{
 		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
 	}}))
-	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120)}
+	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120, true)}
 	for _, view := range views {
 		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
 			strings.Contains(view, "\x1b]") {
@@ -445,5 +448,18 @@ func TestAuthTokenIsBoundToTheChallengingIssuer(t *testing.T) {
 	m, cmd = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "grant", origin: "https://b.example"}))
 	if cmd == nil || m.prepare != prepareChecking || !strings.Contains(m.notice, "Signed in") {
 		t.Fatalf("the challenging issuer's grant was refused: %q", m.notice)
+	}
+}
+
+func TestCertificateErrorsNameTheSkipSetting(t *testing.T) {
+	t.Parallel()
+	untrusted := &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}
+	long := fmt.Errorf("%s: %w", strings.Repeat("path ", 80), untrusted)
+	const hint = "Turn on Skip TLS verify (-insecure) only for a server you trust."
+	if got := errorText(long); !strings.HasSuffix(got, hint) {
+		t.Fatalf("certificate failure hides the skip setting: %q", got)
+	}
+	if got := errorText(errors.New("refused")); strings.Contains(got, "Skip TLS") {
+		t.Fatalf("an unrelated failure suggests skipping verification: %q", got)
 	}
 }
