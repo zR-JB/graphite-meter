@@ -53,13 +53,9 @@
   {/if}
   <div class="result-cards">
     {#each cards as card (card.key)}
-      <Disclosure
-        class="surface result-card enter {card.status}"
-        tone={card.key}
-        bind:open
-      >
+      <Disclosure class="surface result-card enter {card.status}" bind:open>
         {#snippet summary()}
-          <span class="head">
+          <span class="head" data-tone={card.key}>
             <span class="tone-icon" aria-hidden="true"
               ><Icon name={card.icon} /></span
             >

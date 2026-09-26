@@ -9,7 +9,6 @@
     children: Snippet;
     open?: boolean;
     class?: string;
-    tone?: string;
   }
   let {
     title = "",
@@ -19,11 +18,10 @@
     children,
     open = $bindable(false),
     class: surface = "",
-    tone,
   }: Props = $props();
 </script>
 
-<details class="disclosure {surface}" data-tone={tone} bind:open>
+<details class="disclosure {surface}" bind:open>
   <summary>
     <span class="disclosure-summary">
       {#if summary}

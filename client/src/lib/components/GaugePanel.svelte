@@ -175,21 +175,6 @@
               phase: arc.phase,
               fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
               dashed: arc.dashed,
-              description: [
-                `${arc.label}${arc.dashed ? " — partial" : ""}`,
-                `${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
-                ...(arc.phase === "bidirectional"
-                  ? (["down", "up"] as const).flatMap((direction) => {
-                      const lane = store.result?.bidirectional?.[direction];
-                      return lane
-                        ? [
-                            `${STAGE[direction === "down" ? "download" : "upload"].label}: ` +
-                              `${fmtSpeed(gaugeRate(lane.reportedBytesPerSec))} ${gaugeUnit}`,
-                          ]
-                        : [];
-                    })
-                  : []),
-              ].join("\n"),
             }))
           : [],
     };

@@ -399,7 +399,8 @@
 
   /* Small uppercase technical label: section kickers, field and column
      labels. Mono, because it names instrument quantities. */
-  .caps {
+  .caps,
+  .field > span:first-child {
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
     letter-spacing: var(--track-caps);
@@ -613,13 +614,6 @@
     gap: 6px;
     min-width: 0;
   }
-  .field > span:first-child {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
-  }
-
   /* Segmented control: one pressed choice in a recessed track. */
   .segmented {
     display: flex;

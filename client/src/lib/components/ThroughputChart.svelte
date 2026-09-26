@@ -352,7 +352,7 @@
         <div class="marks" style:opacity={marks.opacity}>
           {#each marks.shown.labels as label (label.phase + label.x)}
             <span
-              class="phase-label"
+              class="phase-label caps"
               style:left={`${label.x}px`}
               style:top={`${label.y}px`}
               >{label.phase === "bidirectional"
@@ -484,9 +484,6 @@
   }
   .phase-label {
     translate: 0 -100%;
-    font-weight: var(--w-heavy);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
     opacity: 0.62;
   }
   .stat-label {

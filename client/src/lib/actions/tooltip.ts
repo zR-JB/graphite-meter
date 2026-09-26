@@ -3,24 +3,14 @@ import { fromAction } from "svelte/attachments";
 import { nextFrame } from "../presentation/motion.svelte";
 const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
-interface TooltipOptions {
-  text: string;
-  // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
-  instant?: boolean;
-}
-type TooltipParam = string | TooltipOptions;
 let uid = 0;
 const HOVER_DELAY_MS = 350;
 const TOUCH_DISMISS_MS = 4000;
-function normalize(param: TooltipParam): TooltipOptions {
-  return typeof param === "string" ? { text: param } : param;
-}
 /** An attachment; the getter updates the text in place, so an open tip stays open. */
-export const tooltip = (param: () => TooltipParam) =>
-  fromAction(tooltipAction, param);
+export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
 
-function tooltipAction(node: HTMLElement, param: TooltipParam) {
-  let opts = normalize(param);
+function tooltipAction(node: HTMLElement, initial: string) {
+  let text = initial;
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
   let prevDescribedBy: string | null = null;
@@ -37,14 +27,14 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
   if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
     node.tabIndex = 0;
   function show() {
-    if (bubble || !opts.text || !node.isConnected) return;
+    if (bubble || !text || !node.isConnected) return;
     bubble = document.createElement("div");
     bubble.className = "tooltip";
     bubble.id = id;
     bubble.popover = "manual";
     bubble.setAttribute("role", "tooltip");
     bubble.style.setProperty("position-anchor", `--${id}`);
-    bubble.textContent = opts.text;
+    bubble.textContent = text;
     document.body.appendChild(bubble);
     bubble.showPopover();
     prevDescribedBy = node.getAttribute("aria-describedby");
@@ -102,10 +92,6 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
   }
   function onPointerEnter(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
-    if (opts.instant) {
-      show();
-      return;
-    }
     clearHoverTimer();
     // Not motion: a hovered tip waits before it opens.
     hoverTimer = window.setTimeout(() => {
@@ -163,11 +149,11 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
   for (const [type, listener] of nodeListeners)
     node.addEventListener(type, listener as EventListener);
   return {
-    update(next: TooltipParam) {
-      opts = normalize(next);
+    update(next: string) {
+      text = next;
       if (!bubble) return;
-      if (!opts.text) hide();
-      else bubble.textContent = opts.text;
+      if (!text) hide();
+      else bubble.textContent = text;
     },
     destroy() {
       hide();

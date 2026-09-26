@@ -452,6 +452,7 @@
             {#each ["date" as const, ...columns] as column (column)}
               <button
                 type="button"
+                class="caps"
                 aria-pressed={sort === column}
                 data-order={sort !== column
                   ? undefined
@@ -511,7 +512,7 @@
                     </span>
                     {#each columns as column, index (column)}
                       <span class="metric-cell" data-tone={column}>
-                        <small
+                        <small class="caps"
                           ><span class="head-icon"
                             ><Icon name={COLUMN[column].icon} /></span
                           >{COLUMN[column].short}</small
@@ -730,9 +731,6 @@
     min-height: 34px;
     padding: 0 10px;
     color: var(--text-muted);
-    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
     transition: var(--transition-control);
   }
   .column-head > button:first-child {
@@ -883,9 +881,6 @@
       align-items: center;
       gap: 4px;
       color: var(--text-muted);
-      font: var(--w-heavy) var(--type-2xs) var(--font-mono);
-      letter-spacing: var(--track-caps);
-      text-transform: uppercase;
     }
     .metric-cell strong {
       font-size: var(--type-2xs);

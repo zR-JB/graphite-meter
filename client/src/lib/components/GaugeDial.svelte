@@ -7,7 +7,6 @@
       phase: ResultArcPhase;
       fraction: number;
       dashed: boolean;
-      description?: string;
     }[];
   }
 </script>
@@ -16,7 +15,6 @@
   import { inView } from "../actions/inView";
   import { untrack } from "svelte";
   import { Smoothed, still } from "../presentation/motion.svelte";
-  import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
   import { resultGaugeHeadPlacements } from "./resultGauge";
@@ -156,8 +154,6 @@
   {@attach inView((value) => (seen = value))}
   class="gauge-dial"
   class:motion
-  role={completed ? "group" : undefined}
-  aria-label={completed ? "Completed throughput measurements" : undefined}
 >
   <svg
     class="dial-art"
@@ -261,28 +257,6 @@
       </svg>
     </div>
   {/if}
-  {#if completed}
-    {#each results as result (result.phase)}
-      {#if result.description}
-        {@const angle = angleForFraction(
-          result.fraction,
-          layout.arcStart,
-          layout.arcSweep,
-        )}
-        <span
-          class="result-head-target"
-          role="img"
-          aria-label={result.description}
-          style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
-          style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
-          {@attach tooltip(() => ({
-            text: result.description ?? "",
-            instant: true,
-          }))}
-        ></span>
-      {/if}
-    {/each}
-  {/if}
   <div
     class="live"
     class:visible={input.showValue && !completed}
@@ -358,14 +332,6 @@
 </div>
 
 <style>
-  .result-head-target {
-    position: absolute;
-    z-index: 1;
-    width: 24px;
-    height: 24px;
-    transform: translate(-50%, -50%);
-  }
-
   .gauge-dial,
   .dial-art,
   .live,
