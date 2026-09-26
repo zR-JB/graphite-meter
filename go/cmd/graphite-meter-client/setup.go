@@ -364,35 +364,13 @@ func (m *model) commitEdit() error {
 	return nil
 }
 
-const (
-	maxWarmup   = 4 * time.Second
-	minMeasured = 500 * time.Millisecond
-	maxMeasured = 5 * time.Minute
-)
-
 func (s *setting) inBounds(d time.Duration) error {
-	lo, hi := minMeasured, maxMeasured
+	bound := goclient.StageBound
 	if s == warmupRow {
-		lo, hi = 0, maxWarmup
+		bound = goclient.WarmupBound
 	}
-	if d < lo || d > hi {
-		return fmt.Errorf("%s must be from %s to %s", s.label, fmtSetting(lo), fmtSetting(hi))
-	}
-	return nil
-}
-
-func checkSettings(cfg goclient.Config) error {
-	if len(cfg.Plan()) == 0 {
-		return errors.New("-stages selects no stage: use latency, download, upload, or bidirectional")
-	}
-	for _, section := range sections {
-		for _, s := range section.rows {
-			if s.span != nil {
-				if err := s.inBounds(*s.span(&cfg)); err != nil {
-					return err
-				}
-			}
-		}
+	if err := bound.Check(d); err != nil {
+		return fmt.Errorf("%s %w", s.label, err)
 	}
 	return nil
 }

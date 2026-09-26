@@ -91,9 +91,6 @@ func main() {
 			cfg.LoadedPingInterval = interval
 		}
 	}
-	if err := checkSettings(cfg); err != nil {
-		fail(2, err)
-	}
 	if err := cfg.Validate(); err != nil {
 		fail(2, err)
 	}
@@ -194,9 +191,8 @@ func parsePing(raw string) (time.Duration, error) {
 		return cadences[i].interval, nil
 	}
 	d, err := time.ParseDuration(name)
-	if err != nil || d < goclient.PingFast {
-		return 0, fmt.Errorf("use reply-driven, fast, medium, slow, or a duration of at least %v such as 400ms",
-			goclient.PingFast)
+	if err != nil {
+		return 0, errors.New("use reply-driven, fast, medium, slow, or a duration such as 400ms")
 	}
 	return d, nil
 }

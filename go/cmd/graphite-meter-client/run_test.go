@@ -512,6 +512,15 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
 	}
+	unavailable := goclient.Result{Stage: goclient.StageDownload, Direction: goclient.Down, Unavailable: true}
+	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: goclient.StageDownload, Result: &unavailable})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseFinished})
+	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
+	for _, want := range []string{"✓ 4 s", "! incomplete"} {
+		if !strings.Contains(track, want) {
+			t.Errorf("stage track lost %q: %q", want, track)
+		}
+	}
 	if m.run.stages[2].state != stagePending {
 		t.Error("an unknown phase moved a stage")
 	}

@@ -109,6 +109,12 @@ func TestConfigValidate(t *testing.T) {
 		{"WebSocket unbounded", func(c *Config) {
 			c.LatencyTransport, c.PingInterval = wire.TransportWebSocket, 45*time.Second
 		}, ""},
+		{"no stage", func(c *Config) { c.Stages = StageSet{} }, "select at least one stage"},
+		{"warmup", func(c *Config) { c.Warmup = -time.Second }, "warmup must be from 0 s to 4 s"},
+		{"short stage", func(c *Config) { c.DownloadDuration = 999 * time.Millisecond }, "download duration must be"},
+		{"long stage", func(c *Config) { c.BidirectionalDuration = time.Hour }, "bidirectional duration must be"},
+		{"fast ping", func(c *Config) { c.LoadedPingInterval = 79 * time.Millisecond }, "at least 80ms"},
+		{"streams", func(c *Config) { c.TransferStreams.Forced = MaxTransferStreams + 1 }, "streams must be"},
 	} {
 		cfg := DefaultConfig()
 		// An unreachable base URL proves prepare validates before discovery.
@@ -118,7 +124,8 @@ func TestConfigValidate(t *testing.T) {
 		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
 			t.Errorf("%s: Validate = %v, want %q", c.name, err, c.want)
 		}
-		if _, prepareErr := prepare(t.Context(), cfg); c.want != "" && prepareErr.Error() != err.Error() {
+		pathErr := cfg.normalized().checkPaths()
+		if _, prepareErr := prepare(t.Context(), cfg); pathErr != nil && prepareErr.Error() != pathErr.Error() {
 			t.Errorf("%s: prepare = %v, want the validation error", c.name, prepareErr)
 		}
 	}

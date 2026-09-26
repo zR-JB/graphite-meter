@@ -2,8 +2,10 @@ package goclient
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -124,8 +126,50 @@ func validatePingInterval(c Config) error {
 	return nil
 }
 
+type DurationBound struct{ Min, Max time.Duration }
+
+// The stage minimum leaves room above the 800 ms of evidence every headline needs.
+var (
+	WarmupBound = DurationBound{0, 4 * time.Second}
+	StageBound  = DurationBound{time.Second, 5 * time.Minute}
+)
+
+func (b DurationBound) Check(d time.Duration) error {
+	if d < b.Min || d > b.Max {
+		seconds := func(d time.Duration) string { return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s" }
+		return fmt.Errorf("must be from %s to %s", seconds(b.Min), seconds(b.Max))
+	}
+	return nil
+}
+
+// Validate checks every user setting before a run; Run itself only needs checkPaths.
 func (c Config) Validate() error {
-	c = c.normalized()
+	if len(c.Plan()) == 0 {
+		return errors.New("select at least one stage: latency, download, upload or bidirectional")
+	}
+	if err := WarmupBound.Check(c.Warmup); err != nil {
+		return fmt.Errorf("warmup %w", err)
+	}
+	for _, stage := range []StagePlan{{Name: StageLatency, Duration: c.LatencyDuration},
+		{Name: StageDownload, Duration: c.DownloadDuration}, {Name: StageUpload, Duration: c.UploadDuration},
+		{Name: StageBidirectional, Duration: c.BidirectionalDuration}} {
+		if err := StageBound.Check(stage.Duration); err != nil {
+			return fmt.Errorf("%s duration %w", stage.Name, err)
+		}
+	}
+	for _, interval := range []time.Duration{c.PingInterval, c.LoadedPingInterval} {
+		if interval != PingReplyDriven && interval < PingFast {
+			return fmt.Errorf("ping cadence must be reply-driven or at least %v", PingFast)
+		}
+	}
+	if streams := c.TransferStreams; streams.Forced < 0 || streams.Forced > MaxTransferStreams ||
+		streams.AutomaticMax < 1 || streams.AutomaticMax > MaxTransferStreams {
+		return fmt.Errorf("streams must be from 1 to %d", MaxTransferStreams)
+	}
+	return c.normalized().checkPaths()
+}
+
+func (c Config) checkPaths() error {
 	fetch, ws, wt := wire.TransportFetchStream, wire.TransportWebSocket, wire.TransportWebTransport
 	switch {
 	case !slices.Contains([]string{"auto", "http1", "http2", "http3"}, c.ThroughputProtocol):

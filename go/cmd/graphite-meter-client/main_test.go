@@ -103,11 +103,8 @@ func TestParsePing(t *testing.T) {
 		"Slow":         600 * time.Millisecond,
 		"medium":       goclient.PingMedium,
 		"1500ms":       1500 * time.Millisecond,
-		"80ms":         goclient.PingFast,
 		"Reply-driven": goclient.PingReplyDriven,
-		"79ms":         0,
 		"instant":      0,
-		"0s":           0,
 	} {
 		got, err := parsePing(raw)
 		if got != want || (err != nil) != (want == 0) {
@@ -116,25 +113,8 @@ func TestParsePing(t *testing.T) {
 	}
 }
 
-func TestCommandLineSettingsAndExitStatus(t *testing.T) {
+func TestExitStatus(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		edit func(*goclient.Config)
-		want string
-	}{
-		{func(*goclient.Config) {}, ""},
-		{func(c *goclient.Config) { c.Stages = goclient.StageSet{} }, "selects no stage"},
-		{func(c *goclient.Config) { c.Warmup = -time.Second }, "Warmup must be"},
-		{func(c *goclient.Config) { c.DownloadDuration = 0 }, "Download duration must be"},
-		{func(c *goclient.Config) { c.BidirectionalDuration = time.Hour }, "Bidirectional duration must be"},
-	} {
-		cfg := goclient.DefaultConfig()
-		c.edit(&cfg)
-		if err := checkSettings(cfg); c.want == "" && err != nil || c.want != "" &&
-			(err == nil || !strings.Contains(err.Error(), c.want)) {
-			t.Errorf("checkSettings = %v, want %q", err, c.want)
-		}
-	}
 	m := testModel(t)
 	for _, c := range []struct {
 		last        goclient.Outcome
@@ -306,9 +286,9 @@ func TestCommitEdit(t *testing.T) {
 			func(c goclient.Config) bool { return c.DownloadDuration == 90*time.Second },
 			"",
 		},
-		{sections[1].rows[8], false, "0", nil, "from 500 ms to 300 s"},
-		{sections[1].rows[8], false, "6m", nil, "from 500 ms to 300 s"},
-		{warmupRow, false, "5s", nil, "from 0 ms to 4 s"},
+		{sections[1].rows[8], false, "0", nil, "from 1 s to 300 s"},
+		{sections[1].rows[8], false, "6m", nil, "from 1 s to 300 s"},
+		{warmupRow, false, "5s", nil, "from 0 s to 4 s"},
 		{sections[1].rows[8], false, "soon", nil, "duration like"},
 		{streamsRow, false, "8", func(c goclient.Config) bool {
 			return c.TransferStreams == goclient.TransferStreamPolicy{AutomaticMax: 8}

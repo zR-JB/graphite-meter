@@ -254,6 +254,8 @@ func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {
 	}
 }
 
+var errInsufficientEvidence = fmt.Errorf("the latest interval holds under %v of evidence", minimumSurvivorEvidence)
+
 // errStaleBoundary marks a boundary without new clock evidence; it is skipped, never a zero rate.
 var errStaleBoundary = errors.New("boundary did not advance")
 
@@ -307,7 +309,7 @@ func (a *aggregateMeasurements) result(stage Stage, dir Direction) Result {
 		!interval.Complete ||
 		interval.Window == nil ||
 		interval.End-interval.Start < minimumSurvivorEvidence {
-		result.Err = fmt.Errorf("latest survivor interval has insufficient evidence")
+		result.Err = errInsufficientEvidence
 		return result
 	}
 	components := interval.Window.Down
@@ -319,7 +321,7 @@ func (a *aggregateMeasurements) result(stage Stage, dir Direction) Result {
 	if rate == nil ||
 		len(components) == 0 ||
 		slices.ContainsFunc(components, func(c ComponentWindow) bool { return c.Duration < minimumSurvivorEvidence }) {
-		result.Err = fmt.Errorf("latest receiver windows have insufficient evidence")
+		result.Err = errInsufficientEvidence
 		return result
 	}
 	result.MeanBps = *rate

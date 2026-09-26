@@ -756,8 +756,11 @@ func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 					break
 				}
 			}
-			if server.removed {
+			switch {
+			case server.removed:
 				own.Err = errors.New("earlier partial measurement")
+			case own.Unavailable:
+				own.Err = errInsufficientEvidence
 			}
 			server.results = append(server.results, own)
 		}

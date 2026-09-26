@@ -169,6 +169,7 @@ const (
 	stageWarmup
 	stageMeasuring
 	stageDone
+	stageIncomplete
 	stageStopped
 )
 
@@ -220,8 +221,8 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 }
 
 func (m model) startRun() (tea.Model, tea.Cmd) {
-	if len(m.cfg.Plan()) == 0 {
-		m.notice = "Turn on at least one stage before starting."
+	if err := m.cfg.Validate(); err != nil {
+		m.notice = "Cannot start: " + err.Error() + "."
 		m.run, m.section, m.row = nil, 1, 0
 		return m, nil
 	}
@@ -303,6 +304,10 @@ func (m *model) apply(e goclient.Event) {
 			goclient.PhaseMeasuring: stageMeasuring,
 			goclient.PhaseFinished:  stageDone,
 		}[e.Phase]
+		unavailable := func(result goclient.Result) bool { return result.Stage == e.Stage && result.Unavailable }
+		if state == stageDone && slices.ContainsFunc(r.results, unavailable) {
+			state = stageIncomplete
+		}
 		i := slices.IndexFunc(r.stages, func(s stageProgress) bool { return s.name == e.Stage })
 		if i >= 0 && state != stagePending {
 			r.stages[i].state, r.stages[i].since = state, e.At

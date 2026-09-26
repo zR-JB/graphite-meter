@@ -171,7 +171,7 @@ func websocketClient(cfg Config) (*http.Client, func()) {
 
 func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.checkPaths(); err != nil {
 		return nil, err
 	}
 	if cfg.grant != "" {
@@ -298,7 +298,7 @@ type runner struct {
 
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
-	return min(max(slowStartRTTs*rtt, base), 4*time.Second)
+	return min(max(slowStartRTTs*rtt, base), WarmupBound.Max)
 }
 
 const stageReadyTimeout = 10 * time.Second

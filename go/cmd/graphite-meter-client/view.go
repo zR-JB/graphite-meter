@@ -453,6 +453,8 @@ func (m model) stageTrack(w int) []string {
 			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
 			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
+		case stageIncomplete:
+			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render("incomplete"))
 		case stageStopped:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
 		case stagePending:
