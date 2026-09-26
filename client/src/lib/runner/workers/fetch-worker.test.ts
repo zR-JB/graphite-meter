@@ -132,7 +132,13 @@ for (const streams of [1, 128])
       await import(`./fetch-worker.ts?pool-copies=${streams}`);
       const start = globalThis.onmessage as (event: MessageEvent) => void;
       start({
-        data: { type: "start", dir: "up", url: "/upload?id=test", streams },
+        data: {
+          type: "start",
+          dir: "up",
+          url: "https://meter.test/upload?id=test",
+          streams,
+        },
+        origin: "",
       } as MessageEvent);
       await ended.promise;
       expect(reservoirBytes).toBe(uploadPoolBytes(streams, 8));

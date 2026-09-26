@@ -19,11 +19,11 @@ class Scenario {
   }
 
   get pingUrl(): string {
-    return `https://meter.test/${this.id}/wt/ping`;
+    return `https://${this.id}.meter.test/wt/ping`;
   }
 
   get mintUrl(): string {
-    return `https://meter.test/${this.id}/wt/token`;
+    return `https://${this.id}.meter.test/wt/session`;
   }
 
   outcomeFor(index: number): Outcome {
@@ -39,7 +39,7 @@ class Scenario {
 
 const scenarios = new Map<string, Scenario>();
 const scenarioOf = (url: string): Scenario => {
-  const id = new URL(url).pathname.split("/")[1];
+  const id = new URL(url).hostname.split(".")[0];
   const found = scenarios.get(id);
   if (!found) throw new Error(`unexpected url ${url}`);
   return found;
@@ -329,6 +329,9 @@ test("a ticket spent by a temporary downstream refusal can recover within readin
     expect(realm.posted.some((message) => message.type === "open")).toBe(true);
     expect(scenario.mints).toBeGreaterThanOrEqual(2);
   } finally {
-    realm.send({ type: "stop" });
+    realm.send({
+      type: "stop",
+      cutoffEpochMs: performance.timeOrigin + performance.now(),
+    });
   }
 });

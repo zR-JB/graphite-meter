@@ -53,7 +53,7 @@ export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
 const BROWSER_CONNECTION_BUDGET = 6;
-const MAX_STREAMS = 128;
+export const MAX_STREAMS = 128;
 
 export function normalizeHttpProtocol(
   protocol?: string,

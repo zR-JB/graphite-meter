@@ -11,6 +11,19 @@ import {
   type ProgressDelta,
 } from "./progressWindow";
 import { redirectForCredentials } from "../../request-auth";
+import { MAX_STREAMS, ROUTES } from "../paths";
+import {
+  HTTP_SCHEMES,
+  fields,
+  flag,
+  integer,
+  oneOf,
+  optional,
+  requestCredentials,
+  requestHeaders,
+  requestUrl,
+  tokenMint,
+} from "./inbound";
 
 type InMsg =
   | {
@@ -85,8 +98,44 @@ let finalize: (() => Promise<void>) | null = null;
 /* Resolves the shutdown grace as soon as the terminal record lands, so the stage does not sit its full length. */
 let completed: (() => void) | null = null;
 
-ctx.onmessage = (e: MessageEvent<InMsg>): void => {
-  const msg = e.data;
+/** Parse exactly the messages the session owner sends; anything else throws to its error handler. */
+export function parseInMsg(data: unknown): InMsg {
+  const m = fields(data);
+  switch (oneOf(m.type, ["start", "measure", "stop"], "type")) {
+    case "measure":
+      return {
+        type: "measure",
+        seq: integer(m.seq, 0, Number.MAX_SAFE_INTEGER, "seq"),
+      };
+    case "stop":
+      return { type: "stop" };
+    case "start": {
+      const dir = oneOf(m.dir, ["down", "up"], "direction");
+      return {
+        type: "start",
+        url: requestUrl(
+          m.url,
+          ["https:"],
+          [dir === "down" ? ROUTES.wtDownload : ROUTES.wtUpload],
+        ),
+        dir,
+        lanes: integer(m.lanes, 0, MAX_STREAMS, "lane count"),
+        datagrams: flag(m.datagrams, "datagram mode"),
+        mint: tokenMint(m.mint),
+        progressUrl: optional(m.progressUrl, (v) =>
+          requestUrl(v, HTTP_SCHEMES, [ROUTES.uploadProgress]),
+        ),
+        headers: requestHeaders(m.headers),
+        credentials: requestCredentials(m.credentials),
+      };
+    }
+  }
+}
+
+ctx.onmessage = (e: MessageEvent<unknown>): void => {
+  // Only the owning page reaches a dedicated worker, through a port whose messages carry no origin.
+  if (e.origin !== "") return;
+  const msg = parseInMsg(e.data);
   switch (msg.type) {
     case "start":
       stopped = false;

@@ -14,6 +14,17 @@ import {
 import { incompressibleBlock } from "./payload";
 import { classifyUploadFailure } from "./progressFeed";
 import type { FlowDirection, RecoveryCause } from "../contract";
+import { MAX_STREAMS, ROUTES } from "../paths";
+import {
+  HTTP_SCHEMES,
+  fields,
+  integer,
+  oneOf,
+  optional,
+  requestCredentials,
+  requestHeaders,
+  requestUrl,
+} from "./inbound";
 
 /* An upload lane is stopped by terminating the worker, so it has no shutdown message. */
 type InMsg =
@@ -112,8 +123,33 @@ let init: RequestInit = fetchInit("same-origin");
 let measureSeq = 0;
 let progress = progressWindow(0, REPORT_GAP_MS);
 
-ctx.onmessage = (e: MessageEvent<InMsg>) => {
-  const msg = e.data;
+/** Parse exactly the messages the lane owner sends; anything else throws to the owner's error handler. */
+export function parseInMsg(data: unknown): InMsg {
+  const m = fields(data);
+  if (oneOf(m.type, ["start", "measure"], "type") === "measure")
+    return {
+      type: "measure",
+      seq: integer(m.seq, 0, Number.MAX_SAFE_INTEGER, "seq"),
+    };
+  const dir = oneOf(m.dir, ["down", "up"], "direction");
+  return {
+    type: "start",
+    dir,
+    url: requestUrl(m.url, HTTP_SCHEMES, [
+      dir === "down" ? ROUTES.download : ROUTES.upload,
+    ]),
+    streams: optional(m.streams, (n) =>
+      integer(n, 1, MAX_STREAMS, "stream count"),
+    ),
+    credentials: requestCredentials(m.credentials),
+    headers: requestHeaders(m.headers),
+  };
+}
+
+ctx.onmessage = (e: MessageEvent<unknown>) => {
+  // Only the owning page reaches a dedicated worker, through a port whose messages carry no origin.
+  if (e.origin !== "") return;
+  const msg = parseInMsg(e.data);
   if (msg.type === "measure") {
     measureSeq = msg.seq;
     progress.reset();

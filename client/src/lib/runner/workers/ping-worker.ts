@@ -11,6 +11,17 @@ import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { createPingScheduler, type PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
 import { ESTABLISH_BUDGET_MS } from "../real/budgets";
+import { ROUTES } from "../paths";
+import {
+  fields,
+  finite,
+  flag,
+  integer,
+  oneOf,
+  optional,
+  requestUrl,
+  tokenMint,
+} from "./inbound";
 import {
   pingSample,
   reflectorHandlingMs,
@@ -105,8 +116,51 @@ let flusher: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let drainTimer: ReturnType<typeof setTimeout> | null = null;
 
-ctx.onmessage = (e: MessageEvent<InMsg>): void => {
-  const m = e.data;
+/** Parse exactly the messages the latency channel sends; anything else throws to its error handler. */
+export function parseInMsg(data: unknown): InMsg {
+  const m = fields(data);
+  switch (oneOf(m.type, ["start", "measure", "stop"], "type")) {
+    case "measure":
+      return {
+        type: "measure",
+        intervalMs: optional(m.intervalMs, (v) => finite(v, 1, "interval")),
+      };
+    case "stop":
+      return {
+        type: "stop",
+        cutoffEpochMs: finite(m.cutoffEpochMs, 0, "cutoff"),
+      };
+    case "start": {
+      const transport = oneOf(
+        m.transport,
+        ["websocket", "webtransport"],
+        "transport",
+      );
+      return {
+        type: "start",
+        url:
+          transport === "websocket"
+            ? requestUrl(m.url, ["ws:", "wss:"], [ROUTES.ping])
+            : requestUrl(m.url, ["https:"], [ROUTES.wtPing]),
+        transport,
+        mint: tokenMint(m.mint),
+        intervalMs: finite(m.intervalMs, 1, "interval"),
+        replyDriven: flag(m.replyDriven, "reply mode"),
+        maxInFlight: integer(m.maxInFlight, 1, 1024, "in-flight cap"),
+        lossK: finite(m.lossK, 1, "loss multiplier"),
+        lossFloorMs: finite(m.lossFloorMs, 0, "loss floor"),
+        checkAuthentication: optional(m.checkAuthentication, (v) =>
+          flag(v, "authentication check"),
+        ),
+      };
+    }
+  }
+}
+
+ctx.onmessage = (e: MessageEvent<unknown>): void => {
+  // Only the owning page reaches a dedicated worker, through a port whose messages carry no origin.
+  if (e.origin !== "") return;
+  const m = parseInMsg(e.data);
   switch (m.type) {
     case "start":
       url = m.url;

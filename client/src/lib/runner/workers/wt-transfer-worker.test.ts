@@ -3,8 +3,9 @@ import { bootWorker, type WorkerRealm } from "./test-helpers.testutil";
 
 const globals = globalThis as Record<string, unknown>;
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";
-const PROGRESS_URL = "https://meter.test/upload/progress/gmu_test";
-const MINT_URL = "https://meter.test/wt/token";
+const DOWNLOAD_URL = "https://meter.test/wt/download?bytes=1024";
+const PROGRESS_URL = "https://meter.test/upload/progress?id=gmu_test";
+const MINT_URL = "https://meter.test/wt/session";
 
 const DATAGRAM_BYTES = 1200;
 const DRAIN_BUDGET = 40;
@@ -148,7 +149,7 @@ const fakeFetch = async (
   init?: RequestInit,
 ): Promise<Response> => {
   const url = String(input);
-  if (url.endsWith("/wt/token")) {
+  if (new URL(url).pathname === "/wt/session") {
     if (mintRefuses)
       return new Response("", {
         status: 403,
@@ -203,7 +204,7 @@ function startTransfer(
 ): void {
   realm.send({
     type: "start",
-    url: SESSION_URL,
+    url: options.dir === "down" ? DOWNLOAD_URL : SESSION_URL,
     dir: "up",
     lanes: 1,
     datagrams: false,
@@ -313,7 +314,7 @@ function startDownload(realm: Realm, mintUrl: string): void {
   startTransfer(realm, { dir: "down", mint: { url: mintUrl } });
 }
 test("a dial refused before acceptance re-dials on the same token", async () => {
-  const mintUrl = "https://meter.test/unspent/wt/token";
+  const mintUrl = "https://unspent.meter.test/wt/session";
   const realm = await bootTransfer(
     { dir: "down", mint: { url: mintUrl } },
     () => (dialRefuses = true),
@@ -327,7 +328,7 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   expect(mints).toBe(1);
 });
 test("a session that established never offers its token again", async () => {
-  const mintUrl = "https://meter.test/spent/wt/token";
+  const mintUrl = "https://spent.meter.test/wt/session";
   const realm = await bootTransfer({ dir: "down", mint: { url: mintUrl } });
   await Bun.sleep(5);
   startDownload(realm, mintUrl);

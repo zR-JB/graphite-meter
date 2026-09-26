@@ -62,10 +62,11 @@ async function withWorker(
   try {
     await import(`./ping-worker.ts?lifecycle=${realm++}`);
     const handler = globalThis.onmessage as (event: MessageEvent) => void;
-    const send = (data: unknown) => handler({ data } as MessageEvent);
+    const send = (data: unknown) =>
+      handler({ data, origin: "" } as MessageEvent);
     send({
       type: "start",
-      url: "ws://meter.test/ping",
+      url: "ws://meter.test/ws/ping",
       transport: "websocket",
       intervalMs: 250,
       replyDriven: true,

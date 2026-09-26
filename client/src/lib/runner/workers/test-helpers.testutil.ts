@@ -1,7 +1,7 @@
 const globals = globalThis as Record<string, unknown>;
 
 export const messageEvent = <T>(data: T): MessageEvent<T> =>
-  ({ data }) as MessageEvent<T>;
+  ({ data, origin: "" }) as MessageEvent<T>;
 
 export function stubFetch(handler: typeof fetch): () => void {
   const real = globalThis.fetch;
