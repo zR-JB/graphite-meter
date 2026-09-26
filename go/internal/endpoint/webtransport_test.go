@@ -7,15 +7,12 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -148,45 +145,6 @@ func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
 			t.Fatalf("deadlines = %v, want the last capped at the lane's lifetime", stream.deadlines)
 		}
 	})
-}
-
-// A capped mint is retryable and a refused one is not; neither is an authentication challenge.
-func TestSocketToken(t *testing.T) {
-	for _, tc := range []struct {
-		name              string
-		mint              SocketTokenMinter
-		status            int
-		retryAfter, token string
-		expires           int64
-	}{
-		{"public mode", nil, http.StatusOK, "", "", 0},
-		{"minted", func(*http.Request) (string, time.Time, auth.SocketMint) {
-			return "gmw_minted", time.UnixMilli(3_600_000), auth.SocketMintOK
-		}, http.StatusOK, "", "gmw_minted", 3_600_000},
-		{"at capacity", func(*http.Request) (string, time.Time, auth.SocketMint) {
-			return "", time.Time{}, auth.SocketMintAtCapacity
-		}, http.StatusTooManyRequests, "1", "", 0},
-		{"no session", func(*http.Request) (string, time.Time, auth.SocketMint) {
-			return "", time.Time{}, auth.SocketMintNoSession
-		}, http.StatusForbidden, "", "", 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			rec := httptest.NewRecorder()
-			SocketToken(tc.mint).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/wt/session", nil))
-			if rec.Code != tc.status || rec.Header().Get("Retry-After") != tc.retryAfter ||
-				rec.Header().Get("Graphite-Meter-Auth") != "" {
-				t.Fatalf("status = %d headers = %v", rec.Code, rec.Header())
-			}
-			var body struct {
-				Token   string `json:"token"`
-				Expires int64  `json:"expires"`
-			}
-			if tc.status == http.StatusOK && (json.Unmarshal(rec.Body.Bytes(), &body) != nil ||
-				body.Token != tc.token || body.Expires != tc.expires) {
-				t.Fatalf("body = %s", rec.Body.String())
-			}
-		})
-	}
 }
 
 // The drain feeds the upload counter, so a datagram larger than the buffer must refuse rather than deliver a prefix.

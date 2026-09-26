@@ -26,8 +26,8 @@ func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
 				r.Header.Set("Origin", "https://meter.example")
 				r = r.WithContext(context.WithValue(t.Context(), principalKey{},
 					sessionPrincipal(sess, "local", false)))
-				token, _, status := s.MintSocketToken(r, route.Kind(kind))
-				if status != SocketMintOK {
+				token, _, status := s.mintSocketToken(r, route.Kind(kind))
+				if status != http.StatusOK {
 					t.Fatalf("mint status = %v", status)
 				}
 				return token

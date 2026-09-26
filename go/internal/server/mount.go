@@ -5,7 +5,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/quic-go/webtransport-go"
@@ -48,10 +47,10 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 		m.http(route.UploadSession, http.HandlerFunc(e.upload.ServeSession), proto)
 		m.http(route.UploadCheckpoint, http.HandlerFunc(e.upload.ServeCheckpoint), proto)
 		m.http(route.UploadProgress, http.HandlerFunc(e.upload.ServeProgress), proto)
-		m.http(route.WTSession, endpoint.SocketToken(m.minter(route.WebTransport)), proto)
+		m.http(route.WTSession, authn.SocketTokenHandler(route.WebTransport), proto)
 	}
 	if topo.latency {
-		m.http(route.WSSession, endpoint.SocketToken(m.minter(route.WebSocket)), 0)
+		m.http(route.WSSession, authn.SocketTokenHandler(route.WebSocket), 0)
 		m.handle(route.Ping, m.webSocketPing())
 	}
 	if topo.wt != nil {
@@ -89,14 +88,6 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 		h.ServeHTTP(w, r)
 	}))
 	m.mux.HandleFunc(http.MethodOptions+" "+path, m.authn.ServePreflight)
-}
-
-// minter mints kind tickets under authentication and is nil in public mode.
-func (m *mounter) minter(kind route.Kind) endpoint.SocketTokenMinter {
-	if !m.authn.Enabled() {
-		return nil
-	}
-	return func(r *http.Request) (string, time.Time, auth.SocketMint) { return m.authn.MintSocketToken(r, kind) }
 }
 
 // wsPingReadLimit bounds a probe frame; a valid PING is at most 15 bytes.

@@ -434,8 +434,8 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 			if strings.HasPrefix(path, "/wt/") {
 				kind = route.WebTransport
 			}
-			var status SocketMint
-			if token, _, status = s.MintSocketToken(r, kind); status != SocketMintOK {
+			var status int
+			if token, _, status = s.mintSocketToken(r, kind); status != http.StatusOK {
 				t.Fatalf("mint: %d", status)
 			}
 		}), Listener{})
@@ -524,7 +524,7 @@ func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 	p.grant = &grant{sess: sess, origin: requestingUI, ctx: ctx}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-	if _, _, status := s.MintSocketToken(r, route.WebTransport); status != SocketMintNoSession {
+	if _, _, status := s.mintSocketToken(r, route.WebTransport); status != http.StatusForbidden {
 		t.Fatal("revoked grant minted a ticket")
 	}
 }
