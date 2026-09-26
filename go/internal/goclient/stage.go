@@ -196,7 +196,8 @@ func (s *stageRun) ready() error {
 				return err
 			}
 		case now := <-timer.C:
-			failure := fmt.Errorf("server resources were not ready within %v", stageReadyTimeout)
+			failure := fmt.Errorf("server resources were not ready within %v: %w", stageReadyTimeout,
+				context.DeadlineExceeded)
 			if !s.c.hasMeasured {
 				return failure
 			}
@@ -420,7 +421,7 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			case sample.final:
 				stalled = true
 			case !s.ending && time.Since(s.lastMovement[id].of(dir)) >= redialWindow:
-				err := fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow)
+				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
 				s.fail(server, string(dir), err, time.Now())
 				removed = true
 			}

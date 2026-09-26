@@ -208,7 +208,14 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		server.cancelTransfer(err)
 		server.cancelLatency(err)
 	}
-	failure := ServerFailure{ServerID: server.id(), Stage: stage.Name, Scope: scope, Err: err, At: at.Sub(c.started)}
+	failure := ServerFailure{
+		ServerID: server.id(),
+		Stage:    stage.Name,
+		Scope:    scope,
+		Reason:   failureReason(err),
+		Err:      err,
+		At:       at.Sub(c.started),
+	}
 	c.failures = append(c.failures, failure)
 	c.emit(Event{
 		Kind:     EventServerFailure,

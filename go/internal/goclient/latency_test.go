@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -85,6 +86,51 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 			t.Fatalf("redial: %d connections, %+v, %v", accepted.Load(), stats, err)
 		}
 	})
+}
+
+func TestLaneEndingsNameTheirReason(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		code     websocket.StatusCode
+		session  webtransport.SessionErrorCode
+		want     FailureReason
+		redialed bool
+	}{
+		{4001, 1, FailureTimeout, true},
+		{4002, 2, FailureTimeout, true},
+		{1001, 4, FailureConnectionLost, true},
+		{1008, 3, FailureSignIn, false},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			var accepted atomic.Int64
+			r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if accepted.Add(1) > 1 {
+					pingHandler(answerAll, time.Millisecond).ServeHTTP(w, r)
+					return
+				}
+				conn, err := websocket.Accept(w, r, nil)
+				if err != nil {
+					return
+				}
+				_, msg, _ := conn.Read(r.Context())
+				time.Sleep(time.Millisecond)
+				if id, err := wire.DecodePing(string(msg)); err == nil {
+					_ = conn.Write(r.Context(), websocket.MessageText, []byte(wire.EncodePong(id, 0)))
+				}
+				_ = conn.Close(c.code, "")
+			}))
+			r.cfg.PingInterval = 20 * time.Millisecond
+			_, err := r.measureNow(t.Context(), time.Second)
+			if (err == nil) != c.redialed || (accepted.Load() > 1) != c.redialed {
+				t.Errorf("close %d: %v after %d connections", c.code, err, accepted.Load())
+			}
+			closed := &webtransport.SessionError{Remote: true, ErrorCode: c.session}
+			if got := failureReason(laneEnding(websocket.CloseError{Code: c.code})); got != c.want ||
+				failureReason(laneEnding(closed)) != c.want {
+				t.Errorf("close %d reads as %s, want %s", c.code, got, c.want)
+			}
+		})
+	}
 }
 
 func TestMeasureLatencyFailsPromptlyOnAnUnprovenBus(t *testing.T) {

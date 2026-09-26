@@ -67,6 +67,7 @@ type ServerFailure struct {
 	ServerID string
 	Stage    Stage
 	Scope    FailureScope
+	Reason   FailureReason
 	Err      error
 	At       time.Duration
 }
@@ -264,7 +265,6 @@ func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {
 
 var errInsufficientEvidence = fmt.Errorf("the latest interval holds under %v of evidence", minimumSurvivorEvidence)
 
-// errStaleBoundary marks a boundary without new clock evidence; it is skipped, never a zero rate.
 var errStaleBoundary = errors.New("boundary did not advance")
 
 func (a *aggregateMeasurements) window(first, last measurementBoundary) (*AggregateWindow, error) {

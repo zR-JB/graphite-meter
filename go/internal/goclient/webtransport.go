@@ -88,7 +88,7 @@ func (b wtBus) Send(_ context.Context, msg string) error { return b.sess.SendDat
 
 func (b wtBus) Recv(ctx context.Context) (string, error) {
 	data, err := b.sess.ReceiveDatagram(ctx)
-	return string(data), err
+	return string(data), laneEnding(err)
 }
 
 func (b wtBus) Close() { b.sess.close() }
@@ -205,9 +205,6 @@ func downloadLaneWT(
 		}
 		stopOnCancel()
 		stopOnGone()
-		if sess.Context().Err() != nil {
-			return progressed, laneStopError(ctx, sess.Context().Err())
-		}
 	}
 	return progressed, nil
 }
@@ -257,5 +254,5 @@ func laneStopError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return nil
 	}
-	return err
+	return laneEnding(err)
 }

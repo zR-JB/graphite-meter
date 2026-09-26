@@ -77,6 +77,12 @@ var outcomeLabels = map[goclient.Outcome]string{
 	goclient.OutcomeFailed:     "Failed",
 }
 
+var failureLabels = map[goclient.FailureReason]string{
+	goclient.FailureConnectionLost: "Connection lost",
+	goclient.FailureTimeout:        "Connection timed out",
+	goclient.FailureSignIn:         "Sign-in required",
+}
+
 var transportLabels = map[string]string{
 	wire.TransportFetchStream:          "Fetch streams",
 	wire.TransportWebSocket:            "WebSocket",

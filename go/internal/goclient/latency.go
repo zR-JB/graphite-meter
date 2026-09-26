@@ -27,7 +27,7 @@ func (b wsBus) Send(ctx context.Context, msg string) error {
 
 func (b wsBus) Recv(ctx context.Context) (string, error) {
 	_, msg, err := b.conn.Read(ctx)
-	return string(msg), err
+	return string(msg), laneEnding(err)
 }
 
 func (b wsBus) Close() { _ = b.conn.Close(websocket.StatusNormalClosure, "") }
@@ -231,6 +231,8 @@ func (r *runner) measureLatency(
 			switch {
 			case measureCtx.Err() != nil:
 				return finish(context.Cause(measureCtx))
+			case permanent(err):
+				return finish(err)
 			case !probes.interrupt(time.Now()):
 				return finish(fmt.Errorf("latency channel failed: %w", err))
 			case probes.ended(time.Now()):

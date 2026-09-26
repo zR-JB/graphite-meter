@@ -126,7 +126,6 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 
-// running covers a started run until its first server report, while the previous run stays on screen.
 func (m model) running() bool  { return m.next != nil || m.run != nil && m.run.live() }
 func (m model) finished() bool { return m.run != nil && !m.running() }
 

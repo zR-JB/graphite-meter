@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
@@ -65,6 +68,48 @@ func permanent(err error) bool {
 }
 
 var errNoBytes = errors.New("no bytes moved")
+
+type laneEnd string
+
+func (e laneEnd) Error() string { return "the server ended the lane: " + string(e) }
+
+// laneEnding reads api/wire.md#lane-endings: a revoked grant asks for sign-in, anything else is redialled.
+func laneEnding(err error) error {
+	ends := []laneEnd{"idle", "lifetime", "revoked", "shutdown"}
+	i := slices.Index([]websocket.StatusCode{4001, 4002, 1008, 1001}, websocket.CloseStatus(err))
+	if closed, ok := errors.AsType[*webtransport.SessionError](err); ok && closed.Remote {
+		i = slices.Index([]webtransport.SessionErrorCode{1, 2, 3, 4}, closed.ErrorCode)
+	}
+	switch {
+	case i < 0:
+		return err
+	case ends[i] == "revoked":
+		return &AuthRequiredError{}
+	}
+	return ends[i]
+}
+
+type FailureReason string
+
+const (
+	FailureConnectionLost FailureReason = "connection-lost"
+	FailureTimeout        FailureReason = "timeout"
+	FailureSignIn         FailureReason = "sign-in-required"
+)
+
+var errStalled = errors.New("stopped delivering bytes")
+
+func failureReason(err error) FailureReason {
+	end, ended := errors.AsType[laneEnd](err)
+	_, auth := errors.AsType[*AuthRequiredError](err)
+	switch {
+	case auth:
+		return FailureSignIn
+	case ended && end != "shutdown", errors.Is(err, errStalled), errors.Is(err, context.DeadlineExceeded):
+		return FailureTimeout
+	}
+	return FailureConnectionLost
+}
 
 // persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
 func persist(ctx context.Context, attempt func(context.Context) (progressed bool, err error)) error {
