@@ -188,18 +188,9 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 }
 
 func socketKeys(addr net.Addr, trusted []netip.Prefix) []string {
-	var ip netip.Addr
-	switch a := addr.(type) {
-	case *net.TCPAddr:
-		ip = a.AddrPort().Addr()
-	case *net.UDPAddr:
-		ip = a.AddrPort().Addr()
-	default:
-		addrPort, err := netip.ParseAddrPort(addr.String())
-		if err != nil {
-			return []string{"unknown"}
-		}
-		ip = addrPort.Addr()
+	ip, ok := transport.Peer(addr.String())
+	if !ok {
+		return []string{"unknown"}
 	}
 	if transport.Trusted(ip, trusted) {
 		return nil

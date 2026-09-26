@@ -24,15 +24,11 @@ type ClientAddress struct {
 
 // ResolveClientAddress uses the peer, or a trusted proxy's single X-Real-IP; ok reports usable evidence.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddress, bool) {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-	peer, err := netip.ParseAddr(strings.Trim(host, "[]"))
-	if err != nil {
+	peer, ok := Peer(r.RemoteAddr)
+	if !ok {
 		return ClientAddress{Source: ClientIPSocket}, false
 	}
-	socket := clientAddress(peer.Unmap(), ClientIPSocket)
+	socket := clientAddress(peer, ClientIPSocket)
 	if !Trusted(peer, trusted) {
 		return socket, true
 	}
@@ -45,6 +41,16 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddres
 		return socket, false
 	}
 	return clientAddress(addr.Unmap(), ClientIPForwarded), true
+}
+
+// Peer parses a socket address, host:port or a bare or bracketed IP.
+func Peer(addr string) (netip.Addr, bool) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	ip, err := netip.ParseAddr(strings.Trim(host, "[]"))
+	return ip.Unmap(), err == nil
 }
 
 // Trusted reports whether addr is one of the operator's proxies.

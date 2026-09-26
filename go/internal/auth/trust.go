@@ -30,12 +30,7 @@ func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
 		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
 	}
-	remote, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		remote = r.RemoteAddr
-	}
-	peer, err := netip.ParseAddr(strings.Trim(remote, "[]"))
-	if err != nil || !transport.Trusted(peer, s.trusted) {
+	if peer, ok := transport.Peer(r.RemoteAddr); !ok || !transport.Trusted(peer, s.trusted) {
 		return trust{}
 	}
 	proto := singleHeader(r.Header, "X-Forwarded-Proto")
