@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -369,6 +370,23 @@ func TestStaleRepliesAreDropped(t *testing.T) {
 		next, cmd := modelAndCmd(m.Update(msg))
 		if cmd != nil || next.View() != before || next.auth != nil || next.run != nil {
 			t.Fatalf("stale %T changed the model", msg)
+		}
+	}
+}
+
+func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
+	t.Parallel()
+	remote := &webtransport.SessionError{Remote: true, Message: "closed\x1b]52;c;cHduZWQ=\a\u009b2J\r"}
+	m := testModel(t)
+	m.prepareSeq = 1
+	failed, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, err: remote}))
+	partial, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, run: preparedFixture(nil, remote), err: remote}))
+	m.run = newRunState(m.cfg, "")
+	m.run.err, m.run.outcome = remote, goclient.OutcomeFailed
+	for _, view := range []string{failed.View(), partial.View(), m.View(), m.finalReport()} {
+		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
+			strings.Contains(view, "\x1b]") {
+			t.Fatalf("remote error reached the terminal unfiltered: %q", view)
 		}
 	}
 }

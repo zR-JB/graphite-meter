@@ -59,7 +59,7 @@ func (m model) readiness() []readiness {
 		case !r.ready:
 			r.label = "Unavailable"
 			if s.Err != nil {
-				r.detail = s.Err.Error()
+				r.detail = errorText(s.Err)
 			}
 		}
 		out = append(out, r)

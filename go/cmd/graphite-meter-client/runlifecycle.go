@@ -65,11 +65,11 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	}
 	switch {
 	case msg.err != nil && (msg.run == nil || len(msg.run.Servers) == 0):
-		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
+		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
 	case msg.err != nil:
 		m.prepare, m.prepareErr = prepareFailed, ""
 		if !slices.ContainsFunc(msg.run.Servers, func(s goclient.PreparedServer) bool { return s.Err != nil }) {
-			m.prepareErr = msg.err.Error()
+			m.prepareErr = errorText(msg.err)
 		}
 	default:
 		m.prepare, m.prepareErr = prepareReady, ""
@@ -91,7 +91,7 @@ func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if msg.err != nil {
-		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
+		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
 		return m, nil
 	}
 	m.auth, m.authOpened = msg.pending, false
@@ -110,7 +110,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	}
 	m.auth = nil
 	if msg.err != nil {
-		m.prepare, m.prepareErr = prepareFailed, msg.err.Error()
+		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
 		return m, nil
 	}
 	expected := m.cfg.BaseURL
@@ -122,7 +122,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		return m.reprepare()
 	}
 	if err := m.controller.AcceptAuthorization(msg.origin, msg.token); err != nil {
-		m.prepare, m.prepareErr = prepareFailed, err.Error()
+		m.prepare, m.prepareErr = prepareFailed, errorText(err)
 		return m, nil
 	}
 	m.notice = "Signed in. Checking the authenticated paths…"

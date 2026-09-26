@@ -279,7 +279,7 @@ func (m model) runView(w int) string {
 		b.WriteString("\n\n" + fitLine(m.outcomeNotice()+mutedStyle.Render(" · d Details"), w))
 	}
 	if m.run.err != nil {
-		b.WriteString("\n\n" + fitLine(errorStyle.Render(m.run.err.Error()), w))
+		b.WriteString("\n\n" + fitLine(errorStyle.Render(errorText(m.run.err)), w))
 	} else if m.notice != "" {
 		b.WriteString("\n\n" + fitLine(mutedStyle.Render(m.notice), w))
 	}
@@ -467,7 +467,7 @@ func throughputLines(result goclient.Result, scale float64, barW, w int) []strin
 		lines = append(lines, map[bool]string{true: head, false: indent}[i == 0]+mutedStyle.Render(line))
 	}
 	if result.Err != nil {
-		lines = append(lines, errorStyle.Render("  Incomplete: "+result.Err.Error()))
+		lines = append(lines, errorStyle.Render("  Incomplete: "+errorText(result.Err)))
 	}
 	return lines
 }
@@ -486,7 +486,7 @@ func latencyLines(result goclient.Result, idle *goclient.LatencyStats, w int) []
 		lines = append(lines, mutedStyle.Width(max(1, w-2)).MarginLeft(2).Render(timing))
 	}
 	if result.Err != nil {
-		lines = append(lines, errorStyle.Render("  Incomplete: "+result.Err.Error()))
+		lines = append(lines, errorStyle.Render("  Incomplete: "+errorText(result.Err)))
 	}
 	return lines
 }
@@ -502,7 +502,7 @@ func (m model) finalReport() string {
 		lines = append(lines, "", m.detailsView(w))
 	}
 	if m.run.err != nil {
-		lines = append(lines, "", m.run.err.Error())
+		lines = append(lines, "", errorText(m.run.err))
 	}
 	return ansi.Strip(strings.Join(lines, "\n"))
 }
