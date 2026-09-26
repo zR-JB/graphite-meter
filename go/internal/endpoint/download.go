@@ -22,7 +22,6 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-// Handler serves /download, ending a lane its peer stops draining for idle.
 func (d *Download) Handler(idle time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { d.serve(w, r, idle) })
 }

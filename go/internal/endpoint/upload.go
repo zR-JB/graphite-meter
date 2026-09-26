@@ -47,7 +47,6 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
-// Handler serves /upload, ending a lane that sends nothing for idle.
 func (u *Upload) Handler(idle time.Duration) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { u.serve(w, r, idle) })
 }

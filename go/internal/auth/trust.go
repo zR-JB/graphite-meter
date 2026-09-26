@@ -58,8 +58,7 @@ func requestHostname(host string) string {
 	return strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
 }
 
-// ClientKeys keys every per-client budget: a grant or login, then its subject at twice the share, else the
-// address keys. Password logins share one subject, so each login needs its own share; ambiguous evidence has none.
+// ClientKeys keys every budget by grant or login, then subject at twice the share, else address; none if ambiguous.
 func ClientKeys(r *http.Request, trusted []netip.Prefix) ([]string, bool) {
 	if p, ok := PrincipalFromContext(r.Context()); ok {
 		first := "login:" + p.session.id

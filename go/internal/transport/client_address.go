@@ -43,7 +43,6 @@ func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) (ClientAddres
 	return clientAddress(addr.Unmap(), ClientIPForwarded), true
 }
 
-// Peer parses a socket address, host:port or a bare or bracketed IP.
 func Peer(addr string) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
