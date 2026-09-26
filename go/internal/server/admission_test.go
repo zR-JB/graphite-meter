@@ -8,7 +8,9 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -22,8 +24,12 @@ func routeSpec(path string) route.Spec {
 }
 
 func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
+	synctest.Test(t, requestAdmissionPerClientAndRelease)
+}
+
+func requestAdmissionPerClientAndRelease(t *testing.T) {
 	a := newRequestAdmission(3, 2, 3, 4, time.Minute, time.Hour)
-	entered := make(chan struct{}, 2)
+	entered := make(chan struct{}, 3)
 	release := make(chan struct{})
 	h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		entered <- struct{}{}
@@ -38,8 +44,10 @@ func TestRequestAdmissionPerClientAndRelease(t *testing.T) {
 			h.ServeHTTP(httptest.NewRecorder(), r)
 		})
 	}
-	<-entered
-	<-entered
+	synctest.Wait()
+	if len(entered) != 2 {
+		t.Fatalf("%d of 2 requests within the per-client budget entered", len(entered))
+	}
 	r := httptest.NewRequest(http.MethodGet, "/download", nil)
 	r.RemoteAddr = "192.0.2.10:5678"
 	w := httptest.NewRecorder()
@@ -228,8 +236,9 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 		t.Fatal("failed to occupy admission slot")
 	}
 	defer release()
+	var reached atomic.Bool
 	srv := httptest.NewServer(a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		t.Fatal("rejected WebSocket reached handler")
+		reached.Store(true)
 	}), routeSpec(route.Ping), nil, publicAuth(t)))
 	defer srv.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
@@ -240,5 +249,24 @@ func TestRequestAdmissionRejectsWebSocketBeforeUpgrade(t *testing.T) {
 	}
 	if res == nil || res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") != "1" {
 		t.Fatalf("upgrade response = %#v, want 503 with Retry-After 1", res)
+	}
+	if reached.Load() {
+		t.Fatal("rejected WebSocket reached handler")
+	}
+}
+
+// A panic unwinds through wrap, so the slot returns before net/http recovers the panic.
+func TestAdmissionReleasesTheSlotOfAPanickingHandler(t *testing.T) {
+	a := newRequestAdmission(1, 1, 1, 1, time.Minute, time.Hour)
+	for _, path := range []string{route.Download, route.WTDownload} {
+		h := a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }),
+			routeSpec(path), nil, publicAuth(t))
+		func() {
+			defer func() { _ = recover() }()
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		}()
+		if requests, sessions := a.stats(); requests.active != 0 || sessions.active != 0 {
+			t.Fatalf("%s panic left %d requests and %d sessions admitted", path, requests.active, sessions.active)
+		}
 	}
 }

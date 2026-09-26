@@ -259,6 +259,25 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 	}
 }
 
+// A header block past the listener's bound is refused before routing; one within it is served.
+func TestListenerBoundsTheRequestHeaderBlock(t *testing.T) {
+	t.Parallel()
+	_, httpBase, _ := wtServer(t, nil, nil)
+	for size, want := range map[int]int{16 << 10: http.StatusOK, 64 << 10: http.StatusRequestHeaderFieldsTooLarge} {
+		req, _ := http.NewRequest(http.MethodGet, httpBase+"/preflight", nil)
+		req.Header.Set("X-Padding", strings.Repeat("a", size))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		if res.StatusCode != want {
+			t.Errorf("%d-byte header = %d, want %d", size, res.StatusCode, want)
+		}
+	}
+}
+
 func TestAuthenticationWrapsEveryFinalListenerBeforeDispatch(t *testing.T) {
 	authn := testPasswordAuth(t, "https://meter.example")
 	e := testEndpoints(t)
