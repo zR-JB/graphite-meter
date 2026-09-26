@@ -245,10 +245,19 @@ test("upload refusals fail the stage, an unknown id stalls, and one replacement 
   expect(h.failures).toEqual(["upload progress error"]);
   stage.discard();
 
+  const revoked = h.stage(activity("upload"));
+  const preparingRevoked = revoked.prepare();
+  await h.open(2, "third");
+  await preparingRevoked;
+  revoked.measure();
+  h.feeds.get("third")!.write({ type: "error", code: "revoked" });
+  await until(() => h.failures.length === 2);
+  expect(h.failures[1]).toBe("Sign in again to measure throughput");
+
   const refused = h.stage(activity("bidirectional"));
   const failing = refused.prepare().catch((cause: Error) => cause.message);
-  await until(() => h.mints.length === 3);
-  h.mints[2].resolve(new Response(null, { status: 500 }));
+  await until(() => h.mints.length === 4);
+  h.mints[3].resolve(new Response(null, { status: 500 }));
   expect(await failing).toBe("upload session could not be established");
   expect(workers("download").length).toBeGreaterThan(0);
   refused.discard();

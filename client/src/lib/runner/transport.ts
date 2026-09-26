@@ -734,7 +734,9 @@ class UploadReceiver {
       this.stage.authenticationRequired("throughput");
     else if (event.type === "fatal") {
       this.#open(false);
-      if (
+      if (event.cause === "authentication-failure")
+        this.stage.authenticationRequired("throughput");
+      else if (
         !measuring ||
         ["capacity-refusal", "owner-mismatch", "protocol-refusal"].includes(
           event.cause,

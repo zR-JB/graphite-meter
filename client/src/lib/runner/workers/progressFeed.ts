@@ -28,6 +28,7 @@ const REFUSALS: Record<string, RecoveryCause> = {
   globalFull: "capacity-refusal",
   clientFull: "capacity-refusal",
   idle: "transient-connection",
+  revoked: "authentication-failure",
 };
 
 /** Only explicit protocol evidence classifies a refusal, carried alike by HTTP and WebTransport. */
