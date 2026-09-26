@@ -8,7 +8,7 @@ contribute. Results do not isolate ICMP latency, directional IP loss or a physic
 | Result | Unit and population | Missing evidence |
 | --- | --- | --- |
 | Download / upload | Payload bytes per second over a receiver window, in the chosen rate unit. | No valid receiver window: no rate. |
-| Peak | Highest mean over any window of at least 500 ms in the measured stage. | Shorter evidence: no peak. |
+| Peak | Highest mean over consecutive windows of the latest interval, each at least 500 ms on every clock. | Shorter evidence: no peak. |
 | Latency | Median (p50) RTT of in-window replies, per server and stage; p95 secondary. | No eligible reply: "—". |
 | Added latency | Loaded median − idle median, per stage and server, in ms; negative values are kept. | Either median missing: "—". |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
@@ -125,9 +125,10 @@ lane has sent headers or opened its stream with the progress feed advancing, and
 reply is not required, so silent paths still yield timeouts. Warmup then lasts the configured value or ten idle
 RTTs, whichever is longer, up to 4 s. The measured phase opens on fresh upload checkpoints; the coordinator samples
 about every 250 ms, each checkpoint batch bounded to 1.5 s (500 ms at the final boundary), retrying refusals every
-100 ms. A lane with no bytes for two seconds ends with its last error; a lost progress feed is reopened within two
-seconds. Before the next stage, upload waits until the receiver is quiet (250 ms, at most 4 s). Cleanup joins all
-resources before the outcome is emitted.
+100 ms. A final boundary where any server's direction moved no bytes is skipped, so the result ends at the last good
+one; a gap over 1.75 s between sampled boundaries starts a new interval. A lane with no bytes for two seconds ends
+with its last error; a lost progress feed is reopened within two seconds. Before the next stage, upload waits until
+the receiver is quiet (250 ms, at most 4 s). Cleanup joins all resources before the outcome is emitted.
 
 ## Run outcomes
 
