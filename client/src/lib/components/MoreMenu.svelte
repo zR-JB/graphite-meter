@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { tick, type Snippet } from "svelte";
-  import { fromAction } from "svelte/attachments";
+  // Action menu on a native auto popover: light dismiss, Escape and the top
+  // layer come from the platform; the menu keeps roving arrow-key focus.
+  import type { Snippet } from "svelte";
   import { focusMenuItem, navigateMenu } from "../actions/menu";
   import { tooltip } from "../actions/tooltip";
   import { ICON } from "../constants";
@@ -14,124 +15,69 @@
   }
   let { label, archive = false, children }: Props = $props();
   let open = $state(false);
-  let trigger = $state<HTMLButtonElement>();
-  let menu = $state<HTMLDivElement>();
+  let focusLast = false;
+  let trigger: HTMLButtonElement;
+  let menu: HTMLDivElement;
   const menuId = $props.id();
 
-  async function show(last = false) {
-    open = true;
-    await tick();
-    if (open) focusMenuItem(menu, last);
-  }
   function triggerKeydown(event: KeyboardEvent) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
     event.preventDefault();
     event.stopPropagation();
-    void show(event.key === "ArrowUp");
+    focusLast = event.key === "ArrowUp";
+    menu.showPopover();
   }
   function select(action: (invoker: HTMLButtonElement) => void) {
-    open = false;
-    if (trigger) action(trigger);
-  }
-  function outside(event: PointerEvent) {
-    const target = event.target;
-    if (!(target instanceof Node)) return;
-    if (!trigger?.contains(target) && !menu?.contains(target)) open = false;
+    menu.hidePopover();
+    action(trigger);
   }
 </script>
-
-<svelte:document onpointerdown={outside} />
 
 <div class="more-control" class:archive>
   <button
     bind:this={trigger}
-    class="more-trigger"
+    class="btn btn-icon more-trigger"
     type="button"
     aria-label={label}
     aria-haspopup="menu"
     aria-expanded={open}
-    aria-controls={open ? menuId : undefined}
+    aria-controls={menuId}
+    popovertarget={menuId}
+    style:anchor-name={`--${menuId}`}
     onkeydown={triggerKeydown}
-    onclick={() => {
-      if (open) open = false;
-      else void show();
-    }}
-    {@attach archive && fromAction(tooltip, () => label)}
+    use:tooltip={{ text: label, disabled: !archive }}
   >
     {@html ICON.more}
   </button>
-  {#if open}
-    <div
-      bind:this={menu}
-      id={menuId}
-      class="more-menu menu"
-      role="menu"
-      tabindex="-1"
-      aria-label={label}
-      onkeydown={(event) =>
-        navigateMenu(event, menu, trigger, () => (open = false))}
-    >
-      {@render children(select)}
-    </div>
-  {/if}
+  <div
+    bind:this={menu}
+    id={menuId}
+    class="float popover align-end menu more-menu"
+    popover="auto"
+    role="menu"
+    tabindex="-1"
+    aria-label={label}
+    style:position-anchor={`--${menuId}`}
+    ontoggle={(event) => {
+      open = event.newState === "open";
+      if (open) focusMenuItem(menu, focusLast);
+      focusLast = false;
+    }}
+    onkeydown={(event) =>
+      navigateMenu(event, menu, trigger, () => menu.hidePopover())}
+  >
+    {@render children(select)}
+  </div>
 </div>
 
 <style>
-  .more-control {
-    position: relative;
-  }
-  .more-trigger {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    cursor: pointer;
-  }
-  .more-trigger:hover,
-  .more-trigger[aria-expanded="true"] {
-    border-color: var(--border-strong);
-    color: var(--text);
-  }
-  .more-control :global(svg) {
-    width: 16px;
-    height: 16px;
-  }
   .more-menu {
-    position: absolute;
-    top: calc(100% + 7px);
-    right: 0;
-    z-index: 50;
-    width: 230px;
-    padding: var(--space-1);
-    transform-origin: top right;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-float);
+    width: min(236px, calc(100vw - 16px));
   }
   .more-menu :global(button) {
-    grid-template-columns: 24px minmax(0, 1fr);
-    gap: var(--space-2);
     min-height: 48px;
-    padding: 6px var(--space-2);
   }
-  .more-menu :global(button[aria-current]) {
-    background: var(--brand-soft);
-    color: var(--text);
-  }
-  .more-menu :global(button > span:first-child) {
-    display: grid;
-    place-items: center;
-    color: var(--brand-strong);
-  }
-  .more-menu :global(strong),
-  .more-menu :global(small) {
+  .more-menu :global(:is(strong, small)) {
     display: block;
   }
   .more-menu :global(strong) {
@@ -140,28 +86,12 @@
   .more-menu :global(small) {
     margin-top: 2px;
     color: var(--text-muted);
-    font-size: 9px;
-  }
-  .archive .more-trigger {
-    width: 34px;
-    height: 34px;
-  }
-  .archive :global(svg) {
-    width: 15px;
-    height: 15px;
-  }
-  .archive .more-menu {
-    top: calc(100% + 6px);
-    z-index: 31;
-    width: min(238px, calc(100vw - 32px));
+    font-size: var(--type-2xs);
   }
   .archive .more-menu :global(button) {
-    grid-template-columns: 22px minmax(0, 1fr);
-    min-height: 46px;
     color: var(--err);
   }
-  .archive .more-menu :global(button:hover),
-  .archive .more-menu :global(button:focus-visible) {
+  .archive .more-menu :global(button:is(:hover, :focus-visible)) {
     background: var(--err-soft);
   }
   .archive .more-menu :global(button > span:first-child) {
@@ -169,12 +99,5 @@
   }
   .archive .more-menu :global(strong) {
     color: var(--text);
-  }
-  @media (pointer: coarse) {
-    .more-trigger,
-    .archive .more-trigger {
-      width: 44px;
-      height: 44px;
-    }
   }
 </style>

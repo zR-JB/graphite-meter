@@ -195,7 +195,6 @@
   }
 
   function loadMoreWhenVisible(node: HTMLElement) {
-    if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) loadMore();
@@ -203,7 +202,7 @@
       { rootMargin: "200px 0px" },
     );
     observer.observe(node);
-    return { destroy: () => observer.disconnect() };
+    return () => observer.disconnect();
   }
 
   async function confirmAction() {
@@ -451,7 +450,7 @@
 <section
   class="history-workspace enter"
   bind:this={workspace}
-  use:observeWidth={(width) => (workspaceWidth = width)}
+  {@attach observeWidth((width) => (workspaceWidth = width))}
   aria-labelledby="history-title"
   tabindex="-1"
 >
@@ -703,7 +702,7 @@
           {/each}
         </ol>
         {#if visibleCount < ordered.length}
-          <div class="load-more" use:loadMoreWhenVisible>
+          <div class="load-more" {@attach loadMoreWhenVisible}>
             <button class="btn" type="button" onclick={loadMore}
               >Load 50 more</button
             >

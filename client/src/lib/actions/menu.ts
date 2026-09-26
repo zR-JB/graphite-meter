@@ -8,7 +8,7 @@ function menuItems(menu: HTMLElement | undefined) {
     menu?.querySelectorAll<HTMLButtonElement>(
       '[role="menuitem"]:not(:disabled)',
     ) ?? [],
-  );
+  ).filter((item) => item.checkVisibility());
 }
 function focusItem(items: HTMLButtonElement[], index: number) {
   for (const [position, item] of items.entries())

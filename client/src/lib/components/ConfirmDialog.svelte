@@ -1,8 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
-  import { canFocus, hasFocus } from "../actions/focus";
-  import { focusTrap } from "../actions/focusTrap";
-  import { acquirePageScrollLock } from "../actions/pageScrollLock";
+  import Dialog from "./Dialog.svelte";
 
   interface Props {
     open: boolean;
@@ -27,100 +24,44 @@
     onConfirm,
     onCancel,
   }: Props = $props();
-  let wasOpen = false;
-  let returnFocus: HTMLElement | null = null;
-
-  $effect(() => {
-    if (open) return acquirePageScrollLock();
-  });
-
-  $effect(() => {
-    const visible = open;
-    let cancelled = false;
-    if (visible && !wasOpen) {
-      returnFocus =
-        invoker ??
-        (document.activeElement instanceof HTMLElement
-          ? document.activeElement
-          : null);
-    } else if (!visible && wasOpen) {
-      const target = returnFocus;
-      returnFocus = null;
-      void tick().then(() => {
-        if (!cancelled && !hasFocus() && canFocus(target))
-          target.focus({ preventScroll: true });
-      });
-    }
-    wasOpen = visible;
-    return () => {
-      cancelled = true;
-    };
-  });
 </script>
 
-{#if open}
-  <div class="confirm-backdrop">
-    <div
-      class="confirm-dialog"
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby={`${id}-title`}
-      aria-describedby={`${id}-description`}
-      tabindex="-1"
-      use:focusTrap={true}
-      onkeydown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Escape") {
-          event.preventDefault();
-          onCancel();
-        }
-      }}
-    >
-      <h2 id={`${id}-title`}>{title}</h2>
-      <p id={`${id}-description`}>{description}</p>
-      <div class="confirm-actions">
-        <button class="ghost-btn" type="button" onclick={onCancel}>
-          {cancelLabel}
-        </button>
-        <button class="danger-btn" type="button" onclick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </div>
+<Dialog
+  {open}
+  {invoker}
+  {onCancel}
+  role="alertdialog"
+  labelledby={`${id}-title`}
+  describedby={`${id}-description`}
+>
+  <div class="confirm">
+    <h2 id={`${id}-title`}>{title}</h2>
+    <p id={`${id}-description`}>{description}</p>
+    <div class="confirm-actions">
+      <button class="btn btn-inset" type="button" onclick={onCancel}>
+        {cancelLabel}
+      </button>
+      <button
+        class="btn btn-danger btn-solid"
+        type="button"
+        onclick={onConfirm}
+      >
+        {confirmLabel}
+      </button>
     </div>
   </div>
-{/if}
+</Dialog>
 
 <style>
-  .confirm-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 180;
-    display: grid;
-    place-items: center;
-    padding: var(--space-4);
-    background: color-mix(in srgb, var(--canvas) 64%, transparent);
-    overscroll-behavior: contain;
-  }
-  .confirm-dialog {
-    width: min(360px, 100%);
-    max-height: calc(100svh - 2 * var(--space-4));
+  .confirm {
     overflow-y: auto;
-    overscroll-behavior: contain;
     padding: var(--space-4);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    box-shadow: var(--elev-float);
   }
-  .confirm-dialog h2 {
-    margin: 0;
-    font-family: var(--font-display);
-    font-size: var(--type-lg);
-    font-weight: 650;
-    letter-spacing: 0;
+  h2 {
+    font: var(--w-strong) var(--type-lg) var(--font-display);
   }
-  .confirm-dialog p {
-    margin: var(--space-2) 0 0;
+  p {
+    margin-top: var(--space-2);
     color: var(--text-muted);
     font-size: var(--type-sm);
     line-height: 1.45;
@@ -131,41 +72,5 @@
     justify-content: flex-end;
     gap: var(--space-2);
     margin-top: var(--space-4);
-  }
-  .ghost-btn,
-  .danger-btn {
-    min-height: 32px;
-    padding: 0 var(--space-3);
-    border-radius: var(--r-chrome);
-    font-size: var(--type-sm);
-    font-weight: 650;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .ghost-btn {
-    border: 1px solid var(--border);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-tile);
-    color: var(--text-muted);
-  }
-  .ghost-btn:hover {
-    border-color: var(--border-strong);
-    background: var(--surface-2);
-    color: var(--text);
-  }
-  .danger-btn {
-    border: 1px solid color-mix(in srgb, var(--err) 55%, var(--border));
-    background: var(--err-soft);
-    color: var(--text);
-  }
-  .danger-btn:hover {
-    border-color: var(--err);
-  }
-  button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
   }
 </style>

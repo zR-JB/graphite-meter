@@ -1,4 +1,30 @@
-import { floatingViewport, clampFloatingPosition } from "./floating";
+/** Fixed overlays use the visible viewport, including pinch zoom and panning. */
+function floatingViewport() {
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft ?? 0;
+  const top = viewport?.offsetTop ?? 0;
+  const width = viewport?.width ?? innerWidth;
+  const height = viewport?.height ?? innerHeight;
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
+
+function clampFloatingPosition(
+  element: HTMLElement,
+  left: number,
+  top: number,
+  viewport: ReturnType<typeof floatingViewport>,
+) {
+  element.style.left = `${Math.max(viewport.left + 8, Math.min(left, viewport.right - element.offsetWidth - 8))}px`;
+  element.style.top = `${Math.max(viewport.top + 8, Math.min(top, viewport.bottom - element.offsetHeight - 8))}px`;
+}
+
 // Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {

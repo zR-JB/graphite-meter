@@ -21,7 +21,7 @@
   import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
-  import { mediaQuery } from "../actions/mediaQuery.svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import {
     resolveDockWidths,
     MIN_DOCK_WIDTH,
@@ -141,61 +141,11 @@
   let consoleWidth = $state(
     typeof window === "undefined" ? 0 : window.innerWidth,
   );
-  const dockQuery = mediaQuery(`(min-width: 1200px)`);
-  const allowMultiplePanels = $derived(dockQuery.matches);
+  const dockQuery = new MediaQuery("(min-width: 1200px)");
+  const allowMultiplePanels = $derived(dockQuery.current);
   $effect(() => {
     const next = panelsForLayout(currentRoute);
     if (next !== currentRoute) routeTo(next, true);
-  });
-  let topbar: HTMLElement;
-  let directActions = $state(3);
-  $effect(() => {
-    const resize = new ResizeObserver(measure);
-    const mutations = new MutationObserver(measure);
-    function measure() {
-      const style = getComputedStyle(topbar);
-      const gap = parseFloat(style.columnGap) || 0;
-      const fixed = Array.from(topbar.children).filter(
-        (child) =>
-          !child.matches("[data-topbar-action], .more-control, .topbar-spacer"),
-      );
-      for (const child of fixed) resize.observe(child);
-      const fixedWidth = fixed.reduce((sum, child) => {
-        const itemStyle = getComputedStyle(child);
-        return (
-          sum +
-          child.getBoundingClientRect().width +
-          parseFloat(itemStyle.marginLeft) +
-          parseFloat(itemStyle.marginRight)
-        );
-      }, 0);
-      const button = topbar
-        .querySelector(".icon-btn")!
-        .getBoundingClientRect().width;
-      const available =
-        topbar.clientWidth -
-        parseFloat(style.paddingLeft) -
-        parseFloat(style.paddingRight);
-      const total = store.savingResults ? 3 : 2;
-      let count = total;
-      while (count > 0) {
-        const slots = count + (count < total ? 1 : 0);
-        if (
-          fixedWidth + slots * button + (fixed.length + slots) * gap <=
-          available
-        )
-          break;
-        count--;
-      }
-      directActions = count;
-    }
-    resize.observe(topbar);
-    mutations.observe(topbar, { childList: true });
-    measure();
-    return () => {
-      resize.disconnect();
-      mutations.disconnect();
-    };
   });
   const RESOLVED_PHASES = ["complete", "aborted", "error"];
   const awayRunIndicator = $derived.by(() => {
@@ -226,16 +176,6 @@
   );
   const lastOpened = $derived(lastPanel === "settings" ? "left" : "right");
 
-  const showHistoryDirect = $derived(directActions >= 3);
-  const showEndpointDirect = $derived(directActions >= 2);
-  const showThemeDirect = $derived(directActions >= 1);
-  const historyInMore = $derived(store.savingResults && !showHistoryDirect);
-  const endpointInMore = $derived(!showEndpointDirect);
-  const themeInMore = $derived(!showThemeDirect);
-  const moreAvailable = $derived(
-    historyInMore || endpointInMore || themeInMore,
-  );
-
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
   const THEME_ICON: Record<(typeof THEME_CYCLE)[number], string> = {
     light: ICON.sun,
@@ -259,8 +199,8 @@
   const docks = $derived(
     resolveDockWidths(
       consoleWidth,
-      dockQuery.matches && settingsOpen ? store.dockWidth.left : 0,
-      dockQuery.matches && telemetryOpen ? store.dockWidth.right : 0,
+      dockQuery.current && settingsOpen ? store.dockWidth.left : 0,
+      dockQuery.current && telemetryOpen ? store.dockWidth.right : 0,
     ),
   );
   const stageMinimum = $derived(
@@ -363,7 +303,7 @@
     return (
       route.kind === "app" &&
       (route.dialog === "legal" ||
-        (!dockQuery.matches && route.panels.length > 0))
+        (!dockQuery.current && route.panels.length > 0))
     );
   }
   function toggleHistoryFromPointer(invoker: HTMLElement) {
@@ -443,7 +383,7 @@
       next.kind === "app" &&
       ((next.dialog === "legal" &&
         (previous.kind !== "app" || previous.dialog !== "legal")) ||
-        (!dockQuery.matches &&
+        (!dockQuery.current &&
           next.panels.some(
             (panel) =>
               previous.kind !== "app" || !previous.panels.includes(panel),
@@ -544,7 +484,7 @@
       } else if (hasPendingStart()) {
         cancelPendingStart();
       } else if (settingsOpen || telemetryOpen) {
-        const requested = dockQuery.matches
+        const requested = dockQuery.current
           ? lastOpened === "left"
             ? "settings"
             : "endpoint"
@@ -647,12 +587,13 @@
 
 <main
   id="console"
-  use:observeWidth={(width) => (consoleWidth = width)}
+  {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
-  <!-- TOPBAR -->
-  <header bind:this={topbar} class="topbar" class:authenticated={authEnabled}>
+  <!-- Topbar: a size container. Its queries move the direct actions into the
+       More menu as the bar narrows, without measuring any children. -->
+  <header class="topbar" class:saving={store.savingResults}>
     <button
       type="button"
       class="brand-btn"
@@ -679,7 +620,7 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="ghost-btn icon-btn"
+      class="btn btn-icon"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
       use:tooltip={"Settings — test and display (S)"}
@@ -691,7 +632,7 @@
     <div class="connectivity"><ConnectivityIndicator /></div>
     <div class="topbar-spacer"></div>
     {#if awayRunIndicator}<button
-        class="return-live"
+        class="btn return-live"
         data-tone={awayRunIndicator.tone}
         type="button"
         aria-label={`${awayRunIndicator.label}. Return to live meter.`}
@@ -704,14 +645,13 @@
         <span class="run-icon">{@html ICON[awayRunIndicator.icon]}</span>
         <span class="live-copy">
           <strong>Live</strong>
-          <span class="live-separator" aria-hidden="true">·</span>
-          <span class="live-phase">{awayRunIndicator.label}</span>
+          <span aria-hidden="true">·</span>
+          <span>{awayRunIndicator.label}</span>
         </span>
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
-    {#if store.savingResults && showHistoryDirect}<button
-        data-topbar-action
-        class="ghost-btn icon-btn"
+    {#if store.savingResults}<button
+        class="btn btn-icon direct-history"
         type="button"
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
@@ -721,34 +661,24 @@
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         >{@html ICON.history}</button
       >{/if}
-    {#if showThemeDirect}
-      <button
-        data-topbar-action
-        class="ghost-btn icon-btn"
-        aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
-        use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
-        onclick={toggleTheme}>{@html THEME_ICON[store.theme]}</button
-      >
-    {/if}
-    {#if showEndpointDirect}
-      <button
-        data-topbar-action
-        class="ghost-btn icon-btn"
-        aria-label="Toggle endpoint info"
-        aria-expanded={telemetryOpen}
-        use:tooltip={"Endpoint info"}
-        onclick={(event) =>
-          togglePanelFromPointer(
-            "endpoint",
-            event.currentTarget as HTMLElement,
-          )}>{@html ICON.info}</button
-      >
-    {/if}
-    {#if moreAvailable}
+    <button
+      class="btn btn-icon direct-theme"
+      aria-label={`Theme: ${THEME_LABEL[store.theme]}. Click to cycle light / dark / auto.`}
+      use:tooltip={`Theme: ${THEME_LABEL[store.theme]} (T) — cycles light / dark / auto`}
+      onclick={toggleTheme}>{@html THEME_ICON[store.theme]}</button
+    >
+    <button
+      class="btn btn-icon direct-endpoint"
+      aria-label="Toggle endpoint info"
+      aria-expanded={telemetryOpen}
+      use:tooltip={"Endpoint info"}
+      onclick={(event) =>
+        togglePanelFromPointer("endpoint", event.currentTarget as HTMLElement)}
+      >{@html ICON.info}</button
+    >
+    <div class="topbar-more">
       <TopbarMore
-        showHistory={historyInMore}
-        showEndpoint={endpointInMore}
-        showTheme={themeInMore}
+        showHistory={store.savingResults}
         historyActive={historyOpen}
         endpointActive={telemetryOpen}
         theme={store.theme}
@@ -757,18 +687,17 @@
           togglePanelFromPointer("endpoint", invoker)}
         onTheme={toggleTheme}
       />
-    {/if}
+    </div>
   </header>
 
-  <!-- Center stage: a height-bounded flex column. The gauge hero takes most of
-       it, the chart stays compact so the default fits the viewport without
-       vertical scroll. Advancing a phase never resizes this section. -->
+  <!-- Centre stage: a height-bounded column. The gauge hero takes most of it
+       and the chart stays compact, so the default fits without scrolling. -->
   {#if currentRoute.kind === "not-found"}
     <section class="stage history-stage">
-      <div class="route-not-found">
+      <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
-        <a href="#/">Return to measurement</a>
+        <a class="btn btn-accent" href="#/">Return to measurement</a>
       </div>
     </section>
   {:else if historyOpen}
@@ -782,14 +711,20 @@
             id ? historyRoute(id) : closeHistoryDetail()}
           onClose={dismissHistory}
         />{:else if historyChunkState === "error"}<div
-          class="history-loading error"
+          class="empty-state"
+          data-tone="err"
           role="alert"
         >
-          <span>!</span>
+          <span class="empty-icon">!</span>
           <p>History could not be opened.</p>
-          <button type="button" onclick={loadHistoryWorkspace}>Retry</button>
-        </div>{:else}<div class="history-loading" role="status">
-          <span>{@html ICON.history}</span>Opening local archive…
+          <button
+            class="btn btn-accent"
+            type="button"
+            onclick={loadHistoryWorkspace}>Retry</button
+          >
+        </div>{:else}<div class="empty-state" role="status">
+          <span class="empty-icon">{@html ICON.history}</span>Opening local
+          archive…
         </div>{/if}
     </section>
   {:else}
@@ -802,7 +737,6 @@
     </section>
   {/if}
 
-  <!-- STATUS BAR -->
   <footer class="status">
     <StatusBar />
     <ShortcutHints />
@@ -813,7 +747,7 @@
        panels resize from their inner edge, persisted via store.dockWidth. -->
   <SettingsPanel
     open={settingsOpen}
-    docked={dockQuery.matches}
+    docked={dockQuery.current}
     raised={lastOpened === "left"}
     dockWidth={docks.left}
     dockMaxWidth={dockMaxLeft}
@@ -824,7 +758,7 @@
   />
   <TelemetryPanel
     open={telemetryOpen}
-    docked={dockQuery.matches}
+    docked={dockQuery.current}
     raised={lastOpened === "right"}
     dockWidth={docks.right}
     dockMaxWidth={dockMaxRight}
@@ -834,7 +768,6 @@
     onOpenLegal={openLegal}
   />
 
-  <!-- Transient phase-change toast, pinned bottom-right. -->
   <PhaseToast />
 
   <ConfirmDialog
@@ -852,17 +785,15 @@
 </main>
 
 <style>
-  /* Console grid: the stage owns the middle, the dock columns are 0-width
+  /* Console grid: the stage owns the middle; the dock columns are 0-width
      until a panel docks on a wide screen. A docked <SidePanel> reaches
-     leftdock/rightdock through display:contents and pushes the stage. Below
-     the dock breakpoint the panels are flyout overlays. */
+     leftdock/rightdock through display:contents and pushes the stage. */
   #console {
     display: grid;
-    /* One shared width budget reserves the instrument stage. */
-    grid-template-columns:
-      var(--dock-left, 0px)
-      minmax(0, 1fr)
-      var(--dock-right, 0px);
+    grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
+        --dock-right,
+        0px
+      );
     grid-template-rows:
       var(--topbar-h) minmax(0, 1fr)
       calc(var(--statusbar-h) + env(safe-area-inset-bottom, 0px));
@@ -882,6 +813,7 @@
     gap: var(--space-2);
     padding-inline: var(--space-4);
     border-bottom: 1px solid var(--border);
+    container: topbar / inline-size;
   }
   .topbar > :global(*) {
     flex-shrink: 0;
@@ -890,35 +822,121 @@
     flex: 1;
     min-width: 0;
   }
+  /* The logo doubles as the home action: the wordmark with a hover and
+     focus affordance. */
+  .brand-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: var(--space-1) 6px;
+    margin-left: -6px;
+    border-radius: var(--r-chrome);
+    font: 700 var(--type-md) / 1.4 var(--font-mono);
+    letter-spacing: -0.025em;
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  @media (hover: hover) {
+    .brand-btn:hover {
+      color: var(--brand-strong);
+    }
+  }
+  /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
+  .brand-glyph {
+    width: 18px;
+    height: 18px;
+  }
+  .chrome-divider {
+    width: 1px;
+    height: 22px;
+    margin: 0 2px;
+    background: var(--border);
+  }
+  .connectivity {
+    display: grid;
+    place-items: center;
+  }
+  .return-live {
+    --btn-line: var(--tone-line);
+    padding-inline: var(--space-2) 10px;
+    background-color: color-mix(in srgb, var(--tone) 9%, var(--surface-2));
+  }
+  @media (hover: hover) {
+    .return-live:hover {
+      --btn-line: var(--tone);
+    }
+  }
+  .run-icon {
+    display: grid;
+    color: var(--tone);
+  }
+  .live-copy {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--space-1);
+  }
+  .live-copy strong {
+    color: var(--tone);
+    font-weight: 800;
+  }
+  /* Overflow: 44px coarse targets leave three direct actions room down to a
+     ~320px bar, one down to ~260px, then everything moves into More. */
+  .topbar-more,
+  .topbar :global([data-more]) {
+    display: none;
+  }
+  @container topbar (max-width: 319px) {
+    .saving :is(.direct-history, .direct-endpoint) {
+      display: none;
+    }
+    .saving .topbar-more {
+      display: block;
+    }
+    .saving :global(:is([data-more="history"], [data-more="endpoint"])) {
+      display: grid;
+    }
+  }
+  @container topbar (max-width: 259px) {
+    .direct-history,
+    .direct-endpoint,
+    .direct-theme {
+      display: none;
+    }
+    .topbar-more {
+      display: block;
+    }
+    .topbar :global([data-more]) {
+      display: grid;
+    }
+  }
+
   .stage {
     grid-area: stage;
     display: flex;
     flex-direction: column;
-    min-width: 0;
-    overflow-y: auto;
-    /* The hero gauge flexes to fill, chart and chips keep their compact
-       intrinsic height. This is the flat faceplate, the wells carry the depth. */
-    padding: var(--space-2) var(--space-3);
     gap: var(--space-3);
-    /* Keep stage scrolling from chaining out to the document (anchored bars). */
+    min-width: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow-y: auto;
+    /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
   }
   .history-stage {
     overflow: hidden;
   }
-  /* The gauge owns its mode-stable intrinsic height. Any viewport too short
-     for the complete stage scrolls this center column beneath anchored chrome. */
-  .stage > :global(.gauge-panel) {
-    flex: 0 0 auto;
-    min-height: 0;
+  .measurement-stage:focus {
+    outline: none;
   }
-  .stage > :global(.gauge-panel),
-  .stage > :global(.chart) {
+  /* The gauge owns its mode-stable intrinsic height; a viewport too short for
+     the complete stage scrolls this column beneath the anchored chrome. */
+  .stage > :global(:is(.gauge-panel, .chart)) {
     width: 100%;
     max-width: 1920px;
     align-self: center;
   }
-  /* Let the timeline use spare height while the gauge remains mode-stable. */
+  .stage > :global(.gauge-panel) {
+    flex: none;
+  }
+  /* The timeline uses spare height while the gauge remains stable. */
   .stage > :global(.chart) {
     flex: 1 0 160px;
     min-height: 160px;
@@ -926,8 +944,8 @@
   }
   @media (max-height: 800px) {
     .measurement-stage {
-      padding-block: var(--space-1);
       gap: var(--space-2);
+      padding-block: var(--space-1);
     }
     .stage > :global(.chart) {
       flex-basis: 120px;
@@ -949,277 +967,32 @@
     container: status / inline-size;
   }
 
-  /* The logo doubles as a "home" action: it reads as the wordmark, with a
-     hover/focus affordance to signal it is clickable. */
-  .brand-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 4px 6px;
-    margin-left: -6px;
-    border-radius: var(--r-chrome);
-    color: var(--text);
-    font: 700 var(--type-md) / 1.4 var(--font-mono);
-    letter-spacing: -0.025em;
-    transition: color var(--dur-hover) var(--ease-out);
-  }
-  /* The lattice-needle glyph (see public/favicon.svg): hexagon in the brand
-     accent, needle in the current text color so hover tints it with the
-     wordmark. */
-  .brand-btn .brand-glyph {
-    width: 18px;
-    height: 18px;
-    flex: none;
-  }
-  .brand-btn:hover {
-    color: var(--brand-strong);
-  }
-  .brand-btn:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-
-  /* Flat chrome on the faceplate: a milled top edge-highlight gives the
-     button a tactile lift without a floating drop shadow. */
-  .ghost-btn {
-    display: grid;
-    place-items: center;
-    min-width: 32px;
-    height: 32px;
-    padding: 0 var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-md);
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .ghost-btn:hover {
-    border-color: var(--border-strong);
-    color: var(--text);
-  }
-  .icon-btn :global(svg) {
-    width: 16px;
-    height: 16px;
-  }
-  .chrome-divider {
-    width: 1px;
-    height: 22px;
-    margin: 0 2px;
-    background: var(--border);
-  }
-  .connectivity {
-    display: grid;
-    place-items: center;
-  }
-  .return-live {
-    --run-tone: var(--phase-warmup);
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-    height: 32px;
-    padding: 0 10px 0 8px;
-    border: 1px solid color-mix(in srgb, var(--run-tone) 52%, var(--border));
-    border-radius: var(--r-chrome);
-    background: color-mix(in srgb, var(--run-tone) 9%, var(--surface-2));
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  .return-live[data-tone="latency"] {
-    --run-tone: var(--phase-latency);
-  }
-  .return-live[data-tone="download"] {
-    --run-tone: var(--phase-download);
-  }
-  .return-live[data-tone="upload"] {
-    --run-tone: var(--phase-upload);
-  }
-  .return-live[data-tone="bidirectional"] {
-    --run-tone: var(--phase-bidirectional);
-  }
-  .return-live:hover {
-    border-color: var(--run-tone);
-    background: color-mix(in srgb, var(--run-tone) 14%, var(--surface-2));
-    color: var(--text);
-  }
-  .run-icon {
-    display: grid;
-    place-items: center;
-    flex: none;
-    color: var(--run-tone);
-  }
-  .run-icon :global(svg) {
-    width: 15px;
-    height: 15px;
-  }
-  .live-copy {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 4px;
-    min-width: 0;
-    white-space: nowrap;
-  }
-  .live-copy strong {
-    color: var(--run-tone);
-    font-weight: 800;
-  }
-  .history-loading,
-  .route-not-found {
-    display: grid;
-    justify-items: center;
-    align-content: center;
-    flex: 1;
-    min-height: 280px;
-    gap: var(--space-3);
-    color: var(--text-muted);
-    text-align: center;
-  }
-  .history-loading > span {
-    display: grid;
-    place-items: center;
-    width: 42px;
-    height: 42px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    color: var(--brand);
-  }
-  .history-loading > span :global(svg) {
-    width: 20px;
-    height: 20px;
-  }
-  .history-loading.error > span {
-    color: var(--err);
-    font-weight: 800;
-  }
-  .history-loading p,
-  .route-not-found p {
-    margin: 0;
-  }
-  .measurement-stage:focus {
-    outline: none;
-  }
-  .history-loading button,
-  .route-not-found a {
-    min-height: 30px;
-    padding: 6px 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--brand-strong);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    text-decoration: none;
-  }
-  .route-not-found h1 {
-    margin: 0;
-    font-size: var(--type-xl);
-  }
-
   @media (max-width: 759px) {
-    .brand-label {
-      display: none;
-    }
-    .brand-btn {
-      width: 44px;
-      padding: 0;
-      margin: 0;
-      justify-content: center;
-    }
-  }
-  @media (max-width: 759px), (pointer: coarse) {
-    .brand-btn {
-      min-width: 44px;
-      min-height: 44px;
-    }
     .topbar {
       gap: 2px;
       padding-inline: 6px;
     }
-    .chrome-divider {
-      display: none;
-    }
-    .topbar .icon-btn,
-    .topbar :global(.more-trigger),
-    .topbar :global(.signout),
-    .return-live {
-      width: 44px;
-      min-width: 44px;
-      height: 44px;
-      min-height: 44px;
-      padding: 0;
-      justify-content: center;
-      position: relative;
-      isolation: isolate;
-      border-color: transparent;
-      background: transparent;
-      box-shadow: none;
-    }
-    .topbar .icon-btn::before,
-    .topbar :global(.more-trigger)::before,
-    .topbar :global(.signout)::before,
-    .return-live::before {
-      content: "";
-      position: absolute;
-      inset: 5px;
-      z-index: -1;
-      border: 1px solid var(--border);
-      border-radius: var(--r-chrome);
-      background: var(--surface-2);
-      box-shadow: inset 0 1px 0 var(--edge-light);
-    }
-    .topbar .icon-btn:hover::before,
-    .topbar :global(.more-trigger:hover)::before,
-    .topbar :global(.signout:hover)::before {
-      border-color: var(--border-strong);
-    }
-    .topbar .icon-btn :global(svg),
-    .topbar :global(.more-trigger svg),
-    .topbar :global(.signout svg),
-    .run-icon :global(svg) {
-      width: 16px;
-      height: 16px;
-    }
-    .topbar :global(.account) {
-      width: 44px;
-      min-width: 44px;
-      height: 44px;
-      border: 0;
-      background: transparent;
-      box-shadow: none;
-    }
-    .topbar :global(.account .identity),
-    .topbar :global(.account .everywhere),
+    .brand-label,
+    .chrome-divider,
     .live-copy {
       display: none;
     }
-    .return-live {
-      color: var(--run-tone);
+    .brand-btn {
+      justify-content: center;
+      min-width: var(--hit);
+      min-height: var(--hit);
+      margin: 0;
+      padding: 0;
     }
-    .return-live::before {
-      border-color: color-mix(in srgb, var(--run-tone) 52%, var(--border));
-      background: color-mix(in srgb, var(--run-tone) 9%, var(--surface-2));
+    .return-live {
+      width: calc(var(--control-h) + 2 * var(--hit-pad));
+      padding: 0;
     }
     .connectivity {
       width: 24px;
-      height: 44px;
     }
     .connectivity :global(.spark) {
       display: none;
-    }
-    .topbar-spacer {
-      flex-shrink: 1;
     }
   }
 </style>

@@ -273,6 +273,9 @@
     padding: 0;
     border: 0 solid;
   }
+  dialog {
+    margin: auto;
+  }
   html {
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
