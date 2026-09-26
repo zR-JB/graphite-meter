@@ -48,14 +48,10 @@ type LatencyProfileLaneLike = {
   current?: number | null;
 };
 
-export type LatencyProfileTone =
-  "latency" | "download" | "upload" | "bidirectional";
-
 export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   reflectorTiming?: ReflectorTimingSummary;
   key: TransportRole;
   label: string;
-  tone: LatencyProfileTone;
   jitter: number | null;
   timeoutRatio: number | null;
   accountingComplete: boolean | null;

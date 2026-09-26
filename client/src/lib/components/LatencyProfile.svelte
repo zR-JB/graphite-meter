@@ -33,7 +33,6 @@
       return {
         ...lane,
         ...meta,
-        tone: meta.key,
       };
     }),
   );
@@ -60,7 +59,7 @@
     </p>
   {/if}
 
-  <LatencyProfileView {lanes} variant="bare" showCurrent showTimeouts />
+  <LatencyProfileView {lanes} variant="bare" />
 </section>
 
 <style>

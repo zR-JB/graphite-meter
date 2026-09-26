@@ -1,32 +1,27 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
 
+  // The parent owns state and may veto the toggle.
   interface Props {
-    checked?: boolean;
+    checked: boolean;
     label?: string;
     disabled?: boolean;
-    /** When given, the parent owns state and may veto the toggle. */
-    onToggle?: (next: boolean) => void;
+    onToggle: (next: boolean) => void;
     /** Optional jargon-tooltip text for the label, e.g. JARGON.wireRate. */
     tooltip?: string;
   }
   let {
-    checked = $bindable(false),
+    checked,
     label,
     disabled = false,
     onToggle,
     tooltip: tooltipText = "",
   }: Props = $props();
 
-  function handleChange(e: Event) {
-    const next = (e.currentTarget as HTMLInputElement).checked;
-    if (onToggle) {
-      // Controlled: revert the DOM to `checked` and let the parent decide.
-      (e.currentTarget as HTMLInputElement).checked = checked;
-      onToggle(next);
-    } else {
-      checked = next;
-    }
+  function handleChange(e: Event & { currentTarget: HTMLInputElement }) {
+    const next = e.currentTarget.checked;
+    e.currentTarget.checked = checked;
+    onToggle(next);
   }
 </script>
 

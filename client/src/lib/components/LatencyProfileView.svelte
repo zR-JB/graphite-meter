@@ -18,32 +18,27 @@
     pos,
     profileDomain,
     rangeWidth,
-    type LatencyProfileDomain,
     type LatencyProfileViewLane,
     type MetricKey,
   } from "./latencyProfile";
 
   interface Props {
     lanes: LatencyProfileViewLane[];
-    domain?: LatencyProfileDomain;
     variant?: "bare" | "compact";
-    showCurrent?: boolean;
-    showTimeouts?: boolean;
     label?: string;
   }
 
   let {
     lanes,
-    domain,
     variant = "bare",
-    showCurrent = false,
-    showTimeouts = false,
     label = "Latency, jitter and probe timeouts by phase",
   }: Props = $props();
 
   let motion = $state(false);
 
-  const scale = $derived(domain ?? profileDomain(lanes));
+  const scale = $derived(profileDomain(lanes));
+  // Only the live view animates and shows current values and probe timeouts.
+  const live = $derived(variant === "bare");
   const ticks = $derived([
     scale.min,
     scale.min + scale.span / 2,
@@ -149,7 +144,7 @@
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
       lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
-      showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0
+      live && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
         : null,
       lane.accountingComplete === false ? "Partial accounting" : null,
@@ -162,8 +157,8 @@
 <div
   class="lanes"
   data-latency-profile
-  data-motion={motion && variant === "bare"}
-  {@attach variant === "bare" && inView((seen) => (motion = seen))}
+  data-motion={motion && live}
+  {@attach live && inView((seen) => (motion = seen))}
   data-variant={variant}
   role="group"
   aria-label={label}
@@ -175,7 +170,7 @@
       hover?.key === lane.key
         ? metrics.findIndex((entry) => entry.metric === hover!.metric)
         : -1}
-    <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
+    <div class="lane" data-tone={lane.key} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="tone-icon lane-icon" aria-hidden="true"
           ><Icon name={STAGE[lane.key].icon} /></span
@@ -271,14 +266,14 @@
               ><i class="center-marker"></i></span
             >
           {/if}
-          {#if showCurrent && lane.current != null}
+          {#if live && lane.current != null}
             <span
               class="position"
               style:transform={`translateX(${pos(lane.current, scale)}%)`}
               ><i class="current-marker"></i></span
             >
           {/if}
-          {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+          {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
             <i
               class="timeout-marker"
               style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
@@ -304,7 +299,7 @@
                 >{hoverContext(lane, hover.metric)}</span
               >
             {/if}
-            {#if showTimeouts && lane.timeoutRatio != null && lane.timeoutRatio > 0}
+            {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
               <em>{timeoutLabel(lane.timeoutRatio)}</em>
             {/if}
           </span>

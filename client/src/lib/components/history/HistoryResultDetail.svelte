@@ -103,7 +103,7 @@
       : record.stages.latency.lanes;
     return LATENCY_LANES.flatMap((meta) => {
       const lane = saved[meta.key];
-      return lane ? [{ ...meta, ...lane, tone: meta.key }] : [];
+      return lane ? [{ ...meta, ...lane }] : [];
     });
   });
   const profile = $derived(
@@ -357,7 +357,7 @@
           {#each accounting as lane (lane.key)}
             {@const counts = probeAccountingSummary(lane)}
             <li
-              data-tone={lane.tone}
+              data-tone={lane.key}
               aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
             >
               <strong>{lane.label}</strong>
