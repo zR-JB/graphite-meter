@@ -2,6 +2,7 @@
 
 import {
   mintWtToken,
+  SESSION_REVOKED,
   sessionReady,
   spendWtToken,
   withWtToken,
@@ -185,8 +186,13 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   }
   session = dialed;
   // `closed` resolves on a graceful close and rejects on an abrupt one: both end this session.
-  const closed = (): void => fail(true, "webtransport session closed");
-  void dialed.closed.then(closed, closed);
+  const closed = (info?: WebTransportCloseInfo): void => {
+    if (info?.closeCode !== SESSION_REVOKED)
+      return fail(true, "webtransport session closed");
+    stopped = true;
+    post({ type: "auth-required" });
+  };
+  void dialed.closed.then(closed, () => closed());
   try {
     await sessionReady(dialed);
   } catch (err) {

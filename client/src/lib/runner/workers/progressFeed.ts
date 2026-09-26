@@ -27,6 +27,7 @@ const REFUSALS: Record<string, RecoveryCause> = {
   ownerMismatch: "owner-mismatch",
   globalFull: "capacity-refusal",
   clientFull: "capacity-refusal",
+  idle: "transient-connection",
 };
 
 /** Only explicit protocol evidence classifies a refusal, carried alike by HTTP and WebTransport. */

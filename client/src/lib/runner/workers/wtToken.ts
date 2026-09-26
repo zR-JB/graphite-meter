@@ -103,6 +103,9 @@ export async function mintWtToken(
   }
 }
 
+/** The server closes a session with this code when sign-out or a revoked grant ends it (api/wire.md). */
+export const SESSION_REVOKED = 3;
+
 /* A black-holed handshake can leave `ready` and `closed` pending, so the budget itself ends the dial. */
 export async function sessionReady(session: WebTransport): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;

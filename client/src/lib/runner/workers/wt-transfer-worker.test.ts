@@ -111,7 +111,10 @@ class FakeSession {
     (dialRefuses
       ? Promise.reject(new Error("connect refused"))
       : Promise.resolve());
-  readonly closed = park();
+  end!: (info: WebTransportCloseInfo) => void;
+  readonly closed = new Promise<WebTransportCloseInfo>(
+    (resolve) => (this.end = resolve),
+  );
   readonly datagrams = fakeDatagrams(timing, () => jest.advanceTimersByTime(1));
   readonly feed = new FeedStream();
   closes = 0;
@@ -333,6 +336,17 @@ test("a session that established never offers its token again", async () => {
   expect(dialUrls.length).toBe(2);
   expect(tokenOf(dialUrls[1])).not.toBe(tokenOf(dialUrls[0]));
   expect(mints).toBe(2);
+});
+test("a session the server revokes asks for sign-in instead of redialling", async () => {
+  const realm = await bootTransfer({ dir: "down" });
+  await taskTurn();
+  session().end({ closeCode: 3, reason: "authentication required" });
+  await taskTurn();
+
+  expect(realm.posted.map((msg) => msg.type)).toEqual([
+    "established",
+    "auth-required",
+  ]);
 });
 test("a stop after auth-required is still acknowledged", async () => {
   const realm = await bootTransfer(

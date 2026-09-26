@@ -9,6 +9,7 @@ import {
 } from "./rttEstimator";
 import {
   mintWtToken,
+  SESSION_REVOKED,
   sessionReady,
   spendWtToken,
   withWtToken,
@@ -296,7 +297,11 @@ function dialWebTransport(dialUrl: string, opened: () => void): PingLink {
     }
     onDisconnect(String(reason));
   };
-  void wt.closed.then(() => drop("webtransport closed"), drop);
+  void wt.closed.then((info) => {
+    if (link === connection && info?.closeCode === SESSION_REVOKED)
+      stopForSignIn();
+    else drop("webtransport closed");
+  }, drop);
   const read = async (): Promise<void> => {
     await sessionReady(wt);
     if (link !== connection) return wt.close();
