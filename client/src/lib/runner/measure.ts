@@ -7,7 +7,6 @@ import type {
   PingCadence,
   PreparedPaths,
   ReceiverCheckpoint,
-  StabilityBand,
   StageLatencySummary,
   ThroughputResult,
   TransportRole,
@@ -155,10 +154,6 @@ export const EARLY_FINISH = {
 /** Schmitt trigger: enter at the threshold, leave 0.08 below it. */
 const isStillStable = (wasStable: boolean, score: number): boolean =>
   score >= EARLY_FINISH.stability - (wasStable ? 0.08 : 0);
-
-export function bandForState(stable: boolean, score: number): StabilityBand {
-  return stable ? "high" : score >= 0.6 ? "medium" : "low";
-}
 
 /** The evidence floor a phase can feasibly reach within its budget; never below the statistical minimum. */
 export function confidenceSampleFloor(
@@ -346,8 +341,6 @@ export class ServerLatency {
   #times: number[] = [];
   #rtts: number[] = [];
   #head = 0;
-  #stable = false;
-  #score = 0;
 
   observe(
     stage: TransportRole,
@@ -406,12 +399,6 @@ export class ServerLatency {
     this.#times = [];
     this.#rtts = [];
     this.#head = 0;
-    this.#stable = false;
-  }
-
-  trackStable(score: number): void {
-    this.#stable = isStillStable(this.#stable, score);
-    this.#score = score;
   }
 
   /** The idle headline is the full stage median, as in the native client; a failed population needs three outcomes. */
@@ -426,8 +413,6 @@ export class ServerLatency {
     return {
       reportedMs: summary.p50Ms,
       jitterMs: summary.jitterMs,
-      stabilityScore: this.#score,
-      band: bandForState(this.#stable, this.#score),
     };
   }
 

@@ -15,12 +15,7 @@ type Throughput = {
   totalBytes: number;
   stabilityPct: number;
 };
-type Latency = {
-  reportedMs: number;
-  jitterMs: number | null;
-  stabilityScore: number;
-  band: Band;
-};
+type Latency = { reportedMs: number; jitterMs: number | null };
 type WireStage = "download" | "upload" | "bidirectional";
 type Added = {
   addedMs?: Partial<Record<WireStage, number | null>>;
@@ -108,8 +103,14 @@ const inUnit = (rate: Rate, bytesPerSec: number, shown: string) => {
   const { num, unit } = rate(bytesPerSec);
   return unit === shown ? num : `${num} ${unit}`;
 };
-const band = (score: number): Band =>
-  score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+/** One pip for every stage: 100 × (1 − relative variation), banded at 90 and 75. */
+const quality = (pct: number | null) =>
+  pct === null
+    ? null
+    : {
+        band: (pct >= 90 ? "high" : pct >= 75 ? "medium" : "low") as Band,
+        pct,
+      };
 
 export function summaryCards(
   evidence: SummaryEvidence,
@@ -149,8 +150,14 @@ export function summaryCards(
             ? `from ${evidence.latencySource}`
             : "",
           quality:
-            status === "complete"
-              ? { band: latency.band, pct: latency.stabilityScore * 100 }
+            status === "complete" && latency.jitterMs != null
+              ? quality(
+                  Math.max(
+                    0,
+                    100 *
+                      (1 - latency.jitterMs / Math.max(latency.reportedMs, 1)),
+                  ),
+                )
               : null,
         },
       ];
@@ -195,10 +202,7 @@ export function summaryCards(
       {
         ...card,
         ...shown,
-        quality:
-          status === "complete" && stabilityPct !== null
-            ? { band: band(stabilityPct / 100), pct: stabilityPct }
-            : null,
+        quality: status === "complete" ? quality(stabilityPct) : null,
         wire:
           wire && status === "complete"
             ? { ...wire, num: inUnit(rate, wire.bytesPerSec, shown.unit) }

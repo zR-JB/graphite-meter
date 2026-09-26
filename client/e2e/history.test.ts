@@ -46,8 +46,6 @@ function record(index: number, completedAt = base - index * 60_000) {
         result: {
           reportedMs: 12.4,
           jitterMs: 2.2,
-          stabilityScore: 0.91,
-          band: "high",
         },
         lanes: {
           latency,

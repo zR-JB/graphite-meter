@@ -120,14 +120,14 @@ test("a server's own failures decide its statuses; a server without a latency pa
   });
 });
 
-test("loaded stages show signed added latency and latency shows the grade second", () => {
+test("loaded stages show added latency, latency its grade, and one rule bands every pip", () => {
   const cards = summaryCards(
     {
       status: { download: "complete", upload: "complete", latency: "complete" },
       download: lane(40),
-      upload: lane(20),
+      upload: { ...lane(20), stabilityPct: 80 },
       bidirectional: null,
-      latency: { reportedMs: 12, jitterMs: 1, stabilityScore: 1, band: "high" },
+      latency: { reportedMs: 12, jitterMs: 1 },
       added: { addedMs: { download: 8.25, upload: -2 }, grade: "B" },
       latencyMeasured: true,
       wire: {},
@@ -135,10 +135,15 @@ test("loaded stages show signed added latency and latency shows the grade second
     rate,
     "base10",
   );
-  expect(cards.map(({ key, added, grade }) => [key, added, grade])).toEqual([
-    ["download", "+8.3", null],
-    ["upload", "−2.0", null],
-    ["latency", null, "Grade B"],
+  const shown = cards.map((card) => [
+    card.added,
+    card.grade,
+    card.quality?.band,
+  ]);
+  expect(shown).toEqual([
+    ["+8.3", null, "high"],
+    ["−2.0", null, "medium"],
+    [null, "Grade B", "high"],
   ]);
 });
 
@@ -149,7 +154,7 @@ test("records saved before per-stage added latency show only the grade", () => {
       download: null,
       upload: null,
       bidirectional: null,
-      latency: { reportedMs: 12, jitterMs: 1, stabilityScore: 1, band: "high" },
+      latency: { reportedMs: 12, jitterMs: 1 },
       added: { grade: "C" },
       latencyMeasured: true,
       wire: {},

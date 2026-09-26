@@ -53,10 +53,6 @@ export type CompensationTransport =
   | "http2" // HTTP/2 over TLS (DATA framing)
   | "http3-quic"; // HTTP/3 over QUIC (UDP)
 
-/* ---------- Live measurement stability ---------- */
-/** Coarse band of the 0..1 stability score, surfaced as the result-card pip. */
-export type StabilityBand = "low" | "medium" | "high";
-
 export interface TransferStreamPolicy {
   mode: "auto" | "forced";
   /** H1 per-direction ceiling in auto mode; exact count in forced mode. */
@@ -232,8 +228,6 @@ export interface StageLatencySummary {
 export interface LatencyResult {
   reportedMs: number;
   jitterMs: number | null;
-  stabilityScore: number;
-  band: StabilityBand;
 }
 
 /** Added latency: loaded median − full idle median, signed, in ms. */

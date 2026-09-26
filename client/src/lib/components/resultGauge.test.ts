@@ -56,8 +56,6 @@ test("terminal gauge skips unavailable stages in every combination", () => {
         latency: {
           jitterMs: 1,
           reportedMs: 10,
-          stabilityScore: 1,
-          band: "high",
         },
       }),
     ),

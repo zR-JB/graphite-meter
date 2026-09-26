@@ -181,12 +181,11 @@ test("a failed idle population needs three outcomes and never selects a stable w
   expect(latency.result()).toMatchObject({ reportedMs: 20 });
 });
 
-test("the idle headline is the full median; stability only labels its band", () => {
+test("the idle headline is the full stage median", () => {
   const latency = new ServerLatency();
   for (const rtt of [90, 80, 70, 20, 20])
     latency.observe("latency", reply(rtt), 0, 0);
-  latency.trackStable(1);
-  expect(latency.result()).toMatchObject({ reportedMs: 70, band: "high" });
+  expect(latency.result()).toMatchObject({ reportedMs: 70 });
 });
 
 test("rate buckets split exact byte/time evidence independently of callback chunking", () => {

@@ -1072,10 +1072,8 @@ export class Run {
     const segment = this.#active;
     if (!segment || segment.phase === "warmup") return false;
     const confidence = this.#confidence(segment.phase);
-    if (segment.phase === "latency")
-      for (const server of this.#latencyParticipants())
-        server.latency.trackStable(confidence.score);
-    else this.#aggregate.trackStable(confidence.score);
+    if (segment.phase !== "latency")
+      this.#aggregate.trackStable(confidence.score);
     this.#stabilityAt = performance.now();
     return this.#updateEarly(segment, segment.phase, confidence);
   }

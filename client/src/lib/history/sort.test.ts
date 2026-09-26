@@ -84,8 +84,6 @@ test("each history field sorts in its natural direction and keeps nulls last", (
     value.stages.latency.result = {
       reportedMs: value.completedAt === 1 ? 20 : 10,
       jitterMs: 1,
-      stabilityScore: 1,
-      band: "high",
     };
   const loaded = (center: number) => ({
     min: center,
