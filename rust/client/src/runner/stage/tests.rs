@@ -24,7 +24,7 @@ async fn download_peer_with_gate(
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("https://{}", listener.local_addr()?);
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-    let (certificate, key) = test_identity::generate_identity()?;
+    let (certificate, key) = test_identity::generate_identity("localhost")?;
     let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()

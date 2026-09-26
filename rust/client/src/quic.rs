@@ -352,7 +352,7 @@ mod tests {
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
         use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
-        let (certificate, key) = crate::test_identity::generate_identity()?;
+        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
         let provider = Arc::new(crate::crypto::provider());
         let mut tls = rustls::ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?

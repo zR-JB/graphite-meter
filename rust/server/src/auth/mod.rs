@@ -2,6 +2,7 @@
 mod approval;
 mod grant;
 pub mod http;
+mod jwt;
 mod oidc;
 pub mod pages;
 pub mod password_login;

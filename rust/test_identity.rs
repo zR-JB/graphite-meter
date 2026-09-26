@@ -1,6 +1,9 @@
-/// Generates a disposable localhost P-256 identity as `(certificate PEM, key PEM)`.
+/// Generates a disposable P-256 identity as `(certificate PEM, key PEM)`.
 /// Test keys are generated locally, never shipped in source.
-pub fn generate_identity() -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+pub fn generate_identity(
+    host: &str,
+) -> Result<(String, String), Box<dyn std::error::Error + Send + Sync>> {
+    assert!(matches!(host, "localhost" | "provider.test"));
     // Both PEM blocks go to stdout, key first; nothing touches the filesystem.
     let output = std::process::Command::new("openssl")
         .args([
@@ -16,7 +19,7 @@ pub fn generate_identity() -> Result<(String, String), Box<dyn std::error::Error
             "-subj",
             "/CN=localhost",
             "-addext",
-            "subjectAltName=DNS:localhost",
+            &format!("subjectAltName=DNS:{host}"),
             "-addext",
             "basicConstraints=critical,CA:FALSE",
             "-keyout",

@@ -1,68 +1,105 @@
-//! Provider interaction and single-use, browser-bound authorization transactions.
+use super::jwt::{self, Alg, Jwks, Reject};
 use super::{
     SessionLease,
     password_login::read_secret,
     session::{random_token, token_hash},
 };
 use crate::config::{AuthConfig, ConfigError};
-use openidconnect::{core::*, *};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use graphite_meter_core::origin::split_url;
+use graphite_meter_net::{Proxy, connect};
+use http::{HeaderValue, Method, Request, Response, StatusCode, header};
+use hyper::body::Body as _;
+use hyper_util::rt::TokioIo;
 use rustls_platform_verifier::BuilderVerifierExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::HashMap,
     net::IpAddr,
+    pin::Pin,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     sync::{Mutex as AsyncMutex, Semaphore},
     time::Instant,
 };
+use tokio_rustls::TlsConnector;
 use zeroize::{Zeroize, Zeroizing};
 
-type Client = CoreClient<
-    EndpointSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointNotSet,
-    EndpointMaybeSet,
-    EndpointMaybeSet,
->;
-type Metadata = ProviderMetadata<
-    ExtraMetadata,
-    CoreAuthDisplay,
-    CoreClientAuthMethod,
-    CoreClaimName,
-    CoreClaimType,
-    CoreGrantType,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJweKeyManagementAlgorithm,
-    CoreJsonWebKey,
-    CoreResponseMode,
-    CoreResponseType,
-    CoreSubjectIdentifierType,
->;
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-struct ExtraMetadata {
+#[derive(Deserialize)]
+struct Metadata {
+    issuer: String,
+    authorization_endpoint: String,
+    token_endpoint: String,
+    userinfo_endpoint: String,
+    jwks_uri: String,
+    #[serde(default)]
+    id_token_signing_alg_values_supported: Option<Vec<String>>,
     #[serde(default)]
     authorization_response_iss_parameter_supported: bool,
 }
-impl AdditionalProviderMetadata for ExtraMetadata {}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct Groups {
-    groups: Vec<String>,
-}
-impl AdditionalClaims for Groups {}
 
 pub(super) struct Provider {
-    client: Client,
+    authorization: String,
+    token: String,
+    userinfo: String,
+    jwks_uri: String,
+    algorithms: Vec<Alg>,
+    keys: AsyncMutex<Arc<Jwks>>,
     issuer_parameter: bool,
     pub origin: String,
+}
+impl Provider {
+    fn new(metadata: Metadata, keys: Jwks, issuer: &str) -> Result<Self, ConfigError> {
+        if metadata.issuer != issuer {
+            return Err("OIDC discovery issuer mismatch".into());
+        }
+        for endpoint in [
+            &metadata.authorization_endpoint,
+            &metadata.token_endpoint,
+            &metadata.userinfo_endpoint,
+            &metadata.jwks_uri,
+        ] {
+            valid_url(endpoint)?;
+        }
+        Ok(Self {
+            origin: split_url(&metadata.authorization_endpoint)?.0.key(),
+            algorithms: metadata
+                .id_token_signing_alg_values_supported
+                .as_deref()
+                .map(Alg::allowed)
+                .unwrap_or_else(|| vec![Alg::RS256]),
+            authorization: metadata.authorization_endpoint,
+            token: metadata.token_endpoint,
+            userinfo: metadata.userinfo_endpoint,
+            jwks_uri: metadata.jwks_uri,
+            keys: AsyncMutex::new(Arc::new(keys)),
+            issuer_parameter: metadata.authorization_response_iss_parameter_supported,
+        })
+    }
+    async fn verify(&self, http: &ProviderHttp, token: &str) -> Result<jwt::Verified, Reject> {
+        let seen = self.keys.lock().await.clone();
+        match jwt::verify(token, &seen, &self.algorithms) {
+            Err(Reject::UnknownKey) => {}
+            result => return result,
+        }
+        let mut keys = self.keys.lock().await;
+        if Arc::ptr_eq(&keys, &seen) {
+            *keys = Arc::new(
+                http.jwks(&self.jwks_uri)
+                    .await
+                    .map_err(|_| Reject::UnknownKey)?,
+            );
+        }
+        let keys = keys.clone();
+        jwt::verify(token, &keys, &self.algorithms)
+    }
 }
 struct Transaction {
     provider: Arc<Provider>,
     browser: [u8; 32],
-    nonce: Nonce,
+    nonce: Zeroizing<String>,
     verifier: Zeroizing<String>,
     deadline: Instant,
     address: IpAddr,
@@ -124,45 +161,29 @@ impl Oidc {
                 .ok_or_else(|| "OIDC provider unavailable".into());
         }
         discovery.retry = Instant::now() + Duration::from_secs(30);
-        let metadata = tokio::time::timeout(
-            Duration::from_secs(25),
-            Metadata::discover_async(IssuerUrl::new(self.config.oidc_issuer.clone())?, &self.http),
-        )
-        .await
-        .map_err(|_| "OIDC discovery timed out")?
-        .map_err(|_| "OIDC provider discovery failed")?;
-        for endpoint in [
-            Some(metadata.authorization_endpoint().url()),
-            metadata.token_endpoint().as_ref().map(|url| url.url()),
-            metadata.userinfo_endpoint().as_ref().map(|url| url.url()),
-            Some(metadata.jwks_uri().url()),
-        ] {
-            valid_url(endpoint.ok_or("OIDC endpoint missing")?)?;
-        }
-        let origin = metadata
-            .authorization_endpoint()
-            .url()
-            .origin()
-            .ascii_serialization();
-        let issuer_parameter = metadata
-            .additional_metadata()
-            .authorization_response_iss_parameter_supported;
-        let client = CoreClient::from_provider_metadata(
-            metadata,
-            ClientId::new(self.config.oidc_client_id.clone()),
-            Some(ClientSecret::new(self.secret.to_string())),
-        )
-        .set_redirect_uri(RedirectUrl::new(format!(
-            "{}/auth/oidc/callback",
-            self.config.public_url
-        ))?);
-        let provider = Arc::new(Provider {
-            client,
-            issuer_parameter,
-            origin,
-        });
+        let provider = tokio::time::timeout(Duration::from_secs(25), self.discover())
+            .await
+            .map_err(|_| "OIDC discovery timed out")?
+            .map_err(|_| "OIDC provider discovery failed")?;
+        let provider = Arc::new(provider);
         discovery.provider = Some(provider.clone());
         Ok(provider)
+    }
+    async fn discover(&self) -> Result<Provider, ConfigError> {
+        let issuer = &self.config.oidc_issuer;
+        let separator = if issuer.ends_with('/') { "" } else { "/" };
+        let response = self
+            .http
+            .call(get(&format!(
+                "{issuer}{separator}.well-known/openid-configuration"
+            ))?)
+            .await?;
+        let metadata: Metadata = serde_json::from_slice(json(&response, &["application/json"])?)?;
+        if metadata.issuer != *issuer {
+            return Err("OIDC discovery issuer mismatch".into());
+        }
+        let keys = self.http.jwks(&metadata.jwks_uri).await?;
+        Provider::new(metadata, keys, issuer)
     }
     pub async fn start(
         &self,
@@ -173,21 +194,29 @@ impl Oidc {
         let provider = self.provider().await?;
         let browser = random_token::<32>().map_err(|_| "random source unavailable")?;
         let state = random_token::<32>().map_err(|_| "random source unavailable")?;
-        let nonce = random_token::<32>().map_err(|_| "random source unavailable")?;
-        let verifier = random_token::<32>().map_err(|_| "random source unavailable")?;
-        let pkce =
-            PkceCodeChallenge::from_code_verifier_sha256(&PkceCodeVerifier::new(verifier.clone()));
-        let (url, state, nonce) = provider
-            .client
-            .authorize_url(
-                CoreAuthenticationFlow::AuthorizationCode,
-                || CsrfToken::new(state),
-                || Nonce::new(nonce),
-            )
-            .add_scope(Scope::new("profile".into()))
-            .add_scope(Scope::new("groups".into()))
-            .set_pkce_challenge(pkce)
-            .url();
+        let nonce = Zeroizing::new(random_token::<32>().map_err(|_| "random source unavailable")?);
+        let verifier =
+            Zeroizing::new(random_token::<32>().map_err(|_| "random source unavailable")?);
+        let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ring::digest::digest(
+            &ring::digest::SHA256,
+            verifier.as_bytes(),
+        ));
+        let query = form_urlencoded::Serializer::new(String::new())
+            .append_pair("response_type", "code")
+            .append_pair("client_id", &self.config.oidc_client_id)
+            .append_pair("state", &state)
+            .append_pair("code_challenge", &pkce)
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("redirect_uri", &self.redirect_uri())
+            .append_pair("scope", "openid profile groups")
+            .append_pair("nonce", &nonce)
+            .finish();
+        let separator = match provider.authorization.split_once('?') {
+            None => "?",
+            Some((_, "")) => "",
+            Some(_) => "&",
+        };
+        let url = format!("{}{separator}{query}", provider.authorization);
         let mut transactions = self
             .transactions
             .lock()
@@ -204,22 +233,22 @@ impl Oidc {
             return Err("OIDC transaction capacity reached".into());
         }
         transactions.insert(
-            token_hash(state.secret()),
+            token_hash(&state),
             Transaction {
                 provider,
                 browser: token_hash(&browser),
                 nonce,
-                verifier: Zeroizing::new(verifier),
+                verifier,
                 deadline: now + Duration::from_secs(600),
                 address,
                 challenge,
                 prior,
             },
         );
-        Ok(Started {
-            url: url.into(),
-            browser,
-        })
+        Ok(Started { url, browser })
+    }
+    fn redirect_uri(&self) -> String {
+        format!("{}/auth/oidc/callback", self.config.public_url)
     }
     pub async fn finish(
         &self,
@@ -245,64 +274,51 @@ impl Oidc {
             .exchanges
             .try_acquire()
             .map_err(|_| "OIDC exchange capacity reached")?;
-        let client = &tx.provider.client;
-        let tokens = client
-            .exchange_code(AuthorizationCode::new(code.to_owned()))?
-            .set_pkce_verifier(PkceCodeVerifier::new(tx.verifier.to_string()))
-            .request_async(&self.http)
+        let provider = &tx.provider;
+        let tokens = self
+            .exchange(provider, code, &tx.verifier)
             .await
             .map_err(|_| "OIDC token exchange failed")?;
-        let token = tokens.id_token().ok_or("OIDC ID token missing")?;
-        let verifier = client.id_token_verifier();
-        let claims = token
-            .claims(&verifier, &tx.nonce)
+        let id_token = tokens.id_token.as_deref().ok_or("OIDC ID token missing")?;
+        let verified = provider
+            .verify(&self.http, id_token)
+            .await
             .map_err(|_| "OIDC ID token rejected")?;
-        if claims
-            .authorized_party()
-            .is_some_and(|party| party.as_str() != self.config.oidc_client_id)
-        {
-            return Err("OIDC authorized party rejected".into());
-        }
-        if let Some(expected) = claims.access_token_hash() {
-            let actual = AccessTokenHash::from_token(
-                tokens.access_token(),
-                token.signing_alg()?,
-                token.signing_key(&verifier)?,
-            )?;
-            if actual != *expected {
-                return Err("OIDC access token binding rejected".into());
-            }
-        }
-        let info: UserInfoClaims<Groups, CoreGenderClaim> = client
-            .user_info(
-                tokens.access_token().clone(),
-                Some(claims.subject().clone()),
-            )?
-            .request_async(&self.http)
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let claims = jwt::id_token(
+            verified,
+            &jwt::Expected {
+                issuer: &self.config.oidc_issuer,
+                client_id: &self.config.oidc_client_id,
+                nonce: &tx.nonce,
+                access_token: &tokens.access_token,
+                now,
+            },
+        )
+        .map_err(|_| "OIDC ID token rejected")?;
+        let info = self
+            .user_info(provider, &tokens.access_token)
             .await
             .map_err(|_| "OIDC user information rejected")?;
+        if info.sub != claims.subject {
+            return Err("OIDC user information rejected".into());
+        }
         if !info
-            .additional_claims()
             .groups
             .iter()
             .any(|group| self.config.oidc_allowed_groups.contains(group))
         {
             return Err("OIDC group denied".into());
         }
-        let subject = claims.subject().as_str();
+        let subject = claims.subject.as_str();
         if subject.is_empty() || subject.len() > 256 || subject.chars().any(char::is_control) {
             return Err("OIDC subject rejected".into());
         }
         let name = [
-            info.name()
-                .and_then(|name| name.get(None))
-                .map(|name| name.as_str()),
-            info.preferred_username().map(|name| name.as_str()),
-            claims
-                .name()
-                .and_then(|name| name.get(None))
-                .map(|name| name.as_str()),
-            claims.preferred_username().map(|name| name.as_str()),
+            info.name.as_deref(),
+            info.preferred_username.as_deref(),
+            claims.name.as_deref(),
+            claims.preferred_username.as_deref(),
             Some(subject),
         ]
         .into_iter()
@@ -324,77 +340,201 @@ impl Oidc {
             prior: tx.prior,
         })
     }
-}
-fn valid_url(url: &url::Url) -> Result<(), ConfigError> {
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-    {
-        return Err(
-            "OIDC endpoint must be an absolute HTTPS URL without credentials or fragment".into(),
-        );
+    async fn exchange(
+        &self,
+        provider: &Provider,
+        code: &str,
+        verifier: &str,
+    ) -> Result<Tokens, ConfigError> {
+        let encode =
+            |value: &str| form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
+        let credentials = Zeroizing::new(format!(
+            "{}:{}",
+            encode(&self.config.oidc_client_id),
+            encode(&self.secret)
+        ));
+        let mut authorization = HeaderValue::from_str(&format!(
+            "Basic {}",
+            STANDARD.encode(credentials.as_bytes())
+        ))?;
+        authorization.set_sensitive(true);
+        let body = form_urlencoded::Serializer::new(String::new())
+            .append_pair("grant_type", "authorization_code")
+            .append_pair("code", code)
+            .append_pair("code_verifier", verifier)
+            .append_pair("redirect_uri", &self.redirect_uri())
+            .finish();
+        let request = Request::post(&provider.token)
+            .header(header::ACCEPT, "application/json")
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::AUTHORIZATION, authorization)
+            .body(body)?;
+        let response = self.http.call(request).await?;
+        let essence = essence(&response);
+        if response.status() != StatusCode::OK
+            || response.body().is_empty()
+            || essence
+                .as_deref()
+                .is_some_and(|essence| essence != "application/json")
+        {
+            return Err("OIDC token endpoint rejected the exchange".into());
+        }
+        let tokens: Tokens = serde_json::from_slice(response.body())?;
+        if !tokens.token_type.eq_ignore_ascii_case("Bearer") {
+            return Err("OIDC token type unsupported".into());
+        }
+        Ok(tokens)
     }
-    Ok(())
+    async fn user_info(
+        &self,
+        provider: &Provider,
+        access_token: &str,
+    ) -> Result<UserInfo, ConfigError> {
+        let mut bearer = HeaderValue::from_str(&format!("Bearer {access_token}"))?;
+        bearer.set_sensitive(true);
+        let mut request = get(&provider.userinfo)?;
+        request.headers_mut().insert(header::AUTHORIZATION, bearer);
+        let response = self.http.call(request).await?;
+        if response.status() != StatusCode::OK {
+            return Err("OIDC user information unavailable".into());
+        }
+        match essence(&response).as_deref() {
+            None | Some("application/json") => Ok(serde_json::from_slice(response.body())?),
+            Some("application/jwt") => {
+                let token = std::str::from_utf8(response.body())?.trim();
+                let verified = provider
+                    .verify(&self.http, token)
+                    .await
+                    .map_err(|_| "OIDC user information signature rejected")?;
+                jwt::audience_and_issuer(
+                    &verified.claims,
+                    &self.config.oidc_issuer,
+                    &self.config.oidc_client_id,
+                )
+                .map_err(|_| "OIDC user information claims rejected")?;
+                Ok(serde_json::from_value(serde_json::Value::Object(
+                    verified.claims,
+                ))?)
+            }
+            Some(_) => Err("OIDC user information has an unexpected type".into()),
+        }
+    }
 }
-struct ProviderHttp(reqwest::Client);
+
+#[derive(Deserialize)]
+struct Tokens {
+    access_token: String,
+    token_type: String,
+    id_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UserInfo {
+    sub: String,
+    groups: Vec<String>,
+    name: Option<String>,
+    preferred_username: Option<String>,
+}
+
+fn valid_url(url: &str) -> Result<(), ConfigError> {
+    match split_url(url) {
+        Ok((origin, _)) if origin.scheme == "https" => Ok(()),
+        _ => Err(
+            "OIDC endpoint must be an absolute HTTPS URL without credentials or fragment".into(),
+        ),
+    }
+}
+
+fn get(url: &str) -> Result<Request<String>, ConfigError> {
+    Ok(Request::get(url)
+        .header(header::ACCEPT, "application/json")
+        .body(String::new())?)
+}
+
+fn essence(response: &Response<Vec<u8>>) -> Option<String> {
+    let value = response
+        .headers()
+        .get(header::CONTENT_TYPE)?
+        .to_str()
+        .unwrap_or_default();
+    Some(
+        value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase(),
+    )
+}
+
+fn json<'a>(response: &'a Response<Vec<u8>>, types: &[&str]) -> Result<&'a [u8], ConfigError> {
+    if response.status() != StatusCode::OK
+        || essence(response).is_some_and(|essence| !types.contains(&essence.as_str()))
+    {
+        return Err("OIDC provider returned an unexpected response".into());
+    }
+    Ok(response.body())
+}
+
+struct ProviderHttp {
+    tls: TlsConnector,
+    proxy: Proxy,
+}
 impl ProviderHttp {
     fn new() -> Result<Self, ConfigError> {
         let tls = rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
             .with_safe_default_protocol_versions()?
             .with_platform_verifier()?
             .with_no_client_auth();
-        Ok(Self(
-            reqwest::Client::builder()
-                .use_preconfigured_tls(tls)
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(15))
-                .build()?,
-        ))
-    }
-}
-impl<'a> AsyncHttpClient<'a> for ProviderHttp {
-    type Error = std::io::Error;
-    type Future = std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<HttpResponse, Self::Error>> + Send + 'a>,
-    >;
-    fn call(&'a self, request: HttpRequest) -> Self::Future {
-        Box::pin(async move {
-            tokio::time::timeout(
-                if request.method() == http::Method::GET {
-                    Duration::from_secs(10)
-                } else {
-                    Duration::from_secs(15)
-                },
-                async {
-                    let url = url::Url::parse(&request.uri().to_string())
-                        .map_err(std::io::Error::other)?;
-                    valid_url(&url).map_err(|_| std::io::Error::other("invalid OIDC endpoint"))?;
-                    let (parts, body) = request.into_parts();
-                    let mut response = self
-                        .0
-                        .request(parts.method, url)
-                        .headers(parts.headers)
-                        .body(body)
-                        .send()
-                        .await
-                        .map_err(std::io::Error::other)?;
-                    let mut output = http::Response::builder().status(response.status());
-                    *output.headers_mut().expect("response headers") = response.headers().clone();
-                    let mut bytes = Vec::new();
-                    while let Some(chunk) = response.chunk().await.map_err(std::io::Error::other)? {
-                        if bytes.len() + chunk.len() > 1024 * 1024 {
-                            return Err(std::io::Error::other("OIDC response too large"));
-                        }
-                        bytes.extend_from_slice(&chunk);
-                    }
-                    output.body(bytes).map_err(std::io::Error::other)
-                },
-            )
-            .await
-            .map_err(|_| std::io::Error::other("OIDC request timed out"))?
+        Ok(Self {
+            tls: TlsConnector::from(Arc::new(tls)),
+            proxy: Proxy::from_env(),
         })
+    }
+    async fn jwks(&self, url: &str) -> Result<Jwks, ConfigError> {
+        let response = self.call(get(url)?).await?;
+        let body = json(&response, &["application/json", "application/jwk-set+json"])?;
+        Jwks::parse(body).map_err(|_| "OIDC key set is malformed".into())
+    }
+    async fn call(&self, mut request: Request<String>) -> Result<Response<Vec<u8>>, ConfigError> {
+        let timeout = if request.method() == Method::GET {
+            10
+        } else {
+            15
+        };
+        tokio::time::timeout(Duration::from_secs(timeout), async {
+            let uri = request.uri().to_string();
+            valid_url(&uri)?;
+            let (origin, path) = split_url(&uri)?;
+            let host = origin.key().split_off("https://".len());
+            request
+                .headers_mut()
+                .insert(header::HOST, HeaderValue::from_str(&host)?);
+            *request.uri_mut() = if path.is_empty() {
+                "/".parse()?
+            } else {
+                path.parse()?
+            };
+            let connection = connect(&self.proxy, &origin, Some(&self.tls)).await?;
+            let (mut sender, driver) =
+                hyper::client::conn::http1::handshake(TokioIo::new(connection.stream)).await?;
+            tokio::spawn(driver);
+            let (parts, mut body) = sender.send_request(request).await?.into_parts();
+            let mut bytes = Vec::new();
+            while let Some(frame) =
+                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+            {
+                if let Ok(data) = frame?.into_data() {
+                    if bytes.len() + data.len() > 1024 * 1024 {
+                        return Err("OIDC response too large".into());
+                    }
+                    bytes.extend_from_slice(&data);
+                }
+            }
+            Ok(Response::from_parts(parts, bytes))
+        })
+        .await
+        .map_err(|_| "OIDC request timed out")?
     }
 }
 
@@ -414,29 +554,18 @@ mod tests {
             ..AuthConfig::default()
         })
         .unwrap();
-        let metadata: CoreProviderMetadata = serde_json::from_value(serde_json::json!({
+        let metadata = serde_json::from_value(serde_json::json!({
             "issuer": "https://identity.example",
             "authorization_endpoint": "https://identity.example/authorize",
             "token_endpoint": "https://identity.example/token",
             "userinfo_endpoint": "https://identity.example/userinfo",
             "jwks_uri": "https://identity.example/jwks",
-            "response_types_supported": ["code"],
-            "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": ["RS256"]
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "authorization_response_iss_parameter_supported": true
         }))
         .unwrap();
-        let provider = Provider {
-            client: CoreClient::from_provider_metadata(
-                metadata,
-                ClientId::new("meter".into()),
-                Some(ClientSecret::new("secret".into())),
-            )
-            .set_redirect_uri(
-                RedirectUrl::new("https://meter.example/auth/oidc/callback".into()).unwrap(),
-            ),
-            issuer_parameter: true,
-            origin: "https://identity.example".into(),
-        };
+        let keys = Jwks::parse(br#"{"keys":[]}"#).unwrap();
+        let provider = Provider::new(metadata, keys, "https://identity.example").unwrap();
         *oidc.discovery.lock().await = Discovery {
             provider: Some(Arc::new(provider)),
             retry: Instant::now() + Duration::from_secs(30),
@@ -444,13 +573,18 @@ mod tests {
         oidc
     }
 
+    pub(super) fn query_fields(url: &str) -> HashMap<String, String> {
+        form_urlencoded::parse(url.split_once('?').unwrap().1.as_bytes())
+            .into_owned()
+            .collect()
+    }
+
     #[tokio::test]
     async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validation() {
         let oidc = ready().await;
         let address = "192.0.2.1".parse().unwrap();
         let started = oidc.start(address, String::new(), None).await.unwrap();
-        let url = url::Url::parse(&started.url).unwrap();
-        let fields: HashMap<_, _> = url.query_pairs().into_owned().collect();
+        let fields = query_fields(&started.url);
         assert_eq!(fields["code_challenge_method"], "S256");
         assert_eq!(fields["response_type"], "code");
         assert_eq!(
@@ -492,13 +626,7 @@ mod tests {
             .start("192.0.2.2".parse().unwrap(), String::new(), None)
             .await
             .unwrap();
-        let url = url::Url::parse(&started.url).unwrap();
-        let state = url
-            .query_pairs()
-            .find(|(key, _)| key == "state")
-            .unwrap()
-            .1
-            .into_owned();
+        let state = query_fields(&started.url)["state"].clone();
         assert!(
             oidc.finish(
                 &state,
@@ -519,9 +647,9 @@ mod tests {
             "https://user@identity.example/token",
             "https://identity.example/token#fragment",
         ] {
-            assert!(valid_url(&url::Url::parse(endpoint).unwrap()).is_err());
+            assert!(valid_url(endpoint).is_err());
         }
-        assert!(valid_url(&url::Url::parse("https://identity.example/token").unwrap()).is_ok());
+        assert!(valid_url("https://identity.example/token").is_ok());
     }
 }
 

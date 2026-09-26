@@ -480,7 +480,7 @@ mod tests {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         use std::{future::poll_fn, sync::Arc};
 
-        let (certificate, key) = crate::test_identity::generate_identity().unwrap();
+        let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
         let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
         let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
         let config = quinn::ServerConfig::with_single_cert(vec![certificate.clone()], key).unwrap();

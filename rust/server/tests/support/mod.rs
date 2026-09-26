@@ -13,7 +13,8 @@ pub struct Identity(PathBuf);
 impl Identity {
     pub fn generate() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let (certificate, key) = test_identity::generate_identity().expect("test identity");
+        let (certificate, key) =
+            test_identity::generate_identity("localhost").expect("test identity");
         let identity = Self(Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "identity-{}-{}",
             std::process::id(),

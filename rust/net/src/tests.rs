@@ -209,7 +209,7 @@ mod test_identity;
 #[tokio::test]
 async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-    let (certificate, key) = test_identity::generate_identity().unwrap();
+    let (certificate, key) = test_identity::generate_identity("localhost").unwrap();
     let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
     let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
     let provider = Arc::new(rustls::crypto::ring::default_provider());

@@ -20,7 +20,7 @@ mod test_identity;
 async fn http1_reuses_connections_and_http2_multiplexes_cold_requests() -> Result<(), Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-    let (certificate, key) = test_identity::generate_identity()?;
+    let (certificate, key) = test_identity::generate_identity("localhost")?;
     let certificate = CertificateDer::from_pem_slice(certificate.as_bytes())?;
     let key = PrivateKeyDer::from_pem_slice(key.as_bytes())?;
     let server_tls = rustls::ServerConfig::builder()

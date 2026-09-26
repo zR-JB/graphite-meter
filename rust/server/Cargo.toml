@@ -10,10 +10,11 @@ publish = false
 workspace = true
 
 [dependencies]
-openidconnect = { version = "4.0.1", default-features = false }
-reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2"] }
 rustls-platform-verifier = "0.7.0"
 graphite-meter-core = { path = "../core" }
+graphite-meter-net = { path = "../net" }
+ring = "0.17.14"
+form_urlencoded = "1.2.2"
 bytes = "1"
 getrandom = "0.4.3"
 askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
@@ -23,17 +24,15 @@ base64 = "0.22.1"
 subtle = "2.6.1"
 http = "1"
 httpdate = "1.0.3"
-form_urlencoded = "1.2.2"
 socket2 = { version = "0.6.5", features = ["all"] }
 h2 = "0.4.19"
-hyper = { version = "1.11.1", features = ["server", "http1", "http2"] }
+hyper = { version = "1.11.1", features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
 ipnet = "2.12.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11.0"
 hmac = { version = "0.13.0", features = ["zeroize"] }
-url = "2.5.8"
 h3 = { version = "0.0.8", features = ["i-implement-a-third-party-backend-and-opt-into-breaking-changes"] }
 h3-noq = { path = "../vendor/h3-noq" }
 quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca4b44552c6df355906f45c58e992ddbb7986bbb", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
