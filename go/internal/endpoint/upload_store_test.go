@@ -154,7 +154,7 @@ func TestUploadStoreSweepFollowsActivity(t *testing.T) {
 		for range maxLiveUploadsPerClient - 2 {
 			s.getOrCreateFor(s.Mint(), owner)
 		}
-		time.Sleep(wire.WTIdleBound)
+		time.Sleep(wire.IdleBound)
 		s.sweep(uploadIDTTL)
 		if s.live() != maxLiveUploadsPerClient {
 			t.Fatalf("live = %d within the transport's idle bound, want every receiver kept for a re-dial",

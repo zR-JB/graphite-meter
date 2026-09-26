@@ -114,7 +114,7 @@ func (p TransferStreamPolicy) Lanes(protocol, transport string) (down, up int) {
 	return p.AutomaticMax, p.AutomaticMax
 }
 
-const MaxPingInterval = wire.WTIdleBound / 2
+const MaxPingInterval = wire.IdleBound / 2
 
 type DurationBound struct{ Min, Max time.Duration }
 
@@ -169,7 +169,7 @@ func (c Config) checkPaths() error {
 		return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", c.LatencyTransport, ws, wt)
 	case max(c.PingInterval, c.LoadedPingInterval) > MaxPingInterval:
 		return fmt.Errorf("ping interval must be at most %v, half the server's %v lane idle bound",
-			MaxPingInterval, wire.WTIdleBound)
+			MaxPingInterval, wire.IdleBound)
 	}
 	return nil
 }

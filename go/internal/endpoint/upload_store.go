@@ -94,7 +94,7 @@ const (
 	uploadReconnectGrace    = 30 * time.Second
 	uploadTokenTTL          = 2 * time.Minute
 	// A retained ID outlives its signed token, so sweeping cannot forget a live token's state.
-	uploadIDTTL         = max(2*wire.WTIdleBound+uploadReconnectGrace, uploadTokenTTL)
+	uploadIDTTL         = max(2*wire.IdleBound+uploadReconnectGrace, uploadTokenTTL)
 	uploadSweepInterval = 5 * time.Second
 )
 

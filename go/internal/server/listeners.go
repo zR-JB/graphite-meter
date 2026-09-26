@@ -98,7 +98,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		upload:         upload,
 		admission:      admission,
 		trusted:        cfg.TrustedProxies,
-		idleBound:      wire.WTIdleBound,
+		idleBound:      wire.IdleBound,
 		controlTimeout: controlTimeout,
 	}
 }
@@ -300,7 +300,7 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 func h3QUICConfig(cfg *config.Config) *quic.Config {
 	q := transport.NewQUICConfig()
 	q.HandshakeIdleTimeout = 5 * time.Second
-	q.MaxIdleTimeout = wire.WTIdleBound
+	q.MaxIdleTimeout = wire.IdleBound
 	// A request stream past the client's admission shares would pin its headers only to be refused.
 	q.MaxIncomingStreams = int64(cfg.MaxActiveMeasurementsPerClient + cfg.MaxSessionsPerClient + h3ControlStreams)
 	// Credit past the lane cap, so an excess lane is reset rather than parked (api/wire.md).

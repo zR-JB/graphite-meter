@@ -106,7 +106,7 @@ func TestHTTPUploadLaneEndings(t *testing.T) {
 		}
 		res, id, _, err := upload(func(w io.Writer) {
 			_, _ = w.Write(make([]byte, 1024))
-			time.Sleep(wire.WTIdleBound + time.Second)
+			time.Sleep(wire.IdleBound + time.Second)
 		})
 		if err != nil || res.StatusCode != http.StatusRequestTimeout ||
 			res.Header.Get("X-Graphite-Upload-Refusal") != "idle" || counted(id) != 1024 {
@@ -143,7 +143,7 @@ func TestHTTPDownloadIdleBound(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(wire.WTIdleBound - time.Second)
+		time.Sleep(wire.IdleBound - time.Second)
 		synctest.Wait()
 		if active() != 1 {
 			t.Fatal("download ended before its idle bound")

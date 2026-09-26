@@ -64,8 +64,8 @@ func TestConfigNormalizedInvariants(t *testing.T) {
 
 func TestConfigValidate(t *testing.T) {
 	t.Parallel()
-	if MaxPingInterval*2 != wire.WTIdleBound {
-		t.Errorf("MaxPingInterval = %v, want half of the %v idle bound", MaxPingInterval, wire.WTIdleBound)
+	if MaxPingInterval*2 != wire.IdleBound {
+		t.Errorf("MaxPingInterval = %v, want half of the %v idle bound", MaxPingInterval, wire.IdleBound)
 	}
 	for _, c := range []struct {
 		name string

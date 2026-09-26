@@ -237,12 +237,12 @@ func TestUploadBoundsItsBodyRead(t *testing.T) {
 			before := time.Now()
 			store.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
-			if remaining != 0 && remaining < wire.WTIdleBound {
+			if remaining != 0 && remaining < wire.IdleBound {
 				if !rec.read.Equal(want) {
 					t.Fatalf("read deadline = %v, want the request deadline %v", rec.read, want)
 				}
-			} else if rec.read.Before(before.Add(wire.WTIdleBound)) ||
-				rec.read.After(time.Now().Add(wire.WTIdleBound)) {
+			} else if rec.read.Before(before.Add(wire.IdleBound)) ||
+				rec.read.After(time.Now().Add(wire.IdleBound)) {
 				t.Fatalf("read deadline %v does not keep the idle bound", rec.read)
 			}
 		})

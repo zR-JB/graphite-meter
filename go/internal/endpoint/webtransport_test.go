@@ -115,7 +115,7 @@ func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 func TestIdleDeadlineReArmsWithTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var deadlines []time.Time
-		limit := time.Now().Add(wire.WTIdleBound + 10*time.Second)
+		limit := time.Now().Add(wire.IdleBound + 10*time.Second)
 		set := func(d time.Time) error {
 			deadlines = append(deadlines, d)
 			return nil
@@ -127,12 +127,12 @@ func TestIdleDeadlineReArmsWithTheClock(t *testing.T) {
 		if len(deadlines) != 1 {
 			t.Fatalf("armed %d deadlines over three back-to-back chunks, want 1", len(deadlines))
 		}
-		time.Sleep(wire.WTIdleBound / 4)
+		time.Sleep(wire.IdleBound / 4)
 		idle.moved(time.Now())
-		if len(deadlines) != 2 || !deadlines[1].Equal(time.Now().Add(wire.WTIdleBound)) {
+		if len(deadlines) != 2 || !deadlines[1].Equal(time.Now().Add(wire.IdleBound)) {
 			t.Fatalf("deadlines = %v, want a second one a full bound after the later chunk", deadlines)
 		}
-		time.Sleep(wire.WTIdleBound / 2)
+		time.Sleep(wire.IdleBound / 2)
 		idle.moved(time.Now())
 		if len(deadlines) != 3 || !deadlines[2].Equal(limit) {
 			t.Fatalf("deadlines = %v, want the last capped at the lane's lifetime", deadlines)

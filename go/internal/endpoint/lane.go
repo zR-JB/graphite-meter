@@ -95,10 +95,10 @@ type idleDeadline struct {
 
 func (d *idleDeadline) moved(now time.Time) {
 	d.live.Bump()
-	if d.set == nil || now.Sub(d.armed) <= wire.WTIdleBound/8 {
+	if d.set == nil || now.Sub(d.armed) <= wire.IdleBound/8 {
 		return
 	}
-	deadline := now.Add(wire.WTIdleBound)
+	deadline := now.Add(wire.IdleBound)
 	if !d.limit.IsZero() && d.limit.Before(deadline) {
 		deadline = d.limit
 	}

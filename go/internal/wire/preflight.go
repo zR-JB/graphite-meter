@@ -40,8 +40,8 @@ const (
 // WTMaxStreams is the published ceiling on a WebTransport session's concurrent streams per direction.
 const WTMaxStreams = 16
 
-// WTIdleBound is the published inactivity bound of every lane, per api/wire.md#lane-endings.
-const WTIdleBound = 30 * time.Second
+// IdleBound is the published inactivity bound of every lane, per api/wire.md#lane-endings.
+const IdleBound = 30 * time.Second
 
 type ThroughputTarget struct {
 	ID        string `json:"-"`

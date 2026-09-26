@@ -238,7 +238,7 @@ Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the conta
 | `--report` | `false` | Run once without the interface; automatic when stdout is not a terminal. |
 | `--version` / `--legal` | | Print the version or third-party notices and exit. |
 
-Over WebTransport latency, fixed cadences are capped at 15 s (half the server's idle bound). Headless runs print stage
+Fixed cadences are capped at 15 s (half the server's idle bound). Headless runs print stage
 progress to stderr and the plain report to stdout; an interactive run prints the same report on exit.
 
 | Exit | Meaning |
