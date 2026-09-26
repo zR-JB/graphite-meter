@@ -57,18 +57,18 @@ runtimes and are not identical benchmark targets.
 ## Commands
 
 ```sh
-mise run dev                # development browser build + server
-mise run prod               # production browser build + server
-mise run client-watch       # standalone Vite dev server
-cd go && go run ./cmd/graphite-meter-client  # native client
-mise run check              # deterministic gate; the commit hook runs the parts staged paths touch
-mise run ci                 # everything CI runs, job by job
+mise run dev            # development browser build + server
+mise run prod           # production browser build + server
+mise run client-watch   # standalone Vite dev server
+mise run goclient-build # native client (go/graphite-meter-client)
+mise run check          # deterministic gate; the commit hook runs the parts staged paths touch
+mise run ci             # everything CI runs, job by job
 ```
 
 | Build | Command |
 | --- | --- |
 | Production server | `mise run server-build-prod` (release stamp: `VERSION=0.9.0 mise run server-build-prod`) |
-| Native client | `mise run goclient-build` (all release archives: `mise run release-artifacts`) |
+| Native client | `mise run goclient-build`; every release archive: `mise run release-artifacts` |
 
 Untagged builds identify as `GM_CLIENT_REVISION` (default: the short Git revision); `GM_CLIENT_BUILD_PROFILE` is
 `dev` or `prod`; release automation sets `VERSION` for the server and both clients.
@@ -102,8 +102,8 @@ the pinned browser, and allow browser processes and loopback sockets. If Bun's p
 `mise run codeql` repeats the CodeQL scan offline with the [bundle](https://github.com/github/codeql-action/releases)
 release in `vars.codeql`, installed at `~/.local/share/codeql-bundle` or named by `CODEQL`.
 
-`mise run legal-check` detects drift in legal inventories.
-Regenerate legal outputs (`mise run legal-generate`) only after an intentional dependency or artifact change.
+`mise run legal-check` detects drift in legal inventories; regenerate them (`mise run legal-generate`) only after
+an intentional dependency or artifact change.
 
 ## Local TLS and HTTP/3
 
@@ -143,7 +143,7 @@ Never create or move release tags in ordinary work.
 | mise bootstrap | `mise.toml` `vars.mise_version` | The SHA-pinned CI action |
 | Chrome for Testing | `mise.toml` `vars.browser_chrome` | CI install and identity check |
 | CodeQL bundle | `mise.toml` `vars.codeql` | `mise run codeql` |
-| Utility container images | `mise.toml` `vars.image_*` | Secret scan, build and publication |
+| Utility container images | `mise.toml` `vars.image_*` | Image build, verification and publication |
 | Go dependencies | `go/go.mod`, `go/go.sum` | Module resolution and checksums |
 | Browser dependencies | `client/package.json`, `client/bun.lock` | Frozen Bun installs |
 | External GitHub Actions | Their `uses:` SHA | Immutable workflow refs |

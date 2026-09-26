@@ -107,24 +107,8 @@ it. Build arguments carry no secrets because max provenance records them.
 `actionlint` checks workflow syntax and expressions. `zizmor` (configured in
 `.github/zizmor.yml`) requires full-SHA action pins, non-persisted checkout
 credentials and no dangerous triggers other than the reviewed `workflow_run`.
-`workflow_policy.py` keeps only project rules:
-
-- reviewed triggers, top-level permissions, no write scope for the default
-  token and an action allowlist for both release workflows;
-- release secrets only in the publish-mode `ghcr-release` job; no secrets or
-  environments elsewhere;
-- no interpolated `${{ }}` in run scripts; checkouts select only `github.sha`;
-- ordered verify, approval, recheck and publication steps; dispatch inputs
-  reach only the request validator and the build uses no cache;
-- release identity (`EVENT_SHA`, `PUBLISHER_SHA`, `TARGET_SHA`, actors, refs,
-  run IDs) bound only from the run context; a request that reads only
-  contents; handoffs uploaded only in publish mode; one publication at a time;
-- mise-provisioned tools, uncached trusted Python bootstraps, the pinned
-  Chromium launch check, digest-pinned base images without a custom frontend;
-- CI coverage of the local gate, path filters and no tracked key material.
-
-`test_workflow_policy.py` mutates a copy of the repository once per rule and
-runs both linters against representative violations.
+`workflow_policy.py` holds the project's own trust rules, and
+`test_workflow_policy.py` breaks a copy of the repository once per rule.
 
 When adding an external action, review it and its composite dependencies,
 allow it in repository settings, pin the SHA with a version comment for
@@ -132,12 +116,12 @@ Dependabot and run the checks above.
 
 ## Pre-commit
 
-The hook bootstraps the staged Python pin and runs the staged `precommit.py`.
-It refuses commits to `main`, staged TLS paths or PEM material and files over
-1 MiB, runs Gitleaks against the index, then materializes the exact staged tree
-in a disposable worktree with frozen client dependencies and runs the component
-gates selected by the changed, deleted or renamed paths. `api/`, `mise.toml` and
-`mise.lock` changes select the full `check`.
+The hook refuses commits to `main` and whitespace errors, and scans the index
+with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
+paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
+select the full `check`. The checks run on the exact staged tree in a disposable
+worktree with frozen client dependencies. `workflow-check` refuses tracked TLS
+key and certificate names and PEM material.
 
 ## Python and dependencies
 
