@@ -52,13 +52,10 @@ type endpoints struct {
 	probe, bootstrapProbe *endpoint.Probe
 	download              *endpoint.Download
 	upload                *endpoint.Upload
-	// WebTransport lanes run through these; tests wrap them.
-	stream         endpoint.StreamFunc
-	receive        endpoint.ReceiveFunc
-	admission      *requestAdmission
-	trusted        []netip.Prefix
-	wtIdleBound    time.Duration
-	controlTimeout time.Duration
+	admission             *requestAdmission
+	trusted               []netip.Prefix
+	wtIdleBound           time.Duration
+	controlTimeout        time.Duration
 }
 
 type service struct {
@@ -100,11 +97,12 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		discovery:      endpoint.NewDiscovery(cfg),
 		probe:          endpoint.NewProbe(cfg.TrustedProxies, "", admission.load),
 		bootstrapProbe: endpoint.NewProbe(cfg.TrustedProxies, publicH3Port(cfg), admission.load),
-		download:       download, stream: download.Stream,
-		upload: upload, receive: upload.Receive,
-		admission:   admission,
-		trusted:     cfg.TrustedProxies,
-		wtIdleBound: wire.WTIdleBound, controlTimeout: controlTimeout,
+		download:       download,
+		upload:         upload,
+		admission:      admission,
+		trusted:        cfg.TrustedProxies,
+		wtIdleBound:    wire.WTIdleBound,
+		controlTimeout: controlTimeout,
 	}
 }
 

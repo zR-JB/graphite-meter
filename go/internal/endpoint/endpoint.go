@@ -2,18 +2,12 @@
 package endpoint
 
 import (
-	"context"
-	"io"
 	"net/http"
 	"net/netip"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
-
-type StreamFunc func(ctx context.Context, n int64, w io.Writer)
-
-type ReceiveFunc func(ctx context.Context, id, owner string, src io.Reader) (int64, error)
 
 // ClientKey keys upload ownership and admission by subject, IPv4 address, or IPv6 /64.
 func ClientKey(r *http.Request, trusted []netip.Prefix) string {

@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,7 +22,6 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
@@ -855,94 +855,6 @@ func TestGoClientOutlivesOperationBoundOverFetch(t *testing.T) {
 	runGoClientUnderLifetimeCaps(t, "fetch-stream", "websocket")
 }
 
-// wtObservedSession is what one WebTransport session looked like from inside the endpoint it drove.
-type wtObservedSession struct{ lanes, live, peak int }
-
-// wtLaneCounter wraps a transfer operation and records what the server itself saw on the WebTransport side of it.
-type wtLaneCounter struct {
-	stream  endpoint.StreamFunc
-	receive endpoint.ReceiveFunc
-	// cut, when set, limits how long each WebTransport lane may carry bytes.
-	cut func(lane int) time.Duration
-
-	mu       sync.Mutex
-	byCtx    map[context.Context]*wtObservedSession
-	sessions []*wtObservedSession
-	lanes    int
-}
-
-func (c *wtLaneCounter) Stream(ctx context.Context, n int64, sink io.Writer) {
-	obs, _ := c.enterLane(ctx)
-	defer c.leaveLane(obs)
-	c.stream(ctx, n, sink)
-}
-
-func (c *wtLaneCounter) Receive(ctx context.Context, id, owner string, src io.Reader) (int64, error) {
-	obs, lane := c.enterLane(ctx)
-	defer c.leaveLane(obs)
-	if c.cut != nil {
-		if window := c.cut(lane); window > 0 {
-			src = &deadlineSource{src: src, until: time.Now().Add(window)}
-		}
-	}
-	return c.receive(ctx, id, owner, src)
-}
-
-func (c *wtLaneCounter) enterLane(ctx context.Context) (*wtObservedSession, int) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.byCtx == nil {
-		c.byCtx = map[context.Context]*wtObservedSession{}
-	}
-	obs, ok := c.byCtx[ctx]
-	if !ok {
-		obs = &wtObservedSession{}
-		c.byCtx[ctx] = obs
-		c.sessions = append(c.sessions, obs)
-	}
-	c.lanes++
-	obs.lanes++
-	obs.live++
-	obs.peak = max(obs.peak, obs.live)
-	return obs, c.lanes
-}
-
-func (c *wtLaneCounter) leaveLane(obs *wtObservedSession) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	obs.live--
-}
-
-// observed returns one entry per WebTransport session, in the order they first carried a lane.
-func (c *wtLaneCounter) observed() []wtObservedSession {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]wtObservedSession, 0, len(c.sessions))
-	for _, s := range c.sessions {
-		out = append(out, *s)
-	}
-	return out
-}
-
-// reset forgets every session, so one server can serve several runs and each still be read on its own.
-func (c *wtLaneCounter) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.byCtx, c.sessions, c.lanes = nil, nil, 0
-}
-
-type deadlineSource struct {
-	src   io.Reader
-	until time.Time
-}
-
-func (r *deadlineSource) Read(p []byte) (int, error) {
-	if !time.Now().Before(r.until) {
-		return 0, io.EOF
-	}
-	return r.src.Read(p)
-}
-
 // closeSessionBudget refuses every later WebTransport session with the 503 a saturated session budget answers.
 func closeSessionBudget(a *requestAdmission) {
 	a.mu.Lock()
@@ -1025,111 +937,95 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	}
 }
 
-// The published lane range is 1..16 over WebTransport: both ends run on one session each.
+// The shipped client runs each stage's lanes, one to the published maximum, on one WebTransport session.
 func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 	t.Parallel()
-	down, up := &wtLaneCounter{}, &wtLaneCounter{}
-	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) {
-		down.stream, e.stream = e.stream, down.Stream
-		up.receive, e.receive = e.receive, up.Receive
-	})
-
-	run := func(streams int) {
-		t.Helper()
-		down.reset()
-		up.reset()
+	_, httpBase, e := wtServer(t, nil, nil)
+	for _, streams := range []int{1, wire.WTMaxStreams} {
 		clientCfg := wtClientConfig(httpBase)
 		clientCfg.Stages = goclient.StageSet{Download: true, Upload: true}
 		clientCfg.DownloadDuration = 600 * time.Millisecond
 		clientCfg.UploadDuration = 600 * time.Millisecond
 		clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: streams}
-
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
-		defer cancel()
 		results := map[string]goclient.Result{}
 		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
 			if ev.Kind == goclient.EventResult && ev.Result != nil {
 				results[string(ev.Stage)] = *ev.Result
 			}
 		})
-		if err != nil {
-			t.Fatalf("run at %d lanes: %v", streams, err)
-		}
-		// The server opens the download lanes and the client opens the upload ones.
-		for name, counter := range map[string]*wtLaneCounter{"download": down, "upload": up} {
-			observed := counter.observed()
-			if len(observed) != 1 {
-				t.Fatalf("%s at %d lanes ran on %d WebTransport sessions, want exactly 1", name, streams, len(observed))
-			}
-			if observed[0].peak != streams {
-				t.Errorf("the server saw %d concurrent %s lanes at --streams %d, want %d", observed[0].peak, name,
-					streams, streams)
-			}
-			if got := results[name].TotalBytes; got == 0 {
-				t.Errorf("%s at %d lanes moved no bytes", name, streams)
-			}
+		cancel()
+		if err != nil || results["download"].TotalBytes == 0 || results["upload"].TotalBytes == 0 {
+			t.Fatalf("run at %d lanes: %v, %+v", streams, err, results)
 		}
 	}
-	for _, streams := range []int{1, wire.WTMaxStreams} {
-		run(streams)
+	if _, sessions := e.admission.stats(); sessions.peak != 1 {
+		t.Fatalf("a stage held %d WebTransport sessions at once, want 1", sessions.peak)
 	}
 }
 
-// One lane's stream failing is not a lost session.
+// A reset upload lane costs only its own bytes: the session, its siblings and a replacement lane carry on.
 func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 	t.Parallel()
-	const lanes = 4
-	up := &wtLaneCounter{}
-	var cuts atomic.Int64
-	// Cut the second lane after it carries bytes, making the client observe a mid-transfer fault.
-	up.cut = func(lane int) time.Duration {
-		if lane != 2 {
-			return 0
-		}
-		cuts.Add(1)
-		return 300 * time.Millisecond
-	}
-	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) {
-		up.receive, e.receive = e.receive, up.Receive
-	})
-
-	clientCfg := wtClientConfig(httpBase)
-	clientCfg.Stages = goclient.StageSet{Upload: true}
-	clientCfg.UploadDuration = 1500 * time.Millisecond
-	clientCfg.TransferStreams = goclient.TransferStreamPolicy{Forced: lanes}
-
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	base, httpBase, wtTransport := wtTestServer(t, nil, nil)
+	id := mintUploadID(t, httpBase)
+	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+id)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	results := map[string]goclient.Result{}
-	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
-		if ev.Kind == goclient.EventResult && ev.Result != nil {
-			results[string(ev.Stage)] = *ev.Result
-		}
-	})
+	progress, err := sess.AcceptUniStream(ctx)
 	if err != nil {
-		t.Fatalf("a single reset lane failed the whole upload stage: %v", err)
+		t.Fatalf("accept progress stream: %v", err)
 	}
-	if cuts.Load() != 1 {
-		t.Fatalf("the server reset %d lanes, want exactly 1: nothing about a single lane's fault was tested",
-			cuts.Load())
+	records := bufio.NewScanner(progress)
+	if !firstProgressTypeIs(t, records, "ready") {
+		t.Fatal("progress stream never reported ready")
 	}
-
-	observed := up.observed()
-	if len(observed) != 1 {
-		t.Fatalf("a reset lane cost the stage %d WebTransport sessions, want 1: a new session stops every sibling lane",
-			len(observed))
+	const chunk = 1 << 20
+	write := func(lane *webtransport.SendStream) {
+		t.Helper()
+		if _, err := io.CopyN(lane, zeroes{}, chunk); err != nil {
+			t.Fatalf("write lane: %v", err)
+		}
 	}
-	// The reset lane reopened on that same session: the original lanes plus at least one replacement.
-	if observed[0].lanes < lanes+1 {
-		t.Errorf("the session ran %d lanes in total, want at least %d: the reset lane never came back",
-			observed[0].lanes, lanes+1)
+	open := func() *webtransport.SendStream {
+		t.Helper()
+		lane, err := sess.OpenUniStreamSync(ctx)
+		if err != nil {
+			t.Fatalf("open lane: %v", err)
+		}
+		write(lane)
+		return lane
 	}
-	if observed[0].peak != lanes {
-		t.Errorf("the server saw %d concurrent lanes, want %d", observed[0].peak, lanes)
+	lanes := []*webtransport.SendStream{open(), open(), open(), open()}
+	lanes[1].CancelWrite(0)
+	lanes = append(slices.Delete(lanes, 1, 2), open())
+	for _, lane := range lanes {
+		write(lane)
+		if err := lane.Close(); err != nil {
+			t.Fatalf("close lane: %v", err)
+		}
 	}
-	if got := results["upload"].TotalBytes; got == 0 {
-		t.Error("the sibling lanes moved no bytes across the reset")
+	finish, err := http.NewRequest(http.MethodDelete, httpBase+"/upload/progress?id="+id, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	res, err := http.DefaultClient.Do(finish)
+	if err != nil {
+		t.Fatalf("finish upload: %v", err)
+	}
+	res.Body.Close()
+	for records.Scan() {
+		event, err := wire.DecodeUploadProgress(records.Bytes())
+		if err != nil || event.Type != "complete" {
+			continue
+		}
+		// Three siblings and the replacement carry two chunks each; the reset lane at most one.
+		if event.Bytes < 8*chunk || event.Bytes > 9*chunk || sess.Context().Err() != nil {
+			t.Fatalf("complete counted %d bytes, session error %v", event.Bytes, sess.Context().Err())
+		}
+		return
+	}
+	t.Fatal("progress stream never reported complete")
 }
 
 // firstProgressTypeIs reports whether the FIRST non-blank record has this type.

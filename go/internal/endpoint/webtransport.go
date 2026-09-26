@@ -99,7 +99,7 @@ func WTPing(idleBound time.Duration) SessionHandler {
 }
 
 // WTDownload serves byte lanes on server-opened streams, or a datagram flood.
-func WTDownload(stream StreamFunc, idleBound time.Duration) SessionHandler {
+func WTDownload(download *Download, idleBound time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 		query := r.URL.Query()
 		n := parseBytes(query.Get("bytes"))
@@ -117,19 +117,19 @@ func WTDownload(stream StreamFunc, idleBound time.Duration) SessionHandler {
 			wg.Go(func() { bumpOnPeerDatagrams(ctx, sess, live) })
 			sink := &datagramSink{conn: sess, done: ctx.Done()}
 			for ctx.Err() == nil && !sink.failed {
-				stream(ctx, n, sink)
+				download.Stream(ctx, n, sink)
 			}
 			return
 		}
 		for range wtStreamCount(query) {
-			wg.Go(func() { serveDownloadLane(ctx, stream, sess, n, live) })
+			wg.Go(func() { serveDownloadLane(ctx, download, sess, n, live) })
 		}
 		wg.Wait()
 	}
 }
 
 // serveDownloadLane replaces each exhausted lane while the peer keeps draining.
-func serveDownloadLane(ctx context.Context, stream StreamFunc, sess *webtransport.Session, n int64,
+func serveDownloadLane(ctx context.Context, download *Download, sess *webtransport.Session, n int64,
 	live *sessionActivity) {
 	for ctx.Err() == nil {
 		str, err := sess.OpenUniStreamSync(ctx)
@@ -137,7 +137,7 @@ func serveDownloadLane(ctx context.Context, stream StreamFunc, sess *webtranspor
 			return
 		}
 		lane := &laneWriter{w: str, live: live}
-		withWTWriteStream(ctx, str, func() { stream(ctx, n, lane) })
+		withWTWriteStream(ctx, str, func() { download.Stream(ctx, n, lane) })
 		if !lane.moved {
 			return
 		}
@@ -192,8 +192,8 @@ func wtStreamCount(query url.Values) int {
 	return min(n, wire.WTMaxStreams)
 }
 
-// WTUpload counts client-opened lanes with receive and serves the progress feed on one server stream.
-func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) SessionHandler {
+// WTUpload counts client-opened lanes and serves the progress feed on one server stream.
+func WTUpload(upload *Upload, idleBound time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 		query := r.URL.Query()
 		id := query.Get("id")
@@ -217,7 +217,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 			}
 		})
 		if wtDatagramMode(query) {
-			wg.Go(func() { drainDatagrams(ctx, receive, sess, agg, id, owner, live) })
+			wg.Go(func() { drainDatagrams(ctx, upload, sess, agg, id, owner, live) })
 		}
 		lanes := make(chan struct{}, wire.WTMaxStreams)
 		for {
@@ -229,7 +229,7 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 			case lanes <- struct{}{}:
 				wg.Go(func() {
 					defer func() { <-lanes }()
-					serveUploadLane(ctx, receive, sess, str, id, owner, live)
+					serveUploadLane(ctx, upload, sess, str, id, owner, live)
 				})
 			default:
 				str.CancelRead(0)
@@ -238,11 +238,11 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 	}
 }
 
-func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtransport.Session,
+func serveUploadLane(ctx context.Context, upload *Upload, sess *webtransport.Session,
 	str *webtransport.ReceiveStream, id, owner string, live *sessionActivity) {
 	// A blocked read does not watch ctx.
 	defer transport.UnblockReadsOnDone(ctx, str)()
-	_, err := receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
+	_, err := upload.Receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		serveRefusal(ctx, sess, refusal.access)
 	}
@@ -257,7 +257,7 @@ func serveRefusal(ctx context.Context, sess *webtransport.Session, access upload
 	withWTWriteStream(ctx, str, func() { writeRefusalRecord(str, access) })
 }
 
-func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn, agg *uploadAgg, id, owner string,
+func drainDatagrams(ctx context.Context, upload *Upload, conn datagramConn, agg *uploadAgg, id, owner string,
 	live *sessionActivity) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -269,7 +269,7 @@ func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn,
 		}
 	}()
 	// The session watcher bounds a silent drain.
-	_, _ = receive(ctx, id, owner, datagramSource{conn: conn, ctx: ctx, live: live})
+	_, _ = upload.Receive(ctx, id, owner, datagramSource{conn: conn, ctx: ctx, live: live})
 }
 
 // idleTimeoutReader bounds a lane by inactivity, within 7/8 of timeout.
