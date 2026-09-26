@@ -490,13 +490,9 @@ export function createApplicationController(
     if (pendingStart) return cancelPendingStart();
     const blocked = store.catalogLoading
       ? "Servers are still loading. Try again in a moment."
-      : !store.serverCatalog
-        ? "Open Settings to retry loading the server list."
-        : approval
-          ? "Finish signing in to the selected server before starting."
-          : store.unresolvedServers.length || !store.selectedServers.length
-            ? "The saved selection changed. Open Settings to choose the servers to test."
-            : "";
+      : approval
+        ? "Finish signing in to the selected server before starting."
+        : store.startBlocker;
     if (blocked) {
       store.startError = blocked;
       store.preparationStatus = "blocked";

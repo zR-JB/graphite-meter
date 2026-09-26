@@ -102,7 +102,7 @@ test("the view fails throughput without upload checkpoints but keeps its probe e
   await connection.check();
   expect(connection.view).toMatchObject({
     readiness: "failed",
-    message: expect.stringContaining("checkpoint"),
+    blocked: expect.stringContaining("checkpoint"),
   });
   const { throughput, latency } = connection.view.validation;
   expect(throughput).toMatchObject({ state: "failed", path: paths.throughput });
@@ -291,9 +291,9 @@ test("offline, a remote server blocks without checking until the device is back"
   await connection.check();
   expect(connection.view).toMatchObject({
     readiness: "failed",
-    message: "This device is offline",
+    blocked: "This device is offline",
+    paths: null,
   });
-  expect(connection.paths(Infinity)).toBeNull();
   expect([discoveries, connection.dueAt()]).toEqual([0, Infinity]);
   online = true;
   connection.resume();

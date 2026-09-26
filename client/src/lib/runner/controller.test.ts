@@ -272,6 +272,24 @@ test("a cancelled start keeps the previous result on screen", async () => {
   );
 });
 
+test("a stream plan that cannot fit blocks Start before the click", async () => {
+  await withController(
+    { servers: ["self", "peer"], selected: ["self", "peer"] },
+    async ({ controller, store, runner }) => {
+      expect(store.startBlocker).toBe("");
+      controller.configureRun({
+        transferStreams: { mode: "forced", count: 12 },
+      });
+      expect(store.startBlocker).toContain("Forced streams");
+      expect(store.preparation.status).toBe("blocked");
+      controller.toggleRun();
+      await settle();
+      expect(runner.starts).toBe(0);
+      expect(store.startError).toContain("Forced streams");
+    },
+  );
+});
+
 test("returning to start releases the run so late events cannot reach the fresh store", async () => {
   await withController({}, async ({ controller, store, runner }) => {
     controller.toggleRun();

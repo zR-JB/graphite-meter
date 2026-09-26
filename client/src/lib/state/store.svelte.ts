@@ -21,6 +21,7 @@ import type {
 import {
   CONNECTION_FAILURE_REASONS,
   emptyConnectionValidation,
+  validateServerStreams,
   type ConnectionValidation,
   type ServerView,
 } from "../runner/paths";
@@ -259,8 +260,39 @@ class AppStore {
   #latencyScale = new LatencyScaleController();
   startError = $state("");
   preparationStatus = $state<PreparationStatus>("idle");
+  /** Why Start cannot run, known before the click; a check that may still pass never blocks. */
+  startBlocker = $derived.by((): string => {
+    if (!this.serverCatalog)
+      return "Open Settings to retry loading the server list.";
+    if (this.unresolvedServers.length || !this.selectedServers.length)
+      return "The saved selection changed. Open Settings to choose the servers to test.";
+    const views = this.selectedServers.flatMap(
+      (id) => this.servers.get(id) ?? [],
+    );
+    const blocked = views.find((view) => view.blocked);
+    if (blocked)
+      return views.length > 1
+        ? `${blocked.server.name}: ${blocked.blocked}`
+        : blocked.blocked!;
+    const servers = views.flatMap(({ server, paths }) =>
+      paths ? [{ id: server.id, paths }] : [],
+    );
+    try {
+      if (servers.length === this.selectedServers.length)
+        validateServerStreams(this.config, servers);
+    } catch (cause) {
+      return cause instanceof Error ? cause.message : String(cause);
+    }
+    return "";
+  });
   preparation = $derived.by<PreparationState>(() => ({
-    status: this.preparationStatus,
+    status:
+      this.preparationStatus === "idle" &&
+      this.phase === "idle" &&
+      !this.catalogLoading &&
+      this.startBlocker
+        ? "blocked"
+        : this.preparationStatus,
     throughput:
       this.config.stages.download ||
       this.config.stages.upload ||

@@ -162,7 +162,7 @@
       running: store.isRunning,
       preparing: store.preparing,
       preparation: store.preparation,
-      startError: store.startError,
+      startError: store.startError || store.startBlocker,
       error: store.error,
       latencyTimeout: store.liveLatencyLost,
       latencyMs: gaugeLatency.rttMs,

@@ -128,6 +128,7 @@ test("selection readiness follows each prototype-named server's view", async () 
     discovery: testPreparedPaths().discovery,
     validation: emptyConnectionValidation(),
     readiness,
+    paths: null,
     metadataChecking: false,
   });
   try {
