@@ -37,3 +37,8 @@ quinn = { package = "noq", git = "https://github.com/n0-computer/noq", rev = "ca
 
 [build-dependencies]
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+
+[dev-dependencies]
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
