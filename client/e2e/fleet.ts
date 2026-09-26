@@ -11,7 +11,7 @@ export const password: string = env.password;
 export const harness: string = env.harness;
 
 export async function spawnPeer(name: string, env = {}) {
-  const server = describe(name.toLowerCase(), name);
+  const server = await describe(name.toLowerCase(), name);
   const child = await launch(
     JSON.parse(process.env.GM_E2E_LAUNCH!),
     server,

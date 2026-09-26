@@ -18,22 +18,30 @@ export interface Launch {
   key: string;
 }
 
-// Below the Linux ephemeral range, so outgoing connections cannot take a port.
+// Below the Linux ephemeral range; each test process draws from its own slice.
+const SLICE = 750;
+const base = 20_000 + (process.pid % 16) * SLICE;
 const taken = new Set<number>();
-function freePort(): number {
-  const port = 20_000 + Math.floor(Math.random() * 12_000);
-  try {
-    if (taken.has(port)) throw new Error("port reused");
-    Bun.listen({ hostname: host, port, socket: { data() {} } }).stop(true);
-    taken.add(port);
-    return port;
-  } catch {
-    return freePort();
+async function freePort(): Promise<number> {
+  for (;;) {
+    const port = base + Math.floor(Math.random() * SLICE);
+    if (taken.has(port)) continue;
+    try {
+      Bun.listen({ hostname: host, port, socket: { data() {} } }).stop(true);
+      (await Bun.udpSocket({ hostname: host, port })).close();
+      taken.add(port);
+      return port;
+    } catch {}
   }
 }
 
-export function describe(id: string, name: string): Server {
-  const [h1, tls, h2, h3] = [0, 1, 2, 3].map(freePort);
+export async function describe(id: string, name: string): Promise<Server> {
+  const [h1, tls, h2, h3] = [
+    await freePort(),
+    await freePort(),
+    await freePort(),
+    await freePort(),
+  ];
   return {
     id,
     name,

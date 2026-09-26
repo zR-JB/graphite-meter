@@ -43,11 +43,11 @@ const hash = Bun.spawnSync([bin, "hash-password"], {
 if (hash.exitCode !== 0) throw new Error("could not hash the fixture password");
 
 const fleet = [
-  describe("self", "Home"),
-  describe("server-1", "Frankfurt"),
-  describe("server-2", "Amsterdam"),
-  describe("server-3", "Helsinki"),
-  describe("server-4", "Private"),
+  await describe("self", "Home"),
+  await describe("server-1", "Frankfurt"),
+  await describe("server-2", "Amsterdam"),
+  await describe("server-3", "Helsinki"),
+  await describe("server-4", "Private"),
 ];
 const [, frankfurt, , , locked] = fleet;
 const peers = fleet.slice(1).map(({ id, name, url }) => ({ id, name, url }));
