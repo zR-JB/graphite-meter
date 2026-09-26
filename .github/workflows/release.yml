@@ -129,8 +129,6 @@ jobs:
       - name: Verify OCI platforms and provenance labels
         env:
           REPOSITORY: ${{ github.repository }}
-          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
-          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
           VERSION: ${{ needs.guard.outputs.version }}
           SOURCE_SHA: ${{ github.sha }}
         run: python3 scripts/ci/verify_oci.py "$VERSION" "$SOURCE_SHA" "$RUNNER_TEMP/release-image/graphite-meter.oci.tar"

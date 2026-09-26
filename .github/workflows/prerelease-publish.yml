@@ -117,8 +117,6 @@ jobs:
       - name: Verify OCI platforms and labels without executing image payload
         env:
           REPOSITORY: ${{ github.repository }}
-          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
-          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
           VERSION: ${{ steps.validate.outputs.version }}
           SOURCE_SHA: ${{ steps.validate.outputs.sha }}
         run: >-

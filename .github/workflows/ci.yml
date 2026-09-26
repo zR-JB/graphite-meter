@@ -232,9 +232,6 @@ jobs:
       - name: Build and verify representative release packages
         run: mise run release-check
       - name: Verify pinned Skopeo runtime contract
-        env:
-          SKOPEO_IMAGE: ${{ env.SKOPEO_IMAGE }}
-          SKOPEO_VERSION: ${{ env.SKOPEO_VERSION }}
         run: python3 scripts/ci/verify_oci.py --check-skopeo
 
   security:
