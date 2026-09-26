@@ -522,7 +522,6 @@ async fn start_transfer(
                         upload_transport,
                         lanes.upload,
                         timing.epoch,
-                        target.transport == ThroughputTransport::WebTransportDatagram,
                         stopped.clone(),
                     )
                     .await?

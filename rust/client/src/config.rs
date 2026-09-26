@@ -76,6 +76,9 @@ impl Config {
         {
             return Err("select up to four different server IDs".into());
         }
+        if self.throughput_transport == Some(ThroughputTransport::WebTransportDatagram) {
+            return Err("native throughput supports auto, fetch-stream or webtransport".into());
+        }
         if self.stages.is_empty() {
             return Err("select at least one measurement stage".into());
         }

@@ -90,36 +90,25 @@ impl Upload {
         stagger: Duration,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, epoch, cancel, None, stagger).await
+        Self::start_inner(transport, lanes, epoch, cancel, false, stagger).await
     }
     pub async fn start_webtransport(
         transport: Arc<Transport>,
         lanes: usize,
         epoch: Instant,
-        datagrams: bool,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        // Datagrams share one receiver byte counter and have no stream identifiers.
-        // The sixteen-stream limit therefore applies only to reliable upload lanes.
-        if !datagrams && lanes > 16 {
+        if lanes > 16 {
             return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
-        Self::start_inner(
-            transport,
-            lanes,
-            epoch,
-            cancel,
-            Some(datagrams),
-            Duration::ZERO,
-        )
-        .await
+        Self::start_inner(transport, lanes, epoch, cancel, true, Duration::ZERO).await
     }
     async fn start_inner(
         transport: Arc<Transport>,
         lanes: usize,
         epoch: Instant,
         mut cancel: watch::Receiver<bool>,
-        datagrams: Option<bool>,
+        webtransport: bool,
         stagger: Duration,
     ) -> Result<Self, Error> {
         if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
@@ -130,7 +119,7 @@ impl Upload {
         struct Minted {
             upload_id: String,
         }
-        let control = if datagrams.is_none() && transport.is_http3() {
+        let control = if !webtransport && transport.is_http3() {
             transport.isolated_connection().await?
         } else {
             transport.clone()
@@ -167,9 +156,8 @@ impl Upload {
             progress: JoinSet::new(),
             session: None,
         };
-        if let Some(datagrams) = datagrams {
-            let flag = if datagrams { "1" } else { "0" };
-            let query = [("id", owner.id.as_str()), ("datagrams", flag)];
+        if webtransport {
+            let query = [("id", owner.id.as_str())];
             let session = tokio::select! {
                 biased;
                 () = cancelled(&mut cancel) => return Err("WebTransport upload cancelled during setup".into()),
@@ -220,7 +208,7 @@ impl Upload {
                             tokio::time::sleep(stagger * index as u32).await;
                         }
                         if let Some(session) = session {
-                            send_wt_reconnecting(&session, datagrams.unwrap_or(false), block, active).await
+                            send_wt_reconnecting(&session, block, active).await
                         } else {
                             send_lane(&transport, &id, index, block, active).await
                         }
@@ -563,57 +551,26 @@ async fn failed(state: &mut watch::Receiver<State>) {
 
 async fn send_wt_lane(
     session: &crate::webtransport::Session,
-    datagrams: bool,
     block: Bytes,
     active: Arc<AtomicBool>,
     progress: Arc<TransferProgress>,
 ) -> Result<(), Error> {
-    if datagrams {
-        let mut size = session
-            .max_datagram_size()
-            .filter(|size| *size > 0)
-            .ok_or("WebTransport peer has no datagram capacity")?
-            .min(block.len());
-        loop {
-            match session.send_datagram(&block[..size]).await {
-                Ok(()) => {}
-                Err(error)
-                    if error
-                        .downcast_ref::<quinn::SendDatagramError>()
-                        .is_some_and(|error| {
-                            matches!(error, quinn::SendDatagramError::TooLarge)
-                        })
-                        && size > 1 =>
-                {
-                    // Quinn's path MTU may shrink after max_datagram_size was read.
-                    size = (size * 3 / 4).max(1);
-                    continue;
-                }
-                Err(error) => return Err(error),
-            }
+    loop {
+        let mut stream = session.open_uni().await?;
+        let mut remaining = REQUEST_BYTES;
+        while remaining > 0 {
+            let size = remaining.min(block.len() as u64) as usize;
+            stream.write_chunk(block.slice(..size)).await?;
+            remaining -= size as u64;
             active.store(true, Ordering::Release);
             progress.record();
-            tokio::task::yield_now().await;
         }
-    } else {
-        loop {
-            let mut stream = session.open_uni().await?;
-            let mut remaining = REQUEST_BYTES;
-            while remaining > 0 {
-                let size = remaining.min(block.len() as u64) as usize;
-                stream.write_chunk(block.slice(..size)).await?;
-                remaining -= size as u64;
-                active.store(true, Ordering::Release);
-                progress.record();
-            }
-            stream.finish()?;
-        }
+        stream.finish()?;
     }
 }
 
 async fn send_wt_reconnecting(
     slot: &SessionSlot,
-    datagrams: bool,
     block: Bytes,
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
@@ -624,7 +581,6 @@ async fn send_wt_reconnecting(
         let error = match retry
             .run(send_wt_lane(
                 &session,
-                datagrams,
                 block.clone(),
                 active.clone(),
                 progress,

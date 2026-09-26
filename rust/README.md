@@ -103,7 +103,7 @@ negotiation, WebTransport transfers, and immediate reset without modifying the
 shipped Go implementation.
 
 `client_interop.py` starts an unchanged Go product server and runs the Rust
-measurement engine through all four stages with WebTransport streams, datagrams,
+measurement engine through all four stages with WebTransport streams and datagram latency,
 HTTPS HTTP/1.1 fetch streams, and HTTP/2 fetch streams. The loopback test
 trusts only its disposable CA through `SSL_CERT_FILE`, and verifies
 TLS identity on HTTP and QUIC connections. It does not exercise an external

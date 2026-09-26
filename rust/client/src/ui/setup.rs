@@ -142,7 +142,7 @@ impl Field {
                 None => "automatic",
                 Some(ThroughputTransport::FetchStream) => "HTTP stream",
                 Some(ThroughputTransport::WebTransport) => "WebTransport stream",
-                Some(ThroughputTransport::WebTransportDatagram) => "WebTransport datagram",
+                Some(ThroughputTransport::WebTransportDatagram) => "Unsupported",
             }
             .into(),
             Self::LatencyTransport => match config.latency_transport {
@@ -298,10 +298,10 @@ impl Ui {
                     Some(ThroughputTransport::FetchStream) => {
                         Some(ThroughputTransport::WebTransport)
                     }
-                    Some(ThroughputTransport::WebTransport) => {
-                        Some(ThroughputTransport::WebTransportDatagram)
-                    }
-                    Some(ThroughputTransport::WebTransportDatagram) => None,
+                    Some(
+                        ThroughputTransport::WebTransport
+                        | ThroughputTransport::WebTransportDatagram,
+                    ) => None,
                 }
             }
             Field::LatencyTransport => {

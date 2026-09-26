@@ -116,13 +116,9 @@ impl Download {
         if !(1..=128).contains(&lanes) || duration.is_zero() {
             return Err("invalid WebTransport download lanes or duration".into());
         }
-        let datagrams = match target.transport {
-            ThroughputTransport::WebTransport => false,
-            ThroughputTransport::WebTransportDatagram => true,
-            ThroughputTransport::FetchStream => {
-                return Err("WebTransport download requires a WebTransport target".into());
-            }
-        };
+        if target.transport != ThroughputTransport::WebTransport {
+            return Err("WebTransport download requires a stream target".into());
+        }
         let origin = canonical_origin(&target.base_url)?;
         let mut owner = Self {
             bytes: Arc::new(AtomicU64::new(0)),
@@ -133,10 +129,8 @@ impl Download {
         let start = async {
             for first in (0..lanes).step_by(WT_LANES_PER_SESSION) {
                 let group = (lanes - first).min(WT_LANES_PER_SESSION);
-                let target = format!(
-                    "{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}&datagrams={}",
-                    u8::from(datagrams)
-                );
+                let target =
+                    format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
                 let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
                 for _ in 0..group {
                     let slot = slot.clone();
@@ -146,7 +140,7 @@ impl Download {
                     owner.tasks.spawn(async move {
                         tokio::select! {biased;
                             _ = cancel.wait_for(|value| *value) => Ok(()),
-                            result = timeout(duration, receive_webtransport(slot, bytes, ready, datagrams)) => result?,
+                            result = timeout(duration, receive_webtransport(slot, bytes, ready)) => result?,
                         }
                     });
                 }
@@ -250,7 +244,6 @@ async fn receive_webtransport(
     slot: Arc<SessionSlot>,
     bytes: Arc<AtomicU64>,
     ready: mpsc::Sender<()>,
-    datagrams: bool,
 ) -> Result<(), Error> {
     let mut announced = false;
     let mut retry = TransferRetry::new();
@@ -266,7 +259,6 @@ async fn receive_webtransport(
                 &mut announced,
                 &mut moved,
                 &progress,
-                datagrams,
             ))
             .await;
         if let Err(error) = result {
@@ -292,17 +284,7 @@ async fn receive_webtransport_chunk(
     announced: &mut bool,
     moved: &mut bool,
     progress: &TransferProgress,
-    datagrams: bool,
 ) -> Result<(), Error> {
-    if datagrams {
-        let chunk = session.recv_datagram().await?;
-        *moved |= !chunk.is_empty();
-        if !chunk.is_empty() {
-            progress.record();
-        }
-        record_webtransport(bytes, ready, announced, chunk.len())?;
-        return Ok(());
-    }
     let mut stream = session.accept_uni().await?;
     let mut received = 0_u64;
     while let Some(chunk) = stream.read_chunk().await? {

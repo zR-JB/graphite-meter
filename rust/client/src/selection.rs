@@ -75,6 +75,9 @@ fn throughput_candidate(
     preflight: &Preflight,
     transport: ThroughputTransport,
 ) -> Result<Option<ThroughputTarget>, Error> {
+    if transport == ThroughputTransport::WebTransportDatagram {
+        return Err("native throughput supports auto, fetch-stream or webtransport".into());
+    }
     entry.validate_discovery(preflight)?;
     let candidates = preflight
         .capabilities

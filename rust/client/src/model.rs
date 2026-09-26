@@ -113,7 +113,7 @@ impl ServerSummary {
         let transport = match target.transport {
             ThroughputTransport::FetchStream => "Fetch stream",
             ThroughputTransport::WebTransport => "WebTransport stream",
-            ThroughputTransport::WebTransportDatagram => "WebTransport datagram",
+            ThroughputTransport::WebTransportDatagram => "Unsupported",
         };
         let protocol = match target.protocol {
             Protocol::Http1 => "HTTP/1.1",

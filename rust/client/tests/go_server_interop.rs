@@ -36,12 +36,6 @@ async fn go_server_completes_native_transport_stages() -> Result<(), Error> {
             latency: LatencyTransport::WebTransport,
         },
         Case {
-            name: "WebTransport datagram",
-            protocol: Protocol::Http3,
-            throughput: ThroughputTransport::WebTransportDatagram,
-            latency: LatencyTransport::WebTransport,
-        },
-        Case {
             name: "HTTPS HTTP/1.1 fetch stream",
             protocol: Protocol::Http1,
             throughput: ThroughputTransport::FetchStream,

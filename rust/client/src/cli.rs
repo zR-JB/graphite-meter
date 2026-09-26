@@ -79,7 +79,6 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
                     "auto" => None,
                     "fetch-stream" => Some(ThroughputTransport::FetchStream),
                     "webtransport" => Some(ThroughputTransport::WebTransport),
-                    "webtransport-datagram" => Some(ThroughputTransport::WebTransportDatagram),
                     _ => return Err("unknown throughput transport".into()),
                 }
             }
@@ -163,7 +162,7 @@ pub const HELP: &str = "Graphite Meter experimental Rust client
   -server ID                    Select server; repeat up to four times
   -throughput-origin ORIGIN     Advertised origin, or auto
   -throughput-protocol PROTOCOL auto, http1, http2, http3
-  -throughput-transport TYPE    auto, fetch-stream, webtransport, webtransport-datagram
+  -throughput-transport TYPE    auto, fetch-stream, webtransport
   -latency-origin ORIGIN        Advertised origin, or auto
   -latency-transport TYPE       auto, websocket, webtransport
   -stages LIST                  latency,download,upload,bidirectional
@@ -221,8 +220,31 @@ mod tests {
     }
 
     #[test]
+    fn native_throughput_modes_are_validated_at_configuration_boundaries() {
+        for (name, expected) in [
+            ("auto", None),
+            ("fetch-stream", Some(ThroughputTransport::FetchStream)),
+            ("webtransport", Some(ThroughputTransport::WebTransport)),
+        ] {
+            let Action::Run(config) =
+                parse([OsString::from(format!("--throughput-transport={name}"))]).unwrap()
+            else {
+                panic!("expected run configuration");
+            };
+            assert_eq!(config.throughput_transport, expected);
+            config.validate().unwrap();
+        }
+        let config = Config {
+            throughput_transport: Some(ThroughputTransport::WebTransportDatagram),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn invalid_measurement_settings_are_not_silently_replaced() {
         for args in [
+            vec!["--throughput-transport=webtransport-datagram"],
             vec!["--stages=typo"],
             vec!["--ping=typo"],
             vec!["--warmup=-1s"],

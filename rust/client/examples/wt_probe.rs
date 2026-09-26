@@ -166,29 +166,24 @@ async fn validate_owners(origin: &str) -> Result<(), Error> {
     }
     assert!(replies > 0, "WT latency owner produced no replies");
     println!("WT latency owner PASS");
-    for transport in [
-        ThroughputTransport::WebTransport,
-        ThroughputTransport::WebTransportDatagram,
-    ] {
-        let target = ThroughputTarget {
-            base_url: origin.to_owned(),
-            transport,
-            protocol: Protocol::Http3,
-        };
-        let mut download = Download::start_webtransport(
-            &http,
-            &target,
-            2,
-            Duration::from_secs(5),
-            true,
-            cancelled.clone(),
-        )
-        .await?;
-        assert!(download.bytes() > 0);
-        download.health()?;
-        tokio::time::timeout(Duration::from_secs(2), download.stop()).await?;
-        println!("WT download owner {transport:?} readiness/accounting/shutdown PASS");
-    }
+    let target = ThroughputTarget {
+        base_url: origin.to_owned(),
+        transport: ThroughputTransport::WebTransport,
+        protocol: Protocol::Http3,
+    };
+    let mut download = Download::start_webtransport(
+        &http,
+        &target,
+        2,
+        Duration::from_secs(5),
+        true,
+        cancelled.clone(),
+    )
+    .await?;
+    assert!(download.bytes() > 0);
+    download.health()?;
+    tokio::time::timeout(Duration::from_secs(2), download.stop()).await?;
+    println!("WT download owner readiness/accounting/shutdown PASS");
     Ok(())
 }
 

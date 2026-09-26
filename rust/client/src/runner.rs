@@ -297,7 +297,9 @@ async fn verify_throughput_webtransport(
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let query = match target.transport {
         ThroughputTransport::WebTransport => "bytes=0",
-        ThroughputTransport::WebTransportDatagram => "bytes=0&datagrams=1",
+        ThroughputTransport::WebTransportDatagram => {
+            return Err("native datagram throughput is unsupported".into());
+        }
         ThroughputTransport::FetchStream => return Err("fetch stream is not WebTransport".into()),
     };
     let url = format!("{origin}{}?{query}", Route::WtDownload.path());
