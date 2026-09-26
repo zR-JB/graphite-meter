@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -21,7 +22,8 @@ import (
 // Discovery serves /preflight, /servers and the page's connect policy, built once per request hostname.
 type Discovery struct {
 	cfg        *config.Config
-	generation string // a per-process random tag
+	generation string                    // a per-process random tag
+	configured map[string]*hostDiscovery // built at start and never evicted
 
 	mu    sync.Mutex
 	hosts map[string]*hostDiscovery
@@ -39,27 +41,63 @@ type hostDiscovery struct {
 const maxDiscoveryHosts = 64
 
 func NewDiscovery(cfg *config.Config) *Discovery {
-	return &Discovery{cfg: cfg, generation: rand.Text(), hosts: make(map[string]*hostDiscovery)}
+	d := &Discovery{cfg: cfg, generation: rand.Text(), configured: map[string]*hostDiscovery{},
+		hosts: map[string]*hostDiscovery{}}
+	origins := slices.Concat([]string{"http://localhost", cfg.Auth.PublicURL, cfg.NativePublic.H1,
+		cfg.NativePublic.H1TLS, cfg.NativePublic.H2, cfg.NativePublic.H3}, cfg.Public.Both, cfg.Public.Throughput,
+		cfg.Public.Latency)
+	for _, origin := range origins {
+		if u, err := url.Parse(origin); err == nil && validHost(u.Hostname()) {
+			d.configured[u.Hostname()] = d.build(u.Hostname())
+		}
+	}
+	return d
 }
 
 func RequestHost(r *http.Request) string { return (&url.URL{Host: r.Host}).Hostname() }
 
+// validHost admits an IP literal without a zone, or a DNS name of letters, digits and inner hyphens.
+func validHost(host string) bool {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return addr.Zone() == ""
+	}
+	name := strings.TrimSuffix(host, ".")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for label := range strings.SplitSeq(name, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' ||
+			strings.ContainsFunc(label, func(r rune) bool {
+				return r != '-' && (r < '0' || r > '9') && (r|0x20 < 'a' || r|0x20 > 'z')
+			}) {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *Discovery) forHost(host string) *hostDiscovery {
-	if _, err := wire.CanonicalOrigin("http://" + net.JoinHostPort(host, "1")); err != nil {
+	if !validHost(host) {
 		host = "localhost"
 	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if h, ok := d.hosts[host]; ok {
+	if h, ok := d.configured[host]; ok {
 		return h
 	}
+	d.mu.Lock()
+	h, ok := d.hosts[host]
+	d.mu.Unlock()
+	if ok {
+		return h
+	}
+	h = d.build(host)
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	for evicted := range d.hosts {
 		if len(d.hosts) < maxDiscoveryHosts {
 			break
 		}
 		delete(d.hosts, evicted)
 	}
-	h := d.build(host)
 	d.hosts[host] = h
 	return h
 }
