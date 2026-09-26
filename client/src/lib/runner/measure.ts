@@ -32,20 +32,18 @@ export const STAGES = [
 ] as const;
 export type TransferStage = Exclude<TransportRole, "latency">;
 
-export function median(xs: readonly number[]): number {
-  if (!xs.length) return 0;
-  const s = xs.toSorted((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+export function sortedMedian(sorted: ArrayLike<number>): number {
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** Nearest rank; 0 for empty. */
-export function percentile(xs: readonly number[], p: number): number {
-  if (!xs.length) return 0;
-  const s = xs.toSorted((a, b) => a - b);
-  return s[
-    Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))
-  ];
+export function nearestRank(sorted: ArrayLike<number>, p: number): number {
+  const n = sorted.length;
+  return sorted[Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))];
+}
+
+export function median(xs: readonly number[]): number {
+  return xs.length ? sortedMedian(xs.toSorted((a, b) => a - b)) : 0;
 }
 
 const mean = (xs: readonly number[]) =>
@@ -210,7 +208,9 @@ export function shouldExitPhase(input: {
 
 /** Raw outcomes of one stage; presentation buckets never feed it. */
 export class LatencyPopulation {
-  readonly rtts: number[] = [];
+  #sorted = new Float64Array(0);
+  #fresh: number[] = [];
+  #sum = 0;
   #timeouts = 0;
   #replies = 0;
   #unresolved = 0;
@@ -238,7 +238,8 @@ export class LatencyPopulation {
     if (sample.timedOut) this.#timeouts++;
     else if (valid) this.#replies++;
     if (!valid || sample.rttEligible === false) return;
-    this.rtts.push(rttMs);
+    this.#fresh.push(rttMs);
+    this.#sum += rttMs;
     if (
       handling !== undefined &&
       Number.isFinite(handling) &&
@@ -276,11 +277,9 @@ export class LatencyPopulation {
       this.#complete
     )
       return null;
-    const sorted = this.rtts.toSorted((a, b) => a - b);
-    const rank = (p: number) =>
-      sorted.length
-        ? sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)]
-        : null;
+    const sorted = this.#merge();
+    const n = sorted.length;
+    const rank = (p: number) => (n ? nearestRank(sorted, p) : null);
     const { count, raw, handling } = this.#timing;
     return {
       ...(count
@@ -300,13 +299,27 @@ export class LatencyPopulation {
       jitterPairs: this.#deltaCount,
       minMs: sorted[0] ?? null,
       maxMs: sorted.at(-1) ?? null,
-      meanMs: sorted.length ? mean(this.rtts) : null,
+      meanMs: n ? this.#sum / n : null,
       p10Ms: rank(0.1),
-      p50Ms: sorted.length ? median(sorted) : null,
+      p50Ms: n ? sortedMedian(sorted) : null,
       p90Ms: rank(0.9),
       p95Ms: rank(0.95),
       jitterMs: this.#deltaCount ? this.#deltaSum / this.#deltaCount : null,
     };
+  }
+
+  #merge(): Float64Array {
+    if (!this.#fresh.length) return this.#sorted;
+    const old = this.#sorted;
+    const fresh = Float64Array.from(this.#fresh).sort();
+    const merged = new Float64Array(old.length + fresh.length);
+    for (let i = 0, j = 0, k = 0; k < merged.length; k++)
+      merged[k] =
+        j === fresh.length || (i < old.length && old[i] <= fresh[j])
+          ? old[i++]
+          : fresh[j++];
+    this.#fresh = [];
+    return (this.#sorted = merged);
   }
 }
 
@@ -417,8 +430,8 @@ export class ServerLatency {
       (stage) => [stage, this.stages[stage].summary()?.p50Ms ?? null] as const,
     );
     const medians = loaded.flatMap(([, p50]) => (p50 == null ? [] : [p50]));
-    if (!this.stages.latency.rtts.length || !medians.length) return null;
-    const idleMs = median(this.stages.latency.rtts);
+    const idleMs = this.stages.latency.summary()?.p50Ms;
+    if (idleMs == null || !medians.length) return null;
     const addedMs = Object.fromEntries(
       loaded.map(([stage, p50]) => [stage, p50 == null ? null : p50 - idleMs]),
     ) as BufferbloatGrade["addedMs"];

@@ -1,5 +1,5 @@
 import type { LatencyBucket, Phase, ThroughputSample } from "./contract";
-import { median, percentile } from "./measure";
+import { nearestRank, sortedMedian } from "./measure";
 
 /** Points kept per presented history; the producer keeps as many closed buckets for late revisions. */
 export const SERIES_LIMIT = 1_200;
@@ -123,15 +123,16 @@ export class LatencyPresentationBuckets {
     };
   }
 
+  /** In place: a closed bucket stays sorted, so a late revision costs one adaptive pass. */
   #summarize(bucket: Bucket, endT: number): LatencyBucket {
-    const { rtts } = bucket;
+    const rtts = bucket.rtts.sort((a, b) => a - b);
     return {
       t: (bucket.startT + endT) / 2,
       startT: bucket.startT,
       endT,
-      medianRttMs: rtts.length ? median(rtts) : null,
-      p95RttMs: rtts.length ? percentile(rtts, 95) : null,
-      maxRttMs: rtts.length ? Math.max(...rtts) : null,
+      medianRttMs: rtts.length ? sortedMedian(rtts) : null,
+      p95RttMs: rtts.length ? nearestRank(rtts, 0.95) : null,
+      maxRttMs: rtts.at(-1) ?? null,
       pingCount: bucket.pings,
       timeoutCount: bucket.timeouts,
       underLoad: this.#underLoad,
@@ -320,12 +321,14 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
 
 /** The ladder tier above the p95 of reply medians, with headroom. */
 export function latencyScale(medians: readonly (number | null)[]): number {
-  const valid = medians.filter(
-    (value): value is number =>
-      value != null && Number.isFinite(value) && value >= 0,
-  );
+  const valid = medians
+    .filter(
+      (value): value is number =>
+        value != null && Number.isFinite(value) && value >= 0,
+    )
+    .sort((a, b) => a - b);
   if (!valid.length) return SCALE_LADDER_MS[0];
-  const target = percentile(valid, 95) * SCALE_HEADROOM;
+  const target = nearestRank(valid, 0.95) * SCALE_HEADROOM;
   const tier = SCALE_LADDER_MS.find((value) => value >= target);
   if (tier) return tier;
   const exponent = 10 ** Math.floor(Math.log10(target));
