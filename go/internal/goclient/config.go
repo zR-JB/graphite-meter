@@ -110,11 +110,8 @@ const MaxPingInterval = wire.WTIdleBound / 2
 
 func validatePingInterval(d time.Duration) error {
 	if d > MaxPingInterval {
-		return fmt.Errorf(
-			"ping interval must be at most %v, half the server's %v WebTransport idle bound",
-			MaxPingInterval,
-			wire.WTIdleBound,
-		)
+		return fmt.Errorf("ping interval must be at most %v, half the server's %v WebTransport idle bound",
+			MaxPingInterval, wire.WTIdleBound)
 	}
 	return nil
 }

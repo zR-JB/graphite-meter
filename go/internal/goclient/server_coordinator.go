@@ -332,11 +332,8 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr erro
 			return nil
 		}
 		if !c.hasMeasured {
-			return fmt.Errorf(
-				"%s: %w; resolve the selection before starting",
-				outcome.server.prepared.Server.Name,
-				outcome.err,
-			)
+			name := outcome.server.prepared.Server.Name
+			return fmt.Errorf("%s: %w; resolve the selection before starting", name, outcome.err)
 		}
 		c.failure(outcome.server, stage, outcome.role, outcome.err, outcome.at)
 		if len(c.ids()) == 0 {
@@ -562,13 +559,8 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 			} else if !s.ending &&
 				server.transport.target.Transport == wire.TransportFetchStream &&
 				time.Since(s.lastMovement[id][dir]) >= redialWindow {
-				c.failure(
-					server,
-					s.stage,
-					string(dir),
-					fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow),
-					time.Now(),
-				)
+				stalled := fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow)
+				c.failure(server, s.stage, string(dir), stalled, time.Now())
 				removed = true
 				break
 			}

@@ -43,19 +43,9 @@ func (e *PreparationError) Unwrap() error { return e.Err }
 const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
-	return fmt.Sprintf(
-		"%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t",
-		cfg.BaseURL,
-		cfg.ThroughputTarget,
-		cfg.ThroughputProtocol,
-		cfg.ThroughputTransport,
-		cfg.LatencyTarget,
-		cfg.LatencyTransport,
-		cfg.PingInterval,
-		cfg.InsecureSkipTLSVerify,
-		cfg.needsLatency(),
-		cfg.grant != "",
-	)
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget,
+		cfg.ThroughputProtocol, cfg.ThroughputTransport, cfg.LatencyTarget, cfg.LatencyTransport, cfg.PingInterval,
+		cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.grant != "")
 }
 
 type authTransport struct {
