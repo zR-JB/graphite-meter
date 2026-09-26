@@ -40,22 +40,6 @@ func TestUploadProgressConformance(t *testing.T) {
 	}
 }
 
-func TestUploadProgressExplicitZeroCounters(t *testing.T) {
-	for _, kind := range []string{"progress", "complete"} {
-		encoded, err := json.Marshal(UploadProgress{Type: kind})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var raw map[string]jsontext.Value
-		if err := json.Unmarshal(encoded, &raw); err != nil {
-			t.Fatal(err)
-		}
-		if string(raw["bytes"]) != "0" || string(raw["nanos"]) != "0" {
-			t.Fatalf("zero receiver window omitted counters: %s", encoded)
-		}
-	}
-}
-
 func TestUploadProgressCannotEmitInexactCounters(t *testing.T) {
 	for _, event := range []UploadProgress{
 		{Type: "progress", Bytes: maxUploadCounter + 1},

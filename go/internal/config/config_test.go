@@ -24,9 +24,10 @@ func clearConfigEnv(t *testing.T) {
 
 func TestLoad(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		env   map[string]string
-		check func(Config) bool
+		name     string
+		env      map[string]string
+		check    func(Config) bool
+		rejected bool
 	}{
 		{"endpoints", map[string]string{
 			"GM_H1_TLS_ADDR": ":7247", "GM_H2_ADDR": ":7248", "GM_H3_ADDR": ":7249",
@@ -36,28 +37,30 @@ func TestLoad(t *testing.T) {
 		}, func(c Config) bool {
 			return len(c.AdvertisedNative) == 2 && c.AdvertisedNative[NativeH1TLS] && c.AdvertisedNative[NativeH2] &&
 				c.NativePublic.H2 == "https://h2.example" && len(c.Public.Both) == 2
-		}},
+		}, false},
 		{"every native endpoint", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": "all"},
-			func(c Config) bool { return c.AdvertisedNative == nil }},
+			func(c Config) bool { return c.AdvertisedNative == nil }, false},
 		{"result history", map[string]string{"GM_RESULT_HISTORY_DEFAULT": "true"},
-			func(c Config) bool { return c.ResultHistoryDefault }},
+			func(c Config) bool { return c.ResultHistoryDefault }, false},
 		{"proxy host bits masked", map[string]string{"GM_TRUSTED_PROXIES": "192.168.1.42/24"}, func(c Config) bool {
 			return len(c.TrustedProxies) == 1 && c.TrustedProxies[0].String() == "192.168.1.0/24"
-		}},
+		}, false},
 		{"budgets and durations", map[string]string{
 			"GM_MAX_ACTIVE_SESSIONS": "40", "GM_MAX_OPERATION_DURATION": "90s", "GM_MAX_SESSION_DURATION": "3h",
 		}, func(c Config) bool {
 			return c.MaxActiveSessions == 40 && c.MaxOperationDuration == 90*time.Second &&
 				c.MaxSessionDuration == 3*time.Hour
-		}},
+		}, false},
 		{"explicit off mode", map[string]string{"GM_AUTH_MODE": "off"}, func(c Config) bool {
 			return !c.Auth.Explicit
-		}},
-		{"invalid boolean", map[string]string{"GM_RESULT_HISTORY_DEFAULT": "not-a-bool"}, nil},
-		{"unknown native endpoint", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": "fictional"}, nil},
-		{"IPv4 default route", map[string]string{"GM_TRUSTED_PROXIES": "0.0.0.0/0"}, nil},
-		{"IPv6 default route", map[string]string{"GM_TRUSTED_PROXIES": "::/0"}, nil},
-		{"listed default route", map[string]string{"GM_TRUSTED_PROXIES": "10.0.0.0/8,0.0.0.0/0"}, nil},
+		}, false},
+		{"explicit default auth setting while off", map[string]string{"GM_AUTH_OIDC_PROVIDER_NAME": "Authelia"},
+			func(c Config) bool { return c.Auth.Explicit }, true},
+		{"invalid boolean", map[string]string{"GM_RESULT_HISTORY_DEFAULT": "not-a-bool"}, nil, false},
+		{"unknown native endpoint", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": "fictional"}, nil, false},
+		{"IPv4 default route", map[string]string{"GM_TRUSTED_PROXIES": "0.0.0.0/0"}, nil, false},
+		{"IPv6 default route", map[string]string{"GM_TRUSTED_PROXIES": "::/0"}, nil, false},
+		{"listed default route", map[string]string{"GM_TRUSTED_PROXIES": "10.0.0.0/8,0.0.0.0/0"}, nil, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			clearConfigEnv(t)
@@ -77,22 +80,10 @@ func TestLoad(t *testing.T) {
 			if !tc.check(c) {
 				t.Fatalf("loaded %+v", c)
 			}
-			if err := c.Validate(); err != nil {
-				t.Fatal(err)
+			if err := c.Validate(); (err != nil) != tc.rejected {
+				t.Fatalf("Validate() = %v, want rejected %v", err, tc.rejected)
 			}
 		})
-	}
-}
-
-func TestExplicitDefaultAuthSettingRejectedWhenOff(t *testing.T) {
-	clearConfigEnv(t)
-	t.Setenv("GM_AUTH_OIDC_PROVIDER_NAME", "Authelia")
-	c, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Validate(); err == nil {
-		t.Fatal("explicit auth setting accepted in off mode")
 	}
 }
 

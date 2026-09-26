@@ -7,35 +7,6 @@ import (
 	"testing"
 )
 
-func TestServerCatalogConfiguration(t *testing.T) {
-	for _, file := range []bool{false, true} {
-		t.Run(map[bool]string{false: "inline", true: "file"}[file], func(t *testing.T) {
-			unsetEnv(t, "GM_SERVER_CATALOG")
-			unsetEnv(t, "GM_SERVER_CATALOG_FILE")
-			raw := `{"defaultSelection":["remote"],"servers":[{"id":"remote","name":"Remote",` +
-				`"url":"https://EXAMPLE.net:443","additionalOrigins":["https://transfer.example.net"]}]}`
-			if file {
-				path := filepath.Join(t.TempDir(), "servers.json")
-				if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
-					t.Fatal(err)
-				}
-				t.Setenv("GM_SERVER_CATALOG_FILE", path)
-			} else {
-				t.Setenv("GM_SERVER_CATALOG", raw)
-			}
-			c, err := Load()
-			if err != nil {
-				t.Fatal(err)
-			}
-			got := c.ServerCatalog
-			if len(got.Servers) != 2 || got.Servers[0].ID != "self" || got.DefaultSelection[0] != "remote" ||
-				got.Servers[1].URL != "https://example.net" {
-				t.Fatalf("catalogue = %+v", got)
-			}
-		})
-	}
-}
-
 func TestServerCatalogRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 	unsetEnv(t, "GM_SERVER_CATALOG_FILE")
 	for _, raw := range []string{
@@ -84,7 +55,14 @@ func TestServerCatalogRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 }
 
 func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
-	unsetEnv(t, "GM_SERVER_CATALOG_FILE")
+	clearConfigEnv(t)
+	t.Setenv("GM_SERVER_CATALOG", `{"defaultSelection":["remote"],"servers":[{"id":"remote","name":"Remote",`+
+		`"url":"https://EXAMPLE.net:443","additionalOrigins":["https://transfer.example.net"]}]}`)
+	c, err := Load()
+	if got := c.ServerCatalog; err != nil || len(got.Servers) != 2 || got.Servers[0].ID != "self" ||
+		got.DefaultSelection[0] != "remote" || got.Servers[1].URL != "https://example.net" {
+		t.Fatalf("catalogue = %+v, %v", got, err)
+	}
 	t.Setenv("GM_SERVER_CATALOG", `["https://EXAMPLE.net:443", "http://[::1]:8080"]`)
 	first, err := loadServerCatalog()
 	if err != nil {

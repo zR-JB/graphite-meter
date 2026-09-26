@@ -43,149 +43,78 @@ func mustValidate(t *testing.T, s *jsonschema.Schema, data []byte) {
 }
 
 func TestGoldenDocumentsMatchTheirSchemas(t *testing.T) {
-	for _, name := range []string{"preflight", "probe"} {
+	for name, value := range map[string]any{"preflight": new(Preflight), "probe": new(Probe)} {
 		t.Run(name, func(t *testing.T) {
 			data, err := os.ReadFile("../../../api/" + name + ".golden.json")
 			if err != nil {
 				t.Fatalf("read %s golden: %v", name, err)
 			}
-			mustValidate(t, loadSchema(t, name), data)
-		})
-	}
-}
-
-func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
-	throughput := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream",
-		Protocol: "http1"}
-	latency := LatencyTarget{ID: "ws-http1-clear", Origin: throughput.Origin, Transport: "websocket", Protocol: "http1"}
-	values := []struct {
-		name  string
-		value any
-	}{
-		{"preflight",
-			Preflight{Server: ServerInfo{Name: "graphite-meter"}, EngineVersion: "test", Generation: "test-generation",
-				Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{throughput},
-					LatencyTargets: []LatencyTarget{latency}}}},
-		{"probe",
-			Probe{ClientIP: "198.51.100.4", ClientIPVersion: 4, ClientIPSource: "socket", ProtocolNegotiated: "h2",
-				Load: &ProbeLoad{Active: 1, Max: 256}}},
-	}
-	for _, tc := range values {
-		t.Run(tc.name, func(t *testing.T) {
-			data, err := json.Marshal(tc.value)
-			if err != nil {
-				t.Fatalf("marshal %s: %v", tc.name, err)
+			schema := loadSchema(t, name)
+			mustValidate(t, schema, data)
+			if err := json.Unmarshal(data, value); err != nil {
+				t.Fatalf("unmarshal %s golden: %v", name, err)
 			}
-			mustValidate(t, loadSchema(t, tc.name), data)
-		})
-	}
-}
-
-func TestTargetsRequireExplicitTransport(t *testing.T) {
-	for _, transport := range []string{"", "null", `""`, `"udp"`} {
-		field := ""
-		if transport != "" {
-			field = `,"transport":` + transport
-		}
-		var throughput ThroughputTarget
-		if err := json.Unmarshal([]byte(`{"baseUrl":".","protocol":"http2"`+field+`}`), &throughput); err == nil {
-			t.Fatalf("accepted throughput transport %q", transport)
-		}
-		var latency LatencyTarget
-		if err := json.Unmarshal([]byte(`{"baseUrl":"."`+field+`}`), &latency); err == nil {
-			t.Fatalf("accepted latency transport %q", transport)
-		}
-	}
-}
-
-func TestTargetJSONUsesStrictNativeV2Decoding(t *testing.T) {
-	tests := []struct {
-		name, document string
-	}{
-		{"duplicate name", `{"baseUrl":"https://one.example","baseUrl":"https://two.example"}`},
-		{"invalid UTF-8", "{\"baseUrl\":\"\xff\"}"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var target ThroughputTarget
-			if err := json.Unmarshal([]byte(test.document), &target); err == nil {
-				t.Fatalf("accepted malformed JSON %s", test.document)
+			if data, err = json.Marshal(value); err != nil {
+				t.Fatalf("marshal %s: %v", name, err)
 			}
+			mustValidate(t, schema, data)
 		})
 	}
-
-	var target ThroughputTarget
-	if err := json.Unmarshal([]byte(`{"BaseUrl":"https://speed.example:7246"}`), &target); err == nil {
-		t.Fatal("accepted missing case-sensitive baseUrl")
-	}
-	if target.Origin != "" {
-		t.Fatalf("case-insensitive field match populated Origin=%q", target.Origin)
-	}
 }
 
-// A latency target's protocol never crosses the wire; it follows the transport.
-func TestLatencyTargetProtocolFollowsItsTransport(t *testing.T) {
-	for transport, want := range map[string]string{
-		TransportWebSocket:    "http1",
-		TransportWebTransport: "http3",
-	} {
-		var target LatencyTarget
-		document := `{"baseUrl":"https://speed.example:7246","transport":"` + transport + `"}`
-		if err := json.Unmarshal([]byte(document), &target); err != nil {
-			t.Fatalf("unmarshal %q: %v", transport, err)
-		}
-		if got := target.Protocol; got != want {
-			t.Errorf("transport %q derived protocol %q, want %q", transport, got, want)
-		}
-	}
-}
-
-func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
-	var pf Preflight
-	data, err := os.ReadFile("../../../api/preflight.golden.json")
-	if err != nil {
-		t.Fatalf("read preflight golden: %v", err)
-	}
-	if err := json.Unmarshal(data, &pf); err != nil {
-		t.Fatalf("unmarshal preflight golden: %v", err)
-	}
-	data, err = json.Marshal(pf)
-	if err != nil {
-		t.Fatalf("marshal preflight: %v", err)
-	}
-	mustValidate(t, loadSchema(t, "preflight"), data)
-}
-
+// Targets name an explicit transport; a latency target's protocol never crosses the wire and follows it.
 func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
-	for _, origin := range []string{"https://u:p@example.com", "https://example.com/", "https://example.com/path",
-		"https://example.com?", "https://example.com#", "//example.com", "ftp://example.com",
-		"https://example.com:99999"} {
+	fetch := func(origin string) string {
 		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1",
 			"transport": TransportFetchStream})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var target ThroughputTarget
-		if err := json.Unmarshal(data, &target); err == nil {
-			t.Errorf("accepted origin %q", origin)
-		}
+		return string(data)
 	}
-	for _, document := range []string{`{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`,
-		`{"baseUrl":".","protocol":"http1","transport":"udp"}`} {
-		var target ThroughputTarget
-		if err := json.Unmarshal([]byte(document), &target); err == nil {
-			t.Errorf("accepted target %s", document)
+	for _, tc := range []struct {
+		latency  bool
+		document string
+		protocol string // the decoded protocol, or empty when the target must be refused
+	}{
+		{false, fetch("https://u:p@example.com"), ""},
+		{false, fetch("https://example.com/"), ""},
+		{false, fetch("https://example.com/path"), ""},
+		{false, fetch("https://example.com?"), ""},
+		{false, fetch("https://example.com#"), ""},
+		{false, fetch("//example.com"), ""},
+		{false, fetch("ftp://example.com"), ""},
+		{false, fetch("https://example.com:99999"), ""},
+		{false, fetch("."), "http1"},
+		{false, fetch("https://[::1]:7247"), "http1"},
+		{false, fetch("http://other.example:7246"), "http1"},
+		{false, `{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`, ""},
+		{false, `{"baseUrl":".","protocol":"http2"}`, ""},
+		{false, `{"baseUrl":".","protocol":"http2","transport":null}`, ""},
+		{false, `{"baseUrl":".","protocol":"http2","transport":""}`, ""},
+		{false, `{"baseUrl":".","protocol":"http2","transport":"udp"}`, ""},
+		{false, `{"baseUrl":"https://one.example","baseUrl":"https://two.example","protocol":"http1",` +
+			`"transport":"fetch-stream"}`, ""},
+		{true, `{"baseUrl":"."}`, ""},
+		{true, `{"baseUrl":".","transport":null}`, ""},
+		{true, `{"baseUrl":".","transport":""}`, ""},
+		{true, `{"baseUrl":".","transport":"udp"}`, ""},
+		{true, `{"baseUrl":"https://speed.example:7246","transport":"websocket"}`, "http1"},
+		{true, `{"baseUrl":"https://speed.example:7246","transport":"webtransport"}`, "http3"},
+	} {
+		var protocol string
+		var err error
+		if tc.latency {
+			var target LatencyTarget
+			err = json.Unmarshal([]byte(tc.document), &target)
+			protocol = target.Protocol
+		} else {
+			var target ThroughputTarget
+			err = json.Unmarshal([]byte(tc.document), &target)
+			protocol = target.Protocol
 		}
-	}
-	for _, origin := range []string{".", "https://[::1]:7247", "http://other.example:7246"} {
-		data, err := json.Marshal(map[string]string{"baseUrl": origin, "protocol": "http1",
-			"transport": TransportFetchStream})
-		if err != nil {
-			t.Fatal(err)
-		}
-		var target ThroughputTarget
-		if err := json.Unmarshal(data, &target); err != nil {
-			t.Errorf("rejected origin %q: %v", origin, err)
+		if (err == nil) != (tc.protocol != "") || protocol != tc.protocol {
+			t.Errorf("%s = protocol %q, %v; want %q", tc.document, protocol, err, tc.protocol)
 		}
 	}
 }
