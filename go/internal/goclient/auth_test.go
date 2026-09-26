@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -110,6 +112,29 @@ func TestAuthenticatedOperationRejectsInsecureMode(t *testing.T) {
 	cfg.InsecureSkipTLSVerify = true
 	if _, err := beginAuthorization(cfg, "https://meter.example/login"); err == nil {
 		t.Fatal("authenticated -insecure accepted")
+	}
+}
+
+func TestGrantNeverCrossesUnverifiedTLS(t *testing.T) {
+	t.Parallel()
+	var presented atomic.Bool
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		presented.Store(presented.Load() || r.Header.Get("Authorization") != "")
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	cfg := DefaultConfig()
+	cfg.BaseURL, cfg.InsecureSkipTLSVerify = srv.URL, true
+	if _, err := prepareRun(t.Context(), cfg, nil, map[string]string{srv.URL: "secret"}); err == nil {
+		t.Fatal("prepared an authenticated run without TLS verification")
+	}
+	if presented.Load() {
+		t.Fatal("grant crossed a connection whose certificate was not verified")
+	}
+	cfg.grant = "secret"
+	if _, err := wtDial(t.Context(), cfg, srv.URL, "/wt/ping", nil); err == nil ||
+		!strings.Contains(err.Error(), "refusing") {
+		t.Fatalf("WebTransport dial with a grant and -insecure: %v", err)
 	}
 }
 

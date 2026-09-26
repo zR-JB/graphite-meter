@@ -59,6 +59,7 @@ func preparationKey(cfg Config) string {
 
 type authTransport struct {
 	token, hostname string
+	unverified      bool
 	base            http.RoundTripper
 }
 
@@ -68,6 +69,9 @@ func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
 		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
+	}
+	if t.unverified {
+		return nil, fmt.Errorf("refusing to send authentication grant without TLS verification")
 	}
 	clone := r.Clone(r.Context())
 	clone.Header = r.Header.Clone()
@@ -85,7 +89,9 @@ func pinnedHostname(origin string) string {
 
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 	client := &http.Client{
-		Transport: authTransport{token: cfg.grant, hostname: pinnedHostname(cfg.BaseURL), base: base},
+		Transport: authTransport{
+			token: cfg.grant, hostname: pinnedHostname(cfg.BaseURL), unverified: cfg.InsecureSkipTLSVerify, base: base,
+		},
 	}
 	if cfg.grant != "" || cfg.server != nil {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
