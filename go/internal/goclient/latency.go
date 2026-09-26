@@ -123,7 +123,10 @@ func (r *runner) measureLatency(
 		return LatencyStats{}, err
 	}
 	measureCtx, cancel := context.WithCancel(ctx)
-	probes := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}}
+	probes := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
+	if underLoad {
+		probes.window = 2
+	}
 	recvErr := make(chan error, 1)
 	var readers sync.WaitGroup
 	defer func() {
@@ -242,7 +245,7 @@ type probe struct {
 }
 
 // probeLedger owns probes and the measured population; until is zero until the window opens.
-// Each probe's deadline is fixed at send from an RFC 6298 estimate, so the cadence never sets it.
+// Deadlines come from an RFC 6298 estimate; a full in-flight window skips a send, never a timeout.
 type probeLedger struct {
 	mu           sync.Mutex
 	pending      map[uint32]probe
@@ -252,6 +255,7 @@ type probeLedger struct {
 	until        time.Time
 	srtt, rttvar time.Duration
 	answered     bool
+	window       int
 }
 
 func (l *probeLedger) timeout() time.Duration {
@@ -311,7 +315,7 @@ func (l *probeLedger) register(now time.Time) (uint32, bool) {
 	defer l.mu.Unlock()
 	id := l.nextID
 	l.nextID++
-	if !l.until.IsZero() && !now.Before(l.until) {
+	if !l.until.IsZero() && !now.Before(l.until) || len(l.pending) >= l.window {
 		return 0, false
 	}
 	l.pending[id] = probe{sent: now, deadline: now.Add(l.timeout()), measured: !l.until.IsZero()}

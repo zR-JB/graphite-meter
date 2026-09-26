@@ -82,7 +82,8 @@ func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 		t.Fatalf("the next valid boundary must span the gap in the receiver clock: %+v", result)
 	}
 	a.observe(nativeBoundary(3500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("new", 100, 100)}))
-	if len(a.intervals) != 2 || a.intervals[1].Reason != "evidence-resumed" || a.result("upload", Up).TotalBytes != 1700 {
+	if len(a.intervals) != 2 || a.intervals[1].Reason != "evidence-resumed" ||
+		a.result("upload", Up).TotalBytes != 1700 {
 		t.Fatalf("a replaced receiver must start a fresh interval: %+v", a.intervals)
 	}
 }

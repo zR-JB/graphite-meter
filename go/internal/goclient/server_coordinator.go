@@ -500,7 +500,8 @@ type sampler struct {
 }
 
 func (s *sampler) begin(started time.Time, initial measurementBoundary) {
-	s.lastBytes, s.lastMovement, s.misses = map[string]byteLedger{}, map[string]map[Direction]time.Time{}, map[string]int{}
+	s.lastBytes, s.misses = map[string]byteLedger{}, map[string]int{}
+	s.lastMovement = map[string]map[Direction]time.Time{}
 	for _, p := range s.c.active() {
 		bytes := byteLedger{down: initial.down[p.id()]}
 		if snapshot := initial.up[p.id()]; snapshot != nil {

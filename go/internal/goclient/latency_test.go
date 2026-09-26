@@ -133,7 +133,7 @@ func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 func TestProbeDeadlinesAdaptAndSeparateUnresolved(t *testing.T) {
 	t.Parallel()
 	now := time.Now()
-	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}}
+	l := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
 	if l.timeout() != probeTimeoutFloor {
 		t.Fatalf("cold timeout = %v", l.timeout())
 	}
@@ -217,7 +217,7 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 					t.Fatalf("partial latency population = %+v", results)
 				}
 				stats := results[i].Latency
-				if (stats.Count > 0) != reply || stats.Timeouts == 0 || stats.Unresolved == 0 {
+				if (stats.Count > 0) != reply || stats.Timeouts == 0 || stage == StageLatency && stats.Unresolved == 0 {
 					t.Fatalf("failure discarded probe outcomes: %+v", stats)
 				}
 				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[i].Elapsed != stats.Elapsed {
@@ -229,5 +229,17 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLoadedProbesKeepTwoInFlight(t *testing.T) {
+	t.Parallel()
+	r := testRunner(newPingServer(t, answerNone, 0))
+	r.cfg.PingInterval = 10 * time.Millisecond
+	start := make(chan struct{})
+	close(start)
+	stats, err := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
+	if attempts := stats.Timeouts + stats.Unresolved; err != nil || attempts == 0 || attempts > 4 {
+		t.Fatalf("loaded window sent %d unanswered probes: %+v, %v", attempts, stats, err)
 	}
 }
