@@ -162,13 +162,14 @@ func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
 
 // connectionAdmission bounds TCP and QUIC connections per direct client; trusted proxies are exempt.
 type connectionAdmission struct {
-	mu          sync.Mutex
-	connections budget
-	trusted     []netip.Prefix
+	mu                sync.Mutex
+	connections, quic budget
+	trusted           []netip.Prefix
 }
 
 func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *connectionAdmission {
-	return &connectionAdmission{connections: newBudget(globalMax, clientMax), trusted: trusted}
+	return &connectionAdmission{connections: newBudget(globalMax, clientMax),
+		quic: newBudget(globalMax, min(clientMax, maxClientQUICConnections)), trusted: trusted}
 }
 
 // socketKey buckets a direct peer; the empty key exempts a trusted proxy.
@@ -192,18 +193,24 @@ func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	return transport.AddressBucket(ip)
 }
 
-func (a *connectionAdmission) acquire(addr net.Addr) (func(), bool) {
+func (a *connectionAdmission) acquire(addr net.Addr, quic bool) (func(), bool) {
 	key := socketKey(addr, a.trusted)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.connections.clientFull(key) || a.connections.full() {
+	if a.connections.clientFull(key) || a.connections.full() || quic && a.quic.clientFull(key) {
 		return nil, false
 	}
 	a.connections.take(key)
+	if quic {
+		a.quic.take(key)
+	}
 	return sync.OnceFunc(func() {
 		a.mu.Lock()
+		defer a.mu.Unlock()
 		a.connections.give(key)
-		a.mu.Unlock()
+		if quic {
+			a.quic.give(key)
+		}
 	}), true
 }
 
@@ -221,7 +228,7 @@ func (a *connectionAdmission) verifySourceAddress(net.Addr) bool {
 }
 
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
-	release, ok := a.acquire(info.RemoteAddr)
+	release, ok := a.acquire(info.RemoteAddr, true)
 	if !ok {
 		return nil, errors.New("connection capacity exhausted")
 	}
@@ -244,7 +251,7 @@ func (l admittedListener) Accept() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		release, ok := l.admission.acquire(conn.RemoteAddr())
+		release, ok := l.admission.acquire(conn.RemoteAddr(), false)
 		if !ok {
 			_ = conn.Close()
 			continue

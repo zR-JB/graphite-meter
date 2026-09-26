@@ -37,6 +37,10 @@ const (
 	wtLaneCreditHeadroom             = 4
 	h2ReceiveWindowPerConnection     = 16 << 20
 	h2ReceiveWindowPerStream         = 8 << 20
+	// Each open request stream may hold a HEADERS buffer this large before any deadline applies.
+	h3MaxHeaderBytes = 8 << 10
+	// A client's QUIC connections each carry that many request streams, so they have their own small share.
+	maxClientQUICConnections = 8
 )
 
 // endpoints is the one measurement core every listener mounts.
@@ -300,7 +304,7 @@ func (b *listenerBuild) addH3() error {
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt}, nil, b.authn),
 		auth.Listener{WebTransport: true})
-	h3.MaxHeaderBytes = 32 << 10
+	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
 		return err

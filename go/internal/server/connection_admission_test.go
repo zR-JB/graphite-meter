@@ -49,18 +49,18 @@ func (l *scriptedListener) Addr() net.Addr { return testAddr("127.0.0.1:0") }
 
 func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	a := newConnectionAdmission(2, 1, nil)
-	releaseA, ok := a.acquire(testAddr("192.0.2.1:1"))
+	releaseA, ok := a.acquire(testAddr("192.0.2.1:1"), false)
 	if !ok {
 		t.Fatal("first connection rejected")
 	}
-	if _, ok := a.acquire(testAddr("192.0.2.1:2")); ok {
+	if _, ok := a.acquire(testAddr("192.0.2.1:2"), false); ok {
 		t.Fatal("per-client overflow admitted")
 	}
-	releaseB, ok := a.acquire(testAddr("192.0.2.2:1"))
+	releaseB, ok := a.acquire(testAddr("192.0.2.2:1"), false)
 	if !ok {
 		t.Fatal("second client rejected")
 	}
-	if _, ok := a.acquire(testAddr("192.0.2.3:1")); ok {
+	if _, ok := a.acquire(testAddr("192.0.2.3:1"), false); ok {
 		t.Fatal("global overflow admitted")
 	}
 	stats := a.stats()
@@ -69,7 +69,7 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	}
 	releaseA()
 	releaseA()
-	if release, ok := a.acquire(testAddr("192.0.2.1:3")); !ok {
+	if release, ok := a.acquire(testAddr("192.0.2.1:3"), false); !ok {
 		t.Fatal("released capacity was not reusable")
 	} else {
 		release()
@@ -156,7 +156,7 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 		t.Run(map[bool]string{false: "idle", true: "loaded"}[loaded], func(t *testing.T) {
 			a := newConnectionAdmission(4, 4, nil)
 			if loaded {
-				release, _ := a.acquire(testAddr("192.0.2.1:1"))
+				release, _ := a.acquire(testAddr("192.0.2.1:1"), false)
 				defer release()
 			}
 			pc, err := net.ListenPacket("udp", "127.0.0.1:0")

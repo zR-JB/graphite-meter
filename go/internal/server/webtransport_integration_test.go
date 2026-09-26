@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
@@ -420,6 +422,54 @@ func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	}
 	if total == 0 {
 		t.Fatal("the session survived without carrying anything, so nothing about liveness was proved")
+	}
+}
+
+// A client holds only a few QUIC connections, and each request stream may buffer only a small header block.
+func TestHTTP3BoundsClientConnectionsAndHeaders(t *testing.T) {
+	t.Parallel()
+	h3Base, _, _ := wtServer(t, nil, nil)
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}} //nolint:gosec
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	dial := func() (*quic.Conn, error) {
+		return quic.DialAddr(ctx, strings.TrimPrefix(h3Base, "https://"), tlsConfig, transport.NewQUICConfig())
+	}
+	var held []*quic.Conn
+	for i := range maxClientQUICConnections {
+		conn, err := dial()
+		if err != nil {
+			t.Fatalf("connection %d: %v", i, err)
+		}
+		held = append(held, conn)
+	}
+	if conn, err := dial(); err == nil {
+		_ = conn.CloseWithError(0, "")
+		t.Fatalf("connection %d from one client was admitted", maxClientQUICConnections+1)
+	}
+	for _, conn := range held {
+		_ = conn.CloseWithError(0, "")
+	}
+	h3 := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig()}
+	defer h3.Close()
+	probe := func(padding int) (int, error) {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, h3Base+route.Probe, nil)
+		req.Header.Set("X-Padding", strings.Repeat("x", padding))
+		res, err := h3.RoundTrip(req)
+		if err != nil {
+			return 0, err
+		}
+		_ = res.Body.Close()
+		return res.StatusCode, nil
+	}
+	for status, err := probe(1024); status != http.StatusOK; status, err = probe(1024) {
+		if ctx.Err() != nil {
+			t.Fatalf("ordinary request = %d, %v", status, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if status, err := probe(12 << 10); err == nil && status == http.StatusOK {
+		t.Fatal("a header block over the limit was served")
 	}
 }
 
