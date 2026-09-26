@@ -373,7 +373,7 @@ impl Sessions {
     }
 
     fn datagram(&self, id: u64, payload: Bytes) {
-        let Ok(size) = u32::try_from(payload.len().max(1)) else {
+        let Ok(size) = u32::try_from(payload.len() + 8 + size_of::<Datagram>()) else {
             return;
         };
         let Ok(budget) = self.datagram_bytes.clone().try_acquire_many_owned(size) else {
@@ -381,7 +381,7 @@ impl Sessions {
         };
         let registry = self.registry.lock().expect("session registry poisoned");
         if let Some(sender) = registry.active.get(&id) {
-            // Loss is permitted; a slow session never blocks connection control.
+            // Noq owns exact wire bytes; retain the stripped session prefix charge.
             let _ = sender.datagrams.try_send(Datagram {
                 payload,
                 _budget: budget,

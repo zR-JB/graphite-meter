@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "h3"
 version = "0.0.8"
-source = "git+https://github.com/zR-JB/h3?rev=28c16dfadfe21bddcbbc287b91e6a85d361cb750#28c16dfadfe21bddcbbc287b91e6a85d361cb750"
+source = "git+https://github.com/zR-JB/h3?rev=bfd9bf10e28bee25cfe5d74592498f45b6287b61#bfd9bf10e28bee25cfe5d74592498f45b6287b61"
 dependencies = [
  "bytes",
  "fastrand",
@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "h3-noq"
 version = "0.0.10"
-source = "git+https://github.com/zR-JB/h3?rev=28c16dfadfe21bddcbbc287b91e6a85d361cb750#28c16dfadfe21bddcbbc287b91e6a85d361cb750"
+source = "git+https://github.com/zR-JB/h3?rev=bfd9bf10e28bee25cfe5d74592498f45b6287b61#bfd9bf10e28bee25cfe5d74592498f45b6287b61"
 dependencies = [
  "bytes",
  "futures",
@@ -1089,7 +1089,7 @@ dependencies = [
 [[package]]
 name = "noq"
 version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=e87d1c05c860f0d8e3c39cb98cb87fd27545ce96#e87d1c05c860f0d8e3c39cb98cb87fd27545ce96"
+source = "git+https://github.com/zR-JB/noq?rev=0ae9fe96258162ed58a6405a7affc745fcd22acb#0ae9fe96258162ed58a6405a7affc745fcd22acb"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -1111,7 +1111,7 @@ dependencies = [
 [[package]]
 name = "noq-proto"
 version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=e87d1c05c860f0d8e3c39cb98cb87fd27545ce96#e87d1c05c860f0d8e3c39cb98cb87fd27545ce96"
+source = "git+https://github.com/zR-JB/noq?rev=0ae9fe96258162ed58a6405a7affc745fcd22acb#0ae9fe96258162ed58a6405a7affc745fcd22acb"
 dependencies = [
  "bytes",
  "derive_more",
@@ -1136,7 +1136,7 @@ dependencies = [
 [[package]]
 name = "noq-udp"
 version = "1.3.0"
-source = "git+https://github.com/zR-JB/noq?rev=e87d1c05c860f0d8e3c39cb98cb87fd27545ce96#e87d1c05c860f0d8e3c39cb98cb87fd27545ce96"
+source = "git+https://github.com/zR-JB/noq?rev=0ae9fe96258162ed58a6405a7affc745fcd22acb#0ae9fe96258162ed58a6405a7affc745fcd22acb"
 dependencies = [
  "cfg_aliases",
  "libc",

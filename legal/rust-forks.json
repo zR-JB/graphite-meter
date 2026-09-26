@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/h3",
     "branch": "graphite-meter/h3-v0.0.8",
-    "rev": "28c16dfadfe21bddcbbc287b91e6a85d361cb750",
+    "rev": "bfd9bf10e28bee25cfe5d74592498f45b6287b61",
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
-    "diffSha256": "777ea5e5b42f651a58737a0d4752bcd9e1cac6a0693682f1b0481b8b9968b1c1",
+    "diffSha256": "3eeb7448e7a502cd26bcdf82fc0418e9406f838005514c215bce2810504b0de7",
     "modifiedPackages": [
       "h3",
       "h3-noq"
@@ -51,6 +51,10 @@
       {
         "subject": "Parse buffered stream headers before reading more data",
         "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound buffered frames and stream unknown payloads",
+        "origin": "graphite-meter"
       }
     ],
     "metadataFiles": [
@@ -60,11 +64,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "e87d1c05c860f0d8e3c39cb98cb87fd27545ce96",
+    "rev": "0ae9fe96258162ed58a6405a7affc745fcd22acb",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "1b2397d06b96a6a9793557695637f231b5e7527ee539428f5ddbebdd956369c7",
+    "diffSha256": "658025b1842112d9e128163b79ae97e6583e0b2568e4b66df237761443ec214a",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -108,6 +112,14 @@
       },
       {
         "subject": "Test the Graphite Meter fork",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound datagram queue storage and detach packet backing",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound queued incoming packet storage",
         "origin": "graphite-meter"
       }
     ],
