@@ -22,7 +22,6 @@ type StagePlan struct {
 	Directions []Direction
 }
 
-// Plan lists enabled stages in execution order, before transport preparation.
 func (c Config) Plan() []StagePlan {
 	var plan []StagePlan
 	add := func(enabled bool, name Stage, duration time.Duration, directions ...Direction) {
@@ -120,7 +119,6 @@ func validatePingInterval(d time.Duration) error {
 	return nil
 }
 
-// Validate rejects settings that no server can satisfy.
 func (c Config) Validate() error {
 	c = c.normalized()
 	fetch, ws, wt := wire.TransportFetchStream, wire.TransportWebSocket, wire.TransportWebTransport

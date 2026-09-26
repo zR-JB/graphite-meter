@@ -153,7 +153,6 @@ func (a *aggregateMeasurements) ledger(boundary measurementBoundary) {
 	}
 }
 
-// creditUpload counts unique receiver bytes; a new upload identity restarts from zero.
 func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
 	previous, known := a.uploads[id]
 	if known && previous.id == next.id && next.maximum <= previous.maximum {

@@ -329,7 +329,6 @@ func (r *runner) measureDirection(ctx context.Context, dir Direction, gate *stag
 	return r.measureUpload(ctx, gate)
 }
 
-// Stage transport setup is bounded separately from warmup and the measured window.
 const stageReadyTimeout = 10 * time.Second
 
 type stageGate struct {
@@ -369,7 +368,6 @@ func latencyTargetOver(cfg Config, targets []wire.LatencyTarget, mechanism strin
 		func(t *wire.LatencyTarget) (string, string, bool) { return t.ID, t.Origin, t.Transport == mechanism })
 }
 
-// firstMatch tries an explicit transport alone, or the preferred transport before the fallback.
 func firstMatch[T any](transport, preferred, fallback string, over func(string) (*T, error)) (*T, error) {
 	order := []string{preferred, fallback}
 	if transport != "auto" {
@@ -388,7 +386,6 @@ func firstMatch[T any](transport, preferred, fallback string, over func(string) 
 	return nil, firstErr
 }
 
-// pickTarget honours an explicit selection; automatic selection prefers the base origin, then a sole candidate.
 func pickTarget[T any](
 	kind string,
 	targets []T,

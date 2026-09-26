@@ -42,7 +42,6 @@ var keys = keymap{
 	abort:         key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 }
 
-// reverse reports whether msg is the backward half of a two-way binding.
 func reverse(msg tea.KeyMsg) bool {
 	switch msg.String() {
 	case "shift+tab", "left", "up", "k":

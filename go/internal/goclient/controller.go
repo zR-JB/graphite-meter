@@ -16,7 +16,6 @@ const (
 	runEventCapacity   = 256
 )
 
-// AuthorizationTimeout bounds approval polling and its displayed countdown.
 const AuthorizationTimeout = 2 * time.Minute
 
 type Controller struct {

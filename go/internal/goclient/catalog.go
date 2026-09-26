@@ -13,7 +13,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// PreparedServer keeps transport evidence and credentials under one catalogue identity.
 type PreparedServer struct {
 	Server     wire.ServerEntry
 	Connection *PreparedConnection
