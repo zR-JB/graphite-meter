@@ -3,18 +3,23 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import APICall, JsonValue
+from github_api import ControlPlaneError
+from fixtures import AMD, Answers, engine, fake, gh, git_head, pages, write_release_assets
 from release import (
+    OCI,
     Release,
     assets_sha256,
     command_prepare,
     command_recheck,
+    command_verify,
     parse_release,
     request_title,
     require_compatible_release_tag,
@@ -31,27 +36,47 @@ from trust import (
     require_dispatch_run,
     require_exact_current_main,
     require_main_codeql,
+    require_pr,
     require_protected_environment,
 )
 
 REPO = "zR-JB/graphite-meter"
 MAIN, HEAD, OLD = "1" * 40, "2" * 40, "3" * 40
 APP = {"slug": "github-advanced-security"}
+P = f"repos/{REPO}/"
+PULL, MAIN_COMMIT = P + "pulls/101", P + "commits/main"
+REQUEST_WORKFLOW, REQUEST_RUN = P + "actions/workflows/release-request.yml", P + "actions/runs/4242"
+ARTIFACTS = REQUEST_RUN + "/artifacts?per_page=100"
+JOBS = P + "actions/runs/5151/jobs?filter=latest&per_page=100"
+CHECKS = P + f"commits/{HEAD}/check-runs?per_page=100&filter=all"
+CODEQL = P + "code-scanning/analyses?ref=refs%2Fheads%2Fmain&tool_name=CodeQL&per_page=100"
+TAG_REFS = P + "git/matching-refs/tags/v1.2.3"
+ENVIRONMENT = P + "environments/ghcr-release"
+POLICIES = ENVIRONMENT + "/deployment-branch-policies"
+GATE = {"name": "Gate", "status": "completed", "conclusion": "success"}
+PR = {"state": "open", "base": {"ref": "main"},
+      "head": {"sha": HEAD, "ref": "fix/test", "repo": {"full_name": REPO}}}
+REVIEWED = {"protection_rules": [{"type": "required_reviewers", "reviewers": [{"type": "User"}]}],
+            "deployment_branch_policy": {"custom_branch_policies": True}}
+MAIN_ONLY = {"branch_policies": [{"name": "main", "type": "branch"}]}
 
 
-def fake(responses: dict[str, object]) -> APICall:
-    def api(path: str, *, paginate: bool = False) -> JsonValue:
-        for fragment, response in responses.items():
-            if fragment in path:
-                return cast(JsonValue, response)
-        raise AssertionError(path)
-
-    return api
+def compare(main: str) -> str:
+    return P + f"compare/{main}...{HEAD}"
 
 
-def analysis(analysis_id: int, minute: int, error: str = "") -> dict[str, object]:
+def tree(sha: str) -> str:
+    return P + f"git/trees/{sha}"
+
+
+def ci_runs(event: str, sha: str) -> str:
+    return P + f"actions/workflows/ci.yml/runs?event={event}&head_sha={sha}&per_page=100"
+
+
+def analysis(analysis_id: int, minute: int, error: str = "",
+             commit: str = MAIN) -> dict[str, object]:
     return {
-        "id": analysis_id, "commit_sha": MAIN, "created_at": f"2026-08-15T10:{minute:02}:00Z",
+        "id": analysis_id, "commit_sha": commit, "created_at": f"2026-08-15T10:{minute:02}:00Z",
         "category": "go", "analysis_key": "default", "environment": "", "error": error,
         "warning": "", "tool": {"name": "CodeQL"},
     }
@@ -65,57 +90,121 @@ def ci_run(run_id: int, conclusion: str, pr: int = 101) -> dict[str, object]:
     }
 
 
-def dispatch_run(workflow_id: int, run_id: int) -> dict[str, object]:
+def dispatch_run(workflow_id: int, run_id: int, title: str = "title") -> dict[str, object]:
     return {
         "id": run_id, "workflow_id": workflow_id, "event": "workflow_dispatch",
         "head_branch": "main", "head_sha": MAIN, "status": "completed", "conclusion": "success",
         "run_attempt": 1, "actor": {"login": "zR-JB"}, "triggering_actor": {"login": "zR-JB"},
-        "display_title": "title",
+        "display_title": title,
     }
 
 
-def artifacts(name: str, size: int = 1024, expired: bool = False) -> list[object]:
-    return [{"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}]}]
+def artifacts(*names: str, size: int = 1024, expired: bool = False) -> object:
+    return pages({"artifacts": [{"name": name, "expired": expired, "size_in_bytes": size}
+                                for name in names]})
+
+
+def release_of(stable: bool) -> Release:
+    return Release("v1.2.3", MAIN, 0) if stable else Release("v1.2.3-rc.1", HEAD, 101)
+
+
+def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
+    """Every GitHub answer that authorizes a stable release or a PR #101 prerelease."""
+    names = ["release-request-4242"] + (["release-assets-4242"] if stable else [])
+    responses: dict[str, object] = {
+        MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
+        REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
+        ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
+        ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY,
+    }
+    if stable:
+        run = ci_run(5151, "success") | {"head_sha": MAIN, "head_branch": "main",
+                                          "event": "push", "pull_requests": []}
+        return responses | {
+            TAG_REFS: [], ci_runs("push", MAIN): pages({"workflow_runs": [run]}),
+            CODEQL: pages([analysis(99, 1)]),
+        }
+    check = {"id": 77, "name": "CodeQL", "app": APP, "status": "completed",
+             "conclusion": "success", "pull_requests": [{"number": 101}]}
+    control = {"tree": [{"path": "scripts", "sha": "b" * 40}]}
+    return responses | {
+        PULL: PR, compare(MAIN): {"behind_by": 0, "merge_base_commit": {"sha": MAIN}},
+        tree(HEAD): control, tree(MAIN): control,
+        ci_runs("pull_request", HEAD): pages({"workflow_runs": [ci_run(5151, "success")]}),
+        CHECKS: pages({"check_runs": [check]}),
+    }
+
+
+# Main has advanced to OLD, which the PR head still contains.
+MOVED = {compare(OLD): {"behind_by": 0, "merge_base_commit": {"sha": OLD}},
+         tree(OLD): {"tree": [{"path": "scripts", "sha": "b" * 40}]}}
 
 
 class MainBindingTests(unittest.TestCase):
     def test_pr_must_contain_exact_current_main(self) -> None:
         for behind, base, ok in ((0, MAIN, True), (3, OLD, False), (0, OLD, False)):
-            api = fake({"/commits/main": {"sha": MAIN},
-                        "/compare/": {"behind_by": behind, "merge_base_commit": {"sha": base}}})
+            api = fake({MAIN_COMMIT: {"sha": MAIN},
+                        compare(MAIN): {"behind_by": behind, "merge_base_commit": {"sha": base}}})
             with self.subTest(behind=behind, base=base):
                 if ok:
                     self.assertEqual(require_current_main(REPO, 101, HEAD, api=api), MAIN)
                 else:
                     with self.assertRaisesRegex(TrustError, "behind current main"):
                         require_current_main(REPO, 101, HEAD, api=api)
-        api = fake({"/commits/main": {"sha": MAIN}})
-        self.assertEqual(require_exact_current_main(REPO, MAIN, api=api), MAIN)
-        with self.assertRaisesRegex(TrustError, "no longer current main"):
-            require_exact_current_main(REPO, OLD, api=api)
+
+    def test_current_main_is_an_exact_commit(self) -> None:
+        for main, sha, error in ((MAIN, MAIN, None), (MAIN, OLD, "no longer current main"),
+                                 ("main", "main", "could not resolve"),
+                                 ("A" * 40, "A" * 40, "could not resolve")):
+            api = fake({MAIN_COMMIT: {"sha": main}})
+            with self.subTest(main=main, sha=sha):
+                if error is None:
+                    self.assertEqual(require_exact_current_main(REPO, sha, api=api), main)
+                else:
+                    with self.assertRaisesRegex(TrustError, error):
+                        require_exact_current_main(REPO, sha, api=api)
+
+    def test_prerelease_pr_is_open_same_repository_against_main_at_head(self) -> None:
+        head = cast(dict[str, object], PR["head"])
+        for change, error in (
+            ({}, None), ({"state": "closed"}, "not open against main"),
+            ({"base": {"ref": "release"}}, "not open against main"),
+            ({"head": head | {"repo": {"full_name": "fork/graphite-meter"}}}, "fork PRs"),
+            ({"head": head | {"sha": OLD}}, "head SHA changed"),
+        ):
+            api = fake({PULL: PR | change})
+            with self.subTest(change=change):
+                if error is None:
+                    self.assertEqual(require_pr(REPO, 101, HEAD, api=api), "fix/test")
+                else:
+                    with self.assertRaisesRegex(TrustError, error):
+                        require_pr(REPO, 101, HEAD, api=api)
 
     def test_prerelease_control_plane_must_match_main(self) -> None:
-        def trees(scripts_at_head: str) -> APICall:
-            def tree(scripts: str) -> dict[str, object]:
-                return {"tree": [{"path": ".github", "sha": "a" * 40},
-                                 {"path": "scripts", "sha": scripts}, {"path": "go", "sha": HEAD}]}
-            return fake({f"/git/trees/{HEAD}": tree(scripts_at_head),
-                         f"/git/trees/{MAIN}": tree("b" * 40)})
-
-        require_control_plane_matches_main(REPO, HEAD, MAIN, api=trees("b" * 40))
-        with self.assertRaisesRegex(TrustError, "PR changes scripts"):
-            require_control_plane_matches_main(REPO, HEAD, MAIN, api=trees("c" * 40))
+        control = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
+        paths = (*control, "go", "client")
+        main = [{"path": path, "sha": "a" * 40} for path in paths]
+        for path in paths:
+            for changed in ({"path": path, "sha": "b" * 40}, None):
+                entries = [item for item in main if item["path"] != path] + (
+                    [changed] if changed else [])
+                api = fake({tree(HEAD): {"tree": entries}, tree(MAIN): {"tree": main}})
+                with self.subTest(path=path, removed=changed is None):
+                    if path not in control:
+                        require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
+                    else:
+                        with self.assertRaisesRegex(TrustError, f"PR changes {re.escape(path)};"):
+                            require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
 
     def test_release_tag_preflight_accepts_only_the_expected_commit(self) -> None:
-        tag_ref = "/git/matching-refs/tags/v1.2.3"
-        require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=fake({tag_ref: []}))
+        require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=fake({TAG_REFS: []}))
         annotated = fake({
-            tag_ref: [{"ref": "refs/tags/v1.2.3", "object": {"type": "tag", "sha": OLD}}],
-            f"/git/tags/{OLD}": {"object": {"type": "commit", "sha": MAIN}},
+            TAG_REFS: [{"ref": "refs/tags/v1.2.3", "object": {"type": "tag", "sha": OLD}}],
+            P + f"git/tags/{OLD}": {"object": {"type": "commit", "sha": MAIN}},
         })
         require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=annotated)
-        moved = fake({tag_ref: [{"ref": "refs/tags/v1.2.3",
-                                 "object": {"type": "commit", "sha": HEAD}}]})
+        moved = fake({TAG_REFS: [{"ref": "refs/tags/v1.2.3",
+                                  "object": {"type": "commit", "sha": HEAD}}]})
         with self.assertRaisesRegex(TrustError, "already exists"):
             require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=moved)
 
@@ -132,23 +221,21 @@ class MainBindingTests(unittest.TestCase):
                 else:
                     with self.assertRaisesRegex(TrustError, "stable tags"):
                         parse_release(tag, MAIN, pr)
+        for sha in ("main", "A" * 40, MAIN[:39], MAIN + "1"):
+            with self.subTest(sha=sha), self.assertRaisesRegex(TrustError, "40-character"):
+                parse_release("v0.5.2", sha, 0)
 
 
 class EnvironmentTests(unittest.TestCase):
     def test_publishing_environment_needs_reviewers_and_main_only_deployments(self) -> None:
-        reviewers = {"type": "required_reviewers", "reviewers": [{"type": "User"}]}
-        protected = {"protection_rules": [reviewers],
-                     "deployment_branch_policy": {"custom_branch_policies": True}}
-        main = {"branch_policies": [{"name": "main", "type": "branch"}]}
         for environment, policies, error in (
-            (protected, main, None),
-            (protected | {"protection_rules": []}, main, "require reviewers"),
-            (protected | {"deployment_branch_policy": None}, main, "main"),
-            (protected, {"branch_policies": [{"name": "*", "type": "branch"}]}, "main"),
-            (protected, {"branch_policies": main["branch_policies"] * 2}, "main"),
+            (REVIEWED, MAIN_ONLY, None),
+            (REVIEWED | {"protection_rules": []}, MAIN_ONLY, "require reviewers"),
+            (REVIEWED | {"deployment_branch_policy": None}, MAIN_ONLY, "main"),
+            (REVIEWED, {"branch_policies": [{"name": "*", "type": "branch"}]}, "main"),
+            (REVIEWED, {"branch_policies": MAIN_ONLY["branch_policies"] * 2}, "main"),
         ):
-            api = fake({"/deployment-branch-policies": policies,
-                        "/environments/ghcr-release": environment})
+            api = fake({POLICIES: policies, ENVIRONMENT: environment})
             with self.subTest(error=error):
                 if error is None:
                     require_protected_environment(REPO, api=api)
@@ -162,52 +249,61 @@ class GateTests(unittest.TestCase):
         for analyses, error in (
             ([analysis(10, 0, "transient"), analysis(11, 5)], None),
             ([analysis(20, 0), analysis(21, 6, "finalize failed")], "has errors"),
+            ([analysis(30, 0, commit=OLD)], "missing"),
             ([], "missing"),
         ):
-            api = fake({"/code-scanning/analyses": [analyses]})
-            with self.subTest(error=error):
+            api = fake({CODEQL: pages(analyses)})
+            with self.subTest(error=error, analyses=len(analyses)):
                 if error is None:
                     require_main_codeql(REPO, MAIN, api=api)
                 else:
                     with self.assertRaisesRegex(TrustError, error):
                         require_main_codeql(REPO, MAIN, api=api)
 
-    def test_ci_gate_uses_newest_pr_run_and_its_gate(self) -> None:
-        gate_ok = [{"jobs": [{"name": "Gate", "status": "completed", "conclusion": "success"}]}]
-        gate_failed = [{"jobs": [{"name": "Gate", "status": "completed", "conclusion": "failure"}]}]
+    def test_ci_gate_uses_newest_run_of_this_commit_pr_and_event_and_its_gate(self) -> None:
+        failed = GATE | {"conclusion": "failure"}
         for runs, jobs, result in (
-            ([ci_run(10, "failure"), ci_run(11, "success")], gate_ok, 11),
-            ([ci_run(10, "success"), ci_run(11, "failure")], gate_ok, "latest CI run 11"),
-            ([ci_run(11, "success")], gate_failed, "Gate in CI run 11"),
-            ([ci_run(11, "success", pr=999)], gate_ok, "missing"),
+            ([ci_run(10, "failure"), ci_run(11, "success")], [GATE], 11),
+            ([ci_run(10, "success"), ci_run(11, "failure")], [GATE], "latest CI run 11"),
+            ([ci_run(11, "success")], [failed], "Gate in CI run 11"),
+            ([ci_run(11, "success")], [], "Gate in CI run 11"),
+            ([ci_run(11, "success")], [GATE, GATE], "Gate in CI run 11"),
+            ([ci_run(11, "success", pr=999)], [GATE], "missing"),
+            ([ci_run(11, "success") | {"pull_requests": [{"number": 101}] * 2}], [GATE],
+             "missing"),
+            ([ci_run(11, "success") | {"head_sha": OLD}], [GATE], "missing"),
+            ([ci_run(11, "success") | {"event": "push"}], [GATE], "missing"),
+            ([ci_run(11, "success") | {"head_branch": "main"}], [GATE], "missing"),
         ):
-            api = fake({"/actions/workflows/ci.yml/runs?": [{"workflow_runs": runs}],
-                        "/actions/runs/11/jobs?": jobs})
-            with self.subTest(result=result):
+            api = fake({ci_runs("pull_request", HEAD): pages({"workflow_runs": runs}),
+                        P + "actions/runs/11/jobs?filter=latest&per_page=100":
+                            pages({"jobs": jobs})})
+            with self.subTest(runs=runs, jobs=jobs):
+                def gate() -> int:
+                    return require_ci_gate(REPO, HEAD, event="pull_request", branch="fix/test",
+                                           pr_number=101, api=api)
                 if isinstance(result, int):
-                    self.assertEqual(require_ci_gate(REPO, HEAD, event="pull_request",
-                                                     branch="fix/test", pr_number=101, api=api),
-                                     result)
+                    self.assertEqual(gate(), result)
                 else:
                     with self.assertRaisesRegex(TrustError, result):
-                        require_ci_gate(REPO, HEAD, event="pull_request", branch="fix/test",
-                                        pr_number=101, api=api)
+                        gate()
 
-    def test_newest_pr_codeql_check_decides(self) -> None:
+    def test_newest_pr_codeql_check_from_the_security_app_decides(self) -> None:
         older = {"id": 41, "status": "completed", "conclusion": "success",
                  "started_at": "2026-09-05T10:00:00Z", "pull_requests": [{"number": 101}]}
-        for status, conclusion, started, pr, allowed in (
-            ("in_progress", None, "2026-09-05T10:04:00Z", 101, None),
-            ("queued", None, None, 101, None),
-            ("completed", "failure", "2026-09-05T10:04:00Z", 101, None),
-            ("completed", "success", "2026-09-05T10:04:00Z", 101, 42),
-            ("completed", "failure", "2026-09-05T10:04:00Z", 999, 41),
+        for status, conclusion, started, pr, app, allowed in (
+            ("in_progress", None, "2026-09-05T10:04:00Z", 101, APP, None),
+            ("queued", None, None, 101, APP, None),
+            ("completed", "failure", "2026-09-05T10:04:00Z", 101, APP, None),
+            ("completed", "success", "2026-09-05T10:04:00Z", 101, APP, 42),
+            ("completed", "failure", "2026-09-05T10:04:00Z", 999, APP, 41),
+            ("completed", "failure", "2026-09-05T10:04:00Z", 101, {"slug": "other"}, 41),
         ):
             newer = {"id": 42, "status": status, "conclusion": conclusion, "started_at": started,
-                     "pull_requests": [{"number": pr}]}
-            checks = [{"name": "CodeQL", "app": APP, **item} for item in (older, newer)]
-            api = fake({"/check-runs?per_page=100&filter=all": [{"check_runs": checks}]})
-            with self.subTest(status=status, conclusion=conclusion, pr=pr):
+                     "pull_requests": [{"number": pr}], "app": app}
+            checks = [{"name": "CodeQL", "app": APP} | item for item in (older, newer)]
+            api = fake({CHECKS: pages({"check_runs": checks})})
+            with self.subTest(status=status, conclusion=conclusion, pr=pr, app=app):
                 def check() -> int:
                     return require_check_run(REPO, HEAD, name="CodeQL", app_slug=APP["slug"],
                                              pr_number=101, api=api)
@@ -217,58 +313,36 @@ class GateTests(unittest.TestCase):
                     self.assertEqual(check(), allowed)
 
 
-def trusted_main(stable: bool) -> dict[str, object]:
-    gate = [{"jobs": [{"name": "Gate", "status": "completed", "conclusion": "success"}]}]
-    run = {**ci_run(5151, "success"), "head_sha": MAIN if stable else HEAD}
-    if stable:
-        run |= {"head_branch": "main", "event": "push", "pull_requests": []}
-    tree = {"tree": [{"path": "scripts", "sha": "b" * 40}]}
-    check = {"id": 77, "name": "CodeQL", "app": APP, "status": "completed",
-             "conclusion": "success", "pull_requests": [{"number": 101}]}
-    return {
-        "/commits/main": {"sha": MAIN},
-        "/actions/workflows/release-request.yml": {"id": 31337},
-        "/actions/runs/4242/artifacts": [{"artifacts": [
-            {"name": name, "expired": False, "size_in_bytes": 1024}
-            for name in ("release-request-4242", "release-assets-4242")]}],
-        "/actions/runs/4242": dispatch_run(31337, 4242),
-        "/git/matching-refs/tags/": [],
-        "/pulls/101": {"state": "open", "base": {"ref": "main"}, "head": {
-            "sha": HEAD, "ref": "fix/test", "repo": {"full_name": REPO}}},
-        "/compare/": {"behind_by": 0, "merge_base_commit": {"sha": MAIN}},
-        "/git/trees/": tree,
-        "/actions/workflows/ci.yml/runs": [{"workflow_runs": [run]}],
-        "/actions/runs/5151/jobs": gate,
-        "/code-scanning/analyses": [[analysis(99, 1)]],
-        "/check-runs": [{"check_runs": [check]}],
-    }
-
-
 class RequestTests(unittest.TestCase):
     def test_request_run_is_bound_to_main_owner_attempt_and_artifacts(self) -> None:
-        name = "release-request-6001"
+        name = "release-request-4242"
         for field, value, error in (
             (None, None, None),
+            ("id", 4243, "is not a release-request.yml run"),
+            ("workflow_id", 1, "is not a release-request.yml run"),
+            ("display_title", "other", "dispatch inputs"),
+            ("event", "push", "not dispatched from main"),
             ("head_branch", "feature/stale", "not dispatched from main"),
             ("head_sha", OLD, "main changed"),
             ("run_attempt", 2, "reruns"),
-            ("workflow_id", 1, "is not a release-request.yml run"),
-            ("display_title", "other", "dispatch inputs"),
+            ("status", "in_progress", "request run is in_progress"),
+            ("conclusion", "failure", "request run is completed/failure"),
+            ("actor", {"login": "other"}, "repository owner"),
             ("triggering_actor", {"login": "other"}, "repository owner"),
             ("artifact", artifacts(name, expired=True), "expected one unexpired"),
+            ("artifact", artifacts(name, name), "expected one unexpired"),
             ("artifact", artifacts(name, size=4097), "exceeds"),
         ):
-            run = dispatch_run(7001, 6001)
+            run = dispatch_run(7001, 4242)
             files = artifacts(name)
             if field == "artifact":
                 files = value
             elif field is not None:
                 run[field] = value
-            api = fake({"/actions/workflows/release-request.yml": {"id": 7001},
-                        "/actions/runs/6001/artifacts": files, "/actions/runs/6001": run})
+            api = fake({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})
             with self.subTest(field=field, error=error):
                 def bind() -> None:
-                    require_dispatch_run(REPO, "zR-JB", MAIN, 6001, "release-request.yml",
+                    require_dispatch_run(REPO, "zR-JB", MAIN, 4242, "release-request.yml",
                                          "title", {name: 4096}, api=api)
                 if error is None:
                     bind()
@@ -304,6 +378,10 @@ class RequestTests(unittest.TestCase):
             ({"SHA": HEAD}, "leave sha empty"), ({"PR": "101", "SHA": HEAD}, "stable tags"),
             ({"TAG": "v1.2.3-rc.1"}, "stable tags"), (prerelease | {"SHA": ""}, "SHA is required"),
             ({"REF": "refs/heads/feature"}, "dispatched from main"),
+            ({"EVENT_NAME": "push"}, "dispatched from main"),
+            ({"WORKFLOW_REF": f"{REPO}/.github/workflows/release-request.yml@refs/heads/x"},
+             "release request workflow on main"),
+            ({"ACTOR": "other"}, "repository owner"),
             ({"TRIGGERING_ACTOR": "other"}, "repository owner"),
             ({"REQUEST_RUN_ATTEMPT": "2"}, "reruns"), ({"MODE": "force"}, "mode"),
         ):
@@ -322,21 +400,24 @@ class RequestTests(unittest.TestCase):
                 self.assertIn(f"remote_sha={HEAD if change else ''}\n", output.read_text())
 
     def test_publication_requires_main_or_pr_trust_for_the_release_kind(self) -> None:
-        stable, prerelease = Release("v1.2.3", MAIN, 0), Release("v1.2.3-rc.1", HEAD, 101)
-        self.assertEqual(require_publishable(REPO, stable, api=fake(trusted_main(True))),
+        stable, prerelease = release_of(True), release_of(False)
+        self.assertEqual(require_publishable(REPO, stable, api=fake(trusted(True))),
                          (MAIN, 5151, ""))
-        self.assertEqual(require_publishable(REPO, prerelease, api=fake(trusted_main(False))),
+        self.assertEqual(require_publishable(REPO, prerelease, api=fake(trusted(False))),
                          (MAIN, 5151, "77"))
-        skipped = trusted_main(True) | {"/actions/runs/5151/jobs": [{"jobs": [
-            {"name": "Gate", "status": "completed", "conclusion": "success"},
-            {"name": "Core checks", "status": "completed", "conclusion": "skipped"}]}]}
-        with self.assertRaisesRegex(TrustError, "did not run every job: Core checks"):
-            require_publishable(REPO, stable, api=fake(skipped))
-        moved = {"/git/trees/" + HEAD: {"tree": []}} | trusted_main(False)
-        with self.assertRaisesRegex(TrustError, "PR changes scripts"):
-            require_publishable(REPO, prerelease, api=fake(moved))
-        with self.assertRaisesRegex(TrustError, "no longer current main"):
-            require_publishable(REPO, Release("v1.2.3", HEAD, 0), api=fake(trusted_main(True)))
+        skipped = {JOBS: pages({"jobs": [
+            GATE, {"name": "Core checks", "status": "completed", "conclusion": "skipped"}]})}
+        tag = {TAG_REFS: [{"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": OLD}}]}
+        for release, change, error in (
+            (stable, skipped, "did not run every job: Core checks"),
+            (stable, tag, "already exists"),
+            (stable, {CODEQL: pages([analysis(99, 1, "failed")])}, "has errors"),
+            (Release("v1.2.3", HEAD, 0), {}, "no longer current main"),
+            (prerelease, {tree(HEAD): {"tree": []}}, "PR changes scripts"),
+        ):
+            api = fake(trusted(release.stable) | change)
+            with self.subTest(error=error), self.assertRaisesRegex(TrustError, error):
+                require_publishable(REPO, release, api=api)
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
         request: dict[str, object] = {
@@ -344,27 +425,31 @@ class RequestTests(unittest.TestCase):
             "mode": "publish", "requestRunId": 4242, "requestRunAttempt": 1,
         }
         prerelease = {"tag": "v1.2.3-rc.1", "sourceSha": HEAD, "pr": 101}
-        env = {
+        base_env = {
             "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
             "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main",
             "REQUEST_RUN_ID": "4242",
         }
-        for change, artifacts_present, error in (
-            ({}, True, None), (prerelease, False, None),
-            (prerelease, True, "downloaded artifacts"), ({}, False, "downloaded artifacts"),
-            ({"sourceSha": HEAD}, True, "trusted main commit"),
-            ({"requestRunAttempt": True}, True, "requestRunAttempt"),
-            ({"requestRunId": 1}, True, "requestRunId"),
-            ({"tag": "v1.2.3-rc.1"}, True, "stable tags"),
-            ({"mode": "force"}, True, "mode"),
-            ({"tag": "v1.2.4", "title": {"tag": "v1.2.3"}}, True, "dispatch inputs"),
-            (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, False, "dispatch inputs"),
+        for change, env, artifacts_present, error in (
+            ({}, {}, True, None), (prerelease, {}, False, None),
+            (prerelease, {}, True, "downloaded artifacts"), ({}, {}, False, "downloaded artifacts"),
+            ({"sourceSha": HEAD}, {}, True, "trusted main commit"),
+            ({"requestRunAttempt": True}, {}, True, "requestRunAttempt"),
+            ({"requestRunId": 1}, {}, True, "requestRunId"),
+            ({"tag": "v1.2.3-rc.1"}, {}, True, "stable tags"),
+            ({"mode": "force"}, {}, True, "mode"),
+            ({"tag": "v1.2.4", "title": {"tag": "v1.2.3"}}, {}, True, "dispatch inputs"),
+            (prerelease | {"title": {"pr": 0, "sourceSha": MAIN}}, {}, False, "dispatch inputs"),
+            ({}, {"WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/x"}, True,
+             "trusted main workflow"),
+            ({}, {"PUBLISHER_SHA": OLD, "HEAD": OLD}, True, "no longer current main"),
+            ({}, {"HEAD": OLD}, True, "checked-out tooling"),
         ):
-            with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
-                root = Path(directory)
+            with tempfile.TemporaryDirectory() as directory, self.subTest(change=change, env=env):
+                root = Path(directory) / "request"
                 candidate = root / "release-request-4242"
-                candidate.mkdir()
-                for name in ("graphite-meter.oci.tar", "graphite-meter.oci.tar.sha256"):
+                candidate.mkdir(parents=True)
+                for name in (OCI, f"{OCI}.sha256"):
                     (candidate / name).write_text("x")
                 record = request | {key: value for key, value in change.items() if key != "title"}
                 (candidate / "request.json").write_text(json.dumps(record))
@@ -373,9 +458,9 @@ class RequestTests(unittest.TestCase):
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
                     str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])), MAIN)
-                api = fake(trusted_main(True) | {"/actions/runs/4242": dispatch_run(31337, 4242)
-                                                 | {"display_title": title}})
-                with patch.dict(os.environ, env), patch("release.require_checkout"):
+                api = fake(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})
+                checkout = git_head(Path(directory), env.get("HEAD", MAIN))
+                with patch.dict(os.environ, base_env | env | checkout):
                     if error is None:
                         release, publish = verify_request(root, api=api)
                         expected = (request | change)["sourceSha"]
@@ -385,28 +470,125 @@ class RequestTests(unittest.TestCase):
                             verify_request(root, api=api)
 
 
-    def test_recheck_refuses_a_handoff_other_than_the_verified_archive(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "image").mkdir()
-            (Path(directory) / "image/graphite-meter.oci.tar").write_bytes(b"verified")
-            (Path(directory) / "assets").mkdir()
-            (Path(directory) / "assets/checksums.txt").write_text("sums")
-            env = {"MAIN_SHA": MAIN, "PR": "", "TAG": "v1.2.3", "SOURCE_SHA": MAIN,
-                   "REPOSITORY": REPO, "HANDOFF_DIR": directory,
-                   "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(),
-                   "ASSETS_SHA256": assets_sha256(Path(directory) / "assets"),
-                   "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary")}
-            for change, error in ((None, None), ("OCI_SHA256", "OCI handoff"),
-                                  ("ASSETS_SHA256", "asset handoff")):
-                changed = {change: "0" * 64} if change else {}
-                with (self.subTest(change=change), patch.dict(os.environ, env | changed),
-                      patch("release.require_checkout"),
-                      patch("release.require_publishable", return_value=(MAIN, 1, ""))):
+def write_request(root: Path, stable: bool, mode: str) -> Path:
+    release = release_of(stable)
+    request_dir = root / "request"
+    candidate = request_dir / "release-request-4242"
+    candidate.mkdir(parents=True)
+    (candidate / "request.json").write_text(json.dumps({
+        "schemaVersion": 2, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
+        "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
+    }))
+    (candidate / OCI).write_bytes(b"oci archive")
+    (candidate / f"{OCI}.sha256").write_text(
+        f"{hashlib.sha256(b'oci archive').hexdigest()}  {OCI}\n")
+    if stable:
+        write_release_assets(request_dir / "release-assets-4242", "1.2.3")
+    return request_dir
+
+
+def outputs(path: Path) -> dict[str, str]:
+    return dict(line.split("=", 1) for line in path.read_text().splitlines())
+
+
+Edit = Callable[[Path], None]
+
+
+class CommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+
+    def test_verify_hands_off_only_a_verified_authorized_candidate(self) -> None:
+        def checksum(request_dir: Path) -> None:
+            (request_dir / "release-request-4242" / f"{OCI}.sha256").write_text(f"0  {OCI}\n")
+
+        def asset(request_dir: Path) -> None:
+            (request_dir / "release-assets-4242" / "checksums.txt").write_text(
+                "0" * 64 + "  graphite-meter_1.2.3_third-party-source.tar.gz\n")
+
+        unprotected = {ENVIRONMENT: REVIEWED | {"protection_rules": []}}
+        rows: tuple[tuple[bool, str, Edit | None, dict[str, object], dict[str, str],
+                          str | None], ...] = (
+            (True, "publish", None, {}, {}, None),
+            (False, "validate", None, {}, {}, None),
+            (True, "publish", checksum, {}, {}, "request checksum"),
+            (True, "publish", None, {}, {"LIMIT": "10"}, "exceeds 10 bytes"),
+            (True, "publish", asset, {}, {}, "checksum mismatch"),
+            (True, "publish", None, {}, {"FAKE_DIGEST": "latest"}, "digest is 'latest'"),
+            (True, "publish", None, unprotected, {}, "require reviewers"),
+            (False, "publish", None, MOVED | {MAIN_COMMIT: Answers([{"sha": MAIN}, {"sha": OLD}])},
+             {}, "main moved during"),
+        )
+        for stable, mode, edit, responses, env, error in rows:
+            with self.subTest(stable=stable, mode=mode, error=error):
+                root = self.root / str(len(list(self.root.iterdir())))
+                request_dir = write_request(root, stable, mode)
+                if edit is not None:
+                    edit(request_dir)
+                release = release_of(stable)
+                variables = {
+                    "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
+                    "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main",
+                    "REQUEST_RUN_ID": "4242", "REQUEST_DIR": str(request_dir),
+                    "HANDOFF_DIR": str(root / "handoff"),
+                    "GITHUB_OUTPUT": str(root / "output"),
+                    "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                } | engine(root, REPO, release.version, release.sha) | git_head(root, MAIN) | gh(
+                    root, trusted(stable, mode) | responses) | env
+                limit = int(env.get("LIMIT", 1 << 30))
+                with patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit):
+                    if error is not None:
+                        with self.assertRaisesRegex(ControlPlaneError, error):
+                            command_verify()
+                        self.assertFalse((root / "handoff").exists())
+                        continue
+                    command_verify()
+                result = outputs(root / "output")
+                self.assertEqual((result["digest"], result["publish"], result["sha"]),
+                                 (AMD, str(mode == "publish").lower(), release.sha))
+                self.assertEqual((root / "handoff/image" / OCI).read_bytes(), b"oci archive")
+                if stable:
+                    self.assertEqual(result["assets_sha256"],
+                                     assets_sha256(request_dir / "release-assets-4242"))
+                calls = json.loads((root / "gh.json").read_text())["calls"]
+                self.assertEqual(f"api {ENVIRONMENT}" in calls, mode == "publish")
+
+    def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
+        handoff = self.root / "handoff"
+        (handoff / "image").mkdir(parents=True)
+        (handoff / "image" / OCI).write_bytes(b"verified")
+        write_release_assets(handoff / "assets", "1.2.3")
+        closed = {PULL: PR | {"state": "closed"}}
+        for stable, env, responses, error in (
+            (True, {}, {}, None), (False, {}, {}, None),
+            (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
+            (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
+            (True, {"HEAD": OLD}, {}, "checked-out tooling"),
+            (False, {}, closed, "not open against main"),
+            (False, {}, MOVED | {MAIN_COMMIT: {"sha": OLD}}, "main moved after verification"),
+        ):
+            release = release_of(stable)
+            with (tempfile.TemporaryDirectory() as directory,
+                  self.subTest(stable=stable, env=env, error=error)):
+                variables = {
+                    "MAIN_SHA": MAIN, "PR": str(release.pr or ""), "TAG": release.tag,
+                    "SOURCE_SHA": release.sha, "REPOSITORY": REPO, "HANDOFF_DIR": str(handoff),
+                    "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(),
+                    "ASSETS_SHA256": assets_sha256(handoff / "assets"),
+                    "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
+                } | git_head(Path(directory), env.get("HEAD", MAIN)) | gh(
+                    Path(directory), trusted(stable) | responses) | env
+                with patch.dict(os.environ, variables):
                     if error is None:
                         command_recheck()
+                        self.assertIn(f"authorized on main `{MAIN}`",
+                                      (Path(directory) / "summary").read_text())
                     else:
                         with self.assertRaisesRegex(TrustError, error):
                             command_recheck()
+
 
 if __name__ == "__main__":
     unittest.main()
