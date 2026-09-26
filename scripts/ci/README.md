@@ -4,7 +4,10 @@ Workflow YAML owns events, jobs, permissions and environments. `mise` owns
 pinned tools and project commands. Stdlib-only, type-checked Python in this
 directory owns trust decisions, GitHub JSON validation and artifact
 verification. `publish.sh` holds the registry and GitHub Release writes;
-`test_release_transaction.py` runs it against fake `gh`, Docker and Skopeo.
+`test_release_transaction.py` runs it against a stateful fake GitHub, Docker
+and Skopeo. `fixtures.py` fakes `gh` by exact API path and pagination, the
+checked-out commit and the container engine, so trust tests run the real
+commands.
 
 ## Working on the pipeline
 
@@ -107,6 +110,9 @@ credentials and no dangerous triggers other than the reviewed `workflow_run`.
 - no interpolated `${{ }}` in run scripts; checkouts select only `github.sha`;
 - ordered verify, approval, recheck and publication steps; dispatch inputs
   reach only the request validator and the build uses no cache;
+- release identity (`EVENT_SHA`, `PUBLISHER_SHA`, `TARGET_SHA`, actors, refs,
+  run IDs) bound only from the run context; a request that reads only
+  contents; handoffs uploaded only in publish mode; one publication at a time;
 - mise-provisioned tools, uncached trusted Python bootstraps, the pinned
   Chromium launch check, digest-pinned base images without a custom frontend;
 - CI coverage of the local gate, path filters and no tracked key material.
