@@ -546,8 +546,10 @@
     white-space: nowrap;
   }
   .gauge-value {
+    min-width: 5ch;
     font-size: clamp(20px, 14cqmin, 64px);
     line-height: 0.95;
+    text-align: center;
   }
   .terminal-readout {
     position: relative;

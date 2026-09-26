@@ -66,12 +66,12 @@
     return summaryCards(evidence, rate, store.unitBase);
   });
 
-  // Live chips: earlier stages stay while the next runs. Animated rates are
-  // visual only; accessible values use receiver accounting.
+  // Live chips hold a row for every stage from the start, so none appears later.
+  // Animated rates are visual only; accessible values use receiver accounting.
   const chips = $derived.by(() =>
     ORDER.flatMap((key) => {
       const { status } = store.stagePresentation[key];
-      if (status === "disabled" || status === "pending") return [];
+      if (status === "disabled") return [];
       const active = status === "active" || status === "recovering";
       let value: number | null;
       let authoritative: number | null;

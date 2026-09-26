@@ -5,29 +5,16 @@
   import { BUILD } from "../buildenv";
   import { BLOCKED, phaseLabel } from "../presentation/vocabulary";
 
-  let now = $state(Date.now());
-  let visible = $state(typeof document === "undefined" || !document.hidden);
-
-  $effect(() => {
-    if (!store.isRunning || !visible) return;
-    now = Date.now();
-    const id = setInterval(() => (now = Date.now()), 200);
-    return () => clearInterval(id);
+  // Progress events pace the wall clock, so elapsed and left update together.
+  const elapsedMs = $derived.by(() => {
+    if (store.result) return store.result.durationMs;
+    if (!store.startEpoch) return 0;
+    void store.phaseElapsedMs;
+    return Date.now() - store.startEpoch;
   });
-
-  const elapsedMs = $derived(
-    store.isRunning && store.startEpoch
-      ? now - store.startEpoch
-      : (store.result?.durationMs ??
-          (store.phase === "aborted" && store.startEpoch
-            ? now - store.startEpoch
-            : 0)),
-  );
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
-
-<svelte:document onvisibilitychange={() => (visible = !document.hidden)} />
 
 {#if store.preparation.status === "blocked"}
   <span class="label term" use:tooltip={store.startError || store.startBlocker}
@@ -40,31 +27,42 @@
   class="elapsed"
   class:secondary={showRemaining}
   use:tooltip={`Elapsed ${fmtDuration(elapsedMs)}`}
-  ><span class="caption">elapsed&nbsp;</span>{fmtDuration(elapsedMs)}</span
+  ><span class="caption">elapsed&nbsp;</span><span class="readout"
+    >{fmtDuration(elapsedMs)}</span
+  ></span
+>
+<span class="transferred"
+  ><span class="readout"
+    >{fmtBytes(store.bytesTransferred, store.unitBase)}</span
+  ><span class="caption">&nbsp;transferred</span></span
 >
 {#if showRemaining}
   <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}{fmtDuration(store.phaseRemainingMs)} left{:else}Paused<span
-        class="caption"
-      >
+    {#if store.measuring}<span class="readout"
+        >{fmtDuration(store.phaseRemainingMs)}</span
+      > left{:else}Paused<span class="caption">
         · {fmtDuration(store.phaseRemainingMs)} left</span
       >{/if}
   </span>
 {/if}
-<span class="transferred"
-  >{fmtBytes(store.bytesTransferred, store.unitBase)}<span class="caption"
-    >&nbsp;transferred</span
-  ></span
->
 <span class="build">{BUILD.identity}</span>
 
 <style>
   span {
     white-space: nowrap;
   }
+  /* Reserved widths keep a changing phase or number from moving its neighbours;
+     the countdown comes last so its arrival and exit move nothing. */
   .label {
+    min-width: 14ch;
     color: var(--text);
     font-weight: var(--w-strong);
+  }
+  .readout {
+    display: inline-block;
+    min-width: 7ch;
+    font-variant-numeric: tabular-nums;
+    text-align: end;
   }
   .build {
     margin-left: auto;

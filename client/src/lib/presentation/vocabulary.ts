@@ -100,14 +100,21 @@ export const THEME: Record<ThemePref, { label: string; icon: IconName }> = {
 export const resolvedPhase = (phase: Phase) =>
   phase === "complete" || phase === "aborted" || phase === "error";
 
+export const RUN_ACTION = {
+  start: "Start test",
+  stop: "Stop test",
+  again: "Run again",
+  cancel: "Cancel",
+} as const;
+
 export function runActionLabel(
   preparing: boolean,
   running: boolean,
   phase: Phase,
 ) {
-  if (preparing) return "Cancel";
-  if (running) return "Stop test";
-  return resolvedPhase(phase) ? "Run again" : "Start test";
+  if (preparing) return RUN_ACTION.cancel;
+  if (running) return RUN_ACTION.stop;
+  return resolvedPhase(phase) ? RUN_ACTION.again : RUN_ACTION.start;
 }
 
 export const PING_CADENCE: Record<PingCadence, string> = {

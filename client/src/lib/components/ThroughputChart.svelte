@@ -337,7 +337,7 @@
           {@const { left, right } = presentation.layout.plot}
           <span
             class="time-label"
-            style:left={`calc(${left}px + ${right - left}px * ${tick.t} / var(--t-max))`}
+            style:translate={`calc(${left}px + ${right - left}px * ${tick.t} / var(--t-max) - 50%) -100%`}
             style:top={`${presentation.layout.timeLabelY}px`}
             >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
@@ -467,8 +467,9 @@
   .axis-label-right {
     translate: -100% -50%;
   }
+  /* Moving labels translate rather than lay out again as the time scale eases. */
   .time-label {
-    translate: -50% -100%;
+    left: 0;
   }
   .phase-label {
     translate: 0 -100%;

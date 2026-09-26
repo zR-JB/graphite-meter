@@ -372,6 +372,7 @@
   }
   .lane-meta strong {
     flex: none;
+    min-width: 15ch;
     font: var(--w-heavy) var(--type-sm) / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
