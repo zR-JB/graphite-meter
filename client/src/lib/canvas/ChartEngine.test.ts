@@ -319,7 +319,6 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     }
     expect(counts.paths).toBe(beforeHover);
 
-    // Twenty clock-only updates cost less than one scene rebuild.
     const beforeClock = counts.paths;
     for (let now = 216; now <= 520; now += 16) {
       engine.update({ ...current, timelineT: 4_000 + now * 20 });

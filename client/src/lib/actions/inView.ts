@@ -1,7 +1,6 @@
 import type { Attachment } from "svelte/attachments";
 import { browserEnvironment } from "../canvas/presentation";
 
-/** Reports whether the element is on screen in a visible tab. */
 export function inView(report: (seen: boolean) => void): Attachment {
   return (node) => {
     const environment = browserEnvironment();

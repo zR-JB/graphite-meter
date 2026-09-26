@@ -21,7 +21,6 @@ export function hasFocus(): boolean {
   );
 }
 
-/** The topmost open modal dialog; it owns focus and keys while open. */
 export function activeModal(): HTMLElement | null {
   const modals = document.querySelectorAll<HTMLElement>("dialog:modal");
   return modals[modals.length - 1] ?? null;

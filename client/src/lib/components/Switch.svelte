@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
 
-  // The parent owns state and may veto the toggle.
   interface Props {
     checked: boolean;
     label?: string;

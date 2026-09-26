@@ -7,7 +7,6 @@
   // Explicit props and a template class: a spread or bare class expression pulls in clsx.
   interface Props {
     open: boolean;
-    /** In flow, the dialog neither blocks the page nor takes its focus. */
     modal?: boolean;
     onCancel: () => void;
     /** Close when the backdrop is clicked. */
