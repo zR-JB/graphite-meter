@@ -306,12 +306,24 @@ test("session fetches enforce the same selected-server boundary as grants", asyn
   try {
     const { measurementFetch } = await import("./credentials");
     const session = {
-      server: { id: "self", name: "Home", url: "https://home.example" },
+      server: {
+        id: "self",
+        name: "Home",
+        url: "https://home.example",
+        additionalOrigins: ["https://cdn.example"],
+      },
       kind: "session" as const,
     };
     await expect(
       measurementFetch(session, "https://unrelated.example/probe"),
     ).rejects.toThrow("outside the selected server");
+    for (const url of [
+      "https://cdn.example/upload",
+      "http://home.example:8080/upload",
+    ])
+      await expect(
+        measurementFetch(session, url, { method: "POST" }),
+      ).rejects.toThrow("this page's secure hostname");
     expect(requests).toHaveLength(0);
     await measurementFetch(session, "https://home.example:8443/probe");
     expect(requests).toEqual(["https://home.example:8443/probe"]);

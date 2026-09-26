@@ -64,6 +64,14 @@ export function requestOptions(
     };
   }
   if (context?.kind === "public") return { headers: {}, credentials: "omit" };
+  // The page's CSRF token and cookies reach only its own secure hostname, never an additional origin.
+  const target = context && new URL(input, location.origin);
+  if (
+    target &&
+    target.origin !== location.origin &&
+    (target.protocol !== "https:" || target.hostname !== location.hostname)
+  )
+    throw new Error("Session credentials stay on this page's secure hostname");
   return {
     headers: method === "GET" || method === "HEAD" ? {} : csrfHeader(),
     credentials: authEnabled() ? "include" : "same-origin",
