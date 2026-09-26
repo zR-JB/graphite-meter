@@ -211,6 +211,7 @@ export class LatencyPopulation {
   #sorted = new Float64Array(0);
   #fresh: number[] = [];
   #sum = 0;
+  #final: StageLatencySummary | null | undefined;
   #timeouts = 0;
   #replies = 0;
   #unresolved = 0;
@@ -269,7 +270,13 @@ export class LatencyPopulation {
     this.#previous = null;
   }
 
+  close(): void {
+    this.#final = this.summary();
+    this.#sorted = new Float64Array(0);
+  }
+
   summary(): StageLatencySummary | null {
+    if (this.#final !== undefined) return this.#final;
     if (
       !this.count &&
       !this.#unresolved &&
@@ -383,6 +390,13 @@ export class ServerLatency {
     const timeoutRatio = (outcomes - replies) / outcomes;
     const score = clamp01(1 - jitterRatio * 1.2 - timeoutRatio * 3.6);
     return { score, jitterRatio, timeoutRatio, sampleCount: outcomes };
+  }
+
+  close(): void {
+    for (const stage of STAGES) this.stages[stage].close();
+    this.#times = [];
+    this.#rtts = [];
+    this.#head = 0;
   }
 
   resetStability(): void {

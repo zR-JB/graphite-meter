@@ -1279,6 +1279,7 @@ export class Run implements NetworkRunner {
       durationMs,
     };
     this.#release();
+    for (const server of this.#servers) server.latency.close();
     this.#phase = "complete";
     this.#emit({ type: "complete", result });
   }
