@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
-  import { phaseLabel } from "../presentation/vocabulary";
+  import { BLOCKED, phaseLabel } from "../presentation/vocabulary";
 
   let now = $state(Date.now());
   let visible = $state(typeof document === "undefined" || !document.hidden);
@@ -29,7 +29,13 @@
 
 <svelte:document onvisibilitychange={() => (visible = !document.hidden)} />
 
-<span class="label">{phaseLabel(store.phase, store.result?.outcome)}</span>
+{#if store.preparation.status === "blocked"}
+  <span class="label term" use:tooltip={store.startError || store.startBlocker}
+    >{BLOCKED}</span
+  >
+{:else}
+  <span class="label">{phaseLabel(store.phase, store.result?.outcome)}</span>
+{/if}
 <span
   class="elapsed"
   class:secondary={showRemaining}

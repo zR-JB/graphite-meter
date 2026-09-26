@@ -6,12 +6,20 @@
   const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
   import { fmtDuration } from "../format";
-  import { resolvedPhase, runActionLabel } from "../presentation/vocabulary";
+  import {
+    BLOCKED,
+    resolvedPhase,
+    runActionLabel,
+  } from "../presentation/vocabulary";
 
   const pending = $derived(store.preparing);
+  const idle = $derived(!store.isRunning && !pending);
   const resolved = $derived(resolvedPhase(store.phase));
   const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
   const eta = $derived(fmtDuration(store.totalEtaMs, 0));
+  const blocker = $derived(
+    idle && !store.catalogLoading ? store.startBlocker : "",
+  );
 </script>
 
 <button
@@ -19,15 +27,17 @@
   class:running={store.isRunning}
   class:pending
   aria-busy={pending}
-  aria-describedby={!store.isRunning && !pending ? "run-duration" : undefined}
+  aria-disabled={!!blocker}
+  aria-describedby={idle ? "run-duration" : undefined}
   onclick={controller.toggleRun}
-  use:tooltip={pending
-    ? "Cancel starting the test (Space / Esc)"
-    : store.isRunning
-      ? "Stop the test (Space / Esc)"
-      : resolved
-        ? "Run the test again (Space / R)"
-        : "Start the test (Space)"}
+  use:tooltip={blocker ||
+    (pending
+      ? "Cancel starting the test (Space / Esc)"
+      : store.isRunning
+        ? "Stop the test (Space / Esc)"
+        : resolved
+          ? "Run the test again (Space / R)"
+          : "Start the test (Space)")}
 >
   {#key label}
     <span class="run-button-content enter">
@@ -39,12 +49,14 @@
       {label}
     </span>
   {/key}
-  {#if !store.isRunning && !pending}
+  {#if idle}
     <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
 </button>
-{#if !store.isRunning && !pending}
-  <span id="run-duration" class="sr-only">Estimated duration {eta}</span>
+{#if idle}
+  <span id="run-duration" class="sr-only"
+    >{blocker ? `${BLOCKED}: ${blocker}` : `Estimated duration ${eta}`}</span
+  >
 {/if}
 
 <style>
@@ -75,7 +87,7 @@
       filter var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
-    .run-button:hover:not(.pending) {
+    .run-button:hover:not(.pending, [aria-disabled="true"]) {
       transform: translateY(-1px);
       filter: brightness(1.04);
     }
@@ -89,8 +101,13 @@
     box-shadow: none;
     color: var(--err);
   }
-  .run-button.pending {
+  .run-button.pending,
+  .run-button[aria-disabled="true"] {
     filter: saturate(0.7);
+  }
+  .run-button[aria-disabled="true"] {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
   .run-button-content {
     display: inline-flex;

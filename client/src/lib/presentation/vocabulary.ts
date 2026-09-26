@@ -62,6 +62,8 @@ export const READINESS: Record<
   failed: { label: "Failed", tone: "err" },
 };
 
+export const BLOCKED = "Test cannot start";
+
 export type Outcome = NonNullable<RunResult["outcome"]>;
 export const OUTCOME: Record<Outcome, string> = {
   complete: "Complete",

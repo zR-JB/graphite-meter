@@ -1,4 +1,5 @@
 import type { PreparationState } from "../state/store.svelte";
+import { BLOCKED } from "../presentation/vocabulary";
 
 interface PreparationFailurePresentation {
   headline: string;
@@ -11,7 +12,7 @@ export function preparationFailurePresentation(
   startError: string,
 ): PreparationFailurePresentation | null {
   if (preparation.status === "blocked")
-    return { headline: "Test cannot start", detail: startError };
+    return { headline: BLOCKED, detail: startError };
   if (preparation.status !== "failed") return null;
   const failedThroughput = preparation.throughput === "failed";
   const failedLatency = preparation.latency === "failed";
@@ -25,7 +26,7 @@ export function preparationFailurePresentation(
     return { headline: "Connection check failed", detail };
   }
   return {
-    headline: "Test cannot start",
+    headline: BLOCKED,
     detail: startError || "Unable to start the test",
   };
 }
