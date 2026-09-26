@@ -27,11 +27,9 @@ def plan_checks(paths: tuple[str, ...]) -> tuple[str, ...]:
     recipes: list[str] = []
     if touched(".github/", ".githooks/", "scripts/"):
         recipes += ["workflow-check", "pipeline-test"]
-    if touched("go/", "client/src/auth/", "scripts/auth_assets.py"):
-        recipes.append("check-generated")
     if touched("go/"):
         recipes += ["server-check", "server-test"]
-    if touched("client/"):
+    if touched("client/", "go/internal/auth/assets/"):
         recipes.append("client-ci")
     if touched(*LEGAL_PREFIXES) or LEGAL_FILES & set(paths):
         recipes.append("legal-check")

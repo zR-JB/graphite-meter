@@ -14,10 +14,12 @@ class PlanTests(unittest.TestCase):
         for paths, plan in (
             (("api/routes.txt",), ("check",)),
             (("mise.lock", go), ("check",)),
-            ((go,), ("check-generated", "server-check", "server-test", "legal-check")),
+            ((go,), ("server-check", "server-test", "legal-check")),
             ((".github/workflows/ci.yml",), ("workflow-check", "pipeline-test")),
             (("scripts/legal/model.py",), ("workflow-check", "pipeline-test", "legal-check")),
-            (("client/src/auth/login.tmpl",), ("check-generated", "client-ci", "legal-check")),
+            (("client/src/app.css",), ("client-ci", "legal-check")),
+            (("go/internal/auth/assets/login.tmpl",),
+             ("server-check", "server-test", "client-ci", "legal-check")),
             (("docs/DEVELOPMENT.md",), ()),
         ):
             with self.subTest(paths=paths):

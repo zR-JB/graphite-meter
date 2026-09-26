@@ -133,7 +133,7 @@
   /* This file is the source of truth for two hand-kept copies:
      - client/index.html pre-paint <style>: --canvas and --text literals,
        because this sheet loads with the bundle, too late for the first frame.
-     - client/src/auth/auth.css: the token subset the server-rendered auth
+     - go/internal/auth/assets/auth.css: the token subset the server-rendered auth
        pages need. A Go test pins its colours, --focus-ring and
        --edge-highlight against this file. */
   --canvas: light-dark(#f0f2f3, #131518);

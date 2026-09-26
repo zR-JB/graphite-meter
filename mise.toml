@@ -102,7 +102,6 @@ run = [
 description = "Run the component checks owned by the CI core job"
 run = [
   { task = "doctor" },
-  { task = "check-generated" },
   { task = "client-ci" },
   { task = "server-check" },
   { task = "staticcheck" },
@@ -111,7 +110,7 @@ run = [
 [tasks.client-ci]
 description = "Check client formatting, types, dependencies, and tests"
 run = [
-  "cd client && bun run format:check",
+  "cd client && bun run format:check ../go/internal/auth/assets",
   { task = "client-check" },
   # Duplicate compatible versions are advisory; frozen installs enforce the lockfile.
   "cd client && bun dedupe --dry-run",
@@ -239,14 +238,6 @@ run = [
 description = "Run all Go tests, including loopback integration"
 dir = "go"
 run = "go test ./..."
-
-[tasks.check-generated]
-shell = "bash -e -o pipefail -c"
-description = "Check embedded authentication asset drift"
-run = [
-  "python3 -m scripts.auth_assets",
-  'git diff --quiet -- go/internal/auth/assets_generated.go || { echo "Authentication assets are stale; run go generate ./internal/auth and commit the result" >&2; exit 1; }',
-]
 
 [tasks.staticcheck]
 description = "Run the pinned Go static analyzer"

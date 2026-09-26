@@ -7,6 +7,7 @@
     "src/**/*.ts",
     "src/**/*.js",
     "src/**/*.svelte",
+    "../go/internal/auth/assets/*.js",
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "scripts/**/*.ts",

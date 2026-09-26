@@ -24,7 +24,6 @@ go:
   - *workflow
   - 'api/**'
   - 'go/**'
-  - 'client/src/auth/**'
   - 'client/src/app.css'
 
 deps:

@@ -102,7 +102,7 @@ the pinned browser, and allow browser processes and loopback sockets. If Bun's p
 `mise run codeql` repeats the CodeQL scan offline with the [bundle](https://github.com/github/codeql-action/releases)
 release in `vars.codeql`, installed at `~/.local/share/codeql-bundle` or named by `CODEQL`.
 
-`mise run check-generated` and `mise run legal-check` detect drift in authentication assets and legal inventories.
+`mise run legal-check` detects drift in legal inventories.
 Regenerate legal outputs (`mise run legal-generate`) only after an intentional dependency or artifact change.
 
 ## Local TLS and HTTP/3

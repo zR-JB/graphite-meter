@@ -598,18 +598,3 @@ func TestLoginPaletteMatchesApplicationTokens(t *testing.T) {
 		}
 	}
 }
-
-func TestGeneratedAuthAssetsAreCurrent(t *testing.T) {
-	for path, generated := range map[string]string{
-		"auth.css": authCSS, "theme.js": authThemeJS, "pending.js": authPendingJS, "login.tmpl": loginHTML,
-		"cli.tmpl": cliHTML, "cli-done.tmpl": cliDoneHTML, "continue.tmpl": continueHTML,
-	} {
-		contents, err := os.ReadFile("../../../client/src/auth/" + path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(contents) != generated {
-			t.Fatalf("%s changed without running go generate ./internal/auth", path)
-		}
-	}
-}

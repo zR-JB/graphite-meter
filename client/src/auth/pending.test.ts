@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import source from "./pending.js" with { type: "text" };
+import source from "../../../go/internal/auth/assets/pending.js" with { type: "text" };
 
 // pending.js is a digest-pinned classic script that exports nothing, so the test evaluates its bundled text.
 type Landing = { redirected: boolean; url: string };
