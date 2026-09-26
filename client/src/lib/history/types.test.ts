@@ -159,8 +159,15 @@ test("a result cannot claim more than its stages and evidence support", () => {
   expect(incoherence(testRunResult())).toContain("no stage ran");
 });
 
-test("records that sorting cannot read or that are not plain data are skipped", () => {
+test("records a view could not read or that are not plain data are skipped", () => {
   const valid = saved();
+  const run = (multiServer: object) => ({
+    ...valid,
+    result: {
+      ...valid.result,
+      multiServer: { ...valid.result.multiServer, ...multiServer },
+    },
+  });
   const cases: unknown[] = [
     { ...valid, id: 5 },
     { ...valid, completedAt: 1e20 },
@@ -174,6 +181,10 @@ test("records that sorting cannot read or that are not plain data are skipped", 
       ...valid,
       result: { ...valid.result, download: { reportedBytesPerSec: "fast" } },
     },
+    { ...valid, result: { ...valid.result, outcome: "done" } },
+    run({ selection: [{ id: "a", name: "edge", url: 5 }] }),
+    run({ servers: [{}] }),
+    run({ failures: [{ serverId: "a", stage: "warmup", reason: "timeout" }] }),
   ];
   for (const value of cases) expect(readHistoryRecord(value)).toBeNull();
 });

@@ -131,43 +131,93 @@ function plain(value: unknown, depth = 0): boolean {
   );
 }
 
-const number = (value: unknown, key: string) =>
-  value == null || (object(value) && typeof value[key] === "number");
-const numbers = (value: unknown, key: string) =>
-  object(value) && STAGES.every((stage) => number(value[stage], key));
+type Check = (value: unknown) => boolean;
+const num: Check = (value) => typeof value === "number";
+const str: Check = (value) => typeof value === "string";
+const maybe =
+  (check: Check): Check =>
+  (value) =>
+    value == null || check(value);
+const list =
+  (check: Check): Check =>
+  (value) =>
+    Array.isArray(value) && value.every(check);
+const shape =
+  (fields: Record<string, Check>): Check =>
+  (value) =>
+    object(value) &&
+    Object.entries(fields).every(([key, check]) => check(value[key]));
+const each = (check: Check) =>
+  shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
 
-/** Sorting runs outside the views' boundaries, so it may meet only the numbers it reads. */
-function sortable(result: unknown): result is RunResult {
-  if (!object(result) || !object(result.stages)) return false;
-  const { bidirectional: bidi } = result;
-  return (
-    numbers(result.latencyByStage, "p50Ms") &&
-    number(result.latency, "reportedMs") &&
-    number(result.download, "reportedBytesPerSec") &&
-    number(result.upload, "reportedBytesPerSec") &&
-    (bidi == null ||
-      (object(bidi) &&
-        number(bidi.down, "reportedBytesPerSec") &&
-        number(bidi.up, "reportedBytesPerSec")))
-  );
-}
+const rate = maybe(
+  shape({
+    reportedBytesPerSec: num,
+    totalBytes: num,
+    stabilityPct: num,
+    wire: maybe(
+      shape({
+        totalMultiplier: num,
+        mtuBytes: num,
+        factors: list(shape({ label: str, contributionPct: num })),
+      }),
+    ),
+  }),
+);
+const lanes = maybe(shape({ down: rate, up: rate }));
+const populations = each(maybe(shape({ p50Ms: maybe(num), probeCount: num })));
+const measured = {
+  latency: maybe(shape({ reportedMs: num, band: str })),
+  latencyByStage: populations,
+  download: rate,
+  upload: rate,
+  bidirectional: lanes,
+};
 
-/** A saved record, schema 4 lifted into a result, or null when sorting could not read it. */
+/** What History's rows, sort and detail dereference; a leaf of another type meets the views' boundaries. */
+const readable = shape({
+  schemaVersion: (value) => value === HISTORY_SCHEMA_VERSION,
+  id: str,
+  completedAt: time,
+  build: str,
+  engine: str,
+  result: shape({
+    ...measured,
+    outcome: (value) =>
+      ["complete", "partial", "incomplete"].includes(`${value}`),
+    stages: object,
+    durationMs: num,
+    bufferbloat: maybe(shape({ grade: str })),
+    multiServer: shape({
+      latencyFocus: str,
+      selection: list(shape({ id: str, name: str, url: str })),
+      servers: list(
+        shape({
+          ...measured,
+          server: shape({ id: str }),
+          throughput: shape({ transport: str }),
+          latencyTarget: maybe(shape({ transport: str })),
+          totalBytes: shape({ down: num, up: num }),
+          stages: object,
+        }),
+      ),
+      failures: list(
+        shape({
+          serverId: str,
+          stage: (value) => STAGES.some((stage) => stage === value),
+          reason: str,
+        }),
+      ),
+    }),
+  }),
+});
+
+/** A saved record, with schema 4 lifted into a result, or null when a view could not read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  if (
-    !object(value) ||
-    typeof value.id !== "string" ||
-    !time(value.completedAt) ||
-    !plain(value)
-  )
-    return null;
+  if (!object(value) || !plain(value)) return null;
   const record =
-    value.schemaVersion === 4 && liftable(value)
-      ? fromSchema4(value)
-      : value.schemaVersion === HISTORY_SCHEMA_VERSION
-        ? value
-        : null;
-  return record && sortable(record.result) ? (record as HistoryRecord) : null;
+    value.schemaVersion === 4 && liftable(value) ? fromSchema4(value) : value;
+  return readable(record) ? (record as HistoryRecord) : null;
 }
 
 /** Schema 4 as main saved it: flat per-stage fields for one server, or a result per server. */
@@ -210,21 +260,20 @@ interface Schema4 {
   } | null;
 }
 
-const liftable = (value: Plain): value is Plain & Schema4 =>
-  object(value.stages) &&
-  STAGES.every((stage) => object((value.stages as Plain)[stage])) &&
-  object((value.stages as Schema4["stages"]).latency.lanes) &&
-  object(value.server) &&
-  object(value.client) &&
-  object(value.transport) &&
-  object(value.transport.throughput) &&
-  object(value.transport.latency) &&
-  (value.wireEstimates == null ||
-    (object(value.wireEstimates) && object(value.wireEstimates.breakdown))) &&
-  (value.multiServer === undefined ||
-    (object(value.multiServer) &&
-      Array.isArray(value.multiServer.servers) &&
-      value.multiServer.servers.every(object)));
+const liftable = shape({
+  id: str,
+  stages: shape({
+    latency: shape({ lanes: each(maybe(object)) }),
+    download: object,
+    upload: object,
+    bidirectional: object,
+  }),
+  server: object,
+  client: object,
+  transport: shape({ throughput: object, latency: object }),
+  wireEstimates: maybe(shape({ breakdown: object })),
+  multiServer: maybe(shape({ servers: list(object) })),
+}) as (value: unknown) => value is Schema4;
 
 const summary = (
   lane: LatencyLaneSnapshot | null,

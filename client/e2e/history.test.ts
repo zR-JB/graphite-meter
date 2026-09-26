@@ -194,10 +194,8 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
     { ...record(3), schemaVersion: 2 },
     record(4, 1e20),
   ];
-  const broken = {
-    ...record(5),
-    multiServer: { selection: [], servers: [], failures: 5 },
-  };
+  const broken = record(5);
+  Object.assign(broken.stages.latency.result, { jitterMs: "fast" });
   await seed(page, { records: [current, broken, ...old] });
   const before = await stored(page);
   await history(page);
