@@ -114,23 +114,31 @@ func (d *idleDeadline) endWith(ctx context.Context) (release func()) {
 	}
 }
 
-// idleWriter moves in pieces a slow but draining peer takes well within the idle bound.
+// idleWriter grows pieces while the peer drains each in bound/16, so a slow peer still takes one within the bound.
 type idleWriter struct {
 	w     io.Writer
 	idle  idleDeadline
+	piece int
 	moved bool
 }
 
-const idleWritePiece = 16 * 1024
+const minWritePiece = 16 * 1024
 
 func (w *idleWriter) Write(p []byte) (int, error) {
 	total := 0
 	for len(p) > 0 {
-		n, err := w.w.Write(p[:min(len(p), idleWritePiece)])
+		start := time.Now()
+		n, err := w.w.Write(p[:min(len(p), max(w.piece, minWritePiece))])
 		if n > 0 {
+			now := time.Now()
 			total += n
 			w.moved = true
-			w.idle.moved(time.Now())
+			w.idle.moved(now)
+			if now.Sub(start) < w.idle.bound/16 {
+				w.piece = max(w.piece, 2*n)
+			} else {
+				w.piece = minWritePiece
+			}
 		}
 		if err != nil {
 			return total, err

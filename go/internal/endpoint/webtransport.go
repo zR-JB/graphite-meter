@@ -52,7 +52,7 @@ func WTPing(ctx context.Context, sess *webtransport.Session, _ *http.Request, li
 }
 
 // WTDownload serves byte lanes on server-opened streams, or a datagram flood.
-func WTDownload(download *Download) SessionHandler {
+func WTDownload(download *Download, idle time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request, live *Activity) {
 		query := r.URL.Query()
 		n := parseBytes(query.Get("bytes"))
@@ -75,7 +75,7 @@ func WTDownload(download *Download) SessionHandler {
 			return
 		}
 		for range wtStreamCount(query) {
-			wg.Go(func() { serveDownloadLane(ctx, download, sess, n, live) })
+			wg.Go(func() { serveDownloadLane(ctx, download, sess, n, idle, live) })
 		}
 		wg.Wait()
 	}
@@ -83,13 +83,13 @@ func WTDownload(download *Download) SessionHandler {
 
 // serveDownloadLane replaces each exhausted lane while the peer keeps draining.
 func serveDownloadLane(ctx context.Context, download *Download, sess *webtransport.Session, n int64,
-	live *Activity) {
+	idle time.Duration, live *Activity) {
 	for ctx.Err() == nil {
 		str, err := sess.OpenUniStreamSync(ctx)
 		if err != nil {
 			return
 		}
-		lane := &idleWriter{w: str, idle: idleDeadline{live: live}}
+		lane := &idleWriter{w: str, idle: idleDeadline{bound: idle, live: live}}
 		withWTWriteStream(ctx, str, func() { download.Stream(ctx, n, lane) })
 		if !lane.moved {
 			return

@@ -89,7 +89,7 @@ func TestSlowlyDrainedLaneStaysActive(t *testing.T) {
 		ctx, live := WatchIdle(t.Context(), bound)
 		client, server := net.Pipe()
 		defer client.Close()
-		lane := &idleWriter{w: server, idle: idleDeadline{live: live}}
+		lane := &idleWriter{w: server, idle: idleDeadline{bound: bound, live: live}}
 		go func() {
 			_, _ = lane.Write(make([]byte, 256<<10))
 			server.Close()
@@ -102,6 +102,25 @@ func TestSlowlyDrainedLaneStaysActive(t *testing.T) {
 			}
 		}
 	})
+}
+
+type countingWriter struct{ writes int }
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	c.writes++
+	return len(p), nil
+}
+
+// Every write costs a syscall or a frame handoff, so a peer that drains quickly takes whole blocks.
+func TestQuicklyDrainedLaneTakesWholeBlocks(t *testing.T) {
+	sink := &countingWriter{}
+	lane := &idleWriter{w: sink, idle: idleDeadline{bound: wire.IdleBound}}
+	for range 16 {
+		_, _ = lane.Write(make([]byte, 256<<10))
+	}
+	if sink.writes > 20 {
+		t.Fatalf("16 blocks took %d writes, want the pieces grown to whole blocks after the first", sink.writes)
+	}
 }
 
 // ?streams= is clamped to 1..16, never rejected (api/wire.md).

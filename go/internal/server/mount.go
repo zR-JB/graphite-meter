@@ -53,7 +53,7 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 		m.handle(route.Ping, m.webSocketPing())
 	}
 	if topo.wt != nil {
-		m.handle(route.WTDownload, m.webTransport(topo.wt, endpoint.WTDownload(e.download)))
+		m.handle(route.WTDownload, m.webTransport(topo.wt, endpoint.WTDownload(e.download, e.idleBound)))
 		m.handle(route.WTUpload, m.webTransport(topo.wt, endpoint.WTUpload(e.upload, e.idleBound)))
 		m.handle(route.WTPing, m.webTransport(topo.wt, endpoint.WTPing))
 	}
