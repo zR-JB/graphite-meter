@@ -1,9 +1,9 @@
 <script lang="ts">
+  import Icon from "../Icon.svelte";
   import { historyWirePresentation } from "../../history/wire";
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
-  import { ICON } from "../../constants";
   import { fmtBytes, fmtDuration, reasonLabel } from "../../format";
   import {
     formatHistoryRate,
@@ -275,7 +275,7 @@
           tabindex="-1"
           onclick={() => select(onDelete)}
         >
-          <span>{@html ICON.trash}</span>
+          <span><Icon name="trash" /></span>
           <span><strong>Delete this result</strong></span>
         </button>
       {/snippet}
@@ -287,7 +287,7 @@
       use:tooltip={"Close (Esc)"}
       onclick={onClose}
     >
-      {@html ICON.close}
+      <Icon name="close" />
     </button>
   </header>
 

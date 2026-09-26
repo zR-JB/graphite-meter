@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import { onMount } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
@@ -294,7 +295,7 @@
                   class="tone-icon terminal-icon"
                   data-tone={readout.terminal.direction}
                 >
-                  {@html STAGE[readout.terminal.direction].icon}
+                  <Icon name={STAGE[readout.terminal.direction].icon} />
                 </span>
                 {STAGE[readout.terminal.direction].label}
               </span>

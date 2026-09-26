@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Icon from "../Icon.svelte";
   import { tooltip } from "../../actions/tooltip";
-  import { ICON } from "../../constants";
   import {
     HISTORY_SORT_LABEL,
     HISTORY_SORTS,
@@ -68,7 +68,7 @@
     style:anchor-name={`--${popoverId}`}
     use:tooltip={"Columns and sort order"}
   >
-    <span class="layout-icon">{@html ICON.columns}</span>
+    <span class="layout-icon"><Icon name="columns" /></span>
     <strong>Columns</strong>
   </button>
   <div
@@ -98,7 +98,7 @@
           onclick={() => toggleColumn(column)}
         >
           <span class="check"
-            >{#if columns.includes(column)}{@html ICON.check}{/if}</span
+            >{#if columns.includes(column)}<Icon name="check" />{/if}</span
           >
           <span>{HISTORY_SORT_LABEL[column]}</span>
         </button>
@@ -116,7 +116,7 @@
           onclick={() => chooseSort(option)}
         >
           <span class="check"
-            >{#if sort === option}{@html ICON.check}{/if}</span
+            >{#if sort === option}<Icon name="check" />{/if}</span
           >
           <span>{HISTORY_SORT_LABEL[option]}</span>
         </button>

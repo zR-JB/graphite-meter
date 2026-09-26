@@ -1,10 +1,10 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // The visible text is the accessible name (WCAG 2.5.3); capitals are styling.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
-  import { ICON } from "../constants";
   import { fmtDuration } from "../format";
   import { resolvedPhase, runActionLabel } from "../presentation/vocabulary";
 
@@ -34,7 +34,7 @@
       {#if store.isRunning}
         <span class="stop-sq" aria-hidden="true"></span>
       {:else if !pending}
-        <span class="ico" aria-hidden="true">{@html ICON.bolt}</span>
+        <span class="ico" aria-hidden="true"><Icon name="bolt" /></span>
       {/if}
       {label}
     </span>

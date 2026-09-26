@@ -1,7 +1,7 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // Every item renders; Console's container queries reveal the overflowed ones.
   import { tick } from "svelte";
-  import { ICON } from "../constants";
   import { THEME } from "../presentation/vocabulary";
   import type { ThemePref } from "../state/persistence";
   import MoreMenu from "./MoreMenu.svelte";
@@ -49,7 +49,7 @@
         aria-current={historyActive ? "page" : undefined}
         onclick={() => select(chooseHistory)}
       >
-        <span>{@html ICON.history}</span>
+        <span><Icon name="history" /></span>
         <span
           ><strong>{historyActive ? "Close History" : "Open History"}</strong
           ><small>Saved results</small></span
@@ -64,7 +64,7 @@
       aria-current={endpointActive ? "true" : undefined}
       onclick={() => select(onEndpoint)}
     >
-      <span>{@html ICON.info}</span>
+      <span><Icon name="info" /></span>
       <span><strong>Details</strong><small>Server and connection</small></span>
     </button>
     <button
@@ -74,7 +74,7 @@
       data-more="theme"
       onclick={() => select(chooseTheme)}
     >
-      <span>{@html THEME[theme].icon}</span>
+      <span><Icon name={THEME[theme].icon} /></span>
       <span
         ><strong>Theme: {THEME[theme].label}</strong><small
           >Cycle appearance</small

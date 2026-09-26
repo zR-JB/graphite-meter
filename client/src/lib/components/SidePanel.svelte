@@ -1,10 +1,10 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // Docked column on wide layouts, focus-trapped flyout or sheet elsewhere.
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
   import { focusTrap } from "../actions/focusTrap";
   import { sheetDrag } from "../actions/sheetDrag";
-  import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
 
   interface Props {
@@ -177,7 +177,7 @@
         use:tooltip={"Close (Esc)"}
         onclick={onClose}
       >
-        {@html ICON.close}
+        <Icon name="close" />
       </button>
     </header>
 

@@ -1,5 +1,4 @@
-// Shared inline SVG icons used across the UI.
-// Inline SVGs inherit currentColor so controls can theme them with text color.
+// Build-time SVG markup; only Icon.svelte renders it. currentColor themes each icon.
 const STROKE =
   'fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"';
 
@@ -22,3 +21,5 @@ export const ICON = {
   more: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1" fill="currentColor" stroke="none"/></svg>`,
   trash: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16M9 4h6l1 3H8zM6.5 7l.8 13h9.4l.8-13M10 11v5M14 11v5"/></svg>`,
 } as const;
+
+export type IconName = keyof typeof ICON;

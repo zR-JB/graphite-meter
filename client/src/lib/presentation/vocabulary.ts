@@ -1,5 +1,5 @@
 // User-facing names shared by every view; the TUI uses the same table.
-import { ICON } from "../constants";
+import type { IconName } from "./icons";
 import type {
   Phase,
   PingCadence,
@@ -14,15 +14,15 @@ export const MISSING = "—";
 
 export const STAGE: Record<
   TransportRole,
-  { label: string; short: string; icon: string }
+  { label: string; short: string; icon: IconName }
 > = {
-  latency: { label: "Latency", short: "Latency", icon: ICON.ping },
-  download: { label: "Download", short: "Download", icon: ICON.download },
-  upload: { label: "Upload", short: "Upload", icon: ICON.upload },
+  latency: { label: "Latency", short: "Latency", icon: "ping" },
+  download: { label: "Download", short: "Download", icon: "download" },
+  upload: { label: "Upload", short: "Upload", icon: "upload" },
   bidirectional: {
     label: "Bidirectional",
     short: "Bi-dir",
-    icon: ICON.bidirectional,
+    icon: "bidirectional",
   },
 };
 
@@ -89,10 +89,10 @@ export const transportLabel = (
       : kind
   ];
 
-export const THEME: Record<ThemePref, { label: string; icon: string }> = {
-  light: { label: "Light", icon: ICON.sun },
-  dark: { label: "Dark", icon: ICON.moon },
-  auto: { label: "Auto", icon: ICON.contrast },
+export const THEME: Record<ThemePref, { label: string; icon: IconName }> = {
+  light: { label: "Light", icon: "sun" },
+  dark: { label: "Dark", icon: "moon" },
+  auto: { label: "Auto", icon: "contrast" },
 };
 
 export const resolvedPhase = (phase: Phase) =>

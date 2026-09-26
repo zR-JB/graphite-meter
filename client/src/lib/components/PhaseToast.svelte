@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // Visual only: GaugePanel announces phases.
-  import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration, reasonLabel } from "../format";
@@ -104,11 +104,11 @@
 >
   <span class="notice-icon">
     {#if stalled || toast?.issue || store.phase === "error"}
-      {@html ICON.info}
+      <Icon name="info" />
     {:else if store.phase === "complete"}
-      {@html ICON.check}
+      <Icon name="check" />
     {:else}
-      {@html ICON.ping}
+      <Icon name="ping" />
     {/if}
   </span>
   <span class="kicker"

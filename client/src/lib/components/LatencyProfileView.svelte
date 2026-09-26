@@ -1,6 +1,6 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { tooltip, JARGON } from "../actions/tooltip";
-  import { ICON } from "../constants";
   import { MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs, fmtMsTick } from "../format";
   import {
@@ -193,7 +193,7 @@
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
         <span class="tone-icon lane-icon" aria-hidden="true"
-          >{@html STAGE[lane.key].icon}</span
+          ><Icon name={STAGE[lane.key].icon} /></span
         >
         <span class="caps lane-label">{lane.label}</span>
         <strong
@@ -227,7 +227,7 @@
                 hasProbeAccountingNotice(lane) ? accounting : "",
               ]
                 .filter(Boolean)
-                .join("\n\n")}>{@html ICON.info}</span
+                .join("\n\n")}><Icon name="info" /></span
             >
           {/if}
         </span>

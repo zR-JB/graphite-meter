@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { tooltip, JARGON } from "../actions/tooltip";
   import type { SummaryCard } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
@@ -42,7 +43,9 @@
         style:--i={index}
       >
         <header>
-          <span class="tone-icon" aria-hidden="true">{@html card.icon}</span>
+          <span class="tone-icon" aria-hidden="true"
+            ><Icon name={card.icon} /></span
+          >
           {#if card.key === "latency"}
             <span class="label term" use:tooltip={JARGON.latency}
               >{card.label}</span

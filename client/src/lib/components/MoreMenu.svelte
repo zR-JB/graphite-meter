@@ -1,10 +1,10 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // Action menu on a native auto popover: light dismiss, Escape and the top
   // layer come from the platform; the menu keeps roving arrow-key focus.
   import type { Snippet } from "svelte";
   import { focusMenuItem, navigateMenu } from "../actions/menu";
   import { tooltip } from "../actions/tooltip";
-  import { ICON } from "../constants";
 
   interface Props {
     label: string;
@@ -47,7 +47,7 @@
     onkeydown={triggerKeydown}
     use:tooltip={{ text: label, disabled: !danger }}
   >
-    {@html ICON.more}
+    <Icon name="more" />
   </button>
   <div
     bind:this={menu}

@@ -1,8 +1,8 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   // Editable selection stays separate from the retained run's execution.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { ICON } from "../constants";
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
   import { failureDetail } from "./failurePresentation";
@@ -50,8 +50,6 @@
       — toggle to include or skip</span
     ></legend
   >
-  <!-- The loop variable stays `s`: html-sink-guard.test.ts allowlists the
-       `{@html s.icon}` sink by its exact expression text. -->
   {#each segments as s (s.key)}
     <button
       type="button"
@@ -85,13 +83,13 @@
       </div>
       <span class="seg-row">
         <span class="seg-main">
-          <span class="seg-ico">{@html s.icon}</span>
+          <span class="seg-ico"><Icon name={s.icon} /></span>
           <span class="seg-label">{s.label}</span>
         </span>
         {#if s.reason}
           <span class="seg-tag">{s.reason}</span>
         {:else if s.state === "complete"}
-          <span class="seg-ico seg-check">{@html ICON.check}</span>
+          <span class="seg-ico seg-check"><Icon name="check" /></span>
         {/if}
       </span>
     </button>

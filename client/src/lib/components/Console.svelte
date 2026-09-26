@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import { observeWidth } from "../actions/observeWidth";
   import { onMount, tick, type Component } from "svelte";
   import { store } from "../state/store.svelte";
@@ -17,7 +18,6 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
-  import { ICON } from "../constants";
   import { resolvedPhase, THEME } from "../presentation/vocabulary";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
@@ -598,7 +598,7 @@
       use:tooltip={"Settings — test and display (S)"}
       onclick={(event) =>
         togglePanelFromPointer("settings", event.currentTarget as HTMLElement)}
-      >{@html ICON.settings}</button
+      ><Icon name="settings" /></button
     >
     <span class="chrome-divider" aria-hidden="true"></span>
     <div class="connectivity"><ConnectivityIndicator /></div>
@@ -614,7 +614,7 @@
           routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
         }}
       >
-        <span class="run-icon">{@html ICON[awayRunIndicator.icon]}</span>
+        <span class="run-icon"><Icon name={awayRunIndicator.icon} /></span>
         <span class="live-copy">
           <strong>Live</strong>
           <span aria-hidden="true">·</span>
@@ -633,13 +633,13 @@
           : "History — saved results (H)"}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
-        >{@html ICON.history}</button
+        ><Icon name="history" /></button
       >{/if}
     <button
       class="btn btn-icon direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       use:tooltip={`Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`}
-      onclick={toggleTheme}>{@html THEME[store.theme].icon}</button
+      onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
     <button
       class="btn btn-icon direct-endpoint"
@@ -648,7 +648,7 @@
       use:tooltip={"Details — server and connection (D)"}
       onclick={(event) =>
         togglePanelFromPointer("endpoint", event.currentTarget as HTMLElement)}
-      >{@html ICON.info}</button
+      ><Icon name="info" /></button
     >
     <div class="topbar-more">
       <TopbarMore
@@ -696,7 +696,8 @@
             onclick={() => location.reload()}>Retry</button
           >
         </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon">{@html ICON.history}</span>Opening History…
+          <span class="empty-icon"><Icon name="history" /></span>Opening
+          History…
         </div>{/if}
     </section>
   {:else}

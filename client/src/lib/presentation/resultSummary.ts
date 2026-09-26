@@ -6,6 +6,7 @@ import { fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
+import type { IconName } from "./icons";
 import { MISSING, STAGE } from "./vocabulary";
 
 type Band = "low" | "medium" | "high";
@@ -45,7 +46,7 @@ export interface SummaryEvidence {
 export interface SummaryCard {
   key: TransportRole;
   label: string;
-  icon: string;
+  icon: IconName;
   status: SummaryStatus;
   quality: { band: Band; pct: number } | null;
   num: string;

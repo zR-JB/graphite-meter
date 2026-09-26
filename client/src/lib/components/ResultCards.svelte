@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
@@ -121,7 +122,7 @@
   <div class="result-chips">
     {#each chips as c (c.key)}
       <div class="result-chip enter" class:active={c.active} data-tone={c.key}>
-        <span class="tone-icon">{@html c.icon}</span>
+        <span class="tone-icon"><Icon name={c.icon} /></span>
         <span class="chip-label">{c.label}</span>
         <span class="chip-val" aria-hidden={c.active ? "true" : undefined}>
           <span class="num">{c.num}</span>

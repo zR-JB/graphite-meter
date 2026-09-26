@@ -1,8 +1,9 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+  import type { IconName } from "../presentation/icons";
   import { onMount, tick, untrack } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
-  import { ICON } from "../constants";
   import { createUuid } from "../uuid";
   import {
     announceHistoryChanged,
@@ -91,7 +92,7 @@
 
   const COLUMN: Record<
     HistoryColumn,
-    { short: string; icon: string; help?: string }
+    { short: string; icon: IconName; help?: string }
   > = {
     download: STAGE.download,
     upload: STAGE.upload,
@@ -354,7 +355,7 @@
               onclick={() =>
                 select((invoker) => requestConfirm({ kind: "clear" }, invoker))}
             >
-              <span>{@html ICON.trash}</span>
+              <span><Icon name="trash" /></span>
               <span><strong>Clear all saved results</strong></span>
             </button>
           {/snippet}
@@ -366,7 +367,7 @@
         aria-label="Close History"
         onclick={onClose}
       >
-        {@html ICON.close}
+        <Icon name="close" />
       </button>
     </div>
   </header>
@@ -399,7 +400,7 @@
 
   {#if loadState === "loading"}
     <div class="empty-state" role="status">
-      <span class="empty-icon">{@html ICON.history}</span>
+      <span class="empty-icon"><Icon name="history" /></span>
       <h2>Opening History</h2>
     </div>
   {:else if loadState === "error"}
@@ -413,7 +414,7 @@
     </div>
   {:else if records.length === 0}
     <div class="empty-state">
-      <span class="empty-icon">{@html ICON.history}</span>
+      <span class="empty-icon"><Icon name="history" /></span>
       <h2>No saved results</h2>
       {#if store.savingResults}
         <p>Completed tests appear here automatically.</p>
@@ -452,7 +453,7 @@
               >
                 {#if column !== "date"}<span
                     class="head-icon"
-                    data-tone={column}>{@html COLUMN[column].icon}</span
+                    data-tone={column}><Icon name={COLUMN[column].icon} /></span
                   >{/if}
                 <span>{column === "date" ? "Date" : COLUMN[column].short}</span>
                 {#if sort === column}<span class="sr-only"
@@ -505,7 +506,7 @@
                     <span class="metric-cell" data-tone={column}>
                       <small
                         ><span class="head-icon"
-                          >{@html COLUMN[column].icon}</span
+                          ><Icon name={COLUMN[column].icon} /></span
                         >{COLUMN[column].short}</small
                       >
                       <strong>{row.metrics[index]}</strong>
