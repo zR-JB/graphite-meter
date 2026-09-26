@@ -296,9 +296,8 @@ func TestAuthenticatedWebSocketUpgradeSucceeds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			conn, res,
-				err := websocket.Dial(ctx, wsURL,
-				&websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers})
+			options := &websocket.DialOptions{HTTPClient: s.uiClient, HTTPHeader: tc.headers}
+			conn, res, err := websocket.Dial(ctx, wsURL, options)
 			if err != nil {
 				status := 0
 				if res != nil {

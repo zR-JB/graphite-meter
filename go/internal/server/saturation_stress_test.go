@@ -30,7 +30,7 @@ func TestSaturationEnvelope(t *testing.T) {
 		c.MaxActiveSessions, c.MaxSessionsPerClient = 4096, 4096
 		c.MaxConnections, c.MaxConnectionsPerClient = 8192, 8192
 	}
-	h3Base, base := wtTestOrigins(t, liftCaps)
+	h3Base, base, _ := wtServer(t, liftCaps, nil)
 
 	t.Logf("GOMAXPROCS=%d", runtime.GOMAXPROCS(0))
 	t.Log("loaders alternate download/upload (even index down, 2 forced lanes each); spammers are reply-driven ping chains")
@@ -38,12 +38,12 @@ func TestSaturationEnvelope(t *testing.T) {
 		"cpu")
 
 	// A second server whose sessions die every few seconds, so one scenario drives the redial and progress-handover paths.
-	_, redialBase := wtTestOrigins(t, func(c *config.Config) {
+	_, redialBase, _ := wtServer(t, func(c *config.Config) {
 		liftCaps(c)
 		// The session bound may not sit below the request bound, so both drop.
 		c.MaxOperationDuration = 5 * time.Second
 		c.MaxSessionDuration = 5 * time.Second
-	})
+	}, nil)
 
 	run := func(name string, mix loadMix) {
 		if mix.procs > 0 {

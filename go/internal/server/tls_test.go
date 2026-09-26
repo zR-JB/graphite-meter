@@ -53,8 +53,8 @@ func tlsTestConfig(cert, key string) *config.Config {
 func TestCertificateValidation(t *testing.T) {
 	now := time.Now()
 	dir := t.TempDir()
-	validCert,
-		validKey := writeCertificate(t, dir, "valid", "meter.example", now.Add(-time.Hour), now.Add(24*time.Hour))
+	day := 24 * time.Hour
+	validCert, validKey := writeCertificate(t, dir, "valid", "meter.example", now.Add(-time.Hour), now.Add(day))
 	if _, err := newCertificateManager(tlsTestConfig(validCert, validKey)); err != nil {
 		t.Fatalf("valid certificate: %v", err)
 	}
