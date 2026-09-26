@@ -354,6 +354,32 @@ test("a cancelled start keeps the previous result on screen", async () => {
   );
 });
 
+test("without idle latency the connection settles from verified paths", async () => {
+  await withController(
+    { servers: ["self", "peer"], selected: ["self", "peer"] },
+    async ({ controller, store, idle }) => {
+      await until(() => store.selectionValidation === "verified");
+      expect([idle(), store.effectiveConnectivity]).toEqual([
+        true,
+        "connected",
+      ]);
+      controller.configureLatency("primary", "peer");
+      await until(() => store.selectionValidation === "verified");
+      expect([idle(), store.effectiveConnectivity]).toEqual([
+        false,
+        "connected",
+      ]);
+      controller.configureLatency("primary", "self");
+      controller.toggleStage("latency");
+      await until(() => store.selectionValidation === "verified");
+      expect([idle(), store.effectiveConnectivity]).toEqual([
+        false,
+        "connected",
+      ]);
+    },
+  );
+});
+
 test("a stream plan that cannot fit blocks Start before the click", async () => {
   await withController(
     { servers: ["self", "peer"], selected: ["self", "peer"] },

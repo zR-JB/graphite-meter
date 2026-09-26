@@ -140,7 +140,7 @@ class AppStore {
   serverMetadataLoading = $derived(
     [...this.servers.values()].some((view) => view.metadataChecking),
   );
-  catalogLoading = $state(false);
+  catalogLoading = $state(true);
   selectionValidation = $derived.by(
     (): "verified" | "checking" | "failed" | "stale" => {
       const states = this.selectedServers.map(
@@ -211,7 +211,9 @@ class AppStore {
   /** Why Start cannot run, known before the click; a check that may still pass never blocks. */
   startBlocker = $derived.by((): string => {
     if (!this.serverCatalog)
-      return "Open Settings to retry loading the server list.";
+      return this.catalogLoading
+        ? ""
+        : "Open Settings to retry loading the server list.";
     if (this.unresolvedServers.length || !this.selectedServers.length)
       return "The saved selection changed. Open Settings to choose the servers to test.";
     const views = this.selectedServers.flatMap(
@@ -413,7 +415,7 @@ class AppStore {
         ? "checking"
         : "degraded";
     }
-    // Run evidence ages on the run's timeline; idle evidence ends with its monitor.
+    // Run evidence ages on the run's timeline; at idle, verified paths stand until idle latency says more.
     if (this.isRunning)
       return this.phaseStage &&
         needsPings(activityFor(this.phaseStage, this.runConfig))
@@ -424,7 +426,8 @@ class AppStore {
         : "connected";
     if (this.connectivity === "offline" && this.idleLatency.length)
       return "offline";
-    return connectionQuality(this.idleLatency);
+    const idle = connectionQuality(this.idleLatency);
+    return idle === "checking" ? "connected" : idle;
   });
 
   /** Phase time on the frame clock: progress events correct it, measuring keeps it moving. */
