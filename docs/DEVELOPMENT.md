@@ -52,23 +52,19 @@ receiver observations. Live results and history consume the same summaries ([ser
 The browser separates connection preparation, measurement and presentation; workers own the transfer and probe hot
 paths, the gauge is SVG/CSS and the timeline a canvas. In the native client a controller owns preparation, sign-in
 polling and cancellation, and Bubble Tea owns input and rendering. Browser and native results reflect different
-runtimes and are not identical benchmark targets.
+runtimes and are not identical benchmark targets ([client differences](MEASUREMENTS.md#client-differences)).
 
 ## Commands
 
 ```sh
-mise run dev            # development browser build + server
-mise run prod           # production browser build + server
-mise run client-watch   # standalone Vite dev server
-mise run goclient-build # native client (go/graphite-meter-client)
-mise run check          # deterministic gate; the commit hook runs the parts staged paths touch
-mise run ci             # everything CI runs, job by job
+mise run prod               # production browser build + server
+mise run client-watch       # standalone Vite dev server
+mise run server-build-prod  # production server binary; VERSION=0.9.0 stamps a release
+mise run goclient-build     # native client (go/graphite-meter-client)
+mise run release-artifacts  # every native release archive
+mise run check              # deterministic gate; the commit hook runs the parts staged paths touch
+mise run ci                 # everything CI runs, job by job
 ```
-
-| Build | Command |
-| --- | --- |
-| Production server | `mise run server-build-prod` (release stamp: `VERSION=0.9.0 mise run server-build-prod`) |
-| Native client | `mise run goclient-build`; every release archive: `mise run release-artifacts` |
 
 Untagged builds identify as `GM_CLIENT_REVISION` (default: the short Git revision); `GM_CLIENT_BUILD_PROFILE` is
 `dev` or `prod`; release automation sets `VERSION` for the server and both clients.
