@@ -85,10 +85,10 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   expect(self.latencyTarget?.transport).toBe("websocket");
   expect(peer.latencyTarget).toBeNull();
 
-  await page.getByRole("button", { name: "Toggle Details" }).click();
+  await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
   const badge = (role: string) =>
-    info.locator(".path", { hasText: `${role} path` }).locator("mark");
+    info.locator(".path", { hasText: `${role} path` }).locator(".badge");
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(badge("throughput")).toHaveText("Used");
