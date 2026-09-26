@@ -109,14 +109,14 @@ func main() {
 		return
 	}
 	cfg.Stages = parseStages(stages)
-	if err := transportFlags(cfg.ThroughputTransport, cfg.LatencyTransport); err != nil {
-		fail(2, err)
-	}
-	interval, err := parsePing(ping, cfg.LatencyTransport)
+	interval, err := parsePing(ping)
 	if err != nil {
 		fail(2, fmt.Errorf("-ping: %w", err))
 	}
 	cfg.PingInterval = interval
+	if err := cfg.Validate(); err != nil {
+		fail(2, err)
+	}
 
 	m := newModel(cfg)
 	final, err := tea.NewProgram(m, tea.WithFPS(30), tea.WithAltScreen()).Run()
@@ -151,33 +151,18 @@ func parseStages(raw string) goclient.StageSet {
 	return s
 }
 
-func transportFlags(throughput, latency string) error {
-	if err := goclient.ValidateThroughputTransport(throughput); err != nil {
-		return fmt.Errorf("-throughput-transport: %w", err)
-	}
-	if err := goclient.ValidateLatencyTransport(latency); err != nil {
-		return fmt.Errorf("-latency-transport: %w", err)
-	}
-	return nil
-}
-
-func parsePing(raw, latencyTransport string) (time.Duration, error) {
+func parsePing(raw string) (time.Duration, error) {
 	name := strings.ToLower(strings.TrimSpace(raw))
-	named := func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }
-	if i := slices.IndexFunc(cadences, named); i >= 0 && name != "" {
-		return cadences[i].interval, nil
-	}
 	if name == "" {
 		return 250 * time.Millisecond, nil
+	}
+	named := func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }
+	if i := slices.IndexFunc(cadences, named); i >= 0 {
+		return cadences[i].interval, nil
 	}
 	d, err := time.ParseDuration(name)
 	if err != nil || d <= 0 {
 		return 0, fmt.Errorf("use fast, medium, slow, or a positive duration such as 400ms")
-	}
-	if goclient.PingIntervalBoundApplies(latencyTransport) {
-		if err := goclient.ValidatePingInterval(d); err != nil {
-			return 0, err
-		}
 	}
 	return d, nil
 }

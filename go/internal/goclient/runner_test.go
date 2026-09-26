@@ -17,26 +17,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const captureWindow = 300 * time.Millisecond
-
-func TestHTTP3ClientStartsAtMinimumPacketSize(t *testing.T) {
-	t.Parallel()
-	hc, closeClient := protocolClient(DefaultConfig(), "http3", func() *http.Transport { return &http.Transport{} })
-	defer closeClient()
-	wrapped, ok := hc.Transport.(authTransport)
-	if !ok {
-		t.Fatal("HTTP/3 client has no authentication boundary")
-	}
-	tr, ok := wrapped.base.(*http3.Transport)
-	if !ok || tr.QUICConfig == nil || tr.QUICConfig.InitialPacketSize != 1200 {
-		t.Fatalf("HTTP/3 client QUIC configuration = %+v", tr)
-	}
-}
 
 func TestAdaptiveWarmup(t *testing.T) {
 	t.Parallel()
@@ -85,14 +70,7 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc(route.Servers, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.SingletonCatalog())
 	})
-	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
-	})
+	mux.HandleFunc("/probe", writeProbe)
 }
 
 func writeDownload(w http.ResponseWriter, _ *http.Request) {

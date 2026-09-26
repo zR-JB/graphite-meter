@@ -2,6 +2,8 @@ package goclient
 
 import (
 	"context"
+	"encoding/json/v2"
+	"net/http"
 	"net/http/httptest"
 	"time"
 
@@ -88,5 +90,15 @@ func testRunner(srv *httptest.Server) *runner {
 }
 
 func fetchTarget(origin string) *wire.ThroughputTarget {
-	return &wire.ThroughputTarget{Origin: origin, Transport: wire.TransportFetchStream, Routes: wire.DefaultThroughputRoutes()}
+	target := testTransfer(origin, origin, "http1", false)
+	return &target
+}
+
+func writeProbe(w http.ResponseWriter, _ *http.Request) {
+	_ = json.MarshalWrite(w, wire.Probe{
+		ClientIP:           "127.0.0.1",
+		ClientIPVersion:    4,
+		ClientIPSource:     "socket",
+		ProtocolNegotiated: "http/1.1",
+	})
 }

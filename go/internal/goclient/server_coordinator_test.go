@@ -90,14 +90,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 		f.catalogReads.Add(1)
 		return json.MarshalWrite(w, f.catalog)
 	}))
-	registry.RegisterHTTP(route.Probe, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
-	}))
+	registry.RegisterHTTP(route.Probe, http.HandlerFunc(writeProbe))
 	registry.RegisterHTTP(route.Download, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		block := make([]byte, 8192)
 		timer := time.NewTicker(time.Millisecond)

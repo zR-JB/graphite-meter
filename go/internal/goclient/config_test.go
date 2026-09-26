@@ -85,73 +85,47 @@ func TestConfigNormalizedInvariants(t *testing.T) {
 	}
 }
 
-func TestValidatePingInterval(t *testing.T) {
+func TestConfigValidate(t *testing.T) {
 	t.Parallel()
 	if MaxPingInterval*2 != wire.WTIdleBound {
 		t.Errorf("MaxPingInterval = %v, want half of the %v idle bound", MaxPingInterval, wire.WTIdleBound)
 	}
 	for _, c := range []struct {
-		d       time.Duration
-		wantErr bool
+		name string
+		edit func(*Config)
+		want string
 	}{
-		{250 * time.Millisecond, false},
-		{MaxPingInterval, false},
-		{MaxPingInterval + time.Millisecond, true},
-		{0, true},
-		{-time.Second, true},
+		{"defaults", func(*Config) {}, ""},
+		{"protocol", func(c *Config) { c.ThroughputProtocol = "spdy" }, "invalid throughput protocol"},
+		{"throughput transport", func(c *Config) { c.ThroughputTransport = "webscoket" }, "throughput transport"},
+		{"datagrams", func(c *Config) { c.ThroughputTransport = "webtransport-datagram" }, "throughput transport"},
+		{"latency transport", func(c *Config) { c.LatencyTransport = "webtransport-datagram" }, "latency transport"},
+		{"WebTransport bound", func(c *Config) {
+			c.LatencyTransport, c.PingInterval = wire.TransportWebTransport, MaxPingInterval+time.Millisecond
+		}, MaxPingInterval.String()},
+		{"WebTransport at bound", func(c *Config) {
+			c.LatencyTransport, c.PingInterval = wire.TransportWebTransport, MaxPingInterval
+		}, ""},
+		{"WebSocket unbounded", func(c *Config) {
+			c.LatencyTransport, c.PingInterval = wire.TransportWebSocket, 45*time.Second
+		}, ""},
 	} {
-		err := ValidatePingInterval(c.d)
-		if (err != nil) != c.wantErr {
-			t.Errorf("ValidatePingInterval(%v) = %v, want error %t", c.d, err, c.wantErr)
+		cfg := DefaultConfig()
+		// An unreachable base URL proves prepare validates before discovery.
+		cfg.BaseURL = "https://127.0.0.1:1"
+		c.edit(&cfg)
+		err := cfg.Validate()
+		if c.want == "" && err != nil || c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)) {
+			t.Errorf("%s: Validate = %v, want %q", c.name, err, c.want)
 		}
-		if err != nil && c.d > 0 && !strings.Contains(err.Error(), MaxPingInterval.String()) {
-			t.Errorf("ValidatePingInterval(%v) = %q, want it to name the %v bound", c.d, err, MaxPingInterval)
+		if _, prepareErr := prepare(t.Context(), cfg); c.want != "" && prepareErr.Error() != err.Error() {
+			t.Errorf("%s: prepare = %v, want the validation error", c.name, prepareErr)
 		}
 	}
 }
 
-func newWTLatencyServer(t *testing.T) *httptest.Server {
-	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
-		origin := "http://" + r.Host
-		wtPing := testChannel("wt-ping", origin, false)
-		wtPing.Transport, wtPing.Protocol = wire.TransportWebTransport, "http3"
-		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{
-			ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
-			LatencyTargets:    []wire.LatencyTarget{wtPing},
-		}})
-	})
-	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
-func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
+func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 	t.Parallel()
-	cfg := DefaultConfig()
-	cfg.BaseURL, cfg.LatencyTransport = newWTLatencyServer(t).URL, wire.TransportWebTransport
-	cfg.PingInterval = 45 * time.Second
-	if _, err := prepare(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), MaxPingInterval.String()) {
-		t.Fatalf("a 45s interval over the datagram bus = %v, want an error naming the %v bound", err, MaxPingInterval)
-	}
-
-	ws := newLatencyOnlyServer(t)
-	defer ws.Close()
-	cfg.BaseURL, cfg.LatencyTransport = ws.URL, wire.TransportWebSocket
-	cfg.PingInterval = MaxPingInterval + 5*time.Second
-	if _, err := prepare(t.Context(), cfg); err != nil {
-		t.Fatalf("a %v cadence over the WebSocket bus = %v, want it accepted", cfg.PingInterval, err)
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
 		origin := "http://" + r.Host
@@ -162,25 +136,15 @@ func TestPrepareBindsThePingIntervalToTheSelectedBus(t *testing.T) {
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws", origin, false), wt},
 		}})
 	})
-	mux.HandleFunc("/probe", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, wire.Probe{
-			ClientIP:           "127.0.0.1",
-			ClientIPVersion:    4,
-			ClientIPSource:     "socket",
-			ProtocolNegotiated: "http/1.1",
-		})
-	})
+	mux.HandleFunc("/probe", writeProbe)
 	mux.Handle("/ws/ping", echoPingHandler())
-	fallback := httptest.NewServer(mux)
-	defer fallback.Close()
-	cfg.BaseURL, cfg.LatencyTransport = fallback.URL, "auto"
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	cfg := DefaultConfig()
+	cfg.BaseURL, cfg.PingInterval = srv.URL, MaxPingInterval+5*time.Second
 	prepared, err := prepare(t.Context(), cfg)
 	if err != nil || prepared.LatencyTarget.Transport != wire.TransportWebSocket {
-		t.Fatalf(
-			"automatic path after an unreachable WebTransport bus = %+v, %v; want the WebSocket fallback",
-			prepared,
-			err,
-		)
+		t.Fatalf("automatic path after an unreachable WebTransport bus = %+v, %v; want WebSocket", prepared, err)
 	}
 }
 

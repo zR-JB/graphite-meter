@@ -183,28 +183,18 @@ func websocketClient(cfg Config) (*http.Client, func()) {
 
 func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	if cfg.grant != "" {
 		u, err := url.Parse(cfg.BaseURL)
 		if err != nil || u.Scheme != "https" || cfg.InsecureSkipTLSVerify {
 			return nil, fmt.Errorf("authenticated operation requires verified HTTPS -url")
 		}
 	}
-	switch cfg.ThroughputProtocol {
-	case "auto", "http1", "http2", "http3":
-	default:
-		return nil, fmt.Errorf("invalid throughput protocol %q", cfg.ThroughputProtocol)
-	}
-	if err := ValidateThroughputTransport(cfg.ThroughputTransport); err != nil {
-		return nil, err
-	}
-	if err := ValidateLatencyTransport(cfg.LatencyTransport); err != nil {
-		return nil, err
-	}
 	discoveryTransport := baseTransport(cfg)
 	defer discoveryTransport.CloseIdleConnections()
-	discoveryClient := authenticatedClient(cfg, discoveryTransport)
-
-	pf, err := getPreflight(ctx, discoveryClient, cfg.BaseURL)
+	pf, err := getPreflight(ctx, authenticatedClient(cfg, discoveryTransport), cfg.BaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -243,34 +233,27 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 
 func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnection) error {
 	pf := prepared.Preflight
-	advertisedTarget, err := selectTarget(cfg, pf)
+	selected, err := selectTarget(cfg, pf)
 	if err != nil {
 		return err
 	}
-	if advertisedTarget.Transport == wire.TransportWebTransport {
-		if verifyErr := verifyThroughputWebTransport(ctx, cfg, advertisedTarget); verifyErr != nil {
+	if selected.Transport == wire.TransportWebTransport {
+		if err := verifyThroughputWebTransport(ctx, cfg, selected); err != nil {
 			if cfg.ThroughputTransport != "auto" {
-				return verifyErr
+				return err
 			}
-			fetchTarget, fetchErr := selectTargetOver(cfg, pf, wire.TransportFetchStream)
-			if fetchErr != nil {
-				return fmt.Errorf("%w (the advertised WebTransport target is unreachable: %v)", fetchErr, verifyErr)
-			}
-			advertisedTarget = fetchTarget
+			_, fetchErr := throughputTargetOver(cfg, pf, wire.TransportFetchStream)
+			return fmt.Errorf("%w (the advertised WebTransport target is unreachable: %v)", fetchErr, err)
 		}
 	}
-	target := *advertisedTarget
+	target := *selected
 	if cfg.ThroughputProtocol != "auto" {
 		if target.Protocol != "negotiated" && target.Protocol != cfg.ThroughputProtocol {
 			return fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol)
 		}
 		target.Protocol = cfg.ThroughputProtocol
 	}
-	transfer, closeTransfer := protocolClient(
-		cfg,
-		target.Protocol,
-		func() *http.Transport { return baseTransport(cfg) },
-	)
+	transfer, closeTransfer := protocolClient(cfg, target.Protocol)
 	defer closeTransfer()
 	probe, clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe, "probe")
 	if err != nil {
@@ -289,28 +272,18 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 	if err != nil {
 		return err
 	}
-	if cfg.LatencyTransport != "auto" && PingIntervalBoundApplies(target.Transport) {
-		if err := ValidatePingInterval(cfg.PingInterval); err != nil {
-			return err
-		}
-	}
 	if target.Transport == wire.TransportWebTransport {
-		if verifyErr := verifyLatencyWebTransport(ctx, cfg, target); verifyErr != nil {
+		if err := verifyLatencyWebTransport(ctx, cfg, target); err != nil {
 			if cfg.LatencyTransport != "auto" {
-				return verifyErr
+				return err
 			}
-			if target, err = selectLatencyTargetOver(
-				cfg.LatencyTarget,
-				cfg.BaseURL,
-				targets,
-				wire.TransportWebSocket,
-			); err != nil {
+			if target, err = latencyTargetOver(cfg, targets, wire.TransportWebSocket); err != nil {
 				return err
 			}
 		}
 	}
-	if cfg.LatencyTransport == "auto" && PingIntervalBoundApplies(target.Transport) {
-		if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+	if target.Transport == wire.TransportWebTransport {
+		if err := validatePingInterval(cfg.PingInterval); err != nil {
 			return err
 		}
 	}
@@ -370,74 +343,78 @@ func (r *runner) endpoint(path string) (string, error) {
 	return httpEndpoint(r.target.Origin, path)
 }
 
-func transportOrder(selection string, preferred, fallback string) []string {
-	if selection != "auto" {
-		return []string{selection}
-	}
-	return []string{preferred, fallback}
+func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
+	return firstMatch(cfg.ThroughputTransport, wire.TransportFetchStream, wire.TransportWebTransport,
+		func(mechanism string) (*wire.ThroughputTarget, error) {
+			return throughputTargetOver(cfg, pf, mechanism)
+		})
 }
 
-func selectTarget(cfg Config, pf wire.Preflight) (*wire.ThroughputTarget, error) {
-	if cfg.ThroughputTransport == wire.TransportWebTransportDatagram {
-		return nil, fmt.Errorf("webtransport-datagram throughput is not supported by this client")
+func throughputTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.ThroughputTarget, error) {
+	return pickTarget("throughput", pf.Capabilities.ThroughputTargets, cfg.ThroughputTarget, cfg.BaseURL,
+		func(t *wire.ThroughputTarget) (string, string, bool) {
+			protocolFits := cfg.ThroughputTarget != "auto" || cfg.ThroughputProtocol == "auto" ||
+				t.Protocol == "negotiated" || t.Protocol == cfg.ThroughputProtocol
+			return t.ID, t.Origin, t.Transport == mechanism && protocolFits
+		})
+}
+
+func selectLatencyTarget(cfg Config, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
+	return firstMatch(cfg.LatencyTransport, wire.TransportWebTransport, wire.TransportWebSocket,
+		func(mechanism string) (*wire.LatencyTarget, error) { return latencyTargetOver(cfg, targets, mechanism) })
+}
+
+func latencyTargetOver(cfg Config, targets []wire.LatencyTarget, mechanism string) (*wire.LatencyTarget, error) {
+	return pickTarget("latency", targets, cfg.LatencyTarget, cfg.BaseURL,
+		func(t *wire.LatencyTarget) (string, string, bool) { return t.ID, t.Origin, t.Transport == mechanism })
+}
+
+// firstMatch tries an explicit transport alone, or the preferred transport before the fallback.
+func firstMatch[T any](transport, preferred, fallback string, over func(string) (*T, error)) (*T, error) {
+	order := []string{preferred, fallback}
+	if transport != "auto" {
+		order = []string{transport}
 	}
-	for _, mechanism := range transportOrder(
-		cfg.ThroughputTransport,
-		wire.TransportFetchStream,
-		wire.TransportWebTransport,
-	) {
-		t, err := selectTargetOver(cfg, pf, mechanism)
+	var firstErr error
+	for _, mechanism := range order {
+		t, err := over(mechanism)
 		if err == nil {
 			return t, nil
 		}
-		if cfg.ThroughputTransport != "auto" {
-			return nil, err
+		if firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil, fmt.Errorf("%s target unavailable", cfg.ThroughputTarget)
+	return nil, firstErr
 }
 
-func selectTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.ThroughputTarget, error) {
-	selection := cfg.ThroughputTarget
-	if selection == "auto" {
-		for i := range pf.Capabilities.ThroughputTargets {
-			t := &pf.Capabilities.ThroughputTargets[i]
-			if t.Transport != mechanism ||
-				cfg.ThroughputProtocol != "" &&
-					cfg.ThroughputProtocol != "auto" &&
-					t.Protocol != "negotiated" &&
-					t.Protocol != cfg.ThroughputProtocol {
-				continue
-			}
-			if origin.Equal(t.Origin, cfg.BaseURL) {
-				return t, nil
-			}
-		}
-		var candidate *wire.ThroughputTarget
-		for i := range pf.Capabilities.ThroughputTargets {
-			t := &pf.Capabilities.ThroughputTargets[i]
-			if t.Transport == mechanism &&
-				(cfg.ThroughputProtocol == "" ||
-					cfg.ThroughputProtocol == "auto" ||
-					t.Protocol == "negotiated" ||
-					t.Protocol == cfg.ThroughputProtocol) {
-				if candidate != nil {
-					return nil, fmt.Errorf("multiple throughput endpoints available; select an origin")
-				}
-				candidate = t
-			}
-		}
-		if candidate != nil {
-			return candidate, nil
-		}
-	}
-	for i := range pf.Capabilities.ThroughputTargets {
-		t := &pf.Capabilities.ThroughputTargets[i]
-		if t.Transport == mechanism && (t.ID == selection || origin.Equal(t.Origin, selection)) {
+// pickTarget honours an explicit selection; automatic selection prefers the base origin, then a sole candidate.
+func pickTarget[T any](
+	kind string,
+	targets []T,
+	selection, base string,
+	eligible func(*T) (id, origin string, ok bool),
+) (*T, error) {
+	var candidates []*T
+	for i := range targets {
+		t := &targets[i]
+		id, o, ok := eligible(t)
+		switch {
+		case !ok:
+			continue
+		case selection == "auto" && origin.Equal(o, base),
+			selection != "auto" && (id == selection || origin.Equal(o, selection)):
 			return t, nil
 		}
+		candidates = append(candidates, t)
 	}
-	return nil, fmt.Errorf("%s target unavailable over %s", selection, mechanism)
+	switch {
+	case selection == "auto" && len(candidates) == 1:
+		return candidates[0], nil
+	case selection == "auto" && len(candidates) > 1:
+		return nil, fmt.Errorf("several %s targets are available; select an origin", kind)
+	}
+	return nil, fmt.Errorf("%s target %q unavailable", kind, selection)
 }
 
 func protocolFromEvidence(protocol string) string {
@@ -452,75 +429,16 @@ func protocolFromEvidence(protocol string) string {
 	return protocol
 }
 
-func selectLatencyTarget(cfg Config, targets []wire.LatencyTarget) (*wire.LatencyTarget, error) {
-	for _, mechanism := range transportOrder(
-		cfg.LatencyTransport,
-		wire.TransportWebTransport,
-		wire.TransportWebSocket,
-	) {
-		t, err := selectLatencyTargetOver(cfg.LatencyTarget, cfg.BaseURL, targets, mechanism)
-		if err == nil {
-			return t, nil
-		}
-		if cfg.LatencyTransport != "auto" {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("latency target %q unavailable", cfg.LatencyTarget)
-}
-
-func selectLatencyTargetOver(
-	selection, base string,
-	targets []wire.LatencyTarget,
-	mechanism string,
-) (*wire.LatencyTarget, error) {
-	var candidate *wire.LatencyTarget
-	var sameOriginCandidate *wire.LatencyTarget
-	candidateCount := 0
-	for i := range targets {
-		t := &targets[i]
-		if t.Transport != mechanism {
-			continue
-		}
-		if selection != "auto" && (t.ID == selection || origin.Equal(t.Origin, selection)) {
-			return t, nil
-		}
-		if selection == "auto" {
-			candidateCount++
-			if candidate == nil {
-				candidate = t
-			}
-			if sameOriginCandidate == nil && origin.Equal(t.Origin, base) {
-				sameOriginCandidate = t
-			}
-		}
-	}
-	if selection == "auto" {
-		if sameOriginCandidate != nil {
-			return sameOriginCandidate, nil
-		}
-		if candidateCount == 1 {
-			return candidate, nil
-		}
-		if candidateCount > 1 {
-			selection = "ambiguous"
-		}
-	}
-	return nil, fmt.Errorf("latency target %q unavailable", selection)
-}
-
-func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
+func protocolClient(cfg Config, protocol string) (*http.Client, func()) {
 	if protocol == "http3" {
 		tr := &http3.Transport{
-			TLSClientConfig:    tlsConfig,
+			TLSClientConfig:    &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 			QUICConfig:         transport.NewQUICConfig(),
 			DisableCompression: true,
 		}
 		return authenticatedClient(cfg, tr), func() { _ = tr.Close() }
 	}
-	tr := makeHTTP()
-	tr.TLSClientConfig = tlsConfig
+	tr := baseTransport(cfg)
 	if protocol != "negotiated" {
 		p := &http.Protocols{}
 		p.SetHTTP1(protocol == "http1")

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -89,11 +88,7 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 		own := server.config
 		own.Warmup = c.cfg.Warmup
 		connection := server.Connection
-		hc, closeHTTP := protocolClient(
-			own,
-			connection.ThroughputTarget.Protocol,
-			func() *http.Transport { return baseTransport(own) },
-		)
+		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol)
 		ws, closeWS := websocketClient(own)
 		defer closeHTTP()
 		defer closeWS()

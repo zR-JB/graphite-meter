@@ -90,44 +90,17 @@ func TestParseStages(t *testing.T) {
 
 func TestParsePing(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		raw, transport string
-		want           time.Duration
-		wantErr        string
-	}{
-		{"fast", "auto", 80 * time.Millisecond, ""},
-		{"Slow", "auto", 600 * time.Millisecond, ""},
-		{"", "auto", 250 * time.Millisecond, ""},
-		{"1500ms", "auto", 1500 * time.Millisecond, ""},
-		{goclient.MaxPingInterval.String(), wire.TransportWebTransport, goclient.MaxPingInterval, ""},
-		{"45s", wire.TransportWebSocket, 45 * time.Second, ""},
-		{"45s", wire.TransportWebTransport, 0, goclient.MaxPingInterval.String()},
-		{"instant", "auto", 0, "fast, medium, slow"},
-		{"0s", "auto", 0, "positive duration"},
+	for raw, want := range map[string]time.Duration{
+		"fast":    80 * time.Millisecond,
+		"Slow":    600 * time.Millisecond,
+		"":        250 * time.Millisecond,
+		"1500ms":  1500 * time.Millisecond,
+		"instant": 0,
+		"0s":      0,
 	} {
-		got, err := parsePing(c.raw, c.transport)
-		if c.wantErr != "" {
-			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
-				t.Errorf("parsePing(%q, %q) = %v, %v; want an error naming %q", c.raw, c.transport, got, err, c.wantErr)
-			}
-		} else if err != nil || got != c.want {
-			t.Errorf("parsePing(%q, %q) = %v, %v; want %v", c.raw, c.transport, got, err, c.want)
-		}
-	}
-}
-
-func TestFlagsRejectAnUnknownTransport(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct{ throughput, latency, wantFlag string }{
-		{"auto", "auto", ""},
-		{wire.TransportWebTransport, wire.TransportWebSocket, ""},
-		{wire.TransportWebTransportDatagram, "auto", ""},
-		{"webscoket", "auto", "-throughput-transport"},
-		{"auto", wire.TransportWebTransportDatagram, "-latency-transport"},
-	} {
-		err := transportFlags(c.throughput, c.latency)
-		if (err == nil) != (c.wantFlag == "") || err != nil && !strings.Contains(err.Error(), c.wantFlag) {
-			t.Errorf("transportFlags(%q, %q) = %v, want %q", c.throughput, c.latency, err, c.wantFlag)
+		got, err := parsePing(raw)
+		if got != want || (err != nil) != (want == 0) {
+			t.Errorf("parsePing(%q) = %v, %v; want %v", raw, got, err, want)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package goclient
 import (
 	"cmp"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -108,10 +109,7 @@ func (p TransferStreamPolicy) Label(protocol, transport string) string {
 
 const MaxPingInterval = wire.WTIdleBound / 2
 
-func ValidatePingInterval(d time.Duration) error {
-	if d <= 0 {
-		return fmt.Errorf("ping interval must be greater than zero")
-	}
+func validatePingInterval(d time.Duration) error {
 	if d > MaxPingInterval {
 		return fmt.Errorf(
 			"ping interval must be at most %v, half the server's %v WebTransport idle bound",
@@ -122,34 +120,21 @@ func ValidatePingInterval(d time.Duration) error {
 	return nil
 }
 
-func PingIntervalBoundApplies(latencyTransport string) bool {
-	return latencyTransport == wire.TransportWebTransport
-}
-
-func ValidateThroughputTransport(name string) error {
-	switch name {
-	case "", "auto", wire.TransportFetchStream, wire.TransportWebTransport, wire.TransportWebTransportDatagram:
-		return nil
+// Validate rejects settings that no server can satisfy.
+func (c Config) Validate() error {
+	c = c.normalized()
+	fetch, ws, wt := wire.TransportFetchStream, wire.TransportWebSocket, wire.TransportWebTransport
+	switch {
+	case !slices.Contains([]string{"auto", "http1", "http2", "http3"}, c.ThroughputProtocol):
+		return fmt.Errorf("invalid throughput protocol %q: use auto, http1, http2, or http3", c.ThroughputProtocol)
+	case !slices.Contains([]string{"auto", fetch, wt}, c.ThroughputTransport):
+		return fmt.Errorf("invalid throughput transport %q: use auto, %s, or %s", c.ThroughputTransport, fetch, wt)
+	case !slices.Contains([]string{"auto", ws, wt}, c.LatencyTransport):
+		return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", c.LatencyTransport, ws, wt)
+	case c.LatencyTransport == wire.TransportWebTransport:
+		return validatePingInterval(c.PingInterval)
 	}
-	return fmt.Errorf(
-		"invalid throughput transport %q: use auto, %s, or %s",
-		name,
-		wire.TransportFetchStream,
-		wire.TransportWebTransport,
-	)
-}
-
-func ValidateLatencyTransport(name string) error {
-	switch name {
-	case "", "auto", wire.TransportWebSocket, wire.TransportWebTransport:
-		return nil
-	}
-	return fmt.Errorf(
-		"invalid latency transport %q: use auto, %s, or %s",
-		name,
-		wire.TransportWebSocket,
-		wire.TransportWebTransport,
-	)
+	return nil
 }
 
 type Config struct {
