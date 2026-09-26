@@ -79,7 +79,7 @@ type model struct {
 	serverRow     int
 	openChooser   bool
 	details       viewport.Model
-	scroll        int
+	body          viewport.Model
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
@@ -117,6 +117,7 @@ func newModel(cfg goclient.Config) model {
 		spin:         spinner.New(spinner.WithSpinner(dial), spinner.WithStyle(st.accent)),
 		help:         h,
 		details:      viewport.New(),
+		body:         viewport.New(),
 		now:          time.Now(),
 	}
 }
@@ -217,6 +218,7 @@ func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case m.finished() && key.Matches(msg, keys.setup):
 		m.run = nil
 		m.notice = ""
+		m.body.SetYOffset(0)
 		return m.reprepare()
 	case m.finished() && key.Matches(msg, keys.runAgain):
 		return m.startRun()
@@ -271,13 +273,14 @@ func (m *model) navigate(msg tea.KeyPressMsg) {
 	if reverse(msg) {
 		step = -1
 	}
-	m.scroll = 0
 	if key.Matches(msg, keys.sections) {
 		m.section = (m.section + step + len(sections)) % len(sections)
 	} else {
 		m.row += step
 	}
 	m.row = min(max(m.row, 0), len(sections[m.section].rows)-1)
+	m.body = m.bodyViewport(m.layout())
+	m.body.EnsureVisible(1+m.row, 0, 0)
 }
 
 func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {

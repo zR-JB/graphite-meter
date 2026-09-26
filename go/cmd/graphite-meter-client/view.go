@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -45,7 +46,6 @@ type frame struct {
 	top, footer string
 	body        []string
 	bodyH       int
-	offset      int
 }
 
 func (m model) layout() frame {
@@ -69,14 +69,17 @@ func (m model) layout() frame {
 	} else {
 		f.body = strings.Split(m.setupView(inner), "\n")
 	}
-	limit := max(len(f.body)-f.bodyH, 0)
-	f.offset = m.scroll
-	if m.run == nil && m.scroll == 0 {
-		f.offset = m.row + 3 - f.bodyH
-	}
-	f.offset = min(max(f.offset, 0), limit)
-	f.footer = m.footer(inner, limit > 0)
+	f.footer = m.footer(inner, len(f.body) > f.bodyH)
 	return f
+}
+
+func (m model) bodyViewport(f frame) viewport.Model {
+	vp := m.body
+	w, _ := m.size()
+	vp.SetWidth(w - 2)
+	vp.SetHeight(f.bodyH)
+	vp.SetContentLines(f.body)
+	return vp
 }
 
 func (m model) render() (string, *tea.Cursor) {
@@ -87,8 +90,7 @@ func (m model) render() (string, *tea.Cursor) {
 	}
 	w, _ := m.size()
 	f := m.layout()
-	body := strings.Join(f.body[f.offset:min(f.offset+f.bodyH, len(f.body))], "\n")
-	body = lipgloss.PlaceVertical(f.bodyH, lipgloss.Top, body)
+	body := m.bodyViewport(f).View()
 	screen := lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + body + "\n" + f.footer)
 	pw := m.popupWidth()
 	var title, content string
@@ -117,18 +119,23 @@ func (m model) render() (string, *tea.Cursor) {
 }
 
 func (m *model) scrollBody(msg tea.KeyPressMsg) {
-	f := m.layout()
-	step := 1
+	m.body = m.bodyViewport(m.layout())
 	switch msg.String() {
-	case "pgup", "pgdown":
-		step = max(f.bodyH-1, 1)
-	case "home", "end":
-		step = len(f.body)
+	case "pgup":
+		m.body.PageUp()
+	case "pgdown":
+		m.body.PageDown()
+	case "home":
+		m.body.GotoTop()
+	case "end":
+		m.body.GotoBottom()
+	default:
+		if reverse(msg) {
+			m.body.ScrollUp(1)
+		} else {
+			m.body.ScrollDown(1)
+		}
 	}
-	if reverse(msg) || msg.String() == "pgup" || msg.String() == "home" {
-		step = -step
-	}
-	m.scroll = min(max(f.offset+step, 0), max(len(f.body)-f.bodyH, 0))
 }
 
 func (m model) progress() int {

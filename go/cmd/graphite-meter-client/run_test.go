@@ -797,8 +797,8 @@ func TestScrollingRevealsTheWholeBody(t *testing.T) {
 		}
 		m, _ = modelAndCmd(m.Update(press("down")))
 	}
-	if m.layout().offset != len(f.body)-f.bodyH {
-		t.Fatalf("scrolling stopped at %d of %d", m.layout().offset, len(f.body)-f.bodyH)
+	if !m.bodyViewport(m.layout()).AtBottom() {
+		t.Fatalf("scrolling stopped at %d of %d lines", m.body.YOffset(), len(f.body))
 	}
 	for _, line := range f.body {
 		if want := strings.TrimSpace(ansi.Strip(line)); !seen[want] {
