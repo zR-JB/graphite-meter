@@ -276,6 +276,10 @@ test("an unmonitored server re-reads discovery, so a peer that died stops being 
     await until(() => connection.view.readiness === "failed");
     expect(connection.view.message).toBe("Connection check failed");
     expect(connection.paths(Infinity)).toBeNull();
+    alive = true;
+    connection.resume();
+    await until(() => connection.view.readiness === "ready");
+    expect(discoveries).toBe(4);
   } finally {
     clock.mockRestore();
   }

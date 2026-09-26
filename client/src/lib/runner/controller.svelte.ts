@@ -438,8 +438,8 @@ export function createApplicationController(
   }
   function visibilityChanged() {
     if (hidden()) return wake();
-    onlineAgain();
     selectIntent();
+    onlineAgain();
   }
   function cancelPendingStart() {
     pendingStart?.abort();

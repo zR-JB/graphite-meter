@@ -370,7 +370,7 @@ test("hidden pages defer checks; returning refreshes discovery that expired mean
         setVisibility("hidden");
         clock.mockReturnValue(2000 + CONNECTION_FRESH_MS);
         setVisibility("visible");
-        expect(view().readiness).toBe("unchecked");
+        expect(view().readiness).not.toBe("ready");
         await until(() => view().readiness === "ready");
         expect(discoveries).toBe(2);
       },

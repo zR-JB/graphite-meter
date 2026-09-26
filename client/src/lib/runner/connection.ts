@@ -237,11 +237,13 @@ export class ServerConnection {
     this.#sync();
   }
 
-  /** Online and a regained page reset backoff; sign-in still waits for approval. */
+  /** Online or a regained page: backoff resets and an unmonitored server is re-read now. */
   resume(): void {
     for (const job of [this.#discovering, ...Object.values(this.#roles)])
       if (!job.backoff.signIn) job.backoff = backoff();
     this.#sync();
+    if (this.config && !this.#watched && this.host.active())
+      void this.check({ fresh: true });
   }
 
   wake(): void {
