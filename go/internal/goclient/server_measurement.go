@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -174,24 +175,11 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 		return nil
 	}
 	a.ledger(b)
-	valid := len(interval.Participants) > 0
-	for _, id := range interval.Participants {
-		if interval.Stage != StageUpload {
-			_, ok := b.down[id]
-			valid = valid && ok
-		}
-		if interval.Stage != StageDownload {
-			valid = valid && b.up[id] != nil
-		}
-	}
-	if !valid {
-		interval.Complete = false
-		interval.End = b.at
+	if len(interval.Participants) == 0 || slices.ContainsFunc(interval.Participants, func(id string) bool {
+		_, down := b.down[id]
+		return interval.Stage != StageUpload && !down || interval.Stage != StageDownload && b.up[id] == nil
+	}) {
 		return nil
-	}
-	if !interval.Complete {
-		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
-		return a.observe(b)
 	}
 	if a.first == nil {
 		a.first = new(b)
@@ -201,10 +189,12 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 		return nil
 	}
 	sample, err := aggregateWindow(*a.last, b, *interval)
+	if errors.Is(err, errStaleBoundary) {
+		return nil
+	}
 	full, fullErr := aggregateWindow(*a.first, b, *interval)
 	if err != nil || fullErr != nil {
 		interval.Complete = false
-		interval.End = b.at
 		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
 		return a.observe(b)
 	}
@@ -220,10 +210,14 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 	}
 	return sample
 }
+
+// errStaleBoundary marks a boundary without new clock evidence; it is skipped, never a zero rate.
+var errStaleBoundary = errors.New("boundary did not advance")
+
 func aggregateWindow(first, last measurementBoundary, interval AggregationInterval) (*AggregateWindow, error) {
 	elapsed := last.at - first.at
 	if elapsed <= 0 {
-		return nil, fmt.Errorf("non-advancing client boundary")
+		return nil, errStaleBoundary
 	}
 	window := &AggregateWindow{Start: first.at, End: last.at}
 	for _, id := range interval.Participants {
@@ -242,8 +236,11 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 		}
 		if interval.Stage != StageDownload {
 			start, end := first.up[id], last.up[id]
-			if start == nil || end == nil || start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos <= start.Nanos {
-				return nil, fmt.Errorf("missing or regressing receiver counter")
+			if start.ID == end.ID && end.Bytes >= start.Bytes && end.Nanos == start.Nanos {
+				return nil, errStaleBoundary
+			}
+			if start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos < start.Nanos {
+				return nil, fmt.Errorf("replaced or regressing receiver counter")
 			}
 			duration := time.Duration(end.Nanos - start.Nanos)
 			rate := float64(end.Bytes-start.Bytes) / duration.Seconds()

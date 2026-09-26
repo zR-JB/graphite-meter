@@ -62,7 +62,12 @@ func dialLatencyBus(ctx context.Context, cfg Config, client *http.Client, target
 }
 
 // verifyLatency proves the bus answers probe 0 and returns that warm round trip.
-func verifyLatency(ctx context.Context, cfg Config, client *http.Client, target *wire.LatencyTarget) (time.Duration, error) {
+func verifyLatency(
+	ctx context.Context,
+	cfg Config,
+	client *http.Client,
+	target *wire.LatencyTarget,
+) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	bus, err := dialLatencyBus(ctx, cfg, client, target)

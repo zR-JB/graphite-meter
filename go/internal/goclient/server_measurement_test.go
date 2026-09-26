@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -69,13 +70,20 @@ func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 	missing := nativeBoundary(1200, nil, map[string]*ReceiverSnapshot{"a": nil})
 	missing.observedUp = map[string]uploadLedger{"a": {"id", 500}}
 	a.observe(missing)
-	if result := a.result("upload", Up); !result.Unavailable || result.TotalBytes != 400 {
-		t.Fatalf("missing rate must retain known unique bytes: %+v", result)
+	a.observe(nativeBoundary(1300, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 500, 1100)}))
+	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 0 || result.TotalBytes != 400 ||
+		len(a.intervals) != 1 {
+		t.Fatalf("a missing or stale checkpoint must be skipped, keeping bytes and the window: %+v", result)
 	}
 	a.observe(nativeBoundary(1500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 700, 1600)}))
 	a.observe(nativeBoundary(2500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1700, 2600)}))
-	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 1000 || result.TotalBytes != 1600 {
-		t.Fatalf("recovery reuses stale baseline or double counts bytes: %+v", result)
+	if result := a.result("upload", Up); result.Unavailable || result.MeanBps != 640 || result.TotalBytes != 1600 ||
+		len(a.intervals) != 1 {
+		t.Fatalf("the next valid boundary must span the gap in the receiver clock: %+v", result)
+	}
+	a.observe(nativeBoundary(3500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("new", 100, 100)}))
+	if len(a.intervals) != 2 || a.intervals[1].Reason != "evidence-resumed" || a.result("upload", Up).TotalBytes != 1700 {
+		t.Fatalf("a replaced receiver must start a fresh interval: %+v", a.intervals)
 	}
 }
 func TestCoordinatedBidirectionalUsesCommonMembership(t *testing.T) {
@@ -125,5 +133,25 @@ func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
 	after := measurements.result("upload", Up)
 	if !after.Unavailable || after.TotalBytes != before.TotalBytes || measurements.intervals[0].Window == nil {
 		t.Fatalf("regressed receiver clock retained a rate or lost earlier bytes: %+v", after)
+	}
+}
+
+func TestCheckpointMissesRemoveServers(t *testing.T) {
+	t.Parallel()
+	s := &sampler{misses: map[string]int{}}
+	refused := errors.New("refused")
+	for i, final := range []bool{false, false, true} {
+		if s.dropsServer("a", refused, final) {
+			t.Fatalf("miss %d removed the server", i+1)
+		}
+	}
+	if s.dropsServer("a", nil, false) || s.dropsServer("a", refused, false) || s.dropsServer("a", refused, false) {
+		t.Fatal("a successful checkpoint did not reset the count")
+	}
+	if !s.dropsServer("a", refused, false) {
+		t.Fatal("the third consecutive miss kept the server")
+	}
+	if !s.dropsServer("b", &AuthRequiredError{}, true) {
+		t.Fatal("a refused grant kept the server")
 	}
 }

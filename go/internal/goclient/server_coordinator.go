@@ -55,6 +55,7 @@ type resourceOutcome struct {
 }
 type sampledBoundary struct {
 	boundary measurementBoundary
+	misses   map[string]error
 	epoch    int
 	final    bool
 }
@@ -446,7 +447,7 @@ func (c *coordinator) openWindow(
 	outcomes <-chan resourceOutcome,
 	handle func(resourceOutcome) error,
 ) (time.Time, measurementBoundary, error) {
-	initial := c.capture(ctx, stage, c.active())
+	initial, _ := c.capture(ctx, stage, c.active())
 	if stage.Name == StageUpload || stage.Name == StageBidirectional {
 		for _, s := range servers {
 			if !s.removed && initial.up[s.id()] == nil {
@@ -495,10 +496,11 @@ type sampler struct {
 	work         sync.WaitGroup
 	lastBytes    map[string]byteLedger
 	lastMovement map[string]map[Direction]time.Time
+	misses       map[string]int
 }
 
 func (s *sampler) begin(started time.Time, initial measurementBoundary) {
-	s.lastBytes, s.lastMovement = map[string]byteLedger{}, map[string]map[Direction]time.Time{}
+	s.lastBytes, s.lastMovement, s.misses = map[string]byteLedger{}, map[string]map[Direction]time.Time{}, map[string]int{}
 	for _, p := range s.c.active() {
 		bytes := byteLedger{down: initial.down[p.id()]}
 		if snapshot := initial.up[p.id()]; snapshot != nil {
@@ -519,7 +521,8 @@ func (s *sampler) capture(final bool) {
 	participants, epoch := s.c.active(), s.epoch
 	s.work.Go(func() {
 		defer cancel()
-		s.results <- sampledBoundary{s.c.capture(ctx, s.stage, participants), epoch, final}
+		boundary, misses := s.c.capture(ctx, s.stage, participants)
+		s.results <- sampledBoundary{boundary, misses, epoch, final}
 	})
 }
 
@@ -540,6 +543,17 @@ func (s *sampler) stop() {
 	s.work.Wait()
 }
 
+// dropsServer counts consecutive checkpoint misses; a refused grant or a third miss removes the server.
+func (s *sampler) dropsServer(id string, err error, final bool) bool {
+	if err == nil {
+		s.misses[id] = 0
+		return false
+	}
+	s.misses[id]++
+	_, auth := errors.AsType[*AuthRequiredError](err)
+	return auth || s.misses[id] >= 3 && !final
+}
+
 func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool, error) {
 	c := s.c
 	s.inFlight = false
@@ -554,6 +568,11 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 			continue
 		}
 		id := server.id()
+		if err := sample.misses[id]; s.dropsServer(id, err, sample.final) {
+			c.failure(server, s.stage, string(Up), err, time.Now())
+			removed = true
+			continue
+		}
 		bytes := byteLedger{down: sample.boundary.down[id]}
 		if snapshot := sample.boundary.up[id]; snapshot != nil {
 			bytes.up = snapshot.Bytes
@@ -563,9 +582,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 		for _, dir := range s.stage.Directions {
 			if dir == Down && bytes.down > s.lastBytes[id].down || dir == Up && bytes.up > s.lastBytes[id].up {
 				s.lastMovement[id][dir] = time.Now()
-			} else if !s.ending &&
-				server.transport.target.Transport == wire.TransportFetchStream &&
-				time.Since(s.lastMovement[id][dir]) >= redialWindow {
+			} else if !s.ending && time.Since(s.lastMovement[id][dir]) >= redialWindow {
 				stalled := fmt.Errorf("%s stopped delivering bytes for %v", dir, redialWindow)
 				c.failure(server, s.stage, string(dir), stalled, time.Now())
 				removed = true
@@ -588,7 +605,12 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	return false, nil
 }
 
-func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*participant) measurementBoundary {
+// capture reads every participant's counters; upload stages add a receiver checkpoint per server.
+func (c *coordinator) capture(
+	ctx context.Context,
+	stage StagePlan,
+	servers []*participant,
+) (measurementBoundary, map[string]error) {
 	boundary := measurementBoundary{
 		at:         time.Since(c.started),
 		down:       map[string]uint64{},
@@ -602,20 +624,25 @@ func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*p
 		}
 	}
 	if stage.Name != StageUpload && stage.Name != StageBidirectional {
-		return boundary
+		return boundary, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
 	defer cancel()
 	snapshots := make([]*ReceiverSnapshot, len(servers))
+	errs := make([]error, len(servers))
 	var work sync.WaitGroup
 	for i, server := range servers {
-		work.Go(func() { snapshots[i], _ = server.transport.receiverCheckpoint(ctx) })
+		work.Go(func() { snapshots[i], errs[i] = server.transport.receiverCheckpoint(ctx) })
 	}
 	work.Wait()
+	misses := map[string]error{}
 	for i, server := range servers {
 		boundary.up[server.id()] = snapshots[i]
+		if errs[i] != nil {
+			misses[server.id()] = errs[i]
+		}
 	}
-	return boundary
+	return boundary, misses
 }
 
 func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
@@ -641,7 +668,9 @@ func (c *coordinator) emitRates(stage StagePlan, window *AggregateWindow) {
 func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
 		result := c.aggregate.result(stage.Name, dir)
-		result.Err = stageErr
+		if stageErr != nil {
+			result.Err = stageErr
+		}
 		c.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage.Name, Direction: dir, Result: new(result)})
 		for _, server := range c.servers {
 			own := Result{Stage: stage.Name, Direction: dir, Unavailable: true}
