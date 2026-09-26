@@ -1,8 +1,8 @@
 <script lang="ts">
-  /* Transient phase-change announcer, pinned bottom-right: one message per
-     `store.phase` change, then auto-dismiss. role="status" with
-     aria-live="polite" gives screen readers one calm announcement per
-     transition. GaugePanel's mirror carries the per-value detail. */
+  /* Transient phase-change toast, pinned bottom-right: one message per
+     `store.phase` change, then auto-dismiss. It is visual only: GaugePanel
+     is the single phase and value announcer, and only link and skipped-stage
+     issues, which nothing else voices, reach the status region below. */
   import { ICON } from "../constants";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -106,17 +106,16 @@
 </script>
 
 <div
-  class="phase-toast"
+  class="float phase-toast"
   class:visible={visible || stalled}
   class:alert={stalled ||
     (visible &&
       (skipMessage != null ||
         store.phase === "error" ||
         store.phase === "aborted"))}
-  role="status"
-  aria-live="polite"
+  aria-hidden="true"
 >
-  <span class="notice-icon" aria-hidden="true"
+  <span class="notice-icon"
     >{#if stalled || skipMessage || store.phase === "error"}{@html ICON.info}{:else if store.phase === "complete"}{@html ICON.check}{:else}{@html ICON.ping}{/if}</span
   >
   <span class="kicker"
@@ -130,6 +129,9 @@
     >{stalled ? stallMessage : (skipMessage ?? message(store.phase))}</strong
   >
 </div>
+<p class="sr-only" role="status">
+  {stalled ? stallMessage : (skipMessage ?? "")}
+</p>
 
 <style>
   .phase-toast {
@@ -139,39 +141,31 @@
     z-index: 50;
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr);
-    column-gap: 9px;
     align-items: center;
+    column-gap: 9px;
     min-width: 220px;
     max-width: min(360px, calc(100vw - 24px));
-    pointer-events: none;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--shadow-float);
     padding: var(--space-2) var(--space-3);
     opacity: 0;
-    transform: translateY(4px);
+    translate: 0 4px;
+    pointer-events: none;
     transition:
       opacity var(--dur-slide) var(--ease-out),
-      transform var(--dur-slide) var(--ease-out);
+      translate var(--dur-slide) var(--ease-out);
   }
   .phase-toast.visible {
     opacity: 1;
-    transform: translateY(0);
+    translate: none;
   }
-  /* Keep issue emphasis on the icon, with the same calm surface. */
-  .phase-toast.alert {
-    border-color: var(--border-strong);
-  }
-  .phase-toast.alert .notice-icon {
-    color: var(--err);
-  }
-
   .notice-icon {
     grid-row: 1 / 3;
     display: grid;
     place-items: center;
     color: var(--text-muted);
+  }
+  /* Issue emphasis stays on the icon, with the same calm surface. */
+  .alert .notice-icon {
+    color: var(--err);
   }
   .notice-icon :global(svg) {
     width: 18px;
@@ -179,42 +173,24 @@
   }
   .kicker {
     color: var(--text-muted);
-    font-family: var(--font-sans);
-    font-size: 10px;
+    font-size: var(--type-2xs);
     font-weight: 700;
-    letter-spacing: 0;
   }
   strong {
     margin-top: 2px;
-    color: var(--text);
-    font-size: 12px;
-    font-weight: 500;
+    font-size: var(--type-sm);
+    font-weight: var(--w-normal);
     line-height: 1.4;
     overflow-wrap: anywhere;
   }
-
-  /* Reduced motion: the resting transform is pinned, so the toast fades in
-     without a slide or scale. */
-  @media (prefers-reduced-motion: reduce) {
-    .phase-toast {
-      transform: none;
-    }
-    .phase-toast.visible {
-      transform: none;
-    }
-  }
-
   @media (max-width: 759px) {
-    /* bp: stacked */
     .phase-toast {
-      right: 12px;
-      left: 12px;
-      bottom: 40px;
+      inset-inline: 12px;
       min-width: 0;
     }
-    /* Routine phase toasts duplicate the StatusBar footer and fire 5 to 6
-       times per run, which on a phone reads as an obstruction. The .alert
-       toast (stall, error, aborted) is the one state nothing else surfaces. */
+    /* Routine phase toasts duplicate the status bar and fire several times
+       per run, which on a phone reads as an obstruction. The alert toast
+       (stall, error, aborted) is the one state nothing else surfaces. */
     .phase-toast:not(.alert) {
       display: none;
     }

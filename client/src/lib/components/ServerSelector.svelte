@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { positionPopover } from "../actions/floating";
   import type { ServerIdentity } from "../servers/catalog";
   import { serverLabel } from "../presentation/serverAppearance";
 
@@ -41,14 +40,6 @@
       .filter((index) => !disabledIds.includes(options[index].id)),
   );
 
-  function position() {
-    const rect = trigger.getBoundingClientRect();
-    positionPopover(menu, rect, {
-      width: Math.max(rect.width, 220),
-      minHeight: 44,
-      maxHeight: 320,
-    });
-  }
   function highlight(index: number) {
     active = index;
     menu.children[index]?.scrollIntoView({ block: "nearest" });
@@ -59,7 +50,6 @@
     menu.showPopover();
     trigger.focus({ preventScroll: true });
     open = true;
-    position();
     highlight(active);
   }
   function choose(index: number) {
@@ -136,16 +126,6 @@
       highlight(
         enabled.find((index) => options[index].id === value) ?? enabled[0],
       );
-    window.addEventListener("resize", position);
-    window.visualViewport?.addEventListener("resize", position);
-    window.visualViewport?.addEventListener("scroll", position);
-    document.addEventListener("scroll", position, true);
-    return () => {
-      window.removeEventListener("resize", position);
-      window.visualViewport?.removeEventListener("resize", position);
-      window.visualViewport?.removeEventListener("scroll", position);
-      document.removeEventListener("scroll", position, true);
-    };
   });
 </script>
 
@@ -165,6 +145,7 @@
   {value}
   {disabled}
   popovertarget={`${descriptionId}-list`}
+  style:anchor-name={`--${descriptionId}`}
   onclick={(event) => {
     event.preventDefault();
     if (menu.matches(":popover-open")) {
@@ -180,8 +161,9 @@
 <div
   bind:this={menu}
   id={`${descriptionId}-list`}
-  class="server-menu gm-menu-list"
+  class="float popover menu server-menu"
   popover="auto"
+  style:position-anchor={`--${descriptionId}`}
   role="listbox"
   aria-label={label}
   ontoggle={(event) => {
@@ -218,19 +200,25 @@
     display: inline-flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
     width: var(--selector-width, auto);
     min-width: 0;
     max-width: 100%;
-    height: 32px;
-    padding: 0 8px;
+    height: var(--control-h);
+    padding: 0 var(--space-2);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background: var(--surface-inset);
-    color: var(--text);
-    font: 600 var(--type-xs)/1.3 var(--font-sans);
-    cursor: pointer;
-    transition: border-color 160ms ease;
+    font: 600 var(--type-xs) / 1.3 var(--font-sans);
+    transition: var(--transition-control);
+  }
+  @media (hover: hover) {
+    .server-selector:hover:not(:disabled) {
+      border-color: var(--border-strong);
+    }
+  }
+  .server-selector:disabled {
+    color: var(--text-soft);
   }
   .server-selector > span {
     overflow: hidden;
@@ -240,71 +228,37 @@
   svg {
     width: 14px;
     height: 14px;
-    flex: none;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.5;
   }
   .server-menu {
-    position: fixed;
-    inset: auto;
-    margin: 0;
-    padding: var(--space-1);
-    overflow: auto;
-    overscroll-behavior: contain;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    box-shadow: var(--shadow-float);
-  }
-  .server-menu:not(:popover-open) {
-    display: none;
+    min-width: 220px;
+    min-width: max(anchor-size(width), 220px);
+    max-height: 320px;
   }
   .server-menu > button {
     grid-template-columns: minmax(0, 1fr) 16px;
-    gap: 8px;
-    min-height: 44px;
-    padding: 6px 8px;
-    font: 600 var(--type-xs)/1.4 var(--font-sans);
+    min-height: var(--hit);
+    font-weight: 600;
     overflow-wrap: anywhere;
   }
-  .server-menu > button.active {
-    background: var(--brand-soft);
-    color: var(--text);
-  }
-  .server-menu > button:disabled {
-    color: var(--text-soft);
-    cursor: default;
+  .server-menu > button > span:first-child {
+    display: block;
+    color: inherit;
   }
   small {
     display: block;
     margin-top: 2px;
-    font-weight: 400;
     color: var(--text-muted);
+    font-weight: 400;
   }
   .selected {
     color: var(--brand-strong);
   }
-  .server-selector:hover:not(:disabled) {
-    border-color: var(--border-strong);
-  }
-  .server-selector:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .server-selector:disabled {
-    color: var(--text-soft);
-    cursor: default;
-  }
   @media (pointer: coarse) {
     .server-selector {
-      height: 44px;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .server-selector {
-      transition: none;
+      height: var(--hit);
     }
   }
 </style>

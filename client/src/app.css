@@ -1,4 +1,10 @@
-@import "tailwindcss";
+/* The design system: tokens, a compact reset, and the shared primitives every
+   component composes. Components keep only layout and identity-specific
+   styling; anything a second component would restate belongs here.
+
+   Layers keep this file below component styles: Svelte's scoped rules are
+   unlayered, so a component may refine a primitive without specificity work. */
+@layer reset, base, components;
 
 /* Fonts are self-hosted so the meter still renders correctly offline. */
 @font-face {
@@ -46,290 +52,194 @@
     U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-@theme {
+/* Theme: the stored preference stamps data-theme (store, index.html, and the
+   auth pages' theme.js); without it the OS preference applies. Every palette
+   token is one light-dark() pair, so switching is only color-scheme. */
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+/* Two viewport breakpoints exist, and media queries cannot read custom
+   properties: 760px (phone → tablet) and 1200px (docked panels, mirrored by
+   Console's MediaQuery). Everything else responds to its container. */
+:root {
   --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
   --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
   --font-mono:
     "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
     "Liberation Mono", monospace;
-}
 
-:root {
-  color-scheme: dark;
-
-  /* Shell breakpoints are duplicated in JS/media queries; keep literals in sync. */
   --topbar-h: 60px;
   --statusbar-h: 28px;
-  --rail-w: 268px;
-  --inspector-w: 380px;
-  --gap: 16px;
-
-  --bp-compact: 430px;
-  --bp-stacked: 759px;
-  --bp-dock: 1200px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-hover: 120ms;
   --dur-slide: 180ms;
   --dur-graph: 280ms;
+  --transition-control:
+    background-color var(--dur-hover) var(--ease-out),
+    border-color var(--dur-hover) var(--ease-out),
+    color var(--dur-hover) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out),
+    opacity var(--dur-hover) var(--ease-out);
 
-  /* Master feel knobs: most spacing, radii, and edge strength derive from these. */
-  --feel-radius: 1;
-  --feel-density: 1;
-  --feel-edge: 0.6;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
 
-  --space-1: calc(4px * var(--feel-density));
-  --space-2: calc(8px * var(--feel-density));
-  --space-3: calc(12px * var(--feel-density));
-  --space-4: calc(16px * var(--feel-density));
-  --space-5: calc(24px * var(--feel-density));
-  --space-6: calc(32px * var(--feel-density));
-
-  /* The only radius scale: recessed wells and tracks, chrome controls and
-     cards, the primary pill, and capsules (--r-full clamps to half the
-     shorter side). */
-  --r-well: calc(6px * var(--feel-radius));
-  --r-chrome: calc(8px * var(--feel-radius));
-  --r-pill: calc(12px * var(--feel-radius));
+  /* Recessed wells and tracks, chrome controls and cards, the primary pill,
+     and capsules (--r-full clamps to half the shorter side). */
+  --r-well: 6px;
+  --r-chrome: 8px;
+  --r-pill: 12px;
   --r-full: 999px;
 
-  --type-hero: clamp(40px, 6vw, 76px);
-  --type-xl: 22px;
-  --type-lg: 17px;
-  --type-md: 14px;
-  --type-sm: 12px;
+  /* 10px is the legibility floor for any text. */
+  --type-2xs: 10px;
   --type-xs: 11px;
+  --type-sm: 12px;
+  --type-md: 14px;
+  --type-lg: 17px;
+  --type-xl: 22px;
+  --w-normal: 500;
+  --w-strong: 650;
+  --w-heavy: 750;
   --track-tight: -0.02em;
+  --track-caps: 0.08em;
   --track-wide: 0.1em;
 
-  --edge-light: rgba(211, 219, 227, calc(0.07 * var(--feel-edge)));
-  --edge-shade: rgba(0, 0, 0, calc(0.4 * var(--feel-edge)));
+  --control-h: 32px;
+  --hit: 44px;
+  --icon: 16px;
+  --icon-sm: 13px;
+
+  /* This file is the source of truth for two hand-kept copies:
+     - client/index.html pre-paint <style>: --canvas and --text literals,
+       because this sheet loads with the bundle, too late for the first frame.
+     - client/src/auth/auth.css: the token subset the server-rendered auth
+       pages need. A Go test pins its colours, --focus-ring and
+       --edge-highlight against this file. */
+  --canvas: light-dark(#f0f2f3, #131518);
+  --bg: light-dark(#f5f6f7, #17191c);
+  --surface-1: light-dark(#ffffff, #1c1f23);
+  --surface-2: light-dark(#f0f3f4, #23262b);
+  --surface-3: light-dark(#e4e9eb, #2c3037);
+  --surface-inset: light-dark(#eef1f2, #16191d);
+  /* Surface sheen: the lit top of a tile, layered over its surface colour. */
+  --sheen: linear-gradient(180deg, var(--surface-2), transparent);
+
+  --border-subtle: light-dark(rgb(43 44 40 / 0.08), rgb(211 219 227 / 0.07));
+  --border: light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.11));
+  --border-strong: light-dark(rgb(43 44 40 / 0.22), rgb(211 219 227 / 0.2));
+
+  --text: light-dark(#26272a, #d9dce0);
+  --text-muted: light-dark(#454a4d, #9ba2aa);
+  --text-soft: light-dark(#505559, #8b929a);
+  --text-inverse: light-dark(#ffffff, #111315);
+
+  --brand: light-dark(#2f717a, #6db0b8);
+  --brand-strong: light-dark(#235257, #93cdd4);
+  --brand-soft: light-dark(rgb(47 113 122 / 0.12), rgb(109 176 184 / 0.14));
+
+  --signal: light-dark(#4b6076, #8ba3ba);
+  --signal-soft: light-dark(rgb(75 96 118 / 0.12), rgb(139 163 186 / 0.14));
+
+  --phase-warmup: light-dark(#70767d, #858c94);
+  --phase-latency: light-dark(#4b6076, #8ba3ba);
+  --phase-download: light-dark(#2f717a, #6db0b8);
+  --phase-upload: light-dark(#85683a, #bda36c);
+  --phase-bidirectional: light-dark(#6d5e94, #a695c8);
+  --phase-complete: light-dark(#445f79, #7590a5);
+
+  --ok: light-dark(#285443, #79ad91);
+  --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
+  --warn: light-dark(#6f5426, #c4a568);
+  --warn-soft: light-dark(rgb(111 84 38 / 0.13), rgb(196 165 104 / 0.14));
+  --err: light-dark(#a04a4a, #d89393);
+  --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
+
+  --grid-line: light-dark(rgb(43 44 40 / 0.06), rgb(211 219 227 / 0.05));
+  /* Edges of selected or active controls, and the dimming behind overlays. */
+  --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
+  --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
+  --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
+
+  /* Elevation. The ink is the shadow hue; depths differ per theme because a
+     dark canvas needs a much denser shadow to read at all. */
+  --shade: light-dark(rgb(43 44 40), rgb(5 7 9));
+  --edge-light: light-dark(rgb(255 255 255 / 0.36), rgb(211 219 227 / 0.04));
   /* Lit top edge of a brand-gradient surface. Theme-neutral: that gradient is
      dark enough to carry white in both palettes. */
-  --edge-highlight: rgba(255, 255, 255, 0.22);
-  --shadow-ink: 5, 7, 9;
-  --well-depth: 0.14;
-  --raise-depth: 0.28;
-
-  /* Elevation recipes stay theme-neutral; dark/light only swap primitives. */
+  --edge-highlight: rgb(255 255 255 / 0.22);
+  --elev-tile: inset 0 1px 0 var(--edge-light);
+  --elev-recess: inset 0 1px 2px
+    light-dark(rgb(43 44 40 / 0.024), rgb(5 7 9 / 0.056));
   --elev-inset:
-    inset 0 1px 2px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.8)),
-    inset 0 6px 14px rgba(var(--shadow-ink), calc(var(--well-depth) * 0.45));
+    inset 0 1px 2px light-dark(rgb(43 44 40 / 0.048), rgb(5 7 9 / 0.112)),
+    inset 0 6px 14px light-dark(rgb(43 44 40 / 0.027), rgb(5 7 9 / 0.063));
   --elev-raised:
     0 1px 0 var(--edge-light),
-    0 4px 14px rgba(var(--shadow-ink), var(--raise-depth));
-  --elev-flat: 0 0 0 transparent;
-  --elev-recess: inset 0 1px 2px
-    rgba(var(--shadow-ink), calc(var(--well-depth) * 0.4));
-  --elev-tile: inset 0 1px 0 var(--edge-light);
+    0 4px 14px light-dark(rgb(43 44 40 / 0.06), rgb(5 7 9 / 0.28));
+  --elev-tooltip: 0 4px 12px color-mix(in srgb, var(--shade) 18%, transparent);
+  --elev-float: 0 18px 60px light-dark(rgb(43 44 40 / 0.16), rgb(4 6 8 / 0.55));
 
   /* One ring for every focusable surface. Solid brand clears the 3:1 non-text
      contrast floor against the light palette's surfaces, where a translucent
      ring does not; components restate only the offset or radius they need. */
   --focus-ring: 2px solid var(--brand);
-
-  /* This file is the source of truth for two hand-kept copies; no build step
-     derives either, so a token change here is only half the edit.
-     - client/index.html pre-paint <style>: --canvas as a literal hex per theme
-       (`html { background }` and `[data-theme=light]`), because the bundle,
-       and thus this file, loads too late to own the first frame.
-     - client/src/auth/auth.css: the token subset the server-rendered auth
-       pages need. A Go test pins its colors, --focus-ring, and
-       --edge-highlight against this file; radii, type, and motion are
-       unpinned. */
-  --canvas: #131518;
-  --bg: #17191c;
-  --bg-elevated: #1c1f23;
-
-  --surface-1: #1c1f23;
-  --surface-2: #23262b;
-  --surface-3: #2c3037;
-  --surface-inset: #16191d;
-
-  --border-subtle: rgba(211, 219, 227, 0.07);
-  --border: rgba(211, 219, 227, 0.11);
-  --border-strong: rgba(211, 219, 227, 0.2);
-
-  --text: #d9dce0;
-  --text-muted: #9ba2aa;
-  --text-soft: #8b929a;
-  --text-inverse: #111315;
-
-  --brand: #6db0b8;
-  --brand-strong: #93cdd4;
-  --brand-muted: #47787e;
-  --brand-soft: rgba(109, 176, 184, 0.14);
-
-  --signal: #8ba3ba;
-  --signal-strong: #adc0d4;
-  --signal-soft: rgba(139, 163, 186, 0.14);
-
-  --phase-warmup: #858c94;
-  --phase-latency: #8ba3ba;
-  --phase-download: #6db0b8;
-  --phase-upload: #bda36c;
-  --phase-bidirectional: #a695c8;
-  --phase-complete: #7590a5;
-
-  --ok: #79ad91;
-  --ok-soft: rgba(121, 173, 145, 0.14);
-  --warn: #c4a568;
-  --warn-soft: rgba(196, 165, 104, 0.14);
-  --err: #d89393;
-  --err-soft: rgba(216, 147, 147, 0.15);
-
-  --shadow-card: 0 1px 1px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(5, 7, 9, 0.4);
-  --shadow-float: 0 18px 60px rgba(4, 6, 8, 0.55);
-
-  --grid-line: rgba(211, 219, 227, 0.05);
-  --grid-line-major: rgba(211, 219, 227, 0.1);
+  --ring-halo: 0 0 0 3px var(--brand-soft);
 }
 
-[data-theme="light"] {
-  color-scheme: light;
-
-  --canvas: #f0f2f3;
-  --bg: #f5f6f7;
-  --bg-elevated: #ffffff;
-
-  --surface-1: #ffffff;
-  --surface-2: #f0f3f4;
-  --surface-3: #e4e9eb;
-  --surface-inset: #eef1f2;
-
-  --border-subtle: rgba(43, 44, 40, 0.08);
-  --border: rgba(43, 44, 40, 0.13);
-  --border-strong: rgba(43, 44, 40, 0.22);
-
-  --text: #26272a;
-  --text-muted: #454a4d;
-  --text-soft: #505559;
-  --text-inverse: #ffffff;
-
-  --brand: #2f717a;
-  --brand-strong: #235257;
-  --brand-muted: #5f8f96;
-  --brand-soft: rgba(47, 113, 122, 0.12);
-
-  --signal: #4b6076;
-  --signal-strong: #364a5c;
-  --signal-soft: rgba(75, 96, 118, 0.12);
-
-  --phase-warmup: #70767d;
-  --phase-latency: #4b6076;
-  --phase-download: #2f717a;
-  --phase-upload: #85683a;
-  --phase-bidirectional: #6d5e94;
-  --phase-complete: #445f79;
-
-  --ok: #285443;
-  --ok-soft: rgba(50, 99, 80, 0.13);
-  --warn: #6f5426;
-  --warn-soft: rgba(111, 84, 38, 0.13);
-  --err: #a04a4a;
-  --err-soft: rgba(160, 74, 74, 0.13);
-
-  --shadow-card:
-    0 1px 1px rgba(43, 44, 40, 0.06), 0 8px 24px rgba(43, 44, 40, 0.08);
-  --shadow-float: 0 16px 50px rgba(43, 44, 40, 0.16);
-
-  --grid-line: rgba(43, 44, 40, 0.06);
-  --grid-line-major: rgba(43, 44, 40, 0.12);
-
-  --edge-light: rgba(255, 255, 255, calc(0.6 * var(--feel-edge)));
-  --edge-shade: rgba(43, 44, 40, calc(0.12 * var(--feel-edge)));
-  --shadow-ink: 43, 44, 40;
-  --well-depth: 0.06;
-  --raise-depth: 0.06;
+/* Measurement identity: a data-tone names the phase or state a surface
+   belongs to, and the derived line and wash follow it. */
+[data-tone] {
+  --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
+  --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
 }
-
-@theme inline {
-  --color-canvas: var(--canvas);
-  --color-bg: var(--bg);
-  --color-surface-1: var(--surface-1);
-  --color-surface-2: var(--surface-2);
-  --color-surface-3: var(--surface-3);
-  --color-surface-inset: var(--surface-inset);
-  --color-border: var(--border);
-  --color-border-subtle: var(--border-subtle);
-  --color-border-strong: var(--border-strong);
-  --color-text: var(--text);
-  --color-muted: var(--text-muted);
-  --color-soft: var(--text-soft);
-  --color-brand: var(--brand);
-  --color-brand-strong: var(--brand-strong);
-  --color-signal: var(--signal);
-  --color-ok: var(--ok);
-  --color-warn: var(--warn);
-  --color-err: var(--err);
+[data-tone="warmup"] {
+  --tone: var(--phase-warmup);
 }
-
-html,
-body {
-  height: 100%;
-  /* The center workspace scrolls; browser chrome changes resize the shell. */
-  overflow: clip;
+[data-tone="latency"],
+[data-tone="idle"],
+[data-tone="loaded"] {
+  --tone: var(--phase-latency);
 }
-
-body {
-  margin: 0;
-  background: var(--canvas);
-  color: var(--text);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+[data-tone="download"] {
+  --tone: var(--phase-download);
 }
-
-:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: 2px;
+[data-tone="upload"] {
+  --tone: var(--phase-upload);
 }
-
-.gm-menu-list {
-  display: grid;
-  gap: calc(var(--space-1) / 2);
+[data-tone="bidirectional"] {
+  --tone: var(--phase-bidirectional);
 }
-.gm-menu-list > button {
-  display: grid;
-  align-items: center;
-  width: 100%;
-  border: 0;
-  border-radius: var(--r-well);
-  background: transparent;
-  color: var(--text-muted);
-  text-align: left;
-  cursor: pointer;
+[data-tone="complete"] {
+  --tone: var(--phase-complete);
 }
-.gm-menu-list > button:focus-visible:not(:disabled) {
-  background: var(--brand-soft);
-  color: var(--text);
+[data-tone="brand"] {
+  --tone: var(--brand);
 }
-@media (hover: hover) {
-  .gm-menu-list > button:hover:not(:disabled) {
-    background: var(--brand-soft);
-    color: var(--text);
-  }
+[data-tone="ok"] {
+  --tone: var(--ok);
 }
-@media (prefers-reduced-motion: no-preference) {
-  .gm-reveal {
-    animation: gm-reveal var(--dur-hover) var(--ease-out) both;
-  }
-  .gm-menu-list > button {
-    transition:
-      background-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  @keyframes gm-reveal {
-    from {
-      opacity: 0;
-      transform: translateY(-3px) scale(0.985);
-    }
-  }
+[data-tone="warn"] {
+  --tone: var(--warn);
 }
-
-#console {
-  position: relative;
+[data-tone="err"] {
+  --tone: var(--err);
+}
+[data-tone="neutral"] {
+  --tone: var(--text-soft);
 }
 
 #console {
@@ -358,11 +268,650 @@ body {
   --active-accent: var(--err);
 }
 
+@layer reset {
+  *,
+  ::before,
+  ::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid;
+  }
+  dialog {
+    margin: auto;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    tab-size: 4;
+    line-height: 1.5;
+  }
+  img,
+  svg,
+  video,
+  canvas {
+    display: block;
+    max-width: 100%;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: transparent;
+  }
+  button,
+  summary,
+  label:has(input:not(:disabled)) {
+    cursor: pointer;
+  }
+  :disabled {
+    cursor: not-allowed;
+  }
+  ol,
+  ul,
+  menu {
+    list-style: none;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-size: inherit;
+    font-weight: inherit;
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+  a {
+    color: inherit;
+    text-decoration: inherit;
+  }
+  [hidden]:not([hidden="until-found"]) {
+    display: none !important;
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+    /* The centre workspace scrolls; browser chrome changes resize the shell. */
+    overflow: clip;
+    overscroll-behavior: none;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  :focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
+  }
+  /* Form fields share one inset treatment; the ring halo reads as focus. */
+  select,
+  input:where([type="number"], [type="text"], [type="search"]) {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-1);
+    color: var(--text);
+    font: var(--type-sm) var(--font-mono);
+    transition: var(--transition-control);
+  }
+  select:focus-visible,
+  input:where([type="number"], [type="text"], [type="search"]):focus-visible {
+    outline: none;
+    border-color: var(--brand-line);
+    box-shadow: var(--ring-halo);
+  }
+  kbd {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    box-shadow: var(--elev-tile);
+    color: var(--text-muted);
+    font: 600 var(--type-2xs) / 1 var(--font-mono);
+  }
+  ::selection {
+    background: color-mix(in srgb, var(--brand) 32%, transparent);
+  }
+}
+
+@layer components {
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Small uppercase technical label: section kickers, field and column
+     labels. Mono, because it names instrument quantities. */
+  .caps {
+    color: var(--text-soft);
+    font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+
+  /* Secondary explanatory copy under a control or section. */
+  .hint {
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+    line-height: 1.5;
+  }
+
+  /* A term with a tooltip definition. */
+  .term {
+    cursor: help;
+    text-decoration: underline dotted
+      color-mix(in srgb, var(--text-soft) 70%, transparent);
+    text-underline-offset: 3px;
+  }
+
+  /* Buttons. The visible edge is an inset ring so a coarse pointer can grow
+     the hit area with a transparent border without moving the drawn box. */
+  .btn {
+    --btn-line: var(--border);
+    --hit-pad: 0px;
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: calc(var(--control-h) + 2 * var(--hit-pad));
+    padding: 0 var(--space-3);
+    border: var(--hit-pad) solid transparent;
+    border-radius: calc(var(--r-chrome) + var(--hit-pad));
+    background: var(--surface-2) padding-box;
+    box-shadow:
+      inset 0 0 0 1px var(--btn-line),
+      var(--elev-tile);
+    color: var(--text-muted);
+    font: var(--w-strong) var(--type-xs) / 1.2 var(--font-sans);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: var(--transition-control);
+  }
+  .btn :where(svg) {
+    width: var(--icon);
+    height: var(--icon);
+  }
+  .btn:focus-visible {
+    outline-offset: calc(2px - var(--hit-pad));
+  }
+  .btn[aria-expanded="true"],
+  .btn[aria-pressed="true"] {
+    --btn-line: var(--border-strong);
+    color: var(--text);
+  }
+  @media (hover: hover) {
+    .btn:hover:not(:disabled, [aria-disabled="true"]) {
+      --btn-line: var(--border-strong);
+      color: var(--text);
+    }
+  }
+  .btn:is(:disabled, [aria-disabled="true"]) {
+    opacity: 0.5;
+  }
+  .btn-icon {
+    width: calc(var(--control-h) + 2 * var(--hit-pad));
+    padding: 0;
+  }
+  /* Recessed variant for dialogs and inspectors sitting on --surface-1. */
+  .btn-inset {
+    background-color: var(--surface-inset);
+  }
+  .btn-accent {
+    --btn-line: var(--brand-line);
+    color: var(--brand-strong);
+  }
+  .btn-danger {
+    --btn-line: var(--err-line);
+    background: transparent;
+    box-shadow: inset 0 0 0 1px var(--btn-line);
+  }
+  @media (hover: hover) {
+    .btn-danger:hover:not(:disabled) {
+      --btn-line: var(--err);
+      color: var(--err);
+    }
+  }
+  .btn-danger.btn-solid {
+    background: var(--err-soft) padding-box;
+    color: var(--text);
+  }
+  .btn-quiet {
+    --btn-line: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  @media (hover: hover) {
+    .btn-quiet:hover:not(:disabled) {
+      background: var(--brand-soft) padding-box;
+    }
+  }
+  .btn-link {
+    min-height: 0;
+    padding: 0;
+    background: none;
+    box-shadow: none;
+    color: var(--brand-strong);
+    font-weight: var(--w-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  @media (pointer: coarse) {
+    .btn:not(.btn-link) {
+      --hit-pad: 6px;
+    }
+  }
+
+  /* Status capsule. */
+  .badge {
+    --tone: var(--text-soft);
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 2px 7px;
+    border-radius: var(--r-full);
+    background: color-mix(in srgb, var(--tone) 14%, transparent);
+    color: var(--tone);
+    font: var(--w-heavy) var(--type-2xs) / 1.3 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* Tone-tinted inline message. */
+  .notice {
+    --tone: var(--signal);
+    --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
+    --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--tone-line);
+    border-radius: var(--r-well);
+    background: var(--tone-wash);
+    color: var(--text);
+    font-size: var(--type-xs);
+    line-height: 1.5;
+  }
+  .notice :where(strong) {
+    color: var(--tone);
+  }
+
+  /* Surfaces: a raised tile, a recessed panel, a deep instrument well, and
+     the lit header strip that tops a sectioned surface. */
+  .surface {
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
+  }
+  .surface-inset {
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--sheen), var(--surface-inset);
+    box-shadow: var(--elev-recess);
+  }
+  .well {
+    border: 1px solid var(--border);
+    border-radius: var(--r-well);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-inset);
+  }
+  .surface-head {
+    border-bottom: 1px solid var(--border-strong);
+    background: var(--sheen), var(--surface-1);
+    box-shadow: var(--elev-tile);
+  }
+
+  /* A phase glyph in a tone-bordered tile. */
+  .tone-icon {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid var(--tone-line, var(--border));
+    border-radius: var(--r-well);
+    background: var(--surface-2);
+    color: var(--tone, var(--text-soft));
+  }
+  .tone-icon :where(svg) {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
+  }
+
+  /* Key/value list: labels wrap above values when the row runs out of room. */
+  .kv {
+    display: grid;
+    gap: var(--space-2);
+  }
+  .kv > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px var(--space-3);
+    min-width: 0;
+  }
+  .kv dt {
+    flex: 0 0 var(--kv-label, 7.5rem);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+    font-weight: var(--w-strong);
+  }
+  .kv dd {
+    flex: 1 1 10rem;
+    min-width: 0;
+    color: var(--text);
+    font-size: var(--type-sm);
+    line-height: 1.43;
+    overflow-wrap: anywhere;
+  }
+
+  /* Labelled form field: a caps label above its control. */
+  .field {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+  }
+  .field > span:first-child {
+    color: var(--text-soft);
+    font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
+
+  /* Segmented control: one pressed choice in a recessed track. */
+  .segmented {
+    display: flex;
+    gap: 3px;
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
+  }
+  .segmented > button {
+    flex: 1;
+    min-width: 0;
+    min-height: 30px;
+    overflow: hidden;
+    border-radius: var(--r-well);
+    color: var(--text-soft);
+    font: var(--w-heavy) var(--type-xs) / 1.2 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: var(--transition-control);
+  }
+  @media (hover: hover) {
+    .segmented > button:hover:not(:disabled) {
+      color: var(--text);
+    }
+  }
+  .segmented > button[aria-pressed="true"] {
+    background: var(--brand-soft);
+    color: var(--brand-strong);
+  }
+
+  /* Disclosure: a details element with a rotating chevron. */
+  .disclosure > summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    list-style: none;
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    font-weight: var(--w-strong);
+    transition: var(--transition-control);
+  }
+  .disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+  .disclosure > summary::before {
+    content: "";
+    flex: none;
+    width: 6px;
+    height: 6px;
+    border: solid var(--brand);
+    border-width: 0 1.5px 1.5px 0;
+    transform: translateX(-1px) rotate(-45deg);
+    transition: transform var(--dur-hover) var(--ease-out);
+  }
+  .disclosure[open] > summary::before {
+    transform: translateY(-1px) rotate(45deg);
+  }
+  @media (hover: hover) {
+    .disclosure > summary:hover {
+      color: var(--text);
+    }
+  }
+
+  /* Centred placeholder for loading, empty and error states. */
+  .empty-state {
+    display: grid;
+    flex: 1;
+    justify-items: center;
+    align-content: center;
+    gap: var(--space-2);
+    min-height: 280px;
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: var(--type-sm);
+    line-height: 1.5;
+    text-align: center;
+  }
+  .empty-state > :where(h1, h2) {
+    color: var(--text);
+    font-size: var(--type-lg);
+    font-weight: var(--w-strong);
+  }
+  .empty-state > :where(p) {
+    max-width: 420px;
+  }
+  .empty-state > :where(.btn) {
+    margin-top: var(--space-2);
+  }
+  .empty-icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-bottom: var(--space-1);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
+    color: var(--tone, var(--brand));
+    font: var(--w-heavy) var(--type-lg) var(--font-mono);
+  }
+  .empty-icon :where(svg) {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Floating surfaces: menus, popovers, and dialogs share one shell. */
+  .float {
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-chrome);
+    background: var(--surface-1);
+    color: var(--text);
+    box-shadow: var(--elev-float);
+  }
+
+  /* Popovers anchor to their invoker; the fallbacks flip them on-screen. */
+  .popover {
+    position: fixed;
+    inset: auto;
+    margin: 6px 0;
+    max-width: calc(100vw - 16px);
+    max-height: min(420px, calc(100dvh - 16px));
+    overflow: auto;
+    overscroll-behavior: contain;
+    position-area: block-end span-inline-end;
+    position-try-fallbacks:
+      flip-block,
+      flip-inline,
+      flip-block flip-inline;
+    position-visibility: anchors-visible;
+  }
+  .popover.align-end {
+    position-area: block-end span-inline-start;
+  }
+  /* Without anchor positioning a popover centres in the viewport. */
+  @supports not (position-area: block-end) {
+    .popover {
+      inset: 0;
+      margin: auto;
+    }
+  }
+
+  .menu {
+    display: grid;
+    gap: 2px;
+    padding: var(--space-1);
+  }
+  .menu > button {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    min-height: 40px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--r-well);
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+    text-align: start;
+    transition: var(--transition-control);
+  }
+  .menu > button > :where(:first-child) {
+    display: grid;
+    place-items: center;
+    color: var(--brand-strong);
+  }
+  .menu > button :where(svg) {
+    width: var(--icon);
+    height: var(--icon);
+  }
+  .menu
+    > button:is(
+      :focus-visible,
+      .active,
+      [aria-current]:not([aria-current="false"]),
+      [aria-checked="true"],
+      [aria-pressed="true"]
+    ) {
+    outline: none;
+    background: var(--brand-soft);
+    color: var(--text);
+  }
+  @media (hover: hover) {
+    .menu > button:hover:not(:disabled) {
+      background: var(--brand-soft);
+      color: var(--text);
+    }
+  }
+  .menu > button:disabled {
+    opacity: 0.55;
+  }
+
+  .tooltip {
+    position: fixed;
+    inset: auto;
+    z-index: 200;
+    max-width: min(300px, calc(100vw - 16px));
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--r-chrome);
+    background: var(--surface-2);
+    color: var(--text);
+    box-shadow: var(--elev-tooltip);
+    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    letter-spacing: 0;
+    text-transform: none;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+    opacity: 0;
+    translate: 0 2px;
+    transition:
+      opacity var(--dur-hover) var(--ease-out),
+      translate var(--dur-hover) var(--ease-out);
+  }
+  .tooltip[data-show="true"] {
+    opacity: 1;
+    translate: none;
+  }
+
+  /* Entry motion: one short fade-and-settle for anything that appears,
+     including popovers and dialogs entering the top layer. */
+  .enter,
+  .popover,
+  dialog.float {
+    transition:
+      opacity var(--dur-hover) var(--ease-out),
+      translate var(--dur-hover) var(--ease-out),
+      overlay var(--dur-hover) allow-discrete,
+      display var(--dur-hover) allow-discrete;
+  }
+  .popover:not(:popover-open),
+  dialog.float:not([open]) {
+    opacity: 0;
+    translate: 0 -3px;
+  }
+  @starting-style {
+    .enter,
+    .popover:popover-open,
+    dialog.float[open] {
+      opacity: 0;
+      translate: 0 3px;
+    }
+  }
+  dialog.float::backdrop {
+    background: var(--scrim);
+    transition:
+      opacity var(--dur-hover) var(--ease-out),
+      overlay var(--dur-hover) allow-discrete,
+      display var(--dur-hover) allow-discrete;
+  }
+  @starting-style {
+    dialog.float[open]::backdrop {
+      opacity: 0;
+    }
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
-  *::before,
-  *::after {
+  ::before,
+  ::after,
+  ::backdrop {
     animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }

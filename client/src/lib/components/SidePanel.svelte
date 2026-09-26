@@ -173,11 +173,11 @@
     </div>
     <header class="panel-head">
       <div class="title">
-        {#if kicker}<span class="kicker">{kicker}</span>{/if}
+        {#if kicker}<span class="caps">{kicker}</span>{/if}
         <h2>{title}</h2>
       </div>
       <button
-        class="close-btn"
+        class="btn btn-icon btn-inset"
         aria-label={`Close ${title}`}
         use:tooltip={"Close (Esc)"}
         onclick={close}
@@ -198,23 +198,20 @@
   .panel-layer {
     display: contents;
   }
-
   .backdrop {
     position: fixed;
     inset: var(--topbar-h) 0 0 0;
     z-index: 49;
-    border: 0;
-    padding: 0;
-    background: color-mix(in srgb, var(--canvas) 55%, transparent);
+    background: var(--scrim);
     opacity: 0;
     pointer-events: none;
     transition: opacity var(--dur-slide) var(--ease-out);
   }
-  .panel-layer.open .backdrop {
+  .open .backdrop {
     opacity: 1;
     pointer-events: auto;
   }
-  .panel-layer.docked .backdrop {
+  .docked .backdrop {
     display: none;
   }
 
@@ -222,138 +219,113 @@
     position: fixed;
     top: var(--topbar-h);
     bottom: var(--statusbar-h);
-    width: var(--panel-w, min(480px, 92vw));
     z-index: 50;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%),
-      var(--surface-1);
-    box-shadow: var(--shadow-float);
+    width: var(--panel-w, min(480px, 92vw));
     padding: var(--space-4);
-    pointer-events: auto;
+    background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%);
+    box-shadow: var(--elev-float);
     transition: transform var(--dur-slide) var(--ease-out);
   }
   .panel[data-side="right"] {
+    grid-area: rightdock;
     right: 0;
     border-left: 1px solid var(--border-strong);
     transform: translateX(100%);
-    grid-area: rightdock;
   }
   .panel[data-side="left"] {
+    grid-area: leftdock;
     left: 0;
     border-right: 1px solid var(--border-strong);
     transform: translateX(-100%);
-    grid-area: leftdock;
   }
-  .panel-layer.open .panel {
-    transform: translateX(0);
+  .open .panel {
+    transform: none;
   }
-  .panel-layer.raised:not(.docked) .panel {
+  .raised:not(.docked) .panel {
     z-index: 51;
   }
-
-  .panel-layer.docked .panel {
+  .docked .panel {
     position: relative;
-    top: 0;
-    bottom: auto;
+    inset: auto;
+    z-index: auto;
     width: auto;
     height: 100%;
-    transform: none;
-    z-index: auto;
     box-shadow: none;
+    transform: none;
     transition: none;
+  }
+  .docked:not(.open) .panel {
+    display: none;
   }
 
   .resize-handle {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 11px;
+    inset-block: 0;
     z-index: 3;
+    width: 11px;
     cursor: col-resize;
     touch-action: none;
   }
-  .panel[data-side="left"] .resize-handle {
+  [data-side="left"] .resize-handle {
     right: -6px;
   }
-  .panel[data-side="right"] .resize-handle {
+  [data-side="right"] .resize-handle {
     left: -6px;
   }
   .resize-handle::after {
     content: "";
     position: absolute;
-    top: 0;
-    bottom: 0;
+    inset-block: 0;
     left: 50%;
     width: 2px;
-    transform: translateX(-50%);
-    background: transparent;
-    transition: background var(--dur-hover) var(--ease-out);
+    translate: -50%;
+    transition: background-color var(--dur-hover) var(--ease-out);
   }
-  .resize-handle:hover::after,
-  .resize-handle:focus-visible::after {
+  .resize-handle:is(:hover, :focus-visible)::after {
     background: color-mix(in srgb, var(--brand) 65%, transparent);
   }
   .resize-handle:focus-visible {
     outline: none;
   }
-  .panel-layer.docked:not(.open) .panel {
-    display: none;
-  }
 
+  .sheet-handle {
+    display: none;
+    flex: none;
+    justify-content: center;
+    height: 8px;
+  }
+  .sheet-grip {
+    width: 36px;
+    height: 4px;
+    margin-top: -6px;
+    border-radius: var(--r-full);
+    background: var(--border-strong);
+  }
   /* Only portrait phones use a bottom sheet. A short landscape phone remains
      a side flyout with its own scrollport, the same model as a tablet. */
   @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) .panel {
-      top: auto;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      inset: auto 0 0;
       width: 100%;
       height: 88dvh;
-      border-radius: var(--r-well) var(--r-well) 0 0;
       padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      border-radius: var(--r-well) var(--r-well) 0 0;
       transform: translateY(100%);
     }
-    .panel-layer.open:not(.docked) .panel {
-      transform: translateY(0);
+    .open:not(.docked) .panel {
+      transform: none;
     }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .panel,
-    .backdrop {
-      transition: none;
-    }
-  }
-
-  .sheet-handle {
-    display: none;
-    flex: 0 0 auto;
-    width: 100%;
-    height: 8px;
-    align-items: start;
-  }
-  .sheet-grip {
-    display: block;
-    width: 36px;
-    height: 4px;
-    margin: -6px auto 0;
-    border-radius: var(--r-full);
-    background: var(--border-strong);
-  }
-  @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
-      justify-content: center;
     }
   }
 
   .panel-head {
-    flex: 0 0 auto;
     display: flex;
+    flex: none;
     align-items: flex-start;
     justify-content: space-between;
     gap: var(--space-3);
@@ -362,89 +334,35 @@
   .title {
     min-width: 0;
   }
-  .title .kicker {
+  .title .caps {
     color: var(--brand-strong);
-    font-family: var(--font-mono);
-    font-size: var(--type-xs);
-    font-weight: 800;
     letter-spacing: 0.14em;
-    text-transform: uppercase;
   }
-  .title h2 {
-    margin: 2px 0 0;
-    font-family: var(--font-display);
-    font-size: var(--type-xl);
-    font-weight: 600;
+  h2 {
+    margin-top: 2px;
+    font: 600 var(--type-xl) var(--font-display);
     letter-spacing: var(--track-tight);
-    color: var(--text);
     overflow-wrap: anywhere;
   }
-
-  .close-btn {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 34px;
-    height: 34px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-tile);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out),
-      background var(--dur-hover) var(--ease-out);
-  }
-  .close-btn:hover {
-    border-color: var(--border-strong);
-    background: var(--surface-2);
-    color: var(--text);
-  }
-  .close-btn :global(svg) {
-    width: 18px;
-    height: 18px;
-  }
-
   .panel-toolbar {
-    flex: 0 0 auto;
+    flex: none;
     min-width: 0;
   }
-
   .panel-body {
+    display: flex;
     flex: 1 1 auto;
-    min-height: 0;
+    flex-direction: column;
+    gap: var(--space-4);
     min-width: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
+    min-height: 0;
+    overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    -webkit-overflow-scrolling: touch;
-    /* Overlay scrollbars sit over the scrollport in several engines. Reserve
-       a physical inset so the thumb cannot cover cards or form controls. */
+    /* Overlay scrollbars sit over the scrollport in several engines; reserve
+       an inset so the thumb cannot cover cards or form controls. */
     padding-right: calc(var(--space-2) + 12px);
     scrollbar-gutter: stable;
     scrollbar-width: thin;
     scrollbar-color: var(--border-strong) transparent;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .panel-body::-webkit-scrollbar {
-    width: 10px;
-  }
-  .panel-body::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .panel-body::-webkit-scrollbar-thumb {
-    border: 3px solid transparent;
-    border-radius: var(--r-full);
-    background: var(--border-strong);
-    background-clip: padding-box;
-  }
-  .panel-body::-webkit-scrollbar-thumb:hover {
-    background: var(--text-soft);
-    background-clip: padding-box;
   }
 </style>

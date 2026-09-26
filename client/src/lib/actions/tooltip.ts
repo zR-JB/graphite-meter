@@ -1,4 +1,30 @@
-import { floatingViewport, clampFloatingPosition } from "./floating";
+/** Fixed overlays use the visible viewport, including pinch zoom and panning. */
+function floatingViewport() {
+  const viewport = window.visualViewport;
+  const left = viewport?.offsetLeft ?? 0;
+  const top = viewport?.offsetTop ?? 0;
+  const width = viewport?.width ?? innerWidth;
+  const height = viewport?.height ?? innerHeight;
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
+
+function clampFloatingPosition(
+  element: HTMLElement,
+  left: number,
+  top: number,
+  viewport: ReturnType<typeof floatingViewport>,
+) {
+  element.style.left = `${Math.max(viewport.left + 8, Math.min(left, viewport.right - element.offsetWidth - 8))}px`;
+  element.style.top = `${Math.max(viewport.top + 8, Math.min(top, viewport.bottom - element.offsetHeight - 8))}px`;
+}
+
 // Svelte tooltip action plus the shared jargon dictionary for metric labels and settings controls.
 const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
 interface TooltipOptions {
@@ -10,58 +36,12 @@ interface TooltipOptions {
 }
 type TooltipParam = string | TooltipOptions;
 let uid = 0;
-const STYLE_ID = "gm-tooltip-styles";
 const HOVER_DELAY_MS = 350;
 const TOUCH_DISMISS_MS = 4000;
-function ensureStyles() {
-  if (typeof document === "undefined") return;
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = `
-    .gm-tooltip {
-      position: fixed;
-      inset: auto;
-      margin: 0;
-      z-index: 200;
-      max-width: min(300px, calc(100vw - 16px));
-      padding: var(--space-2) var(--space-3);
-      border: 1px solid var(--border-strong);
-      border-radius: var(--r-chrome);
-      background: var(--surface-2);
-      color: var(--text);
-      box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
-      font-family: var(--font-sans);
-      font-size: var(--type-sm);
-      line-height: 1.4;
-      font-weight: 500;
-      letter-spacing: 0;
-      text-transform: none;
-      white-space: pre-line;
-      overflow-wrap: anywhere;
-      pointer-events: none;
-      opacity: 0;
-      transform: translateY(2px);
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      .gm-tooltip {
-        transition:
-          opacity var(--dur-hover) var(--ease-out),
-          transform var(--dur-hover) var(--ease-out);
-      }
-    }
-    .gm-tooltip[data-show="true"] {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  `;
-  document.head.appendChild(style);
-}
 function normalize(param: TooltipParam): TooltipOptions {
   return typeof param === "string" ? { text: param } : param;
 }
 export function tooltip(node: HTMLElement, param: TooltipParam) {
-  ensureStyles();
   let opts = normalize(param);
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
@@ -76,8 +56,14 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     anchor: DOMRect;
     viewport: ReturnType<typeof floatingViewport>;
   } | null = null;
-  // Non-interactive jargon terms still need keyboard focus for aria-describedby.
-  if (!node.hasAttribute("tabindex") && node.tabIndex < 0) {
+  // Definitions (.term) and notes stay reachable by keyboard; other inert
+  // anchors already carry their text in an accessible name, so they do not
+  // add a tab stop per value.
+  if (
+    !node.hasAttribute("tabindex") &&
+    node.tabIndex < 0 &&
+    node.matches(".term, [role='note']")
+  ) {
     node.tabIndex = 0;
   }
   // Centred on the anchor, flipped to the opposite side when the requested one overflows the viewport, then clamped.
@@ -106,7 +92,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function show() {
     if (opts.disabled || bubble || !opts.text) return;
     bubble = document.createElement("div");
-    bubble.className = "gm-tooltip";
+    bubble.className = "tooltip";
     bubble.id = id;
     bubble.setAttribute("role", "tooltip");
     bubble.textContent = opts.text;

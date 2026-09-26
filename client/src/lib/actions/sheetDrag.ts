@@ -1,5 +1,3 @@
-import { acquirePageScrollLock } from "./pageScrollLock";
-
 interface SheetDragOptions {
   enabled: boolean;
   backdrop?: HTMLElement;
@@ -37,7 +35,6 @@ export function shouldDismissSheet({
 }
 export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   let opts = options;
-  let releasePageLock: (() => void) | undefined;
   let resetTimer: number | undefined;
   let gesture:
     | {
@@ -56,14 +53,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
   // Only portrait phones present this panel as a draggable bottom sheet.
   const isBottomSheetLayout = () =>
     window.matchMedia("(max-width: 759px) and (orientation: portrait)").matches;
-  function setPageLocked(locked: boolean) {
-    if (locked === Boolean(releasePageLock)) return;
-    if (locked) releasePageLock = acquirePageScrollLock();
-    else {
-      releasePageLock?.();
-      releasePageLock = undefined;
-    }
-  }
   function reset() {
     window.clearTimeout(resetTimer);
     node.style.transition = "";
@@ -183,11 +172,9 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     node.addEventListener(type, listener as EventListener, {
       passive: type !== "touchmove",
     });
-  setPageLocked(opts.enabled);
   return {
     update(next: SheetDragOptions) {
       opts = next;
-      setPageLocked(opts.enabled);
       if (!opts.enabled) {
         gesture = undefined;
         reset();
@@ -196,7 +183,6 @@ export function sheetDrag(node: HTMLElement, options: SheetDragOptions) {
     destroy() {
       for (const [type, listener] of listeners)
         node.removeEventListener(type, listener as EventListener);
-      setPageLocked(false);
       reset();
     },
   };

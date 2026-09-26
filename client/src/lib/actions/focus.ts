@@ -25,6 +25,8 @@ export function hasFocus(): boolean {
 export function activeModal(): HTMLElement | null {
   const active = document.activeElement;
   if (!(active instanceof HTMLElement)) return null;
-  const modal = active.closest<HTMLElement>('[aria-modal="true"]');
+  const modal = active.closest<HTMLElement>(
+    'dialog:modal, [aria-modal="true"]',
+  );
   return canFocus(modal) ? modal : null;
 }

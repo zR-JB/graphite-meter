@@ -162,6 +162,7 @@
   <div class="selection-notice" role="status">
     <p>The saved selection has changed.</p>
     <button
+      class="btn"
       type="button"
       disabled={locked}
       onclick={() =>
@@ -177,6 +178,7 @@
       {store.catalogLoading ? "Loading servers…" : "Could not load servers."}
     </p>
     <button
+      class="btn"
       type="button"
       disabled={locked || store.catalogLoading}
       onclick={() => void controller.retryCatalogue()}>Retry servers</button
@@ -192,7 +194,7 @@
         >{/if}
     </div>
     <p class="feedback-message">
-      {#key pending}<span
+      {#key pending}<span class="enter"
           >{pending
             ? `Checking ${server.name}…`
             : store.serverReadiness.get(server.id)?.message}</span
@@ -200,6 +202,7 @@
     </p>
     {#if store.serverReadiness.get(server.id)?.state === "sign-in"}
       <button
+        class="btn"
         type="button"
         disabled={locked ||
           (store.serverApproval?.id === server.id &&
@@ -213,6 +216,7 @@
       >
     {:else}
       <button
+        class="btn"
         type="button"
         disabled={locked}
         aria-disabled={pending}
@@ -240,8 +244,10 @@
           Approve only if both codes match.
         </p>
       {/if}
-      <button type="button" onclick={controller.cancelServerApproval}
-        >Cancel sign-in</button
+      <button
+        class="btn"
+        type="button"
+        onclick={controller.cancelServerApproval}>Cancel sign-in</button
       >
       {#if !store.serverApproval.renewUrl}
         <p>
@@ -261,25 +267,17 @@
 {/each}
 
 <style>
-  .approval-code strong {
-    display: block;
-    padding-block: 4px;
-    font: 600 var(--type-lg)/1.4 var(--font-mono);
-    letter-spacing: 0.12em;
-  }
   .server-setting {
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-2);
     min-width: 0;
-    gap: 8px;
-    font: var(--type-sm)/1.4 var(--font-sans);
+    font: var(--type-sm) / 1.4 var(--font-sans);
   }
-  .server-heading,
-  .latency-policy {
+  .server-heading {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 8px;
+    gap: var(--space-2);
   }
   strong {
     font-size: var(--type-sm);
@@ -292,12 +290,10 @@
   .latency-policy {
     --selector-width: 100%;
     display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    min-width: 0;
-    width: 100%;
     justify-items: start;
     gap: 6px;
-    padding-top: 4px;
+    min-width: 0;
+    padding-top: var(--space-1);
   }
   .server-choices {
     display: grid;
@@ -307,34 +303,30 @@
     overflow-y: auto;
     padding: 3px;
     border: 1px solid var(--border);
-    border-radius: calc(var(--r-well) + 4px);
+    border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
   .server-choices label {
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr) auto;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
-    min-height: 32px;
-    padding: 6px 8px;
+    min-height: var(--control-h);
+    padding: 6px var(--space-2);
     border: 1px solid transparent;
     border-radius: var(--r-well);
-    background: transparent;
     color: var(--text-muted);
-    cursor: pointer;
-    transition:
-      background 160ms ease,
-      border-color 160ms ease;
+    transition: var(--transition-control);
   }
   .server-choices label.checked {
-    color: var(--text);
     border-color: color-mix(
       in srgb,
       var(--server-accent) 28%,
       var(--border-strong)
     );
     background: var(--surface-1);
+    color: var(--text);
   }
   .server-choices input {
     appearance: none;
@@ -342,10 +334,8 @@
     place-content: center;
     width: 14px;
     height: 14px;
-    margin: 0;
     border: 1px solid var(--border-strong);
     border-radius: 3px;
-    background: transparent;
     color: var(--brand-strong);
     cursor: inherit;
   }
@@ -371,23 +361,20 @@
   .server-choices label:not(.checked):has(input:disabled) {
     opacity: 0.55;
   }
-  .server-choices .server-name {
-    text-align: left;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--type-xs);
-    font-weight: 600;
-  }
   .server-identity {
     display: grid;
-    min-width: 0;
     gap: 2px;
-    text-align: left;
+    min-width: 0;
+  }
+  .server-name {
+    overflow: hidden;
+    font-size: var(--type-xs);
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .server-status {
-    font-size: 10px;
+    font-size: var(--type-2xs);
     line-height: 1.3;
   }
   .server-status[data-state="failed"],
@@ -400,19 +387,16 @@
   .server-preflight {
     display: flex;
     align-items: baseline;
-    justify-content: flex-end;
     gap: 2px;
-    color: var(--text-muted);
-    font: var(--type-xs)/1.3 var(--font-mono);
+    font: var(--type-xs) / 1.3 var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
   .server-preflight span {
     color: var(--text-soft);
-    font-size: 9px;
+    font-size: var(--type-2xs);
   }
   .selection-help {
-    margin: 0;
     font-size: var(--type-xs);
   }
   .feedback-message {
@@ -421,45 +405,14 @@
   .feedback-message span {
     display: inline-block;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .feedback-message span {
-      animation: feedback-enter var(--dur-hover) var(--ease-out) both;
-    }
-    .server-choices input:checked::after {
-      animation: check-enter var(--dur-hover) var(--ease-out) both;
-    }
-  }
-  @keyframes feedback-enter {
-    from {
-      opacity: 0.6;
-      transform: translateY(1px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  @keyframes check-enter {
-    from {
-      opacity: 0;
-      transform: translateY(-1px) rotate(-45deg) scale(0.8);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(-1px) rotate(-45deg) scale(1);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .server-choices label {
-      transition: none;
-    }
-  }
-
   .server-feedback,
   .selection-notice {
-    padding: 10px 0;
+    display: grid;
+    justify-items: start;
+    gap: var(--space-1);
+    padding-block: 10px;
     border-top: 1px solid var(--border);
-    font: var(--type-xs)/1.5 var(--font-sans);
+    font: var(--type-xs) / 1.5 var(--font-sans);
   }
   .server-feedback > div {
     display: flex;
@@ -468,30 +421,18 @@
     gap: 6px;
   }
   p {
-    margin: 4px 0;
     color: var(--text-muted);
     overflow-wrap: anywhere;
   }
-  button,
   a {
     color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
-  button {
-    border: 0;
-    border-radius: 999px;
-    background: var(--brand-soft);
-    min-height: 32px;
-    padding: 5px 12px;
-    font: 600 var(--type-xs)/1.3 var(--font-sans);
-    cursor: pointer;
-  }
-  button:disabled,
-  button[aria-disabled="true"] {
-    opacity: 0.5;
-    cursor: default;
-  }
-  button:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
+  .approval-code strong {
+    display: block;
+    padding-block: var(--space-1);
+    font: 600 var(--type-lg) / 1.4 var(--font-mono);
+    letter-spacing: 0.12em;
   }
 </style>

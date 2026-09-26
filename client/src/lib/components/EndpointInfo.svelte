@@ -20,6 +20,12 @@
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
+  const BADGE_TONE: Partial<Record<string, string>> = {
+    verified: "ok",
+    ready: "ok",
+    active: "brand",
+    used: "neutral",
+  };
 
   let inspectedServer = $state("");
   const availableServers = $derived(
@@ -204,19 +210,19 @@
 
 <section class="infra">
   <div class="grid">
-    <article class="card server-card">
+    <article class="surface-inset card server-card">
       <header>
-        <h3>
+        <h3 class="caps">
           {pathMode === "live" ? "Selected endpoints" : "Tested endpoints"}
         </h3>
-        <span class="scope-label"
+        <span class="hint"
           >{availableServers.length > 1
             ? `${availableServers.length} servers`
             : "Single server"}</span
         >
       </header>
       {#if availableServers.length > 1}
-        <label class="server-picker">
+        <label class="field server-picker">
           <span>Inspect server</span>
           <select
             value={selectedServer?.id}
@@ -228,7 +234,7 @@
           </select>
         </label>
       {/if}
-      <dl>
+      <dl class="kv">
         <div>
           <dt>Node</dt>
           <dd>{server?.name ?? "Checking server"}</dd>
@@ -244,7 +250,7 @@
           </div>
         {/if}
       </dl>
-      <p class="scope-note">
+      <p class="hint">
         {pathMode === "live"
           ? "Current selection and verified connections."
           : pathMode === "running"
@@ -259,13 +265,14 @@
     {#each PATH_ROLES as role}
       {@const connection = connections[role]}
       {@const status = endpointPathStatus(connection.validation, pathMode)}
-      <article class="card path">
+      <article class="surface-inset card path">
         <header>
-          <h3>{role} path</h3>
+          <h3 class="caps">{role} path</h3>
           <mark
-            data-state={role === "latency" && !latencyRequested
-              ? "used"
-              : status.tone}
+            class="badge"
+            data-tone={BADGE_TONE[
+              role === "latency" && !latencyRequested ? "used" : status.tone
+            ] ?? "warn"}
             >{role === "latency" && !latencyRequested
               ? pathMode === "live"
                 ? "Not selected"
@@ -273,7 +280,7 @@
               : status.label}</mark
           >
         </header>
-        <dl>
+        <dl class="kv">
           <div>
             <dt>Selected</dt>
             <dd>
@@ -314,9 +321,9 @@
     {/each}
   </div>
 
-  <details class="card capabilities-card">
+  <details class="surface-inset card disclosure capabilities-card">
     <summary>Server capabilities</summary>
-    <dl>
+    <dl class="kv">
       <div>
         <dt>HTTP versions</dt>
         {#if httpPaths === null}
@@ -326,7 +333,7 @@
         {:else}
           <dd class="protocols" aria-label={httpPaths.join(" · ")}>
             {#each httpPaths as path}
-              <span class="protocol">{path}</span>
+              <span class="badge" data-tone="brand">{path}</span>
             {/each}
           </dd>
         {/if}
@@ -342,10 +349,10 @@
     </dl>
   </details>
 
-  <details class="diagnostics-card">
+  <details class="surface-inset disclosure diagnostics-card">
     <summary>Diagnostics</summary>
     <div class="diagnostics">
-      <dl>
+      <dl class="kv">
         <div>
           <dt>Server instance</dt>
           <dd title={discovery?.generation ?? undefined}>
@@ -399,14 +406,14 @@
           <dd>{transferStreams}</dd>
         </div>
       </dl>
-      <p class="diagnostic-note">
+      <p class="hint">
         Server instance changes when the backend restarts. Path evidence names
         browser and server observations only when that path exposes them.
       </p>
-      <button type="button" onclick={copyReport}
+      <button class="btn" type="button" onclick={copyReport}
         >{copied ? "Copied" : "Copy diagnostic report"}</button
       >
-      <span class="sr-status" aria-live="polite"
+      <span class="sr-only" aria-live="polite"
         >{copied
           ? "Diagnostic report copied"
           : copyError
@@ -418,249 +425,64 @@
 </section>
 
 <style>
+  .infra,
+  .grid {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  }
   .server-card {
     grid-column: 1 / -1;
   }
-  .scope-label {
-    font-size: 11px;
-    color: var(--text-soft);
-  }
-  .scope-note {
-    margin: 10px 0 0;
-    color: var(--text-soft);
-    font-size: 11px;
-    line-height: 1.45;
-  }
-  .endpoint-failure {
-    color: var(--err);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .server-picker {
-    display: grid;
-    gap: 5px;
-    margin-bottom: 12px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-  .server-picker select {
-    width: 100%;
-    min-width: 0;
-    min-height: 34px;
-    padding: 6px 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    color: var(--text);
-    font: inherit;
-    font-size: 12px;
-  }
-  .server-picker select:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .capabilities-card summary {
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-  .capabilities-card[open] summary {
-    margin-bottom: 12px;
-  }
-  .infra {
-    display: grid;
-    gap: 14px;
-  }
-  .grid {
-    display: grid;
-    --endpoint-card-min: 240px;
-    grid-template-columns: repeat(
-      auto-fit,
-      minmax(min(100%, var(--endpoint-card-min)), 1fr)
-    );
-    gap: var(--space-3);
-  }
-  .card,
-  .diagnostics-card {
-    position: relative;
+  .card {
     display: grid;
     align-content: start;
     gap: 10px;
     min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(180deg, var(--surface-2), transparent),
-      var(--surface-inset);
     padding: var(--space-3);
-    box-shadow: var(--elev-recess);
-    overflow: clip;
-    container-type: inline-size;
-    container-name: endpoint-card;
-  }
-  .card > * {
-    position: relative;
-    z-index: 1;
-  }
-  h3 {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
   }
   header {
     display: flex;
     flex-wrap: wrap;
-    justify-content: space-between;
     align-items: flex-start;
+    justify-content: space-between;
     gap: var(--space-2);
-    min-width: 0;
   }
-  header h3 {
-    min-width: 0;
+  .server-picker {
+    margin-bottom: var(--space-1);
   }
-  mark {
-    flex: none;
-    align-self: start;
-    padding: 3px 6px;
-    border-radius: var(--r-full);
-    background: var(--warn-soft);
-    color: var(--warn);
-    font-size: 9px;
-    font-weight: 700;
+  .endpoint-failure {
+    color: var(--err);
+    font-size: var(--type-sm);
+    line-height: 1.45;
   }
-  mark[data-state="verified"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  mark[data-state="ready"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  mark[data-state="active"] {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-  mark[data-state="used"] {
-    background: var(--surface-2);
-    color: var(--text-soft);
-  }
-  dl {
-    display: grid;
-    gap: 7px;
-    margin: 0;
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: var(--space-3);
-    align-items: baseline;
-    min-width: 0;
-  }
-  dt {
-    color: var(--text-soft);
-    font-size: 11px;
-    font-weight: 700;
-  }
-  dd {
-    min-width: 0;
-    margin: 0;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    line-height: 1.43;
+  .kv {
+    --kv-label: 6.5rem;
   }
   .protocols {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    font-family: var(--font-sans);
-    line-height: 1.2;
+    gap: var(--space-1);
   }
-  .protocol {
-    border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border));
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface-inset));
-    color: var(--text);
-    padding: 3px 6px;
-    font-size: 9px;
-    font-weight: 700;
-    white-space: nowrap;
+  .capabilities-card[open] summary {
+    margin-bottom: var(--space-1);
   }
-  .diagnostics-card {
-    padding: 0;
-  }
-  .diagnostics-card summary {
-    cursor: pointer;
+  .diagnostics-card > summary {
     padding: var(--space-3);
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
   }
-  .diagnostics-card[open] summary {
+  .diagnostics-card[open] > summary {
     border-bottom: 1px solid var(--border);
   }
-  .diagnostics-card summary:hover {
-    color: var(--text);
-  }
   /* Full-bleed against a clipping card, so the ring goes inside the edge. */
-  .diagnostics-card summary:focus-visible {
-    outline: var(--focus-ring);
+  .diagnostics-card > summary:focus-visible {
     outline-offset: -2px;
   }
   .diagnostics {
     display: grid;
+    justify-items: start;
     gap: var(--space-3);
     padding: var(--space-3);
-  }
-  .diagnostic-note {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.5;
-  }
-  button {
-    justify-self: start;
-    min-height: 34px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 6px 10px;
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
-  }
-  button:hover {
-    border-color: color-mix(in srgb, var(--brand) 45%, var(--border-strong));
-    color: var(--brand-strong);
-  }
-  button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .sr-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-  }
-  @container endpoint-card (max-width: 300px) {
-    dl div {
-      grid-template-columns: 1fr;
-      gap: 2px;
-    }
   }
 </style>

@@ -31,11 +31,10 @@
   .server-tag {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
     min-width: 0;
     max-width: 100%;
     color: var(--text-muted);
-    font: 500 var(--type-xs)/1.4 var(--font-sans);
+    font: var(--w-normal) var(--type-xs) / 1.4 var(--font-sans);
     white-space: nowrap;
     cursor: help;
   }
@@ -43,9 +42,5 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .server-tag:focus-visible {
-    outline: 2px solid var(--brand);
-    outline-offset: 2px;
   }
 </style>

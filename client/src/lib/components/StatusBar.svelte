@@ -2,7 +2,6 @@
   // Bottom status strip: phase label, elapsed/remaining time, transferred bytes,
   // build identity, and compact connection hints.
   import { tooltip } from "../actions/tooltip";
-  import { onMount } from "svelte";
   import { store } from "../state/store.svelte";
   import { fmtBytes } from "../format";
   import { BUILD_IDENTITY } from "../constants";
@@ -23,14 +22,7 @@
   };
 
   let now = $state(Date.now());
-  let visible = $state(true);
-
-  onMount(() => {
-    const update = () => (visible = !document.hidden);
-    update();
-    document.addEventListener("visibilitychange", update);
-    return () => document.removeEventListener("visibilitychange", update);
-  });
+  let visible = $state(typeof document === "undefined" || !document.hidden);
 
   $effect(() => {
     if (!store.isRunning || !visible) return;
@@ -56,7 +48,9 @@
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
 </script>
 
-<span class="label" role="status" aria-live="polite"
+<svelte:document onvisibilitychange={() => (visible = !document.hidden)} />
+
+<span class="label"
   >{store.phase === "complete"
     ? completionLabel(store.result?.outcome)
     : PHASE_LABEL[store.phase]}</span

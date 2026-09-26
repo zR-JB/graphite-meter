@@ -1,11 +1,11 @@
 <script lang="ts">
   /* Contextual keyboard-shortcut strip: a tokenized row of keycaps mirroring
      the global keyboard map in <Console>, which owns the real handler. The
-     primary hint flips with run state (Space = Start test or Abort), and the
+     primary hint flips with run state (Space = Start test or Stop test), and the
      "R · Run again" cap appears once a run resolves. */
   import { store } from "../state/store.svelte";
 
-  // Mirror RunButton's label exactly (Start test → Abort → Run again) so the hint
+  // Mirror RunButton's label exactly (Start test → Stop test → Run again) so the hint
   // never names an action the button doesn't show.
   const resolved = $derived(
     store.phase === "complete" ||
@@ -16,7 +16,7 @@
     store.preparing
       ? "Cancel start"
       : store.isRunning
-        ? "Abort"
+        ? "Stop test"
         : resolved
           ? "Run again"
           : "Start test",
@@ -36,47 +36,22 @@
 </div>
 
 <style>
-  /* A quiet row of keycap and label pairs: one keycap in the faceplate tile
-     language, a muted label, generous spacing between groups. */
+  /* A quiet row of keycap and label pairs mirroring Console's shortcuts. */
   .command-hints {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-4);
     color: var(--text-soft);
-    font-family: var(--font-sans);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
   }
-
   span {
     display: inline-flex;
     align-items: center;
     gap: 5px;
   }
-
-  kbd {
-    display: inline-grid;
-    place-items: center;
-    min-width: 16px;
-    height: 15px;
-    padding: 0 4px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    box-shadow: var(--elev-tile);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  /* The 28px status zone has no room for keycaps on a phone; the
-     visible ShortcutHints strip is a desktop affordance. */
+  /* The status strip has no room for keycaps on narrow screens. */
   @container status (max-width: 1100px) {
-    /* bp: stacked */
     .command-hints {
       display: none;
     }

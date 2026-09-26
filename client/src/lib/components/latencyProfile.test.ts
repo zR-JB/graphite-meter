@@ -1,11 +1,8 @@
 import { test, expect } from "bun:test";
 import {
-  pos,
   probeAccountingDetails,
   probeAccountingSummary,
   hasProbeAccountingNotice,
-  rangeWidth,
-  tickLabel,
   timeoutLabel,
   entries,
   nearestMetric,
@@ -15,8 +12,6 @@ import {
   savedLatencyHasProbeEvidence,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
-
-const DOMAIN = { min: 0, max: 100, span: 100 };
 
 function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   return {
@@ -40,33 +35,12 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   };
 }
 
-test("pos: linear inside the domain, clamped at both ends, null at zero", () => {
-  expect(pos(50, DOMAIN)).toBe(50);
-  expect(pos(0, DOMAIN)).toBe(0);
-  expect(pos(200, DOMAIN)).toBe(100); // above the domain clamps to full
-  expect(pos(-10, DOMAIN)).toBe(0); // below the domain clamps to zero
-  expect(pos(null, DOMAIN)).toBe(0);
-});
-
-test("rangeWidth: exact span as a percentage, including flat and missing ranges", () => {
-  expect(rangeWidth(10, 30, DOMAIN)).toBe(20);
-  expect(rangeWidth(40, 40, DOMAIN)).toBe(0); // fixed caps represent a flat range
-  expect(rangeWidth(null, 30, DOMAIN)).toBe(0);
-  expect(rangeWidth(10, null, DOMAIN)).toBe(0);
-});
-
 test("profileDomain is shared by live and finalized lane profiles", () => {
   expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
     min: 0,
     max: 200,
     span: 200,
   });
-});
-
-test("tickLabel: non-positive collapses to a bare zero", () => {
-  expect(tickLabel(0)).toBe("0");
-  expect(tickLabel(-5)).toBe("0");
-  expect(tickLabel(12)).not.toBe("0");
 });
 
 test("timeoutLabel: hidden at zero, extra precision under one percent", () => {

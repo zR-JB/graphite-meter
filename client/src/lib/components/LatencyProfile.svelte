@@ -22,7 +22,7 @@
 
 <section class="live-profile" aria-label="Latency distribution">
   {#if store.stagePresentation.latency.status === "failed"}
-    <p class="lane-fail" role="alert">
+    <p class="notice" data-tone="err" role="alert">
       Latency skipped — {store.stagePresentation.latency.failure
         ? failureDetail(store.stageFailures.latency?.message)
         : "unavailable"}
@@ -36,18 +36,8 @@
   .live-profile {
     --profile-track-height: clamp(32px, 3.5svh, 42px);
     --profile-lane-gap: 8px;
-    width: 100%;
-    overflow: visible;
   }
-  .lane-fail {
-    margin: 0 0 var(--space-2);
-    padding: var(--space-1) var(--space-2);
-    border: 1px solid color-mix(in srgb, var(--err) 40%, var(--border));
-    border-radius: var(--r-chrome);
-    background: var(--err-soft);
-    color: var(--err);
-    font-size: 11.5px;
-    font-weight: 600;
-    line-height: 1.35;
+  .notice {
+    margin-bottom: var(--space-2);
   }
 </style>

@@ -77,6 +77,7 @@
   {/key}
   <div class="settings-reset">
     <button
+      class="btn btn-danger"
       type="button"
       disabled={store.isRunning || store.preparing}
       onclick={() => (resetConfirmOpen = true)}>Reset settings</button
@@ -101,24 +102,5 @@
     justify-items: start;
     padding-top: var(--space-3);
     border-top: 1px solid var(--border);
-  }
-  .settings-reset button {
-    min-height: 32px;
-    padding: 5px 10px;
-    border: 1px solid color-mix(in srgb, var(--err) 42%, var(--border));
-    border-radius: var(--r-chrome);
-    background: transparent;
-    color: var(--text-soft);
-    font-size: var(--type-sm);
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .settings-reset button:hover:not(:disabled) {
-    border-color: var(--err);
-    color: var(--err);
-  }
-  .settings-reset button:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
   }
 </style>

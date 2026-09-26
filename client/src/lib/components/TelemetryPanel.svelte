@@ -47,6 +47,7 @@
   <p class="license">
     <span>Legal</span>
     <button
+      class="btn-link"
       type="button"
       onclick={(event) =>
         onOpenLegal?.(event.currentTarget as unknown as HTMLElement)}
@@ -56,32 +57,13 @@
 </SidePanel>
 
 <style>
-  /* Footer legal line keeps the previous Endpoint Info visual weight. */
   .license {
     display: flex;
     justify-content: space-between;
     align-items: baseline;
     gap: var(--space-2);
     padding: 0 var(--space-1);
-    font-size: var(--type-xs);
     color: var(--text-soft);
-  }
-  .license button {
-    border: 0;
-    padding: 0;
-    background: transparent;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    text-decoration: underline;
-    transition: color var(--dur-hover) var(--ease-out);
-    cursor: pointer;
-  }
-  .license button:hover {
-    color: var(--text);
-  }
-  .license button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-    border-radius: var(--r-well);
+    font-size: var(--type-xs);
   }
 </style>

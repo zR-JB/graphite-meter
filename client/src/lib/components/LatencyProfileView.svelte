@@ -192,10 +192,10 @@
     {@const accounting = `${lane.accountingComplete === false ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} ` : ""}${probeAccountingDetails(lane)}`}
     <div class="lane" data-tone={lane.tone} data-active={lane.active === true}>
       <div class="lane-meta">
-        <span class="lane-icon" aria-hidden="true"
+        <span class="tone-icon lane-icon" aria-hidden="true"
           >{@html laneIcons[lane.key]}</span
         >
-        <span class="lane-label">{lane.label}</span>
+        <span class="caps lane-label">{lane.label}</span>
         <strong
           >{lane.center == null
             ? lane.accountingComplete === false || lane.count > 0
@@ -206,7 +206,7 @@
               : `median ${fmtMs(lane.center)} ms`}</strong
         >
         {#if lane.jitter != null}
-          <em class="jit" use:tooltip={JARGON.jitter}
+          <em class="term jit" use:tooltip={JARGON.jitter}
             >{fmtMs(lane.jitter)} ms jitter</em
           >
         {/if}
@@ -335,42 +335,13 @@
 </div>
 
 <style>
-  .timing-info {
-    display: inline-flex;
-    flex: none;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    color: var(--text-muted);
-    cursor: help;
-  }
-  .timing-info :global(svg) {
-    width: 12px;
-    height: 12px;
-  }
-  .timing-info:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .accounting-slot {
-    display: inline-flex;
-    flex: 0 0 20px;
-    align-self: center;
-  }
-  .accounting-warning {
-    color: var(--warn);
-    font-weight: 600;
-  }
   .lanes {
-    container: latency-lanes / inline-size;
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
-    padding: 0;
+    container: latency-lanes / inline-size;
   }
   .lane {
-    --tone: var(--phase-latency);
     display: grid;
     gap: var(--space-1);
     min-width: 0;
@@ -388,17 +359,8 @@
       padding-block: var(--space-1);
     }
   }
-  .lane[data-tone="download"] {
-    --tone: var(--phase-download);
-  }
-  .lane[data-tone="upload"] {
-    --tone: var(--phase-upload);
-  }
-  .lane[data-tone="bidirectional"] {
-    --tone: var(--phase-bidirectional);
-  }
   .lane[data-active="true"] {
-    border-color: color-mix(in srgb, var(--tone) 44%, var(--border));
+    border-color: var(--tone-line);
     background: color-mix(
       in srgb,
       var(--signal-soft) 70%,
@@ -408,21 +370,13 @@
   .lane-meta {
     display: flex;
     align-items: baseline;
-    flex-wrap: nowrap;
     gap: var(--space-1) var(--space-2);
     min-width: 0;
   }
   .lane-icon {
-    display: grid;
-    place-items: center;
+    align-self: center;
     width: 18px;
     height: 18px;
-    flex: none;
-    align-self: center;
-    border: 1px solid color-mix(in srgb, var(--tone) 32%, var(--border));
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    color: var(--tone);
   }
   .lane-icon :global(svg) {
     width: 11px;
@@ -431,34 +385,42 @@
   .lane-label {
     flex: 1 0 auto;
     color: var(--text-muted);
-    font: 800 10px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
     white-space: nowrap;
   }
   .lane-meta strong {
     flex: none;
-    white-space: nowrap;
-    color: var(--text);
-    font: 700 13px var(--font-mono);
+    font: 700 13px / 1 var(--font-mono);
     font-variant-numeric: tabular-nums;
-    line-height: 1;
+    white-space: nowrap;
   }
   .lane-meta em {
     min-width: 0;
     overflow: hidden;
+    color: var(--text-muted);
+    font: 400 var(--type-2xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: var(--text-muted);
-    font: 400 10px var(--font-mono);
-    font-style: normal;
-    font-variant-numeric: tabular-nums;
   }
-  .lane-meta .jit {
+  .accounting-slot {
+    display: inline-flex;
+    flex: 0 0 20px;
+    align-self: center;
+  }
+  .timing-info {
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    color: var(--text-muted);
     cursor: help;
-    text-decoration: underline dotted
-      color-mix(in srgb, var(--text-soft) 70%, transparent);
-    text-underline-offset: 2px;
+  }
+  .timing-info :global(svg) {
+    width: 12px;
+    height: 12px;
+  }
+  .accounting-warning {
+    color: var(--warn);
   }
   .strip {
     display: grid;
@@ -472,25 +434,22 @@
   }
   .ticks span {
     position: absolute;
-    top: 0;
+    translate: -50%;
     color: var(--text-muted);
-    font: 400 9px var(--font-mono);
+    font: var(--type-2xs) / 1.2 var(--font-mono);
     font-variant-numeric: tabular-nums;
-    transform: translateX(-50%);
     white-space: nowrap;
   }
   .ticks span:first-child {
-    transform: none;
+    translate: none;
   }
   .ticks span:last-child {
-    transform: translateX(-100%);
+    translate: -100%;
   }
   .track {
     position: relative;
-    height: var(--profile-track-height, 30px);
     width: 100%;
-    padding: 0;
-    overflow: visible;
+    height: var(--profile-track-height, 30px);
     border: 1px solid var(--border);
     border-radius: var(--r-well);
     background:
@@ -498,16 +457,10 @@
         25% 100%,
       var(--surface-2);
     cursor: crosshair;
-    color: inherit;
-    font: inherit;
     isolation: isolate;
   }
   .track:disabled {
     cursor: default;
-  }
-  .track:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
   }
   .profile-artwork {
     position: absolute;
@@ -538,12 +491,8 @@
   .position {
     inset-block: 0;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .lanes[data-motion="true"] .range,
-    .lanes[data-motion="true"] .band,
-    .lanes[data-motion="true"] .position {
-      transition: transform 220ms var(--ease-out);
-    }
+  .lanes[data-motion="true"] :is(.range, .band, .position) {
+    transition: transform 220ms var(--ease-out);
   }
   .range {
     top: calc(50% - 2px);
@@ -556,7 +505,7 @@
     top: 18%;
     bottom: 18%;
     width: 1px;
-    transform: translateX(-50%);
+    translate: -50%;
     background: color-mix(in srgb, var(--text-soft) 64%, transparent);
   }
   .band {
@@ -569,7 +518,7 @@
   .center-marker,
   .current-marker {
     left: 0;
-    transform: translateX(-50%);
+    translate: -50%;
   }
   .center-marker {
     top: 5px;
@@ -580,8 +529,8 @@
   }
   .current-marker {
     top: calc(50% - 5px);
-    height: 10px;
     width: 10px;
+    height: 10px;
     border: 2px solid var(--surface-1);
     border-radius: var(--r-full);
     background: var(--tone);
@@ -606,10 +555,9 @@
     top: -4px;
     bottom: -4px;
     width: 1px;
-    border-radius: var(--r-full);
+    translate: -50%;
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
-    transform: translateX(-50%);
   }
   .hover-card {
     position: absolute;
@@ -623,9 +571,9 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
+    box-shadow: var(--elev-tooltip);
+    translate: 0 -50%;
     pointer-events: none;
-    transform: translateY(-50%);
   }
   .hover-head {
     display: flex;
@@ -638,26 +586,20 @@
   .hover-context,
   .hover-card > em {
     overflow: hidden;
-    margin: 0;
     color: var(--text-muted);
-    font: 800 10px var(--font-mono);
+    font: 700 var(--type-2xs) var(--font-mono);
     font-style: normal;
-    letter-spacing: 0.04em;
     text-overflow: ellipsis;
-    text-transform: uppercase;
     white-space: nowrap;
   }
+  .hover-head span {
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+  }
   .hover-head strong {
-    color: var(--text);
     font: 700 var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-  }
-  .hover-context,
-  .hover-card > em {
-    display: block;
-    letter-spacing: 0;
-    text-transform: none;
   }
   .hover-card > em {
     color: var(--err);
@@ -690,7 +632,7 @@
   }
   @container latency-lanes (max-width: 300px) {
     .lanes[data-variant] .lane-meta strong {
-      font-size: 11px;
+      font-size: var(--type-xs);
     }
   }
 </style>

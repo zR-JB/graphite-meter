@@ -37,13 +37,20 @@
 </script>
 
 <label class="switch" class:disabled>
-  <input type="checkbox" {checked} {disabled} {id} onchange={handleChange} />
+  <input
+    class="sr-only"
+    type="checkbox"
+    {checked}
+    {disabled}
+    {id}
+    onchange={handleChange}
+  />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if label}
     {#if tooltipText}
       <!-- The tooltip action is wired only when there is text: it makes its
            node focusable, and a plain switch needs no extra tab stop. -->
-      <span class="label" use:tooltip={tooltipText}>{label}</span>
+      <span class="label term" use:tooltip={tooltipText}>{label}</span>
     {:else}
       <span class="label">{label}</span>
     {/if}
@@ -51,77 +58,56 @@
 </label>
 
 <style>
+  /* Containing block for the hidden checkbox, so focusing it cannot scroll
+     the panel away. */
   .switch {
-    /* Containing block for the hidden absolute checkbox. Without it the box
-       escapes the panel's scroll clipping and focus scrolls the page away. */
     position: relative;
     display: inline-flex;
     align-items: center;
     gap: 10px;
-    cursor: pointer;
     user-select: none;
   }
   .switch.disabled {
     cursor: not-allowed;
     opacity: 0.5;
   }
-
-  input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
   .track {
     position: relative;
     flex: none;
     width: 36px;
     height: 20px;
+    border: 1px solid var(--border);
     border-radius: var(--r-full);
     background: var(--surface-inset);
-    border: 1px solid var(--border);
-    transition:
-      background var(--dur-hover) var(--ease-out),
-      border-color var(--dur-hover) var(--ease-out);
+    transition: var(--transition-control);
   }
   .knob {
     position: absolute;
-    top: 50%;
+    top: 2px;
     left: 2px;
     width: 14px;
     height: 14px;
     border-radius: var(--r-full);
     background: var(--text-soft);
-    transform: translateY(-50%);
     transition:
-      transform var(--dur-hover) var(--ease-snap),
-      background var(--dur-hover) var(--ease-out);
+      translate var(--dur-hover) var(--ease-snap),
+      background-color var(--dur-hover) var(--ease-out);
   }
-
   input:checked + .track {
+    border-color: var(--brand-line);
     background: var(--brand-soft);
-    border-color: color-mix(in srgb, var(--brand) 42%, var(--border));
   }
   input:checked + .track .knob {
-    transform: translate(16px, -50%);
+    translate: 16px 0;
     background: var(--brand);
   }
-
   input:focus-visible + .track {
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
-
   .label {
     flex: 1 1 auto;
     min-width: 0;
-    font-size: 13px;
-    color: var(--text);
+    font-size: var(--type-sm);
   }
 </style>

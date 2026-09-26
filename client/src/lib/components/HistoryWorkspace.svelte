@@ -195,7 +195,6 @@
   }
 
   function loadMoreWhenVisible(node: HTMLElement) {
-    if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) loadMore();
@@ -203,7 +202,7 @@
       { rootMargin: "200px 0px" },
     );
     observer.observe(node);
-    return { destroy: () => observer.disconnect() };
+    return () => observer.disconnect();
   }
 
   async function confirmAction() {
@@ -449,13 +448,13 @@
 </script>
 
 <section
-  class="history-workspace"
+  class="history-workspace enter"
   bind:this={workspace}
-  use:observeWidth={(width) => (workspaceWidth = width)}
+  {@attach observeWidth((width) => (workspaceWidth = width))}
   aria-labelledby="history-title"
   tabindex="-1"
 >
-  <header class="history-head">
+  <header class="surface-head history-head">
     <div class="history-title">
       <div>
         <h1 id="history-title">History</h1>
@@ -463,7 +462,7 @@
       </div>
     </div>
     <button
-      class="close-history"
+      class="btn close-history"
       type="button"
       aria-label="Close History"
       onclick={onClose}
@@ -473,7 +472,7 @@
   </header>
 
   {#if store.historyWarning || actionError || malformedCount}
-    <div class="archive-warning" role="status">
+    <div class="notice archive-warning" data-tone="warn" role="status">
       <span aria-hidden="true">!</span>
       <div>
         {#if store.historyWarning}<p>{store.historyWarning}</p>{/if}
@@ -488,11 +487,12 @@
   {/if}
 
   {#if records.length > 0 && !store.savingResults}
-    <div class="saving-notice">
+    <div class="notice saving-notice" data-tone="warn">
       <p>
         <strong>Saving is paused.</strong> Retained results remain available.
       </p>
       <button
+        class="btn"
         type="button"
         onclick={() => (store.resultHistoryPreference = "enabled")}
       >
@@ -502,21 +502,23 @@
   {/if}
 
   {#if loadState === "loading"}
-    <div class="archive-state" role="status">
-      <span class="state-icon">{@html ICON.history}</span>
+    <div class="empty-state" role="status">
+      <span class="empty-icon">{@html ICON.history}</span>
       <h2>Opening local archive</h2>
       <p>Reading saved results from this browser.</p>
     </div>
   {:else if loadState === "error"}
-    <div class="archive-state error" role="alert">
-      <span class="state-icon">!</span>
+    <div class="empty-state" data-tone="err" role="alert">
+      <span class="empty-icon">!</span>
       <h2>History is unavailable</h2>
       <p>The browser could not open its local result store.</p>
-      <button type="button" onclick={() => load()}>Retry</button>
+      <button class="btn btn-accent" type="button" onclick={() => load()}
+        >Retry</button
+      >
     </div>
   {:else if records.length === 0}
-    <div class="archive-state">
-      <span class="state-icon">{@html ICON.history}</span>
+    <div class="empty-state">
+      <span class="empty-icon">{@html ICON.history}</span>
       <h2>No saved results</h2>
       {#if store.savingResults}
         <p>Completed tests will appear here automatically.</p>
@@ -526,6 +528,7 @@
           device.
         </p>
         <button
+          class="btn btn-accent"
           type="button"
           onclick={() => (store.resultHistoryPreference = "enabled")}
         >
@@ -539,13 +542,15 @@
       {/if}
     </div>
   {:else}
-    <div class="archive-overview" aria-label="History overview">
+    <div class="surface-head archive-overview" aria-label="History overview">
       <div class="overview-primary">
         <strong>{records.length}</strong>
-        <span>{records.length === 1 ? "result" : "results"} saved locally</span>
+        <span class="caps"
+          >{records.length === 1 ? "result" : "results"} saved locally</span
+        >
       </div>
       <div class="overview-dates">
-        <span>Archive span</span>
+        <span class="caps">Archive span</span>
         <strong
           >{oldest == null ? "—" : dateLabel(oldest)} <i>to</i>
           {newest == null ? "—" : dateLabel(newest)}</strong
@@ -657,9 +662,12 @@
                     <small>{row.secondaryDate}</small>
                   </time>
                   <span class="row-badges">
-                    {#if row.partial}<em class="partial">Partial</em>{/if}
-                    {#if selectedId === record.id}<em class="selected-badge"
-                        >Selected</em
+                    {#if row.partial}<em class="badge" data-tone="warn"
+                        >Partial</em
+                      >{/if}
+                    {#if selectedId === record.id}<em
+                        class="badge"
+                        data-tone="brand">Selected</em
                       >{/if}
                   </span>
                 </span>
@@ -678,7 +686,7 @@
                 </span>
               </a>
               {#if selectedId === record.id && selectedRecord && !sideInspector}
-                <div class="inline-inspector">
+                <div class="inline-inspector enter">
                   <HistoryResultDetail
                     record={selectedRecord}
                     onClose={closeDetail}
@@ -694,15 +702,17 @@
           {/each}
         </ol>
         {#if visibleCount < ordered.length}
-          <div class="load-more" use:loadMoreWhenVisible>
-            <button type="button" onclick={loadMore}>Load 50 more</button>
+          <div class="load-more" {@attach loadMoreWhenVisible}>
+            <button class="btn" type="button" onclick={loadMore}
+              >Load 50 more</button
+            >
             <span>{visibleCount} of {ordered.length}</span>
           </div>
         {/if}
       </div>
 
       {#if sideInspector && selectedRecord}
-        <aside class="detail-inspector" aria-label="Selected result">
+        <aside class="detail-inspector enter" aria-label="Selected result">
           <HistoryResultDetail
             record={selectedRecord}
             onClose={closeDetail}
@@ -730,13 +740,15 @@
               ? "This record uses an unsupported format or failed validation."
               : "It may have been deleted in another tab."}
           </p>
-          <button type="button" onclick={closeDetail}>Back to results</button>
+          <button class="btn" type="button" onclick={closeDetail}
+            >Back to results</button
+          >
         </aside>
       {/if}
     </div>
   {/if}
 
-  <p class="sr-status" aria-live="polite">{announcement}</p>
+  <p class="sr-only" aria-live="polite">{announcement}</p>
 </section>
 
 <ConfirmDialog
@@ -756,7 +768,6 @@
 
 <style>
   .history-workspace {
-    container-type: inline-size;
     position: relative;
     display: flex;
     flex: 1 1 auto;
@@ -769,194 +780,75 @@
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
+    container-type: inline-size;
   }
   .history-workspace:focus {
     outline: none;
   }
-  h1,
-  h2,
-  p {
-    margin: 0;
-  }
-  .history-head {
+  .history-head,
+  .archive-overview,
+  .archive-toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
     padding: 10px var(--space-4);
-    border-bottom: 1px solid var(--border-strong);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1) 72%),
-      var(--surface-1);
-    box-shadow: var(--elev-tile);
   }
   .history-title {
-    display: flex;
-    align-items: center;
     min-width: 0;
   }
   h1 {
-    font-family: var(--font-display);
-    font-size: var(--type-lg);
-    font-weight: 700;
+    font: 700 var(--type-lg) / 1 var(--font-display);
     letter-spacing: -0.015em;
-    line-height: 1;
   }
   .history-title p {
     margin-top: 3px;
     color: var(--text-muted);
-    font-size: 9px;
+    font-size: var(--type-2xs);
     line-height: 1;
   }
-  .close-history {
-    display: inline-flex;
+  .notice {
     align-items: center;
-    gap: 7px;
-    min-height: 32px;
-    padding: 0 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: inset 0 1px 0 var(--edge-light);
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-    cursor: pointer;
-  }
-  .close-history:hover {
-    border-color: var(--border-strong);
-    color: var(--text);
-  }
-  .close-history span {
-    display: grid;
-  }
-  .close-history :global(svg) {
-    width: 14px;
-    height: 14px;
-  }
-  .archive-warning,
-  .saving-notice {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: 8px var(--space-4);
-    border-bottom: 1px solid var(--border);
-    font-size: var(--type-xs);
-  }
-  .archive-warning {
-    background: var(--warn-soft);
-    color: var(--warn);
+    padding-inline: var(--space-4);
+    border-width: 0 0 1px;
+    border-radius: 0;
   }
   .archive-warning > span {
     display: grid;
+    flex: none;
     place-items: center;
     width: 18px;
     height: 18px;
-    flex: none;
     border: 1px solid currentColor;
     border-radius: var(--r-full);
-    font: 750 10px var(--font-mono);
+    color: var(--warn);
+    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
   }
   .archive-warning > div {
     display: grid;
     gap: 2px;
-  }
-  .archive-warning p {
     color: var(--text-muted);
   }
   .saving-notice {
     justify-content: space-between;
-    background: color-mix(in srgb, var(--warn) 6%, var(--surface-1));
     color: var(--text-muted);
   }
-  .saving-notice strong {
-    color: var(--warn);
-  }
-  .saving-notice button,
-  .archive-state button,
-  .selection-state button,
-  .load-more button {
-    min-height: 30px;
-    padding: 0 10px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    font-size: var(--type-xs);
-    font-weight: 700;
-    cursor: pointer;
-  }
-  .archive-state {
-    display: grid;
-    justify-items: center;
-    align-content: center;
+  .empty-state {
     min-height: 360px;
-    padding: var(--space-6);
-    text-align: center;
-  }
-  .state-icon {
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    margin-bottom: var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
-    color: var(--brand);
-    font: 750 var(--type-lg) var(--font-mono);
-  }
-  .state-icon :global(svg) {
-    width: 22px;
-    height: 22px;
-  }
-  .archive-state h2 {
-    font-size: var(--type-lg);
-  }
-  .archive-state p {
-    max-width: 420px;
-    margin-top: 6px;
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    line-height: 1.5;
-  }
-  .archive-state button {
-    margin-top: var(--space-4);
-    border-color: color-mix(in srgb, var(--brand) 55%, var(--border));
-    color: var(--brand-strong);
   }
   .empty-management {
-    margin-top: var(--space-4);
-  }
-  .archive-state.error .state-icon {
-    color: var(--err);
+    margin-top: var(--space-2);
   }
   .archive-overview {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: 11px var(--space-4);
-    border-bottom: 1px solid var(--border);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1) 82%),
-      var(--surface-1);
-    box-shadow: var(--elev-tile);
+    border-bottom-color: var(--border);
   }
   .archive-overview > div {
     min-width: 0;
   }
-  .archive-overview span {
-    display: block;
-    color: var(--text-muted);
-    font: 700 9px var(--font-mono);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-  }
   .archive-overview strong {
     display: block;
     overflow-wrap: anywhere;
-    font: 650 var(--type-xs) var(--font-mono);
+    font: var(--w-strong) var(--type-xs) var(--font-mono);
   }
   .overview-primary {
     display: flex;
@@ -969,7 +861,7 @@
     line-height: 1;
   }
   .overview-dates {
-    text-align: right;
+    text-align: end;
   }
   .overview-dates strong {
     margin-top: 3px;
@@ -979,16 +871,9 @@
     font-style: normal;
   }
   .archive-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     gap: var(--space-3);
-    padding: 8px var(--space-4);
+    padding-block: var(--space-2);
     border-bottom: 1px solid var(--border);
-  }
-  .archive-toolbar > p {
-    display: grid;
-    gap: 2px;
     font-size: var(--type-xs);
   }
   .toolbar-actions {
@@ -1016,21 +901,20 @@
     background: var(--surface-1);
     isolation: isolate;
   }
-  .workspace-body.wide-layout .archive-list {
+  .wide-layout .archive-list {
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
   }
-  .workspace-body.with-side .archive-list {
+  .with-side .archive-list {
     border-right: 1px solid var(--border-strong);
   }
   .column-head,
   .result-row {
     display: grid;
-    grid-template-columns: minmax(150px, 1.25fr) repeat(
-        var(--metric-columns),
-        minmax(82px, 1fr)
-      );
+    grid-template-columns:
+      minmax(150px, 1.25fr)
+      repeat(var(--metric-columns), minmax(82px, 1fr));
     min-width: 0;
   }
   .metrics-row {
@@ -1041,10 +925,7 @@
     top: 0;
     z-index: 5;
     border-bottom: 1px solid var(--border-strong);
-    background:
-      linear-gradient(180deg, var(--surface-2), var(--surface-1)),
-      var(--surface-1);
-    background-clip: padding-box;
+    background: var(--sheen), var(--surface-1);
     box-shadow: var(--elev-tile);
   }
   .column-head > span {
@@ -1058,32 +939,36 @@
     width: 100%;
     min-height: 34px;
     padding: 0 10px;
-    border: 0;
-    background: transparent;
     color: var(--text-muted);
-    font: 700 9px var(--font-mono);
-    letter-spacing: 0.05em;
+    font: 700 var(--type-2xs) var(--font-mono);
+    letter-spacing: var(--track-caps);
     text-transform: uppercase;
-    cursor: pointer;
+    transition: var(--transition-control);
   }
   .column-head > span:first-child button {
     justify-content: flex-start;
   }
-  .column-head button:hover {
-    background: var(--brand-soft);
-    color: var(--text);
+  @media (hover: hover) {
+    .column-head button:hover {
+      background: var(--brand-soft);
+      color: var(--text);
+    }
+    .column-head button:hover i::after {
+      opacity: 0.35;
+    }
   }
   .column-head [aria-sort]:not([aria-sort="none"]) button {
     color: var(--brand-strong);
   }
   .column-head i {
     position: relative;
+    flex: none;
     width: 9px;
     height: 12px;
-    flex: none;
     color: var(--brand-strong);
   }
   .column-head i::after {
+    content: "";
     position: absolute;
     top: 2px;
     left: 2px;
@@ -1091,13 +976,9 @@
     height: 4px;
     border: solid currentColor;
     border-width: 0 1.5px 1.5px 0;
-    content: "";
     opacity: 0;
-    transform: rotate(45deg);
+    rotate: 45deg;
     transition: opacity var(--dur-hover) var(--ease-out);
-  }
-  .column-head button:hover i::after {
-    opacity: 0.35;
   }
   .column-head [aria-sort="descending"] i::after,
   .column-head [aria-sort="ascending"] i::after {
@@ -1105,39 +986,26 @@
   }
   .column-head [aria-sort="ascending"] i::after {
     top: 5px;
-    transform: rotate(225deg);
+    rotate: 225deg;
   }
-  .head-icon {
+  .head-icon,
+  .metric-cell small span {
     display: grid;
     color: var(--tone, var(--text-soft));
   }
-  .head-icon :global(svg) {
-    width: 13px;
-    height: 13px;
-  }
-  [data-tone="download"] {
-    --tone: var(--phase-download);
-  }
-  [data-tone="upload"] {
-    --tone: var(--phase-upload);
-  }
-  [data-tone="bidirectional"] {
-    --tone: var(--phase-bidirectional);
-  }
-  [data-tone="idle"],
-  [data-tone="loaded"] {
-    --tone: var(--phase-latency);
+  .head-icon :global(svg),
+  .metric-cell small :global(svg) {
+    width: var(--icon-sm);
+    height: var(--icon-sm);
   }
   ol {
-    margin: 0;
     padding: 0 var(--space-2) var(--space-2);
-    list-style: none;
   }
   li {
     min-width: 0;
     border-bottom: 1px solid var(--border-subtle);
     content-visibility: auto;
-    contain-intrinsic-size: 58px;
+    contain-intrinsic-size: auto 58px;
   }
   li.selected {
     content-visibility: visible;
@@ -1145,12 +1013,12 @@
   .result-row {
     position: relative;
     min-height: 56px;
-    color: inherit;
-    text-decoration: none;
-    transition: box-shadow var(--dur-hover) var(--ease-out);
+    transition: var(--transition-control);
   }
-  .result-row:hover {
-    background: var(--surface-2);
+  @media (hover: hover) {
+    .result-row:hover {
+      background: var(--surface-2);
+    }
   }
   .result-row[aria-current="true"] {
     background: var(--surface-2);
@@ -1164,11 +1032,11 @@
   .date-cell {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
   .date-cell time {
-    min-width: 0;
     flex: 1;
+    min-width: 0;
   }
   .date-cell time strong,
   .date-cell time small {
@@ -1183,7 +1051,7 @@
   .date-cell time small {
     margin-top: 2px;
     color: var(--text-muted);
-    font: 500 9px var(--font-mono);
+    font: var(--w-normal) var(--type-2xs) var(--font-mono);
   }
   .row-badges {
     display: grid;
@@ -1191,48 +1059,28 @@
     gap: 3px;
   }
   .row-badges em {
-    padding: 2px 5px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-full);
-    font: 700 8px var(--font-mono);
     font-style: normal;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-  .row-badges .partial {
-    border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
-    background: var(--warn-soft);
-    color: var(--warn);
-  }
-  .row-badges .selected-badge {
-    border-color: color-mix(in srgb, var(--brand) 48%, var(--border));
-    background: var(--brand-soft);
-    color: var(--brand-strong);
   }
   .metric-cell {
     display: grid;
     align-content: center;
-    text-align: right;
+    text-align: end;
   }
   .metric-cell small {
     display: none;
   }
   .metric-cell strong {
     overflow-wrap: anywhere;
-    color: var(--text);
-    font: 620 11px var(--font-mono);
-    line-height: 1.35;
+    font: 620 var(--type-xs) / 1.35 var(--font-mono);
   }
   .detail-inspector {
     min-width: 0;
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
-    background: var(--surface-1);
   }
   .inline-inspector {
-    border-top: 2px solid color-mix(in srgb, var(--brand) 50%, var(--border));
-    background: var(--surface-1);
+    border-top: 2px solid var(--brand-line);
   }
   .selection-state {
     display: grid;
@@ -1241,7 +1089,6 @@
     gap: 7px;
     padding: var(--space-5);
     border-top: 1px solid var(--border-strong);
-    background: var(--surface-1);
   }
   .selection-state.side-state {
     position: sticky;
@@ -1250,7 +1097,7 @@
   }
   .selection-state > span {
     color: var(--warn);
-    font: 750 var(--type-lg) var(--font-mono);
+    font: var(--w-heavy) var(--type-lg) var(--font-mono);
   }
   .selection-state h2 {
     font-size: var(--type-md);
@@ -1259,9 +1106,6 @@
     color: var(--text-muted);
     font-size: var(--type-sm);
     line-height: 1.45;
-  }
-  .selection-state button {
-    margin-top: var(--space-2);
   }
   .load-more {
     display: flex;
@@ -1272,15 +1116,7 @@
   }
   .load-more span {
     color: var(--text-muted);
-    font: 600 9px var(--font-mono);
-  }
-  .sr-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
+    font: 600 var(--type-2xs) var(--font-mono);
   }
   @container (max-width: 820px) {
     .column-head {
@@ -1289,19 +1125,17 @@
     ol {
       display: grid;
       gap: 6px;
-      padding: 8px;
+      padding: var(--space-2);
     }
     li {
       border: 1px solid var(--border);
       border-radius: var(--r-chrome);
-      background:
-        linear-gradient(180deg, var(--surface-2), transparent), var(--surface-1);
+      background: var(--sheen), var(--surface-1);
       box-shadow: var(--elev-tile);
-      contain-intrinsic-size: 76px;
+      contain-intrinsic-size: auto 76px;
     }
     li.selected {
       border-color: var(--border-strong);
-      box-shadow: var(--elev-tile);
     }
     .result-row {
       grid-template-columns: minmax(0, 1fr);
@@ -1316,7 +1150,7 @@
     .date-cell time {
       display: flex;
       align-items: baseline;
-      gap: 8px;
+      gap: var(--space-2);
     }
     .date-cell time strong,
     .date-cell time small {
@@ -1328,7 +1162,7 @@
     .row-badges {
       display: flex;
       align-items: center;
-      gap: 4px;
+      gap: var(--space-1);
     }
     .metrics-row {
       display: grid;
@@ -1337,10 +1171,9 @@
     }
     .metric-cell {
       gap: 3px;
-      min-width: 0;
       padding: 6px 7px 7px;
       border-left: 1px solid var(--border-subtle);
-      text-align: left;
+      text-align: start;
     }
     .metric-cell:first-child {
       border-left: 0;
@@ -1350,36 +1183,23 @@
       align-items: center;
       gap: 5px;
       color: var(--text-muted);
-      font: 700 9px var(--font-mono);
-      letter-spacing: 0.05em;
+      font: 700 var(--type-2xs) var(--font-mono);
+      letter-spacing: var(--track-caps);
       text-transform: uppercase;
-    }
-    .metric-cell small span {
-      display: grid;
-      color: var(--tone, var(--text-soft));
-    }
-    .metric-cell small :global(svg) {
-      width: 12px;
-      height: 12px;
     }
     .metric-cell strong {
       overflow: hidden;
-      font-size: 9px;
+      font-size: var(--type-2xs);
       text-overflow: ellipsis;
       white-space: nowrap;
     }
   }
   @container (max-width: 560px) {
     .history-head {
-      padding: 11px var(--space-3);
+      padding-inline: var(--space-3);
     }
     .close-history strong {
       display: none;
-    }
-    .close-history {
-      width: 32px;
-      padding: 0;
-      justify-content: center;
     }
     .archive-overview {
       display: grid;
@@ -1393,9 +1213,6 @@
     .saving-notice {
       align-items: flex-start;
     }
-    .saving-notice p {
-      line-height: 1.4;
-    }
   }
   @container (max-width: 330px) {
     .archive-toolbar {
@@ -1404,55 +1221,12 @@
     .toolbar-actions {
       justify-content: space-between;
     }
-    .date-cell time {
-      gap: 5px;
-    }
-    .date-cell time small {
-      font-size: 8px;
-    }
     .metric-cell {
       padding-inline: 5px;
     }
     .metric-cell small {
       gap: 3px;
-      font-size: 8px;
-      letter-spacing: 0.02em;
-    }
-    .metric-cell small :global(svg) {
-      width: 10px;
-      height: 10px;
-    }
-    .metric-cell strong {
-      font-size: 9px;
-    }
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .history-workspace {
-      animation: reveal-history var(--dur-slide) var(--ease-out) both;
-    }
-    .inline-inspector,
-    .detail-inspector {
-      animation: reveal-detail var(--dur-slide) var(--ease-out) both;
-    }
-    @keyframes reveal-history {
-      from {
-        transform: translateY(4px) scale(0.997);
-      }
-    }
-    @keyframes reveal-detail {
-      from {
-        transform: translateY(4px);
-      }
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .history-workspace,
-    .result-row {
-      animation: none;
-      transition: none;
-    }
-    .column-head i::after {
-      transition: none;
+      letter-spacing: 0;
     }
   }
 </style>

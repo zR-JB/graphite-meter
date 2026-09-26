@@ -1,70 +1,38 @@
 <script lang="ts">
-  import { positionPopover } from "../actions/floating";
+  // Anchored reading surface: a native auto popover supplies light dismiss,
+  // Escape and focus return; CSS anchor positioning keeps it by its trigger.
   import type { Snippet } from "svelte";
   import { ICON } from "../constants";
   let { label, children }: { label: string; children: Snippet } = $props();
   const id = $props.id();
-  let trigger: HTMLButtonElement;
-  let panel: HTMLDivElement;
   let close: HTMLButtonElement;
-  let open = $state(false);
-  function position() {
-    const rect = trigger.getBoundingClientRect();
-    positionPopover(panel, rect, { width: 360, minHeight: 80, maxHeight: 420 });
-  }
-  $effect(() => {
-    if (!open) return;
-    // Keep the reading surface still while scrolling. Dismiss when its trigger
-    // leaves the visible workspace, including clipping by nested scroll areas.
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting && panel.matches(":popover-open"))
-        panel.hidePopover();
-    });
-    observer.observe(trigger);
-    window.addEventListener("resize", position);
-    window.visualViewport?.addEventListener("resize", position);
-    window.visualViewport?.addEventListener("scroll", position);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", position);
-      window.visualViewport?.removeEventListener("resize", position);
-      window.visualViewport?.removeEventListener("scroll", position);
-    };
-  });
 </script>
 
 <button
-  bind:this={trigger}
-  class="details-trigger"
+  class="btn details-trigger"
+  type="button"
   popovertarget={id}
-  onclick={(event) => {
-    event.preventDefault();
-    if (panel.matches(":popover-open")) panel.hidePopover();
-    else {
-      trigger.focus({ preventScroll: true });
-      panel.showPopover();
-      position();
-      close.focus({ preventScroll: true });
-    }
-  }}
+  style:anchor-name={`--${id}`}
 >
   <span aria-hidden="true">{@html ICON.info}</span>{label}
 </button>
 <div
-  bind:this={panel}
-  class="diagnostic-details"
-  ontoggle={(event) => {
-    open = event.currentTarget.matches(":popover-open");
-  }}
+  class="float popover diagnostic-details"
   {id}
   popover="auto"
   role="dialog"
   aria-labelledby={`${id}-title`}
+  style:position-anchor={`--${id}`}
+  ontoggle={(event) => {
+    if (event.newState === "open") close.focus({ preventScroll: true });
+  }}
 >
   <header>
     <h3 id={`${id}-title`}>{label}</h3>
     <button
       bind:this={close}
+      class="btn btn-icon btn-quiet"
+      type="button"
       popovertarget={id}
       popovertargetaction="hide"
       aria-label="Close details">{@html ICON.close}</button
@@ -74,82 +42,31 @@
 </div>
 
 <style>
-  button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    min-height: 32px;
-    padding: 4px 8px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-    color: var(--text-muted);
-    font: 500 var(--type-xs)/1.3 var(--font-sans);
-    cursor: pointer;
-  }
-  button:hover {
-    background: var(--brand-soft);
-    color: var(--text);
-  }
-  button :global(svg) {
+  .details-trigger :global(svg) {
     width: 14px;
     height: 14px;
   }
-  .details-trigger {
-    white-space: nowrap;
-  }
-  .details-trigger span {
-    display: inline-flex;
-  }
   .diagnostic-details {
-    position: fixed;
-    inset: auto;
-    width: min(360px, calc(100vw - 16px));
-    max-height: min(420px, 70svh);
-    overscroll-behavior: contain;
-    margin: 0;
-    padding: 0;
-    overflow: auto;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    box-shadow: var(--shadow-float);
-    font: var(--type-sm)/1.5 var(--font-sans);
+    width: 360px;
+    font: var(--type-sm) / 1.5 var(--font-sans);
   }
   header {
     position: sticky;
     top: 0;
-    background: var(--surface-2);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
     border-bottom: 1px solid var(--border);
-  }
-  header button {
-    border: 0;
-    background: transparent;
+    background: var(--surface-1);
   }
   h3 {
-    margin: 0;
     font-size: var(--type-sm);
     font-weight: 600;
   }
   .details-body {
     padding: var(--space-3);
     overflow-wrap: anywhere;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .diagnostic-details:popover-open {
-      animation: gm-reveal var(--dur-hover) var(--ease-out);
-    }
-  }
-  @media (pointer: coarse) {
-    button {
-      min-height: 44px;
-    }
   }
 </style>
