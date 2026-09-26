@@ -200,6 +200,28 @@ func TestGetPreflight(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects terminal controls in server identity", func(t *testing.T) {
+		for _, name := range []string{`\u001b]52;c;cHduZWQ=\u0007`, `\u009b2J`} {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.WriteString(w, `{"server":{"name":"`+name+`"},"engineVersion":"1.0",`+
+					`"generation":"test","capabilities":{"throughput":[],"latency":[]}}`)
+			}))
+			_, err := getPreflight(t.Context(), srv.Client(), srv.URL)
+			srv.Close()
+			if err == nil {
+				t.Fatalf("accepted server name %s", name)
+			}
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, `{"defaultSelection":["self"],"servers":[{"id":"self","url":".",`+
+				`"name":"Meter","location":"\u001b]0;owned\u0007"}]}`)
+		}))
+		defer srv.Close()
+		if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}); err == nil {
+			t.Fatal("accepted a catalogue location with terminal controls")
+		}
+	})
+
 	t.Run("non-200 status returns formatted error", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)

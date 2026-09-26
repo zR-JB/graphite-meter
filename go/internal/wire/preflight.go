@@ -178,7 +178,9 @@ func targetOrigin(raw string) (*url.URL, error) {
 
 // Validate bounds discovery metadata before a client constructs its target catalog.
 func (p Preflight) Validate() error {
-	if len(p.Server.Name) > 256 || len(p.Server.Location) > 256 || len(p.EngineVersion) > 256 || len(p.Generation) == 0 || len(p.Generation) > 256 {
+	if len(p.Server.Name) > 256 || len(p.Server.Location) > 256 || len(p.EngineVersion) > 256 ||
+		len(p.Generation) == 0 || len(p.Generation) > 256 ||
+		!plainText(p.Server.Name+p.Server.Location+p.EngineVersion+p.Generation) {
 		return fmt.Errorf("invalid discovery metadata")
 	}
 	if p.Capabilities.ThroughputTargets == nil || p.Capabilities.LatencyTargets == nil || len(p.Capabilities.ThroughputTargets) > 32 || len(p.Capabilities.LatencyTargets) > 32 {
