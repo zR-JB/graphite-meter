@@ -8,7 +8,7 @@
     "dev": "vite",
     "build": "bun run check && bun run build:bundle",
     "build:bundle": "vite build",
-    "check": "svelte-check --tsconfig ./tsconfig.check.json --tsgo",
+    "check": "rm -rf .svelte-check && svelte-check --tsconfig ./tsconfig.check.json --tsgo",
     "build:e2e-harness": "vite build -c vite.e2e.config.ts",
     "test:bench": "bun run build:e2e-harness && bun test ./bench/throughput.bench.ts --no-orphans --timeout 1800000",
     "test:e2e": "bun test ./e2e --parallel=3 --no-orphans --timeout=60000",
