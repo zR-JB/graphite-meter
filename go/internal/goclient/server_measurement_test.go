@@ -79,6 +79,9 @@ func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	if result := a.result("download", Down); !result.Unavailable || result.TotalBytes != 9000 {
 		t.Fatalf("late dropout must revoke headline without losing bytes: %+v", result)
 	}
+	if len(a.peaks) != 0 || len(a.serverPeaks) != 0 || !reflect.DeepEqual(a.serverSamples, map[string]int{"b": 1}) {
+		t.Fatalf("peaks outlived their interval: %v %v %v", a.peaks, a.serverPeaks, a.serverSamples)
+	}
 	if a.intervals[0].Window == nil || *a.intervals[0].Window.DownBytesPerSec != 4000 {
 		t.Fatal("earlier evidence lost")
 	}

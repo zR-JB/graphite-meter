@@ -736,7 +736,8 @@ func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 			own := Result{Stage: stage.Name, Direction: dir, Unavailable: true}
 			total := c.aggregate.stageTotals[stage.Name][server.id()]
 			own.TotalBytes = total.of(dir)
-			for _, interval := range slices.Backward(c.aggregate.intervals) {
+			latest := len(c.aggregate.intervals) - 1
+			for n, interval := range slices.Backward(c.aggregate.intervals) {
 				if interval.Stage != stage.Name || interval.Window == nil {
 					continue
 				}
@@ -748,8 +749,10 @@ func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 				if i := slices.IndexFunc(components, mine); i >= 0 {
 					own.MeanBps, own.Elapsed = components[i].BytesPerSec, components[i].Duration
 					own.Unavailable = components[i].Duration < minimumSurvivorEvidence
-					own.PeakBps = c.aggregate.serverPeaks[componentKey{server.id(), dir}]
-					own.Samples = c.aggregate.serverSamples[server.id()]
+					if n == latest {
+						own.PeakBps = c.aggregate.serverPeaks[componentKey{server.id(), dir}]
+						own.Samples = c.aggregate.serverSamples[server.id()]
+					}
 					break
 				}
 			}

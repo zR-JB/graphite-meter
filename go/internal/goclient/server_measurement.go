@@ -99,8 +99,6 @@ func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duratio
 	if reason == "stage-start" {
 		a.uploads = map[string]uploadLedger{}
 		a.downSeen = map[string]uint64{}
-		a.serverPeaks = map[componentKey]float64{}
-		a.serverSamples = map[string]int{}
 	}
 	a.stage = stage
 	if a.stageTotals[stage] == nil {
@@ -122,6 +120,8 @@ func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duratio
 	a.first, a.last, a.peakFrom = nil, nil, nil
 	a.peaks = map[Direction]float64{}
 	a.samples = 0
+	a.serverPeaks = map[componentKey]float64{}
+	a.serverSamples = map[string]int{}
 }
 func (a *aggregateMeasurements) current() *AggregationInterval {
 	if len(a.intervals) == 0 {
