@@ -103,6 +103,23 @@ export async function mintWtToken(
   }
 }
 
+/* A black-holed handshake can leave `ready` and `closed` pending, so the budget itself ends the dial. */
+export async function sessionReady(session: WebTransport): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      reject,
+      ESTABLISH_BUDGET_MS,
+      new Error("webtransport session did not establish"),
+    );
+  });
+  try {
+    await Promise.race([session.ready, expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Append the token to a session URL; a blank token leaves the URL alone. */
 export function withWtToken(url: string, token: string): string {
   if (token === "") return url;

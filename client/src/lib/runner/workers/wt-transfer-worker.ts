@@ -1,7 +1,13 @@
 /* The server opens the download lanes and the upload progress feed, so this worker reads incoming streams for. */
 
-import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
-import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
+import {
+  mintWtToken,
+  sessionReady,
+  spendWtToken,
+  withWtToken,
+  type WtMint,
+} from "./wtToken";
+import { PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import {
@@ -182,15 +188,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   const closed = (): void => fail(true, "webtransport session closed");
   void dialed.closed.then(closed, closed);
   try {
-    await Promise.race([
-      dialed.ready,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new Error("webtransport session did not establish")),
-          ESTABLISH_BUDGET_MS,
-        ),
-      ),
-    ]);
+    await sessionReady(dialed);
   } catch (err) {
     // A dial still in flight would otherwise outlive this worker's report.
     try {

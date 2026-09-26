@@ -7,10 +7,15 @@ import {
   INITIAL_RTT_ESTIMATE,
   type RttEstimate,
 } from "./rttEstimator";
-import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
+import {
+  mintWtToken,
+  sessionReady,
+  spendWtToken,
+  withWtToken,
+  type WtMint,
+} from "./wtToken";
 import { createPingScheduler, type PingScheduler } from "./pingScheduler";
 import { sessionAuthenticationRequired } from "../../request-auth";
-import { ESTABLISH_BUDGET_MS } from "../real/budgets";
 import { ROUTES } from "../paths";
 import {
   fields,
@@ -50,6 +55,8 @@ type InMsg =
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 const post = (m: PingWorkerEvent): void => ctx.postMessage(m);
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
 /** Batch flush cadence (ms). */
 const FLUSH_MS = 50;
@@ -184,7 +191,7 @@ ctx.onmessage = (e: MessageEvent<unknown>): void => {
         },
       );
       ensureTimers();
-      connect();
+      void connect();
       break;
     case "measure":
       if (stopped || stopCutoff !== null) return;
@@ -201,10 +208,32 @@ ctx.onmessage = (e: MessageEvent<unknown>): void => {
   }
 };
 
-function connect(): void {
+async function connect(): Promise<void> {
   if (stopped || stopCutoff !== null) return;
-  if (transport === "webtransport") void connectWebTransport();
-  else void connectWebSocket();
+  // A public bus dials synchronously.
+  const { token, authRequired } = mint
+    ? await mintWtToken(mint)
+    : { token: "", authRequired: false };
+  if (stopped || stopCutoff !== null) return;
+  // An authenticated bus cannot dial without a token.
+  if (mint && token === "") {
+    if (authRequired) stopForSignIn();
+    else scheduleReconnect(`${transport} token mint failed`);
+    return;
+  }
+  const dialUrl = withWtToken(url, token);
+  const opened = (): void => {
+    spendWtToken(token);
+    onConnected();
+  };
+  try {
+    link =
+      transport === "webtransport"
+        ? dialWebTransport(dialUrl, opened)
+        : dialWebSocket(dialUrl, opened);
+  } catch (err) {
+    scheduleReconnect(String(err));
+  }
 }
 
 /* Announces an open bus and starts the chain. */
@@ -221,96 +250,35 @@ function onConnected(): void {
   scheduler?.start();
 }
 
-async function connectWebSocket(): Promise<void> {
-  const minted = mint
-    ? await mintWtToken(mint)
-    : { token: "", authRequired: false };
-  if (stopped || stopCutoff !== null) return;
-  if (mint && minted.token === "") {
-    if (minted.authRequired) {
-      post({ type: "auth-required" });
-      finishStop();
-    } else scheduleReconnect("websocket token mint failed");
-    return;
-  }
-  let ws: WebSocket;
-  try {
-    ws = new WebSocket(withWtToken(url, minted.token));
-  } catch (err) {
-    scheduleReconnect(String(err));
-    return;
-  }
+function dialWebSocket(dialUrl: string, opened: () => void): PingLink {
+  const ws = new WebSocket(dialUrl);
   const connection: PingLink = {
     ready: () => ws.readyState === WebSocket.OPEN,
     send: (msg) => ws.send(msg),
     close: () => ws.close(),
   };
-  link = connection;
   ws.onopen = (): void => {
-    if (link === connection) {
-      spendWtToken(minted.token);
-      onConnected();
-    }
+    if (link === connection) opened();
   };
   ws.onmessage = (ev: MessageEvent): void => {
     if (link === connection && connection.ready()) onFrame(ev.data);
   };
   // A WebSocket always follows onerror with onclose. Reconnect from onclose only, to avoid a double schedule.
   ws.onclose = (event: CloseEvent): void => {
-    if (stopped || link !== connection) return;
-    if (event.code === 1008 && event.reason === "authentication required") {
-      interruptPending("unresolved");
-      post({ type: "auth-required" });
-      finishStop();
-      return;
-    }
-    if (stopCutoff !== null) {
-      onDisconnect("websocket closed");
-      return;
-    }
-    if (checkAuthentication && event.code === 1006) {
+    if (link !== connection) return;
+    if (event.code === 1008 && event.reason === "authentication required")
+      stopForSignIn();
+    else if (checkAuthentication && stopCutoff === null && event.code === 1006)
       void checkSessionThenReconnect("websocket closed");
-      return;
-    }
-    onDisconnect("websocket closed");
+    else onDisconnect("websocket closed");
   };
+  return connection;
 }
 
 /** One wire message per datagram, so the read loop needs no framing. */
-async function connectWebTransport(): Promise<void> {
-  const minted = mint
-    ? await mintWtToken(mint)
-    : { token: "", authRequired: false };
-  if (stopped || stopCutoff !== null) return;
-  // An authenticated bus cannot dial without a token.
-  if (mint && minted.token === "") {
-    if (minted.authRequired) {
-      post({ type: "auth-required" });
-      finishStop();
-      return;
-    }
-    scheduleReconnect("webtransport token mint failed");
-    return;
-  }
-  const token = minted.token;
-  let wt: WebTransport;
-  try {
-    wt = new WebTransport(withWtToken(url, token), {
-      congestionControl: "low-latency",
-    });
-  } catch (err) {
-    scheduleReconnect(String(err));
-    return;
-  }
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
+function dialWebTransport(dialUrl: string, opened: () => void): PingLink {
+  const wt = new WebTransport(dialUrl, { congestionControl: "low-latency" });
   let writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
-  let disconnectReported = false;
-  const disconnect = (detail: string): void => {
-    if (disconnectReported || link !== connection) return;
-    disconnectReported = true;
-    onDisconnect(detail);
-  };
   const connection: PingLink = {
     ready: () => writer !== null,
     send: (msg) => {
@@ -319,72 +287,43 @@ async function connectWebTransport(): Promise<void> {
     },
     close: () => wt.close(),
   };
-  link = connection;
-  void wt.closed.then(
-    () => disconnect("webtransport closed"),
-    (err: unknown) => disconnect(String(err)),
-  );
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    await Promise.race([
-      wt.ready,
-      new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("webtransport session did not establish")),
-          ESTABLISH_BUDGET_MS,
-        );
-      }),
-    ]);
-  } catch (err) {
-    if (timer !== null) clearTimeout(timer);
+  const drop = (reason: unknown): void => {
+    if (link !== connection) return;
     try {
       wt.close();
     } catch {
       /* already closing */
     }
-    // Some implementations leave `closed` pending with a black-holed handshake, so the deadline itself must drive the.
-    disconnect(String(err));
-    return;
-  }
-  if (timer !== null) clearTimeout(timer);
-  if (stopped || stopCutoff !== null || link !== connection) {
-    wt.close();
-    return;
-  }
-  // Readiness proves the ticket was consumed, even though a failed handshake can also consume it.
-  spendWtToken(token);
-  try {
+    onDisconnect(String(reason));
+  };
+  void wt.closed.then(() => drop("webtransport closed"), drop);
+  const read = async (): Promise<void> => {
+    await sessionReady(wt);
+    if (link !== connection) return wt.close();
     writer = wt.datagrams.writable.getWriter();
-    onConnected();
+    opened();
     const reader = wt.datagrams.readable.getReader();
     for (;;) {
       const { value, done } = await reader.read();
-      if (done) {
-        disconnect("webtransport datagram stream closed");
-        return;
-      }
+      if (done) return drop("webtransport datagram stream closed");
       if (link !== connection) return;
       onFrame(decoder.decode(value as AllowSharedBufferSource));
     }
-  } catch (err) {
-    try {
-      wt.close();
-    } catch {
-      /* already closing */
-    }
-    disconnect(String(err));
-  }
+  };
+  void read().catch(drop);
+  return connection;
 }
 
 async function checkSessionThenReconnect(detail: string): Promise<void> {
-  if (await sessionAuthenticationRequired(self.location.origin)) {
-    if (stopped) return;
-    interruptPending("unresolved");
-    post({ type: "auth-required" });
-    finishStop();
-    return;
-  }
-  onDisconnect(detail);
+  if (!(await sessionAuthenticationRequired(self.location.origin)))
+    onDisconnect(detail);
+  else if (!stopped) stopForSignIn();
+}
+
+function stopForSignIn(): void {
+  interruptPending("unresolved");
+  post({ type: "auth-required" });
+  finishStop();
 }
 
 function onDisconnect(detail: string): void {
@@ -413,7 +352,7 @@ function scheduleReconnect(detail: string): void {
     : RECONNECT_MIN_MS;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connect();
+    void connect();
   }, backoff);
 }
 
@@ -438,7 +377,7 @@ function onFrame(data: unknown): void {
     }
     pending.delete(frame.id);
     const rtt = recv - ping.sentAt;
-    rttEstimate = observeRtt(rttEstimate, rtt); // always: keeps the loss timeout accurate; reply-driven localhost.
+    rttEstimate = observeRtt(rttEstimate, rtt); // every reply keeps the loss timeout accurate
     if (eligible(ping))
       recordOutcome(
         ping,
