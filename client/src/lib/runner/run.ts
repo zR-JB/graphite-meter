@@ -173,6 +173,7 @@ export class Run implements NetworkRunner {
   #failures: ServerFailure[] = [];
 
   #live = new LiveRates();
+  #rated = new Set<FlowDirection>();
   #stalled = false;
   #stallAt = 0;
   #stallFrom: Record<FlowDirection, number> = { down: 0, up: 0 };
@@ -555,6 +556,7 @@ export class Run implements NetworkRunner {
     }
     if (!isTransfer(activity.stage)) return;
     this.#live.reset(Object.fromEntries(this.#ids().map((id) => [id, 0])));
+    this.#rated.clear();
     this.#aggregate.begin(activity.stage, this.#ids(), this.#now());
     this.#boundary();
   }
@@ -610,7 +612,12 @@ export class Run implements NetworkRunner {
     }
     for (const server of this.#participants())
       this.#live.download(server.server.id, server.down, now);
-    for (const dir of transfer) this.#emitThroughput(dir, this.#live.rate(dir));
+    for (const dir of transfer) {
+      const rate = this.#live.rate(dir);
+      // No rate is shown before a stage's first evidence, so the gauge never dips to zero between stages.
+      if (rate > 0) this.#rated.add(dir);
+      if (this.#rated.has(dir)) this.#emitThroughput(dir, rate);
+    }
     if (!transfer.includes("up")) return;
     const lanes = (id: string) => {
       const server = this.#servers.find((entry) => entry.server.id === id)!;
