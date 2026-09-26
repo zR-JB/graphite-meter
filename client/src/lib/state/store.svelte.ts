@@ -170,6 +170,15 @@ function sustainedRate(
   return samples[order.at(-1)!].bytesPerSec;
 }
 
+type DisplayPreference =
+  | "unitBase"
+  | "unitKind"
+  | "theme"
+  | "showWireEstimates"
+  | "resultHistoryPreference"
+  | "historyColumns"
+  | "dockWidth";
+
 class AppStore {
   serverCatalog = $state<ServerCatalog | null>(null);
   selectedServers = $state<string[]>(["self"]);
@@ -396,6 +405,11 @@ class AppStore {
 
   constructor() {
     Object.assign(this, loadPersisted());
+  }
+
+  /** The one writer of display preferences; persistence follows by effect. */
+  prefer(patch: Partial<Pick<AppStore, DisplayPreference>>) {
+    Object.assign(this, patch);
   }
 
   liveBidirectional = $derived(

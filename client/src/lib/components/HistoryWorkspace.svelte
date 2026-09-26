@@ -340,7 +340,7 @@
           {columns}
           {sort}
           {descending}
-          onColumnsChange={(next) => (store.historyColumns = next)}
+          onColumnsChange={(next) => store.prefer({ historyColumns: next })}
           onSortChange={setSort}
         />
       {/if}
@@ -379,7 +379,7 @@
           <button
             class="btn"
             type="button"
-            onclick={() => (store.resultHistoryPreference = "enabled")}
+            onclick={() => store.prefer({ resultHistoryPreference: "enabled" })}
             >Resume saving</button
           >
         </p>
@@ -424,7 +424,7 @@
         <button
           class="btn btn-accent"
           type="button"
-          onclick={() => (store.resultHistoryPreference = "enabled")}
+          onclick={() => store.prefer({ resultHistoryPreference: "enabled" })}
           >Resume saving</button
         >
       {/if}

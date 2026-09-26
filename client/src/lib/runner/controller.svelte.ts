@@ -1323,8 +1323,15 @@ export function createApplicationController(
     store.reset();
     selectIntent();
   }
-  function configureRun(patch: Partial<LiveRunConfig>): boolean {
+  /** The one writer of test settings; a running test accepts only its live settings. */
+  function configureRun(patch: Partial<RunnerConfig>): boolean {
     if (store.preparing) return false;
+    const liveKeys = ["stages", "duration", "adaptive", "visualization"];
+    if (
+      store.isRunning &&
+      Object.keys(patch).some((k) => !liveKeys.includes(k))
+    )
+      return false;
     const config = { ...$state.snapshot(store.config), ...patch };
     config.adaptive = canonicalAdaptiveConfig(config.adaptive);
     if (!Object.values(config.stages).some(Boolean)) return false;

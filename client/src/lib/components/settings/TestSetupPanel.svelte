@@ -2,7 +2,7 @@
   import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
   import { DURATION_PRESETS } from "../../state/defaults";
-  import type { RunnerConfig } from "../../runner/contract";
+  import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
   import { panelReadiness, pathOptions } from "../../presentation/paths";
@@ -161,9 +161,12 @@
     }));
   });
 
-  function setForcedStreams(forced: boolean) {
-    store.config.transferStreams.mode = forced ? "forced" : "auto";
-  }
+  const streams = (patch: Partial<RunnerConfig["transferStreams"]>) =>
+    controller.configureRun({
+      transferStreams: { ...store.config.transferStreams, ...patch },
+    });
+  const gaugeMax = (throughputMaxBytesPerSec: number | "auto") =>
+    controller.configureRun({ visualization: { throughputMaxBytesPerSec } });
 
   const vizAuto = $derived(
     store.config.visualization.throughputMaxBytesPerSec === "auto",
@@ -176,9 +179,9 @@
         ),
   );
   function setVizAuto(auto: boolean) {
-    store.config.visualization.throughputMaxBytesPerSec = auto
-      ? "auto"
-      : Math.max(1, Math.round(store.chartScaleBytesPerSec));
+    gaugeMax(
+      auto ? "auto" : Math.max(1, Math.round(store.chartScaleBytesPerSec)),
+    );
   }
   function setVizMax(event: Event) {
     const current = Number(vizDisplay.toFixed(2));
@@ -186,11 +189,7 @@
       event,
       current,
       (value) => (value > 0 ? value : current),
-      (value) =>
-        (store.config.visualization.throughputMaxBytesPerSec = Math.max(
-          1,
-          Math.round(store.fromUnit(value)),
-        )),
+      (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
     );
   }
 
@@ -302,13 +301,13 @@
             type="button"
             aria-pressed={store.unitKind === "bits"}
             use:tooltip={JARGON.unitBits}
-            onclick={() => (store.unitKind = "bits")}>Bits</button
+            onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
           >
           <button
             type="button"
             aria-pressed={store.unitKind === "bytes"}
             use:tooltip={JARGON.unitBytes}
-            onclick={() => (store.unitKind = "bytes")}>Bytes</button
+            onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
           >
         </div>
       </div>
@@ -319,13 +318,13 @@
             type="button"
             aria-pressed={store.unitBase === "base10"}
             use:tooltip={JARGON.unitDecimal}
-            onclick={() => (store.unitBase = "base10")}>Decimal</button
+            onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
           >
           <button
             type="button"
             aria-pressed={store.unitBase === "base2"}
             use:tooltip={JARGON.unitBinary}
-            onclick={() => (store.unitBase = "base2")}>Binary</button
+            onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
           >
         </div>
       </div>
@@ -337,7 +336,9 @@
     <Switch
       checked={store.savingResults}
       onToggle={(enabled) =>
-        (store.resultHistoryPreference = enabled ? "enabled" : "disabled")}
+        store.prefer({
+          resultHistoryPreference: enabled ? "enabled" : "disabled",
+        })}
       label="Save completed results on this device"
     />
     <a
@@ -352,7 +353,8 @@
   <section class="surface-inset panel wide">
     <h3 class="caps">Wire-rate estimates</h3>
     <Switch
-      bind:checked={store.showWireEstimates}
+      checked={store.showWireEstimates}
+      onToggle={(showWireEstimates) => store.prefer({ showWireEstimates })}
       label="Show estimated wire rate"
       tooltip={JARGON.wireRate}
     />
@@ -404,7 +406,11 @@
       <label class="field">
         <span>{label}</span>
         <select
-          bind:value={store.config[key]}
+          value={store.config[key]}
+          onchange={(event) =>
+            controller.configureRun({
+              [key]: event.currentTarget.value as PingCadence,
+            })}
           disabled={running || store.preparing}
         >
           {#each Object.entries(PING_CADENCE) as [value, name] (value)}
@@ -414,7 +420,9 @@
       </label>
     {/each}
     <Switch
-      bind:checked={store.config.skipLoadedLatencyWhenStageOff}
+      checked={store.config.skipLoadedLatencyWhenStageOff}
+      onToggle={(skipLoadedLatencyWhenStageOff) =>
+        controller.configureRun({ skipLoadedLatencyWhenStageOff })}
       disabled={running || store.preparing}
       label="Skip loaded latency when latency is off"
     />
@@ -431,7 +439,9 @@
       </p>
     {/if}
     <Switch
-      bind:checked={store.config.experimentalDatagramThroughput}
+      checked={store.config.experimentalDatagramThroughput}
+      onToggle={(experimentalDatagramThroughput) =>
+        controller.configureRun({ experimentalDatagramThroughput })}
       disabled={running || store.preparing}
       label="Datagram throughput (experimental)"
     />
@@ -443,7 +453,7 @@
     <h3 class="caps">Transfer streams</h3>
     <Switch
       checked={store.config.transferStreams.mode === "forced"}
-      onToggle={setForcedStreams}
+      onToggle={(forced) => streams({ mode: forced ? "forced" : "auto" })}
       disabled={running || store.preparing}
       label="Force exact stream count"
       tooltip="Automatic chooses concurrency for each protocol. Forced uses the exact count per server and direction within shared connection limits."
@@ -466,7 +476,7 @@
             event,
             store.config.transferStreams.count,
             normalizeStreamCount,
-            (count) => (store.config.transferStreams.count = count),
+            (count) => streams({ count }),
           )}
       />
     </label>

@@ -181,7 +181,7 @@
   function toggleTheme() {
     const next =
       THEME_CYCLE[(THEME_CYCLE.indexOf(store.theme) + 1) % THEME_CYCLE.length];
-    store.theme = next;
+    store.prefer({ theme: next });
   }
 
   // The grid and resize controls share one resolution of the saved widths.
@@ -211,15 +211,19 @@
     resizedDock = true;
     const other = side === "left" ? "right" : "left";
     // Freeze the visible sibling so the handle tracks the pointer.
-    store.dockWidth = {
-      ...store.dockWidth,
-      ...(docks[other] ? { [other]: docks[other] } : {}),
-      [side]: px,
-    };
+    store.prefer({
+      dockWidth: {
+        ...store.dockWidth,
+        ...(docks[other] ? { [other]: docks[other] } : {}),
+        [side]: px,
+      },
+    });
   }
   function resetDockWidth(side: "left" | "right") {
     resizedDock = true;
-    store.dockWidth = { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] };
+    store.prefer({
+      dockWidth: { ...store.dockWidth, [side]: DEFAULT_DOCK_WIDTH[side] },
+    });
   }
 
   function requestReturnToStart() {
