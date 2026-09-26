@@ -1,9 +1,30 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import {
+  fetchInit,
   nextUploadBytes,
+  recoverableDownloadStatus,
   recoverableStatus,
   uploadPoolBytes,
-} from "./upload-worker";
+} from "./fetch-worker";
+
+test("admission rejections are terminal for a download lane", () => {
+  for (const [status, recoverable] of [
+    [429, false],
+    [503, false],
+    [500, true],
+    [403, true], // A bare proxy refusal remains recoverable.
+  ] as const)
+    expect(recoverableDownloadStatus(status)).toBe(recoverable);
+});
+
+test("download requests retain bearer credentials", () => {
+  const init = fetchInit("include", {
+    authorization: "Bearer grant",
+  });
+  expect(init.credentials).toBe("include");
+  expect(init.redirect).toBe("error");
+  expect(new Headers(init.headers).get("authorization")).toBe("Bearer grant");
+});
 
 const MIN_POST_BYTES = 128 * 1024;
 const MAX_POST_BYTES = 10 * 1024 * 1024;
@@ -108,10 +129,10 @@ for (const streams of [1, 128])
       },
     });
     try {
-      await import(`./upload-worker.ts?pool-copies=${streams}`);
+      await import(`./fetch-worker.ts?pool-copies=${streams}`);
       const start = globalThis.onmessage as (event: MessageEvent) => void;
       start({
-        data: { type: "start", url: "/upload?id=test", streams },
+        data: { type: "start", dir: "up", url: "/upload?id=test", streams },
       } as MessageEvent);
       await ended.promise;
       expect(reservoirBytes).toBe(uploadPoolBytes(streams, 8));

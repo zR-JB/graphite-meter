@@ -33,17 +33,18 @@ class FakeWorker {
   static all: FakeWorker[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly kind: string;
+  kind: string;
   readonly sent: { type: string; url?: string; seq?: number }[] = [];
   terminated = false;
   constructor(url: URL) {
     this.kind =
-      /(download|upload|wt-transfer|ping)-worker/.exec(String(url))?.[1] ??
-      "other";
+      /(fetch|wt-transfer|ping)-worker/.exec(String(url))?.[1] ?? "other";
     FakeWorker.all.push(this);
   }
-  postMessage(message: { type: string; url?: string }): void {
+  postMessage(message: { type: string; url?: string; dir?: string }): void {
     this.sent.push(message);
+    if (this.kind === "fetch" && message.type === "start")
+      this.kind = message.dir === "down" ? "download" : "upload";
     if (this.kind === "wt-transfer" && message.type === "start")
       queueMicrotask(() => this.emit({ type: "established" }));
     if (this.kind === "wt-transfer" && message.type === "stop")

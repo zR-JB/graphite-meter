@@ -197,8 +197,9 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     for (let i = 0; i < spec.lanes; i++)
       lanes.push(
         openLane(
-          laneWorker(spec.dir === "down" ? "download" : "upload"),
+          laneWorker("fetch"),
           {
+            dir: spec.dir,
             url: laneUrl(urls, i, uploadId),
             streams: spec.lanes,
             credentials: "same-origin",

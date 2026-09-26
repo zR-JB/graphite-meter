@@ -181,19 +181,14 @@ export function openLane(
   };
 }
 
-export const laneWorker = (kind: "download" | "upload" | "wt"): Worker =>
-  kind === "download"
-    ? new Worker(new URL("./workers/download-worker.ts", import.meta.url), {
+export const laneWorker = (kind: "fetch" | "wt"): Worker =>
+  kind === "fetch"
+    ? new Worker(new URL("./workers/fetch-worker.ts", import.meta.url), {
         type: "module",
       })
-    : kind === "upload"
-      ? new Worker(new URL("./workers/upload-worker.ts", import.meta.url), {
-          type: "module",
-        })
-      : new Worker(
-          new URL("./workers/wt-transfer-worker.ts", import.meta.url),
-          { type: "module" },
-        );
+    : new Worker(new URL("./workers/wt-transfer-worker.ts", import.meta.url), {
+        type: "module",
+      });
 
 /** One direction's lanes: restarts, readiness and a measured-progress watchdog. */
 class LaneSet {
@@ -533,8 +528,9 @@ export class ServerStage implements StageTransport {
       const spec = { dir, base: fetchTarget.origin, cbSeed: this.#seed };
       this.#lanes[dir] = new LaneSet(this, dir, streams, (index, on) =>
         openLane(
-          laneWorker(dir === "down" ? "download" : "upload"),
+          laneWorker("fetch"),
           {
+            dir,
             url: laneUrl(spec, index, uploadId),
             streams,
             credentials: mode,
