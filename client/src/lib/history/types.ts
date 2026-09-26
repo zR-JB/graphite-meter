@@ -286,6 +286,8 @@ const numbers = (value: Plain, keys: readonly string[], nullable = false) =>
     (key) =>
       typeof value[key] === "number" || (nullable && value[key] === null),
   );
+const time = (value: unknown) =>
+  typeof value === "number" && !Number.isNaN(new Date(value).getTime());
 const objects = (value: Plain, keys: readonly string[]) =>
   keys.every((key) => object(value[key]));
 
@@ -345,7 +347,9 @@ export function isHistoryRecord(value: unknown): value is HistoryRecord {
     value.schemaVersion !== HISTORY_SCHEMA_VERSION ||
     !plain(value) ||
     typeof value.id !== "string" ||
-    !numbers(value, ["startedAt", "completedAt", "durationMs", "totalBytes"]) ||
+    !time(value.startedAt) ||
+    !time(value.completedAt) ||
+    !numbers(value, ["durationMs", "totalBytes"]) ||
     !objects(value, ["stages", "server", "transport", "client"]) ||
     !Array.isArray(value.failures) ||
     (value.multiServer !== undefined && !serverDetails(value.multiServer)) ||

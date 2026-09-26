@@ -166,6 +166,7 @@ test("corrupted saved shapes are skipped before they reach rendering", () => {
     { ...valid, stages: null },
     { ...valid, failures: {} },
     { ...valid, durationMs: "1" },
+    { ...valid, completedAt: 1e20 },
     {
       ...valid,
       stages: {
