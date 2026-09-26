@@ -33,12 +33,12 @@ func main() {
 		return
 	}
 	if err != nil {
-		log.Fatalf("configuration error: %v", err)
+		log.Fatalf("configuration error: %q", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := server.Run(ctx, new(cfg)); err != nil {
-		log.Fatalf("server error: %v", err)
+		log.Fatalf("server error: %q", err)
 	}
 }
 
