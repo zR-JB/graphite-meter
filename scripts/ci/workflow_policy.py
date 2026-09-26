@@ -115,6 +115,22 @@ def read(root: Path, name: str) -> str:
     return (root / name).read_text(encoding="utf-8")
 
 
+def run_scripts(text: str) -> list[str]:
+    lines = text.splitlines()
+    scripts: list[str] = []
+    for number, line in enumerate(lines):
+        if (match := re.match(r"( *)(- )?run:(.*)", line)) is None:
+            continue
+        indent = len(match.group(1)) + len(match.group(2) or "")
+        body = [match.group(3)]
+        for following in lines[number + 1:]:
+            if following.strip() and len(following) - len(following.lstrip()) <= indent:
+                break
+            body.append(following)
+        scripts.append("\n".join(body))
+    return scripts
+
+
 def check_actions(root: Path) -> None:
     github = root / ".github"
     files = sorted([*github.glob("workflows/*.y*ml"), *github.glob("actions/**/action.y*ml")])
@@ -130,6 +146,8 @@ def check_actions(root: Path) -> None:
                 fail(f"{name} must not use {needle}")
         if re.search(r"uses: (?:actions/setup-(?:go|python)|oven-sh/setup-bun)@", text):
             fail(f"{name} must provision project tools through mise")
+        if any("${{" in script for script in run_scripts(text)):
+            fail(f"{name}: run scripts must read expressions through env, not interpolate them")
         for step in STEP.split(text):
             if "uses: actions/checkout@" in step:
                 if "persist-credentials: false" not in step:

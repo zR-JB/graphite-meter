@@ -17,6 +17,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", CHECKOUT, "uses: actions/checkout@v7", "40-character commit SHA"),
     (OCI, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
+    (W + "release.yml", 'run: echo "::notice::', 'run: echo "${{ github.head_ref }}', "through env"),
+    (OCI, "        bun=$(", "        echo ${{ inputs.version }}\n        bun=$(", "through env"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (W + "ci.yml", "persist-credentials: false", "fetch-depth: 1", "persist-credentials"),
     (W + "prerelease-request.yml", "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}",
