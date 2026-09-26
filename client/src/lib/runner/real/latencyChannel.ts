@@ -25,8 +25,8 @@ import {
 } from "../workers/pingSample";
 
 // Ping pacing is separate for idle, latency, and loaded-transfer contexts.
-const PING_LOSS_K = 4;
-const PING_LOSS_FLOOR_MS = 250;
+const PROBE_DEADLINE_K = 4;
+const PROBE_DEADLINE_FLOOR_MS = 250;
 const PING_MAX_IN_FLIGHT = 16;
 const PING_REPLY_MAX_IN_FLIGHT = 4;
 const PING_LOADED_MAX_IN_FLIGHT = 2;
@@ -62,8 +62,8 @@ function startPingWorker(
     transport: target.transport,
     mint: socketMint(credentials, target.origin, route, wt ? "wt" : "ws"),
     ...pacing,
-    lossK: PING_LOSS_K,
-    lossFloorMs: PING_LOSS_FLOOR_MS,
+    deadlineK: PROBE_DEADLINE_K,
+    deadlineFloorMs: PROBE_DEADLINE_FLOOR_MS,
     checkAuthentication: credentials
       ? credentials.kind === "session"
       : authEnabled(),
@@ -117,8 +117,8 @@ export class LatencyChannel {
     this.teardown();
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
-    // Reply-driven uses this only for its loss sweep; its sends are driven by PONGs and the worker's adaptive backup.
-    const intervalMs = fixedIntervalMs ?? PING_LOSS_FLOOR_MS;
+    // Reply-driven uses this only for its deadline sweep; its sends are driven by PONGs and the worker's adaptive backup.
+    const intervalMs = fixedIntervalMs ?? PROBE_DEADLINE_FLOOR_MS;
     // A loaded stage shares the link with the transfer, so its depth is the same either way; the idle stage goes.
     const maxInFlight = !isLatencyStage
       ? PING_LOADED_MAX_IN_FLIGHT
@@ -150,7 +150,7 @@ export class LatencyChannel {
     this.#worker = worker;
   }
 
-  /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
+  /* The worker owns RTT, probe deadlines and observation time; this channel translates only the cross-realm clock coordinate. */
   measure(): void {
     this.#worker?.postMessage({ type: "measure" });
   }
@@ -452,7 +452,7 @@ export class IdleKeepalive {
             ),
           });
         }
-        // A loss-only batch proves the worker is running, not that the server answered; recover only after a pong.
+        // A timeout-only batch proves the worker is running, not that the server answered; recover only after a pong.
         if (receivedPong && this.#connectivity !== "connected") {
           this.#connectivity = "connected";
           this.onEvent({ type: "connectivity", state: "connected" });

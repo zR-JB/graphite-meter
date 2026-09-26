@@ -46,8 +46,8 @@ async function replay(replies: number) {
       intervalMs: 250,
       replyDriven: true,
       maxInFlight: 4,
-      lossK: 4,
-      lossFloorMs: 250,
+      deadlineK: 4,
+      deadlineFloorMs: 250,
     });
     socket!.onopen();
     send({ type: "measure" });

@@ -3,7 +3,7 @@
 import { encodePing, decodePong } from "../real/wire";
 import {
   observeRtt,
-  lossTimeout,
+  probeDeadline,
   INITIAL_RTT_ESTIMATE,
   type RttEstimate,
 } from "./rttEstimator";
@@ -46,8 +46,8 @@ type InMsg =
       intervalMs: number;
       replyDriven: boolean;
       maxInFlight: number;
-      lossK: number;
-      lossFloorMs: number;
+      deadlineK: number;
+      deadlineFloorMs: number;
       checkAuthentication?: boolean;
     }
   | { type: "measure"; intervalMs?: number }
@@ -89,8 +89,8 @@ let checkAuthentication = false;
 let intervalMs = 250;
 let replyDriven = false;
 let maxInFlight = 16; // caps concurrent pings, bounding wire spam and memory
-let lossK = 4;
-let lossFloorMs = 250;
+let deadlineK = 4;
+let deadlineFloorMs = 250;
 
 interface PendingPing {
   sentAt: number;
@@ -154,8 +154,8 @@ export function parseInMsg(data: unknown): InMsg {
         intervalMs: finite(m.intervalMs, 1, "interval"),
         replyDriven: flag(m.replyDriven, "reply mode"),
         maxInFlight: integer(m.maxInFlight, 1, 1024, "in-flight cap"),
-        lossK: finite(m.lossK, 1, "loss multiplier"),
-        lossFloorMs: finite(m.lossFloorMs, 0, "loss floor"),
+        deadlineK: finite(m.deadlineK, 1, "deadline multiplier"),
+        deadlineFloorMs: finite(m.deadlineFloorMs, 0, "deadline floor"),
         checkAuthentication: optional(m.checkAuthentication, (v) =>
           flag(v, "authentication check"),
         ),
@@ -176,8 +176,8 @@ ctx.onmessage = (e: MessageEvent<unknown>): void => {
       intervalMs = m.intervalMs;
       replyDriven = m.replyDriven;
       maxInFlight = m.maxInFlight;
-      lossK = m.lossK;
-      lossFloorMs = m.lossFloorMs;
+      deadlineK = m.deadlineK;
+      deadlineFloorMs = m.deadlineFloorMs;
       checkAuthentication = m.checkAuthentication ?? false;
       scheduler = createPingScheduler(
         replyDriven
@@ -358,7 +358,7 @@ function scheduleReconnect(detail: string): void {
 
 function ensureTimers(): void {
   // Eviction sweep: drop pings stalled past the adaptive timeout.
-  sweeper ??= setInterval(sweep, Math.max(lossFloorMs, intervalMs));
+  sweeper ??= setInterval(sweep, Math.max(deadlineFloorMs, intervalMs));
   flusher ??= setInterval(flush, FLUSH_MS);
 }
 
@@ -377,7 +377,7 @@ function onFrame(data: unknown): void {
     }
     pending.delete(frame.id);
     const rtt = recv - ping.sentAt;
-    rttEstimate = observeRtt(rttEstimate, rtt); // every reply keeps the loss timeout accurate
+    rttEstimate = observeRtt(rttEstimate, rtt); // every reply keeps the probe deadline accurate
     if (eligible(ping))
       recordOutcome(
         ping,
@@ -408,7 +408,13 @@ function sendPing(now: number): void {
   const ping: PendingPing = {
     sentAt: now,
     expiresAt:
-      now + lossTimeout(rttEstimate, lossK, lossFloorMs, PING_TIMEOUT_CEIL_MS),
+      now +
+      probeDeadline(
+        rttEstimate,
+        deadlineK,
+        deadlineFloorMs,
+        PING_TIMEOUT_CEIL_MS,
+      ),
     writeConfirmed: false,
     measured: measuring,
   };
@@ -442,9 +448,9 @@ function sendPing(now: number): void {
 
 function replyBackupDelay(): number {
   if (!rttEstimate.haveRtt) return REPLY_BACKUP_INITIAL_MS;
-  return lossTimeout(
+  return probeDeadline(
     rttEstimate,
-    lossK,
+    deadlineK,
     REPLY_BACKUP_FLOOR_MS,
     REPLY_BACKUP_CEIL_MS,
   );

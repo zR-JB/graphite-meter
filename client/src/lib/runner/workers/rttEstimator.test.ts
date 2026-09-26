@@ -1,5 +1,9 @@
 import { test, expect } from "bun:test";
-import { observeRtt, lossTimeout, INITIAL_RTT_ESTIMATE } from "./rttEstimator";
+import {
+  observeRtt,
+  probeDeadline,
+  INITIAL_RTT_ESTIMATE,
+} from "./rttEstimator";
 
 test("observeRtt: the first sample seeds srtt directly and rttvar to half of it", () => {
   const est = observeRtt(INITIAL_RTT_ESTIMATE, 100);
@@ -23,22 +27,22 @@ test("observeRtt: an RTT jump moves srtt slowly but spikes rttvar immediately", 
   expect(jump.rttvar).toBeCloseTo(87.5, 10);
 });
 
-test("lossTimeout: before any sample, the floor governs (cold start)", () => {
-  expect(lossTimeout(INITIAL_RTT_ESTIMATE, 4, 250, 10_000)).toBe(250);
+test("probeDeadline: before any sample, the floor governs (cold start)", () => {
+  expect(probeDeadline(INITIAL_RTT_ESTIMATE, 4, 250, 10_000)).toBe(250);
 });
 
-test("lossTimeout: RTO = srtt + k*rttvar once warmed", () => {
+test("probeDeadline: RTO = srtt + k*rttvar once warmed", () => {
   const est = { srtt: 100, rttvar: 20, haveRtt: true };
-  expect(lossTimeout(est, 4, 250, 10_000)).toBe(250); // 180 < floor(250)
-  expect(lossTimeout(est, 4, 50, 10_000)).toBe(180); // 100 + 4*20
+  expect(probeDeadline(est, 4, 250, 10_000)).toBe(250); // 180 < floor(250)
+  expect(probeDeadline(est, 4, 50, 10_000)).toBe(180); // 100 + 4*20
 });
 
-test("lossTimeout: rttvar is floored at 1 so a perfectly stable link still has margin", () => {
+test("probeDeadline: rttvar is floored at 1 so a perfectly stable link still has margin", () => {
   const est = { srtt: 100, rttvar: 0, haveRtt: true };
-  expect(lossTimeout(est, 4, 50, 10_000)).toBe(104); // 100 + 4*max(1,0)
+  expect(probeDeadline(est, 4, 50, 10_000)).toBe(104); // 100 + 4*max(1,0)
 });
 
-test("lossTimeout: clamps at the ceiling on a pathologically slow/jittery link", () => {
+test("probeDeadline: clamps at the ceiling on a pathologically slow/jittery link", () => {
   const est = { srtt: 50_000, rttvar: 10_000, haveRtt: true };
-  expect(lossTimeout(est, 4, 250, 10_000)).toBe(10_000);
+  expect(probeDeadline(est, 4, 250, 10_000)).toBe(10_000);
 });

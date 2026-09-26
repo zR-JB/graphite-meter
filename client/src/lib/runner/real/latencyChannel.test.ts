@@ -125,7 +125,7 @@ test("idle latency buckets use each worker observation time", () => {
   keepalive.stop();
 });
 
-test("loss-only keepalive batches do not recover offline connectivity", () => {
+test("timeout-only keepalive batches do not recover offline connectivity", () => {
   const states: string[] = [];
   const keepalive = new IdleKeepalive(target);
   keepalive.onEvent = (event) => {
