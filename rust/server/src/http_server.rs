@@ -190,9 +190,9 @@ impl HttpServer {
         let port = if public.is_empty() {
             listener.local_addr()?.port()
         } else {
-            url::Url::parse(public)?
-                .port_or_known_default()
-                .ok_or("HTTP/3 public origin has no effective port")?
+            graphite_meter_core::origin::target_origin(public)?
+                .ok_or("HTTP/3 public origin is missing")?
+                .port_number()
         };
         self.serve_tcp(
             listener,
