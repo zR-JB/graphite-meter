@@ -373,21 +373,25 @@ test("a server whose check failed before the run is shown with its reason while 
 });
 
 test("a server lost in the latency stage is not prepared for the later stages", async () => {
+  const lose = (how: (host: ParticipantHost) => unknown): Partial<Peer> => ({
+    measure: (host, { stage }) => void (stage === "latency" && how(host)),
+  });
   const h = await harness(
-    two({
-      measure: (host, { stage }) => {
-        if (stage === "latency") fail(100)(host);
-      },
-    }),
+    [
+      ...two(lose(fail(100))),
+      { id: "c", ...lose((host) => host.stallLatency("fixture")) },
+    ],
     { latency: true, download: true },
     { latencyMs: 400, downloadMs: 1_000 },
   );
   h.start();
   const { multiServer, stages } = await h.result();
   expect(h.calls).not.toContain("begin:a:download");
+  expect(h.calls).not.toContain("begin:c:download");
   expect(multiServer.participants).toEqual(["b"]);
   expect(multiServer.failures).toMatchObject([
     { serverId: "a", stage: "latency", scope: "latency" },
+    { serverId: "c", stage: "latency", scope: "latency" },
   ]);
   expect(stages.download).toBe("complete");
 });

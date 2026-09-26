@@ -920,6 +920,8 @@ export class Run {
     stage: TransportRole,
     detail: string,
   ): void {
+    if (stage === "latency")
+      return this.#remove(server, "connection-lost", detail);
     server.latencyStall = null;
     server.latency.failed.add(stage);
     server.latency.stages[stage].markIncomplete();
@@ -1040,7 +1042,6 @@ export class Run {
       server.latency.failed.add("latency");
       server.latency.stages.latency.markIncomplete();
       server.latencyStall = null;
-      this.#failure(server, "latency", reason, message);
       // An unreachable server would hold each later stage's preparation until it timed out.
       if (
         (reason === "connection-lost" || reason === "timeout") &&
@@ -1050,6 +1051,7 @@ export class Run {
         server.stage?.discard(true);
         server.stage = null;
       }
+      this.#failure(server, "latency", reason, message);
       this.#updateStalled();
       if (!this.#latencyParticipants().length) this.#skipStage();
       return;
