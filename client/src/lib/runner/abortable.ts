@@ -53,7 +53,6 @@ export async function abortableDelay(
   }
 }
 
-/** The first error of `type` in a cause chain. */
 /** The error and its causes, outermost first; a cycle ends the walk. */
 export function* causes(error: unknown): Generator<Error> {
   for (
@@ -65,6 +64,14 @@ export function* causes(error: unknown): Generator<Error> {
     yield error;
   }
 }
+
+const NETWORK_FAILURE =
+  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
+export const isNetworkFailure = (error: unknown): boolean =>
+  [...causes(error)].some(
+    ({ name, message }) =>
+      name === "NetworkError" || NETWORK_FAILURE.test(message),
+  );
 
 export function findCause<T extends Error>(
   error: unknown,

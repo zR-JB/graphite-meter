@@ -378,6 +378,18 @@ test("preparation fails the run before measurement, and later removes only its s
     reason: "protocol-error",
     message: expect.stringMatching(/^a: fixture/),
   });
+  for (const [cause, reason] of [
+    [new TypeError("Failed to fetch"), "connection-lost"],
+    [new DOMException("late", "TimeoutError"), "timeout"],
+  ] as const) {
+    const refused = await harness(
+      two({ prepare: () => Promise.reject(new Error("no", { cause })) }),
+      { download: true },
+      { downloadMs: 1_000 },
+    );
+    refused.start();
+    await expect(refused.result()).rejects.toMatchObject({ reason });
+  }
 
   const later = await harness(
     two({

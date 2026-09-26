@@ -48,6 +48,7 @@ import {
 import { LiveRates, stallRate } from "./liveRates";
 import { LatencyPresentationBuckets } from "./series";
 import { fixedPingIntervalMs } from "./pingCadence";
+import { findCause, isNetworkFailure } from "./abortable";
 import {
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
@@ -445,7 +446,11 @@ export class Run implements NetworkRunner {
           if (generation !== this.#generation) return;
           this.#pending = false;
           this.#fail(
-            "protocol-error",
+            navigator.onLine === false || isNetworkFailure(cause)
+              ? "connection-lost"
+              : findCause(cause, DOMException)?.name === "TimeoutError"
+                ? "timeout"
+                : "protocol-error",
             cause instanceof Error ? cause.message : "Stage preparation failed",
             cause,
           );
@@ -504,6 +509,7 @@ export class Run implements NetworkRunner {
       if (!this.#hasMeasured)
         throw new Error(
           `${server.server.name}: ${message}. Resolve the selection before starting.`,
+          { cause: result.reason },
         );
       this.#remove(server, "preparation-failed", message);
     }

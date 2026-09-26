@@ -42,7 +42,6 @@ import { canonicalAdaptiveConfig } from "../state/defaults";
 import { readStored, writeStored } from "../state/persistence";
 import { buildSegments } from "./schedule";
 import {
-  CONNECTION_FAILURE_REASONS,
   CONNECTION_ROLES,
   latencyPathNeeded,
   portableTransportSelection,
@@ -120,6 +119,7 @@ export function createApplicationController(
     limiter: originLimiter(),
     active,
     metadata: () => metadataWanted,
+    online: () => navigator.onLine,
     // Only this server's idle latency is shown before a run.
     idle: (id) =>
       id === "self" &&
@@ -204,7 +204,9 @@ export function createApplicationController(
 
   function setMetadata(enabled: boolean) {
     metadataWanted = enabled;
-    selectIntent();
+    for (const connection of connections.values())
+      if (!connection.config) connection.select(null);
+    wake();
   }
   async function loadCatalog() {
     setMetadata(false);
@@ -410,10 +412,8 @@ export function createApplicationController(
         connections.get(serverId)?.requireSignIn(message);
       else connections.get(serverId)?.invalidate([scope]);
     }
-    if (
-      event.type === "error" &&
-      CONNECTION_FAILURE_REASONS.has(event.error.reason)
-    )
+    // A failed run proves nothing about its paths any more.
+    if (event.type === "error")
       for (const connection of selected())
         connection.invalidate(CONNECTION_ROLES);
     store.ingest(event);
@@ -437,8 +437,9 @@ export function createApplicationController(
         connection.resume();
   }
   function visibilityChanged() {
-    if (hidden()) wake();
-    else selectIntent();
+    if (hidden()) return wake();
+    onlineAgain();
+    selectIntent();
   }
   function cancelPendingStart() {
     pendingStart?.abort();

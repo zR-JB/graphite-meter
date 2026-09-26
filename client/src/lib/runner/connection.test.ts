@@ -62,6 +62,7 @@ function connect(
       limiter: originLimiter(),
       active: () => false,
       metadata: () => false,
+      online: () => true,
       idle: () => false,
       publish() {},
       idleEvent() {},
@@ -244,9 +245,60 @@ test("a required sign-in yields to the next check; failures back off 30 s then 6
     expect(connection.dueAt()).toBe(61_000);
     connection.resume();
     expect(connection.dueAt()).toBe(0);
+    await connection.check();
+    expect(connection.dueAt()).toBe(31_000);
   } finally {
     clock.mockRestore();
   }
+});
+
+test("an unmonitored server re-reads discovery, so a peer that died stops being Ready", async () => {
+  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  let active = false;
+  let alive = true;
+  let discoveries = 0;
+  try {
+    const connection = connect({
+      active: () => active,
+      discover: async () => {
+        discoveries++;
+        if (!alive) throw new TypeError("Failed to fetch");
+        return evidence().discovery;
+      },
+    });
+    await connection.check();
+    await connection.check({ fresh: true });
+    expect([discoveries, connection.view.readiness]).toEqual([2, "ready"]);
+    expect(connection.dueAt()).toBe(31_000);
+    [alive, active] = [false, true];
+    clock.mockReturnValue(31_000);
+    connection.wake();
+    await until(() => connection.view.readiness === "failed");
+    expect(connection.view.message).toBe("Connection check failed");
+    expect(connection.paths(Infinity)).toBeNull();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test("offline, a remote server blocks without checking until the device is back", async () => {
+  let online = false;
+  let discoveries = 0;
+  const connection = connect({
+    online: () => online,
+    discover: async () => (discoveries++, evidence().discovery),
+  });
+  await connection.check();
+  expect(connection.view).toMatchObject({
+    readiness: "failed",
+    message: "This device is offline",
+  });
+  expect(connection.paths(Infinity)).toBeNull();
+  expect([discoveries, connection.dueAt()]).toEqual([0, Infinity]);
+  online = true;
+  connection.resume();
+  await connection.check();
+  expect(connection.view.readiness).toBe("ready");
 });
 
 test("equivalent intent reuses fresh paths; an expired reselection refreshes discovery and both roles", async () => {

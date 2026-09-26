@@ -12,8 +12,8 @@ import {
   type discoverServer,
   type prepareConnections,
 } from "./real/prepare";
-import { causes, findCause, withinBudget } from "./abortable";
-import type { ServerEntry } from "../servers/catalog";
+import { findCause, isNetworkFailure, withinBudget } from "./abortable";
+import { isLoopbackHostname, type ServerEntry } from "../servers/catalog";
 import {
   ServerAuthenticationRequired,
   type ServerCredentials,
@@ -40,6 +40,7 @@ export interface ConnectionHost {
   limiter: ReturnType<typeof originLimiter>;
   active(): boolean;
   metadata(): boolean;
+  online(): boolean;
   idle(id: string): boolean;
   publish(view: ServerView): void;
   idleEvent(id: string, event: IdleEvent): void;
@@ -61,9 +62,9 @@ interface Role extends Job<void> {
   idle?: NonNullable<ConnectionPreparation["idle"]>;
 }
 
-const NETWORK_FAILURE =
-  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
 const backoff = (): Backoff => ({ attempts: 0, at: 0, signIn: false });
+/** An unmonitored selected server re-reads its discovery this often, so a dead peer never stays Ready. */
+const LIVENESS_MS = 30_000;
 const superseded = () =>
   new DOMException("Connection selection changed", "AbortError");
 
@@ -71,13 +72,10 @@ function failureMessage(cause: unknown, server: ServerEntry): string {
   const authentication = findCause(cause, ServerAuthenticationRequired);
   if (authentication) return authentication.message;
   if (cause instanceof BrowserOriginBlockedError) return cause.message;
-  if (cause instanceof PreflightUnavailableError)
-    for (const { name, message } of causes(cause.cause))
-      if (name === "NetworkError" || NETWORK_FAILURE.test(message))
-        return server.url.startsWith("https://") &&
-          location.protocol === "http:"
-          ? "Server could not be reached. If it requires sign-in, open this interface over HTTPS."
-          : "Server could not be reached";
+  if (cause instanceof PreflightUnavailableError && isNetworkFailure(cause))
+    return server.url.startsWith("https://") && location.protocol === "http:"
+      ? "Server could not be reached. If it requires sign-in, open this interface over HTTPS."
+      : "Server could not be reached";
   return cause instanceof DOMException && cause.name === "TimeoutError"
     ? "Connection check timed out"
     : "Connection check failed";
@@ -108,6 +106,7 @@ export class ServerConnection {
     latency: { key: "", backoff: backoff() },
   };
   #timer?: ReturnType<typeof setTimeout>;
+  #watched = false;
   #closed = false;
 
   constructor(
@@ -165,12 +164,18 @@ export class ServerConnection {
     due = false,
     signal,
   }: CheckOptions = {}): Promise<void> {
+    if (this.#offline()) return;
     if (force)
       for (const r of this.#required())
         if (!role || r === role) this.#cancelRole(r);
     const discovery = await this.#discover(
-      fresh || !this.config,
-      force,
+      force || fresh
+        ? 0
+        : !this.config
+          ? CONNECTION_FRESH_MS
+          : due
+            ? LIVENESS_MS
+            : Infinity,
       signal,
     );
     const config = this.config;
@@ -195,7 +200,8 @@ export class ServerConnection {
   }
 
   paths(maxAgeMs = CONNECTION_FRESH_MS): PreparedPaths | null {
-    if (!this.config || this.#expired() || this.#error) return null;
+    if (!this.config || this.#expired() || this.#error || this.#offline())
+      return null;
     const prepared = preparedPaths(
       this.config,
       this.#discovery ?? null,
@@ -225,9 +231,10 @@ export class ServerConnection {
     this.#sync();
   }
 
+  /** Online and a regained page reset backoff; sign-in still waits for approval. */
   resume(): void {
     for (const job of [this.#discovering, ...Object.values(this.#roles)])
-      if (!job.backoff.signIn) job.backoff.at = 0;
+      if (!job.backoff.signIn) job.backoff = backoff();
     this.#sync();
   }
 
@@ -247,7 +254,7 @@ export class ServerConnection {
       this.credentials.kind === "grant" && !discovering.backoff.signIn
         ? (this.credentials.expiresAt ?? 0)
         : Infinity;
-    if (discovering.task) return at;
+    if (discovering.task || this.#offline()) return at;
     if (!this.config) {
       const stale =
         !this.#discovery ||
@@ -256,10 +263,13 @@ export class ServerConnection {
         at = Math.min(at, discovering.backoff.at);
     } else if (!this.#discovery || this.#error)
       at = Math.min(at, discovering.backoff.at);
-    else
+    else {
       for (const role of this.#required())
         if (!this.#roles[role].task && this.#needsCheck(role))
           at = Math.min(at, this.#roles[role].backoff.at);
+      if (!this.#watched)
+        at = Math.min(at, this.#discovery.fetchedAt + LIVENESS_MS);
+    }
     return at;
   }
 
@@ -271,19 +281,13 @@ export class ServerConnection {
   }
 
   #discover(
-    fresh: boolean,
-    force: boolean,
+    maxAgeMs: number,
     owner?: AbortSignal,
   ): Promise<TransportDiscovery | null> {
     const job = this.#discovering;
     if (job.task && !job.task.signal.aborted) return job.task.promise;
     const known = this.#discovery;
-    if (
-      known &&
-      !this.#error &&
-      !force &&
-      (!fresh || Date.now() - known.fetchedAt <= CONNECTION_FRESH_MS)
-    )
+    if (known && !this.#error && Date.now() - known.fetchedAt < maxAgeMs)
       return Promise.resolve(known);
     this.#error = undefined;
     return this.#job(
@@ -444,14 +448,14 @@ export class ServerConnection {
       this.host.publish(view);
     }
     const idle = this.#roles.latency.idle;
-    if (
-      this.config &&
+    this.#watched =
+      !!idle &&
+      !!this.config &&
       this.host.idle(this.server.id) &&
       !this.#expired() &&
       !this.#error &&
-      !this.#needsCheck("latency")
-    )
-      idle?.start();
+      !this.#needsCheck("latency");
+    if (this.#watched) idle?.start();
     else idle?.stop();
     clearTimeout(this.#timer);
     const at = this.host.active() ? this.dueAt() : Infinity;
@@ -470,16 +474,19 @@ export class ServerConnection {
     const capability = config
       ? uploadCapabilityFailure(config, this.#discovery)
       : undefined;
+    const offline = this.#offline();
     const message = expired
       ? new ServerAuthenticationRequired(this.server).message
-      : this.#error
-        ? failureMessage(this.#error, this.server)
-        : capability || (failed && this.#validation[failed].message);
+      : offline
+        ? "This device is offline"
+        : this.#error
+          ? failureMessage(this.#error, this.server)
+          : capability || (failed && this.#validation[failed].message);
     let validation = this.#validation;
     for (const role of roles) {
       const own = validation[role];
       const shown =
-        discovering || this.#error
+        discovering || this.#error || offline
           ? {
               selection: own.selection,
               state: discovering ? ("checking" as const) : ("failed" as const),
@@ -525,6 +532,12 @@ export class ServerConnection {
     return (
       !!this.config &&
       roleNeedsValidation(this.config, this.#validation, role, this.#discovery)
+    );
+  }
+  #offline(): boolean {
+    return (
+      !this.host.online() &&
+      !isLoopbackHostname(new URL(this.server.url).hostname)
     );
   }
   #expired(): boolean {
