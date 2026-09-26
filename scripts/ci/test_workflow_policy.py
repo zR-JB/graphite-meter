@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,8 @@ OCI = ".github/actions/build-oci/action.yml"
 PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-credentials: false}}\n"
 REQUEST = W + "release-request.yml"
 PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
+RELEASE = W + "release.yml"
+PUBLISH = "  extra:\n    if: needs.verify.outputs.publish == 'true'\n    environment: other\n"
 MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (OCI, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
@@ -74,6 +77,47 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     ("client/package.json", "--parallel=3 --no-orphans", "--parallel=3", "no-orphans"),
     ("certs/dev.txt", None, "local development certificate", "TLS certificate/key paths"),
     ("notes.txt", None, "-----BEGIN " + "PRIVATE KEY-----", "PEM"),
+    (W + "ci.yml", "on:\n", "on:\n  pull_request_target:\n", "triggered only by"),
+    (W + "ci.yml", "permissions: {contents: read}", "permissions: write-all", "write permission"),
+    (W + "ci.yml", None, "  extra:\n    environment: ghcr-release\n", "must not use environment:"),
+    (RELEASE, None, PUBLISH + "    env:\n      TOKEN: ${{ secrets.GHCR_TOKEN }}\n",
+     "release secrets"),
+    (REQUEST, "  contents: read\n", "  contents: read\n  actions: read\n", "only read contents"),
+    (REQUEST, "    runs-on:", "    permissions: read-all\n    runs-on:", "only read contents"),
+    (REQUEST, "EVENT_SHA: ${{ github.sha }}", "EVENT_SHA: ${{ inputs.sha }}", "EVENT_SHA"),
+    (REQUEST, PREPARE, "        run: python3 -c pass\n", "release.py prepare"),
+    (REQUEST, 'python3 scripts/ci/verify_release_assets.py "$VERSION"', "true",
+     "verify_release_assets"),
+    (REQUEST, "uses: ./.github/actions/build-oci", "uses: ./.github/actions/setup-project",
+     "build-oci"),
+    (RELEASE, "github.event.workflow_run.conclusion == 'success'\n      && ", "",
+     "conclusion == 'success'"),
+    (RELEASE, "workflow_run.event == 'workflow_dispatch'", "workflow_run.event != 'push'",
+     "workflow_dispatch"),
+    (RELEASE, "workflow_run.path == '.github", "workflow_run.path != '.github", "path =="),
+    (RELEASE, "run: python3 scripts/ci/release.py verify", "run: echo verified",
+     "release.py verify"),
+    (RELEASE, "        if: steps.verify.outputs.publish == 'true'\n", "", "hand off"),
+    (RELEASE, "group: release-publish-${{ github.repository }}",
+     "group: release-publish-${{ github.run_id }}", "group: release-publish"),
+    (RELEASE, "cancel-in-progress: false", "cancel-in-progress: true", "cancel-in-progress"),
+    (RELEASE, "run: scripts/ci/publish.sh release", "run: echo released", "publish.sh release"),
+    (RELEASE, "run: scripts/ci/publish.sh aliases", "run: echo promoted", "publish.sh aliases"),
+    (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
+     "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha"),
+    (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
+     "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head"),
+    (RELEASE, "secrets.GHCR_TOKEN", "secrets['GHCR_TOKEN']", r"secrets\["),
+    (OCI, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
+    (OCI, "no-cache: true", "no-cache: false", "no-cache"),
+    (OCI, "        no-cache: true\n", "        no-cache: true\n        cache-from: type=gha\n",
+     "cache-from"),
+    (OCI, "        no-cache: true\n", "        no-cache: true\n        cache-to: type=gha\n",
+     "cache-to"),
+    (OCI, "        no-cache: true\n", "        no-cache: true\n        secrets: GIT_AUTH_TOKEN=x\n",
+     "GIT_AUTH_TOKEN"),
+    (OCI, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
+    (OCI, "          GM_CLIENT_REVISION=${{ inputs.revision }}\n", "", "GM_CLIENT_REVISION"),
 )
 
 
@@ -107,6 +151,19 @@ class WorkflowPolicyTests(unittest.TestCase):
                 path.write_text(text)
                 with self.assertRaisesRegex(PolicyError, error):
                     check_repository(root)
+
+    def test_release_identity_comes_only_from_the_run_context(self) -> None:
+        for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
+                             (RELEASE, "publish.sh release")):
+            text = (ROOT / name).read_text()
+            step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
+            for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z_]+): \$\{\{ github\.", step):
+                with self.subTest(marker=marker, variable=variable):
+                    root = self.tree()
+                    rebound = re.sub(rf"(?m)^( +{variable}): .*$", r"\1: ${{ github.job }}", step)
+                    (root / name).write_text(text.replace(step, rebound))
+                    with self.assertRaisesRegex(PolicyError, f" {variable} must be exactly"):
+                        check_repository(root)
 
     def test_pinned_linters_reject_unpinned_actions_and_unknown_outputs(self) -> None:
         zizmor = ("zizmor", "--offline", "--config", ".github/zizmor.yml", ".github")

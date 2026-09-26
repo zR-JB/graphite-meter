@@ -40,22 +40,42 @@ ORDERED = {
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "run: python3 scripts/ci/release.py prepare",
+        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
         "uses: ./.github/actions/build-oci",
         "source-sha: ${{ steps.request.outputs.remote_sha }}",
     ),
     "workflows/release.yml": (
+        "github.event.workflow_run.conclusion == 'success'\n",
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
         "&& github.event.workflow_run.head_branch == 'main'\n",
         "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
         "run: python3 scripts/ci/release.py verify", "environment: ghcr-release",
+        "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
-        "TARGET_SHA: ${{ github.sha }}", "run: scripts/ci/publish.sh release",
-        "run: scripts/ci/publish.sh aliases",
+        "run: scripts/ci/publish.sh release", "run: scripts/ci/publish.sh aliases",
     ),
     "actions/build-oci/action.yml": (
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "no-cache: true", "provenance: mode=max",
-        "github-token: ''",
+        "github-token: ''", "GM_CLIENT_REVISION=${{ inputs.revision }}\n",
     ),
+}
+# Identity that release.py trusts comes from the run context, never from dispatch inputs.
+CONTEXT = {
+    "run: python3 scripts/ci/release.py prepare": {
+        "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
+        "ACTOR": "github.actor", "TRIGGERING_ACTOR": "github.triggering_actor",
+        "EVENT_NAME": "github.event_name", "EVENT_SHA": "github.sha", "REF": "github.ref",
+        "WORKFLOW_REF": "github.workflow_ref", "REQUEST_RUN_ID": "github.run_id",
+        "REQUEST_RUN_ATTEMPT": "github.run_attempt",
+    },
+    "run: python3 scripts/ci/release.py verify": {
+        "REPOSITORY": "github.repository", "REPOSITORY_OWNER": "github.repository_owner",
+        "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
+        "REQUEST_RUN_ID": "github.event.workflow_run.id",
+    },
+    "run: scripts/ci/publish.sh release": {
+        "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+    },
 }
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
@@ -126,6 +146,11 @@ def check_actions(root: Path) -> None:
                     required += ["install_args: --locked python\n", "cache: false"]
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
+            for marker, bindings in CONTEXT.items():
+                env = re.findall(r"(?m)^ +([A-Z_]+): (.*)$", step) if marker in step else []
+                for variable, value in bindings.items() if env else ():
+                    if [found for key, found in env if key == variable] != [f"${{{{ {value} }}}}"]:
+                        fail(f"{name}: {variable} must be exactly ${{{{ {value} }}}}")
         for needle in FORBIDDEN.get(name, ()):
             if needle in text:
                 fail(f"{name} must not contain {needle}")
@@ -164,7 +189,14 @@ def check_workflows(root: Path) -> None:
             or secrets - RELEASE_SECRETS
         ):
             fail("release.yml: only the publish-mode ghcr-release job may read release secrets")
+    for step in STEP.split(release):
+        if ("uses: actions/upload-artifact@" in step
+                and "if: steps.verify.outputs.publish == 'true'" not in step):
+            fail("release.yml: only publish mode may hand off verified artifacts")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
+    scopes = re.findall(r"(?m)^ *permissions:.*(?:\n +\S.*)*", request)
+    if scopes != ["permissions:\n  contents: read"]:
+        fail("release-request.yml: the untrusted build may only read contents")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
