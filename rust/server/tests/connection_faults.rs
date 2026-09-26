@@ -404,14 +404,20 @@ async fn quic_downloads_exceed_the_old_window_limit() -> Result<(), TestError> {
     }
     tokio::time::timeout(Duration::from_secs(60), async {
         for webtransport in [false, true] {
-            let baseline = download_rate(webtransport, Duration::ZERO).await?;
+            let baseline = match download_rate(webtransport, Duration::ZERO).await {
+                Ok(rate) => rate,
+                Err(error) => return Err(error),
+            };
             if baseline < 671.0 {
                 eprintln!(
                     "inconclusive: webtransport={webtransport}, loopback={baseline:.0} Mbit/s"
                 );
                 continue;
             }
-            let delayed = download_rate(webtransport, Duration::from_millis(50)).await?;
+            let delayed = match download_rate(webtransport, Duration::from_millis(50)).await {
+                Ok(rate) => rate,
+                Err(error) => return Err(error),
+            };
             assert!(
                 delayed > 419.0,
                 "webtransport={webtransport}: delayed={delayed:.0}, baseline={baseline:.0} Mbit/s"

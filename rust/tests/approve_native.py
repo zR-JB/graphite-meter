@@ -1,6 +1,7 @@
 """Approve a disposable native-client challenge in the Go interop fixture."""
 
 import http.cookiejar
+import json
 import re
 import ssl
 import sys
@@ -8,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-origin, approval_url, ca_path = sys.argv[1:]
+origin, approval_url, ca_path = json.load(sys.stdin)
 source = urllib.parse.urlparse(origin)
 approval = urllib.parse.urlparse(approval_url)
 port = source.netloc.removeprefix("127.0.0.1:")

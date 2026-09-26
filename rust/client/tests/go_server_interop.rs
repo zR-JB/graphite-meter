@@ -10,7 +10,8 @@ use graphite_meter_core::{
     catalog::ServerEntry,
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
 };
-use std::{path::PathBuf, time::Duration};
+use std::{path::PathBuf, process::Stdio, time::Duration};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::watch;
 
 #[derive(Clone, Copy)]
@@ -82,13 +83,21 @@ async fn go_server_completes_approved_native_stages() -> Result<(), Error> {
         .parent()
         .ok_or("missing Rust workspace directory")?
         .join("tests/approve_native.py");
-    let approved = tokio::process::Command::new("python3")
+    let mut approval = tokio::process::Command::new("python3")
         .arg(helper)
-        .arg(&url)
-        .arg(&pending.browser_url)
-        .arg(std::env::var("SSL_CERT_FILE")?)
-        .output()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let input =
+        serde_json::to_vec(&[&url, &pending.browser_url, &std::env::var("SSL_CERT_FILE")?])?;
+    approval
+        .stdin
+        .take()
+        .ok_or("missing approval input")?
+        .write_all(&input)
         .await?;
+    let approved = approval.wait_with_output().await?;
     if !approved.status.success() {
         return Err(format!(
             "browser approval fixture failed: {}",
