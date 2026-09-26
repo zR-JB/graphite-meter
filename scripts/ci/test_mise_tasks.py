@@ -33,8 +33,9 @@ class MiseTaskTests(unittest.TestCase):
             source = (ROOT / "mise.toml").read_text()
             source = re.sub(r"(?ms)^\[(?:tools|tool_config)\]\n.*?(?=^\[|\Z)", "", source)
             (root / "mise.toml").write_text(source)
-            for name in ("client", "go", "bin", "config", "state", "data", "cache"):
+            for name in ("client", "go", "bin", "config", "state", "data", "cache", "scripts"):
                 (root / name).mkdir()
+            shutil.copy2(ROOT / "scripts/build-version.sh", root / "scripts")
             for name in ("bun", "go", "python3"):
                 (root / "bin" / name).write_text(f"#!{sys.executable}\n{SPY % (KEYS,)}")
                 (root / "bin" / name).chmod(0o755)

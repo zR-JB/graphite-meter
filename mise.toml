@@ -21,17 +21,15 @@ browser_chrome = "153.0.8010.52"
 
 codeql = "2.27.1"
 
-image_skopeo = "quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"
+image_skopeo = """
+quay.io/containers/skopeo:v1.22.3-immutable\
+@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"""
 image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
 image_golang = "docker.io/library/golang:1.27.1@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244"
 image_binfmt = "docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 
 [env]
 CGO_ENABLED = "0"
-
-[tasks.default]
-description = "List developer tasks"
-run = "mise tasks ls"
 
 [tasks.setup]
 description = "Install pinned tools, dependencies, and the commit hook"
@@ -62,7 +60,10 @@ run = [
 [tasks.python-check]
 shell = "bash -e -o pipefail -c"
 description = "Type-check Python tools and tests"
-run = 'ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" --extra-search-path scripts/ci --error-on-warning'
+run = '''
+ty check scripts --python-version "$(python3 scripts/ci/toolchains.py python-target)" \
+  --extra-search-path scripts/ci --error-on-warning
+'''
 
 [tasks.pipeline-test]
 shell = "bash -e -o pipefail -c"
@@ -146,10 +147,6 @@ description = "Print a legal audit or review template"
 usage = 'arg "[mode]" default="audit"'
 run = 'mise run _legal-run "review-${usage_mode?}"'
 
-[tasks._legal-third-party-source-bundle]
-hide = true
-run = [{ task = "_legal-run", args = ["third-party-source-bundle"] }]
-
 [tasks.client-check]
 description = "Type-check the client and Bun tests"
 dir = "client"
@@ -159,11 +156,6 @@ run = "bun run check"
 description = "Run all browser-source unit tests"
 dir = "client"
 run = "bun test src --parallel"
-
-[tasks.client-test-changed]
-description = "Run affected browser-source unit tests"
-dir = "client"
-run = "bun test src --changed --parallel"
 
 [tasks.client-audit]
 description = "Check the live registry advisory database"
@@ -189,9 +181,11 @@ run = 'go run ./internal/auth/cmd/authpreview --mode "${usage_mode?}" --oidc-rea
 
 [tasks._embed-client]
 hide = true
-run = '''
-bun -e "import fs from 'fs'; fs.rmSync('go/internal/static/dist', { recursive: true, force: true }); fs.cpSync('client/dist', 'go/internal/static/dist', { recursive: true }); fs.writeFileSync('go/internal/static/dist/.gitkeep', '')"
-'''
+run = [
+  "rm -rf go/internal/static/dist",
+  "cp -R client/dist go/internal/static/dist",
+  "touch go/internal/static/dist/.gitkeep",
+]
 
 [tasks.server-build-dev]
 description = "Build the development server with embedded client assets"
@@ -208,9 +202,9 @@ run = [
   { task = "client-build-prod" },
   { task = "_embed-client" },
   '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go build -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" -trimpath -o graphite-meter ./cmd/graphite-meter
+version=$(scripts/build-version.sh)
+cd go && go build -trimpath -o graphite-meter \
+  -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
 ''',
 ]
 
@@ -219,7 +213,7 @@ shell = "bash -e -o pipefail -c"
 description = "Check Go formatting and vet, including the stress harness"
 dir = "go"
 run = [
-  'unformatted=$(gofmt -l .); if [ -n "$unformatted" ]; then echo "$unformatted"; gofmt -d .; exit 1; fi',
+  'test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }',
   "go vet ./...",
   "go vet -tags stress ./internal/server/",
 ]
@@ -249,7 +243,10 @@ set -eu
 go test -race -shuffle=on -coverprofile=cover.out ./...
 total=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | tr -d '%')
 echo "total statement coverage: ${total}%"
-awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' || { echo "coverage ${total}% is below the 75% floor" >&2; exit 1; }
+if ! awk -v total="$total" 'BEGIN { exit !(total >= 75) }'; then
+  echo "coverage ${total}% is below the 75% floor" >&2
+  exit 1
+fi
 '''
 
 [tasks._e2e-build]
@@ -297,44 +294,7 @@ run = 'GM_BENCH_FILTER="${usage_filter?}" bun run test:bench'
 [tasks.codeql]
 description = "Reproduce the CodeQL scan offline with the pinned CLI and count results per rule (manual)"
 env = { GM_CODEQL_VERSION = "{{vars.codeql}}" }
-run = '''
-#!/usr/bin/env bash
-set -euo pipefail
-cli=${CODEQL:-$(command -v codeql || echo "$HOME/.local/share/codeql-bundle/codeql/codeql")}
-version=$("$cli" version --format=terse)
-[ "$version" = "$GM_CODEQL_VERSION" ] || { echo "$cli is CodeQL $version, not $GM_CODEQL_VERSION" >&2; exit 1; }
-out=$(mktemp -d)
-trap 'rm -rf "$out"' EXIT
-quiet() { "$@" >"$out/log" 2>&1 || { cat "$out/log" >&2; return 1; }; }
-# Like the hosted scan, analyze tracked files only, not local build output.
-mkdir "$out/src"
-git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$out/src"
-for language in go javascript-typescript python actions; do
-  echo "CodeQL $language" >&2
-  pack=${language%-typescript}
-  build=(--build-mode=none)
-  [ "$language" != go ] || build=(--command="go build ./..." --working-dir="$out/src/go")
-  quiet "$cli" database create "$out/db-$language" --language="$language" --source-root="$out/src" \
-    "${build[@]}" --overwrite --threads=0
-  quiet "$cli" database analyze "$out/db-$language" --threat-model=local --format=sarif-latest \
-    --output="$out/$language.sarif" --threads=0 \
-    "codeql/$pack-queries:codeql-suites/$pack-security-extended.qls" \
-    "codeql/$pack-queries:codeql-suites/$pack-security-and-quality.qls"
-done
-python3 - "$out"/*.sarif <<'PY'
-import collections, json, sys
-rules = collections.Counter()
-for name in sys.argv[1:]:
-    for result in json.load(open(name))["runs"][0].get("results", []):
-        where = result["locations"][0]["physicalLocation"]
-        print(f"{result['ruleId']}  {where['artifactLocation']['uri']}:{where['region']['startLine']}")
-        rules[result["ruleId"]] += 1
-for rule, count in sorted(rules.items()):
-    print(f"{count:4}  {rule}")
-print(f"{sum(rules.values())} results")
-sys.exit(1 if rules else 0)
-PY
-'''
+run = "scripts/codeql.sh"
 
 [tasks.bench-servers]
 description = "Measure one, two, and four real servers in isolated Linux network namespaces (manual)"
@@ -361,22 +321,7 @@ RELEASE_DIST="$tmp/dist" python3 scripts/ci/verify_release_assets.py "$VERSION"
 [tasks.release-artifacts]
 description = "Build distributable native archives and checksums without publishing"
 usage = 'arg "[version]" default="development"'
-run = '''
-#!/usr/bin/env sh
-set -eu
-VERSION=$usage_version
-export VERSION
-dist=${RELEASE_DIST:-go/dist}
-case "$dist" in /*) ;; *) dist="$PWD/$dist" ;; esac
-mkdir -p "$dist"
-find "$dist" -maxdepth 1 -type f -delete
-LEGAL_THIRD_PARTY_SOURCE_OUT="$dist/graphite-meter_${VERSION}_third-party-source.tar.gz" mise run _legal-third-party-source-bundle
-while IFS= read -r target; do
-  [ -n "$target" ] || continue
-  scripts/package-tui.sh "$VERSION" "${target%/*}" "${target#*/}" "$dist"
-done < scripts/tui-targets.txt
-(cd "$dist" && find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt)
-'''
+run = 'scripts/release-artifacts.sh "$usage_version"'
 
 [tasks.container-smoke]
 description = "Build and smoke-test the local production image"
@@ -407,16 +352,10 @@ run = [
 shell = "bash -e -o pipefail -c"
 description = "Build the stamped native TUI without browser assets"
 run = '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go build -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" -trimpath -o graphite-meter-client ./cmd/graphite-meter-client
+version=$(scripts/build-version.sh)
+cd go && go build -trimpath -o graphite-meter-client \
+  -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" ./cmd/graphite-meter-client
 '''
-
-[tasks.goclient-run]
-description = "Run the native TUI against a server"
-dir = "go"
-raw = true
-run = "go run ./cmd/graphite-meter-client"
 
 [tasks.dev]
 description = "Build the development client and run the embedded server"
@@ -435,9 +374,9 @@ run = [
   { task = "client-build-prod" },
   { task = "_embed-client" },
   '''
-version=${VERSION:-${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}}
-case "$version" in *[!A-Za-z0-9._+-]*) echo "Invalid build version" >&2; exit 2 ;; esac
-cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
+version=$(scripts/build-version.sh)
+cd go && go run \
+  -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.EngineVersion=$version" ./cmd/graphite-meter
 ''',
 ]
 

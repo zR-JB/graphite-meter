@@ -56,8 +56,8 @@ class ToolchainBoundaryTests(unittest.TestCase):
     def test_skopeo_tags_require_an_immutable_digest(self) -> None:
         root = self.copy_pins()
         path = root / "mise.toml"
-        current = load_pins(root)["images"]["skopeo"]
-        path.write_text(path.read_text().replace(current, "quay.io/containers/skopeo:v1.24.1"))
+        unpinned = 'image_skopeo = "quay.io/containers/skopeo:v1.24.1"'
+        path.write_text(re.sub(r'(?s)image_skopeo = """.*?"""', unpinned, path.read_text()))
         with self.assertRaisesRegex(ValueError, "exact version or image digest"):
             load_pins(root)
 

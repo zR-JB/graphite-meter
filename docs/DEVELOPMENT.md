@@ -60,7 +60,7 @@ runtimes and are not identical benchmark targets.
 mise run dev                # development browser build + server
 mise run prod               # production browser build + server
 mise run client-watch       # standalone Vite dev server
-mise run goclient-run       # native client
+cd go && go run ./cmd/graphite-meter-client  # native client
 mise run check              # deterministic gate; the commit hook runs the parts staged paths touch
 mise run ci                 # everything CI runs, job by job
 ```
