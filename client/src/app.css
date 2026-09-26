@@ -133,7 +133,6 @@
   --bg: light-dark(#f5f6f7, #17191c);
   --surface-1: light-dark(#ffffff, #1c1f23);
   --surface-2: light-dark(#f0f3f4, #23262b);
-  --surface-3: light-dark(#e4e9eb, #2c3037);
   --surface-inset: light-dark(#eef1f2, #16191d);
   /* Surface sheen: the lit top of a tile, layered over its surface colour. */
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
@@ -240,32 +239,6 @@
 }
 [data-tone="neutral"] {
   --tone: var(--text-soft);
-}
-
-#console {
-  --active-accent: var(--brand);
-}
-#console[data-phase="warmup"] {
-  --active-accent: var(--phase-warmup);
-}
-#console[data-phase="latency"] {
-  --active-accent: var(--phase-latency);
-}
-#console[data-phase="download"] {
-  --active-accent: var(--phase-download);
-}
-#console[data-phase="upload"] {
-  --active-accent: var(--phase-upload);
-}
-#console[data-phase="bidirectional"] {
-  --active-accent: var(--phase-bidirectional);
-}
-#console[data-phase="complete"] {
-  --active-accent: var(--phase-complete);
-}
-#console[data-phase="error"],
-#console[data-phase="aborted"] {
-  --active-accent: var(--err);
 }
 
 @layer reset {

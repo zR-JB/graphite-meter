@@ -7,7 +7,6 @@
     checked?: boolean;
     label?: string;
     disabled?: boolean;
-    id?: string;
     /** Optional controlled handler. When provided, the parent owns state:
      *  the toggle is vetoable (e.g. live-toggle constraints) and `checked`
      *  is treated as a one-way input rather than a bound value. */
@@ -19,7 +18,6 @@
     checked = $bindable(false),
     label,
     disabled = false,
-    id,
     onToggle,
     tooltip: tooltipText = "",
   }: Props = $props();
@@ -42,7 +40,6 @@
     type="checkbox"
     {checked}
     {disabled}
-    {id}
     onchange={handleChange}
   />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>

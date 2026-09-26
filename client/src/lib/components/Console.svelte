@@ -578,7 +578,6 @@
 <main
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
-  data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
   <!-- Topbar: a size container. Its queries move the direct actions into the

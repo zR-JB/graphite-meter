@@ -92,9 +92,8 @@
       }
     </style>
     <script>
-      /* Pick the saved theme before first paint: mirrors applyThemePrePaint()
-         in src/main.ts, but runs ahead of the bundle so the very first frame
-         is correct. Storage key: graphite-meter:v1 (see persistence.ts). */
+      /* Pick the saved theme before first paint; the store owns it afterwards.
+         Storage key: graphite-meter:v1 (see persistence.ts). */
       try {
         var raw = localStorage.getItem("graphite-meter:v1");
         var saved = raw ? JSON.parse(raw).theme : null;
