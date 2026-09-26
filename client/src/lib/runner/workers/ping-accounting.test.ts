@@ -1,7 +1,6 @@
 import { stubGlobals } from "../../test-helpers.testutil";
 import { expect, test } from "bun:test";
 import { ServerLatency } from "../measure";
-import { DEFAULT_CONFIG } from "../../state/defaults";
 import type { PingSample } from "./pingSample";
 
 type Batch = { type: "samples"; samples: PingSample[] };
@@ -82,7 +81,7 @@ test("reply-driven accounting retains nine replies and one timeout regardless of
       0,
       0,
     );
-  expect(latency.result(DEFAULT_CONFIG)!.probeTimeoutPct).toBe(10);
+  expect(latency.result()!.probeTimeoutPct).toBe(10);
 });
 
 test("a fast reply burst produces bounded batches without discarding outcomes", async () => {

@@ -1151,7 +1151,6 @@ export class Run implements NetworkRunner {
 
   #cancelEarly(): void {
     this.#early = { index: -1, at: 0 };
-    for (const server of this.#servers) server.latency.earlyStop("cancel");
   }
 
   /** Arms, revokes or confirms an early finish without changing measured time. */
@@ -1177,15 +1176,9 @@ export class Run implements NetworkRunner {
       return false;
     }
     const index = this.#segments.indexOf(segment);
-    if (this.#early.index !== index) {
-      this.#early = { index, at: this.#elapsed };
-      if (phase === "latency")
-        for (const server of this.#servers) server.latency.earlyStop("arm");
-    }
+    if (this.#early.index !== index) this.#early = { index, at: this.#elapsed };
     if (this.#elapsed - this.#early.at < cfg.adaptive.confirmationMs)
       return false;
-    if (phase === "latency")
-      for (const server of this.#servers) server.latency.earlyStop("confirm");
     const total = this.#segments.at(-1)?.end ?? 0;
     this.#segments = truncateSegmentAt(
       this.#segments,
@@ -1202,7 +1195,7 @@ export class Run implements NetworkRunner {
   #finalize(phase: Phase): void {
     const cfg = this.#cfg!;
     if (phase === "latency" && cfg.stages.latency && !this.#results.latency) {
-      const result = this.#latencySource.latency.result(cfg);
+      const result = this.#latencySource.latency.result();
       this.#results.latency = result;
       if (result) this.#emit({ type: "stageResult", stage: "latency", result });
     }
@@ -1326,7 +1319,7 @@ export class Run implements NetworkRunner {
         return {
           server,
           ...pathEvidence(paths),
-          latency: cfg ? latency.result(cfg) : null,
+          latency: latency.result(),
           latencyByStage: latency.summaries(),
           bufferbloat: latency.bufferbloat(),
           download: result("download", "down"),

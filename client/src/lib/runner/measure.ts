@@ -8,7 +8,6 @@ import type {
   PingCadence,
   PreparedPaths,
   ReceiverCheckpoint,
-  RunnerConfig,
   StabilityBand,
   StageLatencySummary,
   ThroughputResult,
@@ -332,9 +331,7 @@ export class ServerLatency {
   #times: number[] = [];
   #rtts: number[] = [];
   #head = 0;
-  #stableStart = -1;
-  #candidate = -1;
-  #earlyStart = -1;
+  #stable = false;
   #score = 0;
 
   observe(
@@ -387,56 +384,34 @@ export class ServerLatency {
     this.#times = [];
     this.#rtts = [];
     this.#head = 0;
-    this.#stableStart = -1;
+    this.#stable = false;
   }
 
-  trackStable(score: number, cfg: AdaptiveDurationConfig): boolean {
-    const stable = isStillStable(this.#stableStart >= 0, score, cfg);
+  trackStable(score: number, cfg: AdaptiveDurationConfig): void {
+    this.#stable = isStillStable(this.#stable, score, cfg);
     this.#score = score;
-    if (!stable) this.#stableStart = -1;
-    else if (this.#stableStart < 0)
-      this.#stableStart = Math.max(0, this.stages.latency.rtts.length - 1);
-    return stable;
   }
 
-  earlyStop(action: "arm" | "cancel" | "confirm"): void {
-    const at = Math.max(0, this.stages.latency.rtts.length - 1);
-    if (action === "arm" && this.#candidate < 0) this.#candidate = at;
-    if (action === "confirm" && this.#candidate >= 0)
-      this.#earlyStart = this.#candidate;
-    if (action !== "arm") this.#candidate = -1;
-  }
-
-  /** The idle headline; a failed population needs three outcomes and never uses a stable window. */
-  result(config: RunnerConfig): LatencyResult | null {
+  /** The idle headline is the full stage median, as in the native client; a failed population needs three outcomes. */
+  result(): LatencyResult | null {
     const idle = this.stages.latency;
     const summary = idle.summary();
-    const failed = this.failed.has("latency");
     if (
-      !summary ||
-      !idle.rtts.length ||
-      (failed && idle.count < MIN_PARTIAL_LATENCY_OUTCOMES)
+      summary?.p50Ms == null ||
+      (this.failed.has("latency") && idle.count < MIN_PARTIAL_LATENCY_OUTCOMES)
     )
       return null;
-    const length = idle.rtts.length;
-    let start =
-      config.adaptive.enabled && !failed && this.#stableStart < length
-        ? this.#stableStart
-        : -1;
-    if (start >= 0 && this.#earlyStart >= 0 && this.#earlyStart < length)
-      start = start <= this.#earlyStart ? this.#earlyStart : -1;
-    const idleMs = start >= 0 ? median(idle.rtts.slice(start)) : summary.p50Ms!;
     return {
-      idleMs,
-      reportedMs: idleMs,
+      idleMs: summary.p50Ms,
+      reportedMs: summary.p50Ms,
       minMs: summary.minMs,
       p50Ms: summary.p50Ms,
       p95Ms: summary.p95Ms,
       jitterMs: summary.jitterMs,
       probeTimeoutPct: idle.timeoutPct,
-      method: start >= 0 ? "stable-window" : "full-average",
+      method: "full-average",
       stabilityScore: this.#score,
-      band: bandForState(this.#stableStart >= 0, this.#score),
+      band: bandForState(this.#stable, this.#score),
     };
   }
 

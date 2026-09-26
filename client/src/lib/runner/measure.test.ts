@@ -133,7 +133,7 @@ test("stage populations stay separate and added latency is the signed worst load
   for (let i = 0; i < 100; i++) latency.observe("download", reply(20), 0, 0);
   latency.observe("upload", reply(300), 0, 0);
   latency.observe("upload", reply(250, true), 0, 0);
-  expect(latency.result(DEFAULT_CONFIG)).toMatchObject({
+  expect(latency.result()).toMatchObject({
     minMs: 10,
     p50Ms: 15,
     p95Ms: 20,
@@ -157,7 +157,7 @@ test("stage populations stay separate and added latency is the signed worst load
   });
   const loadedOnly = new ServerLatency();
   loadedOnly.observe("download", reply(30), 0, 0);
-  expect(loadedOnly.result(DEFAULT_CONFIG)).toBeNull();
+  expect(loadedOnly.result()).toBeNull();
 });
 
 test("a failed idle population needs three outcomes and never selects a stable window", () => {
@@ -165,31 +165,25 @@ test("a failed idle population needs three outcomes and never selects a stable w
   latency.failed.add("latency");
   latency.observe("latency", reply(10), 0, 0);
   latency.observe("latency", reply(20, true), 0, 0);
-  expect(latency.result(DEFAULT_CONFIG)).toBeNull();
+  expect(latency.result()).toBeNull();
   latency.observe("latency", reply(30), 0, 0);
-  expect(latency.result(DEFAULT_CONFIG)).toMatchObject({
+  expect(latency.result()).toMatchObject({
     reportedMs: 20,
     method: "full-average",
   });
 });
 
-test("the idle headline uses the confirmed stable window while descriptors cover the stage", () => {
+test("the idle headline is the full median; stability only labels its band", () => {
   const latency = new ServerLatency();
-  const cfg = DEFAULT_CONFIG.adaptive;
-  for (const rtt of [90, 80, 20, 20])
+  for (const rtt of [90, 80, 70, 20, 20])
     latency.observe("latency", reply(rtt), 0, 0);
-  latency.trackStable(1, cfg);
-  latency.earlyStop("arm");
-  latency.observe("latency", reply(20), 0, 0);
-  latency.earlyStop("confirm");
-  const result = latency.result(DEFAULT_CONFIG)!;
-  expect(result).toMatchObject({
-    reportedMs: 20,
-    method: "stable-window",
-    p50Ms: 20,
+  latency.trackStable(1, DEFAULT_CONFIG.adaptive);
+  expect(latency.result()).toMatchObject({
+    reportedMs: 70,
+    method: "full-average",
+    p50Ms: 70,
     band: "high",
   });
-  expect(result.minMs).toBe(20);
 });
 
 test("rate buckets split exact byte/time evidence independently of callback chunking", () => {

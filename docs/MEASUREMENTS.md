@@ -100,8 +100,9 @@ percentage is inferred from cadence and elapsed time.
 **Browser.** Live summaries update at most once per second and are final once the stage's terminal outcomes are in.
 The drain lasts at most ten seconds; a fixed cadence waits for a free slot without a catch-up burst. The worker
 flushes outcomes before acknowledging its stop; if it crashes or misses the bounded wait, the stage keeps
-`accountingComplete: false` rather than inventing outcomes. The idle headline is the median over an adaptive stable
-window; full-stage descriptors never fall back to loaded RTTs or preflight hints.
+`accountingComplete: false` rather than inventing outcomes. The idle headline is the full stage median, as in the
+native client and in added latency; the adaptive stable window only decides early finish. It never falls back to
+loaded RTTs or preflight hints.
 
 **Native.** Raw RTT ends when the adapter receives the reply, before decoding. A fixed cadence skips a send when the
 window is full. A failed stage keeps its measured population with an incomplete marker; a failure before any probe
