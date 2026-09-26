@@ -16,17 +16,22 @@ mise run workflow-check    # actionlint, zizmor, workflow_policy.py, tool pins
 mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
-`mise run check` is the deterministic developer gate and `mise run ci` mirrors
-CI job by job: `plan` runs the workflow and pipeline checks, `core` runs
-`legal-check` and `core-check`, and `go` runs every Go test with `-race`. The
-policy fails if a step of `mise run ci` has no CI job. Path filters narrow PR
-runs only; every push to main runs every job. `Gate` is the only required
-status.
+`mise run check` is the deterministic developer gate; `mise run ci` runs every
+CI job's task locally, and the policy fails if one of its steps has no CI job.
+`Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
+narrow PR runs only; every push to main runs every job.
 
-The E2E suite serves a prebuilt Vite harness with `Bun.serve()` on an
-OS-assigned loopback port while the fixture owns the real server. Go
-integration tests pass pre-bound sockets into the production listener assembly
-instead of probing for free ports.
+| Job | mise task |
+| --- | --- |
+| `plan` | `workflow-check`, `pipeline-test` |
+| `core` | `legal-check`, `core-check` |
+| `go` | `server-race` |
+| `tui` | `tui-cross-build` |
+| `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |
+| `smoke` | `container-smoke` |
+| `release` | `release-check` |
+| `security` | `security`, `client-audit` |
+| `secret-scan` | `secret-scan-ci` |
 
 ## Releases
 
