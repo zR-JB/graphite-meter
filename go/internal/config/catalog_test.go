@@ -69,6 +69,18 @@ func TestServerCatalogRejectsUnsafeOrAmbiguousInput(t *testing.T) {
 	if _, err := loadServerCatalog(); err == nil {
 		t.Fatal("ambiguous sources accepted")
 	}
+	unsetEnv(t, "GM_SERVER_CATALOG")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "servers.json"), []byte(`["https://example.net"]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	for _, path := range []string{"servers.json", dir + "/sub/../servers.json"} {
+		t.Setenv("GM_SERVER_CATALOG_FILE", path)
+		if _, err := loadServerCatalog(); err == nil || !strings.Contains(err.Error(), "absolute path") {
+			t.Fatalf("catalogue file %q: %v, want a path refusal", path, err)
+		}
+	}
 }
 
 func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {

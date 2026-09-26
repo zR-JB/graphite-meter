@@ -9,8 +9,9 @@ server capacity or the physical link's maximum.
 Every server runs the same image and configures itself. Servers never contact each other: clients connect directly
 to each selected server and never import a peer's catalogue. No shared keys, database or discovery service.
 
-Set one of `GM_SERVER_CATALOG` (inline JSON) or `GM_SERVER_CATALOG_FILE` (a file, normally mounted read-only) and
-restart. With neither, the catalogue holds only `self`. Usually a list of the other servers' origins is enough:
+Set one of `GM_SERVER_CATALOG` (inline JSON) or `GM_SERVER_CATALOG_FILE` (an absolute file path, normally mounted
+read-only) and restart. With neither, the catalogue holds only `self`. Usually a list of the other servers' origins is
+enough:
 
 ```sh
 export GM_SERVER_CATALOG='["https://fra.example.net","https://ams.example.net"]'

@@ -327,7 +327,7 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 | `GM_AUTH_OIDC_ALLOWED_GROUPS` | `--auth-oidc-allowed-groups` | empty | Required comma-separated, case-sensitive groups. |
 | `GM_AUTH_OIDC_PROVIDER_NAME` | `--auth-oidc-provider-name` | `Authelia` | Sign-in page label, ≤ 64 bytes. |
 | `GM_SERVER_CATALOG` | *env only* | empty | [Server catalogue](SERVERS.md#operator-catalogue) JSON. |
-| `GM_SERVER_CATALOG_FILE` | *env only* | empty | Catalogue file (≤ 64 KiB); exclusive with the inline form. |
+| `GM_SERVER_CATALOG_FILE` | *env only* | empty | Absolute catalogue file path without `..` (≤ 64 KiB); exclusive with the inline form. |
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
   handlers, and session duration ≥ operation duration.
