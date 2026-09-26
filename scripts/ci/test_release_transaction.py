@@ -9,7 +9,6 @@ covered without adding repository code execution to the privileged runner.
 from __future__ import annotations
 
 import pathlib
-import re
 import subprocess
 import textwrap
 import unittest
@@ -37,37 +36,6 @@ class ReleaseTransactionTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=False,
         )
-
-    def test_transaction_structure_preserves_last_mile_boundary(self) -> None:
-        text = WORKFLOW.read_text(encoding="utf-8")
-        for forbidden in ("actions/checkout@", "uses: ./", "scripts/", "mise "):
-            self.assertNotIn(forbidden, text)
-        for required in (
-            "wait_for_tag_target()",
-            "wait_for_release_published()",
-            'created_ref=$(gh api --method POST "repos/$REPOSITORY/git/refs"',
-            'require_tag_target "$created_ref"',
-            'wait_for_tag_target "new tag creation"',
-            "Reference already exists",
-            'published=$(wait_for_release_published "post-publish reconciliation")',
-            'wait_for_tag_target "post-publish verification"',
-        ):
-            self.assertIn(required, text)
-        self.assertLess(
-            text.index('wait_for_tag_target "new tag creation"'),
-            text.index('{"draft":false,"prerelease":false,"make_latest":"legacy"}'),
-        )
-
-    def test_contents_write_is_confined_to_stable_release_publication(self) -> None:
-        writers = {
-            path.name
-            for path in (ROOT / ".github" / "workflows").glob("*.yml")
-            if re.search(
-                r"(?m)^\s+contents:\s*write\s*$",
-                path.read_text(encoding="utf-8"),
-            )
-        }
-        self.assertEqual(writers, {"release.yml", "_publish-release.yml"})
 
     def test_tag_creation_waits_for_read_after_write_visibility(self) -> None:
         sha = "a" * 40

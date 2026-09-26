@@ -5,7 +5,7 @@ import shutil
 import tempfile
 import unittest
 
-from toolchains import ROOT, check, literal_updates, load_pins, runtime_pins
+from toolchains import ROOT, check, literal_updates, load_pins, runtime_pins, skopeo_version
 
 
 class ToolchainBoundaryTests(unittest.TestCase):
@@ -48,6 +48,19 @@ class ToolchainBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "_publish-oci.yml"):
             check(root)
 
+    def test_skopeo_tags_require_an_immutable_digest(self) -> None:
+        root = self.copy_pins()
+        path = root / "mise.toml"
+        original = path.read_text()
+        current = load_pins(root)["images"]["skopeo"]
+        for tag in ("v1.24.1", "v1.24.1-immutable"):
+            image = f"quay.io/containers/skopeo:{tag}@sha256:" + "a" * 64
+            path.write_text(original.replace(current, image))
+            self.assertEqual(skopeo_version(root), "1.24.1")
+        path.write_text(original.replace(current, "quay.io/containers/skopeo:v1.24.1"))
+        with self.assertRaisesRegex(ValueError, "exact version or image digest"):
+            load_pins(root)
+
     def test_tool_pins_reject_nonversions_and_unknown_entries(self) -> None:
         root = self.copy_pins()
         path = root / "mise.toml"
@@ -68,7 +81,6 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(path.read_text().replace(f'python = "{runtime_pins(root)["python"]}"', 'python = "3.14"'))
         with self.assertRaisesRegex(ValueError, "python must select an exact"):
             runtime_pins(root)
-
 
 
 if __name__ == "__main__":

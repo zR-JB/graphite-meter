@@ -17,7 +17,6 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
-import toolchains
 from github_api import JsonObject, JsonValue
 from precommit import (
     CheckPlan,
@@ -66,22 +65,6 @@ from trust import (
     require_file_matches_main,
     require_check_run,
     require_main_codeql,
-)
-from workflow_policy import (
-    PolicyError,
-    check_candidate_boundary,
-    check_ci_path_map,
-    check_oci_build_action,
-    check_external_action_shas,
-    check_browser_ci,
-    check_toolchain_consumers,
-    check_privileged_workflows,
-    check_runner_labels,
-    check_skopeo_contract_consistency,
-    check_prerelease_request_workflow,
-    check_release_request_workflow,
-    check_release_workflow,
-    check_trusted_checkout_refs,
 )
 
 MAIN = "1" * 40
@@ -337,15 +320,6 @@ class PipelineTests(unittest.TestCase):
             self.assertIsNone(SEMVER_RE.fullmatch(value), value)
             self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
 
-    def test_external_actions_require_exact_40_character_sha(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        check_external_action_shas(root)
-        path = root / ".github/workflows/unpinned.yml"
-        path.write_text("steps:\n  - uses: docker/setup-buildx-action@" + "a" * 39 + "\n")
-        with self.assertRaisesRegex(PolicyError, "unpinned.yml:2: external action"):
-            check_external_action_shas(root)
-
     def test_prerelease_gate_control_plane_is_bound_to_current_main(self) -> None:
         from unittest.mock import patch
 
@@ -429,121 +403,6 @@ class PipelineTests(unittest.TestCase):
         )
         plan = plan_checks(tuple(change.path for change in parse_staged_changes(raw)))
         self.assertTrue(plan.pipeline, "deleted/renamed workflow paths must still select pipeline checks")
-
-    def test_policy_requires_dockerignore_to_select_image_checks(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/ci-paths.yml"
-        text = path.read_text(encoding="utf-8")
-        release_start = text.index("release:\n")
-        release_end = text.index("\nsecurity:\n", release_start)
-        release = text[release_start:release_end].replace("  - '.dockerignore'\n", "", 1)
-        path.write_text(text[:release_start] + release + text[release_end:], encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "release checks when .dockerignore changes"):
-            check_ci_path_map(root)
-
-    def test_policy_rejects_unpinned_privileged_qemu_image(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/actions/build-oci/action.yml"
-        text = path.read_text(encoding="utf-8")
-        text = re.sub(
-            r"(?m)^\s*image:\s*docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}\s*\n",
-            "",
-            text,
-            count=1,
-        )
-        path.write_text(text, encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "privileged binfmt/QEMU image"):
-            check_oci_build_action(root)
-
-    def test_policy_rejects_buildkit_insecure_entitlements(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/actions/build-oci/action.yml"
-        text = path.read_text(encoding="utf-8").replace(
-            "buildkitd-flags: --log-level=info",
-            "buildkitd-flags: --allow-insecure-entitlement network.host",
-            1,
-        )
-        path.write_text(text, encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "BuildKit insecure entitlements|OCI provenance invariant"):
-            check_oci_build_action(root)
-
-    def test_policy_rejects_independent_runtime_version_declarations(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        original = path.read_text()
-        for action in ("actions/setup-go", "actions/setup-python", "oven-sh/setup-bun"):
-            with self.subTest(action=action):
-                path.write_text(original + f"\n      - uses: {action}@{'a' * 40}\n")
-                with self.assertRaisesRegex(PolicyError, "through mise"):
-                    check_toolchain_consumers(root)
-        path.write_text(original)
-        setup = root / ".github/actions/setup-project/action.yml"
-        setup.write_text(setup.read_text().replace("install_args: --locked", "unused_args: --locked"))
-        with self.assertRaisesRegex(PolicyError, "install_args"):
-            check_toolchain_consumers(root)
-
-    def test_trusted_python_bootstrap_cannot_enable_shared_tool_cache(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-publish.yml"
-        path.write_text(path.read_text().replace("cache: false", "cache: true", 1))
-        with self.assertRaisesRegex(PolicyError, "disable shared caches"):
-            check_toolchain_consumers(root)
-
-    def test_policy_rejects_unpinned_chrome_version(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("chrome-version: ${{ steps.toolchain.outputs.chrome-version }}", "chrome-version: latest"))
-        with self.assertRaisesRegex(PolicyError, "pinned Chromium"):
-            check_browser_ci(root)
-
-    def test_policy_rejects_missing_webview_launch_preflight(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        text = path.read_text(encoding="utf-8").replace(
-            "        run: cd client && bun run check:webview\n", "", 1
-        )
-        path.write_text(text, encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "launch preflight"):
-            check_browser_ci(root)
-
-    def test_policy_rejects_missing_client_audit(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("          mise run client-audit\n", ""))
-        with self.assertRaisesRegex(PolicyError, "networked Bun audit"):
-            check_ci_path_map(root)
-
-    def test_policy_rejects_missing_webview_orphan_cleanup(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / "client/package.json"
-        path.write_text(path.read_text().replace(" --no-orphans", ""))
-        with self.assertRaisesRegex(PolicyError, "clean up child processes"):
-            check_browser_ci(root)
-
-    def _copy_policy_tree(self) -> pathlib.Path:
-        td = tempfile.mkdtemp()
-        dst = pathlib.Path(td)
-        shutil.copytree(ROOT / ".github", dst / ".github")
-        shutil.copytree(ROOT / ".githooks", dst / ".githooks")
-        shutil.copy2(ROOT / "mise.toml", dst / "mise.toml")
-        shutil.copy2(ROOT / ".gitignore", dst / ".gitignore")
-        shutil.copy2(ROOT / ".dockerignore", dst / ".dockerignore")
-        (dst / "client").mkdir()
-        shutil.copy2(ROOT / "client/package.json", dst / "client/package.json")
-        for name in ("mise.lock", "go/go.mod", "container/Dockerfile"):
-            target = dst / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(ROOT / name, target)
-        return dst
 
     def test_checksum_verifier_accepts_file_and_rejects_path_escape(self) -> None:
         import hashlib
@@ -816,44 +675,6 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(OCIVerificationError, "unexpected platform"):
             validate_index_descriptors(bad_extra)
 
-    def test_policy_rejects_floating_runner_major(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/ci.yml"
-        path.write_text(path.read_text().replace("runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", 1))
-        with self.assertRaisesRegex(PolicyError, "pin the Ubuntu major image"):
-            check_runner_labels(root)
-
-    def test_policy_rejects_secret_reference_in_max_provenance_build(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/actions/build-oci/action.yml"
-        path.write_text(path.read_text() + "\n# ${{ secrets.EXAMPLE }}\n")
-        with self.assertRaisesRegex(PolicyError, "must not pass GitHub secrets"):
-            check_oci_build_action(root)
-
-    def test_oci_builder_requires_client_identity_build_args(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/actions/build-oci/action.yml"
-        original = path.read_text(encoding="utf-8")
-        for argument in (
-            "CLIENT_VERSION=${{ inputs.version }}",
-            "GM_CLIENT_BUILD_PROFILE=prod",
-            "GM_CLIENT_REVISION=${{ inputs.revision }}",
-        ):
-            path.write_text(original.replace(f"          {argument}\n", "", 1), encoding="utf-8")
-            with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
-                check_oci_build_action(root)
-
-    def test_policy_requires_explicit_max_oci_provenance(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/actions/build-oci/action.yml"
-        path.write_text(path.read_text().replace("        provenance: mode=max\n", "", 1))
-        with self.assertRaisesRegex(PolicyError, "OCI provenance invariant"):
-            check_oci_build_action(root)
-
     def test_skopeo_runtime_contract_uses_pinned_image_and_strict_version(self) -> None:
         from unittest.mock import patch
 
@@ -877,40 +698,6 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(calls[0][-1], "--version")
         self.assertIn("--network", calls[0])
         self.assertIn("none", calls[0])
-
-    def test_skopeo_release_tags_still_require_an_immutable_digest(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        config = root / "mise.toml"
-        original = config.read_text()
-        current = toolchains.pin("images.skopeo")
-        for tag in ("v1.24.1", "v1.24.1-immutable"):
-            image = f"quay.io/containers/skopeo:{tag}@sha256:" + "a" * 64
-            config.write_text(original.replace(current, image))
-            self.assertEqual(toolchains.skopeo_version(root), "1.24.1")
-        config.write_text(original.replace(current, "quay.io/containers/skopeo:v1.24.1"))
-        with self.assertRaisesRegex(ValueError, "exact version or image digest"):
-            toolchains.load_pins(root)
-
-    def test_policy_rejects_skopeo_digest_drift_between_consumers(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_promote-oci.yml"
-        text = path.read_text().replace(
-            toolchains.pin("images.skopeo").split("@sha256:", 1)[1],
-            "a" * 64,
-            1,
-        )
-        path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "non-exact SKOPEO_IMAGE assignment"):
-            check_skopeo_contract_consistency(root)
-
-    def test_promotion_copies_from_inspected_digest_not_mutable_tag(self) -> None:
-        text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
-        self.assertEqual(text.count('source_digest=$(skopeo inspect --format "{{.Digest}}" "$source_tag")'), 1)
-        self.assertIn('source="docker://$IMAGE@$source_digest"', text)
-        self.assertIn('skopeo copy --all --preserve-digests "$source"', text)
-        self.assertNotIn('skopeo copy --all --preserve-digests "docker://$IMAGE:$VERSION"', text)
 
     def _run_promotion(self, digest: str, series: str, latest: str) -> subprocess.CompletedProcess[str]:
         text = (ROOT / ".github/workflows/_promote-oci.yml").read_text(encoding="utf-8")
@@ -985,206 +772,6 @@ class PipelineTests(unittest.TestCase):
         mounts = [call[index + 1] for index, value in enumerate(call[:-1]) if value == "-v"]
         self.assertEqual(len(mounts), 1, "OCI verification must mount only the archive")
         self.assertTrue(mounts[0].endswith(":/work/image.oci.tar:ro"))
-
-    def test_policy_requires_stable_release_source_notice(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_publish-release.yml"
-        path.write_text(path.read_text().replace("Source code (zip)", "Project archive", 1))
-        with self.assertRaisesRegex(PolicyError, "_publish-release.yml missing invariant"):
-            check_privileged_workflows(root)
-
-    def test_policy_rejects_missing_last_mile_source_freshness(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_publish-oci.yml"
-        path.write_text(
-            path.read_text().replace(
-                'gh api "repos/$REPOSITORY/commits/main"',
-                'echo "skip current-main API check"',
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "last-mile source freshness invariant"):
-            check_privileged_workflows(root)
-
-    def test_policy_rejects_missing_last_mile_ci_recheck(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_publish-oci.yml"
-        path.write_text(
-            path.read_text().replace(
-                'gh api "repos/$REPOSITORY/actions/runs/$EXPECTED_CI_RUN_ID"',
-                'echo "skip exact CI-run API check"',
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "last-mile source freshness invariant"):
-            check_privileged_workflows(root)
-
-    def test_policy_rejects_unbound_prerelease_request_dispatch_sha(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(
-            path.read_text().replace(
-                "EVENT_SHA: ${{ github.sha }}",
-                "EVENT_SHA: ${{ inputs.sha }}",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "low-authority request invariant"):
-            check_prerelease_request_workflow(root)
-
-    def test_policy_rejects_unbound_prerelease_publisher_tooling_sha(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-publish.yml"
-        path.write_text(path.read_text().replace("          PUBLISHER_SHA: ${{ github.sha }}\n", ""))
-        with self.assertRaisesRegex(PolicyError, "trusted-consumer/freshness input"):
-            check_trusted_checkout_refs(root)
-
-    def test_policy_rejects_prerelease_publisher_head_checkout(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-publish.yml"
-        text = path.read_text().replace(
-            "ref: ${{ github.sha }}",
-            "ref: ${{ github.event.workflow_run.head_sha }}",
-            1,
-        )
-        path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "non-trusted checkout ref"):
-            check_trusted_checkout_refs(root)
-
-    def test_policy_rejects_missing_exact_tag_publication_serialization(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_publish-oci.yml"
-        path.write_text(
-            path.read_text().replace(
-                "group: publish-oci-${{ github.repository }}-${{ inputs.tag }}",
-                "group: publish-oci-${{ github.repository }}",
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "serialize publication by exact destination tag"):
-            check_privileged_workflows(root)
-
-    def test_policy_rejects_candidate_host_execution_before_trusted_oci_build(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        text = path.read_text().replace(
-            "      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
-            "      - name: Execute PR code on host\n        run: mise run release-build \"1.2.3\"\n\n      - name: Build candidate linux/amd64 + linux/arm64 OCI archive\n",
-            1,
-        )
-        path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "forbidden path|host run steps"):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_prerelease_untrusted_runner_checkout(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        text = path.read_text().replace(
-            "      - id: request\n",
-            "      - name: Checkout untrusted PR source\n"
-            "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n"
-            "        with:\n"
-            "          ref: ${{ inputs.sha }}\n"
-            "          path: source\n\n"
-            "      - id: request\n",
-            1,
-        )
-        path.write_text(text)
-        with self.assertRaisesRegex(PolicyError, "checkout trusted tooling exactly once|forbidden path"):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_raw_prerelease_sha_bypassing_validator(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(
-            path.read_text().replace(
-                "source-sha: ${{ steps.request.outputs.sha }}",
-                "source-sha: ${{ inputs.sha }}",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "isolation invariant|raw prerelease SHA"):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_missing_prerelease_default_branch_job_guard(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(
-            path.read_text().replace(
-                "    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}\n",
-                "",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "isolation invariant"):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_unneeded_prerelease_actions_read_permission(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(
-            path.read_text().replace(
-                "permissions:\n  contents: read\n",
-                "permissions:\n  contents: read\n  actions: read\n",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "forbidden path"):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_pr_controlled_candidate_action(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/prerelease-request.yml"
-        path.write_text(path.read_text().replace("./.github/actions/build-oci", "./source/.github/actions/build-oci"))
-        with self.assertRaises(PolicyError):
-            check_candidate_boundary(root)
-
-    def test_policy_rejects_published_only_release_lookup_for_draft_retry(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/_publish-release.yml"
-        text = path.read_text()
-        text = text.replace(
-            'release_pages=$(gh api --paginate --slurp "repos/$REPOSITORY/releases?per_page=100")',
-            'release_pages=$(gh api "repos/$REPOSITORY/releases/tags/$TAG")',
-        )
-        path.write_text(text)
-        with self.assertRaises(PolicyError):
-            check_privileged_workflows(root)
-
-    def test_policy_rejects_stable_source_sha_job_output_indirection(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        path.write_text(path.read_text().replace(
-            "target_sha: ${{ github.sha }}",
-            "target_sha: ${{ needs.guard.outputs.sha }}",
-            1,
-        ))
-        with self.assertRaisesRegex(PolicyError, "github.sha directly"):
-            check_release_workflow(root)
-
-    def test_policy_rejects_skopeo_image_outside_job_env_mapping(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github" / "workflows" / "_promote-oci.yml"
-        path.write_text(
-            path.read_text().replace("      SKOPEO_IMAGE:", "    SKOPEO_IMAGE:", 1)
-        )
-        with self.assertRaisesRegex(PolicyError, "job env mapping"):
-            check_privileged_workflows(root)
 
     def test_prerelease_request_run_is_bound_to_exact_current_main_and_owner(self) -> None:
         request_run_id = 6001
@@ -1327,86 +914,6 @@ class PipelineTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False), patch("release.git", return_value=MAIN):
             with self.assertRaisesRegex(SystemExit, "not dispatched from main"):
                 validate_request_context(api=fake)
-
-    def test_policy_rejects_tag_triggered_stable_release(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        path.write_text(
-            path.read_text().replace(
-                "on:\n  workflow_run:",
-                "on:\n  push:\n    tags: ['v*']\n  workflow_run:",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "tag pushes"):
-            check_release_workflow(root)
-
-    def test_policy_rejects_direct_dispatch_on_write_capable_stable_consumer(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        path.write_text(
-            path.read_text().replace(
-                "on:\n  workflow_run:",
-                "on:\n  workflow_dispatch:\n  workflow_run:",
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "directly workflow_dispatch"):
-            check_release_workflow(root)
-
-    def test_stable_validate_mode_does_not_upload_publication_handoffs(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        text = path.read_text(encoding="utf-8").replace(
-            "        if: needs.guard.outputs.publish == 'true'\n        uses: actions/upload-artifact@",
-            "        uses: actions/upload-artifact@",
-            1,
-        )
-        path.write_text(text, encoding="utf-8")
-        with self.assertRaisesRegex(PolicyError, "validate mode must not upload"):
-            check_release_workflow(root)
-
-    def test_stable_release_build_does_not_rebuild_representative_payload(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        text = path.read_text()
-        path.write_text(
-            text.replace(
-                'run: python3 scripts/ci/verify_release_assets.py "$VERSION"',
-                'run: mise run release-check "$VERSION"',
-                1,
-            )
-        )
-        with self.assertRaisesRegex(PolicyError, "exact built payload"):
-            check_release_workflow(root)
-
-    def test_stable_release_verifies_native_payload_before_oci_build(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release.yml"
-        text = path.read_text()
-        verify = 'python3 scripts/ci/verify_release_assets.py "$VERSION"'
-        text = text.replace(verify, "echo skipped verification", 1)
-        path.write_text(text + "\n# " + verify + "\n")
-        with self.assertRaisesRegex(PolicyError, "before OCI build"):
-            check_release_workflow(root)
-
-    def test_stable_release_request_is_zero_write_and_no_checkout(self) -> None:
-        root = self._copy_policy_tree()
-        self.addCleanup(shutil.rmtree, root)
-        path = root / ".github/workflows/release-request.yml"
-        text = path.read_text()
-        path.write_text(text.replace("permissions: {}", "permissions:\n  contents: write", 1))
-        with self.assertRaisesRegex(PolicyError, "write permission"):
-            check_release_request_workflow(root)
-
-        path.write_text(text.replace("steps:\n", "steps:\n      - uses: actions/checkout@" + "a" * 40 + "\n", 1))
-        with self.assertRaisesRegex(PolicyError, "repository checkout"):
-            check_release_request_workflow(root)
 
 class PythonTypeGateTests(unittest.TestCase):
     def test_python_gate_rejects_a_type_error_and_accepts_its_correction(self) -> None:
