@@ -14,7 +14,6 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -378,7 +377,7 @@ type pathChoice struct {
 }
 
 func (c pathChoice) selects(target, transport string) bool {
-	return origin.Key(c.target) == origin.Key(target) && c.transport == transport
+	return (c.target == target || wire.SameOrigin(c.target, target)) && c.transport == transport
 }
 
 func (m model) pathRow(label, target, transport string, latency bool) setupRow {
@@ -513,7 +512,7 @@ func (m model) selectedThroughputPath() *wire.ThroughputTarget {
 		return nil
 	}
 	i := slices.IndexFunc(pf.Capabilities.ThroughputTargets, func(t wire.ThroughputTarget) bool {
-		return t.Transport == m.cfg.ThroughputTransport && origin.Key(t.Origin) == origin.Key(m.cfg.ThroughputTarget)
+		return t.Transport == m.cfg.ThroughputTransport && wire.SameOrigin(t.Origin, m.cfg.ThroughputTarget)
 	})
 	if i < 0 {
 		return nil

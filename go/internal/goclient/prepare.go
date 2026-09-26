@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -347,8 +346,8 @@ func pickTarget[T any](
 		switch {
 		case !ok:
 			continue
-		case selection == "auto" && origin.Equal(o, base),
-			selection != "auto" && (id == selection || origin.Equal(o, selection)):
+		case selection == "auto" && wire.SameOrigin(o, base),
+			selection != "auto" && (id == selection || wire.SameOrigin(o, selection)):
 			return t, nil
 		}
 		candidates = append(candidates, t)

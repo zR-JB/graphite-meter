@@ -12,7 +12,6 @@ import (
 
 	"github.com/quic-go/quic-go/http3"
 
-	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -32,7 +31,7 @@ func (c credential) authorize(u *url.URL) (http.Header, error) {
 	}
 	here := u.Scheme + "://" + u.Host
 	if c.insecure || u.Scheme != "https" || !slices.ContainsFunc(c.origins, func(o string) bool {
-		return origin.Equal(o, here)
+		return wire.SameOrigin(o, here)
 	}) {
 		return nil, errGrantScope
 	}
