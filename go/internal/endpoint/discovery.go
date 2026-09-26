@@ -146,45 +146,28 @@ func websocketOrigin(target string) string {
 	return ""
 }
 
+// preflightFor lists the targets host's clients reach: each advertised native listener with its fixed
+// protocol, then the proxied public origins, merging a fetch origin offered under different protocols.
 func (d *Discovery) preflightFor(host string) wire.Preflight {
-	throughput := make([]wire.ThroughputTarget, 0)
-	latency := make([]wire.LatencyTarget, 0)
-	addThroughput := func(base, protocol string) {
-		base = strings.TrimRight(base, "/")
-		for i := range throughput {
-			if throughput[i].Transport == wire.TransportFetchStream && origin.Equal(throughput[i].Origin, base) {
-				if throughput[i].Protocol != protocol {
+	throughput, latency := []wire.ThroughputTarget{}, []wire.LatencyTarget{}
+	fetch := func(base, protocol string) {
+		for i, t := range throughput {
+			if t.Transport == wire.TransportFetchStream && origin.Equal(t.Origin, base) {
+				if t.Protocol != protocol {
 					throughput[i].Protocol = "negotiated"
 				}
 				return
 			}
 		}
-		throughput = append(throughput,
-			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportFetchStream, Protocol: protocol,
-				TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultThroughputRoutes()})
+		throughput = append(throughput, wire.ThroughputTarget{Origin: base, Transport: wire.TransportFetchStream,
+			Protocol: protocol})
 	}
-	addLatency := func(base string) {
-		base = strings.TrimRight(base, "/")
-		for _, e := range latency {
-			if e.Transport == wire.TransportWebSocket && origin.Equal(e.Origin, base) {
-				return
-			}
+	websocket := func(base string) {
+		if !slices.ContainsFunc(latency, func(t wire.LatencyTarget) bool {
+			return t.Transport == wire.TransportWebSocket && origin.Equal(t.Origin, base)
+		}) {
+			latency = append(latency, wire.LatencyTarget{Origin: base, Transport: wire.TransportWebSocket})
 		}
-		latency = append(latency,
-			wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebSocket, Protocol: "http1",
-				TLS: strings.HasPrefix(base, "https://"), Routes: wire.DefaultLatencyRoutes()})
-	}
-	addWebTransport := func(base string) {
-		base = strings.TrimRight(base, "/")
-		throughput = append(throughput,
-			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3",
-				TLS: true, Routes: wire.DefaultThroughputRoutes()})
-		throughput = append(throughput,
-			wire.ThroughputTarget{ID: base, Origin: base, Transport: wire.TransportWebTransportDatagram,
-				Protocol: "http3", TLS: true, Routes: wire.DefaultThroughputRoutes()})
-		latency = append(latency,
-			wire.LatencyTarget{ID: base, Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3",
-				TLS: true, Routes: wire.DefaultLatencyRoutes()})
 	}
 	cfg := d.cfg
 	for _, n := range cfg.Natives() {
@@ -192,35 +175,32 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 			continue
 		}
 		base := nativeOrigin(n.Public, n.Scheme, host, n.Addr)
-		addThroughput(base, n.Protocol)
+		fetch(base, n.Protocol)
 		switch n.Protocol {
 		case "http1":
-			addLatency(base)
+			websocket(base)
 		case "http3":
-			addWebTransport(base)
+			throughput = append(throughput,
+				wire.ThroughputTarget{Origin: base, Transport: wire.TransportWebTransport, Protocol: "http3"},
+				wire.ThroughputTarget{Origin: base, Transport: wire.TransportWebTransportDatagram, Protocol: "http3"})
+			latency = append(latency, wire.LatencyTarget{Origin: base, Transport: wire.TransportWebTransport})
 		}
 	}
-	for _, base := range cfg.Public.Both {
-		addThroughput(publicBase(base), "negotiated")
-		addLatency(publicBase(base))
+	self := func(base string) string {
+		if base == "self" {
+			return "."
+		}
+		return base
 	}
-	for _, base := range cfg.Public.Throughput {
-		addThroughput(publicBase(base), "negotiated")
+	for _, base := range slices.Concat(cfg.Public.Both, cfg.Public.Throughput) {
+		fetch(self(base), "negotiated")
 	}
-	for _, base := range cfg.Public.Latency {
-		addLatency(publicBase(base))
+	for _, base := range slices.Concat(cfg.Public.Both, cfg.Public.Latency) {
+		websocket(self(base))
 	}
 	return wire.Preflight{Server: wire.ServerInfo{Name: cfg.ServerName, Location: cfg.ServerLocation},
-		EngineVersion: cfg.EngineVersion, Generation: d.generation,
-		Capabilities: wire.Capabilities{UploadCheckpoint: true, ThroughputTargets: throughput,
-			LatencyTargets: latency}}
-}
-
-func publicBase(configured string) string {
-	if configured == "self" {
-		return "."
-	}
-	return configured
+		EngineVersion: cfg.EngineVersion, Generation: d.generation, Capabilities: wire.Capabilities{
+			UploadCheckpoint: true, ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
 func nativeOrigin(public, scheme, host, addr string) string {
