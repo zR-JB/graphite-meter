@@ -205,7 +205,6 @@ export interface ReflectorTimingSummary {
   sampleCount: number;
   meanRawRttMs: number;
   meanHandlingMs: number;
-  meanAdjustedRttMs: number;
 }
 
 /** Full measured stage; percentiles use nearest rank, with the midpoint median for P50. */

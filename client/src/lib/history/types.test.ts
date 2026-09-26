@@ -317,7 +317,6 @@ test("optional paired server timing is copied without changing saved raw methodo
     sampleCount: 2,
     meanRawRttMs: 18,
     meanHandlingMs: 3,
-    meanAdjustedRttMs: 15,
   };
   const saved = buildHistoryRecord(
     source,

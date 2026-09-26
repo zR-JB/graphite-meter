@@ -289,7 +289,6 @@ export class LatencyPopulation {
               sampleCount: count,
               meanRawRttMs: raw / count,
               meanHandlingMs: handling / count,
-              meanAdjustedRttMs: (raw - handling) / count,
             },
           }
         : {}),

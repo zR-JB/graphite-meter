@@ -13,7 +13,7 @@ contribute. Results do not isolate ICMP latency, directional IP loss or a physic
 | Added latency | Loaded median − idle median, per stage and server, in ms; negative values are kept. | Either median missing: "—". |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
 | Probe timeouts | `timeouts / (replies + timeouts)`, as a percentage. | No resolved probe: "—", not zero. |
-| Paired server timing | Mean raw RTT, server handling and adjusted RTT over the same valid pairs. | No valid pair: absent. |
+| Paired server timing | Mean raw RTT and server handling over the same valid pairs. | No valid pair: absent. |
 
 Definitions used throughout:
 
@@ -121,10 +121,10 @@ replies with a valid handling time; timeouts, interrupted, failed, late and post
 handling time above that reply's raw RTT, or one the client cannot represent exactly, omits the pair but keeps the
 raw reply; values are never clamped. Malformed fields invalidate the reply.
 
-Adjusted RTT subtracts only the instrumented handling interval and keeps network delay, queues outside it and client
-scheduling. Raw RTT stays primary for latency, jitter, deadlines and added latency. Browser stages expose
-`reflectorTiming` (`sampleCount`, `meanRawRttMs`, `meanHandlingMs`, `meanAdjustedRttMs`); native stages expose
-`ReflectorTiming` durations.
+Handling time is a diagnostic of the server's own share (about 100 ns by design), so no adjusted RTT is shown or
+saved. Raw RTT stays primary for latency, jitter, deadlines and added latency. Browser stages expose
+`reflectorTiming` (`sampleCount`, `meanRawRttMs`, `meanHandlingMs`); native stages expose `ReflectorTiming`
+durations.
 
 ## Native stages
 

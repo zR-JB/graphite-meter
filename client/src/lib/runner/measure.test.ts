@@ -123,7 +123,6 @@ test("paired server timing uses only valid in-window replies and leaves raw stat
     sampleCount: 2,
     meanRawRttMs: 15,
     meanHandlingMs: 1,
-    meanAdjustedRttMs: 14,
   });
 });
 

@@ -239,5 +239,5 @@ export function reflectorTimingDescription(
   timing: ReflectorTimingSummary,
 ): string {
   return `Server timing · ${timing.sampleCount} paired replies
-Mean RTT: ${fmtMs(timing.meanRawRttMs)} ms raw − ${fmtMs(timing.meanHandlingMs)} ms server handling = ${fmtMs(timing.meanAdjustedRttMs)} ms adjusted.`;
+Mean server handling ${fmtMs(timing.meanHandlingMs)} ms within a mean RTT of ${fmtMs(timing.meanRawRttMs)} ms.`;
 }
