@@ -49,7 +49,7 @@ ORDERED = {
         "&& github.event.workflow_run.event == 'workflow_dispatch'\n",
         "&& github.event.workflow_run.head_branch == 'main'\n",
         "&& github.event.workflow_run.path == '.github/workflows/release-request.yml'\n",
-        "run: python3 scripts/ci/release.py verify", "environment: ghcr-release",
+        "run: python3 scripts/ci/release.py verify",
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
         "run: scripts/ci/publish.sh release", "run: scripts/ci/publish.sh aliases",
