@@ -55,11 +55,6 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 		if t.Secure {
 			s.authenticatedSecurityHeaders(w.Header())
 		}
-		if r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/auth/") {
-			controller := http.NewResponseController(w)
-			_ = controller.SetReadDeadline(time.Now().Add(15 * time.Second))
-			defer controller.SetReadDeadline(time.Time{})
-		}
 		if r.Method == http.MethodOptions && (isMeasurementRoute(r.URL.Path) || r.URL.Path == "/auth/browser/token") {
 			s.corsPreflight(w, r, t)
 			return

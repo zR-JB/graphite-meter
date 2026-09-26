@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -223,6 +224,32 @@ func TestListenerTopologies(t *testing.T) {
 				if rec := serve(path); rec.Code != http.StatusNotFound || strings.Contains(rec.Body.String(), "shell") {
 					t.Errorf("%s = %d %q, want 404", path, rec.Code, rec.Body.String())
 				}
+			}
+		})
+	}
+}
+
+// A client that declares a body and goes silent cannot hold its connection, before or after the handler answers.
+func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
+	t.Parallel()
+	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) { e.controlTimeout = 200 * time.Millisecond })
+	for _, request := range []string{"POST /upload/session", "GET /probe", "GET /"} {
+		t.Run(request, func(t *testing.T) {
+			t.Parallel()
+			conn, err := net.Dial("tcp", strings.TrimPrefix(httpBase, "http://"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			_, _ = io.WriteString(conn, request+" HTTP/1.1\r\nHost: meter\r\nContent-Length: 200000\r\n\r\npartial")
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			res, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, res.Body)
+			if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+				t.Fatalf("answered %d, then the connection stayed open: %v", res.StatusCode, err)
 			}
 		})
 	}

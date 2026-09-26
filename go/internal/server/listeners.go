@@ -55,6 +55,8 @@ type endpoints struct {
 	admission   *requestAdmission
 	trusted     []netip.Prefix
 	wtIdleBound time.Duration
+	// controlTimeout bounds a request outside measurement admission, and the body drained after any request.
+	controlTimeout time.Duration
 }
 
 type service struct {
@@ -100,7 +102,7 @@ func buildEndpoints(ctx context.Context, cfg *config.Config) *endpoints {
 		upload: upload, receive: upload.Receive,
 		admission:   admission,
 		trusted:     cfg.TrustedProxies,
-		wtIdleBound: wire.WTIdleBound,
+		wtIdleBound: wire.WTIdleBound, controlTimeout: 15 * time.Second,
 	}
 }
 
@@ -258,7 +260,8 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 	if l.topo.spa {
 		spa = b.spa
 	}
-	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener), protocols)
+	s := baseServer(boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener),
+		b.e.controlTimeout), protocols)
 	ln, err := b.sockets.listenTCP(l.addr)
 	if err != nil {
 		return err

@@ -77,15 +77,22 @@ func TestConnectionAdmissionLimitsAndRelease(t *testing.T) {
 	releaseB()
 }
 
-func TestSocketKeyIPv6AndTrustedProxy(t *testing.T) {
-	a := socketKey(testAddr("[2001:db8:1::1]:1"), nil)
-	b := socketKey(testAddr("[2001:db8:1::ffff]:2"), nil)
-	if a != b {
-		t.Fatalf("same /64 produced %q and %q", a, b)
-	}
-	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}
-	if got := socketKey(testAddr("10.0.0.2:443"), trusted); got != "" {
-		t.Fatalf("trusted proxy key = %q, want the empty exemption key", got)
+// An IPv6 client is bounded per /64, and its /56 and /48 hold only two and four clients' shares.
+func TestConnectionAdmissionBucketsIPv6Hierarchically(t *testing.T) {
+	a := newConnectionAdmission(100, 2, []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")})
+	for i, tc := range []struct {
+		addr string
+		want bool
+	}{
+		{"[2001:db8:0:100::1]:1", true}, {"[2001:db8:0:100::2]:1", true}, {"[2001:db8:0:100::3]:1", false},
+		{"[2001:db8:0:101::1]:1", true}, {"[2001:db8:0:101::2]:1", true}, {"[2001:db8:0:102::1]:1", false},
+		{"[2001:db8:0:200::1]:1", true}, {"[2001:db8:0:200::2]:1", true},
+		{"[2001:db8:0:201::1]:1", true}, {"[2001:db8:0:201::2]:1", true}, {"[2001:db8:0:300::1]:1", false},
+		{"[2001:db8:1::1]:1", true}, {"10.0.0.2:443", true}, {"10.0.0.2:443", true}, {"10.0.0.2:443", true},
+	} {
+		if _, ok := a.acquire(testAddr(tc.addr), false); ok != tc.want {
+			t.Fatalf("connection %d from %s admitted = %t", i, tc.addr, ok)
+		}
 	}
 }
 

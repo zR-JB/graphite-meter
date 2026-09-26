@@ -198,31 +198,25 @@ func TestAdmissionLifetimeFollowsTheRouteBudget(t *testing.T) {
 // deadlineRecordingWriter counts the socket deadlines wrap arms through http.NewResponseController.
 type deadlineRecordingWriter struct {
 	*httptest.ResponseRecorder
-	armed int
+	read, write time.Time
 }
 
-func (w *deadlineRecordingWriter) SetReadDeadline(time.Time) error  { w.armed++; return nil }
-func (w *deadlineRecordingWriter) SetWriteDeadline(time.Time) error { w.armed++; return nil }
+func (w *deadlineRecordingWriter) SetReadDeadline(t time.Time) error  { w.read = t; return nil }
+func (w *deadlineRecordingWriter) SetWriteDeadline(t time.Time) error { w.write = t; return nil }
 
-// A socket deadline bounds a request; it tears a channel down mid-stream.
-func TestChannelRoutesTakeNoSocketDeadline(t *testing.T) {
+// A socket deadline bounds a request; it would tear a held channel down mid-stream, so a channel clears the control
+// deadline every request starts with.
+func TestAdmissionSetsSocketDeadlinesByRouteKind(t *testing.T) {
 	a := newRequestAdmission(100, 100, 100, 100, time.Minute, time.Hour)
-	armedFor := func(path string) int {
-		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder()}
+	for path, bounded := range map[string]bool{
+		route.Ping: false, route.WTPing: false, route.WTDownload: false, route.WTUpload: false,
+		route.Download: true, route.Upload: true,
+	} {
+		w := &deadlineRecordingWriter{ResponseRecorder: httptest.NewRecorder(), read: time.Now(), write: time.Now()}
 		a.wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), routeSpec(path), nil, publicAuth(t)).
 			ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
-		return w.armed
-	}
-	for _, path := range []string{route.Ping, route.WTPing, route.WTDownload, route.WTUpload} {
-		if got := armedFor(path); got != 0 {
-			t.Errorf("%s armed %d socket deadlines, want none: it holds a channel open rather than answering a request",
-				path, got)
-		}
-	}
-	// The control: a request-shaped route still gets its deadlines.
-	for _, path := range []string{route.Download, route.Upload} {
-		if got := armedFor(path); got == 0 {
-			t.Errorf("%s armed no socket deadline, want one: an unbounded transfer that stops reading its context has nothing else to stop it", path)
+		if w.read.IsZero() == bounded || w.write.IsZero() == bounded {
+			t.Errorf("%s socket deadlines = %v / %v, want bounded = %t", path, w.read, w.write, bounded)
 		}
 	}
 }

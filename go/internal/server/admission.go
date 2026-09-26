@@ -27,10 +27,14 @@ func newBudget(limit, clientLimit int) budget {
 	return budget{limit: limit, clientLimit: clientLimit, clients: make(map[string]int)}
 }
 
-func (b *budget) clientFull(key string) bool {
-	if key != "" && b.clients[key] >= b.clientLimit {
-		b.rejectedClient++
-		return true
+// clientFull reports and counts a refusal by any of keys; each later key is an aggregate that holds twice the
+// share of the one before it.
+func (b *budget) clientFull(keys ...string) bool {
+	for i, key := range keys {
+		if b.clients[key] >= b.clientLimit<<i {
+			b.rejectedClient++
+			return true
+		}
 	}
 	return false
 }
@@ -43,17 +47,17 @@ func (b *budget) full() bool {
 	return false
 }
 
-func (b *budget) take(key string) {
+func (b *budget) take(keys ...string) {
 	b.active++
 	b.peak = max(b.peak, b.active)
-	if key != "" {
+	for _, key := range keys {
 		b.clients[key]++
 	}
 }
 
-func (b *budget) give(key string) {
+func (b *budget) give(keys ...string) {
 	b.active--
-	if key != "" {
+	for _, key := range keys {
 		if b.clients[key]--; b.clients[key] == 0 {
 			delete(b.clients, key)
 		}
@@ -100,9 +104,9 @@ func (a *requestAdmission) acquire(key, sessionKey string) (release func(), stat
 	if a.requests.full() || a.sessions.full() {
 		return nil, http.StatusServiceUnavailable
 	}
-	a.requests.take("")
+	a.requests.take()
 	a.sessions.take(sessionKey)
-	return func() { a.mu.Lock(); a.requests.give(""); a.sessions.give(sessionKey); a.mu.Unlock() }, 0
+	return func() { a.mu.Lock(); a.requests.give(); a.sessions.give(sessionKey); a.mu.Unlock() }, 0
 }
 
 func (a *requestAdmission) load() (active, max int) {
@@ -125,7 +129,6 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 	if session {
 		lifetime = a.sessionLifetime
 	}
-	// Held channels take no socket deadline.
 	request := spec.Kind == route.HTTP
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key, sessionKey := endpoint.ClientKey(r, trusted), ""
@@ -142,22 +145,29 @@ func (a *requestAdmission) wrap(next http.Handler, spec route.Spec, trusted []ne
 		defer release()
 		ctx, cancel := context.WithTimeout(r.Context(), lifetime)
 		defer cancel()
+		// A request is bounded by its lifetime; a held channel by its own idle policy, not the socket.
+		var deadline time.Time
 		if request {
-			deadline, _ := ctx.Deadline()
-			defer setSocketDeadlines(w, deadline)()
+			deadline, _ = ctx.Deadline()
 		}
+		controller := http.NewResponseController(w)
+		_ = controller.SetReadDeadline(deadline)
+		_ = controller.SetWriteDeadline(deadline)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func setSocketDeadlines(w http.ResponseWriter, deadline time.Time) func() {
-	controller := http.NewResponseController(w)
-	_ = controller.SetReadDeadline(deadline)
-	_ = controller.SetWriteDeadline(deadline)
-	return func() {
-		_ = controller.SetReadDeadline(time.Time{})
+// boundedRequest gives every request a control deadline, which measurement admission replaces, and bounds the
+// unread body an HTTP/1 connection drains after its handler returns.
+func boundedRequest(next http.Handler, timeout time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		controller := http.NewResponseController(w)
+		_ = controller.SetReadDeadline(time.Now().Add(timeout))
+		_ = controller.SetWriteDeadline(time.Now().Add(timeout))
+		next.ServeHTTP(w, r)
+		_ = controller.SetReadDeadline(time.Now().Add(timeout))
 		_ = controller.SetWriteDeadline(time.Time{})
-	}
+	})
 }
 
 // connectionAdmission bounds TCP and QUIC connections per direct client; trusted proxies are exempt.
@@ -172,8 +182,8 @@ func newConnectionAdmission(globalMax, clientMax int, trusted []netip.Prefix) *c
 		quic: newBudget(globalMax, min(clientMax, maxClientQUICConnections)), trusted: trusted}
 }
 
-// socketKey buckets a direct peer; the empty key exempts a trusted proxy.
-func socketKey(addr net.Addr, trusted []netip.Prefix) string {
+// socketKeys buckets a direct peer by address, or an IPv6 peer by its /64, /56 and /48; a trusted proxy has none.
+func socketKeys(addr net.Addr, trusted []netip.Prefix) []string {
 	var ip netip.Addr
 	switch a := addr.(type) {
 	case *net.TCPAddr:
@@ -183,33 +193,40 @@ func socketKey(addr net.Addr, trusted []netip.Prefix) string {
 	default:
 		addrPort, err := netip.ParseAddrPort(addr.String())
 		if err != nil {
-			return "unknown"
+			return []string{"unknown"}
 		}
 		ip = addrPort.Addr()
 	}
-	if transport.Trusted(ip, trusted) {
-		return ""
+	switch ip = ip.Unmap(); {
+	case transport.Trusted(ip, trusted):
+		return nil
+	case ip.Is4():
+		return []string{ip.String()}
 	}
-	return transport.AddressBucket(ip)
+	var keys []string
+	for _, bits := range []int{64, 56, 48} {
+		keys = append(keys, netip.PrefixFrom(ip, bits).Masked().String())
+	}
+	return keys
 }
 
 func (a *connectionAdmission) acquire(addr net.Addr, quic bool) (func(), bool) {
-	key := socketKey(addr, a.trusted)
+	keys := socketKeys(addr, a.trusted)
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.connections.clientFull(key) || a.connections.full() || quic && a.quic.clientFull(key) {
+	if a.connections.clientFull(keys...) || a.connections.full() || quic && a.quic.clientFull(keys...) {
 		return nil, false
 	}
-	a.connections.take(key)
+	a.connections.take(keys...)
 	if quic {
-		a.quic.take(key)
+		a.quic.take(keys...)
 	}
 	return sync.OnceFunc(func() {
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		a.connections.give(key)
+		a.connections.give(keys...)
 		if quic {
-			a.quic.give(key)
+			a.quic.give(keys...)
 		}
 	}), true
 }

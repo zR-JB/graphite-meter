@@ -87,8 +87,8 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 			http.NotFound(w, r)
 			return
 		}
-		// HTTP/2 holds an unread body up to the stream window while the handler runs.
-		if r.ProtoMajor == 2 && r.Method != http.MethodPost && r.ContentLength != 0 {
+		// An unread body holds its connection or stream window while the handler runs and after it returns.
+		if r.Method != http.MethodPost && (r.ContentLength > 0 || r.ContentLength < 0 && r.ProtoMajor < 3) {
 			http.Error(w, "request body not accepted", http.StatusBadRequest)
 			return
 		}
