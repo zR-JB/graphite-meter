@@ -22,13 +22,6 @@
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
-  const BADGE_TONE: Partial<Record<string, string>> = {
-    verified: "ok",
-    ready: "ok",
-    active: "brand",
-    used: "neutral",
-  };
-
   let { onOpenLegal }: { onOpenLegal: (invoker: HTMLElement) => void } =
     $props();
   let inspectedServer = $state("");
@@ -231,9 +224,9 @@
           <h3 class="caps">{role} path</h3>
           <span
             class="badge"
-            data-tone={BADGE_TONE[
-              role === "latency" && !latencyRequested ? "used" : status.tone
-            ] ?? "warn"}
+            data-tone={role === "latency" && !latencyRequested
+              ? "neutral"
+              : status.tone}
             >{role === "latency" && !latencyRequested
               ? pathMode === "live"
                 ? "Not selected"

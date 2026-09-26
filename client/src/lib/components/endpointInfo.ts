@@ -8,27 +8,19 @@ import type {
 } from "../runner/contract";
 import { httpProtocolLabel } from "../runner/paths";
 import type { ConnectionValidationState } from "../runner/paths";
+import { READINESS } from "../presentation/vocabulary";
 
 type EndpointPathMode = "live" | "running" | "result";
 
 export function endpointPathStatus(
   validation: ConnectionValidationState,
   mode: EndpointPathMode,
-): {
-  label: string;
-  tone: "ready" | "active" | "used" | ConnectionValidationState;
-} {
-  if (validation !== "verified")
-    return {
-      label: validation[0].toUpperCase() + validation.slice(1),
-      tone: validation,
-    };
-  const verified = {
-    live: { label: "Ready", tone: "ready" },
-    running: { label: "In use", tone: "active" },
-    result: { label: "Used", tone: "used" },
-  } as const;
-  return verified[mode];
+): { label: string; tone: string } {
+  if (validation !== "verified" || mode === "live")
+    return READINESS[validation];
+  return mode === "running"
+    ? { label: "In use", tone: "brand" }
+    : { label: "Used", tone: "neutral" };
 }
 
 /** Measurement occupancy as the server reported it at probe time. */

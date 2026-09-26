@@ -7,6 +7,7 @@ import type {
   TransportKind,
   TransportRole,
 } from "../runner/contract";
+import type { ConnectionValidationState } from "../runner/paths";
 import type { ThemePref } from "../state/persistence";
 
 export const MISSING = "—";
@@ -39,7 +40,7 @@ export const LATENCY_POPULATION: Record<
 };
 
 const PHASE: Record<Phase, string> = {
-  idle: "Ready",
+  idle: "Not started",
   connecting: "Checking paths",
   warmup: "Warmup",
   latency: "Latency",
@@ -49,6 +50,16 @@ const PHASE: Record<Phase, string> = {
   complete: "Complete",
   aborted: "Stopped",
   error: "Failed",
+};
+
+export const READINESS: Record<
+  ConnectionValidationState,
+  { label: string; tone: "ok" | "brand" | "warn" | "err" }
+> = {
+  verified: { label: "Ready", tone: "ok" },
+  checking: { label: "Checking", tone: "brand" },
+  stale: { label: "Recheck needed", tone: "warn" },
+  failed: { label: "Failed", tone: "err" },
 };
 
 export type Outcome = NonNullable<RunResult["outcome"]>;

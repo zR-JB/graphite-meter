@@ -5,6 +5,7 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
+  import { READINESS } from "../../presentation/vocabulary";
 
   interface Props {
     role: ConnectionRole;
@@ -43,12 +44,6 @@
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
   );
-  const status = $derived(
-    validation === "verified"
-      ? "Ready"
-      : validation[0].toUpperCase() + validation.slice(1),
-  );
-
   function select(value: string) {
     controller.selectConnection(role, value);
   }
@@ -58,24 +53,23 @@
   <legend class="caps">{title}</legend>
   <div class="options">
     {#each options as option (option.value)}
-      {@const view = option}
       <label
         class="choice"
         class:selected={selected === option.value}
-        class:unavailable={view.disabled || locked}
+        class:unavailable={option.disabled || locked}
       >
         <input
           type="radio"
           name={`${role}-target`}
           value={option.value}
           checked={selected === option.value}
-          disabled={view.disabled || locked}
+          disabled={option.disabled || locked}
           onchange={() => select(option.value)}
         />
         <span class="radio-dot" aria-hidden="true"></span>
         <span class="copy">
           <strong>{option.label}</strong>
-          <small>{view.detail}</small>
+          <small>{option.detail}</small>
         </span>
       </label>
     {/each}
@@ -85,14 +79,10 @@
       >Use Automatic</button
     >
   {/if}
-  <div
-    class="validation"
-    class:error={validation === "failed"}
-    aria-live="polite"
-  >
-    <span class="dot" data-state={validation}></span>
+  <div class="validation">
+    <span class="dot" data-tone={READINESS[validation].tone}></span>
     <span class="validation-copy">
-      <strong>{locked ? "In use" : status}</strong>
+      <strong>{locked ? "In use" : READINESS[validation].label}</strong>
       <small>{summary}</small>
     </span>
     {#if !locked && (validation === "failed" || validation === "stale")}
@@ -227,15 +217,6 @@
     width: 7px;
     height: 7px;
     border-radius: var(--r-full);
-    background: var(--text-soft);
-  }
-  .dot[data-state="verified"] {
-    background: var(--ok);
-  }
-  .dot[data-state="checking"] {
-    background: var(--brand);
-  }
-  .dot[data-state="failed"] {
-    background: var(--warn);
+    background: var(--tone);
   }
 </style>

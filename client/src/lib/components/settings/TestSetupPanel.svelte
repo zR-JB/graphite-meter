@@ -14,11 +14,15 @@
   import {
     phaseLabel,
     PING_CADENCE,
+    READINESS,
     STAGE,
   } from "../../presentation/vocabulary";
   import { fmtDuration } from "../../format";
   import { untrack } from "svelte";
-  import { announce } from "../../presentation/announcer.svelte";
+  import {
+    announce,
+    announceChanges,
+  } from "../../presentation/announcer.svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
 
   let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
@@ -207,12 +211,7 @@
   }
 
   const readiness = $derived(store.selectionValidation);
-  const READINESS_LABEL = {
-    verified: "Ready",
-    checking: "Checking paths",
-    failed: "Path failed",
-    stale: "Recheck needed",
-  } as const;
+  announceChanges(() => `Connection paths: ${READINESS[readiness].label}`);
 </script>
 
 {#snippet rejectedHint(field: typeof rejected)}
@@ -229,17 +228,12 @@
       <span
         class="badge term"
         data-readiness={readiness}
-        data-tone={readiness === "verified"
-          ? "ok"
-          : readiness === "failed"
-            ? "err"
-            : "warn"}
-        aria-live="polite"
+        data-tone={READINESS[readiness].tone}
         use:tooltip={readiness === "verified"
           ? "Recent successful checks are reused while the required server and path are unchanged. Expired checks are refreshed before a test starts."
-          : READINESS_LABEL[readiness]}
+          : READINESS[readiness].label}
       >
-        {READINESS_LABEL[readiness]}
+        {READINESS[readiness].label}
       </span>
     </div>
     <ServerSelection />
