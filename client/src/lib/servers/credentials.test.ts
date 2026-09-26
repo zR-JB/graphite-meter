@@ -61,7 +61,12 @@ test("remote requests omit cookies, reject redirects, and bind the bearer to app
     const { measurementFetch, requestOptions, socketMint } =
       await import("./credentials");
     const context = {
-      server: { id: "a", name: "A", url: "https://a.example" },
+      server: {
+        id: "a",
+        name: "A",
+        url: "https://a.example",
+        additionalOrigins: ["https://edge.example"],
+      },
       kind: "grant" as const,
       token: "private-grant",
       expiresAt: Date.now() + 60000,
@@ -78,6 +83,19 @@ test("remote requests omit cookies, reject redirects, and bind the bearer to app
     expect(() => requestOptions(context, "http://a.example/probe")).toThrow(
       "HTTPS",
     );
+    expect(() => requestOptions(context, "https://edge.example/probe")).toThrow(
+      "hostname",
+    );
+    expect(() =>
+      socketMint(context, "https://edge.example", "/ping", "ws"),
+    ).toThrow("hostname");
+    expect(
+      requestOptions(
+        { server: context.server, kind: "public" },
+        "https://edge.example/probe",
+      ),
+    ).toEqual({ headers: {}, credentials: "omit" });
+    expect(requests).toHaveLength(1);
     const mint = socketMint(context, "https://a.example", "/ping", "ws")!;
     expect(mint.url).not.toContain("private-grant");
     expect(new URL(mint.url).searchParams.get("target")).toBe(

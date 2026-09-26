@@ -50,8 +50,12 @@ export function requestOptions(
   )
     throw new Error("Request destination is outside the selected server");
   if (context?.kind === "grant") {
-    if (new URL(input, context.server.url).protocol !== "https:")
+    const target = new URL(input, context.server.url);
+    if (target.protocol !== "https:")
       throw new Error("Measurement grants require HTTPS");
+    // The issuer accepts its grant only on its own hostname, never on an additional origin.
+    if (target.hostname !== new URL(context.server.url).hostname)
+      throw new Error("Measurement grants stay on their server's hostname");
     if (!context.token || (context.expiresAt ?? 0) <= Date.now())
       throw new ServerAuthenticationRequired(context.server);
     return {
