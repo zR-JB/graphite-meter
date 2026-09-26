@@ -143,6 +143,7 @@ test("catalogs reject ambiguous IDs, duplicate origins, and oversized population
       ...catalog.servers,
       { id: "duplicate", url: "https://a.example", name: "X" },
     ],
+    [...catalog.servers, { id: "x", url: "https://x.example", name: "‮X" }],
     Array.from({ length: 33 }, (_, i) => ({
       id: i === 0 ? "self" : `s${i}`,
       url: `https://s${i}.example`,

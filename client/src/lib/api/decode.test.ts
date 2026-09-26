@@ -64,6 +64,9 @@ test("discovery bounds lists and metadata and rejects unknown protocols", () => 
     {},
     { ...discovery(), generation: "" },
     { ...discovery(), generation: "x".repeat(257) },
+    { ...discovery(), server: { name: "Home‮gnp.exe" } },
+    { ...discovery(), server: { name: "Home", location: "Oslo\u0085" } },
+    { ...discovery(), engineVersion: "dev⁦" },
     {
       ...discovery(),
       capabilities: {

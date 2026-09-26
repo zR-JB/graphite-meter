@@ -45,6 +45,15 @@ function string(value: unknown, max: number, allowEmpty = false): string {
   return value;
 }
 
+// Controls and bidirectional overrides could disguise a server's displayed identity.
+const UNSAFE_TEXT = /[\p{Cc}؜‎‏‪-‮⁦-⁩]/u;
+
+export function displayText(value: unknown, max: number, allowEmpty = false) {
+  const text = string(value, max, allowEmpty);
+  if (UNSAFE_TEXT.test(text)) throw new Error("invalid control response text");
+  return text;
+}
+
 function member<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T))
     throw new Error("unsupported control response value");
@@ -93,12 +102,12 @@ export function parsePreflight(value: unknown) {
   const capabilities = record(input.capabilities);
   return {
     server: {
-      name: string(server.name, 256, true),
+      name: displayText(server.name, 256, true),
       ...(server.location === undefined
         ? {}
-        : { location: string(server.location, 256, true) }),
+        : { location: displayText(server.location, 256, true) }),
     },
-    engineVersion: string(input.engineVersion, 256, true),
+    engineVersion: displayText(input.engineVersion, 256, true),
     generation: string(input.generation, 256),
     capabilities: {
       ...(capabilities.uploadCheckpoint === undefined
