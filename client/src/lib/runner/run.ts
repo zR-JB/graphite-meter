@@ -1028,6 +1028,15 @@ export class Run {
       server.latency.stages.latency.markIncomplete();
       server.latencyStall = null;
       this.#failure(server, "latency", reason, message);
+      // An unreachable server would hold each later stage's preparation until it timed out.
+      if (
+        (reason === "connection-lost" || reason === "timeout") &&
+        this.#ids().length > 1
+      ) {
+        server.removed = true;
+        server.stage?.discard(true);
+        server.stage = null;
+      }
       this.#updateStalled();
       if (!this.#latencyParticipants().length) this.#skipStage();
       return;

@@ -347,6 +347,26 @@ test("a server whose check failed before the run is shown with its reason while 
   expect(outcome).toBe("partial");
 });
 
+test("a server lost in the latency stage is not prepared for the later stages", async () => {
+  const h = await harness(
+    two({
+      measure: (host, { stage }) => {
+        if (stage === "latency") fail(100)(host);
+      },
+    }),
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
+  );
+  h.start();
+  const { multiServer, stages } = await h.result();
+  expect(h.calls).not.toContain("begin:a:download");
+  expect(multiServer.participants).toEqual(["b"]);
+  expect(multiServer.failures).toMatchObject([
+    { serverId: "a", stage: "latency", scope: "latency" },
+  ]);
+  expect(stages.download).toBe("complete");
+});
+
 test("server failure text is bounded and dropped when it could disguise itself", async () => {
   const say = (message: string) => (host: ParticipantHost) =>
     setTimeout(() => host.fail("protocol-error", message), 100);
