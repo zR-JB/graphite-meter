@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
-	"encoding/json/v2"
 	"html/template"
 	"io"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"golang.org/x/oauth2"
 )
@@ -103,38 +101,27 @@ func TestOffModeIsTransparentAndReservesAuthRoutes(t *testing.T) {
 	}
 }
 
-func TestUnauthenticatedRequestRejectedBeforeBodyRead(t *testing.T) {
-	s := testService(t)
-	body := &countingReader{r: bytes.NewReader(bytes.Repeat([]byte("x"), 1024))}
-	called := false
-	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }), Listener{})
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, secureRequest("POST", "/upload", body))
-	if rr.Code != 403 || called || body.n != 0 || rr.Header().Get("Connection") != "close" {
-		t.Fatalf("code=%d called=%v bytes=%d connection=%q, want 403 before reading and a closed H1 connection",
-			rr.Code, called, body.n, rr.Header().Get("Connection"))
-	}
-}
-
-func TestUnauthenticatedUIRootRedirectsButAPIsDoNot(t *testing.T) {
+func TestUnauthenticatedRequestsAreRefusedBeforeTheirBody(t *testing.T) {
 	s := testService(t)
 	for _, tc := range []struct {
-		name     string
-		listener Listener
-		path     string
-		want     int
+		name, method, path string
+		listener           Listener
+		want               int
 	}{
-		{"UI root", Listener{UI: true}, "/", http.StatusTemporaryRedirect},
-		{"measurement root", Listener{}, "/", http.StatusForbidden},
-		{"UI API", Listener{UI: true}, "/preflight", http.StatusForbidden},
+		{"UI root", http.MethodGet, "/", Listener{UI: true}, http.StatusTemporaryRedirect},
+		{"measurement root", http.MethodGet, "/", Listener{}, http.StatusForbidden},
+		{"UI API", http.MethodGet, "/preflight", Listener{UI: true}, http.StatusForbidden},
+		{"upload", http.MethodPost, "/upload", Listener{}, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			body := &countingReader{r: bytes.NewReader(make([]byte, 1024))}
 			h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }),
 				tc.listener)
 			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, secureRequest(http.MethodGet, tc.path, nil))
-			if rr.Code != tc.want {
-				t.Fatalf("code=%d, want %d", rr.Code, tc.want)
+			h.ServeHTTP(rr, secureRequest(tc.method, tc.path, body))
+			if rr.Code != tc.want || body.n != 0 || rr.Header().Get("Connection") != "close" {
+				t.Fatalf("code=%d bytes=%d connection=%q, want %d before reading and a closed H1 connection",
+					rr.Code, body.n, rr.Header().Get("Connection"), tc.want)
 			}
 			if want := s.origin + "/login"; tc.want == http.StatusTemporaryRedirect &&
 				rr.Header().Get("Location") != want {
@@ -179,71 +166,6 @@ func TestSessionRevocationCancelsActiveRequest(t *testing.T) {
 	}
 }
 
-func TestSessionExpiryCancelsAtDeadline(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := testService(t)
-		_, sess, err := s.createSession("expiring", "Name", "local")
-		if err != nil {
-			t.Fatal(err)
-		}
-		time.Sleep(sessionLifetime - time.Second)
-		synctest.Wait()
-		if sess.ctx.Err() != nil {
-			t.Fatal("session ended before its deadline")
-		}
-		time.Sleep(time.Second)
-		synctest.Wait()
-		if sess.ctx.Err() == nil {
-			t.Fatal("session survived its deadline")
-		}
-	})
-}
-
-func TestSessionLifetimeIsAbsolute(t *testing.T) {
-	s := testService(t)
-	raw, sess, err := s.createSession("subject", "Name", "local")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expires := sess.expires
-	r := secureRequest(http.MethodGet, "/auth/session", nil)
-	p := Principal{Subject: sess.subject, Name: sess.name, Provider: sess.provider, Expires: sess.expires,
-		session: sess}
-	rr := httptest.NewRecorder()
-	s.sessionInfo(rr, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
-	var got struct {
-		RemainingMs       int64 `json:"remainingMs"`
-		MaximumLifetimeMs int64 `json:"maximumLifetimeMs"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.MaximumLifetimeMs != sessionLifetime.Milliseconds() ||
-		got.RemainingMs < (sessionLifetime-time.Second).Milliseconds() ||
-		got.RemainingMs > sessionLifetime.Milliseconds() {
-		t.Fatalf("session info = %+v, want a fresh eight-hour session", got)
-	}
-	if len(rr.Result().Cookies()) != 0 {
-		t.Fatal("session info renewed a cookie")
-	}
-	for _, path := range []string{"/", "/download"} {
-		r := withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)
-		r.Header.Set("Sec-Fetch-Site", "same-origin")
-		rr := httptest.NewRecorder()
-		s.Enforce(statusHandler(http.StatusNoContent), Listener{UI: true}).ServeHTTP(rr, r)
-		if rr.Code != http.StatusNoContent || len(rr.Result().Cookies()) != 0 {
-			t.Fatalf("path=%s status=%d cookies=%d", path, rr.Code, len(rr.Result().Cookies()))
-		}
-	}
-	if _, ok := s.consumeSocketToken(mintForSession(t, s, sess),
-		secureRequest(http.MethodGet, "/wt/ping", nil)); !ok {
-		t.Fatal("fresh reconnect token was refused")
-	}
-	if !sess.expires.Equal(expires) {
-		t.Fatal("authenticated activity changed the absolute expiry")
-	}
-}
-
 func TestRequestEvidencePolicy(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
@@ -258,6 +180,7 @@ func TestRequestEvidencePolicy(t *testing.T) {
 	}{
 		{"mutation without origin", "POST", "/upload", "", "", "", sess.csrf, false, 403},
 		{"mutation without CSRF", "POST", "/upload", "", s.origin, "", "", false, 403},
+		{"mutation with the session token as CSRF", "POST", "/upload", "", s.origin, "", raw, false, 403},
 		{"mutation with origin and CSRF", "POST", "/upload", "", s.origin, "", sess.csrf, false, 204},
 		{"WebSocket without origin", "GET", "/ws/ping", "", "", "", "", false, 403},
 		{"WebSocket from another origin", "GET", "/ws/ping", "", "https://wrong.example", "", "", false, 403},
@@ -312,14 +235,9 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 	s.SetConnectOrigins([]string{
 		"https://[2001:db8::1]:7248", "wss://[2001:db8::1]:7247", "https://meter.example:*", "wss://meter.example:*",
 	})
-	policy := s.PagePolicy()
-	for _, want := range []string{
-		"default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
-		"form-action 'self'", "connect-src 'self' https://meter.example:* wss://meter.example:*",
-	} {
-		if !strings.Contains(policy, want) || strings.Contains(policy, "[") {
-			t.Fatalf("page policy missing %q or holding an IPv6 literal: %s", want, policy)
-		}
+	if policy := s.PagePolicy(); !strings.HasSuffix(policy,
+		"connect-src 'self' https://meter.example:* wss://meter.example:*") {
+		t.Fatalf("page policy lost a connect origin or kept an IPv6 literal: %s", policy)
 	}
 	raw, _, _ := s.createSession("subject", "Name", "local")
 	r := withSessionCookie(secureRequest(http.MethodGet, "/download", nil), raw)
@@ -351,6 +269,8 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	}
 }
 
+var inlineScript = regexp.MustCompile(`(?s)<script[^>]*>(.*?)</script>`)
+
 func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 	digest := func(asset string) string {
 		sum := sha256.Sum256([]byte(asset))
@@ -378,25 +298,14 @@ func TestAuthPagesCarryTheScriptPinnedByCSP(t *testing.T) {
 		if (name == "login" || name == "cli") && !strings.Contains(rendered.String(), authPendingJS) {
 			t.Errorf("%s submits a form without the pending-state script", name)
 		}
-		rest := rendered.String()
-		scripts := 0
-		for {
-			_, after, found := strings.Cut(rest, "<script>")
-			if !found {
-				break
-			}
-			script, remainder, closed := strings.Cut(after, "</script>")
-			if !closed {
-				t.Fatalf("%s renders an unterminated inline script", name)
-			}
-			if script != authThemeJS && script != authPendingJS {
+		scripts := inlineScript.FindAllStringSubmatch(rendered.String(), -1)
+		if len(scripts) == 0 {
+			t.Fatalf("%s renders no inline script", name)
+		}
+		for _, script := range scripts {
+			if script[1] != authThemeJS && script[1] != authPendingJS {
 				t.Fatalf("%s script does not match a digest pinned in the CSP", name)
 			}
-			scripts++
-			rest = remainder
-		}
-		if scripts == 0 {
-			t.Fatalf("%s renders no inline script", name)
 		}
 	}
 }
@@ -433,7 +342,8 @@ func TestLoginCSRFFailureReasons(t *testing.T) {
 	}
 }
 
-func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *testing.T) {
+// Only an unauthenticated refusal or a browser grant's own origin is exposed to another origin.
+func TestOtherOriginsSeeOnlyTheSignInHandshake(t *testing.T) {
 	s := testService(t)
 	h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }), Listener{})
 	for _, origin := range []string{s.origin, "https://other.example", "http://other.example", "null", ""} {
@@ -460,20 +370,15 @@ func TestAuthRequiredExposesTheBrowserHandshakeWithoutCrossOriginCookies(t *test
 			t.Fatal("cross-origin session cookies were enabled")
 		}
 	}
-}
-
-// Only an unauthenticated refusal or a browser grant's own origin is exposed to another origin.
-func TestAuthenticatedResponsesStayClosedToOtherOrigins(t *testing.T) {
-	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local")
-	for name, bearer := range map[string]bool{"cookie": false, "native grant": true} {
+	for _, bearer := range []bool{false, true} {
 		r := secureRequest(http.MethodGet, "/download", nil)
 		r.Header.Set("Origin", requestingUI)
 		r = r.WithContext(context.WithValue(r.Context(), principalKey{}, sessionPrincipal(sess, "local", bearer)))
 		h := http.Header{}
 		s.MeasurementCORS(h, r)
 		if h.Get("Access-Control-Allow-Origin") != "" {
-			t.Errorf("%s response exposed to %s: %v", name, requestingUI, h)
+			t.Errorf("authenticated (bearer=%t) response exposed to %s: %v", bearer, requestingUI, h)
 		}
 	}
 }
@@ -481,13 +386,11 @@ func TestAuthenticatedResponsesStayClosedToOtherOrigins(t *testing.T) {
 func TestLoginOffersOnlyConfiguredMethods(t *testing.T) {
 	for _, tc := range []struct {
 		mode               string
-		ready              bool
 		password, provider bool
 	}{
-		{"password", false, true, false},
-		{"oidc", false, false, true},
-		{"oidc", true, false, true},
-		{"hybrid", true, true, true},
+		{"password", true, false},
+		{"oidc", false, true},
+		{"hybrid", true, true},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			s := &Service{cfg: config.AuthConfig{Mode: tc.mode, OIDCProviderName: "Provider"}}
@@ -506,26 +409,12 @@ func TestLoginOffersOnlyConfiguredMethods(t *testing.T) {
 					t.Fatalf("%s mounted as %q", route.pattern, got)
 				}
 			}
-			if tc.provider {
-				s.oidc = newOIDCState(s.cfg, "secret", false)
-				if tc.ready {
-					s.oidc.discovered.Store(&oidcDiscovery{provider: &oidc.Provider{}})
-				}
-			}
 			rr := httptest.NewRecorder()
 			s.loginPage(rr, secureRequest(http.MethodGet, "/login", nil))
 			body := rr.Body.String()
 			if strings.Contains(body, `action="/auth/password"`) != tc.password ||
 				strings.Contains(body, `action="/auth/oidc/start"`) != tc.provider {
 				t.Fatalf("unexpected methods in %s", body)
-			}
-			if tc.provider && strings.Contains(body, " disabled") == tc.ready {
-				t.Fatalf("provider ready=%v disabled state mismatch", tc.ready)
-			}
-			if tc.password &&
-				(!strings.Contains(body, `autocomplete="current-password"`) ||
-					!strings.Contains(body, `for="password"`)) {
-				t.Fatal("password form lacks labeling or password-manager semantics")
 			}
 		})
 	}

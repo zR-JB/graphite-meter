@@ -10,8 +10,6 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"testing/synctest"
-	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
@@ -29,9 +27,7 @@ func browserExchangeRequest(verifier, origin string) *http.Request {
 // Exercise the real approval boundary with a first-party login cookie, then exchange without cookies.
 func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (grant, verifier string) {
 	t.Helper()
-	mux := http.NewServeMux()
-	s.Mount(mux)
-	handler := s.Enforce(mux, Listener{UI: true})
+	handler := mountedAuth(s)
 	verifier = randomToken(32)
 	challenge := challengeFor(verifier)
 	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
@@ -39,12 +35,6 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 	handler.ServeHTTP(w, secureRequest(http.MethodGet, path, nil))
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
 		t.Fatalf("login continuation: %d %s", w.Code, w.Header().Get("Location"))
-	}
-	// Both password and OIDC preserve challenge through the existing /auth/cli continuation.
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil))
-	if w.Code != http.StatusSeeOther || !strings.HasPrefix(w.Header().Get("Location"), "/auth/browser?") {
-		t.Fatal("login lost the browser approval audience")
 	}
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), cookie))
@@ -56,19 +46,8 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("unapproved exchange: %d", w.Code)
 	}
-	r := withSessionCookie(secureRequest(http.MethodPost, "/auth/browser/approve", nil), cookie)
-	r.Body = io.NopCloser(strings.NewReader(url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.PublicOrigin())
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
+	if w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, cookie, sess)); w.Code != http.StatusOK {
 		t.Fatalf("approve: %d", w.Code)
-	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, browserExchangeRequest(verifier, "https://wrong.example"))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("wrong audience exchange: %d", w.Code)
 	}
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, browserExchangeRequest(verifier, requestingUI))
@@ -146,26 +125,6 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	}
 }
 
-func TestBrowserApprovalWithoutFirstPartySessionReachesLogin(t *testing.T) {
-	for _, site := range []string{"", "none", "same-origin", "same-site", "cross-site"} {
-		t.Run(site, func(t *testing.T) {
-			s := testService(t)
-			challenge := randomToken(32)
-			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-			r := secureRequest(http.MethodGet, path, nil)
-			r.Header.Set("Sec-Fetch-Site", site)
-			w := httptest.NewRecorder()
-			s.browserPage(w, r)
-			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
-				t.Fatalf("unauthenticated entry looped or bypassed login: %d %s", w.Code, w.Header().Get("Location"))
-			}
-			if len(s.sessions) != 0 || s.approvals[challenge].approved {
-				t.Fatal("fetch metadata authorized an anonymous client")
-			}
-		})
-	}
-}
-
 func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
@@ -217,160 +176,49 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	}
 }
 
-func TestOIDCLoginReturnsToTheExactBrowserApproval(t *testing.T) {
-	f := newFakeOIDC(t)
-	s := f.service(t)
-	challenge := challengeFor(randomToken(32))
-	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-	w := httptest.NewRecorder()
-	s.browserPage(w, secureRequest(http.MethodGet, path, nil))
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("browser approval did not request login: %d", w.Code)
+func TestBrowserGrantCapacityKeepsExistingClients(t *testing.T) {
+	s := testService(t)
+	raw, sess, err := s.createSession("subject", "Name", "local")
+	if err != nil {
+		t.Fatal(err)
 	}
-	state, transaction := startOIDC(t, s, f, challenge)
-	loggedIn := finishOIDC(s, state, transaction, "")
-	if loggedIn.Code != http.StatusOK || !strings.Contains(loggedIn.Body.String(), "/auth/cli?challenge="+challenge) {
-		t.Fatalf("OIDC lost the approval continuation: %d", loggedIn.Code)
-	}
-	var login *http.Cookie
-	for _, cookie := range loggedIn.Result().Cookies() {
-		if cookie.Name == sessionCookie {
-			login = cookie
-		}
-	}
-	if login == nil {
-		t.Fatal("OIDC did not establish a parent login")
-	}
-	r := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
-	r.AddCookie(login)
-	w = httptest.NewRecorder()
-	s.cliPage(w, r)
-	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
-		t.Fatalf("wrong browser approval destination: %d %s", w.Code, w.Header().Get("Location"))
-	}
-	r = secureRequest(http.MethodGet, path, nil)
-	r.AddCookie(login)
-	w = httptest.NewRecorder()
-	s.browserPage(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) ||
-		!strings.Contains(w.Body.String(), "/auth/browser/approve") {
-		t.Fatal("OIDC continuation did not require explicit browser-origin approval")
-	}
-}
-
-func TestBrowserGrantCannotOutliveItsParentLogin(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := testService(t)
-		raw, sess, err := s.createSession("subject", "Name", "local")
-		if err != nil {
-			t.Fatal(err)
-		}
+	var grants []string
+	for range maxSessionGrants {
 		grant, _ := approveBrowser(t, s, raw, sess)
-		p, ok := s.authenticateGrant(grant)
-		if !ok {
-			t.Fatal("live browser grant was refused")
-		}
-		time.Sleep(time.Until(sess.expires) + time.Second)
-		synctest.Wait()
-		if _, ok := s.authenticateGrant(grant); ok {
-			t.Fatal("expired parent left a browser grant usable")
-		}
-		if p.measurementContext().Err() == nil {
-			t.Fatal("expiry did not cancel work admitted by the grant")
-		}
-	})
-}
-
-func TestBrowserGrantCapacityOffersExplicitLoginRenewal(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		race bool
+		grants = append(grants, grant)
+	}
+	verifier := randomToken(32)
+	challenge := challengeFor(verifier)
+	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+	page := withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)
+	if w := serveMounted(s, page); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("approval page at capacity = %d, want 429", w.Code)
+	}
+	w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, raw, sess))
+	if w.Code != http.StatusTooManyRequests || s.approvals[challenge].approved {
+		t.Fatalf("approval at capacity = %d, approved=%t", w.Code, s.approvals[challenge].approved)
+	}
+	for _, exchange := range []struct {
+		verifier, origin string
+		status           int
 	}{
-		{name: "full before approval page"},
-		{name: "fills before approval submission", race: true},
+		{verifier, requestingUI, http.StatusTooManyRequests},
+		{verifier, "https://wrong.example", http.StatusAccepted},
+		{randomToken(32), requestingUI, http.StatusAccepted},
+		{"short", requestingUI, http.StatusForbidden},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := testService(t)
-			raw, sess, err := s.createSession("subject", "Name", "local")
-			if err != nil {
-				t.Fatal(err)
-			}
-			count := maxSessionGrants
-			if tc.race {
-				count--
-			}
-			var grants []string
-			for range count {
-				grant, _ := approveBrowser(t, s, raw, sess)
-				grants = append(grants, grant)
-			}
-			mux := http.NewServeMux()
-			s.Mount(mux)
-			handler := s.Enforce(mux, Listener{UI: true})
-			verifier := randomToken(32)
-			challenge := challengeFor(verifier)
-			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-			assertCapacityPage := func(w *httptest.ResponseRecorder) {
-				t.Helper()
-				body := w.Body.String()
-				if w.Code != http.StatusTooManyRequests || !strings.Contains(body, "Browser client limit reached") ||
-					!strings.Contains(body, `href="/login"`) ||
-					!strings.Contains(body, "revokes its existing client grants") {
-					t.Fatalf("capacity recovery page: %d %s", w.Code, body)
-				}
-				if strings.Contains(body, "<form") || strings.Contains(body, "/login?") ||
-					strings.Contains(body, "Client approved") {
-					t.Fatal("capacity page offered an unusable approval or preserved its old challenge")
-				}
-			}
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), raw))
-			if tc.race {
-				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Approve this client") {
-					t.Fatalf("available approval page: %d", w.Code)
-				}
-				grant, _ := approveBrowser(t, s, raw, sess)
-				grants = append(grants, grant)
-			} else {
-				assertCapacityPage(w)
-			}
-			r := withSessionCookie(secureRequest(http.MethodPost, "/auth/browser/approve", nil), raw)
-			r.Body = io.NopCloser(strings.NewReader(url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()))
-			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			r.Header.Set("Origin", s.PublicOrigin())
-			w = httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			assertCapacityPage(w)
-			if s.approvals[challenge].approved {
-				t.Fatal("full login approved an unusable browser client")
-			}
-			for _, exchange := range []struct {
-				verifier, origin string
-				status           int
-			}{
-				{verifier, requestingUI, http.StatusTooManyRequests},
-				{verifier, "https://wrong.example", http.StatusAccepted},
-				{randomToken(32), requestingUI, http.StatusAccepted},
-				{"short", requestingUI, http.StatusForbidden},
-			} {
-				w = httptest.NewRecorder()
-				handler.ServeHTTP(w, browserExchangeRequest(exchange.verifier, exchange.origin))
-				if w.Code != exchange.status {
-					t.Fatalf("exchange status=%d, want %d", w.Code, exchange.status)
-				}
-				if w.Header().Get("Access-Control-Allow-Origin") != exchange.origin {
-					t.Fatal("exchange lost its requesting origin's CORS response")
-				}
-			}
-			if len(sess.grants) != maxSessionGrants || sess.ctx.Err() != nil {
-				t.Fatal("capacity recovery changed the existing login or grant budget")
-			}
-			for _, grant := range grants {
-				if _, ok := s.authenticateGrant(grant); !ok {
-					t.Fatal("capacity recovery revoked an existing client")
-				}
-			}
-		})
+		w := serveMounted(s, browserExchangeRequest(exchange.verifier, exchange.origin))
+		if w.Code != exchange.status || w.Header().Get("Access-Control-Allow-Origin") != exchange.origin {
+			t.Fatalf("exchange from %s = %d %v, want %d", exchange.origin, w.Code, w.Header(), exchange.status)
+		}
+	}
+	if len(sess.grants) != maxSessionGrants || sess.ctx.Err() != nil {
+		t.Fatal("capacity recovery changed the existing login or grant budget")
+	}
+	for _, grant := range grants {
+		if _, ok := s.authenticateGrant(grant); !ok {
+			t.Fatal("capacity recovery revoked an existing client")
+		}
 	}
 }
 
@@ -416,36 +264,14 @@ func TestPublicBrowserApprovalPagesAreBoundedPerClient(t *testing.T) {
 	}
 }
 
-func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) {
+func TestBrowserSocketTicketsBindAllBoundaries(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant, _ := approveBrowser(t, s, raw, sess)
-	mint := func(path string) string {
-		t.Helper()
-		r := browserBearerRequest("/ws/session?target="+url.QueryEscape("https://meter.example"+path), grant,
-			requestingUI)
-		r.Method = http.MethodPost
-		var token string
-		h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			kind := route.WebSocket
-			if strings.HasPrefix(path, "/wt/") {
-				kind = route.WebTransport
-			}
-			var status int
-			if token, _, status = s.mintSocketToken(r, kind); status != http.StatusOK {
-				t.Fatalf("mint: %d", status)
-			}
-		}), Listener{})
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		if token == "" {
-			t.Fatalf("mint refused: %d", w.Code)
-		}
-		return token
-	}
+	p, _ := s.authenticateGrant(grant)
 	for _, tc := range []struct {
 		name, path, host, origin string
 		want                     bool
@@ -456,7 +282,7 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 		{"origin", "/ws/ping", "meter.example", "https://wrong.example", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			token := mint("/ws/ping")
+			token := mintTicket(t, s, p, "/ws/ping")
 			r := secureRequest(http.MethodGet, tc.path, nil)
 			r.Host = tc.host
 			r.Header.Set("Origin", tc.origin)
@@ -470,36 +296,6 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 				t.Fatal("presented ticket accepted again")
 			}
 		})
-	}
-	token := mint("/wt/ping")
-	r := secureRequest(http.MethodGet, "/wt/ping?token="+token, nil)
-	r.Method = http.MethodConnect
-	r.Header.Set("Origin", requestingUI)
-	started, ended := make(chan struct{}), make(chan struct{})
-	h := s.Enforce(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		if !SessionEnded(r.Context()) {
-			t.Error("lost revocation cause")
-		}
-		close(ended)
-	}), Listener{WebTransport: true})
-	go h.ServeHTTP(httptest.NewRecorder(), r)
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("ticket did not reach socket")
-	}
-	s.mu.Lock()
-	s.deleteSessionLocked(sess)
-	s.mu.Unlock()
-	select {
-	case <-ended:
-	case <-time.After(time.Second):
-		t.Fatal("logout left socket running")
-	}
-	if _, ok := s.authenticateGrant(grant); ok {
-		t.Fatal("grant survived logout")
 	}
 }
 

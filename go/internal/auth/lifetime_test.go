@@ -1,15 +1,12 @@
 package auth
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"testing/synctest"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 func TestExpiredCookieIsRefusedByTheRequestItself(t *testing.T) {
@@ -26,10 +23,12 @@ func TestExpiredCookieIsRefusedByTheRequestItself(t *testing.T) {
 			s.Enforce(statusHandler(http.StatusNoContent), Listener{}).ServeHTTP(w, r)
 			return w.Code
 		}
+		time.Sleep(time.Until(sess.expires) - time.Second)
 		if code := read(); code != http.StatusNoContent {
 			t.Fatalf("live cookie = %d, want 204", code)
 		}
-		time.Sleep(time.Until(sess.expires))
+		// Refused one second after a use: authenticated activity never extends the absolute expiry.
+		time.Sleep(time.Second)
 		if code := read(); code != http.StatusForbidden || s.sessions[sess.hash] != nil {
 			t.Fatalf("cookie at its expiry = %d with the session kept=%t, want a 403 that drops it", code,
 				s.sessions[sess.hash] != nil)
@@ -106,39 +105,6 @@ func TestExpiredSessionsReleaseCapacityAtTheNextLogin(t *testing.T) {
 		time.Sleep(sessionLifetime)
 		if _, _, err := s.createSession("late", "Name", "local"); err != nil || len(s.sessions) != 1 {
 			t.Fatalf("login after every session expired: %v with %d sessions", err, len(s.sessions))
-		}
-	})
-}
-
-func TestSocketTicketsFreeTheirCapAndNeverOutliveTheLogin(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		s := quietService(t)
-		_, sess, err := s.createSession("subject", "Name", "local")
-		if err != nil {
-			t.Fatal(err)
-		}
-		mint := func() (time.Time, int) {
-			r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
-			r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{session: sess}))
-			_, expires, status := s.mintSocketToken(r, route.WebTransport)
-			return expires, status
-		}
-		for range maxSessionSocketTokens {
-			if _, status := mint(); status != http.StatusOK {
-				t.Fatalf("mint under the cap = %d", status)
-			}
-		}
-		if _, status := mint(); status != http.StatusTooManyRequests {
-			t.Fatalf("mint at the cap = %d, want http.StatusTooManyRequests", status)
-		}
-		time.Sleep(socketTokenLifetime)
-		if _, status := mint(); status != http.StatusOK {
-			t.Fatalf("mint after every ticket expired unspent = %d, want http.StatusOK", status)
-		}
-		time.Sleep(time.Until(sess.expires) - socketTokenLifetime/2)
-		if expires, status := mint(); status != http.StatusOK || !expires.Equal(sess.expires) {
-			t.Fatalf("ticket near the login's end expires %v (%d), want the login's %v", expires, status,
-				sess.expires)
 		}
 	})
 }

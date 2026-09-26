@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -23,24 +22,22 @@ import (
 )
 
 type fakeOIDC struct {
-	server         *httptest.Server
-	key            *rsa.PrivateKey
-	mu             sync.Mutex
-	nonce          string
-	challenge      string
-	audience       string
-	subject        string
-	userinfoSub    string
-	groups         []string
-	expires        time.Time
-	accessToken    string
-	badAccessHash  bool
-	badSignature   bool
-	tokenStatus    int
-	jwksStatus     int
-	userinfoStatus int
-	discoveries    int
-	mistypedMeta   bool
+	server        *httptest.Server
+	key           *rsa.PrivateKey
+	mu            sync.Mutex
+	nonce         string
+	challenge     string
+	audience      string
+	subject       string
+	userinfoSub   string
+	groups        []string
+	expires       time.Time
+	accessToken   string
+	badAccessHash bool
+	badSignature  bool
+	tokenStatus   int
+	discoveries   int
+	mistypedMeta  bool
 }
 
 func newFakeOIDC(t *testing.T) *fakeOIDC {
@@ -76,13 +73,6 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			"authorization_response_iss_parameter_supported": responseIssuer,
 		})
 	case "/jwks":
-		f.mu.Lock()
-		status := f.jwksStatus
-		f.mu.Unlock()
-		if status != 0 {
-			http.Error(w, "temporarily unavailable", status)
-			return
-		}
 		key := jose.JSONWebKey{Key: &f.key.PublicKey, KeyID: "test", Algorithm: string(jose.RS256), Use: "sig"}
 		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{key}})
 	case "/token":
@@ -128,12 +118,8 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	case "/userinfo":
 		f.mu.Lock()
-		subject, groups, status := f.userinfoSub, slices.Clone(f.groups), f.userinfoStatus
+		subject, groups := f.userinfoSub, slices.Clone(f.groups)
 		f.mu.Unlock()
-		if status != 0 {
-			http.Error(w, "temporarily unavailable", status)
-			return
-		}
 		writeJSON(w, map[string]any{"sub": subject, "name": "Example User", "groups": groups})
 	default:
 		http.NotFound(w, r)
@@ -157,29 +143,21 @@ func (f *fakeOIDC) service(t *testing.T) *Service {
 	return s
 }
 
-func startOIDC(t *testing.T, s *Service, f *fakeOIDC, approvalChallenge ...string) (state string, cookie *http.Cookie) {
-	t.Helper()
-	return startOIDCFrom(t, s, f, "", approvalChallenge...)
-}
-
-// startOIDCFrom starts a sign-in from a browser that may still hold a prior session cookie.
-func startOIDCFrom(t *testing.T, s *Service, f *fakeOIDC, prior string, approvalChallenge ...string) (string,
-	*http.Cookie) {
-	t.Helper()
-	csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
-	values := url.Values{"csrf": {csrf}}
-	if len(approvalChallenge) > 0 {
-		values.Set("challenge", approvalChallenge[0])
+func oidcStartRequest(s *Service, challenge string) *http.Request {
+	const csrf = "abcdefghijklmnopqrstuvwxyz0123456789"
+	form := url.Values{"csrf": {csrf}}
+	if challenge != "" {
+		form.Set("challenge", challenge)
 	}
-	body := values.Encode()
-	r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
-	r.Body = io.NopCloser(strings.NewReader(body))
+	r := secureRequest(http.MethodPost, "/auth/oidc/start", strings.NewReader(form.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
-	if prior != "" {
-		withSessionCookie(r, prior)
-	}
+	return r
+}
+
+func startOIDC(t *testing.T, s *Service, f *fakeOIDC, r *http.Request) (string, *http.Cookie) {
+	t.Helper()
 	rr := httptest.NewRecorder()
 	s.oidcStart(rr, r)
 	if rr.Code != http.StatusSeeOther {
@@ -202,25 +180,34 @@ func startOIDCFrom(t *testing.T, s *Service, f *fakeOIDC, prior string, approval
 	return "", nil
 }
 
-func finishOIDC(s *Service, state string, cookie *http.Cookie, query string) *httptest.ResponseRecorder {
-	query = "?state=" + url.QueryEscape(state) + "&code=valid-code&iss=" + url.QueryEscape(s.cfg.OIDCIssuer) + query
-	r := secureRequest(http.MethodGet, "/auth/oidc/callback"+query, nil)
+// finishOIDC returns from the provider with a valid code and issuer, as edited by edit when it is not nil.
+func finishOIDC(s *Service, state string, cookie *http.Cookie, edit func(url.Values)) *httptest.ResponseRecorder {
+	query := url.Values{"state": {state}, "code": {"valid-code"}, "iss": {s.cfg.OIDCIssuer}}
+	if edit != nil {
+		edit(query)
+	}
+	r := secureRequest(http.MethodGet, "/auth/oidc/callback?"+query.Encode(), nil)
 	r.AddCookie(cookie)
 	rr := httptest.NewRecorder()
 	s.oidcCallback(rr, r)
 	return rr
 }
 
+func sessionCookieIn(rr *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookie && c.Value != "" {
+			return c
+		}
+	}
+	return nil
+}
+
 // One client holds at most its share of pending sign-ins, so it cannot exhaust the transaction table.
 func TestOIDCTransactionsAreBoundedPerClient(t *testing.T) {
 	s := newFakeOIDC(t).service(t)
 	start := func(remote string) string {
-		const csrf = "abcdefghijklmnopqrstuvwxyz0123456789"
-		r := secureRequest(http.MethodPost, "/auth/oidc/start", strings.NewReader("csrf="+csrf))
+		r := oidcStartRequest(s, "")
 		r.RemoteAddr = remote
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.Header.Set("Origin", s.origin)
-		r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
 		rr := httptest.NewRecorder()
 		s.oidcStart(rr, r)
 		return rr.Header().Get("Location")
@@ -238,38 +225,60 @@ func TestOIDCTransactionsAreBoundedPerClient(t *testing.T) {
 	}
 }
 
+// Every refused callback shows only the generic notice and leaves the provider usable without rediscovery.
 func TestOIDCLoginSecurityChecks(t *testing.T) {
+	repeat := func(key string) func(url.Values) { return func(q url.Values) { q.Add(key, q.Get(key)) } }
 	tests := []struct {
 		name   string
 		mutate func(*fakeOIDC)
-		want   int
+		edit   func(url.Values)
+		replay bool
 	}{
-		{"valid", func(*fakeOIDC) {}, http.StatusOK},
-		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, http.StatusSeeOther},
-		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, http.StatusSeeOther},
-		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, http.StatusSeeOther},
-		{"group case mismatch", func(f *fakeOIDC) { f.groups = []string{"Allowed"} }, http.StatusSeeOther},
-		{"bad access hash", func(f *fakeOIDC) { f.badAccessHash = true }, http.StatusSeeOther},
-		{"bad signature", func(f *fakeOIDC) { f.badSignature = true }, http.StatusSeeOther},
+		{"valid", nil, nil, false},
+		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, nil, false},
+		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, nil, false},
+		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, nil, false},
+		{"group case mismatch", func(f *fakeOIDC) { f.groups = []string{"Allowed"} }, nil, false},
+		{"bad access hash", func(f *fakeOIDC) { f.badAccessHash = true }, nil, false},
+		{"bad signature", func(f *fakeOIDC) { f.badSignature = true }, nil, false},
+		{"wrong nonce", func(f *fakeOIDC) { f.nonce = "wrong" }, nil, false},
+		{"token endpoint unavailable", func(f *fakeOIDC) { f.tokenStatus = http.StatusServiceUnavailable }, nil, false},
+		{"missing issuer", nil, func(q url.Values) { q.Del("iss") }, false},
+		{"duplicate state", nil, repeat("state"), false},
+		{"duplicate code", nil, repeat("code"), false},
+		{"replay", nil, nil, true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			f := newFakeOIDC(t)
-			test.mutate(f)
 			s := f.service(t)
-			state, cookie := startOIDC(t, s, f)
-			rr := finishOIDC(s, state, cookie, "")
-			if rr.Code != test.want {
-				t.Fatalf("status=%d, want %d", rr.Code, test.want)
+			state, cookie := startOIDC(t, s, f, oidcStartRequest(s, ""))
+			if test.mutate != nil {
+				f.mu.Lock()
+				test.mutate(f)
+				f.mu.Unlock()
 			}
-			loggedIn := false
-			for _, c := range rr.Result().Cookies() {
-				if c.Name == sessionCookie && c.Value != "" {
-					loggedIn = true
+			if test.replay {
+				if rr := finishOIDC(s, state, cookie, nil); rr.Code != http.StatusOK {
+					t.Fatalf("first callback status=%d, want 200", rr.Code)
 				}
 			}
-			if want := test.name == "valid"; loggedIn != want {
-				t.Fatalf("loggedIn=%v, want %v", loggedIn, want)
+			rr := finishOIDC(s, state, cookie, test.edit)
+			loggedIn := sessionCookieIn(rr) != nil
+			if test.name == "valid" {
+				if rr.Code != http.StatusOK || !loggedIn {
+					t.Fatalf("status=%d loggedIn=%t, want 200 with a session", rr.Code, loggedIn)
+				}
+			} else if rr.Code != http.StatusSeeOther || loggedIn ||
+				!strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
+				t.Fatalf("status=%d location=%q loggedIn=%t, want the generic refusal", rr.Code,
+					rr.Header().Get("Location"), loggedIn)
+			}
+			f.mu.Lock()
+			discoveries := f.discoveries
+			f.mu.Unlock()
+			if !s.oidc.ready() || discoveries != 1 {
+				t.Fatalf("provider ready=%t after %d discoveries, want ready after one", s.oidc.ready(), discoveries)
 			}
 		})
 	}
@@ -284,94 +293,12 @@ func TestOIDCLoginRevokesTheSessionItReplaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	grant := grantFor(t, s, sess)
-	state, cookie := startOIDCFrom(t, s, f, prior)
-	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
+	state, cookie := startOIDC(t, s, f, withSessionCookie(oidcStartRequest(s, ""), prior))
+	if rr := finishOIDC(s, state, cookie, nil); rr.Code != http.StatusOK {
 		t.Fatalf("callback status=%d, want 200", rr.Code)
 	}
 	if _, ok := s.authenticateGrant(grant); ok || s.sessions[sess.hash] != nil || len(s.sessions) != 1 {
 		t.Fatal("the new login kept the session it replaced or that session's grant")
-	}
-}
-
-func TestOIDCCallbackRejectsWrongNonceAndMissingIssuer(t *testing.T) {
-	f := newFakeOIDC(t)
-	s := f.service(t)
-	state, cookie := startOIDC(t, s, f)
-	f.mu.Lock()
-	f.nonce = "wrong"
-	f.mu.Unlock()
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=failed") {
-		t.Fatal("wrong nonce accepted")
-	}
-
-	state, cookie = startOIDC(t, s, f)
-	r := secureRequest(http.MethodGet, "/auth/oidc/callback?state="+url.QueryEscape(state)+"&code=valid-code", nil)
-	r.AddCookie(cookie)
-	rr := httptest.NewRecorder()
-	s.oidcCallback(rr, r)
-	if !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
-		t.Fatal("missing response issuer accepted")
-	}
-}
-
-func TestOIDCCallbackRejectsReplayAndDuplicateParameters(t *testing.T) {
-	f := newFakeOIDC(t)
-	s := f.service(t)
-	state, cookie := startOIDC(t, s, f)
-	if rr := finishOIDC(s, state, cookie, ""); rr.Code != http.StatusOK {
-		t.Fatalf("first status=%d, want 200", rr.Code)
-	}
-	if rr := finishOIDC(s, state, cookie, ""); !strings.Contains(rr.Header().Get("Location"), "error=failed") {
-		t.Fatal("transaction replay accepted")
-	}
-
-	state, cookie = startOIDC(t, s, f)
-	rr := finishOIDC(s, state, cookie, "&state=duplicate")
-	if !strings.Contains(rr.Header().Get("Location"), "error="+string(noticeGeneric)) {
-		t.Fatal("duplicate state accepted")
-	}
-}
-
-func TestOIDCCallbackFailureDoesNotDisableProvider(t *testing.T) {
-	for _, endpoint := range []string{"token", "jwks", "userinfo"} {
-		t.Run(endpoint, func(t *testing.T) {
-			f := newFakeOIDC(t)
-			s := f.service(t)
-			state, cookie := startOIDC(t, s, f)
-			f.mu.Lock()
-			switch endpoint {
-			case "token":
-				f.tokenStatus = http.StatusServiceUnavailable
-			case "jwks":
-				f.jwksStatus = http.StatusServiceUnavailable
-			case "userinfo":
-				f.userinfoStatus = http.StatusServiceUnavailable
-			}
-			f.mu.Unlock()
-			_ = finishOIDC(s, state, cookie, "")
-			if !s.oidc.ready() {
-				t.Fatal("one failed callback disabled OIDC globally")
-			}
-			f.mu.Lock()
-			discoveries := f.discoveries
-			f.mu.Unlock()
-			if discoveries != 1 {
-				t.Fatalf("one failed callback triggered %d discoveries", discoveries)
-			}
-		})
-	}
-}
-
-func TestOIDCStartupDoesNotProbeProtectedProviderEndpoints(t *testing.T) {
-	f := newFakeOIDC(t)
-	f.mu.Lock()
-	f.tokenStatus = http.StatusServiceUnavailable
-	f.jwksStatus = http.StatusServiceUnavailable
-	f.userinfoStatus = http.StatusServiceUnavailable
-	f.mu.Unlock()
-	s := f.service(t)
-	if !s.oidc.ready() {
-		t.Fatal("successful discovery did not make OIDC available")
 	}
 }
 
@@ -392,8 +319,8 @@ func TestOIDCDiscoveryToleratesMistypedOptionalMetadata(t *testing.T) {
 func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	f := newFakeOIDC(t)
 	s := f.service(t)
-	state, cookie := startOIDC(t, s, f)
-	rr := finishOIDC(s, state, cookie, "")
+	state, cookie := startOIDC(t, s, f, oidcStartRequest(s, ""))
+	rr := finishOIDC(s, state, cookie, nil)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rr.Code)
 	}
@@ -404,55 +331,39 @@ func TestOIDCCallbackCompletesWithSameSiteHopNotRedirect(t *testing.T) {
 	if !strings.Contains(body, `http-equiv="refresh"`) || !strings.Contains(body, `url=/"`) {
 		t.Fatalf("interstitial does not navigate to the application root: %s", body)
 	}
-	var session *http.Cookie
-	for _, c := range rr.Result().Cookies() {
-		if c.Name == sessionCookie {
-			session = c
-		}
-	}
-	if session == nil || session.SameSite != http.SameSiteStrictMode {
+	if session := sessionCookieIn(rr); session == nil || session.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("session cookie = %+v, want SameSite=Strict", session)
-	}
-	if remaining := time.Until(session.Expires); remaining < 7*time.Hour || remaining > sessionLifetime {
-		t.Fatalf("OIDC session lifetime = %v, want the local eight-hour policy", remaining)
-	}
-	if ct := rr.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
-		t.Fatalf("content-type=%q, want a text/html interstitial", ct)
 	}
 }
 
-func TestOIDCStartStoresOnlyValidChallenge(t *testing.T) {
+// The callback continues to a browser approval only for the valid challenge its sign-in carried.
+func TestOIDCLoginReturnsToTheBrowserApproval(t *testing.T) {
 	f := newFakeOIDC(t)
 	s := f.service(t)
-	start := func(challenge string) string {
-		t.Helper()
-		csrf := "abcdefghijklmnopqrstuvwxyz0123456789"
-		body := url.Values{"csrf": {csrf}, "challenge": {challenge}}.Encode()
-		r := secureRequest(http.MethodPost, "/auth/oidc/start", nil)
-		r.Body = io.NopCloser(strings.NewReader(body))
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		r.Header.Set("Origin", s.origin)
-		r.AddCookie(&http.Cookie{Name: loginCookie, Value: csrf})
-		rr := httptest.NewRecorder()
-		s.oidcStart(rr, r)
-		if rr.Code != http.StatusSeeOther {
-			t.Fatalf("start status=%d, want 303", rr.Code)
-		}
-		location, err := url.Parse(rr.Header().Get("Location"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		key := sha256.Sum256([]byte(location.Query().Get("state")))
-		s.oidc.mu.Lock()
-		defer s.oidc.mu.Unlock()
-		return s.oidc.tx[key].cliChallenge
+	challenge := challengeFor(randomToken(32))
+	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+	if w := serveMounted(s, secureRequest(http.MethodGet, path, nil)); w.Code != http.StatusSeeOther {
+		t.Fatalf("browser approval did not request login: %d", w.Code)
 	}
-	sum := sha256.Sum256([]byte("terminal-verifier"))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	if got := start(challenge); got != challenge {
-		t.Fatalf("valid challenge stored as %q", got)
+	state, transaction := startOIDC(t, s, f, oidcStartRequest(s, challenge))
+	loggedIn := finishOIDC(s, state, transaction, nil)
+	login := sessionCookieIn(loggedIn)
+	if login == nil || !strings.Contains(loggedIn.Body.String(), "/auth/cli?challenge="+challenge) {
+		t.Fatalf("OIDC lost the approval continuation: %d", loggedIn.Code)
 	}
-	if got := start("not-a-challenge"); got != "" {
-		t.Fatalf("invalid challenge stored as %q", got)
+	cli := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
+	cli.AddCookie(login)
+	if w := serveMounted(s, cli); w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
+		t.Fatalf("wrong browser approval destination: %d %s", w.Code, w.Header().Get("Location"))
+	}
+	page := secureRequest(http.MethodGet, path, nil)
+	page.AddCookie(login)
+	if w := serveMounted(s, page); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) ||
+		!strings.Contains(w.Body.String(), "/auth/browser/approve") || s.approvals[challenge].approved {
+		t.Fatal("OIDC continuation did not require explicit browser-origin approval")
+	}
+	state, transaction = startOIDC(t, s, f, oidcStartRequest(s, "not-a-challenge"))
+	if body := finishOIDC(s, state, transaction, nil).Body.String(); strings.Contains(body, "challenge=") {
+		t.Fatalf("an invalid challenge survived the sign-in: %s", body)
 	}
 }

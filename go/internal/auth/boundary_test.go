@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -26,84 +27,30 @@ func clearRequest(method, path, remote string) *http.Request {
 
 func TestForwardedHeadersAreEvidenceOnlyFromATrustedPeer(t *testing.T) {
 	s := proxiedService(t)
+	v := func(values ...string) []string { return values }
 	for _, tc := range []struct {
-		name           string
-		remote         string
-		headers        map[string][]string
-		wantSecure     bool
-		wantCanonical  bool
-		wantAuthorized bool
+		name, remote string
+		proto, host  []string
+		trusted      bool
 	}{
-		{
-			name:    "untrusted peer forging both headers",
-			remote:  "198.51.100.9:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"meter.example"}},
-		},
-		{
-			name:   "trusted peer sending no headers",
-			remote: "192.0.2.10:40000",
-		},
-		{
-			name:    "trusted peer sending proto only",
-			remote:  "192.0.2.10:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"https"}},
-		},
-		{
-			name:   "trusted peer sending a duplicated proto header",
-			remote: "192.0.2.10:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"https", "https"},
-				"X-Forwarded-Host": {"meter.example"}},
-		},
-		{
-			name:    "trusted peer sending a comma-joined proto header",
-			remote:  "192.0.2.10:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"https,http"}, "X-Forwarded-Host": {"meter.example"}},
-		},
-		{
-			name:   "trusted peer sending a comma-joined host header",
-			remote: "192.0.2.10:40000",
-			headers: map[string][]string{
-				"X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"meter.example,evil.example"},
-			},
-		},
-		{
-			name:    "trusted peer sending a foreign host",
-			remote:  "192.0.2.10:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"evil.example"}},
-		},
-		{
-			name:    "trusted peer sending http",
-			remote:  "192.0.2.10:40000",
-			headers: map[string][]string{"X-Forwarded-Proto": {"http"}, "X-Forwarded-Host": {"meter.example"}},
-		},
-		{
-			name:           "trusted peer with the documented header pair",
-			remote:         "192.0.2.10:40000",
-			headers:        map[string][]string{"X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"meter.example"}},
-			wantSecure:     true,
-			wantCanonical:  true,
-			wantAuthorized: true,
-		},
+		{"untrusted peer forging both headers", "198.51.100.9:40000", v("https"), v("meter.example"), false},
+		{"no headers", "192.0.2.10:40000", nil, nil, false},
+		{"proto only", "192.0.2.10:40000", v("https"), nil, false},
+		{"duplicated proto header", "192.0.2.10:40000", v("https", "https"), v("meter.example"), false},
+		{"comma-joined proto header", "192.0.2.10:40000", v("https,http"), v("meter.example"), false},
+		{"comma-joined host header", "192.0.2.10:40000", v("https"), v("meter.example,evil.example"), false},
+		{"foreign host", "192.0.2.10:40000", v("https"), v("evil.example"), false},
+		{"http", "192.0.2.10:40000", v("http"), v("meter.example"), false},
+		{"documented header pair", "192.0.2.10:40000", v("https"), v("meter.example"), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := clearRequest(http.MethodGet, "/login", tc.remote)
-			for name, values := range tc.headers {
-				for _, v := range values {
-					r.Header.Add(name, v)
-				}
+			r.Header["X-Forwarded-Proto"], r.Header["X-Forwarded-Host"] = tc.proto, tc.host
+			if got := s.requestTrust(r); got != (trust{Secure: tc.trusted, Canonical: tc.trusted}) {
+				t.Fatalf("requestTrust = %+v, want both %t", got, tc.trusted)
 			}
-			got := s.requestTrust(r)
-			if got.Secure != tc.wantSecure || got.Canonical != tc.wantCanonical {
-				t.Fatalf("requestTrust = %+v, want {Secure:%t Canonical:%t}", got, tc.wantSecure, tc.wantCanonical)
-			}
-
-			mux := http.NewServeMux()
-			s.Mount(mux)
-			rr := httptest.NewRecorder()
-			s.Enforce(mux, Listener{UI: true}).ServeHTTP(rr, r)
-			reached := rr.Code == http.StatusOK
-			if reached != tc.wantAuthorized {
-				t.Fatalf("login page status = %d, reachable=%t, want reachable=%t", rr.Code, reached, tc.wantAuthorized)
+			if rr := serveMounted(s, r); (rr.Code == http.StatusOK) != tc.trusted {
+				t.Fatalf("login page status = %d, want reachable=%t", rr.Code, tc.trusted)
 			}
 		})
 	}
@@ -222,31 +169,26 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	info.Header.Set("Origin", s.origin)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, info)
-	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"provider":"local"`) ||
-		!strings.Contains(rr.Body.String(), csrf.Value) {
+	var got struct {
+		Provider, CSRF                 string
+		RemainingMs, MaximumLifetimeMs int64
+	}
+	err = json.Unmarshal(rr.Body.Bytes(), &got, json.MatchCaseInsensitiveNames(true))
+	if rr.Code != http.StatusOK || err != nil || got.Provider != "local" || got.CSRF != csrf.Value ||
+		got.MaximumLifetimeMs != sessionLifetime.Milliseconds() ||
+		sessionLifetime.Milliseconds()-got.RemainingMs > time.Second.Milliseconds() {
 		t.Fatalf("session info = %d %s", rr.Code, rr.Body.String())
 	}
-	for _, tc := range []struct {
-		name   string
-		header string
-		want   int
-	}{
-		{"with the mirrored CSRF token", csrf.Value, http.StatusNoContent},
-		{"without it", "", http.StatusForbidden},
-		{"with the session token instead", session.Value, http.StatusForbidden},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			measurement := secureRequest(http.MethodPost, "/upload", nil)
-			measurement.AddCookie(session)
-			measurement.Header.Set("Origin", s.origin)
-			if tc.header != "" {
-				measurement.Header.Set("X-CSRF-Token", tc.header)
-			}
-			rr := httptest.NewRecorder()
-			s.Enforce(statusHandler(http.StatusNoContent), Listener{UI: true}).ServeHTTP(rr, measurement)
-			if rr.Code != tc.want {
-				t.Fatalf("status=%d, want %d", rr.Code, tc.want)
-			}
-		})
+	measurement := secureRequest(http.MethodPost, "/upload", nil)
+	measurement.AddCookie(session)
+	measurement.Header.Set("Origin", s.origin)
+	measurement.Header.Set("X-CSRF-Token", csrf.Value)
+	upload := httptest.NewRecorder()
+	s.Enforce(statusHandler(http.StatusNoContent), Listener{UI: true}).ServeHTTP(upload, measurement)
+	if upload.Code != http.StatusNoContent {
+		t.Fatalf("measurement with the mirrored CSRF token = %d, want 204", upload.Code)
+	}
+	if len(rr.Result().Cookies()) != 0 || len(upload.Result().Cookies()) != 0 {
+		t.Fatal("authenticated activity renewed a cookie; the session lifetime is absolute")
 	}
 }

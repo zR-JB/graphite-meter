@@ -50,32 +50,16 @@ func TestAmbiguousAuthEvidenceCannotReachAuthenticatedHandler(t *testing.T) {
 	r = request()
 	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "invalid"})
 	check(r, http.StatusForbidden)
-}
 
-func TestRepeatedPreflightFieldsCannotChooseAnAllowedValue(t *testing.T) {
-	s := testService(t)
-	handler := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}), Listener{UI: true})
-	request := func() *http.Request {
+	for repeated, want := range map[string]int{"": http.StatusNoContent,
+		"Access-Control-Request-Method": http.StatusForbidden, "Access-Control-Request-Headers": http.StatusForbidden} {
 		r := secureRequest(http.MethodOptions, "/upload", nil)
 		r.Header.Set("Origin", s.PublicOrigin())
 		r.Header.Set("Access-Control-Request-Method", "POST")
 		r.Header.Set("Access-Control-Request-Headers", "content-type")
-		return r
-	}
-	check := func(r *http.Request, want int) {
-		t.Helper()
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
-		if w.Code != want {
-			t.Fatalf("status = %d, want %d", w.Code, want)
+		if repeated != "" {
+			r.Header.Add(repeated, r.Header.Get(repeated))
 		}
-	}
-	check(request(), http.StatusNoContent)
-	for _, name := range []string{"Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"} {
-		r := request()
-		r.Header.Add(name, r.Header.Get(name))
-		check(r, http.StatusForbidden)
+		check(r, want)
 	}
 }

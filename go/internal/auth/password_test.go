@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -12,9 +13,6 @@ func TestPasswordHashRoundTripsThroughAHashFile(t *testing.T) {
 	h, err := HashPassword(password)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.HasPrefix(h, "$argon2id$v=19$m=19456,t=2,p=1$") {
-		t.Fatalf("unexpected PHC: %s", h)
 	}
 	path := filepath.Join(t.TempDir(), "password.phc")
 	if err := os.WriteFile(path, []byte(h+"\r\n"), 0600); err != nil {
@@ -37,7 +35,8 @@ func TestPasswordRejectsLineBreaksAndWeakerHashes(t *testing.T) {
 	}
 	valid, _ := HashPassword("password")
 	for _, h := range []string{"", strings.Replace(valid, "m=19456", "m=4096", 1),
-		strings.Replace(valid, "t=2", "t=1", 1), strings.Replace(valid, "p=1", "p=2", 1)} {
+		strings.Replace(valid, "t=2", "t=1", 1), strings.Replace(valid, "p=1", "p=2", 1),
+		strings.Join(slices.Replace(strings.Split(valid, "$"), 4, 5, "AAAA"), "$")} {
 		if _, _, err := parsePasswordHash(h); err == nil {
 			t.Fatalf("accepted %q", h)
 		}

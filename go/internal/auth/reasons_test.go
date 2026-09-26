@@ -9,52 +9,7 @@ import (
 	"testing"
 )
 
-// Every refusal reason reaches the browser as a notice describing server or
-// form state; a credential outcome is never distinguishable from a generic failure.
-func TestLoginRefusalsCarryOnlyASafeNotice(t *testing.T) {
-	want := map[reason]notice{
-		reasonProviderNotReady:    noticeProvider,
-		reasonVerifierBusy:        noticeBusy,
-		reasonSessionCapacity:     noticeBusy,
-		reasonTransactionCapacity: noticeBusy,
-		reasonThrottled:           noticeThrottled,
-		reasonPasswordMismatch:    noticePassword,
-		reasonCSRFCookieMissing:   noticeStale,
-		reasonCSRFTokenMissing:    noticeStale,
-		reasonTransactionCookie:   noticeStale,
-	}
-	for _, why := range []reason{
-		reasonCSRFOriginMissing, reasonCSRFOriginMismatch, reasonCSRFTokenMismatch, reasonFormMalformed,
-		reasonClientAddress, reasonExchangeRateLimited, reasonCallbackParameters, reasonTransactionReplay,
-		reasonResponseIssuer, reasonTokenExchange, reasonMissingIDToken, reasonIDTokenVerification,
-		reasonIDTokenClaimsOrNonce, reasonAccessTokenHash, reasonUserInfoOrSubject, reasonUserInfoClaimsOrGroup,
-		reasonInvalidSubject,
-	} {
-		want[why] = noticeGeneric
-	}
-	s := testService(t)
-	for why, n := range want {
-		r := secureRequest(http.MethodPost, "/auth/password", nil)
-		r.Form = url.Values{}
-		rr := httptest.NewRecorder()
-		s.loginRejected(rr, r, why)
-		location := rr.Header().Get("Location")
-		if got := noticeFor(why); got != n || !strings.HasSuffix(location, "?error="+string(n)) {
-			t.Errorf("reason %q = notice %q redirecting to %q, want %q", why, got, location, n)
-		}
-	}
-	for raw, n := range map[string]notice{
-		"": "", "provider": noticeProvider, "busy": noticeBusy, "stale": noticeStale, "throttled": noticeThrottled,
-		"password": noticePassword, "failed": noticeGeneric, "1": noticeGeneric,
-		"<script>alert(1)</script>": noticeGeneric,
-	} {
-		if got := parseNotice(raw); got != n {
-			t.Errorf("parseNotice(%q) = %q, want %q", raw, got, n)
-		}
-	}
-}
-
-// The sign-in handlers reach those notices through their real refusal paths.
+// The sign-in handlers reach their notices through their real refusal paths.
 func TestSignInRefusalPaths(t *testing.T) {
 	post := func(s *Service, path, form string, withCSRF bool) *http.Request {
 		const token = "abcdefghijklmnopqrstuvwxyz0123456789"

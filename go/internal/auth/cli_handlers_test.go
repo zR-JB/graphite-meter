@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
@@ -134,49 +133,37 @@ func TestCliPageRendersApprovalReusesAndCapsIt(t *testing.T) {
 	}
 }
 
-func approveRequest(s *Service, sess *session, challenge, csrf, origin string) *http.Request {
-	form := url.Values{"csrf": {csrf}, "challenge": {challenge}}.Encode()
-	r := secureRequest(http.MethodPost, "/auth/cli/approve", strings.NewReader(form))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	if origin != "" {
-		r.Header.Set("Origin", origin)
-	}
-	return r.WithContext(context.WithValue(r.Context(), principalKey{},
-		Principal{Subject: sess.subject, session: sess}))
-}
-
 func TestCliApprove(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
-	_, other, _ := s.createSession("local-operator", "Local operator", "local")
+	otherRaw, other, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge, expired := challengeFor("verifier-approve"), challengeFor("verifier-expired")
 	s.cliPage(httptest.NewRecorder(), cliPageRequest(challenge, raw))
 	s.cliPage(httptest.NewRecorder(), cliPageRequest(expired, raw))
 	s.approvals[expired].expires = time.Now().Add(-time.Second)
+	wrongOrigin := approvalForm("/auth/cli/approve", challenge, raw, sess)
+	wrongOrigin.Header.Set("Origin", "https://evil.example")
 	for name, r := range map[string]*http.Request{
-		"wrong csrf":        approveRequest(s, sess, challenge, "not-the-token", s.origin),
-		"wrong origin":      approveRequest(s, sess, challenge, sess.csrf, "https://evil.example"),
-		"foreign session":   approveRequest(s, other, challenge, other.csrf, s.origin),
-		"unknown challenge": approveRequest(s, sess, challengeFor("nope"), sess.csrf, s.origin),
-		"expired approval":  approveRequest(s, sess, expired, sess.csrf, s.origin),
+		"another login's csrf": approvalForm("/auth/cli/approve", challenge, raw, other),
+		"wrong origin":         wrongOrigin,
+		"foreign session":      approvalForm("/auth/cli/approve", challenge, otherRaw, other),
+		"unknown challenge":    approvalForm("/auth/cli/approve", challengeFor("nope"), raw, sess),
+		"expired approval":     approvalForm("/auth/cli/approve", expired, raw, sess),
 	} {
-		rr := httptest.NewRecorder()
-		s.approve(rr, r)
-		if rr.Code != http.StatusForbidden {
-			t.Errorf("%s: code=%d, want 403", name, rr.Code)
+		if w := serveMounted(s, r); w.Code != http.StatusForbidden {
+			t.Errorf("%s: code=%d, want 403", name, w.Code)
 		}
 	}
 	if s.approvals[challenge].approved || s.approvals[expired].approved {
 		t.Fatal("a rejected request still marked an approval approved")
 	}
-	rr := httptest.NewRecorder()
-	s.approve(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
-	if rr.Code != http.StatusOK || !s.approvals[challenge].approved {
-		t.Fatalf("approve code=%d, want 200 and an approved approval", rr.Code)
+	w := serveMounted(s, approvalForm("/auth/cli/approve", challenge, raw, sess))
+	if w.Code != http.StatusOK || !s.approvals[challenge].approved {
+		t.Fatalf("approve code=%d, want 200 and an approved approval", w.Code)
 	}
 }
 
-func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
+func TestCLIExchangeIsSingleUse(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("subject", "Name", "local")
 	if rr := cliExchange(s, `{"verifier":"not-known"}`); rr.Code != http.StatusAccepted || len(s.approvals) != 0 {
@@ -200,12 +187,6 @@ func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 	}
 	if replay := cliExchange(s, `{"verifier":"terminal-verifier"}`); replay.Code != http.StatusAccepted {
 		t.Fatalf("replay code=%d, want 202", replay.Code)
-	}
-	s.mu.Lock()
-	s.deleteSessionLocked(sess)
-	s.mu.Unlock()
-	if _, ok := s.authenticateGrant(out.Token); ok {
-		t.Fatal("grant survived parent logout")
 	}
 }
 
