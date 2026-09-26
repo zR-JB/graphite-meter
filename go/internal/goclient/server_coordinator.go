@@ -61,7 +61,7 @@ type nativeCoordinator struct {
 	cfg         Config
 	prepared    *PreparedRun
 	servers     []*nativeParticipant
-	streams     map[string]map[string]streamCounts
+	streams     map[string]streamCounts
 	aggregate   aggregateMeasurements
 	failures    []ServerFailure
 	started     time.Time
@@ -151,6 +151,7 @@ func (c *nativeCoordinator) run(ctx context.Context) error {
 		if err = c.stage(ctx, stage); err != nil {
 			break
 		}
+		c.publish("running")
 		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StageFinished})
 	}
 	outcome := "complete"
@@ -187,6 +188,7 @@ func (c *nativeCoordinator) failure(server *stageParticipant, stage StagePlan, r
 	}
 	c.failures = append(c.failures, failure)
 	c.emit(Event{Kind: EventServerFailure, At: at, Stage: stage.Name, ServerID: failure.ServerID, Failure: new(failure)})
+	c.publish("running")
 }
 func (c *nativeCoordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 	if outcome.role != "latency" {
@@ -235,7 +237,7 @@ func (c *nativeCoordinator) stage(ctx context.Context, stage StagePlan) (stageEr
 		servers = append(servers, server)
 		r := participant.transport
 		r.coordinated = &participantCounters{}
-		r.streams = c.streams[stage.Name][participant.prepared.Server.ID]
+		r.streams = c.streams[participant.prepared.Server.ID]
 		launch := func(role string, ownCtx context.Context, ownCancel context.CancelCauseFunc) {
 			gate := &stageGate{cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{participant.prepared.Server.ID, role} }}
 			gates = append(gates, gate)
@@ -545,7 +547,6 @@ drain:
 				reset()
 				continue
 			}
-			c.publish("running")
 			if sample.final {
 				normalEnd = true
 				return nil

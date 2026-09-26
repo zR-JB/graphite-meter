@@ -36,8 +36,9 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) (failure 
 		}
 		defer host.close()
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
+			buf := make([]byte, 1024*1024) // One read buffer per lane, kept across session redials.
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
-				return r.downloadLaneWT(lctx, sess, &total, ready)
+				return r.downloadLaneWT(lctx, sess, buf, &total, ready)
 			})
 		}
 	} else {

@@ -264,8 +264,7 @@ func (r *runner) wtDownloadQuery() url.Values {
 	}
 }
 
-func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, total *atomic.Uint64, ready func()) (bool, error) {
-	buf := make([]byte, 1024*1024)
+func (r *runner) downloadLaneWT(ctx context.Context, sess *wtSession, buf []byte, total *atomic.Uint64, ready func()) (bool, error) {
 	progressed := false
 	for ctx.Err() == nil {
 		str, err := sess.AcceptUniStream(ctx)

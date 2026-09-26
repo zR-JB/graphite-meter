@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
@@ -168,6 +169,11 @@ func baseTransport(cfg Config) *http.Transport {
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		WriteBufferSize:       256 * 1024,
 		ReadBufferSize:        256 * 1024,
+		// Measured bytes are wire payload; transparent decompression would change what a download counts.
+		DisableCompression: true,
+		// The 4 MiB default stream window caps an HTTP/2 download at one window per round trip; the
+		// connection bound replaces the 1 GiB default so buffered unread data stays bounded.
+		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 32 << 20, MaxReceiveBufferPerConnection: 64 << 20},
 	}
 }
 
@@ -206,26 +212,55 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (*PreparedConnection, error) {
-		return nil, &PreparationError{Preflight: pf, Err: err}
-	}
 	if cfg.server != nil {
 		if err := cfg.server.ValidateDiscovery(pf); err != nil {
-			return fail(err)
+			return nil, &PreparationError{Preflight: pf, Err: err}
 		}
 	}
+	// The throughput and latency paths are independent, so a blocked UDP path delays readiness once, not twice.
+	branches, cancel := context.WithCancel(ctx)
+	defer cancel()
+	prepared := &PreparedConnection{Preflight: pf, configKey: preparationKey(cfg)}
+	var throughputErr, latencyErr error
+	var work sync.WaitGroup
+	work.Go(func() {
+		if throughputErr = prepareThroughput(branches, cfg, prepared); throughputErr != nil {
+			cancel()
+		}
+	})
+	if cfg.needsLatency() {
+		work.Go(func() {
+			if latencyErr = prepareLatency(branches, cfg, prepared); latencyErr != nil {
+				cancel()
+			}
+		})
+	}
+	work.Wait()
+	// A branch stopped by its sibling's failure reports that failure instead.
+	if err := throughputErr; err != nil || latencyErr != nil {
+		if err == nil || errors.Is(err, context.Canceled) && latencyErr != nil && ctx.Err() == nil {
+			err = latencyErr
+		}
+		return nil, &PreparationError{Preflight: pf, Err: err}
+	}
+	prepared.VerifiedAt = time.Now()
+	return prepared, nil
+}
+
+func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnection) error {
+	pf := prepared.Preflight
 	advertisedTarget, err := selectTarget(cfg, pf)
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	if advertisedTarget.Transport == wire.TransportWebTransport {
 		if verifyErr := verifyThroughputWebTransport(ctx, cfg, advertisedTarget); verifyErr != nil {
 			if cfg.ThroughputTransport != "auto" {
-				return fail(verifyErr)
+				return verifyErr
 			}
 			fetchTarget, fetchErr := selectTargetOver(cfg, pf, wire.TransportFetchStream)
 			if fetchErr != nil {
-				return fail(fmt.Errorf("%w (the advertised WebTransport target is unreachable: %v)", fetchErr, verifyErr))
+				return fmt.Errorf("%w (the advertised WebTransport target is unreachable: %v)", fetchErr, verifyErr)
 			}
 			advertisedTarget = fetchTarget
 		}
@@ -233,7 +268,7 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	target := *advertisedTarget
 	if cfg.ThroughputProtocol != "auto" {
 		if target.Protocol != "negotiated" && target.Protocol != cfg.ThroughputProtocol {
-			return fail(fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol))
+			return fmt.Errorf("endpoint is fixed to %s, cannot use %s", target.Protocol, cfg.ThroughputProtocol)
 		}
 		target.Protocol = cfg.ThroughputProtocol
 	}
@@ -241,57 +276,56 @@ func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	defer closeTransfer()
 	probe, clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, target.Routes.Probe, "probe")
 	if err != nil {
-		return fail(err)
+		return err
 	}
 	if target.Protocol == "negotiated" {
 		target.Protocol = protocolFromEvidence(clientProtocol)
 	}
+	prepared.ThroughputTarget, prepared.Probe = target, probe
+	return nil
+}
+
+func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnection) error {
+	targets := prepared.Preflight.Capabilities.LatencyTargets
+	target, err := selectLatencyTarget(cfg, targets)
+	if err != nil {
+		return err
+	}
+	if cfg.LatencyTransport != "auto" && PingIntervalBoundApplies(target.Transport) {
+		if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+			return err
+		}
+	}
+	if target.Transport == wire.TransportWebTransport {
+		if verifyErr := verifyLatencyWebTransport(ctx, cfg, target); verifyErr != nil {
+			if cfg.LatencyTransport != "auto" {
+				return verifyErr
+			}
+			if target, err = selectLatencyTargetOver(cfg.LatencyTarget, cfg.BaseURL, targets, wire.TransportWebSocket); err != nil {
+				return err
+			}
+		}
+	}
+	if cfg.LatencyTransport == "auto" && PingIntervalBoundApplies(target.Transport) {
+		if err := ValidatePingInterval(cfg.PingInterval); err != nil {
+			return err
+		}
+	}
 	wsClient, closeWebSocket := websocketClient(cfg)
 	defer closeWebSocket()
-	latencyTarget, latencyErr := selectLatencyTarget(cfg, pf.Capabilities.LatencyTargets)
-	needsLatency := cfg.needsLatency()
-	if latencyErr != nil && needsLatency {
-		return fail(latencyErr)
+	probeStarted := time.Now()
+	probe, _, err := getJSONProbe(ctx, wsClient, target.Origin, target.Routes.Probe, "latency probe")
+	if err != nil {
+		return err
 	}
-	var latencyProbe *wire.Probe
-	var preflightRTT time.Duration
-	if !needsLatency {
-		latencyTarget = nil
-	} else if latencyTarget != nil {
-		if cfg.LatencyTransport != "auto" && PingIntervalBoundApplies(latencyTarget.Transport) {
-			if err := ValidatePingInterval(cfg.PingInterval); err != nil {
-				return fail(err)
-			}
-		}
-		if latencyTarget.Transport == wire.TransportWebTransport {
-			if verifyErr := verifyLatencyWebTransport(ctx, cfg, latencyTarget); verifyErr != nil {
-				if cfg.LatencyTransport != "auto" {
-					return fail(verifyErr)
-				}
-				if latencyTarget, latencyErr = selectLatencyTargetOver(cfg.LatencyTarget, cfg.BaseURL, pf.Capabilities.LatencyTargets, wire.TransportWebSocket); latencyErr != nil {
-					return fail(latencyErr)
-				}
-			}
-		}
-		if cfg.LatencyTransport == "auto" && PingIntervalBoundApplies(latencyTarget.Transport) {
-			if err := ValidatePingInterval(cfg.PingInterval); err != nil {
-				return fail(err)
-			}
-		}
-		probeStarted := time.Now()
-		p, _, err := getJSONProbe(ctx, wsClient, latencyTarget.Origin, latencyTarget.Routes.Probe, "latency probe")
-		if err != nil {
-			return fail(err)
-		}
-		preflightRTT = time.Since(probeStarted)
-		latencyProbe = new(p)
-		if latencyTarget.Transport == wire.TransportWebSocket {
-			if err := verifyLatencyWebSocket(ctx, wsClient, latencyTarget); err != nil {
-				return fail(err)
-			}
+	rtt := time.Since(probeStarted)
+	if target.Transport == wire.TransportWebSocket {
+		if err := verifyLatencyWebSocket(ctx, wsClient, target); err != nil {
+			return err
 		}
 	}
-	return &PreparedConnection{PreflightRTT: preflightRTT, Preflight: pf, ThroughputTarget: target, LatencyTarget: latencyTarget, Probe: probe, LatencyProbe: latencyProbe, VerifiedAt: time.Now(), configKey: preparationKey(cfg)}, nil
+	prepared.LatencyTarget, prepared.LatencyProbe, prepared.PreflightRTT = target, &probe, rtt
+	return nil
 }
 
 func Run(ctx context.Context, cfg Config, emit func(Event)) error {
@@ -547,7 +581,7 @@ func selectLatencyTargetOver(selection, base string, targets []wire.LatencyTarge
 func protocolClient(cfg Config, protocol string, makeHTTP func() *http.Transport) (*http.Client, func()) {
 	tlsConfig := &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify} //nolint:gosec
 	if protocol == "http3" {
-		tr := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig()}
+		tr := &http3.Transport{TLSClientConfig: tlsConfig, QUICConfig: transport.NewQUICConfig(), DisableCompression: true}
 		return authenticatedClient(cfg, tr), func() { _ = tr.Close() }
 	}
 	tr := makeHTTP()

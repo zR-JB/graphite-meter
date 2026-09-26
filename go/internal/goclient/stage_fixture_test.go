@@ -35,7 +35,7 @@ func (r *runner) runTestStage(ctx context.Context, stage string, duration time.D
 		cfg:      cfg,
 		prepared: &PreparedRun{Servers: []PreparedServer{prepared}, LatencyFocus: "self"},
 		servers:  []*nativeParticipant{{prepared: prepared, transport: r}},
-		streams:  map[string]map[string]streamCounts{stage: {"self": r.streams}},
+		streams:  map[string]streamCounts{"self": r.streams},
 		started:  time.Now(),
 		emit:     r.emit,
 	}
