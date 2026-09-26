@@ -9,6 +9,7 @@
   } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
+  import { READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
   let retrying = $state<string[]>([]);
@@ -20,7 +21,7 @@
       await controller.retry({ id: serverId });
     } finally {
       if (
-        store.servers.get(serverId)?.readiness === "ready" &&
+        store.servers.get(serverId)?.readiness === "verified" &&
         document.activeElement === button
       ) {
         const choice = choices.get(serverId);
@@ -66,15 +67,11 @@
         {@const checked = store.selectedServers.includes(server.id)}
         {@const readiness = store.servers.get(server.id)?.readiness}
         {@const status =
-          readiness === "checking"
-            ? "Checking…"
-            : readiness === "failed"
-              ? "Unavailable"
-              : readiness === "sign-in"
-                ? "Sign in"
-                : readiness === "ready" && checked
-                  ? "Ready"
-                  : ""}
+          !readiness ||
+          readiness === "unchecked" ||
+          (readiness === "verified" && !checked)
+            ? ""
+            : READINESS[readiness].label}
         {@const preflightMs = store.servers.get(server.id)?.discovery
           ?.preflightMs}
         {@const unavailable =
@@ -224,7 +221,7 @@
         aria-disabled={pending}
         aria-busy={pending}
         onclick={(event) => void retry(server.id, event.currentTarget)}
-        >{pending ? "Checking…" : `Retry ${server.name}`}</button
+        >{pending ? READINESS.checking.label : `Retry ${server.name}`}</button
       >
     {/if}
     {#if store.serverApproval?.id === server.id}
@@ -383,7 +380,7 @@
   .server-status[data-state="sign-in"] {
     color: var(--warn);
   }
-  .server-status[data-state="ready"] {
+  .server-status[data-state="verified"] {
     color: var(--brand-strong);
   }
   .server-preflight {

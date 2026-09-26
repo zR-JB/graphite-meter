@@ -1,5 +1,5 @@
 import type { PreparationState } from "../state/store.svelte";
-import { BLOCKED } from "../presentation/vocabulary";
+import { BLOCKED, START_FAILED } from "../presentation/vocabulary";
 
 interface PreparationFailurePresentation {
   headline: string;
@@ -25,8 +25,5 @@ export function preparationFailurePresentation(
           : "Latency path is unavailable";
     return { headline: "Connection check failed", detail };
   }
-  return {
-    headline: BLOCKED,
-    detail: startError || "Unable to start the test",
-  };
+  return { headline: START_FAILED, detail: startError };
 }

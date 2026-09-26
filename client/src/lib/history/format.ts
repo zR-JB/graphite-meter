@@ -6,7 +6,7 @@ import {
   rateValueAt,
   throughputUnitIndex,
 } from "../format";
-import type { HistoryRecord, StageStatus } from "./types";
+import type { HistoryRecord } from "./types";
 
 interface HistoryUnits {
   base: "base10" | "base2";
@@ -46,16 +46,6 @@ export function formatRecentCompletion(
 
 export function formatLatency(value: number | null | undefined): string {
   return value == null ? MISSING : `${fmtMs(value)} ms`;
-}
-
-export function stageStatusLabel(status: StageStatus): string {
-  return status === "not-run"
-    ? "Skipped"
-    : status === "failed"
-      ? "Failed"
-      : status === "partial"
-        ? "Partial"
-        : MISSING;
 }
 
 /** One completeness rule for the list badge and the detail. */

@@ -5,6 +5,7 @@ import type {
   StagePresentationStatus,
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
+import { STATUS } from "../presentation/vocabulary";
 
 type SegState = StagePresentationStatus | "warmup";
 
@@ -40,11 +41,11 @@ export function stageTrackModel(input: {
       ? { state: "pending" as const, fill: 0 }
       : segmentState(execution);
   const tag = !selected
-    ? "skipped"
+    ? STATUS["not-run"]
     : execution.status === "disabled"
-      ? "next run"
+      ? STATUS.next
       : execution.status === "partial" || execution.status === "failed"
-        ? execution.status
+        ? STATUS[execution.status]
         : null;
   return {
     selected,
@@ -64,8 +65,8 @@ export function lockReason(
   state: SegState,
 ): string | null {
   if (canToggle) return null;
-  if (state === "complete" || state === "partial") return "done";
+  if (state === "complete" || state === "partial") return STATUS[state];
   if (phaseStage === stage)
-    return state === "recovering" ? "recovering" : "running";
-  return phase === "complete" ? "done" : "upcoming";
+    return state === "recovering" ? STATUS.recovering : STATUS.running;
+  return phase === "complete" ? STATUS.complete : STATUS.upcoming;
 }

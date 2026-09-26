@@ -588,7 +588,8 @@ export interface ServerView {
   readonly server: ServerEntry;
   readonly discovery: TransportDiscovery | null;
   readonly validation: ConnectionValidation;
-  readonly readiness: "unchecked" | "checking" | "ready" | "sign-in" | "failed";
+  readonly readiness:
+    "unchecked" | "checking" | "verified" | "sign-in" | "failed";
   readonly message?: string;
   /** A reason no connection check can clear: offline, sign-in or a missing server capability. */
   readonly blocked?: string;

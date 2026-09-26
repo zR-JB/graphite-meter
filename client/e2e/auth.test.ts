@@ -91,7 +91,7 @@ test("an HTTP interface explains a protected HTTPS refusal", async (page) => {
     "Connection check failed",
   );
   await expect(
-    settings.locator('.server-status[data-state="ready"]'),
+    settings.locator('.server-status[data-state="verified"]'),
   ).toHaveCount(2, { timeout: 15_000 });
 });
 

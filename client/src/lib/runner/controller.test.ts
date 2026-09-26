@@ -198,7 +198,7 @@ test("a pending start ends on a second click or a draft change without blocking 
       }
       block = false;
       await controller.retry();
-      expect(view().readiness).toBe("ready");
+      expect(view().readiness).toBe("verified");
       held.resolve(preparation());
       expect(runner.starts).toBe(0);
       controller.toggleRun();
@@ -371,12 +371,12 @@ test("hidden pages defer checks; returning refreshes discovery that expired mean
       async ({ setVisibility, view }) => {
         expect(view().readiness).toBe("unchecked");
         setVisibility("visible");
-        await until(() => view().readiness === "ready");
+        await until(() => view().readiness === "verified");
         setVisibility("hidden");
         clock.mockReturnValue(2000 + CONNECTION_FRESH_MS);
         setVisibility("visible");
-        expect(view().readiness).not.toBe("ready");
-        await until(() => view().readiness === "ready");
+        expect(view().readiness).not.toBe("verified");
+        await until(() => view().readiness === "verified");
         expect(discoveries).toBe(2);
       },
     );
@@ -399,7 +399,7 @@ test("an expired grant needs a new approval even when its paths are fresh", asyn
         const { controller, view } = harness;
         await approve(harness, "peer", 1000);
         await controller.retry();
-        expect(view("peer").readiness).toBe("ready");
+        expect(view("peer").readiness).toBe("verified");
         controller.applyServers(["home"]);
         clock.mockReturnValue(2001);
         controller.applyServers(["peer"]);
@@ -409,7 +409,7 @@ test("an expired grant needs a new approval even when its paths are fresh", asyn
         });
         await approve(harness, "peer", 60_000);
         await controller.retry();
-        expect(view("peer").readiness).toBe("ready");
+        expect(view("peer").readiness).toBe("verified");
       },
     );
   } finally {

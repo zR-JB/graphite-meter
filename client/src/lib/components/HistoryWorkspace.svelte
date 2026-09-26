@@ -15,8 +15,8 @@
     formatLatency,
     formatRecentCompletion,
     historyOutcome,
-    stageStatusLabel,
   } from "../history/format";
+  import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
     HISTORY_SORT_LABEL,

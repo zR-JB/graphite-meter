@@ -172,17 +172,3 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
     },
   };
 }
-export const JARGON = {
-  addedLatency:
-    "Added latency: loaded median RTT minus idle median RTT for the same server. Negative values are kept. The grade labels the worst stage: A ≤5 ms, B ≤30, C ≤60, D ≤200, otherwise F.",
-  jitter:
-    "RTT variation: average absolute change between consecutive successful replies in one segment. Lower is steadier; timeouts are excluded.",
-  wireRate:
-    "Estimated physical-link rate, including forward-path protocol overhead.",
-  latency:
-    "Median round-trip time (RTT) to the server and back. Lower is faster.",
-  unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
-  unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
-  unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",
-  unitBinary: "Binary prefixes: 1,024 per step (Kibit/s, Mibit/s, Gibit/s).",
-} as const;

@@ -522,7 +522,7 @@ export class ServerConnection {
           : discovering || roles.some((role) => this.#roles[role].task)
             ? "checking"
             : paths
-              ? "ready"
+              ? "verified"
               : "unchecked",
       ...(message ? { message } : {}),
       ...(message && (signIn || offline || capability)

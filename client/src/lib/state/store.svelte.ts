@@ -22,6 +22,7 @@ import {
   emptyConnectionValidation,
   validateServerStreams,
   type ConnectionValidation,
+  type ConnectionValidationState,
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
@@ -73,8 +74,8 @@ type PreparationStatus =
 
 export interface PreparationState {
   status: PreparationStatus;
-  throughput: "checking" | "ready" | "failed" | "stale" | "disabled";
-  latency: "checking" | "ready" | "failed" | "stale" | "disabled";
+  throughput: ConnectionValidationState | "disabled";
+  latency: ConnectionValidationState | "disabled";
 }
 
 type StageResults = {
@@ -152,7 +153,9 @@ class AppStore {
       if (states.includes("checking")) return "checking";
       if (states.some((state) => state === "failed" || state === "sign-in"))
         return "failed";
-      return states.every((state) => state === "ready") ? "verified" : "stale";
+      return states.every((state) => state === "verified")
+        ? "verified"
+        : "stale";
     },
   );
   serverApproval = $state<{
@@ -245,14 +248,10 @@ class AppStore {
       this.config.stages.download ||
       this.config.stages.upload ||
       this.config.stages.bidirectional
-        ? this.connectionValidation.throughput.state === "verified"
-          ? "ready"
-          : this.connectionValidation.throughput.state
+        ? this.connectionValidation.throughput.state
         : "disabled",
     latency: this.latencyEnabled
-      ? this.connectionValidation.latency.state === "verified"
-        ? "ready"
-        : this.connectionValidation.latency.state
+      ? this.connectionValidation.latency.state
       : "disabled",
   }));
   preparing = $derived(
@@ -421,7 +420,7 @@ class AppStore {
         return "checking";
       if (this.selectionValidation === "failed")
         return this.selectedServers.some(
-          (id) => this.servers.get(id)?.readiness === "ready",
+          (id) => this.servers.get(id)?.readiness === "verified",
         )
           ? "degraded"
           : "offline";

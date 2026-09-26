@@ -45,7 +45,7 @@
       });
     if (chartPresentation?.latencyEnabled)
       rows.push({
-        label: "RTT median",
+        label: "Median",
         value: hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`,
       });
     if (hover.timeoutCount > 0)

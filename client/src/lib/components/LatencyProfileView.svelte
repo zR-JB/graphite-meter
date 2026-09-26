@@ -1,8 +1,8 @@
 <script lang="ts">
   import { inView } from "../actions/inView";
   import Icon from "./Icon.svelte";
-  import { tooltip, JARGON } from "../actions/tooltip";
-  import { MISSING, STAGE } from "../presentation/vocabulary";
+  import { tooltip } from "../actions/tooltip";
+  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs, fmtMsTick } from "../format";
   import {
     entries,

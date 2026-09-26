@@ -196,7 +196,8 @@
                       const lane = store.result?.bidirectional?.[direction];
                       return lane
                         ? [
-                            `${direction === "down" ? "Download" : "Upload"}: ${fmtSpeed(gaugeRate(lane.reportedBytesPerSec))} ${gaugeUnit}`,
+                            `${STAGE[direction === "down" ? "download" : "upload"].label}: ` +
+                              `${fmtSpeed(gaugeRate(lane.reportedBytesPerSec))} ${gaugeUnit}`,
                           ]
                         : [];
                     })

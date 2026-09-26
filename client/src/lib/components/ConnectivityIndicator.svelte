@@ -2,6 +2,7 @@
   import { store } from "../state/store.svelte";
   import { tooltip } from "../actions/tooltip";
   import { announceChanges } from "../presentation/announcer.svelte";
+  import { CONNECTIVITY } from "../presentation/vocabulary";
 
   const spark = $derived(
     store.pulseLatency
@@ -22,11 +23,14 @@
       )
       .join(" ");
   });
-  announceChanges(() => `Connection: ${store.effectiveConnectivity}`);
+  const label = $derived(
+    `Connection: ${CONNECTIVITY[store.effectiveConnectivity]}`,
+  );
+  announceChanges(() => label);
 </script>
 
-<div class="pulse" use:tooltip={`Connection: ${store.effectiveConnectivity}`}>
-  <span class="sr-only">Connection: {store.effectiveConnectivity}</span>
+<div class="pulse" use:tooltip={label}>
+  <span class="sr-only">{label}</span>
   <span class="dot" data-state={store.effectiveConnectivity}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
     <polyline {points} />

@@ -4,7 +4,7 @@
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
-  import { fmtBytes, fmtDuration, reasonLabel } from "../../format";
+  import { fmtBytes, fmtDuration } from "../../format";
   import {
     formatHistoryRate,
     formatLatency,
@@ -18,6 +18,7 @@
     OUTCOME,
     STAGE,
     MISSING,
+    reasonLabel,
     TRANSPORT,
     transportLabel,
   } from "../../presentation/vocabulary";

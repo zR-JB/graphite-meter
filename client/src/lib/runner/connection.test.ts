@@ -147,7 +147,7 @@ test("an intent change cancels only its role and discards the late result", asyn
   expect(connection.view.validation.latency.selection).toBe(
     "transport:websocket",
   );
-  expect(connection.view.readiness).toBe("ready");
+  expect(connection.view.readiness).toBe("verified");
 });
 
 test("a new server generation cancels an in-flight role before accepting replacement evidence", async () => {
@@ -175,7 +175,7 @@ test("a new server generation cancels an in-flight role before accepting replace
   expect(heldSignal?.aborted).toBe(true);
   held.resolve(preparation());
   await flush();
-  expect(connection.view.readiness).toBe("ready");
+  expect(connection.view.readiness).toBe("verified");
   expect(connection.view.validation.latency.path!.generation).toBe("gen-b");
 });
 
@@ -204,7 +204,7 @@ test("sign-in is required by a wrapped refusal or an expired grant and never ret
       active: () => active,
     });
     await granted.check();
-    expect(granted.view.readiness).toBe("ready");
+    expect(granted.view.readiness).toBe("verified");
     expect(granted.dueAt()).toBe(2000);
     clock.mockReturnValue(2001);
     active = true;
@@ -272,7 +272,7 @@ test("an unmonitored server re-reads discovery, so a peer that died stops being 
     });
     await connection.check();
     await connection.check({ fresh: true });
-    expect([discoveries, connection.view.readiness]).toEqual([2, "ready"]);
+    expect([discoveries, connection.view.readiness]).toEqual([2, "verified"]);
     expect(connection.dueAt()).toBe(31_000);
     [alive, active] = [false, true];
     clock.mockReturnValue(31_000);
@@ -282,7 +282,7 @@ test("an unmonitored server re-reads discovery, so a peer that died stops being 
     expect(connection.paths(Infinity)).toBeNull();
     alive = true;
     connection.resume();
-    await until(() => connection.view.readiness === "ready");
+    await until(() => connection.view.readiness === "verified");
     expect(discoveries).toBe(4);
   } finally {
     clock.mockRestore();
@@ -306,7 +306,7 @@ test("offline, a remote server blocks without checking until the device is back"
   online = true;
   connection.resume();
   await connection.check();
-  expect(connection.view.readiness).toBe("ready");
+  expect(connection.view.readiness).toBe("verified");
 });
 
 test("equivalent intent reuses fresh paths; an expired reselection refreshes discovery and both roles", async () => {
@@ -326,7 +326,7 @@ test("equivalent intent reuses fresh paths; an expired reselection refreshes dis
     config.transports.latencyTarget = latency!.target.origin;
     connection.select(config);
     await connection.check();
-    expect(connection.view.readiness).toBe("ready");
+    expect(connection.view.readiness).toBe("verified");
     expect(connection.view.validation.throughput.path).toBe(
       ready.validation.throughput.path,
     );
@@ -338,7 +338,7 @@ test("equivalent intent reuses fresh paths; an expired reselection refreshes dis
     connection.select(config);
     expect(connection.view.readiness).toBe("unchecked");
     await connection.check();
-    expect(connection.view.readiness).toBe("ready");
+    expect(connection.view.readiness).toBe("verified");
     expect([discoveries, probes]).toEqual([2, 4]);
   } finally {
     clock.mockRestore();
@@ -383,7 +383,7 @@ test("background discovery leaves capacity for a selected server", async () => {
   const selected = connect({ limiter, discover });
   await selected.check();
   expect(started).toEqual(["a", "self"]);
-  expect(selected.view.readiness).toBe("ready");
+  expect(selected.view.readiness).toBe("verified");
   expect(slow[0].view.metadataChecking).toBe(true);
   background.resolve();
 });

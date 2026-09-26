@@ -26,7 +26,7 @@ async function regainPage(page: Page) {
     });
 }
 
-test("a verified peer that dies turns Unavailable when the page returns, and Start refuses it", async (page) => {
+test("a verified peer that dies fails its check when the page returns, and Start refuses it", async (page) => {
   const oslo = await spawnPeer("Oslo");
   const bergen = await spawnPeer("Bergen", catalog(oslo.server));
   try {

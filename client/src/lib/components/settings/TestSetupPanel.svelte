@@ -11,11 +11,12 @@
   const controller = getApplicationController();
   import { pathOptions } from "../../presentation/paths";
   import { normalizeStreamCount } from "../../runner/paths";
-  import { JARGON, tooltip } from "../../actions/tooltip";
+  import { tooltip } from "../../actions/tooltip";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import {
+    JARGON,
     phaseLabel,
     PING_CADENCE,
     READINESS,

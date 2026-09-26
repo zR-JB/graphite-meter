@@ -159,7 +159,7 @@ test("metadata timeouts back off without starving later servers", async (page) =
   ).toHaveCount(1, { timeout: 15_000 });
   await expect(status("Private")).toHaveText("Sign in", { timeout: 15_000 });
   for (const held of [frankfurt.name, fleet[2].name])
-    await expect(status(held)).toHaveText("Unavailable", { timeout: 30_000 });
+    await expect(status(held)).toHaveText("Failed", { timeout: 30_000 });
   const urls = fleet.map((server) => server.url);
   expect((await activity.read()).requests).toEqual(urls);
   await closeSettings(page);

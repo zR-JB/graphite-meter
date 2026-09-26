@@ -1,18 +1,4 @@
 // Formatting and scale helpers for speeds, bytes, latency, and chart domains.
-import type { FailureReason } from "./runner/contract";
-
-const REASON: Record<FailureReason, string> = {
-  "preparation-failed": "Couldn't prepare the connection",
-  "connection-lost": "Connection lost",
-  timeout: "Stopped delivering data",
-  "sign-in-required": "Sign-in required",
-  "server-busy": "Server at capacity",
-  "protocol-error": "Unexpected server response",
-  "insufficient-evidence": "Too little measured time",
-};
-
-export const reasonLabel = (reason: FailureReason) =>
-  REASON[reason] ?? "Measurement issue";
 
 export function fmtSpeed(value: number): string {
   if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
@@ -26,6 +12,12 @@ export function fixedMs(ms: number): string {
   return Math.abs(Math.round(ms * 10) / 10) < 100
     ? ms.toFixed(1)
     : ms.toFixed(0);
+}
+
+/** Signed added latency; the sign follows the rounded value, so zero has none. */
+export function fmtAddedMs(ms: number): string {
+  const text = fixedMs(Math.abs(ms));
+  return Number(text) === 0 ? text : `${ms < 0 ? "−" : "+"}${text}`;
 }
 
 /** Browser timers resolve 0.1 ms, so a smaller measured value is shown as below it. */

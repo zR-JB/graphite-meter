@@ -1,9 +1,10 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { tooltip, JARGON } from "../actions/tooltip";
+  import { tooltip } from "../actions/tooltip";
   import type { SummaryCard } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
+  import { JARGON, STATUS } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -62,9 +63,7 @@
               >{card.quality.band}<span class="sr-only">, {pct}</span></span
             >
           {:else if card.status !== "complete"}
-            <span class="badge" data-tone="err"
-              >{card.status === "partial" ? "Partial" : "Failed"}</span
-            >
+            <span class="badge" data-tone="err">{STATUS[card.status]}</span>
           {/if}
         </header>
         {#key scope}

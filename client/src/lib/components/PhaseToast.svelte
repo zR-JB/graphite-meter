@@ -3,10 +3,10 @@
   // Visual only: GaugePanel announces phases.
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
-  import { fmtBytes, fmtDuration, reasonLabel } from "../format";
+  import { fmtBytes, fmtDuration } from "../format";
   import { failureDetail } from "./failurePresentation";
   import { STAGE_ORDER } from "../state/stagePresentation";
-  import { STAGE, phaseLabel } from "../presentation/vocabulary";
+  import { STAGE, phaseLabel, reasonLabel } from "../presentation/vocabulary";
   import { serverName } from "../presentation/serverAppearance";
   import { announceChanges } from "../presentation/announcer.svelte";
 

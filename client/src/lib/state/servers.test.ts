@@ -137,13 +137,13 @@ test("selection readiness follows each prototype-named server's view", async () 
     store.selectedServers = ids;
     store.servers.clear();
     expect(store.selectionValidation).toBe("stale");
-    for (const id of ids) store.servers.set(id, view(id, "ready"));
+    for (const id of ids) store.servers.set(id, view(id, "verified"));
     expect(store.selectionValidation).toBe("verified");
     store.servers.set("__proto__", view("__proto__", "checking"));
     expect(store.selectionValidation).toBe("checking");
     store.servers.set("__proto__", view("__proto__", "failed"));
     expect(store.selectionValidation).toBe("failed");
-    expect(store.servers.get("constructor")?.readiness).toBe("ready");
+    expect(store.servers.get("constructor")?.readiness).toBe("verified");
   } finally {
     store.servers.clear();
     store.selectedServers = previousSelection;

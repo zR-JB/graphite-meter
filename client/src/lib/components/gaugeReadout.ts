@@ -1,7 +1,12 @@
-import { fmtMs, reasonLabel } from "../format";
+import { fmtMs } from "../format";
 import type { Phase, RunnerError } from "../runner/contract";
 import type { PreparationState } from "../state/store.svelte";
-import { MISSING, phaseLabel } from "../presentation/vocabulary";
+import {
+  MISSING,
+  phaseLabel,
+  READINESS,
+  reasonLabel,
+} from "../presentation/vocabulary";
 import { preparationFailurePresentation } from "./preparationFailure";
 import type { ResultGaugeArc } from "./resultGauge";
 
@@ -76,9 +81,13 @@ export function gaugeReadout(input: GaugeReadoutInput) {
     : phase === "idle" || phase === "connecting" || phase === "warmup"
       ? phaseLabel(phase)
       : "";
-  const path = (state: string) => (state === "disabled" ? "not needed" : state);
+  const path = (role: "throughput" | "latency") => {
+    const state = preparation[role];
+    return state === "disabled" ? "Not needed" : READINESS[state].label;
+  };
   const statusText = input.preparing
-    ? `${preparationLabel}. Throughput path ${path(preparation.throughput)}; Latency path ${path(preparation.latency)}`
+    ? `${preparationLabel}. Throughput path: ${path("throughput")}; ` +
+      `Latency path: ${path("latency")}`
     : failure
       ? `${failure.headline} — ${failure.detail}`
       : status

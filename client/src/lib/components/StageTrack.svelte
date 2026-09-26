@@ -6,7 +6,7 @@
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageTrackModel } from "./stageTrack";
   import { failureDetail } from "./failurePresentation";
-  import { STAGE } from "../presentation/vocabulary";
+  import { STAGE, STATUS } from "../presentation/vocabulary";
   import { STAGE_ORDER } from "../state/stagePresentation";
 
   const controller = getApplicationController();
@@ -29,7 +29,7 @@
         ? failureDetail(failure.message)
         : key === "bidirectional" && !locked
           ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
-          : reason === "skipped" && !locked
+          : reason === STATUS["not-run"] && !locked
             ? "skipped, toggle to include"
             : (reason ?? (selected ? "toggle to skip" : "toggle to include"));
       return {
@@ -60,7 +60,7 @@
       aria-label="{s.label} stage{s.reason
         ? ` (${s.reason})`
         : s.state === 'complete'
-          ? ' (complete)'
+          ? ` (${STATUS.complete})`
           : ''}"
       use:tooltip={s.tip}
       disabled={s.locked}

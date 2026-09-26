@@ -5,7 +5,7 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   phase: "download",
   running: true,
   preparing: false,
-  preparation: { status: "idle", throughput: "ready", latency: "ready" },
+  preparation: { status: "idle", throughput: "verified", latency: "verified" },
   startError: "",
   error: null,
   latencyTimeout: false,
