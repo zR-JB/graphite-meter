@@ -5,6 +5,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func nativeBoundary(ms int, down map[string]uint64, up map[string]*ReceiverSnapshot) measurementBoundary {
@@ -174,5 +176,33 @@ func TestCheckpointMissesRemoveServers(t *testing.T) {
 	}
 	if !s.dropsServer("b", &AuthRequiredError{}, true) {
 		t.Fatal("a refused grant kept the server")
+	}
+}
+
+func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name    string
+		replies int
+		window  bool
+		want    Outcome
+	}{
+		{"measured", 3, true, OutcomeComplete},
+		{"no idle reply", 0, true, OutcomeIncomplete},
+		{"no throughput window", 3, false, OutcomeIncomplete},
+	} {
+		cfg := DefaultConfig()
+		cfg.Stages = StageSet{Latency: true, Download: true}
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+		p.results = []Result{{Stage: StageLatency, Latency: LatencyStats{Count: c.replies}}}
+		co := &coordinator{cfg: cfg, servers: []*participant{p}}
+		co.aggregate.begin(StageDownload, []string{"a"}, 0, "stage-start")
+		if c.window {
+			co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 0}, nil))
+			co.aggregate.observe(nativeBoundary(1000, map[string]uint64{"a": 1000}, nil))
+		}
+		if got := co.outcome(t.Context(), nil); got != c.want {
+			t.Errorf("%s: outcome %v, want %v", c.name, got, c.want)
+		}
 	}
 }

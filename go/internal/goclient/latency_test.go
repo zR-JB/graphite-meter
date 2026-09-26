@@ -208,7 +208,11 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 				}
 				err := r.runTestStage(t.Context(), stage, time.Second)
 				failed := details != nil && len(details.Failures) == 1 && details.Failures[0].Scope == "latency"
-				if err != nil || !failed || details.Outcome != OutcomePartial || len(details.Participants) != 1 {
+				outcome := OutcomePartial
+				if stage == StageLatency && !reply {
+					outcome = OutcomeIncomplete
+				}
+				if err != nil || !failed || details.Outcome != outcome || len(details.Participants) != 1 {
 					t.Fatalf("latency failure removed throughput membership: %v %+v", err, details)
 				}
 				results := details.Servers[0].Results

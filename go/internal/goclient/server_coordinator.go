@@ -185,6 +185,8 @@ func (c *coordinator) run(ctx context.Context) error {
 
 func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 	switch {
+	case err == nil && c.missingResults():
+		return OutcomeIncomplete
 	case err == nil && len(c.failures) == 0:
 		return OutcomeComplete
 	case err == nil:
@@ -195,6 +197,23 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 		return OutcomeIncomplete
 	}
 	return OutcomeFailed
+}
+
+func (c *coordinator) missingResults() bool {
+	for _, stage := range c.cfg.Plan() {
+		for _, dir := range stage.Directions {
+			if c.aggregate.result(stage.Name, dir).Unavailable {
+				return true
+			}
+		}
+		replied := func(r Result) bool { return r.Stage == stage.Name && r.Direction == "" && r.Latency.Count > 0 }
+		for _, p := range c.active() {
+			if len(stage.Directions) == 0 && !slices.ContainsFunc(p.results, replied) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
