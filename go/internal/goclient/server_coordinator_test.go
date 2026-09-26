@@ -305,7 +305,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 		after     int
 		all       bool
 		available bool
-	}{{"survivor", 1, false, true}, {"late", 4, false, false}, {"all", 1, true, false}} {
+	}{{"survivor", 1, false, true}, {"late", 4, false, true}, {"all", 1, true, false}} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
 			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
@@ -347,8 +347,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			}
 			for _, server := range details.Servers {
 				own, cause := server.Results[0], left[server.Server.ID]
-				if cause != nil && (!own.Unavailable || own.Err != cause) ||
-					cause == nil && own.Unavailable != result.Unavailable {
+				if cause != nil && own.Err != cause || cause == nil && own.Unavailable != result.Unavailable {
 					t.Errorf("%s kept a result its interval does not support: %+v", server.Server.ID, own)
 				}
 			}

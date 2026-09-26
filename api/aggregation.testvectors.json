@@ -145,5 +145,33 @@
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 0, "upBytesPerSec": null}}
     ]
+  },
+  {
+    "name": "a late dropout keeps the headline of the interval every server finished",
+    "stage": "download",
+    "participants": ["a", "b", "c", "d"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0, "c": 0, "d": 0}, "up": {}},
+      {"atMs": 250, "down": {"a": 250, "b": 250, "c": 250, "d": 250}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 500, "c": 500, "d": 500}, "up": {}},
+      {"atMs": 750, "down": {"a": 750, "b": 750, "c": 750, "d": 750}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 1000, "c": 1000, "d": 1000}, "up": {}},
+      {"atMs": 1250, "down": {"a": 1250, "b": 1250, "c": 1250, "d": 1250}, "up": {}},
+      {"atMs": 1500, "down": {"a": 1500, "b": 1500, "c": 1500, "d": 1500}, "up": {}},
+      {"atMs": 1750, "down": {"a": 1750, "b": 1750, "c": 1750, "d": 1750}, "up": {}},
+      {"atMs": 2000, "down": {"a": 2000, "b": 2000, "c": 2000, "d": 2000}, "up": {}},
+      {"atMs": 2250, "dropout": ["d"], "down": {"a": 2250, "b": 2250, "c": 2250}, "up": {}},
+      {"atMs": 2500, "down": {"a": 2500, "b": 2500, "c": 2500}, "up": {}},
+      {"atMs": 2750, "down": {"a": 2750, "b": 2750, "c": 2750}, "up": {}},
+      {"atMs": 3000, "down": {"a": 3000, "b": 3000, "c": 3000}, "up": {}}
+    ],
+    "headline": {"down": 4000, "up": null},
+    "peak": {"downBytesPerSec": 3000, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
+      {"reason": "dropout", "complete": true,
+       "window": {"startMs": 2250, "endMs": 3000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
   }
 ]

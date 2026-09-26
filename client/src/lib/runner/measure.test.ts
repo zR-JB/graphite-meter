@@ -501,6 +501,7 @@ type Vector = {
   participants: string[];
   boundaries: {
     atMs: number;
+    dropout?: string[];
     down: Record<string, number>;
     up: Record<string, { id: string; bytes: number; nanos: number } | null>;
   }[];
@@ -524,7 +525,12 @@ for (const vector of vectors)
   test(`aggregation conformance: ${vector.name}`, () => {
     const m = new ThroughputAggregate();
     m.begin(vector.stage, vector.participants, vector.boundaries[0].atMs);
-    for (const b of vector.boundaries)
+    let live = vector.participants;
+    for (const b of vector.boundaries) {
+      if (b.dropout) {
+        live = live.filter((id) => !b.dropout!.includes(id));
+        m.begin(vector.stage, live, b.atMs, "dropout");
+      }
       m.observe({
         atMs: b.atMs,
         down: b.down,
@@ -535,6 +541,7 @@ for (const vector of vectors)
           ]),
         ),
       });
+    }
     const intervals: Vector["intervals"] = m.intervals.map((interval) => ({
       reason: interval.reason,
       complete: interval.complete,

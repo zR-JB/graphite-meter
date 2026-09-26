@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -63,8 +64,8 @@ func TestPeaksNeedAMinimumWindow(t *testing.T) {
 	if result.PeakBps != 3000 || result.MeanBps != 3000 || result.Samples != 6 {
 		t.Fatalf("a burst inside a short window became the peak: %+v", result)
 	}
-	if a.servers["a"].peak.down != 2000 || a.servers["b"].peak.down != 1000 || a.servers["a"].samples != 6 {
-		t.Fatalf("per-server peaks or samples = %+v %+v", a.servers["a"], a.servers["b"])
+	if own := a.current().servers; own["a"].peak.down != 2000 || own["b"].peak.down != 1000 || own["a"].samples != 6 {
+		t.Fatalf("per-server peaks or samples = %+v %+v", own["a"], own["b"])
 	}
 }
 func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
@@ -81,11 +82,12 @@ func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	a.restart([]string{"b"}, 2*time.Second, ReasonDropout)
 	a.observe(nativeBoundary(2100, map[string]uint64{"b": 4200}, nil))
 	a.observe(nativeBoundary(2500, map[string]uint64{"b": 5000}, nil))
-	if result := a.result(Down); !result.Unavailable || result.TotalBytes != 9000 {
-		t.Fatalf("late dropout must revoke headline without losing bytes: %+v", result)
+	if result := a.result(Down); result.Unavailable || result.MeanBps != 4000 || result.PeakBps != 4000 ||
+		result.TotalBytes != 9000 {
+		t.Fatalf("a late dropout lost the headline of the interval before it: %+v", result)
 	}
-	if a.peak.down != 0 || a.servers["a"].peak.down != 0 || a.servers["a"].samples != 0 || a.servers["b"].samples != 1 {
-		t.Fatalf("peaks outlived their interval: %+v %+v %+v", a.peak, a.servers["a"], a.servers["b"])
+	if latest := a.current(); latest.combined.peak.down != 0 || latest.servers["b"].samples != 1 {
+		t.Fatalf("peaks outlived their interval: %+v", latest)
 	}
 	if a.intervals[0].Window == nil || *a.intervals[0].Window.DownBytesPerSec != 4000 {
 		t.Fatal("earlier evidence lost")
@@ -282,10 +284,11 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 		Stage        Stage
 		Participants []string
 		Boundaries   []struct {
-			AtMs  int64
-			Final bool
-			Down  map[string]uint64
-			Up    map[string]*struct {
+			AtMs    int64
+			Final   bool
+			Dropout []string
+			Down    map[string]uint64
+			Up      map[string]*struct {
 				ID           string
 				Bytes, Nanos uint64
 			}
@@ -304,7 +307,12 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	for _, c := range cases {
 		var a aggregateMeasurements
 		a.beginStage(c.Stage, c.Participants, time.Duration(c.Boundaries[0].AtMs)*time.Millisecond)
+		live := c.Participants
 		for _, b := range c.Boundaries {
+			if len(b.Dropout) > 0 {
+				live = slices.DeleteFunc(slices.Clone(live), func(id string) bool { return slices.Contains(b.Dropout, id) })
+				a.restart(live, time.Duration(b.AtMs)*time.Millisecond, ReasonDropout)
+			}
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
 			boundary.final = b.Final
 			for id, r := range b.Up {
@@ -318,7 +326,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			if dir == Up && c.Stage == StageDownload || dir == Down && c.Stage == StageUpload {
 				return nil
 			}
-			return a.peak.of(dir)
+			return a.current().combined.peak.of(dir)
 		}
 		if peak(Down) != c.Peak.DownBytesPerSec || peak(Up) != c.Peak.UpBytesPerSec {
 			t.Errorf("%s: peak down=%v up=%v, want %+v", c.Name, peak(Down), peak(Up), c.Peak)

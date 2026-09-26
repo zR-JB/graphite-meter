@@ -8,7 +8,7 @@ contribute. Results do not isolate ICMP latency, directional IP loss or a physic
 | Result | Unit and population | Missing evidence |
 | --- | --- | --- |
 | Download / upload | Payload bytes per second over a receiver window, in the chosen rate unit. | No valid receiver window: no rate. |
-| Peak | Highest mean over consecutive windows of the latest interval, each at least 500 ms on every clock. | Shorter evidence: no peak. |
+| Peak | Highest mean over consecutive windows of the headline's interval, each at least 500 ms on every clock. | Shorter evidence: no peak. |
 | Latency | Median (p50) RTT of in-window replies, per server and stage; p95 secondary. | No eligible reply: "—". |
 | Added latency | Loaded median − idle median, per stage and server, in ms; negative values are kept. | Either median missing: "—". |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
@@ -59,9 +59,10 @@ native client measures the full window.
   stability resets. A server that cannot prepare a stage is removed the same way; the run fails only when no server
   survives. A removed server stays out for the rest of the run, except that a sole server retries at the next
   stage. A latency-only failure keeps throughput.
-- **Final headline** needs at least 800 ms of client evidence in the latest interval and, for upload, 800 ms in
-  every receiver clock, and a window that moved no bytes has none; otherwise the stage fails with a stated reason
-  and the run is Incomplete. Stages last 1 s to 5 min (0 skips one), and early finish waits for that evidence.
+- **Final headline** comes from the latest interval with at least 800 ms of client evidence and, for upload, 800 ms
+  in every receiver clock; a window that moved no bytes has none. When a late dropout leaves the survivors less, the
+  interval before it holds the headline and the stage is Partial. With no survivor or no such interval the stage
+  fails with a stated reason and the run is Incomplete. Stages last 1 s to 5 min (0 skips one), and early finish waits for that evidence.
   Earlier intervals and failed servers' measurements remain in per-server results.
 - **Live duration changes** set the active stage's end: a shortened stage ends at once and keeps its evidence.
 - **Byte ledgers** count unique measured bytes once, independent of window selection.
