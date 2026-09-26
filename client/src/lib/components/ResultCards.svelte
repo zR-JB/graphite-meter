@@ -31,8 +31,7 @@
   });
   const status = (key: Stage) => store.stagePresentation[key].status;
 
-  // Every stage holds its card from the start; a settled stage fills in its values.
-  const cards = $derived.by(() => {
+  const settled = $derived.by(() => {
     const evidence = summaryEvidence(
       Object.fromEntries(CARD_ORDER.map((key) => [key, status(key)])) as Record<
         Stage,
@@ -49,19 +48,23 @@
       shown,
       details?.latencyFocus,
     );
-    const settled = summaryCards(
+    return summaryCards(
       evidence,
       rate,
       store.unitBase,
       store.showWireEstimates,
     );
-    if (!store.isRunning) return settled;
-    return CARD_ORDER.flatMap((key) =>
-      status(key) === "disabled"
-        ? []
-        : [settled.find((card) => card.key === key) ?? liveCard(key)],
-    );
   });
+  // Every stage holds its card from the start; a settled stage fills in its values.
+  const cards = $derived(
+    store.isRunning
+      ? CARD_ORDER.flatMap((key) =>
+          status(key) === "disabled"
+            ? []
+            : [settled.find((card) => card.key === key) ?? liveCard(key)],
+        )
+      : settled,
+  );
 
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {
