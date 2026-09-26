@@ -16,16 +16,29 @@ export function stubFetch(handler: typeof fetch): () => void {
 export function testClock() {
   let time = 0;
   let nextId = 0;
-  const timers = new Map<number, { at: number; callback: () => void }>();
+  const timers = new Map<
+    number,
+    { at: number; everyMs?: number; callback: () => void }
+  >();
+  const schedule = (callback: () => void, delayMs = 0, everyMs?: number) => {
+    const id = ++nextId;
+    timers.set(id, { at: time + delayMs, everyMs, callback });
+    return id;
+  };
+  const clear = (timer: unknown): void => {
+    timers.delete(timer as number);
+  };
   return {
     now: () => time,
-    setTimeout(callback: () => void, delayMs: number) {
-      const id = nextId++;
-      timers.set(id, { at: time + delayMs, callback });
-      return id;
-    },
-    clearTimeout(timer: unknown) {
-      timers.delete(timer as number);
+    setTimeout: (callback: () => void, delayMs?: number) =>
+      schedule(callback, delayMs),
+    clearTimeout: clear,
+    setInterval: (callback: () => void, everyMs: number) =>
+      schedule(callback, everyMs, everyMs),
+    clearInterval: clear,
+    /** Move time without firing timers, as a suspended realm would. */
+    jump(ms: number) {
+      time += ms;
     },
     advance(ms: number) {
       const end = time + ms;
@@ -34,9 +47,11 @@ export function testClock() {
           .filter(([, timer]) => timer.at <= end)
           .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
         if (!next) break;
-        time = next[1].at;
-        timers.delete(next[0]);
-        next[1].callback();
+        const [id, timer] = next;
+        time = Math.max(time, timer.at);
+        if (timer.everyMs) timer.at = time + timer.everyMs;
+        else timers.delete(id);
+        timer.callback();
       }
       time = end;
     },

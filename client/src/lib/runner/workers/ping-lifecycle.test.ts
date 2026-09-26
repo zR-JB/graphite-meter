@@ -1,4 +1,5 @@
 import { stubGlobals } from "../../test-helpers.testutil";
+import { testClock } from "./test-helpers.testutil";
 import { expect, test } from "bun:test";
 import { LatencyPopulation } from "../measure";
 import type { PingSample } from "./pingSample";
@@ -26,20 +27,10 @@ async function withWorker(
   }) => void | Promise<void>,
   completeWarmup = true,
 ) {
-  let now = 0;
-  let nextTimer = 0;
-  const timers = new Map<
-    number,
-    { at: number; interval?: number; callback: () => void }
-  >();
+  const clock = testClock();
   const posted: Output[] = [];
   let socket!: FakeSocket;
   const sockets: FakeSocket[] = [];
-  const timeout = (callback: () => void, delay = 0, interval?: number) => {
-    const id = ++nextTimer;
-    timers.set(id, { at: now + delay, interval, callback });
-    return id;
-  };
   const overrides = {
     self: globalThis,
     WebSocket: class extends FakeSocket {
@@ -49,13 +40,12 @@ async function withWorker(
         sockets.push(this);
       }
     },
-    performance: { now: () => now, timeOrigin: 10_000 },
+    performance: { now: clock.now, timeOrigin: 10_000 },
     postMessage: (message: Output) => posted.push(message),
-    setTimeout: timeout,
-    clearTimeout: (id: number) => timers.delete(id),
-    setInterval: (callback: () => void, delay: number) =>
-      timeout(callback, delay, delay),
-    clearInterval: (id: number) => timers.delete(id),
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    setInterval: clock.setInterval,
+    clearInterval: clock.clearInterval,
     onmessage: null,
   };
   const restore = stubGlobals(overrides);
@@ -83,30 +73,14 @@ async function withWorker(
       socket,
       sockets,
       send,
-      now: () => now,
-      jump: (ms) => {
-        now += ms;
-      },
-      advance(ms) {
-        const end = now + ms;
-        for (;;) {
-          const next = [...timers.entries()]
-            .filter(([, timer]) => timer.at <= end)
-            .sort((a, b) => a[1].at - b[1].at || a[0] - b[0])[0];
-          if (!next) break;
-          const [id, timer] = next;
-          now = Math.max(now, timer.at);
-          if (timer.interval) timer.at = now + timer.interval;
-          else timers.delete(id);
-          timer.callback();
-        }
-        now = end;
-      },
+      now: clock.now,
+      jump: clock.jump,
+      advance: clock.advance,
       reply: (id, handling) =>
         socket.onmessage({
           data: `PONG,${id},${handling ?? "0"}`,
         }),
-      stop: (cutoff = now) =>
+      stop: (cutoff = clock.now()) =>
         send({ type: "stop", cutoffEpochMs: 10_000 + cutoff }),
       samples: () =>
         posted.flatMap((message) =>
