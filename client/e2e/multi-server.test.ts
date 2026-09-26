@@ -52,6 +52,7 @@ test("four servers share one run and keep separate receiver windows", async (pag
   }
 
   const scope = page.getByRole("combobox", { name: "Result measurements" });
+  await expect(scope).toBeVisible();
   await scope.fill("server-1");
   await expect(scope).toHaveValue("server-1");
   expect(await savedResult(page)).toEqual(saved);
