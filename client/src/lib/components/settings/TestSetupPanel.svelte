@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
   import { DURATION_PRESETS } from "../../state/defaults";
   import type { ProtocolTarget, RunnerConfig } from "../../runner/contract";
@@ -67,9 +68,7 @@
   // gated on its setting, and stays visible while it is the current selection.
   const simultaneous = $derived(store.selectedServers.length > 1);
   const selectedServers = $derived(
-    store.serverCatalog?.servers.filter((server) =>
-      store.selectedServers.includes(server.id),
-    ) ?? [],
+    catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const globalThroughput = $derived(
     store.config.transports.throughputTarget.startsWith("protocol:") ||

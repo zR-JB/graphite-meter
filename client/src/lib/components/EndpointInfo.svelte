@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { catalogSelection } from "../presentation/serverAppearance";
   import {
     presentConnections,
     emptyConnectionValidation,
@@ -34,9 +35,7 @@
   const availableServers = $derived(
     store.activeServers.length
       ? store.activeServers.map((entry) => entry.server)
-      : (store.serverCatalog?.servers.filter((server) =>
-          store.selectedServers.includes(server.id),
-        ) ?? []),
+      : catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const selectedServer = $derived(
     availableServers.find((server) => server.id === inspectedServer) ??

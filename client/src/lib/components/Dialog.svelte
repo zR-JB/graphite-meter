@@ -2,7 +2,7 @@
   // Modal shell over native <dialog>: showModal() supplies the top layer,
   // background inertness, the focus trap and Escape. The owner keeps the
   // open state; every native close is reported through onCancel.
-  import { tick, type Snippet } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { canFocus, hasFocus } from "../actions/focus";
 
   interface Props {
@@ -43,16 +43,12 @@
   $effect(() => {
     if (!open) return;
     reported = false;
-    const opener =
-      invoker ??
-      (document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null);
+    const opener = untrack(() => invoker) ?? document.activeElement;
     dialog.showModal();
     return () => {
       dialog.close();
       void tick().then(() => {
-        if (!hasFocus() && canFocus(opener))
+        if (!hasFocus() && opener instanceof HTMLElement && canFocus(opener))
           opener.focus({ preventScroll: true });
       });
     };

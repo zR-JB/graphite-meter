@@ -1,4 +1,4 @@
-import type { ServerIdentity } from "../servers/catalog";
+import type { ServerCatalog, ServerIdentity } from "../servers/catalog";
 
 export function serverAccent(
   server: ServerIdentity,
@@ -23,4 +23,11 @@ export function serverLabel(
     !server.name.toLowerCase().includes(server.location.toLowerCase())
     ? `${server.name} · ${server.location}`
     : server.name;
+}
+
+export function catalogSelection(
+  catalog: ServerCatalog | null,
+  ids: readonly string[],
+) {
+  return catalog?.servers.filter((server) => ids.includes(server.id)) ?? [];
 }

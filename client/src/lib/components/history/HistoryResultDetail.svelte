@@ -465,9 +465,6 @@
     border-top: 1px solid var(--border);
     padding-top: var(--space-3);
   }
-  .disclosure > summary {
-    cursor: pointer;
-  }
   .disclosure[open] > summary {
     margin-bottom: var(--space-3);
   }

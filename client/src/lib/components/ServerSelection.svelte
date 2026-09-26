@@ -2,7 +2,11 @@
   import { tooltip } from "../actions/tooltip";
   import { fmtMs } from "../format";
   import ServerScope from "./ServerScope.svelte";
-  import { serverAccent, serverLabel } from "../presentation/serverAppearance";
+  import {
+    serverAccent,
+    serverLabel,
+    catalogSelection,
+  } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   const controller = getApplicationController();
@@ -29,9 +33,7 @@
     }
   }
   const selected = $derived(
-    store.serverCatalog?.servers.filter((server) =>
-      store.selectedServers.includes(server.id),
-    ) ?? [],
+    catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const locked = $derived(store.isRunning || store.preparing);
   const problems = $derived(

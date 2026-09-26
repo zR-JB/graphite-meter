@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { catalogSelection } from "../presentation/serverAppearance";
   import { onMount } from "svelte";
   import { prefersReducedMotion } from "svelte/motion";
   import { store } from "../state/store.svelte";
@@ -30,10 +31,7 @@
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
-      store.serverCatalog?.servers.filter((server) =>
-        store.selectedServers.includes(server.id),
-      ) ??
-      [],
+      catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const serverIndicator = $derived(
     store.isRunning

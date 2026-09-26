@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { catalogSelection } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import ServerScope from "./ServerScope.svelte";
@@ -9,10 +10,7 @@
   const controller = getApplicationController();
   const servers = $derived(
     store.serverDetails?.selection ??
-      store.serverCatalog?.servers.filter((server) =>
-        store.selectedServers.includes(server.id),
-      ) ??
-      [],
+      catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const unmeasured = $derived(
     servers
