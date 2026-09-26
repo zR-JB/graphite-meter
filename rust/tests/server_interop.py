@@ -25,9 +25,18 @@ def unused_port(kind: int) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--server", type=Path, default=ROOT / "rust/target/debug/graphite-meter-server")
+    parser.add_argument("--server", type=Path, help="Prebuilt server binary")
     args = parser.parse_args()
-    directory = Path(tempfile.mkdtemp(prefix="server-interop-", dir=ROOT / "rust/target"))
+    if args.server is None:
+        subprocess.run(
+            ["cargo", "build", "--locked", "-p", "graphite-meter-server", "--bin", "graphite-meter-server"],
+            cwd=ROOT / "rust",
+            check=True,
+        )
+        args.server = ROOT / "rust/target/debug/graphite-meter-server"
+    target = ROOT / "rust/target"
+    target.mkdir(exist_ok=True)
+    directory = Path(tempfile.mkdtemp(prefix="server-interop-", dir=target))
     print(f"Evidence: {directory}", flush=True)
     cert, key = directory / "cert.pem", directory / "key.pem"
     subprocess.run([
