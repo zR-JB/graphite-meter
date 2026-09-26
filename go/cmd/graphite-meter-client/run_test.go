@@ -485,7 +485,7 @@ func TestMultiServerRunViews(t *testing.T) {
 			{
 				Kind:     goclient.EventServerFailure,
 				ServerID: "b",
-				Failure:  &goclient.ServerFailure{ServerID: "b", Message: "connection lost"},
+				Failure:  &goclient.ServerFailure{ServerID: "b", Err: errors.New("connection lost")},
 			},
 		},
 	}))

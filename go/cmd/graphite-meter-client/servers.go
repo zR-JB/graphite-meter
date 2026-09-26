@@ -298,7 +298,7 @@ func (m model) detailsView(w int) string {
 		lines = append(lines, "", mutedStyle.Render("Left the test"))
 		for _, f := range details.Failures {
 			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s",
-				r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), f.Message))
+				r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), errorText(f.Err)))
 		}
 	}
 	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {

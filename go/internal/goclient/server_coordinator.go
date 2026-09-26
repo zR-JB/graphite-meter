@@ -202,7 +202,7 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		Stage:    stage.Name,
 		Scope:    scope,
 		Reason:   "connection-lost",
-		Message:  err.Error(),
+		Err:      err,
 		At:       at.Sub(c.started),
 	}
 	if _, ok := errors.AsType[*AuthRequiredError](err); ok {

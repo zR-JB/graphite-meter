@@ -457,7 +457,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 					if !errors.Is(err, errNoSurvivors) ||
 						details == nil ||
 						len(details.Failures) != 1 ||
-						!strings.Contains(details.Failures[0].Message, "stopped delivering bytes") {
+						!strings.Contains(details.Failures[0].Err.Error(), "stopped delivering bytes") {
 						t.Fatalf("stalled participant survived: err=%v details=%+v", err, details)
 					}
 					if time.Since(started) >= duration {

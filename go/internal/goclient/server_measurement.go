@@ -39,10 +39,11 @@ type AggregationInterval struct {
 }
 
 type ServerFailure struct {
-	ServerID               string
-	Stage                  Stage
-	Scope, Reason, Message string
-	At                     time.Duration
+	ServerID      string
+	Stage         Stage
+	Scope, Reason string
+	Err           error
+	At            time.Duration
 }
 
 type measurementBoundary struct {

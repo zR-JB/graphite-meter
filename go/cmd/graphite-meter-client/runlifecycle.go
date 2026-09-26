@@ -265,7 +265,7 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
 	case goclient.EventServerFailure:
-		m.notice = r.serverName(e.ServerID) + ": " + e.Failure.Message
+		m.notice = r.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
 		state := map[goclient.Phase]stageState{

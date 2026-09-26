@@ -354,7 +354,14 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	partial, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, run: preparedFixture(nil, remote), err: remote}))
 	m.run = newRunState(m.cfg, "")
 	m.run.err, m.run.outcome = remote, goclient.OutcomeFailed
-	for _, view := range []string{failed.View(), partial.View(), m.View(), m.finalReport()} {
+	multi := runModel(t, "a", "b")
+	failure := goclient.ServerFailure{ServerID: "b", Scope: "throughput", Err: remote}
+	multi.run.details.Failures = []goclient.ServerFailure{failure}
+	multi, _ = modelAndCmd(multi.Update(eventsMsg{seq: multi.runSeq, events: []goclient.Event{
+		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
+	}}))
+	views := []string{failed.View(), partial.View(), m.View(), m.finalReport(), multi.View(), multi.detailsView(120)}
+	for _, view := range views {
 		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
 			strings.Contains(view, "\x1b]") {
 			t.Fatalf("remote error reached the terminal unfiltered: %q", view)
