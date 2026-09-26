@@ -110,6 +110,14 @@ function resolveSteps(steps: Step[]): Element[] {
   return nodes;
 }
 
+function reportPolicyViolations() {
+  document.addEventListener("securitypolicyviolation", (event) =>
+    console.error(
+      `CSP violation: ${event.effectiveDirective} ${event.blockedURI}`,
+    ),
+  );
+}
+
 function firstElement(elements: Element[]) {
   if (!elements[0]) throw new Error("no element");
   return elements[0];
@@ -236,14 +244,22 @@ export class Page {
         stderr: process.env.GM_WEBVIEW_DEBUG ? "inherit" : "ignore",
       },
       dataStore: "ephemeral",
-      console: (type, ...args) =>
-        this.console.push(`${type}: ${args.map(String).join(" ")}`),
+      console: (type, ...args) => {
+        const line = args
+          .map((arg) => (arg as { description?: string })?.description ?? arg)
+          .join(" ");
+        this.console.push(`${type}: ${line}`);
+        if (type === "error") this.errors.push(`console.error: ${line}`);
+      },
     });
   }
   private init() {
     this.ready ??= (async () => {
       await this.raw.navigate("about:blank");
       await this.raw.cdp("Runtime.enable");
+      await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
+        source: `(${reportPolicyViolations})()`,
+      });
       this.raw.addEventListener("Runtime.exceptionThrown", (event: any) => {
         const details = event.data.exceptionDetails;
         this.errors.push(details.exception?.description ?? details.text);
