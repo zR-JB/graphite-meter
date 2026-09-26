@@ -4,7 +4,7 @@
   import { Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs, fmtMsTick } from "../format";
   import {
     entries,
@@ -219,7 +219,7 @@
               : "waiting"
             : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        <em class="jit" {@attach tooltip(() => JARGON.jitter)}
+        <em class="jit"
           >{lane.jitter == null
             ? `jitter ${MISSING}`
             : `${fmtMs(lane.jitter)} ms jitter`}</em
@@ -417,15 +417,14 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  /* Fixed bases keep changing numbers from moving the median. */
+  /* Fixed widths keep changing numbers from moving the median; a narrow lane drops facts, never truncates them. */
   .lane-meta em {
-    flex: 0 1 14ch;
-    min-width: 0;
-    overflow: hidden;
+    flex: none;
+    min-width: 15ch;
     color: var(--text-muted);
     font: 400 var(--type-2xs) var(--font-mono);
     font-variant-numeric: tabular-nums;
-    text-overflow: ellipsis;
+    text-align: end;
     white-space: nowrap;
   }
   .accounting-slot {
@@ -637,9 +636,13 @@
     top: 3px;
     bottom: 3px;
   }
-  @container latency-lanes (max-width: 420px) {
-    .jit,
+  @container latency-lanes (max-width: 500px) {
     .range-label {
+      display: none;
+    }
+  }
+  @container latency-lanes (max-width: 400px) {
+    .jit {
       display: none;
     }
   }
