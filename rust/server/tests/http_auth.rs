@@ -129,7 +129,7 @@ impl Harness {
         let (headers, _) = self.request("GET", "/login", "", "").await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
         let nonce = cookie(&headers, "__Host-gm_login");
-        let body = url::form_urlencoded::Serializer::new(String::new())
+        let body = form_urlencoded::Serializer::new(String::new())
             .append_pair("csrf", &nonce)
             .append_pair("password", "correct horse battery staple")
             .finish();
@@ -286,7 +286,7 @@ async fn password_flow() {
     let (mut websocket, _) = tokio_tungstenite::client_async(ws_request, h.connect().await)
         .await
         .unwrap();
-    let logout = url::form_urlencoded::Serializer::new(String::new())
+    let logout = form_urlencoded::Serializer::new(String::new())
         .append_pair("csrf", &csrf)
         .finish();
     let (logged_out, _) = h

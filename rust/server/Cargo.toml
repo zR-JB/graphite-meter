@@ -23,8 +23,8 @@ base64 = "0.22.1"
 subtle = "2.6.1"
 http = "1"
 httpdate = "1.0.3"
+form_urlencoded = "1.2.2"
 socket2 = { version = "0.6.5", features = ["all"] }
-time = { version = "0.3.55", default-features = false, features = ["formatting"] }
 h2 = "0.4.19"
 hyper = { version = "1.11.1", features = ["server", "http1", "http2"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }
@@ -41,7 +41,6 @@ rustls = { version = "0.23.45", default-features = false, features = ["std", "tl
 tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring"] }
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-x509-cert = { version = "0.3.0", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "net", "signal", "io-util", "time"] }
 
 [target.'cfg(unix)'.dependencies]

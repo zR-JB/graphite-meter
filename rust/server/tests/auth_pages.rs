@@ -198,10 +198,10 @@ fn continue_encodes_challenge_as_one_query_value() {
         opening: true,
     };
     let destination = page.destination();
-    let parsed = url::Url::parse(&format!("https://meter.example{destination}")).unwrap();
-    assert_eq!(parsed.path(), "/auth/cli");
+    let (path, query) = destination.split_once('?').unwrap();
+    assert_eq!(path, "/auth/cli");
     assert_eq!(
-        parsed.query_pairs().collect::<Vec<_>>(),
+        form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>(),
         [("challenge".into(), page.challenge.into())]
     );
     let html = page.render().unwrap();

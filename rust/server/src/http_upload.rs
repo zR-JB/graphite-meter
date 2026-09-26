@@ -165,7 +165,7 @@ impl HttpServer {
 }
 
 fn upload_id<B>(request: &Request<B>) -> String {
-    url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
         .find(|(key, _)| key == "id")
         .map(|(_, value)| value.into_owned())
         .unwrap_or_default()

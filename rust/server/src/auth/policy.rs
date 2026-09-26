@@ -491,7 +491,7 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
 }
 
 fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
-    url::form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
         .find(|(key, _)| key == name)
         .map(|(_, value)| value.into_owned())
 }

@@ -781,7 +781,7 @@ impl Operation {
 }
 
 fn download_bytes(query: &str) -> u64 {
-    let value = url::form_urlencoded::parse(query.as_bytes())
+    let value = form_urlencoded::parse(query.as_bytes())
         .find(|(key, _)| key == "bytes")
         .map(|(_, value)| value);
     value

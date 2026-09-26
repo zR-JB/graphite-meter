@@ -52,7 +52,7 @@ impl ContinuePage<'_> {
         if self.challenge.is_empty() {
             return "/".into();
         }
-        let query = url::form_urlencoded::Serializer::new(String::new())
+        let query = form_urlencoded::Serializer::new(String::new())
             .append_pair("challenge", self.challenge)
             .finish();
         format!("/auth/cli?{query}")

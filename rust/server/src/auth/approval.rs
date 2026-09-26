@@ -258,7 +258,7 @@ impl SessionStore {
             return None;
         }
         let origin = approval.browser_origin.as_ref()?;
-        let query = url::form_urlencoded::Serializer::new(String::new())
+        let query = form_urlencoded::Serializer::new(String::new())
             .append_pair("challenge", challenge)
             .append_pair("client_origin", origin)
             .finish();

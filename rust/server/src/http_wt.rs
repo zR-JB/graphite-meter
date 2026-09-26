@@ -138,7 +138,7 @@ impl HttpServer {
             ) => result??,
         }
         let query = request.uri().query().unwrap_or("");
-        let params: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).collect();
+        let params: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
         let value = |name: &str| {
             params
                 .iter()
