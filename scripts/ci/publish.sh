@@ -51,36 +51,32 @@ publish_image() {
 promote_aliases() {
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   [[ "$VERSION" =~ ^$STABLE$ ]] || fail "invalid stable version: $VERSION"
-  local series=${VERSION%.*} requested="v$VERSION" tags latest current
+  local series=${VERSION%.*} tags
   tags=$(gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
     --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
     | { grep -E "^v$STABLE\$" || true; } | sort -V)
-  [[ -n "$tags" ]] || fail "no published stable releases found"
-  latest=$(tail -n1 <<<"$tags")
-  current=$(grep -E "^v${series//./\\.}\\.[0-9]+\$" <<<"$tags" | tail -n1 || true)
-  [[ -n "$current" ]] || fail "no published release found for series $series"
-  [[ "$requested" == "$current" ]] || echo "::notice::skip $series alias: $requested is older than $current"
-  [[ "$requested" == "$latest" ]] || echo "::notice::skip latest alias: $requested is older than $latest"
-  local promote_series=false promote_latest=false
-  [[ "$requested" != "$current" ]] || promote_series=true
-  [[ "$requested" != "$latest" ]] || promote_latest=true
+  grep -qx "v$VERSION" <<<"$tags" || fail "v$VERSION is not a published stable release yet"
+  # Aliases follow the highest published releases, so any later run repairs a cancelled one.
   registry '
     [ "$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$VERSION")" = "$DIGEST" ] || {
       echo "$VERSION is not the verified $DIGEST" >&2
       exit 1
     }
     promote() {
-      skopeo copy --all --preserve-digests "docker://$IMAGE@$DIGEST" "docker://$IMAGE:$1"
-      [ "$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$1")" = "$DIGEST" ] || {
-        echo "$1 does not match the verified $DIGEST" >&2
+      digest=$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$2")
+      case $digest in sha256:*) ;; *) echo "$2 has no digest" >&2; exit 1 ;; esac
+      skopeo copy --all --preserve-digests "docker://$IMAGE@$digest" "docker://$IMAGE:$1"
+      [ "$(skopeo inspect --format "{{.Digest}}" "docker://$IMAGE:$1")" = "$digest" ] || {
+        echo "$1 does not match $2 at $digest" >&2
         exit 1
       }
-      echo "promoted $IMAGE:$1 -> $DIGEST"
+      echo "promoted $IMAGE:$1 -> $2 @ $digest"
     }
-    if [ "$PROMOTE_SERIES" = true ]; then promote "$SERIES"; fi
-    if [ "$PROMOTE_LATEST" = true ]; then promote latest; fi
-  ' -e VERSION -e SERIES="$series" -e PROMOTE_SERIES="$promote_series" \
-    -e PROMOTE_LATEST="$promote_latest"
+    promote "$SERIES" "$SERIES_TARGET"
+    promote latest "$LATEST_TARGET"
+  ' -e VERSION -e SERIES="$series" \
+    -e SERIES_TARGET="$(grep -E "^v${series//./\\.}\\.[0-9]+\$" <<<"$tags" | tail -n1 | cut -c2-)" \
+    -e LATEST_TARGET="$(tail -n1 <<<"$tags" | cut -c2-)"
 }
 
 resolve_tag_target() {

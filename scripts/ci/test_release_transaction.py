@@ -10,16 +10,17 @@ import unittest
 
 SCRIPT = pathlib.Path(__file__).resolve().parent / "publish.sh"
 VERIFIED = "sha256:" + "a" * 64
-MOVED = "sha256:" + "b" * 64
+OTHER = "sha256:" + "b" * 64
+# Skopeo keeps registry tags as TAG=DIGEST lines in $TAGS.
 SKOPEO = """#!/bin/sh
-echo "$*" >>"$SKOPEO_LOG"
 case "$1 $4" in
-  "copy "*) echo "VERSION_DIGEST=$DIGEST" >"$SKOPEO_LOG.state" ;;
-  "inspect docker://"*:1.2.3)
-    [ ! -f "$SKOPEO_LOG.state" ] || . "$SKOPEO_LOG.state"
-    [ -n "$VERSION_DIGEST" ] || { echo "manifest unknown" >&2; exit 1; }
-    echo "$VERSION_DIGEST" ;;
-  inspect*) echo "$DIGEST" ;;
+  "copy oci-archive:"*) echo "${5##*:}=$DIGEST" >>"$TAGS" ;;
+  "copy "*) echo "${5##*:}=${4##*@}" >>"$TAGS" ;;
+  "inspect oci-archive:"*) echo "$DIGEST" ;;
+  inspect*)
+    digest=$(grep "^${4##*:}=" "$TAGS" | tail -n1 | cut -d= -f2)
+    [ -n "$digest" ] || { echo "manifest unknown" >&2; exit 1; }
+    echo "$digest" ;;
 esac
 """
 # Docker runs the in-container script on the host and records its argv.
@@ -203,16 +204,18 @@ published=$(wait_for_release_published "test convergence")
 
 
 class RegistryTests(unittest.TestCase):
-    def run_script(self, command: str, version_digest: str = "",
-                   releases: str = "v1.2.3") -> tuple[int, str, str]:
+    def run_script(self, command: str, registry: dict[str, str],
+                   releases: str = "v1.2.3") -> tuple[int, str, dict[str, str]]:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "skopeo").write_text(SKOPEO)
             (root / "skopeo").chmod(0o755)
+            tags = root / "tags"
+            (root / "docker.log").touch()
+            tags.write_text("".join(f"{tag}={digest}\n" for tag, digest in registry.items()))
             env = os.environ | {
-                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}",
-                "SKOPEO_LOG": str(root / "skopeo.log"), "DOCKER_LOG": str(root / "docker.log"),
-                "DIGEST": VERIFIED, "VERSION_DIGEST": version_digest,
+                "PATH": f"{directory}{os.pathsep}{os.environ['PATH']}", "TAGS": str(tags),
+                "DOCKER_LOG": str(root / "docker.log"), "DIGEST": VERIFIED,
                 "REGISTRY_TOKEN": "secret-token", "REPOSITORY": "Owner/Repo",
                 "REGISTRY_ACTOR": "owner", "VERSION": "1.2.3", "IMAGE_TAG": "1.2.3",
                 "ARCHIVE_DIR": directory, "SKOPEO_IMAGE": "skopeo", "RELEASES": releases,
@@ -220,38 +223,38 @@ class RegistryTests(unittest.TestCase):
             result = subprocess.run(["bash", "-c", f"{SHIM}source {SCRIPT} {command}"], env=env,
                                     capture_output=True, text=True)
             self.assertNotIn("secret-token", (root / "docker.log").read_text())
-            log = (root / "skopeo.log").read_text()
-            return result.returncode, result.stdout + result.stderr, log
+            state = dict(line.split("=", 1) for line in tags.read_text().splitlines())
+            return result.returncode, result.stdout + result.stderr, state
 
     def test_image_publication_is_exact_and_idempotent(self) -> None:
-        status, output, log = self.run_script("image")
-        self.assertEqual(status, 0, output)
-        self.assertIn("copy --all --preserve-digests oci-archive:/work/graphite-meter.oci.tar "
-                      "docker://ghcr.io/owner/repo:1.2.3", log)
-        status, output, log = self.run_script("image", VERIFIED)
-        self.assertEqual((status, "copy" in log), (0, False), output)
-        status, output, _ = self.run_script("image", MOVED)
+        status, output, tags = self.run_script("image", {})
+        self.assertEqual((status, tags), (0, {"1.2.3": VERIFIED}), output)
+        status, output, tags = self.run_script("image", {"1.2.3": VERIFIED})
+        self.assertEqual((status, tags), (0, {"1.2.3": VERIFIED}), output)
+        status, output, _ = self.run_script("image", {"1.2.3": OTHER})
         self.assertNotEqual(status, 0)
         self.assertIn("already exists", output)
 
-    def test_aliases_copy_only_the_verified_digest(self) -> None:
-        status, output, log = self.run_script("aliases", VERIFIED, "v1.1.9 v1.2.3")
-        self.assertEqual(status, 0, output)
-        for alias in ("1.2", "latest"):
-            self.assertIn(f"copy --all --preserve-digests docker://ghcr.io/owner/repo@{VERIFIED} "
-                          f"docker://ghcr.io/owner/repo:{alias}", log)
+    def test_aliases_follow_the_highest_published_releases(self) -> None:
+        for releases, series, latest in (
+            ("v1.1.9 v1.2.3", VERIFIED, VERIFIED),
+            ("v1.2.3 v1.10.0", VERIFIED, OTHER),
+            ("v1.2.3 v1.2.4", OTHER, OTHER),
+        ):
+            registry = {"1.2.3": VERIFIED, "1.2.4": OTHER, "1.10.0": OTHER, "1.1.9": OTHER}
+            with self.subTest(releases=releases):
+                status, output, tags = self.run_script("aliases", registry, releases)
+                self.assertEqual(status, 0, output)
+                self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
 
-    def test_a_moved_version_tag_stops_promotion(self) -> None:
-        status, output, log = self.run_script("aliases", MOVED)
-        self.assertNotEqual(status, 0)
-        self.assertIn("not the verified", output)
-        self.assertNotIn("copy", log)
-
-    def test_an_older_series_is_promoted_without_latest(self) -> None:
-        status, output, log = self.run_script("aliases", VERIFIED, "v1.2.3 v1.10.0")
-        self.assertEqual(status, 0, output)
-        self.assertIn("promoted ghcr.io/owner/repo:1.2", output)
-        self.assertNotIn(":latest", log)
+    def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
+        for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),
+                                          ({"1.2.3": VERIFIED}, "v1.2.2", "not a published")):
+            with self.subTest(error=error):
+                status, output, tags = self.run_script("aliases", registry, releases)
+                self.assertNotEqual(status, 0)
+                self.assertIn(error, output)
+                self.assertNotIn("latest", tags)
 
 
 if __name__ == "__main__":
