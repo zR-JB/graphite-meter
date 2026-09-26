@@ -225,8 +225,9 @@ export class LatencyPopulation {
   get count(): number {
     return this.#replies + this.#timeouts;
   }
-  get timeoutPct(): number | null {
-    return this.count ? (100 * this.#timeouts) / this.count : null;
+  /** Timeouts over resolved probes; interrupted probes and send failures stay out. */
+  get timeoutRatio(): number | null {
+    return this.count ? this.#timeouts / this.count : null;
   }
 
   observe(sample: LatencyObservation, continuity = 0): void {
@@ -400,7 +401,8 @@ export class ServerLatency {
       p50Ms: summary.p50Ms,
       p95Ms: summary.p95Ms,
       jitterMs: summary.jitterMs,
-      probeTimeoutPct: idle.timeoutPct,
+      probeTimeoutPct:
+        idle.timeoutRatio === null ? null : idle.timeoutRatio * 100,
       method: "full-average",
       stabilityScore: this.#score,
       band: bandForState(this.#stable, this.#score),
