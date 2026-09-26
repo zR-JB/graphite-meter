@@ -65,6 +65,11 @@ export interface PreparedServer {
   server: ServerIdentity;
   paths: PreparedPaths;
 }
+export interface DroppedServer {
+  server: ServerIdentity;
+  reason: FailureReason;
+  message: string;
+}
 
 const TICK_MS = 60;
 const STABILITY_CADENCE_MS = 100;
@@ -170,12 +175,17 @@ export class Run {
   #bytes = 0;
   #continuity = 0;
 
+  /** Servers that failed their check before the run, shown with the reason they were left out. */
+  readonly #dropped: DroppedServer[];
+
   constructor(
     servers: PreparedServer[],
     latencySource: string,
+    dropped: DroppedServer[] = [],
     create: (options: StageOptions) => StageTransport = (options) =>
       new ServerStage(options),
   ) {
+    this.#dropped = dropped;
     const ids = new Set(servers.map((entry) => entry.server.id));
     if (!servers.length || servers.length > 4 || ids.size !== servers.length)
       throw new Error("Select one to four different servers");
@@ -269,6 +279,14 @@ export class Run {
     this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
+    for (const { server, reason, message } of this.#dropped)
+      this.#record(
+        server.id,
+        "throughput",
+        reason,
+        message,
+        this.#segments[0]?.activity.stage,
+      );
     this.#running = true;
     this.#tick();
     this.#arm();
@@ -1283,7 +1301,9 @@ export class Run {
   details(): MultiServerResult {
     const aggregate = this.#aggregate;
     return {
-      selection: this.#servers.map((server) => server.server),
+      selection: [...this.#servers, ...this.#dropped].map(
+        ({ server }) => server,
+      ),
       participants: this.#ids(),
       latencyFocus: this.#latencySource.server.id,
       intervals: structuredClone(aggregate.intervals),

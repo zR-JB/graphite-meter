@@ -233,6 +233,35 @@ test("a failed Start stays idle and lapses once its selection verifies", async (
   );
 });
 
+test("a server that fails its start check is left out while another survives", async () => {
+  let dead = false;
+  const runner = new TestRunner();
+  const started: Parameters<NonNullable<Dependencies["createRunner"]>>[] = [];
+  await withController(
+    {
+      servers: ["self", remote("peer")],
+      selected: ["self", "peer"],
+      discover: async (_signal, credentials) => {
+        if (dead && credentials.server.id === "peer")
+          throw new Error("offline");
+        return testServerDiscovery();
+      },
+      createRunner: (...args) => (started.push(args), runner),
+    },
+    async ({ controller, view }) => {
+      await until(() => view("peer").readiness === "verified");
+      dead = true;
+      controller.toggleRun();
+      await until(() => runner.starts === 1);
+      const [[servers, , dropped]] = started;
+      expect(servers.map(({ server }) => server.id)).toEqual(["self"]);
+      expect(dropped).toMatchObject([
+        { server: { id: "peer" }, reason: "preparation-failed" },
+      ]);
+    },
+  );
+});
+
 test("idle latency stops before the run starts and resumes after abort", async () => {
   await withController({}, async ({ controller, runner, idle }) => {
     expect(idle()).toBe(true);

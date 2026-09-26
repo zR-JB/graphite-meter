@@ -8,6 +8,7 @@ import {
   type SessionBudget,
 } from "../auth";
 import {
+  identity,
   parseCatalog,
   allowsServerOrigin,
   reconcileSelection,
@@ -30,7 +31,7 @@ import type {
   RunnerConfig,
   RunnerEvent,
 } from "./contract";
-import { Run, type PreparedServer } from "./run";
+import { Run, type DroppedServer, type PreparedServer } from "./run";
 import { discoverServer, prepareConnections } from "./real/prepare";
 import type {
   store as applicationStore,
@@ -55,7 +56,11 @@ interface ApplicationDependencies {
   loadCatalog: (signal: AbortSignal) => Promise<ServerCatalog>;
   discover: ConnectionHost["discover"];
   prepare: ConnectionHost["prepare"];
-  createRunner: (servers: PreparedServer[], focus: string) => Runner;
+  createRunner: (
+    servers: PreparedServer[],
+    focus: string,
+    dropped: DroppedServer[],
+  ) => Runner;
 }
 export type Runner = Pick<
   Run,
@@ -85,7 +90,7 @@ export function createApplicationController(
   const fetchCatalog = dependencies.loadCatalog ?? loadServerCatalog;
   const createRunner =
     dependencies.createRunner ??
-    ((servers: PreparedServer[], focus: string) => new Run(servers, focus));
+    ((servers, focus, dropped) => new Run(servers, focus, dropped));
 
   const connections = new Map<string, ServerConnection>();
   let metadataWanted = false;
@@ -570,7 +575,7 @@ export function createApplicationController(
     );
     if (!live()) return;
     const prepared: PreparedServer[] = [];
-    const failures: string[] = [];
+    const dropped: DroppedServer[] = [];
     for (const connection of servers) {
       const { server, view } = connection;
       const paths = connection.paths();
@@ -579,11 +584,23 @@ export function createApplicationController(
       else if (!view.message)
         throw new DOMException("Connection selection changed", "AbortError");
       else
-        failures.push(
-          servers.length > 1 ? `${server.name}: ${view.message}` : view.message,
-        );
+        dropped.push({
+          server: identity(server),
+          reason:
+            view.readiness === "sign-in"
+              ? "sign-in-required"
+              : "preparation-failed",
+          message: view.message,
+        });
     }
-    if (failures.length) throw new Error(failures.join("; "));
+    if (!prepared.length)
+      throw new Error(
+        dropped
+          .map(({ server, message }) =>
+            servers.length > 1 ? `${server.name}: ${message}` : message,
+          )
+          .join("; "),
+      );
     const focus =
       (store.latencySelection.mode === "primary" &&
         prepared.find(
@@ -600,7 +617,7 @@ export function createApplicationController(
     store.latencyFocus = focus.server.id;
     releaseRunner();
     wake();
-    const owner = createRunner(prepared, focus.server.id);
+    const owner = createRunner(prepared, focus.server.id, dropped);
     runner = owner;
     // Only the current run may write the store, even through a retained callback.
     unsubscribe = owner.on((event) => {

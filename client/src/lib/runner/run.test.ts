@@ -11,6 +11,7 @@ import type {
   RunnerEvent,
 } from "./contract";
 import type { ParticipantHost, StageTransport } from "./transport";
+import type { DroppedServer } from "./run";
 import { buildHistoryRecord, readHistoryRecord } from "../history/types";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { STAGES } from "./schedule";
@@ -65,6 +66,7 @@ async function harness(
     latencySource?: string;
     adaptive?: boolean;
     loadedLatency?: boolean;
+    dropped?: DroppedServer[];
   } = {},
 ) {
   const { Run } = await import("./run");
@@ -81,6 +83,7 @@ async function harness(
   const run = new Run(
     servers,
     options.latencySource ?? peers[0].id,
+    options.dropped,
     ({ host, paths, activity }) => {
       const peer = peers.find(
         (entry) =>
@@ -319,6 +322,29 @@ test("a late dropout keeps the headline of the interval every server finished", 
   expect(result.multiServer.failures).toMatchObject([
     { serverId: "a", stage: "download", scope: "throughput" },
   ]);
+});
+
+test("a server whose check failed before the run is shown with its reason while the rest measure", async () => {
+  const peer = { id: "peer", url: "https://peer.example", name: "Peer" };
+  const h = await harness(
+    [{ id: "self", rate: 2 }],
+    { download: true },
+    { downloadMs: 1_000 },
+    {
+      dropped: [
+        { server: peer, reason: "preparation-failed", message: "unreachable" },
+      ],
+    },
+  );
+  h.start();
+  const { multiServer, stages, outcome } = await h.result();
+  expect(multiServer.selection.map(({ id }) => id)).toEqual(["self", "peer"]);
+  expect(multiServer.participants).toEqual(["self"]);
+  expect(multiServer.failures).toMatchObject([
+    { serverId: "peer", stage: "download", reason: "preparation-failed" },
+  ]);
+  expect(stages.download).toBe("partial");
+  expect(outcome).toBe("partial");
 });
 
 test("server failure text is bounded and dropped when it could disguise itself", async () => {
