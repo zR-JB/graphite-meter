@@ -121,28 +121,18 @@ func WTDownload(stream StreamFunc, idleBound time.Duration) SessionHandler {
 			}
 			return
 		}
-		lanes := laneOpener(func(ctx context.Context) (laneStream, error) {
-			return sess.OpenUniStreamSync(ctx)
-		})
 		for range wtStreamCount(query) {
-			wg.Go(func() { serveDownloadLane(ctx, stream, lanes, n, live) })
+			wg.Go(func() { serveDownloadLane(ctx, stream, sess, n, live) })
 		}
 		wg.Wait()
 	}
 }
 
-type laneStream interface {
-	io.WriteCloser
-	CancelWrite(webtransport.StreamErrorCode)
-	SetWriteDeadline(time.Time) error
-}
-
-type laneOpener func(context.Context) (laneStream, error)
-
 // serveDownloadLane replaces each exhausted lane while the peer keeps draining.
-func serveDownloadLane(ctx context.Context, stream StreamFunc, lanes laneOpener, n int64, live *sessionActivity) {
+func serveDownloadLane(ctx context.Context, stream StreamFunc, sess *webtransport.Session, n int64,
+	live *sessionActivity) {
 	for ctx.Err() == nil {
-		str, err := lanes(ctx)
+		str, err := sess.OpenUniStreamSync(ctx)
 		if err != nil {
 			return
 		}
@@ -169,7 +159,7 @@ func (c *laneWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func withWTWriteStream(ctx context.Context, str laneStream, serve func()) {
+func withWTWriteStream(ctx context.Context, str *webtransport.SendStream, serve func()) {
 	defer str.Close()
 	defer transport.UnblockWritesOnDone(ctx, str)()
 	serve()
