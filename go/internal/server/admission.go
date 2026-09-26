@@ -197,17 +197,10 @@ func socketKeys(addr net.Addr, trusted []netip.Prefix) []string {
 		}
 		ip = addrPort.Addr()
 	}
-	switch ip = ip.Unmap(); {
-	case transport.Trusted(ip, trusted):
+	if transport.Trusted(ip, trusted) {
 		return nil
-	case ip.Is4():
-		return []string{ip.String()}
 	}
-	var keys []string
-	for _, bits := range []int{64, 56, 48} {
-		keys = append(keys, netip.PrefixFrom(ip, bits).Masked().String())
-	}
-	return keys
+	return transport.AddressBuckets(ip)
 }
 
 func (a *connectionAdmission) acquire(addr net.Addr, quic bool) (func(), bool) {

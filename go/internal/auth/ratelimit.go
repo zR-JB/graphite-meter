@@ -5,6 +5,8 @@ import (
 	"maps"
 	"net/http"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
 const (
@@ -19,26 +21,28 @@ const (
 
 func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
 	global *[]time.Time) bool {
-	key, ok := s.clientBucket(r)
+	client, ok := transport.ResolveClientAddress(r, s.trusted)
 	if !ok {
 		return false
 	}
+	keys := transport.AddressBuckets(client.Addr)
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
+	if len(store)+len(keys) > maxBudgetKeys {
 		maps.DeleteFunc(store, func(k string, times []time.Time) bool {
 			store[k] = recentAttempts(times, now)
 			return len(store[k]) == 0
 		})
-		if len(store) >= maxBudgetKeys {
+	}
+	for i, key := range keys {
+		if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
 			s.noteCeilingLocked(name+"-address", now)
 			return false
 		}
-	}
-	times := recentAttempts(store[key], now)
-	if len(times) >= limit {
-		return false
+		if store[key] = recentAttempts(store[key], now); len(store[key]) >= limit<<i {
+			return false
+		}
 	}
 	if global != nil {
 		*global = recentAttempts(*global, now)
@@ -48,7 +52,9 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 		}
 		*global = append(*global, now)
 	}
-	store[key] = append(times, now)
+	for _, key := range keys {
+		store[key] = append(store[key], now)
+	}
 	return true
 }
 

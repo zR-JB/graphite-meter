@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"net/http"
 	"net/netip"
@@ -54,6 +55,25 @@ func TestAddressBudgets(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across, so it
+// alone cannot engage the global ceiling that would lock the operator out.
+func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
+	s := testService(t)
+	allowed := 0
+	for i := range 64 {
+		remote := fmt.Sprintf("[2001:db8:0:%x::1]:40000", i<<4)
+		if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", remote)) {
+			allowed++
+		}
+	}
+	if allowed != 4*maxAddressAttempts {
+		t.Fatalf("one /48 made %d attempts, want %d", allowed, 4*maxAddressAttempts)
+	}
+	if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "[2001:db8:1::1]:40000")) {
+		t.Fatal("another allocation was refused")
 	}
 }
 

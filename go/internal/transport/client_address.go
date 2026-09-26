@@ -55,16 +55,23 @@ func Trusted(addr netip.Addr, trusted []netip.Prefix) bool {
 }
 
 // AddressBucket keys a per-client budget: an IPv4 address or an IPv6 /64.
-func AddressBucket(addr netip.Addr) string {
+func AddressBucket(addr netip.Addr) string { return AddressBuckets(addr)[0] }
+
+// AddressBuckets is the address's bucket followed, for IPv6, by the /56 and /48 that hold it; a budget gives each
+// of them twice the share of the one before, so one allocation cannot claim a budget through many /64s.
+func AddressBuckets(addr netip.Addr) []string {
 	addr = addr.Unmap()
 	switch {
 	case !addr.IsValid():
-		return "unknown"
-	case addr.Is6():
-		return netip.PrefixFrom(addr, 64).Masked().String()
-	default:
-		return addr.String()
+		return []string{"unknown"}
+	case addr.Is4():
+		return []string{addr.String()}
 	}
+	var buckets []string
+	for _, bits := range []int{64, 56, 48} {
+		buckets = append(buckets, netip.PrefixFrom(addr, bits).Masked().String())
+	}
+	return buckets
 }
 
 func clientAddress(addr netip.Addr, source ClientIPSource) ClientAddress {
