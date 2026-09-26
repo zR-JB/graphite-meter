@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { inView } from "../actions/inView";
   import Icon from "./Icon.svelte";
   import { tooltip, JARGON } from "../actions/tooltip";
   import { MISSING, STAGE } from "../presentation/vocabulary";
@@ -41,22 +42,6 @@
   }: Props = $props();
 
   let motion = $state(false);
-  function attachMotion(node: HTMLElement) {
-    let intersecting = false;
-    const update = () => {
-      motion = intersecting && !document.hidden;
-    };
-    const observer = new IntersectionObserver(([entry]) => {
-      intersecting = entry.isIntersecting;
-      update();
-    });
-    observer.observe(node);
-    document.addEventListener("visibilitychange", update);
-    return () => {
-      observer.disconnect();
-      document.removeEventListener("visibilitychange", update);
-    };
-  }
 
   const scale = $derived(domain ?? profileDomain(lanes));
   const ticks = $derived([
@@ -178,7 +163,7 @@
   class="lanes"
   data-latency-profile
   data-motion={motion && variant === "bare"}
-  {@attach variant === "bare" && attachMotion}
+  {@attach variant === "bare" && inView((seen) => (motion = seen))}
   data-variant={variant}
   role="group"
   aria-label={label}

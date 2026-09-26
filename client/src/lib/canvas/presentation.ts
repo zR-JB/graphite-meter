@@ -122,7 +122,7 @@ export class PresentationScheduler {
     this.#timer = 0;
   }
 }
-function browserEnvironment(): PresentationEnvironment {
+export function browserEnvironment(): PresentationEnvironment {
   return {
     hidden: () => typeof document !== "undefined" && document.hidden,
     now: () => performance.now(),

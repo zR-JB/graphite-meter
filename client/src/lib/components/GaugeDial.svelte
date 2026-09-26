@@ -13,6 +13,7 @@
 </script>
 
 <script lang="ts">
+  import { inView } from "../actions/inView";
   import { prefersReducedMotion } from "svelte/motion";
   import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
@@ -22,6 +23,7 @@
   let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
     $props();
   const shadeId = $props.id();
+  // CSS owns interpolation; only suppress motion when this instrument is unseen.
   let seen = $state(true);
   const motion = $derived(seen && !prefersReducedMotion.current);
   const completed = $derived(
@@ -72,27 +74,6 @@
         : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
   );
 
-  // CSS owns interpolation; only suppress motion when this instrument is unseen.
-  function attach(node: HTMLDivElement) {
-    let intersecting = true;
-    const update = () => {
-      seen = intersecting && !document.hidden;
-    };
-    const observer = new IntersectionObserver(([entry]) => {
-      intersecting = entry.isIntersecting;
-      update();
-    });
-    observer.observe(node);
-    document.addEventListener("visibilitychange", update);
-    update();
-    return () => {
-      observer.disconnect();
-      node
-        .getAnimations({ subtree: true })
-        .forEach((animation) => animation.cancel());
-      document.removeEventListener("visibilitychange", update);
-    };
-  }
   let surface = $state<HTMLDivElement>();
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
@@ -194,7 +175,7 @@
 {/snippet}
 
 <div
-  {@attach attach}
+  {@attach inView((value) => (seen = value))}
   bind:this={surface}
   class="gauge-dial"
   class:motion
