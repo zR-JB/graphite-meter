@@ -199,7 +199,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case m.auth != nil:
 		return m.handleSignInKey(msg)
 	case m.prepare == prepareSignIn && key.Matches(msg, keys.start):
-		m.notice = "Sign in first. Press v to request a new code."
+		m.notice = blocked + ": sign in first. Press v to request a new code."
 		return m, nil
 	}
 	return m.handleSetupKey(msg)

@@ -49,10 +49,11 @@ func (m model) serverName(id string) string {
 
 type readiness struct {
 	server wire.ServerEntry
-	label  string
+	state  pathState
 	detail string
-	ready  bool
 }
+
+func (r readiness) usable() bool { return r.state == pathReady || r.state == pathStale }
 
 func (m model) readiness() []readiness {
 	if m.preparedRun == nil {
@@ -60,19 +61,19 @@ func (m model) readiness() []readiness {
 	}
 	out := make([]readiness, 0, len(m.preparedRun.Servers))
 	for _, s := range m.preparedRun.Servers {
-		r := readiness{server: s.Server, label: "Ready", ready: s.Err == nil && s.Connection != nil}
+		r := readiness{server: s.Server}
 		switch {
 		case m.prepare == prepareChecking:
-			r.label, r.ready = "Checking…", false
+			r.state = pathChecking
 		case isAuthRequired(s.Err):
-			r.label = "Sign in"
-		case !r.ready:
-			r.label = "Unavailable"
+			r.state, r.detail = pathFailed, "Sign-in required."
+		case s.Err != nil || s.Connection == nil:
+			r.state = pathFailed
 			if s.Err != nil {
 				r.detail = errorText(s.Err)
 			}
 		case time.Since(m.preparedRun.VerifiedAt) > goclient.PreparationFreshness:
-			r.label = "Recheck needed"
+			r.state = pathStale
 		}
 		out = append(out, r)
 	}
@@ -82,7 +83,7 @@ func (m model) readiness() []readiness {
 func (m model) readyServers() []string {
 	var ids []string
 	for _, r := range m.readiness() {
-		if r.ready {
+		if r.usable() {
 			ids = append(ids, r.server.ID)
 		}
 	}
@@ -194,7 +195,7 @@ func (m model) serverChooserView(w, h int) (string, string) {
 		server := catalog.Servers[i]
 		label := serverLabel(server.Name, server.Location)
 		if r := slices.IndexFunc(states, func(r readiness) bool { return r.server.ID == server.ID }); r >= 0 {
-			label += " · " + states[r].label
+			label += " · " + pathLabels[states[r].state]
 		}
 		line := m.st.checkbox(slices.Contains(m.serverDraft, server.ID)) + " " + label
 		if i == m.serverRow {

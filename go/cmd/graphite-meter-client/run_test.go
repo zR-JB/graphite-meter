@@ -306,10 +306,10 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	}
 	setup := testModel(t)
 	for state, want := range map[prepareState]string{
-		prepareChecking: "Checking paths",
-		prepareSignIn:   "Sign in",
-		prepareFailed:   "Failed",
-		prepareReady:    "Recheck needed",
+		prepareChecking: "Not started",
+		prepareSignIn:   "Test cannot start",
+		prepareFailed:   "Not started",
+		prepareReady:    "Not started",
 	} {
 		setup.prepare = state
 		if got := setup.statusLabel(); got != want {
@@ -514,17 +514,19 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
 	}
+	if m.run.stages[2].state != stagePending {
+		t.Error("an unknown phase moved a stage")
+	}
 	unavailable := goclient.Result{Stage: goclient.StageDownload, Direction: goclient.Down, Unavailable: true}
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: goclient.StageDownload, Result: &unavailable})
 	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseFinished})
+	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageUpload, Phase: goclient.PhaseFinished})
 	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "! incomplete"} {
+	for _, want := range []string{"✓ 4 s", "Download      ! Incomplete", "Upload        ! Partial"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
-	}
-	if m.run.stages[2].state != stagePending {
-		t.Error("an unknown phase moved a stage")
 	}
 }
 
@@ -584,9 +586,9 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 		"A",
 		"Ready",
 		"B",
-		"Sign in",
+		"Sign-in required",
 		"C",
-		"Unavailable",
+		"Failed",
 		"connection refused",
 		"u Use available servers",
 	} {
@@ -621,7 +623,7 @@ func TestRunAgainKeepsTheLastResultsUntilTheNextRunStarts(t *testing.T) {
 	if m.run != previous || m.statusLabel() != "Checking paths" || !m.running() {
 		t.Fatalf("run again replaced the results before the run started: %q", m.statusLabel())
 	}
-	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test not started:") {
+	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test cannot start:") {
 		t.Fatalf("a failed start lost the previous run or its reason: %q", m.notice)
 	}
 }

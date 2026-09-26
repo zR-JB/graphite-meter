@@ -48,6 +48,27 @@ func directionLabel(r goclient.Result) string {
 	return "Bi-dir ↓"
 }
 
+const (
+	notStarted = "Not started"
+	blocked    = "Test cannot start"
+)
+
+type pathState int
+
+const (
+	pathReady pathState = iota
+	pathChecking
+	pathStale
+	pathFailed
+)
+
+var pathLabels = map[pathState]string{
+	pathReady:    "Ready",
+	pathChecking: "Checking",
+	pathStale:    "Recheck needed",
+	pathFailed:   "Failed",
+}
+
 var outcomeLabels = map[goclient.Outcome]string{
 	goclient.OutcomeComplete:   "Complete",
 	goclient.OutcomePartial:    "Partial",

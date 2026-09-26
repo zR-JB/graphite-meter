@@ -179,6 +179,7 @@ const (
 	stageWarmup
 	stageMeasuring
 	stageDone
+	stagePartial
 	stageIncomplete
 	stageStopped
 )
@@ -232,7 +233,7 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 
 func (m model) startRun() (tea.Model, tea.Cmd) {
 	if err := m.cfg.Validate(); err != nil {
-		m.notice = "Cannot start: " + err.Error() + "."
+		m.notice = blocked + ": " + err.Error() + "."
 		m.run, m.section, m.row = nil, 1, 0
 		return m, nil
 	}
@@ -282,7 +283,7 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 	case m.last == goclient.OutcomeStopped:
 		m.notice = "Test stopped before it started."
 	default:
-		m.notice = "Test not started: " + errorText(done.Err)
+		m.notice = blocked + ": " + errorText(done.Err)
 	}
 	return m, nil
 }
@@ -336,8 +337,13 @@ func (m *model) apply(e goclient.Event) {
 			goclient.PhaseFinished:  stageDone,
 		}[e.Phase]
 		unavailable := func(result goclient.Result) bool { return result.Stage == e.Stage && result.Unavailable }
-		if state == stageDone && slices.ContainsFunc(r.results, unavailable) {
+		left := func(f goclient.ServerFailure) bool { return f.Stage == e.Stage }
+		switch {
+		case state != stageDone:
+		case slices.ContainsFunc(r.results, unavailable):
 			state = stageIncomplete
+		case r.details != nil && slices.ContainsFunc(r.details.Failures, left):
+			state = stagePartial
 		}
 		i := slices.IndexFunc(r.stages, func(s stageProgress) bool { return s.name == e.Stage })
 		if i >= 0 && state != stagePending {
@@ -432,16 +438,8 @@ func (m model) statusLabel() string {
 		}
 		return stageLabels[r.stage]
 	}
-	switch m.prepare {
-	case prepareChecking:
-		return "Checking paths"
-	case prepareSignIn:
-		return "Sign in"
-	case prepareFailed:
-		return "Failed"
+	if m.prepare == prepareSignIn || m.cfg.Validate() != nil {
+		return blocked
 	}
-	if !m.preparedRun.FreshFor(m.cfg) {
-		return "Recheck needed"
-	}
-	return "Ready"
+	return notStarted
 }

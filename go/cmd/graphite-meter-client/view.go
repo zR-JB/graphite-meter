@@ -274,19 +274,10 @@ func (m model) planView(w int) string {
 		nameWidth = max(nameWidth, len([]rune(serverLabel(r.server.Name, r.server.Location))))
 	}
 	for _, r := range rows {
-		glyph := m.st.ok.Render("●")
-		switch r.label {
-		case "Checking…":
-			glyph = m.spin.View()
-		case "Sign in":
-			glyph = m.st.warn.Render("○")
-		case "Unavailable":
-			glyph = m.st.err.Render("✗")
-		case "Recheck needed":
-			glyph = m.st.muted.Render("○")
-		}
+		glyph := map[pathState]string{pathReady: m.st.ok.Render("●"), pathChecking: m.spin.View(),
+			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗")}[r.state]
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
-		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(r.label))
+		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(pathLabels[r.state]))
 		if r.detail != "" {
 			lines = append(lines, m.st.warn.PaddingLeft(2).Width(max(w, 4)).Render(r.detail))
 		}
@@ -465,8 +456,12 @@ func (m model) stageTrack(w int) []string {
 			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
 			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
-		case stageIncomplete:
-			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render("incomplete"))
+		case stagePartial, stageIncomplete:
+			label := outcomeLabels[goclient.OutcomePartial]
+			if s.state == stageIncomplete {
+				label = outcomeLabels[goclient.OutcomeIncomplete]
+			}
+			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render(label))
 		case stageStopped:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
 		case stagePending:
