@@ -213,11 +213,20 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 	for _, id := range interval.Participants {
 		a.serverSamples[id]++
 	}
-	if peak, err := aggregateWindow(*a.peakFrom, b, *interval); err == nil && peak.End-peak.Start >= minimumPeakWindow {
+	if peak, err := aggregateWindow(*a.peakFrom, b, *interval); err == nil && peak.shortest() >= minimumPeakWindow {
 		a.peakFrom = new(b)
 		a.recordPeak(peak)
 	}
 	return sample
+}
+
+// shortest is the least span any clock covered; checkpoint retries can shrink a receiver's span.
+func (w *AggregateWindow) shortest() time.Duration {
+	span := w.End - w.Start
+	for _, c := range w.Up {
+		span = min(span, c.Duration)
+	}
+	return span
 }
 
 func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {

@@ -287,6 +287,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			Complete bool
 			Window   *window
 		}
+		Peak struct{ DownBytesPerSec, UpBytesPerSec any }
 	}
 	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
@@ -302,6 +303,15 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 				}
 			}
 			a.observe(boundary)
+		}
+		peak := func(dir Direction) any {
+			if rate, ok := a.peaks[dir]; ok {
+				return rate
+			}
+			return nil
+		}
+		if peak(Down) != c.Peak.DownBytesPerSec || peak(Up) != c.Peak.UpBytesPerSec {
+			t.Errorf("%s: peak down=%v up=%v, want %+v", c.Name, peak(Down), peak(Up), c.Peak)
 		}
 		if len(a.intervals) != len(c.Intervals) {
 			t.Errorf("%s: %d intervals, want %d", c.Name, len(a.intervals), len(c.Intervals))
