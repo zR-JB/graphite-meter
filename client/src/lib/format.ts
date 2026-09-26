@@ -19,10 +19,12 @@ const REASON: Record<FailureReason | TerminationReason, string> = {
 export const reasonLabel = (reason: FailureReason | TerminationReason) =>
   REASON[reason] ?? "Measurement issue";
 
+/** Decimals follow the rounded value, so 999.96 reads 1000 and 99.996 reads 100.0. */
 export function fmtSpeed(value: number): string {
-  if (value >= 1000) return value.toFixed(0);
-  if (value >= 100) return value.toFixed(1);
-  return value.toFixed(2);
+  if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
+  return Math.abs(Math.round(value * 10) / 10) < 1000
+    ? value.toFixed(1)
+    : value.toFixed(0);
 }
 
 /** One decimal below 100 ms, decided after rounding so 99.96 reads 100. */

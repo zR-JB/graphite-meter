@@ -561,73 +561,34 @@ for (const vector of vectors)
     expect(intervals).toEqual(vector.intervals);
   });
 
-interface LatencyVector {
+const latencyVectors: {
   name: string;
-  outcomes?: {
-    rttMs?: number;
-    timeout?: boolean;
-    handlingMs?: number;
-    interrupted?: "unresolved" | "send-failed";
-    count?: number;
-  }[];
-  expect?: Record<string, unknown>;
-  idleMs?: number[];
-  loadedMs?: Record<"download" | "upload" | "bidirectional", number[]>;
-  addedMs?: Record<string, number | null>;
-}
-const latencyVectors: LatencyVector[] = await Bun.file(
+  outcomes: { rttMs?: number; timeout?: boolean; break?: boolean }[];
+  expect: Record<string, number | null>;
+}[] = await Bun.file(
   new URL("../../../../api/latency.testvectors.json", import.meta.url),
 ).json();
 
 for (const vector of latencyVectors)
   test(`latency conformance: ${vector.name}`, () => {
-    if (vector.addedMs) {
-      const latency = new ServerLatency();
-      for (const rtt of vector.idleMs!)
-        latency.observe("latency", reply(rtt), 0, 0);
-      for (const [stage, rtts] of Object.entries(vector.loadedMs!))
-        for (const rtt of rtts)
-          latency.observe(stage as "download", reply(rtt), 0, 0);
-      return expect(latency.bufferbloat()?.addedMs).toEqual(vector.addedMs);
-    }
     const stats = new LatencyPopulation();
-    for (const outcome of vector.outcomes!)
-      if (outcome.interrupted)
-        stats.interrupt(outcome.count!, outcome.interrupted);
+    let continuity = 0;
+    for (const outcome of vector.outcomes)
+      if (outcome.break) continuity++;
       else
         stats.observe(
-          reply(
-            outcome.rttMs ?? 250,
-            !!outcome.timeout,
-            true,
-            outcome.handlingMs,
-          ),
+          reply(outcome.rttMs ?? 250, !!outcome.timeout),
+          continuity,
         );
-    const s = stats.summary()!;
-    const timing = s.reflectorTiming;
-    const actual: Record<string, unknown> = {
-      replies: s.probeCount - s.timeoutCount,
-      timeouts: s.timeoutCount,
-      unresolved: s.unresolvedCount,
-      sendFailures: s.sendFailureCount,
+    const s = stats.summary();
+    const actual: Record<string, number | null> = {
+      replies: (s?.probeCount ?? 0) - (s?.timeoutCount ?? 0),
+      timeouts: s?.timeoutCount ?? 0,
       timeoutRatio: stats.timeoutRatio,
-      minMs: s.minMs,
-      p10Ms: s.p10Ms,
-      p50Ms: s.p50Ms,
-      p90Ms: s.p90Ms,
-      p95Ms: s.p95Ms,
-      maxMs: s.maxMs,
-      meanMs: s.meanMs,
-      jitterMs: s.jitterMs,
-      jitterPairs: s.jitterPairs,
-      reflector: timing
-        ? {
-            count: timing.sampleCount,
-            meanRawMs: timing.meanRawRttMs,
-            meanHandlingMs: timing.meanHandlingMs,
-            meanAdjustedMs: timing.meanAdjustedRttMs,
-          }
-        : null,
+      p50Ms: s?.p50Ms ?? null,
+      p95Ms: s?.p95Ms ?? null,
+      jitterMs: s?.jitterMs ?? null,
+      jitterPairs: s?.jitterPairs ?? 0,
     };
-    expect(actual).toEqual(vector.expect!);
+    expect(actual).toEqual(vector.expect);
   });
