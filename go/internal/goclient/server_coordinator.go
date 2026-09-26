@@ -247,8 +247,10 @@ func (s *stageServer) measure(ctx context.Context, stage StagePlan, role string,
 		stats, err := s.transport.measureLatency(ctx, stage.Name, len(stage.Directions) > 0, stage.Duration, gate)
 		outcome.result = Result{Stage: stage.Name, Latency: stats, Elapsed: stats.Elapsed, Err: err}
 		outcome.err = err
+	} else if Direction(role) == Down {
+		outcome.err = s.transport.measureDownload(ctx, gate)
 	} else {
-		outcome.err = s.transport.measureDirection(ctx, Direction(role), gate)
+		outcome.err = s.transport.measureUpload(ctx, gate)
 	}
 	outcome.at = time.Now()
 	return outcome

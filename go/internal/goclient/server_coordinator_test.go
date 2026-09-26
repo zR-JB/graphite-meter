@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -59,7 +60,7 @@ type serverFixture struct {
 	failed               atomic.Bool
 	checkpointFailed     atomic.Bool
 	checkpointDelayNanos atomic.Int64
-	active               atomic.Int32
+	handlers, conns      sync.WaitGroup
 	catalogReads         atomic.Int32
 }
 
@@ -115,9 +116,9 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	mux := http.NewServeMux()
 	registry.Mount(t.Context(), mux)
 	mux.Handle(route.Ping, pingHandler(answerAll, 0))
-	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.active.Add(1)
-		defer f.active.Add(-1)
+	f.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.handlers.Add(1)
+		defer f.handlers.Done()
 		if r.URL.Path == route.UploadCheckpoint {
 			if delay := time.Duration(f.checkpointDelayNanos.Swap(0)); delay > 0 {
 				timer := time.NewTimer(delay)
@@ -142,6 +143,15 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 		}
 		mux.ServeHTTP(w, r)
 	}))
+	f.server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			f.conns.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			f.conns.Done()
+		}
+	}
+	f.server.Start()
 	f.catalog = wire.SingletonCatalog()
 	t.Cleanup(f.server.Close)
 	return f

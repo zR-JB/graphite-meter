@@ -19,30 +19,39 @@ import (
 
 func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 	t.Parallel()
-	p := newUploadProgress(t.Context(), "id")
-	advanced := p.advanced()
-	p.read(io.NopCloser(strings.NewReader(strings.Join([]string{
-		`{"type":"ready"}`,
-		`{"type":"progress","bytes":100,"nanos":10}`,
-		`{"type":"progress","bytes":90,"nanos":20}`,
-		`{"type":"progress","bytes":110,"nanos":9}`,
-		`{"type":"complete","bytes":200}`,
-		`{"type":"complete","bytes":"200","nanos":20}`,
-		`{"type":"complete","bytes":200,"nanos":9}`,
-		`{"type":"progress","bytes":120,"nanos":30}`,
-		`{"type":"complete","bytes":130,"nanos":40}`,
-		`{"type":"progress","bytes":140,"nanos":50}`,
-	}, "\n"))))
-	if n, ns := p.counters(); n != 130 || ns != 40 {
-		t.Fatalf("accepted receiver pair = (%d, %d), want the accepted complete pair", n, ns)
-	}
-	select {
-	case <-advanced:
-	default:
-		t.Fatal("an accepted count did not signal waiters")
-	}
-	if err := p.awaitReady(t.Context()); err != nil {
-		t.Fatalf("ready = %v", err)
+	const held = `{"type":"progress","bytes":100,"nanos":10}`
+	for _, c := range []struct {
+		name         string
+		feeds        [][]string
+		bytes, nanos uint64
+	}{
+		{"bytes regress", [][]string{{held, `{"type":"progress","bytes":90,"nanos":20}`}}, 100, 10},
+		{"clock regresses", [][]string{{held, `{"type":"progress","bytes":110,"nanos":9}`}}, 100, 10},
+		{"malformed pair", [][]string{{held, `{"type":"complete","bytes":"200","nanos":20}`}}, 100, 10},
+		{"missing clock", [][]string{{held, `{"type":"complete","bytes":200}`}}, 100, 10},
+		{"equal pair", [][]string{{held, held}}, 100, 10},
+		{"complete ends the feed", [][]string{{held, `{"type":"complete","bytes":130,"nanos":40}`,
+			`{"type":"progress","bytes":140,"nanos":50}`}}, 130, 40},
+		{"stale prefix of a replacement feed", [][]string{{held}, {`{"type":"progress","bytes":90,"nanos":5}`}}, 100, 10},
+		{"replacement feed moves on", [][]string{{held}, {`{"type":"progress","bytes":90,"nanos":5}`,
+			`{"type":"progress","bytes":120,"nanos":30}`}}, 120, 30},
+	} {
+		p := newUploadProgress(t.Context(), "id")
+		advanced := p.advanced()
+		for _, feed := range c.feeds {
+			p.read(io.NopCloser(strings.NewReader(`{"type":"ready"}` + "\n" + strings.Join(feed, "\n"))))
+		}
+		if bytes, nanos := p.counters(); bytes != c.bytes || nanos != c.nanos {
+			t.Errorf("%s: receiver pair = (%d, %d), want (%d, %d)", c.name, bytes, nanos, c.bytes, c.nanos)
+		}
+		select {
+		case <-advanced:
+		default:
+			t.Errorf("%s: an accepted count did not signal waiters", c.name)
+		}
+		if err := p.awaitReady(t.Context()); err != nil {
+			t.Errorf("%s: ready = %v", c.name, err)
+		}
 	}
 }
 

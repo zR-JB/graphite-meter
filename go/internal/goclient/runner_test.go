@@ -333,36 +333,29 @@ func TestConnectionSummaryNamesEveryPathTheSameWay(t *testing.T) {
 
 func TestLoadedLatencyDrainsSilentProbesToTimeouts(t *testing.T) {
 	t.Parallel()
-	for _, duration := range []time.Duration{80 * time.Millisecond, 400 * time.Millisecond} {
-		t.Run(duration.String(), func(t *testing.T) {
-			t.Parallel()
-			var details *RunDetails
-			var transferResult *Result
-			r := testRunner(newTransferServer(t))
-			r.latencyTarget = new(testChannel("silent", newPingServer(t, answerNone, 0).URL, false))
-			r.cfg.LoadedLatency, r.cfg.PingInterval = true, 10*time.Millisecond
-			r.emit = func(e Event) {
-				if e.Kind == EventResult {
-					transferResult = e.Result
-				}
-				if e.Kind == EventDone {
-					details = e.Servers
-				}
-			}
-			if err := r.runTestStage(t.Context(), StageDownload, duration); err != nil {
-				t.Fatal(err)
-			}
-			results := details.Servers[0].Results
-			if transferResult == nil ||
-				transferResult.Direction != Down ||
-				len(results) != 2 ||
-				results[0].Direction != "" {
-				t.Fatalf("loaded results: %+v %+v", transferResult, results)
-			}
-			stats := results[0].Latency
-			if stats.Count != 0 || stats.Unresolved != 0 || stats.Timeouts == 0 {
-				t.Fatalf("silent loaded probes did not drain to timeouts: %+v", stats)
-			}
-		})
+	var details *RunDetails
+	var transferResult *Result
+	r := testRunner(newTransferServer(t))
+	r.latencyTarget = new(testChannel("silent", newPingServer(t, answerNone, 0).URL, false))
+	r.cfg.LoadedLatency, r.cfg.PingInterval = true, 10*time.Millisecond
+	r.emit = func(e Event) {
+		if e.Kind == EventResult {
+			transferResult = e.Result
+		}
+		if e.Kind == EventDone {
+			details = e.Servers
+		}
+	}
+	// Two silent warmup probes can hold the loaded window for one floor deadline.
+	if err := r.runTestStage(t.Context(), StageDownload, 2*probeTimeoutFloor); err != nil {
+		t.Fatal(err)
+	}
+	results := details.Servers[0].Results
+	if transferResult == nil || transferResult.Direction != Down || len(results) != 2 || results[0].Direction != "" {
+		t.Fatalf("loaded results: %+v %+v", transferResult, results)
+	}
+	stats := results[0].Latency
+	if stats.Count != 0 || stats.Unresolved != 0 || stats.Timeouts == 0 {
+		t.Fatalf("silent loaded probes did not drain to timeouts: %+v", stats)
 	}
 }

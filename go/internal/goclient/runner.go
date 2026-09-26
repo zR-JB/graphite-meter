@@ -142,22 +142,6 @@ func ProtocolLabel(protocol string) string {
 	return protocol
 }
 
-func (p *PreparedConnection) ThroughputSummary() string {
-	if p == nil {
-		return "Not checked"
-	}
-	t := p.ThroughputTarget
-	return ConnectionSummary(t.Transport, t.Protocol, t.TLS())
-}
-
-func (p *PreparedConnection) LatencySummary() string {
-	if p == nil || p.LatencyTarget == nil {
-		return "Not selected"
-	}
-	t := p.LatencyTarget
-	return ConnectionSummary(t.Transport, t.Protocol, t.TLS())
-}
-
 func baseTransport(cfg Config) *http.Transport {
 	return &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
@@ -314,13 +298,6 @@ type runner struct {
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {
 	const slowStartRTTs = 10
 	return min(max(slowStartRTTs*rtt, base), 4*time.Second)
-}
-
-func (r *runner) measureDirection(ctx context.Context, dir Direction, gate *stageGate) error {
-	if dir == Down {
-		return r.measureDownload(ctx, gate)
-	}
-	return r.measureUpload(ctx, gate)
 }
 
 const stageReadyTimeout = 10 * time.Second

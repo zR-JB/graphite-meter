@@ -93,7 +93,7 @@ func TestMeasureLatencyRedialsAProvenBus(t *testing.T) {
 	defer srv.Close()
 	r := testRunner(srv)
 	r.cfg.PingInterval = 20 * time.Millisecond
-	stats, err := r.measureNow(t.Context(), captureWindow)
+	stats, err := r.measureNow(t.Context(), time.Second)
 	if err != nil || accepted.Load() < 2 || stats.Count <= dropAfter {
 		t.Fatalf("redial: %d connections, %+v, %v", accepted.Load(), stats, err)
 	}

@@ -148,13 +148,17 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 		details.Outcome != OutcomeStopped {
 		t.Fatalf("cancelled result: %v %+v done=%d", err, details, doneCount)
 	}
-	deadline := time.Now().Add(time.Second)
 	for _, f := range fixtures {
-		for f.active.Load() > 0 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		if f.active.Load() > 0 {
-			t.Fatal("participant request survived cancellation")
+		released := make(chan struct{})
+		go func() {
+			f.handlers.Wait()
+			f.conns.Wait()
+			close(released)
+		}()
+		select {
+		case <-released:
+		case <-time.After(10 * time.Second):
+			t.Fatal("a participant request or connection survived cancellation")
 		}
 	}
 }
