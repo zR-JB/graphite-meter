@@ -97,6 +97,8 @@ export function createApplicationController(
   let sessionBudget: SessionBudget | null = null;
   let approval: { id: string; abort: AbortController } | null = null;
   let runRttMs = 0;
+  /** Selection validation when a Start was refused; the refusal lapses once that selection verifies. */
+  let refusedUnder: string | null = null;
   let idleEvidenceKey = "";
 
   const hidden = () => document.visibilityState === "hidden";
@@ -135,6 +137,9 @@ export function createApplicationController(
         entry.name = view.server.name;
       if (entry && entry.location !== view.server.location)
         entry.location = view.server.location;
+      const verified = store.selectionValidation === "verified";
+      if (verified && refusedUnder && refusedUnder !== "verified")
+        cancelPendingStart();
     },
     idleEvent(id, event) {
       if (event.type === "latency")
@@ -440,6 +445,7 @@ export function createApplicationController(
   function cancelPendingStart() {
     pendingStart?.abort();
     pendingStart = null;
+    refusedUnder = null;
     store.startError = "";
     store.preparationStatus = "idle";
     wake();
@@ -483,19 +489,27 @@ export function createApplicationController(
       return;
     }
     if (pendingStart) return cancelPendingStart();
-    const blocked = store.catalogLoading
-      ? "Servers are still loading. Try again in a moment."
-      : approval
-        ? "Finish signing in to the selected server before starting."
-        : store.startBlocker;
-    if (blocked) {
-      store.startError = blocked;
-      store.preparationStatus = "blocked";
-      return;
-    }
+    const refuse = (status: "blocked" | "failed", message: string) => {
+      store.startError = message;
+      store.preparationStatus = status;
+      refusedUnder = store.selectionValidation;
+    };
+    // A live blocker already shows its own reason and clears with its cause.
+    if (store.catalogLoading)
+      return refuse(
+        "blocked",
+        "Servers are still loading. Try again in a moment.",
+      );
+    if (approval)
+      return refuse(
+        "blocked",
+        "Finish signing in to the selected server before starting.",
+      );
+    if (store.startBlocker) return;
     const config = $state.snapshot(store.config);
     const task = new AbortController();
     pendingStart = task;
+    refusedUnder = null;
     store.startError = "";
     store.preparationStatus = "authenticating";
     const live = () => pendingStart === task;
@@ -504,10 +518,10 @@ export function createApplicationController(
         if (!live()) return;
         if (cause instanceof DOMException && cause.name === "AbortError")
           return;
-        store.startError =
-          cause instanceof Error ? cause.message : "Connection check failed";
-        store.preparationStatus =
-          store.preparationStatus === "authenticating" ? "blocked" : "failed";
+        refuse(
+          store.preparationStatus === "authenticating" ? "blocked" : "failed",
+          cause instanceof Error ? cause.message : "Connection check failed",
+        );
       })
       .finally(() => {
         if (live()) {

@@ -208,20 +208,27 @@ test("a pending start ends on a second click or a draft change without blocking 
   );
 });
 
-test("a failed Start check stays idle instead of manufacturing a run error", async () => {
+test("a failed Start stays idle and lapses once its selection verifies", async () => {
+  let offline = true;
   await withController(
     {
       hidden: true,
       discover: async () => {
-        throw new Error("offline");
+        if (offline) throw new Error("offline");
+        return testServerDiscovery();
       },
     },
-    async ({ controller, store }) => {
+    async ({ controller, store, setVisibility }) => {
       controller.toggleRun();
       await until(() => !store.preparing);
       expect(store.phase).toBe("idle");
       expect(store.startError).toBe("Connection check failed");
-      expect(store.preparationStatus).toBe("failed");
+      expect(store.preparation.status).toBe("failed");
+      offline = false;
+      setVisibility("visible");
+      await until(() => store.selectionValidation === "verified");
+      expect(store.preparation.status).toBe("idle");
+      expect(store.startError).toBe("");
     },
   );
 });
@@ -283,7 +290,7 @@ test("a stream plan that cannot fit blocks Start before the click", async () => 
       controller.toggleRun();
       await settle();
       expect(runner.starts).toBe(0);
-      expect(store.startError).toContain("Forced streams");
+      expect(store.preparation.status).toBe("blocked");
     },
   );
 });

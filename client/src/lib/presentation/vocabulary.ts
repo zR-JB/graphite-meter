@@ -12,6 +12,7 @@ import type {
 } from "../runner/contract";
 import type { ConnectionValidationState } from "../runner/paths";
 import type { ThemePref } from "../state/persistence";
+import type { PreparationState } from "../state/store.svelte";
 
 export const MISSING = "—";
 
@@ -133,6 +134,20 @@ export const OUTCOME: Record<Outcome, string> = {
 
 export const phaseLabel = (phase: Phase, outcome: Outcome = "complete") =>
   phase === "complete" ? OUTCOME[outcome] : PHASE[phase];
+
+/** The footer and the gauge name one state: a refused start, preparation, else the phase. */
+export function statusLabel(
+  preparation: PreparationState["status"],
+  phase: Phase,
+  outcome?: Outcome,
+): string {
+  if (preparation === "blocked") return BLOCKED;
+  if (preparation === "failed") return START_FAILED;
+  if (preparation === "authenticating") return "Checking sign-in";
+  if (preparation === "checking" || preparation === "launching")
+    return PHASE.connecting;
+  return phaseLabel(phase, outcome);
+}
 
 /** Bare "webtransport" names the session: streams carry throughput, datagrams latency. */
 export const TRANSPORT: Record<TransportKind, string> = {

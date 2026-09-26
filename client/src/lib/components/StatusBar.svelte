@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
-  import { BLOCKED, phaseLabel } from "../presentation/vocabulary";
+  import { statusLabel } from "../presentation/vocabulary";
 
   // Progress events pace the wall clock, so elapsed and left update together.
   const elapsedMs = $derived.by(() => {
@@ -14,14 +14,19 @@
   });
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
+  const { status } = $derived(store.preparation);
+  const refused = $derived(status === "blocked" || status === "failed");
+  const label = $derived(
+    statusLabel(status, store.phase, store.result?.outcome),
+  );
 </script>
 
-{#if store.preparation.status === "blocked"}
+{#if refused}
   <span class="label term" use:tooltip={store.startError || store.startBlocker}
-    >{BLOCKED}</span
+    >{label}</span
   >
 {:else}
-  <span class="label">{phaseLabel(store.phase, store.result?.outcome)}</span>
+  <span class="label">{label}</span>
 {/if}
 <span
   class="elapsed"

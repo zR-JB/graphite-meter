@@ -6,6 +6,7 @@ import {
   phaseLabel,
   READINESS,
   reasonLabel,
+  statusLabel,
 } from "../presentation/vocabulary";
 import { preparationFailurePresentation } from "./preparationFailure";
 import type { ResultGaugeArc } from "./resultGauge";
@@ -70,10 +71,7 @@ export function gaugeReadout(input: GaugeReadoutInput) {
   const { phase, preparation } = input;
   const arc = phase === "complete" ? input.headline : null;
   const terminal = arc && { ...arc, value: input.rate(arc.bytesPerSec) };
-  const preparationLabel =
-    preparation.status === "authenticating"
-      ? "Checking sign-in"
-      : phaseLabel("connecting");
+  const preparationLabel = statusLabel(preparation.status, phase);
   const failure = preparationFailurePresentation(preparation, input.startError);
   const status = terminalStatus(input);
   const hint = input.preparing
