@@ -5,6 +5,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -277,6 +278,56 @@ func pingHandler(answer func(id uint32) bool, delay time.Duration) http.Handler 
 		}
 	})
 }
+
+// pipedRunner reaches handler over net.Pipe, so one synctest bubble holds both ends on its virtual clock.
+func pipedRunner(t *testing.T, handler http.Handler) *runner {
+	t.Helper()
+	ln := &pipeListener{conns: make(chan net.Conn), closed: make(chan struct{})}
+	srv := &http.Server{Handler: handler}
+	go func() { _ = srv.Serve(ln) }()
+	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		client, server := net.Pipe()
+		select {
+		case ln.conns <- server:
+			return client, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}}
+	t.Cleanup(func() {
+		tr.CloseIdleConnections()
+		_ = srv.Close()
+	})
+	origin := "http://fixture.invalid"
+	return &runner{
+		cfg:           Config{BaseURL: origin}.normalized(),
+		websocketHTTP: &http.Client{Transport: tr},
+		latencyTarget: new(testChannel("test-ws", origin, false)),
+		emit:          func(Event) {},
+	}
+}
+
+type pipeListener struct {
+	conns  chan net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (l *pipeListener) Accept() (net.Conn, error) {
+	select {
+	case c := <-l.conns:
+		return c, nil
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
+}
+
+func (l *pipeListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+	return nil
+}
+
+func (l *pipeListener) Addr() net.Addr { return &net.UnixAddr{Name: "pipe", Net: "pipe"} }
 
 func newPingServer(t *testing.T, answer func(id uint32) bool, delay time.Duration) *httptest.Server {
 	t.Helper()

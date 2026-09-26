@@ -8,63 +8,49 @@ import (
 	"slices"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// Each population runs in virtual time, so its counts are exact rather than a scheduling-tolerant band.
 func TestMeasureLatencyPopulations(t *testing.T) {
 	t.Parallel()
 	everyThird := func(id uint32) bool { return id%3 != 2 }
+	ms := time.Millisecond
 	for _, c := range []struct {
-		name     string
-		answer   func(uint32) bool
-		delay    time.Duration
-		interval time.Duration
-		window   time.Duration
-		check    func(LatencyStats) bool
+		name                        string
+		answer                      func(uint32) bool
+		delay, interval, window     time.Duration
+		count, timeouts, unresolved int
+		p50                         time.Duration
 	}{
-		{"answered", answerAll, 0, 20 * time.Millisecond, captureWindow, func(s LatencyStats) bool {
-			ratio, ok := s.TimeoutRatio()
-			return s.Count > 0 && s.Min > 0 && s.P50 > 0 && ok && ratio == 0
-		}},
-		{"silent", answerNone, 0, 20 * time.Millisecond, captureWindow, func(s LatencyStats) bool {
-			ratio, ok := s.TimeoutRatio()
-			return s.Count == 0 && ok && ratio == 1
-		}},
-		{"every third dropped", everyThird, 0, 20 * time.Millisecond, captureWindow, func(s LatencyStats) bool {
-			ratio, ok := s.TimeoutRatio()
-			return s.Count > 0 && s.Mean > 0 && ok && ratio >= 0.10 && ratio <= 0.55
-		}},
-		{"silent probes drain to their deadline", answerNone, 0, 10 * time.Millisecond, 80 * time.Millisecond,
-			func(s LatencyStats) bool {
-				ratio, ok := s.TimeoutRatio()
-				return s.Count == 0 && s.Timeouts > 0 && s.Unresolved == 0 && ok && ratio == 1
-			}},
-		{"in-flight replies at window end", answerAll, 100 * time.Millisecond, 20 * time.Millisecond,
-			150 * time.Millisecond, func(s LatencyStats) bool {
-				return s.Count >= 7 && s.Timeouts == 0 && s.Unresolved == 0
-			}},
-		{"slow replies above the cadence", answerAll, 400 * time.Millisecond, 80 * time.Millisecond, time.Second,
-			func(s LatencyStats) bool {
-				return s.Count > 0 && s.Timeouts > 0 && s.P50 >= 400*time.Millisecond
-			}},
+		{"answered", answerAll, ms, 20 * ms, captureWindow, 14, 0, 0, ms},
+		{"silent", answerNone, 0, 20 * ms, captureWindow, 0, 14, 0, 0},
+		{"every third dropped", everyThird, ms, 20 * ms, captureWindow, 9, 5, 0, ms},
+		{"silent probes drain to their deadline", answerNone, 0, 10 * ms, 80 * ms, 0, 7, 0, 0},
+		{"in-flight replies at window end", answerAll, 105 * ms, 20 * ms, 150 * ms, 7, 0, 0, 105 * ms},
+		{"slow replies above the cadence", answerAll, 395 * ms, 80 * ms, time.Second, 8, 4, 0, 395 * ms},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			r := testRunner(newPingServer(t, c.answer, c.delay))
-			r.cfg.PingInterval = c.interval
-			var replies atomic.Int64
-			r.emit = func(e Event) {
-				if e.Kind == EventLatency && !e.Latency.TimedOut {
-					replies.Add(1)
+			synctest.Test(t, func(t *testing.T) {
+				r := pipedRunner(t, pingHandler(c.answer, c.delay))
+				r.cfg.PingInterval = c.interval
+				var replies atomic.Int64
+				r.emit = func(e Event) {
+					if e.Kind == EventLatency && !e.Latency.TimedOut {
+						replies.Add(1)
+					}
 				}
-			}
-			stats, err := r.measureNow(t.Context(), c.window)
-			if err != nil || !c.check(stats) || replies.Load() != int64(stats.Count) {
-				t.Fatalf("stats = %+v, %v; %d reply events", stats, err, replies.Load())
-			}
+				s, err := r.measureNow(t.Context(), c.window)
+				if err != nil || s.Count != c.count || s.Timeouts != c.timeouts || s.Unresolved != c.unresolved ||
+					s.P50 != c.p50 || replies.Load() != int64(s.Count) {
+					t.Fatalf("stats = %+v, %v; %d reply events", s, err, replies.Load())
+				}
+			})
 		})
 	}
 }
@@ -239,14 +225,16 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 
 func TestLoadedProbesKeepTwoInFlight(t *testing.T) {
 	t.Parallel()
-	r := testRunner(newPingServer(t, answerNone, 0))
-	r.cfg.LoadedPingInterval = 10 * time.Millisecond
-	start := make(chan struct{})
-	close(start)
-	stats, err := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
-	if attempts := stats.Timeouts + stats.Unresolved; err != nil || attempts == 0 || attempts > 4 {
-		t.Fatalf("loaded window sent %d unanswered probes: %+v, %v", attempts, stats, err)
-	}
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, pingHandler(answerNone, 0))
+		r.cfg.LoadedPingInterval = 10 * time.Millisecond
+		start := make(chan struct{})
+		close(start)
+		stats, err := r.measureLatency(t.Context(), StageDownload, true, captureWindow, testStageGate(start))
+		if err != nil || stats.Timeouts != 2 || stats.Unresolved != 0 {
+			t.Fatalf("loaded window, want two unanswered probes: %+v, %v", stats, err)
+		}
+	})
 }
 
 func TestProbeLedgerMeasuresOnlyTheWindow(t *testing.T) {
