@@ -1,4 +1,4 @@
-/* The server opens the download lanes and the upload progress feed, so this worker reads incoming streams for. */
+/* The server opens the download lanes and the upload progress feed; this worker opens only the upload lanes. */
 
 import {
   mintWtToken,
@@ -61,7 +61,7 @@ const post = (m: OutMsg): void => ctx.postMessage(m);
 /* A datagram loop iterates per packet, so an unthrottled alive would jank the thread latency is measured on. */
 const ALIVE_GAP_MS = 250;
 
-/* A worker's message queue is dispatched only across a task, and both datagram loops can have their sole. */
+/* A datagram loop settled within one microtask checkpoint would outrun the queue carrying its own `stop`. */
 const YIELD_GAP_MS = 4;
 
 /** Bytes per WebTransport stream write. */
@@ -84,7 +84,7 @@ const taskTurn = (): Promise<void> =>
 
 let lastAlive = 0;
 
-/* `now` is passed in from a loop that has already read the clock: a datagram loop reads it per packet and must. */
+/* A datagram loop passes the `now` it already read, so the clock is read once per packet. */
 function postAlive(now = performance.now()): void {
   if (now - lastAlive < ALIVE_GAP_MS) return;
   lastAlive = now;
@@ -93,7 +93,7 @@ function postAlive(now = performance.now()): void {
 
 let session: WebTransport | null = null;
 let stopped = false;
-/* Separate from `stopped`, which a terminal refusal latches too: the owner waits on the ack whatever ended the. */
+/* Separate from `stopped`, which a refusal latches too: the owner waits on the ack whatever ended the session. */
 let stopping = false;
 /** Latches the first failure of this session, so its echoes stay silent. */
 let failed = false;
@@ -184,7 +184,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
     return;
   }
   session = dialed;
-  // `closed` resolves on a graceful close and rejects on an abrupt one, and the server always closes gracefully, so.
+  // `closed` resolves on a graceful close and rejects on an abrupt one: both end this session.
   const closed = (): void => fail(true, "webtransport session closed");
   void dialed.closed.then(closed, closed);
   try {
@@ -221,7 +221,7 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   for (let i = 0; i < msg.lanes; i++) void uploadLane(block);
 }
 
-/* Drain every server-opened stream: each is one sized lane request, replaced by the server when exhausted, so the. */
+/* Each server-opened stream is one sized lane request, replaced when exhausted, so this runs for the whole stage. */
 async function acceptDownloadStreams(): Promise<void> {
   if (!session) return;
   const incoming = session.incomingUnidirectionalStreams.getReader();
@@ -255,7 +255,7 @@ async function readDatagrams(): Promise<void> {
     for (;;) {
       const { value, done } = await reader.read();
       if (done || stopped) return;
-      // One clock read serves both the report window and the yield gap: a datagram is ~1200 bytes, so a second read.
+      // One clock read per ~1200-byte datagram serves both the report window and the yield gap.
       const now = performance.now();
       countDownload((value as Uint8Array).byteLength, now);
       if (now - lastYield < YIELD_GAP_MS) continue;
@@ -277,9 +277,9 @@ async function uploadDatagrams(): Promise<void> {
     let lastYield = performance.now();
     while (!stopped) {
       await writer.ready;
-      // The path MTU estimate can shrink mid-session and an oversized datagram is dropped with a resolved promise, so.
+      // The path MTU estimate can shrink, and an oversized datagram is dropped with a resolved promise.
       const size = Math.min(payload.length, datagrams.maxDatagramSize);
-      // Returning silently would leave the stage running to its full timer with zero bytes, no restart and no.
+      // Returning silently would leave the stage running to its full timer with zero bytes and no diagnostic.
       if (size === 0) {
         fail(true, "webtransport datagram size collapsed");
         return;
@@ -296,7 +296,7 @@ async function uploadDatagrams(): Promise<void> {
   }
 }
 
-/* Report at the fetch lanes' cadence: one aggregate for the whole session, since the main thread treats this. */
+/* Report at the fetch lanes' cadence: one aggregate, since the main thread treats this worker as one lane. */
 function countDownload(n: number, now = performance.now()): void {
   postProgress(progress.add(n, now));
 }
@@ -356,11 +356,11 @@ async function readProgressStreams(
         return;
       }
       opened = true;
-      // Keep accepting later server-opened control streams concurrently so an explicit lane refusal reaches the.
+      // Keep accepting later server-opened control streams so an explicit lane refusal reaches the owner.
       void readProgress(value as ReadableStream);
     }
   } catch (err) {
-    // A transport-level break is the session dying: recoverable, the owner restarts the session and the server.
+    // A transport-level break is the session dying: recoverable, since a restarted session reopens the feed.
     if (!stopped) fail(true, `upload progress stream: ${String(err)}`);
   }
 }
@@ -382,7 +382,7 @@ async function readProgress(
   if (end === "eof") fail(true, "webtransport progress feed ended early");
 }
 
-/* Stop the lanes, finalize the upload, let the terminal progress record land, and ack, so the main thread can. */
+/* Stop the lanes, finalize the upload, let the terminal progress record land, then ack. */
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
