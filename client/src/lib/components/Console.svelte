@@ -447,15 +447,11 @@
     );
   }
 
-  // Space and Enter already activate these natively.
-  function selfActivating(el: EventTarget | null): boolean {
-    if (!(el instanceof HTMLElement)) return false;
-    const tag = el.tagName;
+  // Space and Enter belong to whatever control holds focus.
+  function unownedTarget(el: EventTarget | null): boolean {
     return (
-      tag === "BUTTON" ||
-      tag === "A" ||
-      tag === "SUMMARY" ||
-      el.getAttribute("role") === "button"
+      el === document.body ||
+      (el instanceof HTMLElement && el.classList.contains("measurement-stage"))
     );
   }
 
@@ -472,11 +468,7 @@
         currentRoute.workspace.kind === "history" &&
         currentRoute.workspace.selectedId
       ) {
-        const detailClose = document.querySelector<HTMLButtonElement>(
-          ".result-detail .close-detail",
-        );
-        if (detailClose) detailClose.click();
-        else closeHistoryDetail();
+        closeHistoryDetail();
       } else if (historyOpen) {
         dismissHistory();
       } else if (!measurementOpen) {
@@ -506,7 +498,7 @@
     }
 
     if (e.key === " " || e.key === "Enter") {
-      if (!measurementOpen || selfActivating(e.target)) return;
+      if (!measurementOpen || !unownedTarget(e.target)) return;
       toggleRun();
       e.preventDefault();
       return;
