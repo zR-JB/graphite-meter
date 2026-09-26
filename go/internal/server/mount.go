@@ -112,7 +112,7 @@ func (m *mounter) webSocketPing() http.Handler {
 			end := endpoint.EndOf(ctx, m.ctx)
 			conn.Close(websocket.StatusCode(end.WS), end.Reason)
 		}
-		ended := context.AfterFunc(ctx, end)
+		stop := context.AfterFunc(ctx, end)
 		// The read limit admits one extra byte, so an oversized message fails before filling buf.
 		var buf [wsPingReadLimit + 2]byte
 		endpoint.ServePing(func() ([]byte, error) {
@@ -130,7 +130,7 @@ func (m *mounter) webSocketPing() http.Handler {
 			}
 			return nil, err
 		}, func(reply []byte) error { return conn.Write(context.Background(), websocket.MessageText, reply) })
-		if ended() {
+		if stop() {
 			end()
 		}
 	})
