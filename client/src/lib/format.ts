@@ -61,8 +61,8 @@ export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
   return `${value.toFixed(tier ? 1 : 0)} ${units[tier]}`;
 }
 
-type UnitBase = "base10" | "base2";
-type UnitKind = "bits" | "bytes";
+export type UnitBase = "base10" | "base2";
+export type UnitKind = "bits" | "bytes";
 
 const SI_PREFIX = ["", "k", "M", "G", "T"];
 const IEC_PREFIX = ["", "Ki", "Mi", "Gi", "Ti"];

@@ -29,15 +29,8 @@ import {
   combineCompensationEstimates,
   type CompensationEstimate,
 } from "../compensation";
-import {
-  chartThroughputScale,
-  DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
-  throughputUnitIndex,
-  rateUnit,
-  rateValueAt,
-  rawRateFrom,
-} from "../format";
-import { gaugeScaleForPeak } from "../components/gaugeScale";
+import { rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
 import { buildSegments } from "../runner/schedule";
 import {
@@ -48,7 +41,6 @@ import {
 import {
   appendThroughputSample,
   compactThroughputHistory,
-  LatencyScaleController,
   upsertLatencyBucket,
 } from "../runner/series";
 import {
@@ -107,7 +99,6 @@ const EMPTY_STAGE_RESULTS: StageResults = Object.freeze({
   latency: null,
 });
 
-const SCALE_DWELL_MS = 700;
 const NO_LATENCY: LatencyBucket[] = [];
 const MAX_IDLE_SAMPLES = 60;
 
@@ -137,28 +128,6 @@ const EMPTY_LANE = {
   sendFailureCount: null,
   count: 0,
 };
-
-/** The rate held for at least `dwellMs` among recent samples; brief spikes cannot set a scale. */
-function sustainedRate(
-  samples: readonly { t: number; bytesPerSec: number }[],
-  dwellMs: number,
-): number {
-  if (samples.length < 2) return samples[0]?.bytesPerSec ?? 0;
-  const order = samples
-    .map((_, index) => index)
-    .sort((a, b) => samples[b].bytesPerSec - samples[a].bytesPerSec);
-  let held = 0;
-  for (const index of order) {
-    held += Math.max(
-      1,
-      index === 0
-        ? samples[1].t - samples[0].t
-        : samples[index].t - samples[index - 1].t,
-    );
-    if (held >= dwellMs) return samples[index].bytesPerSec;
-  }
-  return samples[order.at(-1)!].bytesPerSec;
-}
 
 type DisplayPreference =
   | "unitBase"
@@ -239,12 +208,8 @@ class AppStore {
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
     this.latencyRevision++;
-    this.#latencyScale.reset();
-    for (const sample of this.latency)
-      this.latencyScaleMs = this.#latencyScale.observe(sample);
   }
 
-  #latencyScale = new LatencyScaleController();
   startError = $state("");
   preparationStatus = $state<PreparationStatus>("idle");
   /** Why Start cannot run, known before the click; a check that may still pass never blocks. */
@@ -315,9 +280,7 @@ class AppStore {
   throughputRevision = $state(0);
   /** The current transfer stage's latest sample; null between stages. */
   live = $state.raw<LiveSample | null>(null);
-  #scaleThroughput: { t: number; bytesPerSec: number }[] = [];
   #throughputTargetSpanMs = 0;
-  #sustainedPeakBytesPerSec = $state(0);
   bytesTransferred = $derived(this.throughput.at(-1)?.bytesCumulative ?? 0);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
@@ -426,7 +389,6 @@ class AppStore {
   dockWidth = $state<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
   });
-  latencyScaleMs = $state(20);
 
   constructor() {
     Object.assign(this, loadPersisted());
@@ -564,90 +526,36 @@ class AppStore {
       : null,
   );
 
-  #peakBytesPerSec = $state(0);
-
-  #terminalPeak = $derived.by(() => {
-    const bidi = this.result?.bidirectional;
-    return Math.max(
-      this.stageResults.download?.reportedBytesPerSec ?? 0,
-      this.stageResults.upload?.reportedBytesPerSec ?? 0,
-      (bidi?.down?.reportedBytesPerSec ?? 0) +
-        (bidi?.up?.reportedBytesPerSec ?? 0),
-    );
-  });
-
-  chartScaleBytesPerSec = $derived.by(() => {
-    const cfg = this.config.visualization.throughputMaxBytesPerSec;
-    if (typeof cfg === "number" && cfg > 0) return cfg;
-    return chartThroughputScale(
-      Math.max(this.#sustainedPeakBytesPerSec, this.#terminalPeak),
-    );
-  });
-
-  gaugeScaleBytesPerSec = $derived.by(() => {
-    const cfg = this.config.visualization.throughputMaxBytesPerSec;
-    if (typeof cfg === "number" && cfg > 0) return gaugeScaleForPeak(cfg);
-    const scalePeak = Math.max(
-      this.#sustainedPeakBytesPerSec,
-      this.#terminalPeak,
-      this.#unitIndex < 2 ? this.#peakBytesPerSec : 0,
-    );
-    return gaugeScaleForPeak(scalePeak, {
-      minimumBitsPerSec: this.#unitIndex >= 2 ? 1_000_000_000 : undefined,
-    });
-  });
-
-  #unitIndex = $derived.by(() => {
-    const cfg = this.config.visualization.throughputMaxBytesPerSec;
-    const refBytesPerSec =
-      typeof cfg === "number" && cfg > 0
-        ? cfg
-        : this.#peakBytesPerSec > 0
-          ? this.#peakBytesPerSec
-          : DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
-    return throughputUnitIndex(refBytesPerSec, this.unitBase, this.unitKind);
-  });
+  scales = $derived(
+    throughputScales(
+      this.throughput,
+      {
+        ...this.stageResults,
+        bidirectional: this.result?.bidirectional ?? null,
+      },
+      this.config.visualization.throughputMaxBytesPerSec,
+      this.unitBase,
+      this.unitKind,
+    ),
+  );
+  latencyScaleMs = $derived(latencyAxisMs(this.latency, !this.isRunning));
 
   get unitLabel() {
-    return rateUnit(this.unitBase, this.unitKind, this.#unitIndex);
+    return rateUnit(this.unitBase, this.unitKind, this.scales.unitIndex);
   }
 
   toUnit(bytesPerSec: number): number {
-    return rateValueAt(
-      bytesPerSec,
-      this.unitBase,
-      this.unitKind,
-      this.#unitIndex,
-    );
+    const { unitBase, unitKind, scales } = this;
+    return rateValueAt(bytesPerSec, unitBase, unitKind, scales.unitIndex);
   }
 
   fromUnit(displayValue: number): number {
-    return rawRateFrom(
-      displayValue,
-      this.unitBase,
-      this.unitKind,
-      this.#unitIndex,
-    );
+    const { unitBase, unitKind, scales } = this;
+    return rawRateFrom(displayValue, unitBase, unitKind, scales.unitIndex);
   }
 
   #ingestLive(live: LiveSample): void {
     this.live = live;
-    if (live.down == null && live.up == null) return;
-    const scaleRate = (live.down ?? 0) + (live.up ?? 0);
-    const scale = this.#scaleThroughput;
-    scale.push({ t: live.t, bytesPerSec: scaleRate });
-    let drop = 0;
-    while (
-      scale.length - drop > 2 &&
-      scale[drop + 1].t < live.t - SCALE_DWELL_MS * 2
-    )
-      drop++;
-    if (drop) scale.splice(0, drop);
-    this.#sustainedPeakBytesPerSec = Math.max(
-      this.#sustainedPeakBytesPerSec,
-      sustainedRate(scale, SCALE_DWELL_MS),
-    );
-    this.#peakBytesPerSec = Math.max(this.#peakBytesPerSec, scaleRate);
     const { t, phase, continuityId, bytes: bytesCumulative } = live;
     for (const dir of ["down", "up"] as const) {
       const bytesPerSec = live[dir];
@@ -719,7 +627,6 @@ class AppStore {
         if (event.serverId !== this.latencyFocus) break;
         if (moved) this.latencyRevision++;
         this.#latencyTail++;
-        this.latencyScaleMs = this.#latencyScale.observe(event.sample);
         break;
       }
       case "serverLatencySummary":
@@ -754,10 +661,6 @@ class AppStore {
             ...this.completedStages,
             from as TransportRole,
           ];
-        if (from === "idle") {
-          this.#latencyScale.reset();
-          this.latencyScaleMs = this.#latencyScale.scaleMs;
-        }
         this.phase = to;
         this.phaseStage = stage;
         this.phaseStartedAtMs = t;
@@ -835,12 +738,7 @@ class AppStore {
       startEpoch: 0,
       historyCandidate: null,
     });
-    this.#scaleThroughput = [];
     this.#throughputTargetSpanMs = buildSegments(this.config).totalMs;
-    this.#sustainedPeakBytesPerSec = 0;
-    this.#peakBytesPerSec = 0;
-    this.#latencyScale.reset();
-    this.latencyScaleMs = this.#latencyScale.scaleMs;
     this.runSeq++;
   }
 

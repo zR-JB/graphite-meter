@@ -4,11 +4,8 @@ import type {
   LatencyBucket,
 } from "../runner/contract";
 import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
-import {
-  latencyBucketExceedsScale,
-  latencyScale,
-  upsertThroughputSample,
-} from "../runner/series";
+import { upsertThroughputSample } from "../runner/series";
+import { latencyBucketExceedsScale } from "../presentation/scales";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
@@ -513,10 +510,7 @@ export class ChartEngine {
       d.scaleBytesPerSec !== DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC ||
       d.throughput.length > 0;
     const rttMin = 0;
-    // Terminal mode resolves its Y domain from full history rather than the recent live controller.
-    const rttMax = complete
-      ? latencyScale(d.latency.map((bucket) => bucket.medianRttMs))
-      : d.latencyScaleMs;
+    const rttMax = d.latencyScaleMs;
     this.#targetTMax = targetTMax;
     if (!this.#cameraInitialized) {
       this.#displayTMax = this.#targetTMax;

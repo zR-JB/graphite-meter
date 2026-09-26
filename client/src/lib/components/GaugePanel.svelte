@@ -16,7 +16,7 @@
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
   import { fmtSpeed, fmtMsTick } from "../format";
-  import { gaugeLatencyPresentation } from "./gaugeLatency";
+  import { gaugeLatency as latencyGauge } from "../presentation/scales";
   import {
     LiveRateAnimator,
     liveTargets,
@@ -72,10 +72,10 @@
     terminalArcs.length ? "speed" : "latency",
   );
   const gaugeLatency = $derived.by(() => {
-    return gaugeLatencyPresentation({
+    return latencyGauge({
       phase: store.phase,
       liveRttMs: store.liveRtt,
-      liveScaleMs: store.latencyScaleMs,
+      axisMs: store.latencyScaleMs,
       history: store.latency,
       completedRttMs:
         store.phase === "complete" && terminalArcs.length === 0
@@ -88,7 +88,7 @@
     store.phase === "latency" ||
       (store.phase === "complete" && completedKind === "latency"),
   );
-  const gaugeScaleBytesPerSec = $derived(store.gaugeScaleBytesPerSec);
+  const gaugeScaleBytesPerSec = $derived(store.scales.gaugeBytesPerSec);
   const gaugeUnit = $derived(store.unitLabel);
   const gaugeRate = (bytesPerSec: number) => store.toUnit(bytesPerSec);
   const gaugeTicks = $derived.by(() => {
@@ -165,7 +165,7 @@
 
   const dialState = $derived.by<GaugeDialState>(() => {
     const p = store.phase;
-    const scale = store.gaugeScaleBytesPerSec;
+    const scale = store.scales.gaugeBytesPerSec;
     return {
       phase: p,
       showValue: !unusableStage,

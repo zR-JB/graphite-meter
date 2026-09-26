@@ -4,10 +4,6 @@ import { nearestRank, sortedMedian } from "./measure";
 /** Points kept per presented history; the producer keeps as many closed buckets for late revisions. */
 export const SERIES_LIMIT = 1_200;
 const BUCKET_MS = 200;
-const SCALE_WINDOW_MS = 6_000;
-const SCALE_HEADROOM = 1.25;
-const SCALE_SHRINK_DWELL_MS = 2_000;
-const SCALE_LADDER_MS = [20, 40, 100, 200, 400, 1_000, 2_000, 4_000];
 
 type Bucket = {
   startT: number;
@@ -320,76 +316,4 @@ function mergeLatency(bin: LatencyBucket[]): LatencyBucket {
     pingCount: bin.reduce((sum, b) => sum + b.pingCount, 0),
     timeoutCount: bin.reduce((sum, b) => sum + b.timeoutCount, 0),
   };
-}
-
-/** The ladder tier above the p95 of reply medians, with headroom. */
-export function latencyScale(medians: readonly (number | null)[]): number {
-  const valid = medians
-    .filter(
-      (value): value is number =>
-        value != null && Number.isFinite(value) && value >= 0,
-    )
-    .sort((a, b) => a - b);
-  if (!valid.length) return SCALE_LADDER_MS[0];
-  const target = nearestRank(valid, 0.95) * SCALE_HEADROOM;
-  const tier = SCALE_LADDER_MS.find((value) => value >= target);
-  if (tier) return tier;
-  const exponent = 10 ** Math.floor(Math.log10(target));
-  return [1, 2, 5, 10].find((step) => step * exponent >= target)! * exponent;
-}
-
-/** True when any drawn part of a bucket exceeds the domain. */
-export function latencyBucketExceedsScale(
-  bucket: LatencyBucket,
-  scaleMs: number,
-): boolean {
-  return [bucket.medianRttMs, bucket.p95RttMs, bucket.maxRttMs].some(
-    (value) => value != null && value > scaleMs,
-  );
-}
-
-/** The live gauge and chart domain: grows at once, shrinks one tier after a dwell. */
-export class LatencyScaleController {
-  #recent: LatencyBucket[] = [];
-  #latestT = 0;
-  #scaleMs = SCALE_LADDER_MS[0];
-  #shrinkTarget = 0;
-  #shrinkSince = 0;
-
-  reset(): void {
-    this.#recent = [];
-    this.#latestT = this.#shrinkTarget = this.#shrinkSince = 0;
-    this.#scaleMs = SCALE_LADDER_MS[0];
-  }
-
-  observe(bucket: LatencyBucket): number {
-    if (bucket.medianRttMs != null)
-      upsertLatencyBucket(this.#recent, bucket, Infinity);
-    const latestT = (this.#latestT = Math.max(this.#latestT, bucket.endT));
-    this.#recent = this.#recent.filter(
-      (b) => b.endT > latestT - SCALE_WINDOW_MS,
-    );
-    const target = latencyScale(this.#recent.map((b) => b.medianRttMs));
-    if (target >= this.#scaleMs) {
-      this.#scaleMs = target;
-      this.#shrinkTarget = 0;
-      return this.#scaleMs;
-    }
-    const lower =
-      SCALE_LADDER_MS.findLast(
-        (tier) => tier < this.#scaleMs && tier >= target,
-      ) ?? target;
-    if (this.#shrinkTarget !== lower) {
-      this.#shrinkTarget = lower;
-      this.#shrinkSince = latestT;
-    } else if (latestT - this.#shrinkSince >= SCALE_SHRINK_DWELL_MS) {
-      this.#scaleMs = lower;
-      this.#shrinkTarget = 0;
-    }
-    return this.#scaleMs;
-  }
-
-  get scaleMs(): number {
-    return this.#scaleMs;
-  }
 }

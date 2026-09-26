@@ -192,7 +192,7 @@
   );
   function setVizAuto(auto: boolean) {
     gaugeMax(
-      auto ? "auto" : Math.max(1, Math.round(store.chartScaleBytesPerSec)),
+      auto ? "auto" : Math.max(1, Math.round(store.scales.chartBytesPerSec)),
     );
   }
   function setVizMax(event: Event) {

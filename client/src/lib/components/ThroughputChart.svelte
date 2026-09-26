@@ -135,7 +135,7 @@
       store.latency.at(-1)?.endT ?? 0,
     ),
     runSeq: store.runSeq,
-    scaleBytesPerSec: store.chartScaleBytesPerSec,
+    scaleBytesPerSec: store.scales.chartBytesPerSec,
     latencyScaleMs: store.latencyScaleMs,
     resultRates: {
       download: store.stageResults.download?.reportedBytesPerSec,

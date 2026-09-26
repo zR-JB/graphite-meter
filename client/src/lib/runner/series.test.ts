@@ -3,10 +3,7 @@ import type { ThroughputSample } from "./contract";
 import {
   compactThroughputHistory,
   LatencyPresentationBuckets,
-  LatencyScaleController,
-  latencyBucketExceedsScale,
   latencyBucketMs,
-  latencyScale,
   singleLatencyBucket,
   upsertLatencyBucket,
 } from "./series";
@@ -116,28 +113,5 @@ describe("throughput history", () => {
     expect(values).toContain(1);
     expect(history[0].t).toBe(0);
     expect(history.at(-1)!.t).toBe(990);
-  });
-});
-
-describe("latency scale", () => {
-  test("follows the p95 of medians with headroom on the tier ladder", () => {
-    expect(latencyScale([])).toBe(20);
-    expect(latencyScale([null, 30])).toBe(40);
-    expect(latencyScale([5_000])).toBe(10_000);
-  });
-
-  test("the maximum can exceed the scale that its median sets", () => {
-    const bucket = { ...singleLatencyBucket(0, 10, false), maxRttMs: 25 };
-    expect(latencyBucketExceedsScale(bucket, latencyScale([10]))).toBe(true);
-  });
-
-  test("grows at once and shrinks one tier after a dwell", () => {
-    const scale = new LatencyScaleController();
-    const at = (t: number, rtt: number) =>
-      scale.observe({ ...singleLatencyBucket(t, rtt, false), endT: t });
-    expect(at(0, 100)).toBe(200);
-    expect(at(6_100, 10)).toBe(200);
-    expect(at(7_000, 10)).toBe(200);
-    expect(at(8_200, 10)).toBe(100);
   });
 });
