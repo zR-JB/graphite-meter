@@ -88,6 +88,11 @@ func (m *mounter) http(path string, h http.Handler, proto int) {
 			http.NotFound(w, r)
 			return
 		}
+		// HTTP/2 holds an unread body up to the stream window while the handler runs.
+		if r.ProtoMajor == 2 && r.Method != http.MethodPost && r.ContentLength != 0 {
+			http.Error(w, "request body not accepted", http.StatusBadRequest)
+			return
+		}
 		h.ServeHTTP(w, r)
 	}))
 	// Public-mode preflight; authentication answers its own.

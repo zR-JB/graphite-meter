@@ -247,6 +247,49 @@ func TestNativeHTTP2ProbeAndTransfer(t *testing.T) {
 	assertProbeAndDownload(t, client, base, "h2")
 }
 
+func TestHTTP2HeldRoutesRefuseARequestBody(t *testing.T) {
+	t.Parallel()
+	client, base := nativeHTTP(t, "http2", muxTopology{transfers: true, requiredProto: 2})
+	res, err := client.Post(base+"/upload/session", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		UploadID string `json:"uploadId"`
+	}
+	err = json.UnmarshalRead(res.Body, &session)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/upload/progress?id=" + session.UploadID, "/download?bytes=1000000000"} {
+		body, unread := io.Pipe()
+		t.Cleanup(func() { _ = unread.Close() })
+		go func() { _, _ = unread.Write(make([]byte, 1<<20)) }()
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, base+target, body)
+		res, err := client.Do(req)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		cancel()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("GET %s with a body = %d, want the stream refused", target, res.StatusCode)
+		}
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodDelete, base+"/upload/progress?id="+session.UploadID, nil)
+	res, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.Header.Get("X-Graphite-Upload-Refusal") != "invalid" {
+		t.Fatalf("bodiless DELETE did not reach the receiver store: %d", res.StatusCode)
+	}
+}
+
 func TestNativeHTTP3ProbeAndTransfer(t *testing.T) {
 	t.Parallel()
 	client, base := nativeHTTP3(t)
