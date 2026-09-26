@@ -45,6 +45,17 @@ test("the first sample and non-finite samples never make the value non-finite", 
   expect(value.current).toBe(42);
 });
 
+test("a morph keeps its pace while samples retarget it, and snaps once landed", () => {
+  const sweep = new Smoothed();
+  sweep.set(0, { snap: true, now: 0 });
+  sweep.set(100, { over: 400, now: 0 });
+  sweep.set(200, { finish: true, now: 100 });
+  expect(sweep.at(300)).toBeGreaterThan(100);
+  expect(sweep.at(400)).toBe(200);
+  sweep.set(50, { finish: true, now: 600 });
+  expect(sweep.at(600)).toBe(50);
+});
+
 test("a handoff never shows a key shorter than its fade-out and follows a held key live", () => {
   const frames: FrameRequestCallback[] = [];
   const raf = globalThis.requestAnimationFrame;

@@ -52,6 +52,8 @@ interface Correction {
   max?: number;
   /** A fixed glide instead of the interval between samples. */
   over?: number;
+  /** Glide within the glide under way, else snap: a morph keeps its pace while samples retarget it. */
+  finish?: boolean;
   snap?: boolean;
   now?: number;
 }
@@ -88,9 +90,15 @@ export class Smoothed {
     const { rate = 0, max = Infinity, now = performance.now() } = correction;
     if (!Number.isFinite(value) || !Number.isFinite(rate)) return;
     const gap = now - this.#at;
-    const snap = correction.snap || still() || !Number.isFinite(gap);
+    const left = this.#at + this.#glide - now;
+    const snap =
+      correction.snap ||
+      still() ||
+      !Number.isFinite(gap) ||
+      (correction.finish && !(left > 0));
     this.#from = snap ? value : this.at(now);
     if (correction.over !== undefined) this.#glide = correction.over;
+    else if (correction.finish) this.#glide = left;
     else if (gap < SAMPLE_GAP_MS)
       this.#glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, gap));
     this.#to = value;

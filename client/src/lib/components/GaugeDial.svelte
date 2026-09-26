@@ -83,9 +83,10 @@
     const { phase, scaleBytesPerSec, latencyScaleMs, throughputEvidence } =
       input;
     const current = `${phase}:${scaleBytesPerSec}:${latencyScaleMs}:${throughputEvidence}`;
-    const snap = !motion || !input.showValue || completed || current === course;
+    const snap = !motion || !input.showValue || completed;
+    const glide = current === course ? { finish: true } : { over: 480 };
     course = current;
-    untrack(() => sweep.set(next, { snap }));
+    untrack(() => sweep.set(next, { snap, ...glide }));
   });
   // Each half ring turns through its own 180°, so both clips meet at the crossing.
   const halfAngle = (half: number) =>
