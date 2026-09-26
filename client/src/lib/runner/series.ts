@@ -162,7 +162,7 @@ const latencySeries = (b: LatencyBucket) =>
 const throughputSeries = (s: ThroughputSample) =>
   `${s.phase}:${s.dir}:${s.continuityId}`;
 
-/** Inserts or revises a bucket in time order, searching from the tail; true when existing points changed. */
+/** Inserts or revises a bucket, keeping start order through compaction; true when existing points changed. */
 export function upsertLatencyBucket(
   history: LatencyBucket[],
   bucket: LatencyBucket,
@@ -182,10 +182,13 @@ export function upsertLatencyBucket(
   if (revised) history[same] = bucket;
   else history.splice(at, 0, bucket);
   if (history.length <= limit) return revised || at < history.length - 1;
+  const reduced = compact(history, limit, latencySeries, (bin) => [
+    mergeLatency(bin),
+  ]);
   history.splice(
     0,
     history.length,
-    ...compact(history, limit, latencySeries, (bin) => [mergeLatency(bin)]),
+    ...reduced.sort((a, b) => a.startT - b.startT),
   );
   return true;
 }

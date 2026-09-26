@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ThroughputSample } from "./contract";
+import type { LatencyBucket, ThroughputSample } from "./contract";
 import {
   compactThroughputHistory,
   LatencyPresentationBuckets,
@@ -83,6 +83,29 @@ describe("latency history", () => {
       true,
     );
     expect(history.map((bucket) => bucket.medianRttMs)).toEqual([10, 8, 14]);
+  });
+
+  test("a revision after compaction replaces its bucket in start order", () => {
+    const bucket = (startT: number, endT: number, rtt: number, id = 0) => ({
+      ...singleLatencyBucket(startT, rtt, false),
+      t: (startT + endT) / 2,
+      endT,
+      continuityId: id,
+    });
+    const history: LatencyBucket[] = [];
+    for (const b of [
+      bucket(0, 100, 10),
+      bucket(50, 60, 50, 1),
+      bucket(100, 200, 10),
+      bucket(200, 300, 10),
+    ])
+      upsertLatencyBucket(history, b, 3);
+    upsertLatencyBucket(history, bucket(50, 60, 70, 1), 3);
+    expect(history.map((b) => [b.startT, b.medianRttMs])).toEqual([
+      [0, 10],
+      [50, 70],
+      [200, 10],
+    ]);
   });
 
   test("compaction keeps the success-weighted median and the worst tail", () => {
