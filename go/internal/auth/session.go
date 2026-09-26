@@ -21,6 +21,14 @@ const (
 	sessionLifetime    = 8 * time.Hour
 )
 
+func uniqueCookie(r *http.Request, name string) *http.Cookie {
+	cookies := r.CookiesNamed(name)
+	if len(cookies) != 1 {
+		return nil
+	}
+	return cookies[0]
+}
+
 type session struct {
 	hash                    [32]byte
 	id                      string

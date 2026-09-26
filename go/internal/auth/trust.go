@@ -14,6 +14,19 @@ import (
 
 type trust struct{ Secure, Canonical bool }
 
+// Security-relevant fields must appear at most once per request.
+func ambiguousAuthHeaders(h http.Header) bool {
+	for _, name := range [...]string{
+		"Authorization", "Origin", "Sec-Fetch-Site", "X-CSRF-Token",
+		"Access-Control-Request-Method", "Access-Control-Request-Headers",
+	} {
+		if len(h.Values(name)) > 1 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) requestTrust(r *http.Request) trust {
 	if r.TLS != nil {
 		return trust{Secure: true, Canonical: equalHost(r.Host, s.public.Host)}
@@ -122,8 +135,8 @@ func (s *Service) checkCSRF(r *http.Request, field string) (reason, bool) {
 	if origin != s.origin {
 		return reasonCSRFOriginMismatch, false
 	}
-	c, err := r.Cookie(loginCookie)
-	if err != nil {
+	c := uniqueCookie(r, loginCookie)
+	if c == nil {
 		return reasonCSRFCookieMissing, false
 	}
 	v := r.FormValue(field)

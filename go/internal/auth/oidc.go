@@ -223,7 +223,7 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 	}
 	client := transport.AddressBucket(addr)
 	tx := oidcTransaction{state: state, nonce: nonce, verifier: verifier, browser: browserHash, expires: time.Now().Add(oidcTransactionLifetime), client: client, cliChallenge: challengeOrEmpty(r.FormValue("challenge"))}
-	if c, err := r.Cookie(sessionCookie); err == nil {
+	if c := uniqueCookie(r, sessionCookie); c != nil {
 		tx.prior = sha256.Sum256([]byte(c.Value))
 		tx.hasPrior = true
 	}
@@ -319,8 +319,8 @@ func (s *Service) resolveOIDCTransaction(w http.ResponseWriter, r *http.Request)
 		s.oidcLoginFailure(w, r, reasonCallbackParameters)
 		return oidcTransaction{}, "", false
 	}
-	cookie, err := r.Cookie(transactionCookie)
-	if err != nil {
+	cookie := uniqueCookie(r, transactionCookie)
+	if cookie == nil {
 		s.oidcLoginFailure(w, r, reasonTransactionCookie)
 		return oidcTransaction{}, "", false
 	}
