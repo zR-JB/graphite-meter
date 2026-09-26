@@ -402,16 +402,11 @@
     e.returnValue = "";
   }
 
-  function isEditable(el: EventTarget | null): boolean {
-    if (!(el instanceof HTMLElement)) return false;
-    const tag = el.tagName;
-    return (
-      tag === "INPUT" ||
-      tag === "TEXTAREA" ||
-      tag === "SELECT" ||
-      el.isContentEditable
-    );
-  }
+  // Keys belong to text entry; a focused toggle leaves them to the page.
+  const isEditable = (el: EventTarget | null) =>
+    el instanceof HTMLElement &&
+    (el.isContentEditable ||
+      el.matches("textarea, select, input:not([type=checkbox], [type=radio])"));
 
   // Space and Enter belong to whatever control holds focus.
   function unownedTarget(el: EventTarget | null): boolean {
@@ -438,12 +433,12 @@
         dismissHistory();
       } else if (!measurementOpen) {
         return;
+      } else if (lastPanel) {
+        dismissPanel(lastPanel);
       } else if (store.isRunning) {
         toggleRun();
       } else if (hasPendingStart()) {
         cancelPendingStart();
-      } else if (lastPanel) {
-        dismissPanel(lastPanel);
       } else {
         return;
       }

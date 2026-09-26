@@ -75,6 +75,30 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   ).toBeFocused();
 });
 
+test("Escape closes the docked Settings panel before it stops a running test", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await open(page, undefined, {
+    config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
+  });
+  await ready(page);
+  await runButton(page, "Start test").click();
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  const settings = await openSettings(page);
+  await settings
+    .getByRole("checkbox")
+    .nth(0)
+    .evaluate((el: HTMLElement) => el.focus());
+  await page.raw.press("Escape");
+  await expect
+    .poll(() =>
+      settings.all((els: HTMLElement[]) => els.every((el) => el.inert)),
+    )
+    .toBe(true);
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  await page.raw.press("Escape");
+  await expect(phase(page, "aborted")).toHaveCount(1);
+});
+
 test("legal notices recover through Retry and keep focus in the dialog", async (page) => {
   await open(page);
   await page.blockRequests(["*legal/about.json*"]);
