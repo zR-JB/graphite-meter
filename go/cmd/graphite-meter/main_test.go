@@ -73,8 +73,12 @@ func TestParseConfig(t *testing.T) {
 			}
 		})
 	}
-	if _, err := parseConfig("test", []string{"-h"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+	var help strings.Builder
+	if _, err := parseConfig("test", []string{"-h"}, &help); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig(-h) = %v, want flag.ErrHelp", err)
+	}
+	if !strings.Contains(help.String(), "-h1-addr address\n    \tclear HTTP/1.1 listen address (env GM_H1_ADDR)") {
+		t.Fatalf("help omits the environment name:\n%s", help.String())
 	}
 }
 

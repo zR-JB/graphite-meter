@@ -286,7 +286,7 @@ func Load() (Config, error) {
 func RegisterFlags(fs *flag.FlagSet, c *Config) {
 	for _, s := range c.settings() {
 		if s.flag != "" {
-			fs.Var(flagValue{c, s}, s.flag, s.usage)
+			fs.Var(flagValue{c, s}, s.flag, s.usage+" (env "+s.env+")")
 		}
 	}
 }
