@@ -1,4 +1,5 @@
 import { test, expect, afterEach } from "bun:test";
+import type { RecoveryCause } from "../contract";
 import {
   decodeUploadProgress,
   readProgressFeed,
@@ -148,11 +149,14 @@ test("every pinned upload refusal surfaces as a fatal", async () => {
         type: "fatal",
         detail: message,
         cause:
-          name === "invalid"
-            ? "unknown-upload-id"
-            : name === "ownerMismatch"
-              ? "owner-mismatch"
-              : "capacity-refusal",
+          (
+            {
+              invalid: "unknown-upload-id",
+              ownerMismatch: "owner-mismatch",
+              idle: "transient-connection",
+              revoked: "authentication-failure",
+            } as Record<string, RecoveryCause>
+          )[name] ?? "capacity-refusal",
       },
     ]);
   }

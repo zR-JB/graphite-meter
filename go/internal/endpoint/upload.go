@@ -63,12 +63,10 @@ func (u *Upload) serve(w http.ResponseWriter, r *http.Request, bound time.Durati
 	switch {
 	case err != nil && auth.SessionEnded(r.Context()):
 		auth.SignInRequired(w.Header())
-		w.Header().Set("X-Graphite-Upload-Refusal", wire.LaneRevoked.Name)
-		http.Error(w, wire.LaneRevoked.Reason, http.StatusForbidden)
+		writeLaneRefusal(w, wire.LaneRevoked)
 		return
 	case errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)):
-		w.Header().Set("X-Graphite-Upload-Refusal", wire.LaneIdle.Name)
-		http.Error(w, wire.LaneIdle.Reason, http.StatusRequestTimeout)
+		writeLaneRefusal(w, wire.LaneIdle)
 		return
 	case err != nil:
 		return
@@ -257,4 +255,15 @@ func (u *Upload) waitDrained(done, superseded <-chan struct{}, agg *uploadAgg) b
 		case <-changed:
 		}
 	}
+}
+
+var laneRefusalStatus = map[string]int{
+	wire.LaneIdle.Name:    http.StatusRequestTimeout,
+	wire.LaneRevoked.Name: http.StatusForbidden,
+}
+
+// writeLaneRefusal answers an HTTP upload lane that ended as idle or revoked (api/uploadrefusals.txt).
+func writeLaneRefusal(w http.ResponseWriter, end wire.LaneEnd) {
+	w.Header().Set("X-Graphite-Upload-Refusal", end.Name)
+	http.Error(w, end.Reason, laneRefusalStatus[end.Name])
 }
