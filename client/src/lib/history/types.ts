@@ -254,17 +254,8 @@ export function incoherence(
 type Plain = Record<string, unknown>;
 const object = (value: unknown): value is Plain =>
   value !== null && typeof value === "object" && !Array.isArray(value);
-/** Saved counts, bytes, rates and durations are never negative. */
-const numbers = (value: Plain, keys: readonly string[], nullable = false) =>
-  keys.every(
-    (key) =>
-      (typeof value[key] === "number" && value[key] >= 0) ||
-      (nullable && value[key] === null),
-  );
 const time = (value: unknown) =>
   typeof value === "number" && !Number.isNaN(new Date(value).getTime());
-const objects = (value: Plain, keys: readonly string[]) =>
-  keys.every((key) => object(value[key]));
 
 /** Saved leaves are finite numbers, bounded text, booleans, null or omitted. */
 function plain(value: unknown, depth = 0): boolean {
@@ -277,83 +268,21 @@ function plain(value: unknown, depth = 0): boolean {
     entries.length <= 512 && entries.every((entry) => plain(entry, depth + 1))
   );
 }
-const throughputShape = (value: unknown): boolean =>
-  value === null ||
-  (object(value) &&
-    numbers(value, ["reportedBytesPerSec", "totalBytes"]) &&
-    numbers(value, ["peakBytesPerSec"], true));
-const wireShape = (value: unknown): boolean => {
-  if (!object(value) || !object(value.breakdown)) return false;
-  const breakdown = value.breakdown;
-  return (
-    STAGES.slice(1).every(
-      (stage) => breakdown[stage] === null || object(breakdown[stage]),
-    ) &&
-    numbers(
-      value,
-      ["downloadBytesPerSec", "uploadBytesPerSec", "bidirectionalBytesPerSec"],
-      true,
-    )
-  );
-};
-const lanes = (value: unknown): boolean =>
-  object(value) &&
-  STAGES.every(
-    (stage) =>
-      value[stage] == null ||
-      (object(value[stage]) && numbers(value[stage], ["count"])),
-  );
-const serverDetails = (value: unknown): boolean =>
-  object(value) &&
-  typeof value.latencyFocus === "string" &&
-  ["selection", "participants", "servers", "intervals", "failures"].every(
-    (key) => Array.isArray(value[key]),
-  ) &&
-  (value.selection as unknown[]).every(
-    (server) => object(server) && typeof server.name === "string",
-  ) &&
-  (value.servers as unknown[]).every(
-    (server) =>
-      object(server) &&
-      objects(server, [
-        "server",
-        "throughput",
-        "latencyByStage",
-        "totalBytes",
-      ]) &&
-      numbers(server.totalBytes as Plain, ["down", "up"]) &&
-      ["download", "upload"].every((stage) => throughputShape(server[stage])),
-  );
-
-/** Records are self-authored: reading needs their version and the shape the history view dereferences. */
+/** Records are self-authored: reading checks identity and what sorting dereferences; views have a boundary. */
 export function isHistoryRecord(value: unknown): value is HistoryRecord {
   if (
     !object(value) ||
     value.schemaVersion !== HISTORY_SCHEMA_VERSION ||
-    !plain(value) ||
     typeof value.id !== "string" ||
-    !time(value.startedAt) ||
     !time(value.completedAt) ||
-    (value.startedAt as number) > (value.completedAt as number) ||
-    !numbers(value, ["durationMs", "totalBytes"]) ||
-    !objects(value, ["stages", "server", "transport", "client"]) ||
-    (value.multiServer !== undefined && !serverDetails(value.multiServer)) ||
-    (value.wireEstimates !== null && !wireShape(value.wireEstimates))
+    !plain(value) ||
+    !object(value.stages)
   )
     return false;
-  const stages = value.stages as Plain;
-  if (!objects(stages, ["latency", "download", "upload", "bidirectional"]))
-    return false;
-  const latency = stages.latency as Plain,
-    bidirectional = stages.bidirectional as Plain;
+  const { latency, download, upload, bidirectional } = value.stages;
   return (
-    lanes(latency.lanes) &&
-    (latency.result === null ||
-      (object(latency.result) && numbers(latency.result, ["reportedMs"]))) &&
-    throughputShape((stages.download as Plain).result) &&
-    throughputShape((stages.upload as Plain).result) &&
-    throughputShape(bidirectional.down) &&
-    throughputShape(bidirectional.up) &&
-    typeof (value.server as Plain).name === "string"
+    object(latency) &&
+    object(latency.lanes) &&
+    [download, upload, bidirectional].every(object)
   );
 }

@@ -218,12 +218,12 @@ test("a record cannot claim more than its stages and evidence support", () => {
   );
 });
 
-test("corrupted saved shapes are skipped before they reach rendering", () => {
+test("records that sorting cannot read or that are not plain data are skipped", () => {
   const valid = serverHistoryRecord();
   const lanes = valid.stages.latency.lanes;
   const cases: unknown[] = [
     { ...valid, stages: null },
-    { ...valid, durationMs: "1" },
+    { ...valid, stages: { ...valid.stages, upload: null } },
     { ...valid, completedAt: 1e20 },
     {
       ...valid,
@@ -235,20 +235,7 @@ test("corrupted saved shapes are skipped before they reach rendering", () => {
         },
       },
     },
-    {
-      ...valid,
-      stages: {
-        ...valid.stages,
-        download: { status: "complete", result: { reportedBytesPerSec: 1 } },
-      },
-    },
     { ...valid, wireEstimates: { downloadBytesPerSec: Infinity } },
-    // Each of these once reached rendering and threw or showed impossible values.
-    { ...valid, wireEstimates: { downloadBytesPerSec: 5 } },
-    { ...valid, startedAt: valid.completedAt + 1 },
-    { ...valid, durationMs: -1 },
-    { ...valid, totalBytes: -5 },
-    { ...valid, multiServer: { ...valid.multiServer, servers: [null] } },
     { ...valid, server: { name: "x".repeat(4096) } },
     { ...valid, failures: Array.from({ length: 600 }, () => null) },
   ];

@@ -163,7 +163,7 @@
           return {
             id: server.id,
             name: serverLabel(server),
-            host: new URL(server.url).host,
+            host: URL.parse(server.url)?.host ?? "",
             down: rate(measured?.download?.reportedBytesPerSec),
             up: rate(measured?.upload?.reportedBytesPerSec),
             latency: formatLatency(measured?.latency?.reportedMs),

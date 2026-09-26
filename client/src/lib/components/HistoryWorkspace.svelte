@@ -79,7 +79,7 @@
   const visibleCount = $derived(
     Math.max(pages, Math.ceil((selectedIndex + 1) / 50)) * 50,
   );
-  const visibleRows = $derived(ordered.slice(0, visibleCount).map(historyRow));
+  const visible = $derived(ordered.slice(0, visibleCount));
   const selectedRecord = $derived(
     records.find((record) => record.id === selectedId) ?? null,
   );
@@ -261,6 +261,19 @@
         ),
       ].join(". "),
     };
+  }
+
+  function select(event: MouseEvent, id: string) {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    event.preventDefault();
+    onNavigate(selectedId === id ? null : id);
   }
 
   function dateLabel(value: number): string {
@@ -457,55 +470,60 @@
             {/each}
           </div>
           <ol aria-label="Saved results">
-            {#each visibleRows as row (row.record.id)}
+            {#each visible as record (record.id)}
               <li>
-                <a
-                  class="result-row"
-                  data-history-id={row.record.id}
-                  href={`#/history/${row.record.id}`}
-                  aria-current={selectedId === row.record.id
-                    ? "true"
-                    : undefined}
-                  aria-label={row.label}
-                  onclick={(event) => {
-                    if (
-                      event.button !== 0 ||
-                      event.metaKey ||
-                      event.ctrlKey ||
-                      event.shiftKey ||
-                      event.altKey
-                    )
-                      return;
-                    event.preventDefault();
-                    onNavigate(
-                      selectedId === row.record.id ? null : row.record.id,
-                    );
-                  }}
-                >
-                  <span class="date-cell">
-                    <time
-                      datetime={new Date(row.record.completedAt).toISOString()}
-                      title={row.exact}
-                    >
-                      <strong>{row.primary}</strong>
-                      <small>{row.secondary}</small>
-                    </time>
-                    {#if row.outcome !== "complete"}<span
-                        class="badge"
-                        data-tone="warn">{OUTCOME[row.outcome]}</span
-                      >{/if}
-                  </span>
-                  {#each columns as column, index (column)}
-                    <span class="metric-cell" data-tone={column}>
-                      <small
-                        ><span class="head-icon"
-                          ><Icon name={COLUMN[column].icon} /></span
-                        >{COLUMN[column].short}</small
+                <svelte:boundary>
+                  {@const row = historyRow(record)}
+                  <a
+                    class="result-row"
+                    data-history-id={record.id}
+                    href={`#/history/${record.id}`}
+                    aria-current={selectedId === record.id ? "true" : undefined}
+                    aria-label={row.label}
+                    onclick={(event) => select(event, record.id)}
+                  >
+                    <span class="date-cell">
+                      <time
+                        datetime={new Date(record.completedAt).toISOString()}
+                        title={row.exact}
                       >
-                      <strong>{row.metrics[index]}</strong>
+                        <strong>{row.primary}</strong>
+                        <small>{row.secondary}</small>
+                      </time>
+                      {#if row.outcome !== "complete"}<span
+                          class="badge"
+                          data-tone="warn">{OUTCOME[row.outcome]}</span
+                        >{/if}
                     </span>
-                  {/each}
-                </a>
+                    {#each columns as column, index (column)}
+                      <span class="metric-cell" data-tone={column}>
+                        <small
+                          ><span class="head-icon"
+                            ><Icon name={COLUMN[column].icon} /></span
+                          >{COLUMN[column].short}</small
+                        >
+                        <strong>{row.metrics[index]}</strong>
+                      </span>
+                    {/each}
+                  </a>
+                  {#snippet failed()}
+                    <a
+                      class="result-row"
+                      data-history-id={record.id}
+                      href={`#/history/${record.id}`}
+                      onclick={(event) => select(event, record.id)}
+                    >
+                      <span class="date-cell">
+                        <time
+                          datetime={new Date(record.completedAt).toISOString()}
+                          ><strong>{dateLabel(record.completedAt)}</strong
+                          ></time
+                        >
+                        <span class="badge" data-tone="warn">Unreadable</span>
+                      </span>
+                    </a>
+                  {/snippet}
+                </svelte:boundary>
               </li>
             {/each}
           </ol>
@@ -520,31 +538,16 @@
         {/if}
       </div>
 
-      {#if selectedRecord}
-        {#key selectedRecord.id}
-          <div class="detail-pane enter">
-            <HistoryResultDetail
-              record={selectedRecord}
-              onClose={() => onNavigate(null)}
-              onDelete={(invoker) =>
-                requestConfirm(
-                  { kind: "delete", id: selectedRecord.id },
-                  invoker,
-                )}
-              bind:region={detailRegion}
-            />
-          </div>
-        {/key}
-      {:else if selectedId && selectedState !== "ready"}
+      {#snippet unavailable(malformed: boolean)}
         <div class="detail-pane empty-state" role="status">
           <span class="empty-icon">!</span>
           <h2>
-            {selectedState === "malformed"
+            {malformed
               ? "Unreadable saved result"
               : "Result no longer available"}
           </h2>
           <p>
-            {selectedState === "malformed"
+            {malformed
               ? "This record uses an unsupported format or failed validation."
               : "It may have been deleted in another tab."}
           </p>
@@ -552,6 +555,27 @@
             >Back to results</button
           >
         </div>
+      {/snippet}
+      {#if selectedRecord}
+        {#key selectedRecord.id}
+          <svelte:boundary>
+            <div class="detail-pane enter">
+              <HistoryResultDetail
+                record={selectedRecord}
+                onClose={() => onNavigate(null)}
+                onDelete={(invoker) =>
+                  requestConfirm(
+                    { kind: "delete", id: selectedRecord.id },
+                    invoker,
+                  )}
+                bind:region={detailRegion}
+              />
+            </div>
+            {#snippet failed()}{@render unavailable(true)}{/snippet}
+          </svelte:boundary>
+        {/key}
+      {:else if selectedId && selectedState !== "ready"}
+        {@render unavailable(selectedState === "malformed")}
       {/if}
     </div>
   {/if}

@@ -195,21 +195,23 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
     { ...record(3), schemaVersion: 2 },
     record(4, 1e20),
   ];
-  await seed(page, { records: [current, ...old] });
+  const broken = { ...record(5), multiServer: { selection: [{}, {}] } };
+  await seed(page, { records: [current, broken, ...old] });
   const before = await stored(page);
   await history(page);
-  await expect(page.locator(".result-row")).toHaveCount(1);
+  await expect(page.locator(".result-row")).toHaveCount(2);
   await expect(page.locator(".history-workspace")).toContainText(
     "3 unsupported or malformed records were ignored.",
   );
-  await history(page, old[0].id);
-  await expect(
-    page.getByRole("heading", { name: "Unreadable saved result" }),
-  ).toBeVisible();
+  const unreadable = page.getByRole("heading", {
+    name: "Unreadable saved result",
+  });
+  for (const id of [broken.id, old[0].id]) {
+    await history(page, id);
+    await expect(unreadable).toBeVisible();
+  }
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "Unreadable saved result" }),
-  ).toBeVisible();
+  await expect(unreadable).toBeVisible();
   expect(await stored(page)).toEqual(before);
 
   const management = page.getByRole("button", { name: "History actions" });
