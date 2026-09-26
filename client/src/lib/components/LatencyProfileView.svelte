@@ -219,7 +219,7 @@
               : "waiting"
             : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        <em class="term jit" {@attach tooltip(() => JARGON.jitter)}
+        <em class="jit" {@attach tooltip(() => JARGON.jitter)}
           >{lane.jitter == null
             ? `jitter ${MISSING}`
             : `${fmtMs(lane.jitter)} ms jitter`}</em
@@ -439,7 +439,6 @@
     width: 20px;
     height: 20px;
     color: var(--text-muted);
-    cursor: help;
   }
   .timing-info :global(svg) {
     width: 12px;

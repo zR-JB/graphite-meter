@@ -206,7 +206,6 @@
             /><path d="M6 5.5h.01M6 14.5h.01M10 8v4" /></svg
           >
           <span
-            class="term"
             {@attach tooltip(() =>
               indicatedServers.map((server) => server.name).join(", "),
             )}>{serverIndicator}</span

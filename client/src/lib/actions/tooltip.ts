@@ -1,7 +1,8 @@
 // Anchored tooltips for jargon, controls and chart points; the words live in vocabulary.ts.
 import { fromAction } from "svelte/attachments";
 import { nextFrame } from "../presentation/motion.svelte";
-const ACTIONABLE_SELECTOR = "button, a, label, [role='switch'], [role='tab']";
+const ACTIONABLE_SELECTOR =
+  "button, a, label, summary, [role='switch'], [role='tab']";
 interface TooltipOptions {
   text: string;
   // Chart/plot tooltips track the pointer immediately; normal UI tips wait.
@@ -31,14 +32,10 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
     "anchor-name",
     anchorNames ? `${anchorNames}, --${id}` : `--${id}`,
   );
-  // Definitions and notes need a tab stop; other anchors already name their text.
-  if (
-    !node.hasAttribute("tabindex") &&
-    node.tabIndex < 0 &&
-    node.matches(".term, [role='note']")
-  ) {
+  // A hint inside a control rides its focus and taps; any other anchor takes a tab stop.
+  const inert = !node.closest(ACTIONABLE_SELECTOR);
+  if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
     node.tabIndex = 0;
-  }
   function show() {
     if (bubble || !opts.text || !node.isConnected) return;
     bubble = document.createElement("div");
@@ -127,14 +124,14 @@ function tooltipAction(node: HTMLElement, param: TooltipParam) {
       if (target.matches(":focus-visible")) show();
     });
   }
-  // A tap on a control runs the control, so only inert jargon shows a tip on touch.
+  // A tap on a control runs the control, so only an inert anchor shows a tip on touch.
   function onPointerUp(event: PointerEvent) {
     if (event.pointerType !== "touch") return;
     if (touchOpen) {
       hide();
       return;
     }
-    if (node.closest(ACTIONABLE_SELECTOR)) return;
+    if (!inert) return;
     show();
     if (!bubble) return;
     touchOpen = true;

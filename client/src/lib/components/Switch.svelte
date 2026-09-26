@@ -6,7 +6,6 @@
     label?: string;
     disabled?: boolean;
     onToggle: (next: boolean) => void;
-    /** Optional jargon-tooltip text for the label, e.g. JARGON.wireRate. */
     tooltip?: string;
   }
   let {
@@ -24,7 +23,7 @@
   }
 </script>
 
-<label class="switch" class:disabled>
+<label class="switch" class:disabled {@attach tooltip(() => tooltipText)}>
   <input
     class="sr-only"
     type="checkbox"
@@ -33,16 +32,7 @@
     onchange={handleChange}
   />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
-  {#if label}
-    {#if tooltipText}
-      <!-- The tooltip adds a tab stop, so only a label with text gets one. -->
-      <span class="label term" {@attach tooltip(() => tooltipText)}
-        >{label}</span
-      >
-    {:else}
-      <span class="label">{label}</span>
-    {/if}
-  {/if}
+  {#if label}<span class="label">{label}</span>{/if}
 </label>
 
 <style>
@@ -52,6 +42,7 @@
     display: inline-flex;
     align-items: center;
     gap: 10px;
+    border-radius: var(--r-well);
     user-select: none;
   }
   .switch.disabled {
@@ -87,10 +78,6 @@
   input:checked + .track .knob {
     translate: 16px 0;
     background: var(--brand);
-  }
-  input:focus-visible + .track {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
   }
   .label {
     flex: 1 1 auto;

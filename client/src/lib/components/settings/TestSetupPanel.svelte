@@ -12,6 +12,7 @@
   import { pathOptions } from "../../presentation/paths";
   import { normalizeStreamCount } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
+  import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
@@ -223,7 +224,7 @@
     <div class="section-heading">
       <h3 class="caps">Connection paths</h3>
       <span
-        class="badge term"
+        class="badge"
         data-readiness={readiness}
         data-tone={READINESS[readiness].tone}
         {@attach tooltip(() =>
@@ -353,12 +354,12 @@
       label="Save completed results on this device"
     />
     <a
-      class="btn-link"
+      class="btn"
       href="#/history"
       onclick={(event) => {
         event.preventDefault();
         onOpenHistory(event.currentTarget as HTMLElement);
-      }}>View History</a
+      }}><Icon name="history" />Open History</a
     >
   </section>
   <section class="surface-inset panel wide">
@@ -574,7 +575,7 @@
   .presets > button {
     text-transform: capitalize;
   }
-  .btn-link {
+  a.btn {
     justify-self: start;
   }
   .settings-reset {

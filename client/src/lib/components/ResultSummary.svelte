@@ -48,7 +48,7 @@
             ><Icon name={card.icon} /></span
           >
           {#if card.key === "latency"}
-            <span class="label term" {@attach tooltip(() => JARGON.latency)}
+            <span class="label" {@attach tooltip(() => JARGON.latency)}
               >{card.label}</span
             >
           {:else}
@@ -57,7 +57,7 @@
           {#if card.quality}
             {@const pct = `Measurement stability: ${Math.round(card.quality.pct)}%`}
             <span
-              class="badge term"
+              class="badge"
               data-tone={QUALITY_TONE[card.quality.band]}
               {@attach tooltip(() => pct)}
               >{card.quality.band}<span class="sr-only">, {pct}</span></span
@@ -75,15 +75,13 @@
             {#if card.jitter !== null}
               <p class="line">
                 <strong>{card.jitter} <small>ms</small></strong>
-                <span class="term" {@attach tooltip(() => JARGON.jitter)}
-                  >jitter</span
-                >
+                <span {@attach tooltip(() => JARGON.jitter)}>jitter</span>
               </p>
             {/if}
             {#if card.added !== null}
               <p class="line">
                 <strong>{card.added} <small>ms</small></strong>
-                <span class="term" {@attach tooltip(() => JARGON.addedLatency)}
+                <span {@attach tooltip(() => JARGON.addedLatency)}
                   >added latency</span
                 >
               </p>
@@ -91,9 +89,7 @@
             {#if card.wire}
               <p class="line">
                 <strong>{card.wire.num}</strong>
-                <span
-                  class="term"
-                  {@attach tooltip(() => card.wire?.tooltip ?? "")}
+                <span {@attach tooltip(() => card.wire?.tooltip ?? "")}
                   >wire{card.wire.pct ? ` ${card.wire.pct}` : ""}</span
                 >
               </p>
@@ -188,7 +184,7 @@
     color: var(--brand-strong);
   }
   .line small,
-  .line .term {
+  .line > span {
     color: var(--text-soft);
     font-size: var(--type-2xs);
   }

@@ -73,14 +73,23 @@
           to the extent permitted by applicable law.
         </p>
         <p class="legal-links">
-          <a href={data.sourceURL} target="_blank" rel="noopener noreferrer"
-            >Source code</a
+          <a
+            class="btn"
+            href={data.sourceURL}
+            target="_blank"
+            rel="noopener noreferrer">Source code</a
           >
-          <a href={data.licenseURL} target="_blank" rel="noopener noreferrer"
-            >Project license</a
+          <a
+            class="btn"
+            href={data.licenseURL}
+            target="_blank"
+            rel="noopener noreferrer">Project license</a
           >
-          <a href={data.noticesURL} target="_blank" rel="noopener noreferrer"
-            >Third-party notices</a
+          <a
+            class="btn"
+            href={data.noticesURL}
+            target="_blank"
+            rel="noopener noreferrer">Third-party notices</a
           >
         </p>
       </section>
@@ -167,12 +176,7 @@
   .legal-links {
     display: flex;
     flex-wrap: wrap;
-    gap: var(--space-2) var(--space-4);
-  }
-  a {
-    color: var(--brand-strong);
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    gap: var(--space-2);
   }
   .component {
     margin-top: var(--space-2);

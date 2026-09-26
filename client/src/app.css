@@ -336,6 +336,22 @@
     outline: var(--focus-ring);
     outline-offset: 2px;
   }
+  /* Only keyboard focus rings: a choice label draws its control's, and a region
+     focused to move the reading position draws none. */
+  label:has(> :is([type="radio"], [type="checkbox"]):focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: var(--ring-offset, 2px);
+  }
+  label > :is([type="radio"], [type="checkbox"]):focus-visible,
+  :is(section, article)[tabindex="-1"]:focus-visible {
+    outline: none;
+  }
+  /* Links inside prose; standalone links are buttons. */
+  :is(p, dd) a:not(.btn) {
+    color: var(--brand-strong);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
   /* Form fields share one inset treatment; the ring halo reads as focus. */
   select,
   input:where([type="number"], [type="text"], [type="search"]) {
@@ -400,16 +416,8 @@
     line-height: 1.5;
   }
 
-  /* A term with a tooltip definition. */
-  .term {
-    cursor: help;
-    text-decoration: underline dotted
-      color-mix(in srgb, var(--text-soft) 70%, transparent);
-    text-underline-offset: 3px;
-  }
-
-  /* Buttons. The visible edge is an inset ring so a coarse pointer can grow
-     the hit area with a transparent border without moving the drawn box. */
+  /* Buttons, and links that act as buttons. The visible edge is an inset ring so a
+     coarse pointer can grow the hit area with a transparent border without moving the drawn box. */
   .btn {
     --btn-line: var(--border);
     --hit-pad: 0px;
@@ -491,18 +499,8 @@
       background: var(--brand-soft) padding-box;
     }
   }
-  .btn-link {
-    min-height: 0;
-    padding: 0;
-    background: none;
-    box-shadow: none;
-    color: var(--brand-strong);
-    font-weight: var(--w-strong);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
   @media (pointer: coarse) {
-    .btn:not(.btn-link) {
+    .btn {
       --hit-pad: 6px;
     }
   }

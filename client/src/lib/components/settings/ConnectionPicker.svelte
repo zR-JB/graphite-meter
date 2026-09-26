@@ -156,10 +156,6 @@
     opacity: 0;
     pointer-events: none;
   }
-  .choice:focus-within {
-    border-color: var(--brand-line);
-    box-shadow: var(--ring-halo);
-  }
   .radio-dot {
     width: 14px;
     height: 14px;

@@ -22,7 +22,7 @@
 
 {#if refused}
   <span
-    class="label term"
+    class="label"
     {@attach tooltip(() => store.startError || store.startBlocker)}
     >{label}</span
   >

@@ -862,9 +862,6 @@
   .history-stage {
     overflow: hidden;
   }
-  .measurement-stage:focus {
-    outline: none;
-  }
   /* A viewport too short for the instruments scrolls this column. */
   .stage > :global(:is(.gauge-panel, .chart)) {
     width: 100%;

@@ -302,6 +302,7 @@
     background: var(--surface-inset);
   }
   .server-choices label {
+    --ring-offset: 1px;
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr) auto;
     align-items: center;
@@ -345,10 +346,6 @@
     border-left: 1.5px solid currentColor;
     border-bottom: 1.5px solid currentColor;
     transform: translateY(-1px) rotate(-45deg);
-  }
-  .server-choices label:has(input:focus-visible) {
-    outline: var(--focus-ring);
-    outline-offset: 1px;
   }
   .server-choices label:has(input:disabled) {
     cursor: default;
@@ -418,11 +415,6 @@
   p {
     color: var(--text-muted);
     overflow-wrap: anywhere;
-  }
-  a {
-    color: var(--brand-strong);
-    text-decoration: underline;
-    text-underline-offset: 3px;
   }
   .approval-code strong {
     display: block;

@@ -612,9 +612,6 @@
     box-shadow: var(--elev-raised);
     container: history / inline-size;
   }
-  .history-workspace:focus {
-    outline: none;
-  }
   .history-head {
     display: flex;
     flex-wrap: wrap;

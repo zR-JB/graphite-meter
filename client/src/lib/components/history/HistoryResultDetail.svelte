@@ -322,7 +322,6 @@
               <span
                 >{counts.exceptions.join(" · ") ||
                   "No timeouts"}{#if lane.accountingComplete === false}<em
-                    class="term"
                     {@attach tooltip(() => PARTIAL_ACCOUNTING_HELP)}
                     >· partial accounting</em
                   >{/if}</span
@@ -370,9 +369,6 @@
     min-width: 0;
     background: var(--surface-1);
     container: detail / inline-size;
-  }
-  .result-detail:focus {
-    outline: none;
   }
   .detail-head {
     position: sticky;

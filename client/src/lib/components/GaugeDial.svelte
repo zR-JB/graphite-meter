@@ -364,7 +364,6 @@
     width: 24px;
     height: 24px;
     transform: translate(-50%, -50%);
-    cursor: help;
   }
 
   .gauge-dial,

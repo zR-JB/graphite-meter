@@ -371,7 +371,7 @@
   </details>
   <p class="license">
     <span>Legal</span>
-    <button class="btn-link" type="button" onclick={onOpenLegal}
+    <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
       >About &amp; legal</button
     >
   </p>
