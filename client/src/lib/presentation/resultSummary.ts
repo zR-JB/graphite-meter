@@ -34,7 +34,6 @@ export interface SummaryEvidence {
   bidirectional: { down: Throughput | null; up: Throughput | null } | null;
   latency: Latency | null;
   added: Added | null;
-  latencyMeasured: boolean;
   latencySource?: string;
   wire: Partial<Record<WireStage, WireView | null>>;
 }
@@ -62,6 +61,10 @@ export const CARD_ORDER = [
   "latency",
 ] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
+const shownStatus = (stages: Record<TransportRole, string>) =>
+  Object.fromEntries(
+    Object.entries(stages).filter(([, value]) => SHOWN_STATUS.has(value)),
+  ) as SummaryEvidence["status"];
 
 export const wireOverhead = (multiplier: number) =>
   multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
@@ -81,20 +84,16 @@ export function liveWire(
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
   stages: Record<TransportRole, string>,
-  run: Omit<SummaryEvidence, "status" | "latencyMeasured" | "latencySource">,
+  run: Omit<SummaryEvidence, "status" | "latencySource">,
   details: MultiServerResult | null | undefined,
   shown: string,
   latencyFocus: string | null | undefined,
 ): SummaryEvidence {
-  const status = Object.fromEntries(
-    Object.entries(stages).filter(([, value]) => SHOWN_STATUS.has(value)),
-  ) as SummaryEvidence["status"];
   const multiple = details && details.selection.length > 1;
   return (
-    (details && shown && serverEvidence(details, shown, status)) || {
+    (details && shown && serverEvidence(details, shown)) || {
       ...run,
-      status,
-      latencyMeasured: true,
+      status: shownStatus(stages),
       latencySource: multiple
         ? details.selection.find((server) => server.id === latencyFocus)?.name
         : undefined,
@@ -138,8 +137,6 @@ export function summaryCards(
     };
     if (key === "latency") {
       const latency = evidence.latency;
-      if (!evidence.latencyMeasured)
-        return [{ ...card, status: "complete", detail: "Not measured" }];
       if (!latency) return [card];
       return [
         {
@@ -214,43 +211,20 @@ export function summaryCards(
   });
 }
 
-/** One server's share of a run; its own failures decide each status. */
+/** One server's share of a run, with the statuses the run settled for that server. */
 export function serverEvidence(
   details: MultiServerResult,
   id: string,
-  status: SummaryEvidence["status"],
 ): SummaryEvidence | null {
   const server = details.servers.find((entry) => entry.server.id === id);
   if (!server) return null;
-  const scoped = (key: TransportRole, base: SummaryStatus): SummaryStatus => {
-    if (base === "failed") return base;
-    if (key === "latency" && !server.latencyTarget) return "complete";
-    const measured =
-      key === "bidirectional"
-        ? !!(server.bidirectional?.down || server.bidirectional?.up)
-        : !!server[key];
-    const failed = details.failures.some(
-      (failure) =>
-        failure.serverId === id &&
-        failure.stage === key &&
-        failure.scope === (key === "latency" ? "latency" : "throughput"),
-    );
-    if (measured) return failed ? "partial" : "complete";
-    return failed ? "failed" : "partial";
-  };
   return {
-    status: Object.fromEntries(
-      CARD_ORDER.flatMap((key) => {
-        const base = status[key];
-        return base ? [[key, scoped(key, base)]] : [];
-      }),
-    ),
+    status: shownStatus(server.stages),
     download: server.download,
     upload: server.upload,
     bidirectional: server.bidirectional,
     latency: server.latency,
     added: server.bufferbloat,
-    latencyMeasured: !!server.latencyTarget,
     wire: {},
   };
 }

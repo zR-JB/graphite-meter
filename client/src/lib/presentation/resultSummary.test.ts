@@ -1,8 +1,6 @@
 import { expect, test } from "bun:test";
-import type { MultiServerResult } from "../runner/measure";
 import {
   liveWire,
-  serverEvidence,
   summaryCards,
   summaryEvidence,
   wireOverhead,
@@ -54,7 +52,6 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
       bidirectional: { down: lane(40), up: null },
       latency: null,
       added: null,
-      latencyMeasured: true,
       wire: {},
     },
     rate,
@@ -67,59 +64,6 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
   });
 });
 
-test("a server's own failures decide its statuses; a server without a latency path is unmeasured", () => {
-  const server = (id: string, latency: boolean) => ({
-    server: { id, name: id, url: `https://${id}.test` },
-    throughput: { origin: "", transport: "fetch-stream", protocol: "http1" },
-    latencyTarget: latency ? { origin: "", transport: "websocket" } : null,
-    latency: null,
-    latencyByStage: {
-      latency: null,
-      download: null,
-      upload: null,
-      bidirectional: null,
-    },
-    bufferbloat: null,
-    download: lane(10) as never,
-    upload: null,
-    bidirectional: null,
-    totalBytes: { down: 1, up: 0 },
-  });
-  const details = {
-    servers: [server("a", true), server("b", false)],
-    failures: [
-      {
-        serverId: "a",
-        stage: "upload",
-        scope: "throughput",
-        atMs: 0,
-        reason: "",
-        message: "",
-      },
-    ],
-  } as unknown as MultiServerResult;
-  const status = {
-    download: "complete",
-    upload: "complete",
-    latency: "complete",
-  } as const;
-  expect(serverEvidence(details, "a", status)?.status).toEqual({
-    latency: "partial",
-    download: "complete",
-    upload: "failed",
-  });
-  const b = serverEvidence(details, "b", status)!;
-  expect(b.status).toEqual({
-    latency: "complete",
-    download: "complete",
-    upload: "partial",
-  });
-  expect(summaryCards(b, rate, "base10").at(-1)).toMatchObject({
-    num: "—",
-    detail: "Not measured",
-  });
-});
-
 test("cards show signed added latency, the grade, and one pip rule", () => {
   const cards = summaryCards(
     {
@@ -129,7 +73,6 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { addedMs: { download: 8.25, upload: -0.04 }, grade: "B" },
-      latencyMeasured: true,
       wire: {},
     },
     rate,
@@ -156,7 +99,6 @@ test("records saved before per-stage added latency show only the grade", () => {
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { grade: "C" },
-      latencyMeasured: true,
       wire: {},
     },
     rate,

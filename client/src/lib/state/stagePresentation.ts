@@ -1,4 +1,9 @@
-import type { Phase, StageStatus, TransportRole } from "../runner/contract";
+import type {
+  FailureReason,
+  Phase,
+  StageStatus,
+  TransportRole,
+} from "../runner/contract";
 
 export type StagePresentationStatus =
   | "disabled"
@@ -15,20 +20,18 @@ export interface StagePresentation {
   status: StagePresentationStatus;
   fill: number;
   warming: boolean;
-  failure: boolean;
+  failure: FailureReason | null;
 }
 
 interface StagePresentationInput {
   configured: boolean;
-  /** The completed run's own status, which settles every stage. */
+  /** The run's own status once the stage ended. */
   settled: StageStatus | undefined;
   phase: Phase;
   phaseStage: TransportRole | null;
   phaseFraction: number;
   measuring: boolean;
-  hasResult: boolean;
-  hasFailure: boolean;
-  finished: boolean;
+  failure: FailureReason | null;
 }
 
 export function deriveStagePresentation(
@@ -40,8 +43,6 @@ export function deriveStagePresentation(
   let warming = false;
   if (!input.configured || input.settled === "not-run") status = "disabled";
   else if (input.settled) status = input.settled;
-  else if (input.hasFailure) status = input.hasResult ? "partial" : "failed";
-  else if (input.hasResult) status = "complete";
   else if (
     input.phaseStage === stage &&
     (input.phase === "warmup" || input.phase === stage)
@@ -49,7 +50,7 @@ export function deriveStagePresentation(
     warming = input.phase === "warmup";
     status = input.measuring ? "active" : "recovering";
     fill = warming ? 0 : Math.round(input.phaseFraction * 200) / 2;
-  } else if (input.finished) status = "failed";
+  }
   if (status === "complete" || status === "partial") fill = 100;
   return {
     stage,
@@ -57,6 +58,6 @@ export function deriveStagePresentation(
     status,
     fill,
     warming,
-    failure: input.hasFailure,
+    failure: input.failure,
   };
 }

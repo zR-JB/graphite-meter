@@ -3,7 +3,6 @@ import type {
   FailureReason,
   FlowDirection,
   LatencyObservation,
-  LatencyResult,
   LiveRunConfig,
   Phase,
   PhaseActivity,
@@ -15,7 +14,6 @@ import type {
   RunnerEvent,
   StageStatus,
   StallInfo,
-  ThroughputResult,
   TransportRole,
 } from "./contract";
 import { safeDetail } from "../api/decode";
@@ -98,6 +96,24 @@ const isTransfer = (phase: Phase): phase is TransferStage =>
 const isMeasured = (phase: Phase): phase is TransportRole =>
   phase === "latency" || isTransfer(phase);
 
+type StageEvidence = Pick<
+  RunResult,
+  "latency" | "download" | "upload" | "bidirectional"
+>;
+const noEvidence = (): StageEvidence => ({
+  latency: null,
+  download: null,
+  upload: null,
+  bidirectional: null,
+});
+const stageLanes = (evidence: StageEvidence, stage: TransportRole) =>
+  stage === "bidirectional"
+    ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
+    : [evidence[stage]];
+/** The run and each server share one rule: every lane, then no failure. */
+const stageStatus = (lanes: unknown[], failed: boolean): StageStatus =>
+  !lanes.every(Boolean) ? "failed" : failed ? "partial" : "complete";
+
 const classify = <T>(cause: unknown, fallback: T) =>
   navigator.onLine === false || isNetworkFailure(cause)
     ? "connection-lost"
@@ -142,11 +158,8 @@ export class Run {
   #boundaryAbort = new AbortController();
   #streams: Record<string, Record<FlowDirection, number>> = {};
   #aggregate = new ThroughputAggregate();
-  #results: {
-    download: ThroughputResult | null;
-    upload: ThroughputResult | null;
-    latency: LatencyResult | null;
-  } = { download: null, upload: null, latency: null };
+  #results: StageEvidence = noEvidence();
+  #settled: Partial<Record<TransportRole, StageStatus>> = {};
   #failures: ServerFailure[] = [];
 
   #live = new LiveRates();
@@ -237,7 +250,8 @@ export class Run {
     this.#entered.clear();
     this.#progressKey = "";
     this.#aggregate = new ThroughputAggregate();
-    this.#results = { download: null, upload: null, latency: null };
+    this.#results = noEvidence();
+    this.#settled = {};
     this.#failures = [];
     this.#reported = { down: 0, up: 0 };
     this.#bytes = this.#continuity = 0;
@@ -407,7 +421,6 @@ export class Run {
     const previous = this.#active;
     const sameStage = previous?.activity.stage === segment.activity.stage;
     const enter = () => {
-      this.#finalize(this.#phase);
       this.#active = segment;
       const show = () =>
         this.#transition(segment.phase, segment.activity.stage, segment.start);
@@ -651,6 +664,8 @@ export class Run {
       server.latencyStall = null;
       server.stage = null;
     }
+    const status = this.#settle(activity.stage);
+    this.#emit({ type: "stageEnd", stage: activity.stage, status });
     this.#emit({ type: "serverDetails", details: this.details() });
     this.#ending = false;
     this.#tickAt = this.#clock.resume();
@@ -1151,86 +1166,74 @@ export class Run {
     return true;
   }
 
-  /** Each measured stage's result is reduced and emitted once, the moment it ends. */
-  #finalize(phase: Phase): void {
-    const cfg = this.#cfg!;
-    if (
-      phase === "latency" &&
-      planned(cfg, "latency") &&
-      !this.#results.latency
-    ) {
-      const result = this.#latencySource.latency.result();
-      this.#results.latency = result;
-      if (result) this.#emit({ type: "stageResult", stage: "latency", result });
-    }
-    if (
-      (phase !== "download" && phase !== "upload") ||
-      !planned(cfg, phase) ||
-      this.#results[phase]
-    )
-      return;
-    const result = this.#aggregate.result(
-      phase,
-      this.#completedEarly.has(phase),
-    )[phase === "download" ? "down" : "up"];
-    this.#results[phase] = result;
-    if (result) this.#emit({ type: "stageResult", stage: phase, result });
+  #failed(stage: TransportRole, serverId?: string): boolean {
+    const scope = stage === "latency" ? "latency" : "throughput";
+    return this.#failures.some(
+      (failure) =>
+        failure.stage === stage &&
+        failure.scope === scope &&
+        (!serverId || failure.serverId === serverId),
+    );
   }
 
-  #status(stage: TransportRole, lanes: unknown[]): StageStatus {
-    const cfg = this.#cfg!;
-    if (!planned(cfg, stage)) return "not-run";
-    const scope = stage === "latency" ? "latency" : "throughput";
-    const failed = () =>
-      this.#failures.some(
-        (failure) => failure.stage === stage && failure.scope === scope,
-      );
-    if (lanes.every(Boolean)) return failed() ? "partial" : "complete";
-    if (!this.#entered.has(stage) || failed()) return "failed";
-    const ids =
-      stage === "latency"
-        ? [this.#latencySource.server.id]
-        : (this.#aggregate.intervals.findLast(
-            (interval) => interval.stage === stage,
-          )?.participants ?? this.#ids());
-    for (const id of ids)
-      this.#record(
-        id,
-        scope,
-        "insufficient-evidence",
-        "Too little measured evidence for a result",
-        stage,
-      );
-    return "failed";
+  #reduce(stage: TransportRole): void {
+    const early = this.#completedEarly.has(stage);
+    const results = this.#results;
+    if (stage === "latency") {
+      results.latency = this.#latencySource.latency.result();
+      if (results.latency)
+        this.#emit({ type: "stageResult", stage, result: results.latency });
+    } else if (stage === "bidirectional")
+      results.bidirectional = this.#aggregate.result(stage, early);
+    else {
+      const result = this.#aggregate.result(stage, early)[
+        stage === "download" ? "down" : "up"
+      ];
+      results[stage] = result;
+      if (result) this.#emit({ type: "stageResult", stage, result });
+    }
+  }
+
+  /** A stage's results and status are reduced and emitted once, the moment it ends. */
+  #settle(stage: TransportRole): StageStatus {
+    const settled = this.#settled[stage];
+    if (settled) return settled;
+    if (!planned(this.#cfg!, stage)) return (this.#settled[stage] = "not-run");
+    const entered = this.#entered.has(stage);
+    if (entered) this.#reduce(stage);
+    const lanes = stageLanes(this.#results, stage);
+    const failed = this.#failed(stage);
+    if (entered && !failed && !lanes.every(Boolean)) {
+      const ids =
+        stage === "latency"
+          ? [this.#latencySource.server.id]
+          : (this.#aggregate.intervals.findLast(
+              (interval) => interval.stage === stage,
+            )?.participants ?? this.#ids());
+      const scope = stage === "latency" ? "latency" : "throughput";
+      for (const id of ids)
+        this.#record(
+          id,
+          scope,
+          "insufficient-evidence",
+          "Too little measured evidence for a result",
+          stage,
+        );
+    }
+    return (this.#settled[stage] = stageStatus(lanes, failed));
   }
 
   #complete(): void {
     this.#running = false;
     this.#completed = true;
-    const cfg = this.#cfg!;
-    this.#finalize(this.#phase);
     const durationMs = this.#now();
     const source = this.#latencySource.latency;
-    const bidirectional = planned(cfg, "bidirectional")
-      ? this.#aggregate.result(
-          "bidirectional",
-          this.#completedEarly.has("bidirectional"),
-        )
-      : null;
-    const lanes = {
-      ...this.#results,
-      bidirectional: bidirectional && [bidirectional.down, bidirectional.up],
-    };
     const stages = Object.fromEntries(
-      STAGES.map((stage) => [
-        stage,
-        this.#status(stage, [lanes[stage]].flat()),
-      ]),
+      STAGES.map((stage) => [stage, this.#settle(stage)]),
     ) as RunResult["stages"];
     const statuses = Object.values(stages);
     const result: RunResult = {
       ...this.#results,
-      bidirectional,
       stages,
       bufferbloat: source.bufferbloat(),
       latencyByStage: source.summaries(),
@@ -1270,12 +1273,8 @@ export class Run {
       servers: this.#servers.map(({ server, paths, latency }) => {
         const result = (stage: TransferStage, dir: FlowDirection) =>
           aggregate.serverResult(stage, dir, server.id);
-        return {
-          server,
-          ...pathEvidence(paths),
+        const evidence = {
           latency: latency.result(),
-          latencyByStage: latency.summaries(),
-          bufferbloat: latency.bufferbloat(),
           download: result("download", "down"),
           upload: result("upload", "up"),
           bidirectional:
@@ -1285,7 +1284,25 @@ export class Run {
                   up: result("bidirectional", "up"),
                 }
               : null,
+        };
+        const status = (stage: TransportRole): StageStatus =>
+          (this.#settled[stage] ?? "not-run") === "not-run" ||
+          (stage === "latency" && !paths.latency)
+            ? "not-run"
+            : stageStatus(
+                stageLanes(evidence, stage),
+                this.#failed(stage, server.id),
+              );
+        return {
+          server,
+          ...pathEvidence(paths),
+          ...evidence,
+          latencyByStage: latency.summaries(),
+          bufferbloat: latency.bufferbloat(),
           totalBytes: aggregate.totals(server.id),
+          stages: Object.fromEntries(
+            STAGES.map((stage) => [stage, status(stage)]),
+          ) as Record<TransportRole, StageStatus>,
         };
       }),
     };

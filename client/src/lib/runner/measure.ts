@@ -8,6 +8,7 @@ import type {
   PreparedPaths,
   ReceiverCheckpoint,
   StageLatencySummary,
+  StageStatus,
   ThroughputResult,
   TransportRole,
 } from "./contract";
@@ -561,6 +562,7 @@ export interface ServerMeasurementSummary {
     up: ThroughputResult | null;
   } | null;
   totalBytes: Record<FlowDirection, number>;
+  stages: Record<TransportRole, StageStatus>;
 }
 export interface MultiServerResult {
   selection: ServerIdentity[];

@@ -365,6 +365,7 @@ export type RunnerEvent =
       result: ThroughputResult;
     }
   | { type: "stageResult"; stage: "latency"; result: LatencyResult }
+  | { type: "stageEnd"; stage: TransportRole; status: StageStatus }
   | { type: "complete"; result: RunResult }
   // Abnormal end (user-abort is the "aborted" phase).
   | { type: "error"; error: RunnerError };

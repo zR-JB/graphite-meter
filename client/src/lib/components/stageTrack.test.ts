@@ -10,7 +10,7 @@ const stage = (
   status: "pending",
   fill: 0,
   warming: false,
-  failure: false,
+  failure: null,
   ...overrides,
 });
 const model = (
@@ -59,7 +59,7 @@ test("failed and partial execution remain visible when selected after terminatio
         stage({
           status,
           fill: status === "partial" ? 100 : 0,
-          failure: true,
+          failure: "timeout",
         }),
         true,
       ),

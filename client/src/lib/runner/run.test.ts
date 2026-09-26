@@ -1,3 +1,4 @@
+import "../state/runes.testutil";
 import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import { stubGlobals } from "../test-helpers.testutil";
 import { TEST_BUILD_TOKENS, testPreparedPaths } from "./test-helpers.testutil";
@@ -12,6 +13,7 @@ import type {
 import type { ParticipantHost, StageTransport } from "./transport";
 import { buildHistoryRecord, isHistoryRecord } from "../history/types";
 import { ServerAuthenticationRequired } from "../servers/credentials";
+import { STAGES } from "./schedule";
 
 let restore: () => void;
 const clock = performance.now;
@@ -52,6 +54,7 @@ interface Peer {
   finish?(host: ParticipantHost): void | Promise<void>;
   discard?(host: ParticipantHost, incomplete: boolean): void;
   checkpoint?(measuring: boolean): Promise<ReceiverCheckpoint | null>;
+  receives?: false;
 }
 
 async function harness(
@@ -117,6 +120,7 @@ async function harness(
               if (activity.transfer.includes("down")) host.download(rate * 20);
               if (
                 activity.transfer.includes("up") &&
+                peer.receives !== false &&
                 (performance.now() - started) % 100 < 20
               )
                 host.receiver(receiver());
@@ -538,6 +542,68 @@ test("a stable feed completes early and each result arrives before the next stag
   );
   expect(stageResult).toBeGreaterThan(-1);
   expect(stageResult).toBeLessThan(upload);
+});
+
+test("the live stage track shows the statuses the run settles, one-lane bidirectional included", async () => {
+  const { store } = await import("../state/store.svelte");
+  const h = await harness(
+    [{ id: "self", rate: 2, receives: false }],
+    { download: true, bidirectional: true },
+    { downloadMs: 1_000, bidirectionalMs: 1_000 },
+  );
+  store.reset();
+  store.run = { config: h.config, servers: [] };
+  const live: [string, string][] = [];
+  h.run.on((event) => {
+    store.ingest(event);
+    if (event.type === "stageEnd")
+      live.push([event.stage, store.stagePresentation[event.stage].status]);
+  });
+  h.start();
+  const result = await h.result();
+  expect(result.stages.bidirectional).toBe("failed");
+  expect(live).toEqual([
+    ["download", "complete"],
+    ["bidirectional", "failed"],
+  ]);
+  for (const stage of STAGES)
+    expect(store.stagePresentation[stage].status).toBe(
+      result.stages[stage] === "not-run" ? "disabled" : result.stages[stage],
+    );
+  store.reset();
+});
+
+test("each server's stage statuses follow the run's rule on its own lanes and failures", async () => {
+  const h = await harness(
+    [
+      {
+        id: "a",
+        measure: (host, { stage }) => {
+          if (stage === "latency") probe(10, 4)(host);
+          if (stage === "upload") fail(300)(host);
+        },
+      },
+      { id: "b", rate: 3, latency: false },
+    ],
+    { latency: true, download: true, upload: true },
+    { latencyMs: 400, downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  h.start();
+  const { multiServer } = await h.result();
+  expect(multiServer.servers.map((server) => server.stages)).toEqual([
+    {
+      latency: "complete",
+      download: "complete",
+      upload: "failed",
+      bidirectional: "not-run",
+    },
+    {
+      latency: "not-run",
+      download: "complete",
+      upload: "complete",
+      bidirectional: "not-run",
+    },
+  ]);
 });
 
 test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {

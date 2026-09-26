@@ -22,9 +22,8 @@
         model.tag ??
         lockReason(!locked, store.phase, store.phaseStage, key, model.state);
       const label = STAGE[key].short;
-      const failure = execution.failure ? store.stageFailures[key] : undefined;
-      const hint = failure
-        ? reasonLabel(failure.reason)
+      const hint = execution.failure
+        ? reasonLabel(execution.failure)
         : key === "bidirectional" && !locked
           ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
           : reason === STATUS["not-run"] && !locked

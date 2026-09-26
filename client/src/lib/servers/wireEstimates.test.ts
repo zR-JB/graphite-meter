@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { ThroughputAggregate, type MultiServerResult } from "../runner/measure";
 import { serverWireEstimate } from "./wireEstimates";
 import { compensationTooltip, estimateCompensation } from "../compensation";
+import { NOT_RUN } from "../runner/test-helpers.testutil";
 
 function fixture(): MultiServerResult {
   const aggregate = new ThroughputAggregate();
@@ -43,6 +44,7 @@ function fixture(): MultiServerResult {
       upload: null,
       bidirectional: null,
       totalBytes: { down: 0, up: 0 },
+      stages: NOT_RUN,
     })),
   };
 }

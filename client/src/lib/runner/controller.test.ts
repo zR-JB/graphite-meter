@@ -315,7 +315,7 @@ test("returning to start releases the run so late events cannot reach the fresh 
       },
       participants: [],
     });
-    expect(store.stageFailures).toEqual({});
+    expect(store.serverDetails).toBeNull();
   });
 });
 

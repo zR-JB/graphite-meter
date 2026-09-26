@@ -1,6 +1,8 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
 import { incoherence, type HistoryRecord } from "../src/lib/history/types";
 import type { RunnerConfig } from "../src/lib/runner/contract";
+import { STAGES } from "../src/lib/runner/schedule";
+import { STAGE } from "../src/lib/presentation/vocabulary";
 import { describe, launch, type Server } from "./servers";
 import { expect, type Page } from "./webview";
 
@@ -123,7 +125,21 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
       { timeout },
     )
     .toBe(true);
-  expect(incoherence(record!)).toEqual([]);
+  const config = await page.evaluate(
+    () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config,
+  );
+  expect(incoherence(record!, config)).toEqual([]);
+  // History views have no stage track; the live view must show what was saved.
+  for (const stage of STAGES) {
+    const { status } = record!.stages[stage];
+    const name = new RegExp(`^${STAGE[stage].short} stage`);
+    const track = page.getByRole("switch", { name });
+    if (status !== "not-run" && (await track.state()).length)
+      await expect(track).toHaveAttribute(
+        "class",
+        new RegExp(`\\bseg--${status}\\b`),
+      );
+  }
   return record!;
 }
 

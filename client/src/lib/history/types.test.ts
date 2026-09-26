@@ -113,6 +113,7 @@ result.multiServer.servers = [
     upload: result.upload,
     bidirectional: result.bidirectional,
     totalBytes: { down: 800, up: 0 },
+    stages: result.stages,
   },
 ];
 

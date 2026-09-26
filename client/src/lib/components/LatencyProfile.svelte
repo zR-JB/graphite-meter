@@ -53,8 +53,8 @@
   {/if}
   {#if store.stagePresentation.latency.status === "failed"}
     <p class="notice" data-tone="err" role="alert">
-      Latency skipped — {store.stageFailures.latency
-        ? reasonLabel(store.stageFailures.latency.reason)
+      Latency skipped — {store.stagePresentation.latency.failure
+        ? reasonLabel(store.stagePresentation.latency.failure)
         : "unavailable"}
     </p>
   {/if}

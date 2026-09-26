@@ -171,6 +171,13 @@ export function testPreparedPaths(
   };
 }
 
+export const NOT_RUN: RunResult["stages"] = {
+  latency: "not-run",
+  download: "not-run",
+  upload: "not-run",
+  bidirectional: "not-run",
+};
+
 /** A completed single-server run result with no measurements. */
 export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
   const server = { id: "self", name: "Test server", url: "http://meter.test" };
@@ -196,12 +203,7 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
       failures: [],
     },
     outcome: "complete",
-    stages: {
-      latency: "not-run",
-      download: "not-run",
-      upload: "not-run",
-      bidirectional: "not-run",
-    },
+    stages: NOT_RUN,
     startedAt: 0,
     durationMs: 0,
     ...overrides,

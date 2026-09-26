@@ -1,6 +1,7 @@
 import "./runes.testutil";
 import { expect, test } from "bun:test";
 import {
+  NOT_RUN,
   TEST_BUILD_TOKENS,
   testPreparedPaths,
   testRunResult,
@@ -62,6 +63,7 @@ function result(): RunResult {
           upload: null,
           bidirectional: null,
           totalBytes: { down: 25_000_000, up: 0 },
+          stages: { ...NOT_RUN, download: "complete" },
         },
       ],
     },

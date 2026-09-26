@@ -17,6 +17,7 @@ import type {
   StallInfo,
   TransportRole,
   StageLatencySummary,
+  StageStatus,
 } from "../runner/contract";
 import {
   emptyConnectionValidation,
@@ -41,11 +42,7 @@ import {
   planned,
   STAGES,
 } from "../runner/schedule";
-import {
-  latencyLanes,
-  type MultiServerResult,
-  type ServerFailure,
-} from "../runner/measure";
+import { latencyLanes, type MultiServerResult } from "../runner/measure";
 import { appendThroughputSample, upsertLatencyBucket } from "../runner/series";
 import {
   deriveStagePresentation,
@@ -333,16 +330,8 @@ class AppStore {
   );
   result = $state.raw<RunResult | null>(null);
   stageResults = $state.raw<StageResults>(EMPTY_STAGE_RESULTS);
-  completedStages = $state.raw<TransportRole[]>([]);
+  settledStages = $state.raw<Partial<Record<TransportRole, StageStatus>>>({});
   error = $state.raw<RunnerError | null>(null);
-  /** The first server failure of each stage in that stage's own scope. */
-  stageFailures = $derived.by(() => {
-    const failures: Partial<Record<TransportRole, ServerFailure>> = {};
-    for (const failure of this.serverDetails?.failures ?? [])
-      if ((failure.scope === "latency") === (failure.stage === "latency"))
-        failures[failure.stage] ??= failure;
-    return failures;
-  });
 
   config = $state<RunnerConfig>(structuredClone(DEFAULT_CONFIG));
   /** The current or last run's own inputs; live settings patch its config. */
@@ -469,15 +458,17 @@ class AppStore {
           stage,
           deriveStagePresentation(stage, {
             configured: planned(this.runConfig, stage),
-            settled: this.result?.stages[stage],
+            settled: this.settledStages[stage],
             phase: this.phase,
             phaseStage: this.phaseStage,
             phaseFraction: this.phaseFraction,
             measuring: this.measuring,
-            hasResult:
-              stage !== "bidirectional" && this.stageResults[stage] != null,
-            hasFailure: this.stageFailures[stage] != null,
-            finished: this.completedStages.includes(stage),
+            failure:
+              this.serverDetails?.failures.find(
+                (failure) =>
+                  failure.stage === stage &&
+                  (failure.scope === "latency") === (stage === "latency"),
+              )?.reason ?? null,
           }),
         ]),
       ) as Record<TransportRole, StagePresentation>,
@@ -575,6 +566,7 @@ class AppStore {
     this.live = null;
     this.runClock.set(result.durationMs);
     this.result = result;
+    this.settledStages = result.stages;
     this.stageResults = {
       download: result.download,
       upload: result.upload,
@@ -641,18 +633,6 @@ class AppStore {
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
-        const from = this.phase;
-        if (
-          STAGES.some((key) => key === from) &&
-          to !== "aborted" &&
-          to !== "error" &&
-          from !== to &&
-          !this.completedStages.includes(from as TransportRole)
-        )
-          this.completedStages = [
-            ...this.completedStages,
-            from as TransportRole,
-          ];
         this.phase = to;
         this.phaseStage = stage;
         this.phaseStartedAtMs = t;
@@ -693,6 +673,12 @@ class AppStore {
       case "live":
         this.#ingestLive(event.sample);
         break;
+      case "stageEnd":
+        this.settledStages = {
+          ...this.settledStages,
+          [event.stage]: event.status,
+        };
+        break;
       case "complete":
         this.#complete(event.result);
         break;
@@ -732,7 +718,7 @@ class AppStore {
       measuring: true,
       stallInfo: null,
       stageResults: EMPTY_STAGE_RESULTS,
-      completedStages: [],
+      settledStages: {},
       result: null,
       error: null,
       run: null,
