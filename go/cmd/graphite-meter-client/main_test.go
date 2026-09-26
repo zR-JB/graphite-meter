@@ -200,21 +200,26 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 func TestLatencySummaryVocabulary(t *testing.T) {
 	t.Parallel()
 	idle := goclient.LatencyStats{Count: 4, P50: 10 * time.Millisecond}
+	lost := errors.New("connection lost")
 	for _, c := range []struct {
 		stats goclient.LatencyStats
 		idle  *goclient.LatencyStats
 		want  string
+		err   error
 	}{
-		{goclient.LatencyStats{}, nil, "— |  | — | — | — | 0 replies"},
-		{goclient.LatencyStats{Timeouts: 3}, nil, "— |  | — | — | 3/3 (100.0%) | 0 replies"},
+		{goclient.LatencyStats{}, nil, "— |  | — | — | — | 0 replies", nil},
+		{goclient.LatencyStats{Timeouts: 3}, nil, "— |  | — | — | 3/3 (100.0%) | 0 replies", nil},
 		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
-			&idle, "12.0 ms | +2.0 ms | 20.0 ms | 0.0 ms | 0/2 (0.0%) | 2 replies"},
-		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms"},
-		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1/1000 (0.10%)"},
+			&idle, "12.0 ms | +2.0 ms | 20.0 ms | 0.0 ms | 0/2 (0.0%) | 2 replies", nil},
+		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", nil},
+		{goclient.LatencyStats{Count: 1, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "— |  | — |", lost},
+		{goclient.LatencyStats{Count: 2, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", lost},
+		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1/1000 (0.10%)", nil},
 		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil,
-			"0 replies | 4.0 s | unfinished probes 2 | failed sends 1"},
+			"0 replies | 4.0 s | unfinished probes 2 | failed sends 1", nil},
 	} {
-		got := strings.Join(append(latencyCells(c.stats, c.idle), latencyFacts(c.stats)...), " | ")
+		population := goclient.Result{Latency: c.stats, Err: c.err}
+		got := strings.Join(append(latencyCells(population, c.idle), latencyFacts(c.stats)...), " | ")
 		if !strings.Contains(got, c.want) {
 			t.Errorf("summary %q, want %q", got, c.want)
 		}

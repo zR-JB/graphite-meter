@@ -446,7 +446,7 @@ func TestLoadedLatencyKeepsTheIdleRTT(t *testing.T) {
 		{StageLatency, 7 * time.Millisecond, 7 * time.Millisecond},
 		{StageUpload, 40 * time.Millisecond, 7 * time.Millisecond},
 	} {
-		result := Result{Stage: step.stage, Latency: LatencyStats{P50: step.p50}}
+		result := Result{Stage: step.stage, Latency: LatencyStats{Count: 1, P50: step.p50}}
 		c.retainLatency(resourceOutcome{server: s, role: roleLatency, result: result}, true)
 		if s.transport.idleRTT != step.want {
 			t.Fatalf("after %s latency the idle RTT is %v, want %v", step.stage, s.transport.idleRTT, step.want)

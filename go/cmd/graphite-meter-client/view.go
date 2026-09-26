@@ -547,7 +547,7 @@ func (m model) resultsView(w int) string {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
-	if population, ok := latency[goclient.StageLatency]; ok && population.Latency.Count > 0 {
+	if population, ok := latency[goclient.StageLatency]; ok && population.HasMedian() {
 		idle = &population.Latency
 	}
 	var throughput, latencyRows [][]string
@@ -613,7 +613,7 @@ func (m model) resultsView(w int) string {
 			if stage.Name == goclient.StageLatency {
 				base = nil
 			}
-			cells := latencyCells(population.Latency, base)
+			cells := latencyCells(population, base)
 			added = added || cells[1] != ""
 			latencyRows = append(latencyRows, append([]string{compactPopulation(stage.Name)}, cells...))
 			label := populationLabel(stage.Name)

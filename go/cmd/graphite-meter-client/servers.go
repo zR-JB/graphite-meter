@@ -267,7 +267,7 @@ func (m model) detailsView(w int, intervals bool) string {
 		for _, stage := range r.plan {
 			value := missing
 			for _, result := range server.Results {
-				if result.Stage == stage.Name && result.Direction == "" && result.Latency.Count > 0 {
+				if result.Stage == stage.Name && result.Direction == "" && result.HasMedian() {
 					value = fmtMs(result.Latency.P50)
 				}
 			}

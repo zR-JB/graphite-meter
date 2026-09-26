@@ -124,6 +124,10 @@ type Result struct {
 
 func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
+func (r Result) HasMedian() bool {
+	return r.Latency.Count > 0 && (r.Err == nil || r.Latency.Count+r.Latency.Timeouts >= minimumFailedLatencyOutcomes)
+}
+
 type LatencyStats struct {
 	ReflectorTiming *ReflectorTimingStats // Nil when no valid timing pairs were observed.
 	P50, P95        time.Duration

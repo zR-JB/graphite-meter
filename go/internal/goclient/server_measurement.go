@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	minimumSurvivorEvidence = 800 * time.Millisecond
-	minimumPeakWindow       = 500 * time.Millisecond
-	maximumIntervals        = 128
+	minimumSurvivorEvidence      = 800 * time.Millisecond
+	minimumPeakWindow            = 500 * time.Millisecond
+	maximumIntervals             = 128
+	minimumFailedLatencyOutcomes = 3
 )
 
 type ReceiverSnapshot struct {

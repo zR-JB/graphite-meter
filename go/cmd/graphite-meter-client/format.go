@@ -82,11 +82,12 @@ func fmtClock(d time.Duration) string {
 	return fmt.Sprintf("%.1f s", max(d, 0).Seconds())
 }
 
-func latencyCells(s goclient.LatencyStats, idle *goclient.LatencyStats) []string {
+func latencyCells(population goclient.Result, idle *goclient.LatencyStats) []string {
+	s := population.Latency
 	cells := []string{missing, "", missing, missing, missing}
-	if s.Count > 0 {
+	if population.HasMedian() {
 		cells[0], cells[2] = fmtMs(s.P50), fmtMs(s.P95)
-		if idle != nil && idle.Count > 0 {
+		if idle != nil {
 			cells[1] = fmtAdded(s.P50 - idle.P50)
 		}
 	}

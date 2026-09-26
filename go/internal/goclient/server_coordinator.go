@@ -184,7 +184,7 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 
 func (c *coordinator) missingResults() bool {
 	for _, stage := range c.cfg.Plan() {
-		replied := func(r Result) bool { return r.Stage == stage.Name && r.Direction == "" && r.Latency.Count > 0 }
+		replied := func(r Result) bool { return r.Stage == stage.Name && r.Direction == "" && r.HasMedian() }
 		for _, p := range c.active() {
 			if len(stage.Directions) == 0 && !slices.ContainsFunc(p.results, replied) {
 				return true
@@ -257,12 +257,12 @@ func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 		return
 	}
 	result := outcome.result
-	if normalEnd && outcome.err == context.Canceled {
+	if normalEnd && errors.Is(outcome.err, context.Canceled) {
 		result.Err = nil
 	}
 	p := outcome.server.participant
 	p.results = append(p.results, result)
-	if result.Stage == StageLatency && result.Latency.P50 > 0 {
+	if result.Stage == StageLatency && result.HasMedian() {
 		p.transport.idleRTT = result.Latency.P50
 	}
 }

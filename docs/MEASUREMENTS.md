@@ -9,7 +9,7 @@ contribute. Results do not isolate ICMP latency, directional IP loss or a physic
 | --- | --- | --- |
 | Download / upload | Payload bytes per second over a receiver window, in the chosen rate unit. | No valid receiver window: no rate. |
 | Peak | Highest mean over consecutive windows of the headline's interval, each at least 500 ms on every clock. | Shorter evidence: no peak. |
-| Latency | Median (p50) RTT of in-window replies, per server and stage; p95 secondary. | No eligible reply: "—". |
+| Latency | Median (p50) RTT of in-window replies, per server and stage; p95 secondary. | No eligible reply, or a failed stage with under three replies and timeouts: "—". |
 | Added latency | Loaded median − idle median, per stage and server, in ms; negative values are kept. | Either median missing: "—". |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
 | Probe timeouts | `timeouts / (replies + timeouts)`, as a percentage. | No resolved probe: "—", not zero. |
