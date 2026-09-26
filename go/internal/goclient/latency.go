@@ -3,13 +3,13 @@ package goclient
 import (
 	"context"
 	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"maps"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -33,12 +33,17 @@ func (b wsBus) Recv(ctx context.Context) (string, error) {
 func (b wsBus) Close() { _ = b.conn.Close(websocket.StatusNormalClosure, "") }
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
-	return dialLatencyBus(ctx, r.cfg, r.websocketHTTP, r.latencyTarget)
+	return dialLatencyBus(ctx, r.cred, r.websocketHTTP, r.latencyTarget)
 }
 
-func dialLatencyBus(ctx context.Context, cfg Config, client *http.Client, target *wire.LatencyTarget) (pingBus, error) {
+func dialLatencyBus(
+	ctx context.Context,
+	cred credential,
+	client *http.Client,
+	target *wire.LatencyTarget,
+) (pingBus, error) {
 	if target.Transport == wire.TransportWebTransport {
-		sess, err := wtDial(ctx, cfg, target.Origin, route.WTPing, nil)
+		sess, err := wtDial(ctx, cred, target.Origin, route.WTPing, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -63,13 +68,13 @@ func dialLatencyBus(ctx context.Context, cfg Config, client *http.Client, target
 
 func verifyLatency(
 	ctx context.Context,
-	cfg Config,
+	cred credential,
 	client *http.Client,
 	target *wire.LatencyTarget,
 ) (time.Duration, error) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	bus, err := dialLatencyBus(ctx, cfg, client, target)
+	bus, err := dialLatencyBus(ctx, cred, client, target)
 	if err != nil {
 		return 0, err
 	}

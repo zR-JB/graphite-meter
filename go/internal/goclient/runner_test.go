@@ -211,7 +211,7 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.InsecureSkipTLSVerify = proxy.URL, true
-	prepared, err := prepare(t.Context(), cfg)
+	prepared, err := prepareOne(t.Context(), cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestPrepareErrorRetainsDiscoveredTargets(t *testing.T) {
 	defer srv.Close()
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages = srv.URL, StageSet{Download: true}
-	_, err := prepare(t.Context(), cfg)
+	_, err := prepareOne(t.Context(), cfg)
 	if preparationErr, ok := errors.AsType[*PreparationError](err); !ok ||
 		len(preparationErr.Preflight.Capabilities.ThroughputTargets) != 2 {
 		t.Fatalf("prepare error = %T %v, want a PreparationError with both discovered targets", err, err)

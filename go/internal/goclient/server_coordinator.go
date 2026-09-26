@@ -99,19 +99,17 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 		return err
 	}
 	for _, server := range prepared.Servers {
-		own := server.config
-		own.Warmup = c.cfg.Warmup
 		connection := server.Connection
-		own.grantOrigins = connection.grantOrigins
-		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol)
+		hc, closeHTTP := protocolClient(server.credential, connection.ThroughputTarget.Protocol)
 		// Upload lanes get their own connection so control requests and download reads never queue behind them.
-		up, closeUp := protocolClient(own, connection.ThroughputTarget.Protocol)
-		ws, closeWS := websocketClient(own)
+		up, closeUp := protocolClient(server.credential, connection.ThroughputTarget.Protocol)
+		ws, closeWS := websocketClient(server.credential)
 		defer closeHTTP()
 		defer closeUp()
 		defer closeWS()
 		r := &runner{
-			cfg:           own,
+			cfg:           c.cfg,
+			cred:          server.credential,
 			streams:       streams[server.Server.ID],
 			http:          hc,
 			uploadHTTP:    up,

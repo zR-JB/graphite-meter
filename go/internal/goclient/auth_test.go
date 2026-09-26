@@ -48,17 +48,16 @@ func okResponse(r *http.Request) (*http.Response, error) {
 
 func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T) {
 	t.Parallel()
-	cfg := DefaultConfig()
-	cfg.BaseURL, cfg.grant = "https://meter.example", "secret"
+	cred := credential{token: "secret", origins: []string{"https://meter.example"}}
 	var pf wire.Preflight
 	pf.Capabilities.ThroughputTargets = []wire.ThroughputTarget{
 		{Origin: "https://meter.example:7247"},
 		{Origin: "https://cdn.example"},
 		{Origin: "http://meter.example:8080"},
 	}
-	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
+	cred.reach("https://meter.example", pf)
 	seen := ""
-	client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	client := authenticatedClient(cred, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		seen = r.Header.Get("Authorization")
 		return okResponse(r)
 	}))
@@ -82,7 +81,7 @@ func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T)
 		if _, err := client.Do(bad); err == nil {
 			t.Fatalf("grant sent to %s outside the server's advertised HTTPS origins", origin)
 		}
-		if _, err := wtDial(t.Context(), cfg, origin, "/wt/ping", nil); err == nil ||
+		if _, err := wtDial(t.Context(), cred, origin, "/wt/ping", nil); err == nil ||
 			!strings.Contains(err.Error(), "refusing") {
 			t.Fatalf("WebTransport grant toward %s: %v", origin, err)
 		}
@@ -96,10 +95,9 @@ func TestAuthenticatedClientNeverFollowsRedirects(t *testing.T) {
 		"https://other.example/download",
 		"http://meter.example/download",
 	} {
-		cfg := DefaultConfig()
-		cfg.BaseURL, cfg.grant = "https://meter.example", "secret"
+		cred := credential{token: "secret", origins: []string{"https://meter.example"}}
 		calls := 0
-		client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		client := authenticatedClient(cred, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			calls++
 			return &http.Response{
 				StatusCode: http.StatusTemporaryRedirect,
@@ -141,8 +139,8 @@ func TestGrantNeverCrossesUnverifiedTLS(t *testing.T) {
 	if presented.Load() {
 		t.Fatal("grant crossed a connection whose certificate was not verified")
 	}
-	cfg.grant = "secret"
-	if _, err := wtDial(t.Context(), cfg, srv.URL, "/wt/ping", nil); err == nil ||
+	cred := credential{token: "secret", origins: []string{srv.URL}, insecure: true}
+	if _, err := wtDial(t.Context(), cred, srv.URL, "/wt/ping", nil); err == nil ||
 		!strings.Contains(err.Error(), "refusing") {
 		t.Fatalf("WebTransport dial with a grant and -insecure: %v", err)
 	}
@@ -247,8 +245,10 @@ func TestAuthenticatedPreparationRequiresVerifiedHTTPS(t *testing.T) {
 		insecure bool
 	}{{"http://127.0.0.1:1", false}, {"https://127.0.0.1:1", true}} {
 		cfg := DefaultConfig()
-		cfg.BaseURL, cfg.InsecureSkipTLSVerify, cfg.grant = tc.base, tc.insecure, "secret"
-		if _, err := prepare(t.Context(), cfg); err == nil || !strings.Contains(err.Error(), "verified HTTPS") {
+		cfg.BaseURL, cfg.InsecureSkipTLSVerify = tc.base, tc.insecure
+		cred := credential{token: "secret", origins: []string{tc.base}, insecure: tc.insecure}
+		_, err := prepare(t.Context(), cfg, nil, &cred)
+		if err == nil || !strings.Contains(err.Error(), "verified HTTPS") {
 			t.Fatalf("prepare %s insecure=%t with a grant: %v", tc.base, tc.insecure, err)
 		}
 	}

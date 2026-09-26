@@ -17,7 +17,7 @@ type PreparedServer struct {
 	Server     wire.ServerEntry
 	Connection *PreparedConnection
 	Err        error
-	config     Config
+	credential credential
 }
 
 type PreparedRun struct {
@@ -49,14 +49,10 @@ func (p *PreparedRun) FreshFor(cfg Config) bool {
 	return p.Ready() && p.key == cfg.PreparationKey() && time.Since(p.VerifiedAt) <= PreparationFreshness
 }
 
-func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
-	tr := baseTransport(cfg)
+func getCatalog(ctx context.Context, cfg Config, cred credential) (wire.ServerCatalog, error) {
+	tr := baseTransport(cred.insecure)
 	defer tr.CloseIdleConnections()
-	hc := authenticatedClient(cfg, tr)
-	// A catalogue is an authority boundary; a redirect cannot replace its operator.
-	hc.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return errors.New("server catalogue must not redirect")
-	}
+	hc := authenticatedClient(cred, tr)
 	target, err := httpEndpoint(cfg.BaseURL, "/servers")
 	if err != nil {
 		return wire.ServerCatalog{}, err
@@ -90,8 +86,10 @@ func prepareRun(
 		return nil, err
 	}
 	cfg.BaseURL = base
-	cfg.grant = grants[base]
-	catalog, err := getCatalog(ctx, cfg)
+	credentialFor := func(origin string) credential {
+		return credential{token: grants[origin], origins: []string{origin}, insecure: cfg.InsecureSkipTLSVerify}
+	}
+	catalog, err := getCatalog(ctx, cfg, credentialFor(base))
 	if err != nil {
 		return nil, err
 	}
@@ -116,15 +114,16 @@ func prepareRun(
 		}) {
 			return prepared, fmt.Errorf("%s changed origin; review the server selection and check again", server.Name)
 		}
-		own := cfg
-		own.BaseURL, own.server, own.grant = server.URL, new(server), grants[server.URL]
-		prepared.Servers = append(prepared.Servers, PreparedServer{Server: server, config: own})
+		own := PreparedServer{Server: server, credential: credentialFor(server.URL)}
+		prepared.Servers = append(prepared.Servers, own)
 	}
 	var work sync.WaitGroup
 	for i := range prepared.Servers {
 		work.Go(func() {
 			server := &prepared.Servers[i]
-			server.Connection, server.Err = prepare(ctx, server.config)
+			own := cfg
+			own.BaseURL = server.Server.URL
+			server.Connection, server.Err = prepare(ctx, own, new(server.Server), &server.credential)
 		})
 	}
 	work.Wait()

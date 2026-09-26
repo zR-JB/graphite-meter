@@ -126,7 +126,7 @@ func TestPreparedServersCarryOnlyTheirOwnGrant(t *testing.T) {
 		t.Fatalf("prepared %+v, want all three selected servers", prepared)
 	}
 	for _, server := range prepared.Servers {
-		if got := server.config.grant; got != grants[server.Server.URL] {
+		if got := server.credential.token; got != grants[server.Server.URL] {
 			t.Errorf("%s prepared with grant %q, want %q", server.Server.ID, got, grants[server.Server.URL])
 		}
 	}

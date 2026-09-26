@@ -132,7 +132,7 @@ func TestGetPreflight(t *testing.T) {
 				`"name":"Meter","location":"\u001b]0;owned\u0007"}]}`)
 		}))
 		defer srv.Close()
-		if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}); err == nil {
+		if _, err := getCatalog(t.Context(), Config{BaseURL: srv.URL}, credential{}); err == nil {
 			t.Fatal("accepted a catalogue location with terminal controls")
 		}
 	})
@@ -197,7 +197,7 @@ func TestVerifyLatencyRequiresMatchingProbeReply(t *testing.T) {
 			}))
 			defer server.Close()
 			target := testChannel(server.URL, server.URL, false)
-			rtt, err := verifyLatency(t.Context(), DefaultConfig(), server.Client(), &target)
+			rtt, err := verifyLatency(t.Context(), credential{}, server.Client(), &target)
 			if (err == nil) != matching || matching && rtt <= 0 {
 				t.Fatalf("readiness = %v, %v; matching reply = %v", rtt, err, matching)
 			}

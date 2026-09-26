@@ -339,7 +339,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages, cfg.ThroughputTransport = srv.URL, StageSet{Download: true}, "auto"
-	_, err := prepare(t.Context(), cfg)
+	_, err := prepareOne(t.Context(), cfg)
 	if err == nil {
 		t.Fatal("Prepare succeeded with no reachable throughput target")
 	}
@@ -393,7 +393,7 @@ func TestWebTransportDialClassifiesAuthenticationRequired(t *testing.T) {
 	t.Cleanup(func() { _ = server.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
-	_, err = wtDial(ctx, Config{InsecureSkipTLSVerify: true}, "https://"+conn.LocalAddr().String(), "/wt/ping", nil)
+	_, err = wtDial(ctx, credential{insecure: true}, "https://"+conn.LocalAddr().String(), "/wt/ping", nil)
 	if authErr, ok := errors.AsType[*AuthRequiredError](err); !ok || authErr.URL != "https://meter.example/login" {
 		t.Fatalf("wtDial = %v, want the server's authentication challenge", err)
 	}

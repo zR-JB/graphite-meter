@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
-	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/quic-go/webtransport-go"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -41,7 +40,7 @@ func (s *wtSession) alive() bool {
 	return s != nil && !s.closed.Load() && s.lifetime != nil && s.lifetime.Err() == nil
 }
 
-func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Values) (*wtSession, error) {
+func wtDial(ctx context.Context, cred credential, origin, path string, query url.Values) (*wtSession, error) {
 	u, err := httpEndpoint(origin, path)
 	if err != nil {
 		return nil, err
@@ -49,16 +48,16 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
-	var hdr http.Header
-	if token := cfg.grant; token != "" {
-		parsed, err := url.Parse(u)
-		if err != nil || cfg.InsecureSkipTLSVerify || !grantAllowed(parsed, cfg) {
-			return nil, fmt.Errorf("refusing to send authentication grant outside the server's HTTPS origins")
-		}
-		hdr = http.Header{"Authorization": {"Bearer " + token}}
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return nil, err
+	}
+	hdr, err := cred.authorize(parsed)
+	if err != nil {
+		return nil, err
 	}
 	wtTransport := &webtransport.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: cred.insecure}, //nolint:gosec
 		QUICConfig:      transport.NewQUICConfig(),
 	}
 	response, sess, err := wtTransport.Dial(ctx, u, hdr)
@@ -72,10 +71,10 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil
 }
 
-func verifyThroughputWebTransport(ctx context.Context, cfg Config, target *wire.ThroughputTarget) error {
+func verifyThroughputWebTransport(ctx context.Context, cred credential, target *wire.ThroughputTarget) error {
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	sess, err := wtDial(verifyCtx, cfg, target.Origin, route.WTDownload, url.Values{"bytes": {"0"}})
+	sess, err := wtDial(verifyCtx, cred, target.Origin, route.WTDownload, url.Values{"bytes": {"0"}})
 	if err != nil {
 		return err
 	}

@@ -75,18 +75,14 @@ func beginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	token.Path = "/auth/cli/token"
 	token.RawQuery = ""
 	code := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(sum[:5])
-	tr := baseTransport(cfg)
-	client := authenticatedClient(cfg, tr)
-	client.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return errors.New("authentication endpoints must not redirect")
-	}
+	tr := baseTransport(false)
 	return &PendingAuthorization{
 		BrowserURL: login.String(),
 		Code:       code,
 		Origin:     issuingOrigin,
 		verifier:   verifier,
 		tokenURL:   token.String(),
-		client:     client,
+		client:     authenticatedClient(credential{}, tr),
 		close:      tr.CloseIdleConnections,
 	}, nil
 }

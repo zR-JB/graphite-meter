@@ -3,22 +3,15 @@ package goclient
 import (
 	"cmp"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
-	"net"
 	"net/http"
 	"net/url"
-	"slices"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/quic-go/quic-go/http3"
-
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -27,7 +20,6 @@ type PreparedConnection struct {
 	Preflight        wire.Preflight
 	ThroughputTarget wire.ThroughputTarget
 	LatencyTarget    *wire.LatencyTarget
-	grantOrigins     []string
 }
 
 type PreparationError struct {
@@ -37,64 +29,6 @@ type PreparationError struct {
 
 func (e *PreparationError) Error() string { return e.Err.Error() }
 func (e *PreparationError) Unwrap() error { return e.Err }
-
-type authTransport struct {
-	cfg  Config
-	base http.RoundTripper
-}
-
-func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.cfg.grant == "" {
-		return t.base.RoundTrip(r)
-	}
-	if !grantAllowed(r.URL, t.cfg) {
-		return nil, fmt.Errorf("refusing to send authentication grant outside the server's HTTPS origins")
-	}
-	if t.cfg.InsecureSkipTLSVerify {
-		return nil, fmt.Errorf("refusing to send authentication grant without TLS verification")
-	}
-	clone := r.Clone(r.Context())
-	clone.Header = r.Header.Clone()
-	clone.Header.Set("Authorization", "Bearer "+t.cfg.grant)
-	return t.base.RoundTrip(clone)
-}
-
-func grantOrigins(base string, pf wire.Preflight) []string {
-	origins := []string{base}
-	sameHost := func(o string) {
-		u, err := url.Parse(o)
-		b, baseErr := url.Parse(base)
-		if err == nil && baseErr == nil && strings.EqualFold(u.Hostname(), b.Hostname()) {
-			origins = append(origins, o)
-		}
-	}
-	for _, t := range pf.Capabilities.ThroughputTargets {
-		sameHost(t.Origin)
-	}
-	for _, t := range pf.Capabilities.LatencyTargets {
-		sameHost(t.Origin)
-	}
-	return origins
-}
-
-func grantAllowed(u *url.URL, cfg Config) bool {
-	origins := cfg.grantOrigins
-	if origins == nil {
-		origins = []string{cfg.BaseURL}
-	}
-	here := u.Scheme + "://" + u.Host
-	return u.Scheme == "https" && slices.ContainsFunc(origins, func(o string) bool { return origin.Equal(o, here) })
-}
-
-func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
-	client := &http.Client{Transport: authTransport{cfg, base}}
-	if cfg.grant != "" || cfg.server != nil {
-		client.CheckRedirect = func(*http.Request, []*http.Request) error {
-			return errors.New("authenticated measurement endpoints must not redirect")
-		}
-	}
-	return client
-}
 
 func ConnectionSummary(transport, protocol string, tls bool) string {
 	mechanism := map[string]string{
@@ -126,52 +60,27 @@ func ProtocolLabel(protocol string) string {
 	return protocol
 }
 
-func baseTransport(cfg Config) *http.Transport {
-	return &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          maxIdleConnsPerHost * 2,
-		MaxIdleConnsPerHost:   maxIdleConnsPerHost,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: responseHeaderTimeout,
-		ExpectContinueTimeout: expectContinueTimeout,
-		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
-		WriteBufferSize:       256 * 1024,
-		ReadBufferSize:        256 * 1024,
-		DisableCompression:    true,
-		// The 4 MiB default stream window caps H2 downloads per RTT.
-		HTTP2: &http.HTTP2Config{MaxReceiveBufferPerStream: 32 << 20, MaxReceiveBufferPerConnection: 64 << 20},
-	}
-}
-
-func websocketClient(cfg Config) (*http.Client, func()) {
-	tr := baseTransport(cfg)
-	protocols := &http.Protocols{}
-	protocols.SetHTTP1(true)
-	tr.Protocols = protocols
-	return authenticatedClient(cfg, tr), tr.CloseIdleConnections
-}
-
-func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
+// prepare checks one server's paths; server, when known, limits the targets it may advertise.
+func prepare(ctx context.Context, cfg Config, server *wire.ServerEntry, cred *credential) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
 	if err := cfg.checkPaths(); err != nil {
 		return nil, err
 	}
-	if cfg.grant != "" {
-		u, err := url.Parse(cfg.BaseURL)
-		if err != nil || u.Scheme != "https" || cfg.InsecureSkipTLSVerify {
-			return nil, fmt.Errorf("authenticated operation requires verified HTTPS -url")
-		}
-	}
-	discoveryTransport := baseTransport(cfg)
-	defer discoveryTransport.CloseIdleConnections()
-	pf, err := getPreflight(ctx, authenticatedClient(cfg, discoveryTransport), cfg.BaseURL)
+	base, err := url.Parse(cfg.BaseURL)
 	if err != nil {
 		return nil, err
 	}
-	if cfg.server != nil {
-		if err := cfg.server.ValidateDiscovery(pf); err != nil {
+	if _, err := cred.authorize(base); err != nil {
+		return nil, errors.New("authenticated operation requires verified HTTPS -url")
+	}
+	discoveryTransport := baseTransport(cred.insecure)
+	defer discoveryTransport.CloseIdleConnections()
+	pf, err := getPreflight(ctx, authenticatedClient(*cred, discoveryTransport), cfg.BaseURL)
+	if err != nil {
+		return nil, err
+	}
+	if server != nil {
+		if err := server.ValidateDiscovery(pf); err != nil {
 			return nil, &PreparationError{Preflight: pf, Err: err}
 		}
 	}
@@ -179,20 +88,20 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		err := errors.New("receiver checkpoint support is required; upgrade this measurement server")
 		return nil, &PreparationError{Preflight: pf, Err: err}
 	}
-	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
+	cred.reach(cfg.BaseURL, pf)
 	branches, cancel := context.WithCancel(ctx)
 	defer cancel()
-	prepared := &PreparedConnection{Preflight: pf, grantOrigins: cfg.grantOrigins}
+	prepared := &PreparedConnection{Preflight: pf}
 	var throughputErr, latencyErr error
 	var work sync.WaitGroup
 	work.Go(func() {
-		if throughputErr = prepareThroughput(branches, cfg, prepared); throughputErr != nil {
+		if throughputErr = prepareThroughput(branches, cfg, *cred, prepared); throughputErr != nil {
 			cancel()
 		}
 	})
 	if cfg.needsLatency() {
 		work.Go(func() {
-			if latencyErr = prepareLatency(branches, cfg, prepared); latencyErr != nil {
+			if latencyErr = prepareLatency(branches, cfg, *cred, prepared); latencyErr != nil {
 				cancel()
 			}
 		})
@@ -207,14 +116,14 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	return prepared, nil
 }
 
-func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnection) error {
+func prepareThroughput(ctx context.Context, cfg Config, cred credential, prepared *PreparedConnection) error {
 	pf := prepared.Preflight
 	selected, err := selectTarget(cfg, pf)
 	if err != nil {
 		return err
 	}
 	if selected.Transport == wire.TransportWebTransport {
-		if err := verifyThroughputWebTransport(ctx, cfg, selected); err != nil {
+		if err := verifyThroughputWebTransport(ctx, cred, selected); err != nil {
 			if cfg.ThroughputTransport != "auto" {
 				return err
 			}
@@ -229,7 +138,7 @@ func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnec
 		}
 		target.Protocol = cfg.ThroughputProtocol
 	}
-	transfer, closeTransfer := protocolClient(cfg, target.Protocol)
+	transfer, closeTransfer := protocolClient(cred, target.Protocol)
 	defer closeTransfer()
 	clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe)
 	if err != nil {
@@ -242,20 +151,20 @@ func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnec
 	return nil
 }
 
-func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnection) error {
+func prepareLatency(ctx context.Context, cfg Config, cred credential, prepared *PreparedConnection) error {
 	targets := prepared.Preflight.Capabilities.LatencyTargets
 	target, err := selectLatencyTarget(cfg, targets)
 	if err != nil {
 		return err
 	}
-	wsClient, closeWebSocket := websocketClient(cfg)
+	wsClient, closeWebSocket := websocketClient(cred)
 	defer closeWebSocket()
-	rtt, err := verifyLatency(ctx, cfg, wsClient, target)
+	rtt, err := verifyLatency(ctx, cred, wsClient, target)
 	if err != nil && target.Transport == wire.TransportWebTransport && cfg.LatencyTransport == "auto" {
 		if target, err = latencyTargetOver(cfg, targets, wire.TransportWebSocket); err != nil {
 			return err
 		}
-		rtt, err = verifyLatency(ctx, cfg, wsClient, target)
+		rtt, err = verifyLatency(ctx, cred, wsClient, target)
 	}
 	if err != nil {
 		return err
@@ -272,6 +181,7 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 type runner struct {
 	coordinated   *participantCounters
 	cfg           Config
+	cred          credential
 	streams       byDirection[int]
 	http          *http.Client
 	websocketHTTP *http.Client
@@ -383,23 +293,4 @@ func protocolFromEvidence(protocol string) string {
 		return "http3"
 	}
 	return protocol
-}
-
-func protocolClient(cfg Config, protocol string) (*http.Client, func()) {
-	if protocol == "http3" {
-		tr := &http3.Transport{
-			TLSClientConfig:    &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
-			QUICConfig:         transport.NewQUICConfig(),
-			DisableCompression: true,
-		}
-		return authenticatedClient(cfg, tr), func() { _ = tr.Close() }
-	}
-	tr := baseTransport(cfg)
-	if protocol != "negotiated" {
-		p := &http.Protocols{}
-		p.SetHTTP1(protocol == "http1")
-		p.SetHTTP2(protocol == "http2")
-		tr.Protocols = p
-	}
-	return authenticatedClient(cfg, tr), tr.CloseIdleConnections
 }

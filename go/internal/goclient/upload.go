@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
 	"net/http"
 	"net/http/httptrace"
@@ -17,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -44,7 +44,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	}
 	if r.target.Transport == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
-			return wtDial(ctx, r.cfg, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
+			return wtDial(ctx, r.cred, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
 		}, func(ctx context.Context, sess *wtSession) error {
 			str, err := acceptUploadProgressWT(ctx, sess)
 			if err == nil {

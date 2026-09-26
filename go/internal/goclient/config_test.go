@@ -126,7 +126,7 @@ func TestConfigValidate(t *testing.T) {
 			t.Errorf("%s: Validate = %v, want %q", c.name, err, c.want)
 		}
 		pathErr := cfg.normalized().checkPaths()
-		if _, prepareErr := prepare(t.Context(), cfg); pathErr != nil && prepareErr.Error() != pathErr.Error() {
+		if _, prepareErr := prepareOne(t.Context(), cfg); pathErr != nil && prepareErr.Error() != pathErr.Error() {
 			t.Errorf("%s: prepare = %v, want the validation error", c.name, prepareErr)
 		}
 	}
@@ -148,12 +148,12 @@ func TestPrepareRefusesUploadsWithoutReceiverCheckpoints(t *testing.T) {
 	defer srv.Close()
 	cfg := DefaultConfig()
 	cfg.BaseURL = srv.URL
-	_, err := prepare(t.Context(), cfg)
+	_, err := prepareOne(t.Context(), cfg)
 	if failed, ok := errors.AsType[*PreparationError](err); !ok || failed.Preflight.Generation != "test" {
 		t.Fatalf("upload stage without receiver checkpoints = %v, want a refusal that keeps discovery", err)
 	}
 	cfg.Stages = StageSet{Latency: true, Download: true}
-	if _, err := prepare(t.Context(), cfg); err != nil {
+	if _, err := prepareOne(t.Context(), cfg); err != nil {
 		t.Fatalf("download-only run refused: %v", err)
 	}
 }
@@ -177,7 +177,7 @@ func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 	defer srv.Close()
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.PingInterval = srv.URL, MaxPingInterval+5*time.Second
-	prepared, err := prepare(t.Context(), cfg)
+	prepared, err := prepareOne(t.Context(), cfg)
 	if err != nil || prepared.LatencyTarget.Transport != wire.TransportWebSocket {
 		t.Fatalf("automatic path after an unreachable WebTransport bus = %+v, %v; want WebSocket", prepared, err)
 	}

@@ -24,9 +24,14 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// prepareOne prepares cfg.BaseURL alone, outside any catalogue and without a grant.
+func prepareOne(ctx context.Context, cfg Config) (*PreparedConnection, error) {
+	return prepare(ctx, cfg, nil, &credential{insecure: cfg.InsecureSkipTLSVerify})
+}
+
 func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 	cfg = cfg.normalized()
-	connection, err := prepare(ctx, cfg)
+	connection, err := prepareOne(ctx, cfg)
 	if err != nil {
 		emit(Event{Kind: EventDone, At: time.Now(), Err: err})
 		return err
@@ -34,7 +39,7 @@ func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 	server := PreparedServer{
 		Server:     wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: "fixture"},
 		Connection: connection,
-		config:     cfg,
+		credential: credential{insecure: cfg.InsecureSkipTLSVerify},
 	}
 	prepared := &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}
 	return runSelected(ctx, cfg, prepared, emit)
@@ -69,7 +74,6 @@ func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Du
 	prepared := PreparedServer{
 		Server:     wire.ServerEntry{ID: "self", Name: "fixture", URL: cfg.BaseURL},
 		Connection: &PreparedConnection{ThroughputTarget: *r.target, LatencyTarget: r.latencyTarget},
-		config:     cfg,
 	}
 	c := &coordinator{
 		cfg:      cfg,

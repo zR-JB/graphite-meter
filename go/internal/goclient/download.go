@@ -18,7 +18,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) error {
 	total := &r.coordinated.down
 	if r.target.Transport == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
-			return wtDial(ctx, r.cfg, r.target.Origin, route.WTDownload, r.wtDownloadQuery())
+			return wtDial(ctx, r.cred, r.target.Origin, route.WTDownload, r.wtDownloadQuery())
 		}, nil)
 		if err != nil {
 			return err
