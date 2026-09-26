@@ -52,8 +52,9 @@ func main() {
 	flag.IntVar(&cfg.TransferStreams.AutomaticMax, "auto-streams", cfg.TransferStreams.AutomaticMax,
 		"maximum H1 streams per direction")
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
-		"force exact streams per server and direction (0 = automatic; 128 per direction across the run)")
-	flag.StringVar(&ping, "ping", "medium", "ping cadence: fast (80 ms), medium (250 ms), slow (600 ms), "+
+		fmt.Sprintf("force exact streams per server and direction (0 = automatic; %d per direction across the run)",
+			goclient.MaxTransferStreams))
+	flag.StringVar(&ping, "ping", "", "ping cadence: fast, medium (default), slow, "+
 		"or a duration (up to "+goclient.MaxPingInterval.String()+" over the WebTransport latency path)")
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,
 		"measure latency while transfer stages are loaded")
@@ -66,11 +67,13 @@ func main() {
 		return
 	}
 	cfg.Stages = parseStages(stages)
-	interval, err := parsePing(ping)
-	if err != nil {
-		fail(2, fmt.Errorf("-ping: %w", err))
+	if ping != "" {
+		interval, err := parsePing(ping)
+		if err != nil {
+			fail(2, fmt.Errorf("-ping: %w", err))
+		}
+		cfg.PingInterval = interval
 	}
-	cfg.PingInterval = interval
 	if err := cfg.Validate(); err != nil {
 		fail(2, err)
 	}
@@ -109,12 +112,8 @@ func parseStages(raw string) goclient.StageSet {
 }
 
 func parsePing(raw string) (time.Duration, error) {
-	name := strings.ToLower(strings.TrimSpace(raw))
-	if name == "" {
-		return 250 * time.Millisecond, nil
-	}
-	named := func(c cadence) bool { return strings.HasPrefix(strings.ToLower(c.label), name+" ") }
-	if i := slices.IndexFunc(cadences, named); i >= 0 {
+	name := strings.TrimSpace(raw)
+	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.EqualFold(c.name, name) }); i >= 0 {
 		return cadences[i].interval, nil
 	}
 	d, err := time.ParseDuration(name)

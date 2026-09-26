@@ -96,7 +96,7 @@ func TestParsePing(t *testing.T) {
 	for raw, want := range map[string]time.Duration{
 		"fast":    80 * time.Millisecond,
 		"Slow":    600 * time.Millisecond,
-		"":        250 * time.Millisecond,
+		"medium":  goclient.PingMedium,
 		"1500ms":  1500 * time.Millisecond,
 		"instant": 0,
 		"0s":      0,

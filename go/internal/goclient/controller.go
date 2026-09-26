@@ -205,7 +205,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 				return
 			}
 		}
-		_ = runSelection(measurement, delivery, cfg, prepared, emit)
+		runSelection(measurement, delivery, cfg, prepared, emit)
 	})
 	return events
 }

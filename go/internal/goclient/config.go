@@ -45,8 +45,15 @@ type TransferStreamPolicy struct {
 	Forced       int
 }
 
+// Named probe cadences; PingMedium is the default.
 const (
-	maxTransferStreams = 128
+	PingFast   = 80 * time.Millisecond
+	PingMedium = 250 * time.Millisecond
+	PingSlow   = 600 * time.Millisecond
+)
+
+const (
+	MaxTransferStreams = 128
 
 	transferBytesPerStream = 64 << 30
 	maxIdleConnsPerHost    = 256
@@ -171,7 +178,7 @@ func DefaultConfig() Config {
 		UploadDuration:        10 * time.Second,
 		BidirectionalDuration: 10 * time.Second,
 		TransferStreams:       TransferStreamPolicy{AutomaticMax: 6},
-		PingInterval:          250 * time.Millisecond,
+		PingInterval:          PingMedium,
 		LoadedLatency:         true,
 	}
 }
@@ -191,9 +198,9 @@ func (c Config) normalized() Config {
 	c.BidirectionalDuration = positive(c.BidirectionalDuration, d.BidirectionalDuration)
 	c.TransferStreams.AutomaticMax = min(
 		positive(c.TransferStreams.AutomaticMax, d.TransferStreams.AutomaticMax),
-		maxTransferStreams,
+		MaxTransferStreams,
 	)
-	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), maxTransferStreams)
+	c.TransferStreams.Forced = min(max(c.TransferStreams.Forced, 0), MaxTransferStreams)
 	c.PingInterval = positive(c.PingInterval, d.PingInterval)
 	return c
 }
@@ -215,8 +222,8 @@ func planRunStreams(cfg Config, servers []PreparedServer) (map[string]streamCoun
 		total.down += lanes.down
 		total.up += lanes.up
 	}
-	if total.down > maxTransferStreams || total.up > maxTransferStreams {
-		return nil, fmt.Errorf("the run exceeds %d streams per direction; reduce forced streams", maxTransferStreams)
+	if total.down > MaxTransferStreams || total.up > MaxTransferStreams {
+		return nil, fmt.Errorf("the run exceeds %d streams per direction; reduce forced streams", MaxTransferStreams)
 	}
 	return plan, nil
 }

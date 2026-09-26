@@ -36,7 +36,17 @@ func runDirect(ctx context.Context, cfg Config, emit func(Event)) error {
 		config:     cfg,
 	}
 	prepared := &PreparedRun{Servers: []PreparedServer{server}, LatencyFocus: "self"}
-	return runSelection(ctx, context.WithoutCancel(ctx), cfg, prepared, emit)
+	return runSelected(ctx, cfg, prepared, emit)
+}
+
+func runSelected(ctx context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
+	runSelection(ctx, context.WithoutCancel(ctx), cfg, prepared, func(e Event) {
+		if e.Kind == EventDone {
+			err = e.Err
+		}
+		emit(e)
+	})
+	return err
 }
 
 func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Duration) error {

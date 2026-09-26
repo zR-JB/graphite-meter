@@ -73,11 +73,18 @@ type coordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
+// checkpointBudget bounds one concurrent batch of receiver checkpoints.
+const checkpointBudget = 1500 * time.Millisecond
+
+// runSelection measures a prepared selection and always ends with one EventDone.
+func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) {
 	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
-	defer func() {
-		emit(Event{Kind: EventDone, At: time.Now(), Err: err, Servers: c.details(c.outcome(ctx, err))})
-	}()
+	err := c.start(ctx, teardown)
+	emit(Event{Kind: EventDone, At: time.Now(), Err: err, Servers: c.details(c.outcome(ctx, err))})
+}
+
+func (c *coordinator) start(ctx, teardown context.Context) error {
+	prepared := c.prepared
 	if !prepared.Ready() {
 		return errors.New("resolve every selected server before starting")
 	}
@@ -107,7 +114,7 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 		}
 		r.emit = func(e Event) {
 			e.ServerID = server.Server.ID
-			emit(e)
+			c.emit(e)
 		}
 		c.servers = append(c.servers, &participant{prepared: server, transport: r})
 	}
@@ -630,7 +637,7 @@ func (c *coordinator) capture(
 	if stage.Name != StageUpload && stage.Name != StageBidirectional {
 		return boundary, nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, checkpointBudget)
 	defer cancel()
 	snapshots := make([]*ReceiverSnapshot, len(servers))
 	errs := make([]error, len(servers))

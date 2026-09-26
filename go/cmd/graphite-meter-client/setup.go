@@ -137,15 +137,15 @@ var (
 	streamsRow = &setting{
 		view: func(m model) setupRow {
 			if n := m.cfg.TransferStreams.Forced; n > 0 {
-				return setupRow{label: "Streams per server and direction", value: strconv.Itoa(n), note: "1 to 128"}
+				return setupRow{label: "Streams per server and direction", value: strconv.Itoa(n), note: streamRange}
 			}
 			return setupRow{label: "Maximum H1 streams per direction",
 				value: strconv.Itoa(m.cfg.TransferStreams.AutomaticMax), note: "HTTP/1.1 paths only"}
 		},
 		parse: func(m *model, raw string) error {
 			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > 128 {
-				return errors.New("streams must be a whole number from 1 to 128")
+			if err != nil || n < 1 || n > goclient.MaxTransferStreams {
+				return errors.New("streams must be a whole number from " + streamRange)
 			}
 			if m.cfg.TransferStreams.Forced > 0 {
 				m.cfg.TransferStreams.Forced = n
@@ -242,25 +242,24 @@ func (m model) activate(s *setting) (tea.Model, tea.Cmd) {
 }
 
 type cadence struct {
-	label    string
+	name     string
 	interval time.Duration
 }
 
-var cadences = []cadence{
-	{"Fast (80 ms)", 80 * time.Millisecond},
-	{"Medium (250 ms)", 250 * time.Millisecond},
-	{"Slow (600 ms)", 600 * time.Millisecond},
-}
+var streamRange = fmt.Sprintf("1 to %d", goclient.MaxTransferStreams)
+
+var cadences = []cadence{{"Fast", goclient.PingFast}, {"Medium", goclient.PingMedium}, {"Slow", goclient.PingSlow}}
 
 func cadenceIndex(interval time.Duration) int {
 	return slices.IndexFunc(cadences, func(c cadence) bool { return c.interval == interval })
 }
 
 func cadenceLabel(interval time.Duration) string {
+	name := "Custom"
 	if i := cadenceIndex(interval); i >= 0 {
-		return cadences[i].label
+		name = cadences[i].name
 	}
-	return "Custom (" + fmtSetting(interval) + ")"
+	return name + " (" + fmtSetting(interval) + ")"
 }
 
 var mechanisms = map[string]string{

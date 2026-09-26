@@ -74,14 +74,14 @@ func TestConfigNormalizedInvariants(t *testing.T) {
 	if got.ThroughputTarget != "edge-h2" ||
 		got.Warmup != 0 ||
 		got.DownloadDuration != d.DownloadDuration || got.TransferStreams != (TransferStreamPolicy{
-		AutomaticMax: maxTransferStreams,
+		AutomaticMax: MaxTransferStreams,
 	}) {
 		t.Fatalf("normalized %+v", got)
 	}
 	if got := (Config{
 		TransferStreams: TransferStreamPolicy{Forced: 500},
-	}).normalized(); got.TransferStreams.Forced != maxTransferStreams {
-		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, maxTransferStreams)
+	}).normalized(); got.TransferStreams.Forced != MaxTransferStreams {
+		t.Fatalf("forced streams = %d, want the %d ceiling", got.TransferStreams.Forced, MaxTransferStreams)
 	}
 }
 
