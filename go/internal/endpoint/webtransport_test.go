@@ -81,6 +81,17 @@ func TestSessionWatcherEndsOnlyQuietSessions(t *testing.T) {
 	})
 }
 
+// ?streams= is clamped to 1..16, never rejected (api/wire.md).
+func TestWTStreamCountClamps(t *testing.T) {
+	for query, want := range map[string]int{"streams=99": 16, "streams=16": 16, "streams=3": 3, "": 1,
+		"streams=0": 1, "streams=-2": 1, "streams=nonsense": 1} {
+		values, _ := url.ParseQuery(query)
+		if got := wtStreamCount(values); got != want {
+			t.Errorf("wtStreamCount(%q) = %d, want %d", query, got, want)
+		}
+	}
+}
+
 // ?datagrams= is presence-based, but a spelling of zero is a refusal rather than presence.
 func TestWTDatagramModeParsesRatherThanComparingSpellings(t *testing.T) {
 	for _, tc := range []struct {

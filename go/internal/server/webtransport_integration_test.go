@@ -180,43 +180,26 @@ func TestWebTransportDownloadServesTheRequestedSize(t *testing.T) {
 	}
 }
 
+// Every clamped lane delivers, and none past the cap opens once they all have.
 func TestWebTransportDownloadClampsTheLaneCount(t *testing.T) {
 	t.Parallel()
 	base, _, wtTransport := wtTestServer(t, nil, nil)
-	const unread = "bytes=67108864"
-	for _, tc := range []struct {
-		query string
-		want  int
-	}{
-		{unread + "&streams=99", 16},
-		{unread, 1},
-		{unread + "&streams=0", 1},
-		{unread + "&streams=nonsense", 1},
-	} {
-		t.Run(tc.query, func(t *testing.T) {
-			t.Parallel()
-			sess := dialWT(t, wtTransport, base+"/wt/download?"+tc.query)
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-			defer cancel()
-			// One accept past the expected count must find nothing.
-			seen := 0
-			for seen <= tc.want {
-				wait := 2 * time.Second
-				if seen == tc.want {
-					wait = 200 * time.Millisecond
-				}
-				accept, cancelAccept := context.WithTimeout(ctx, wait)
-				_, err := sess.AcceptUniStream(accept)
-				cancelAccept()
-				if err != nil {
-					break
-				}
-				seen++
-			}
-			if seen != tc.want {
-				t.Errorf("%s opened %d concurrent lanes, want %d", tc.query, seen, tc.want)
-			}
-		})
+	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=67108864&streams=99")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	for lane := range wire.WTMaxStreams {
+		str, err := sess.AcceptUniStream(ctx)
+		if err != nil {
+			t.Fatalf("lane %d: %v", lane, err)
+		}
+		if _, err := io.ReadFull(str, make([]byte, 1)); err != nil {
+			t.Fatalf("lane %d delivered nothing: %v", lane, err)
+		}
+	}
+	extra, cancelExtra := context.WithTimeout(ctx, time.Second)
+	defer cancelExtra()
+	if _, err := sess.AcceptUniStream(extra); err == nil {
+		t.Fatalf("a lane past the %d-lane cap opened", wire.WTMaxStreams)
 	}
 }
 
