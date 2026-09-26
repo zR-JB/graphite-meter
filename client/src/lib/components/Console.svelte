@@ -749,10 +749,7 @@
     kicker="Test & Display"
     width="min(560px, 94vw)"
   >
-    <TestSetupPanel
-      open={settingsOpen}
-      onOpenHistory={(invoker) => historyRoute(null, invoker)}
-    />
+    <TestSetupPanel onOpenHistory={(invoker) => historyRoute(null, invoker)} />
   </SidePanel>
   <SidePanel
     open={telemetryOpen}

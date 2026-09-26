@@ -9,11 +9,10 @@
   import { tooltip } from "../actions/tooltip";
 
   interface Props {
-    open?: boolean;
+    open: boolean;
     side?: "left" | "right";
     title: string;
     kicker?: string;
-    label?: string;
     width?: string;
     docked?: boolean;
     raised?: boolean;
@@ -21,16 +20,14 @@
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
     onResetWidth?: () => void;
-    onClose?: () => void;
-    toolbar?: Snippet;
+    onClose: () => void;
     children: Snippet;
   }
   let {
-    open = $bindable(false),
+    open,
     side = "right",
     title,
     kicker,
-    label,
     width,
     docked = false,
     raised = false,
@@ -39,20 +36,15 @@
     onResize,
     onResetWidth,
     onClose,
-    toolbar,
     children,
   }: Props = $props();
 
-  function close() {
-    if (onClose) onClose();
-    else open = false;
-  }
-
   let panelEl = $state<HTMLDivElement>();
+  // Keeps the body painted while a closing flyout slides out.
+  const linger = (_node: Element) => ({ duration: 180 });
 
-  function resizeBy(startWidth: number, delta: number) {
-    const desired = startWidth + (side === "left" ? delta : -delta);
-    onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, desired)));
+  function setWidth(px: number) {
+    onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
   }
 
   function resizeHandle(handle: HTMLElement) {
@@ -69,8 +61,10 @@
       document.body.style.userSelect = "none";
       document.body.style.cursor = "col-resize";
       const move = (next: PointerEvent) => {
-        if (next.pointerId === event.pointerId)
-          resizeBy(startWidth, next.clientX - startX);
+        if (next.pointerId === event.pointerId) {
+          const delta = next.clientX - startX;
+          setWidth(startWidth + (side === "left" ? delta : -delta));
+        }
       };
       const end = (next: PointerEvent) => {
         if (next.pointerId === event.pointerId) finish?.();
@@ -99,19 +93,23 @@
   }
 
   function onHandleKey(e: KeyboardEvent) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      onResetWidth?.();
-      return;
-    }
-    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-    if (!panelEl) return;
+    const width = panelEl?.offsetWidth ?? MIN_DOCK_WIDTH;
+    const step = e.shiftKey ? 48 : 16;
+    const next: Record<string, number> = {
+      ArrowRight: width + step,
+      ArrowUp: width + step,
+      ArrowLeft: width - step,
+      ArrowDown: width - step,
+      Home: MIN_DOCK_WIDTH,
+      End: dockMaxWidth,
+    };
+    if (e.key === "Enter" || e.key === " ") onResetWidth?.();
+    else if (e.key in next) setWidth(next[e.key]);
+    else return;
     e.preventDefault();
-    const step = (e.shiftKey ? 48 : 16) * (e.key === "ArrowRight" ? 1 : -1);
-    resizeBy(panelEl.offsetWidth, step);
   }
 
-  let backdropEl = $state<HTMLButtonElement>();
+  let backdropEl = $state<HTMLDivElement>();
 </script>
 
 <div
@@ -121,13 +119,12 @@
   class:raised
   aria-hidden={!open}
 >
-  <button
+  <div
     class="backdrop"
     bind:this={backdropEl}
-    aria-label={`Close ${title}`}
-    tabindex={open ? 0 : -1}
-    onclick={close}
-  ></button>
+    aria-hidden="true"
+    onclick={onClose}
+  ></div>
 
   <div
     class="panel"
@@ -135,13 +132,13 @@
     use:sheetDrag={{
       enabled: open && !docked,
       backdrop: backdropEl,
-      onDismiss: close,
+      onDismiss: onClose,
     }}
     data-side={side}
     style={width ? `--panel-w: ${width}` : undefined}
     role={docked ? "region" : "dialog"}
     aria-modal={docked ? undefined : true}
-    aria-label={label ?? title}
+    aria-label={title}
     inert={!open}
     tabindex="-1"
     use:focusTrap={open && !docked}
@@ -149,7 +146,7 @@
       if (e.key === "Escape") {
         if (document.querySelector(":popover-open")) return;
         e.stopPropagation();
-        close();
+        onClose();
       }
     }}
   >
@@ -162,6 +159,7 @@
         aria-valuemin={MIN_DOCK_WIDTH}
         aria-valuemax={dockMaxWidth}
         aria-valuenow={dockWidth}
+        aria-valuetext={`${dockWidth} pixels wide`}
         tabindex="0"
         {@attach resizeHandle}
         onkeydown={onHandleKey}
@@ -180,17 +178,15 @@
         class="btn btn-icon btn-inset"
         aria-label={`Close ${title}`}
         use:tooltip={"Close (Esc)"}
-        onclick={close}
+        onclick={onClose}
       >
         {@html ICON.close}
       </button>
     </header>
 
-    {#if toolbar}
-      <div class="panel-toolbar">{@render toolbar()}</div>
+    {#if open}
+      <div class="panel-body" out:linger>{@render children()}</div>
     {/if}
-
-    <div class="panel-body">{@render children()}</div>
   </div>
 </div>
 
@@ -343,10 +339,6 @@
     font: 600 var(--type-xl) var(--font-display);
     letter-spacing: var(--track-tight);
     overflow-wrap: anywhere;
-  }
-  .panel-toolbar {
-    flex: none;
-    min-width: 0;
   }
   .panel-body {
     display: flex;

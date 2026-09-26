@@ -22,19 +22,12 @@
   import { untrack } from "svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
 
-  interface Props {
-    open: boolean;
-    onOpenHistory: (invoker: HTMLElement) => void;
-  }
-  let { open, onOpenHistory }: Props = $props();
+  let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
+    $props();
   const running = $derived(store.isRunning);
   let resetConfirmOpen = $state(false);
   $effect(() => {
-    if (!open) resetConfirmOpen = false;
-  });
-  $effect(() => {
     if (
-      open &&
       store.serverCatalog &&
       !store.catalogLoading &&
       !store.isRunning &&
