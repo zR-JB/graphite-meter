@@ -4,6 +4,8 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -25,6 +27,17 @@ func TestProbeReturnsConnectionEvidenceAndLoad(t *testing.T) {
 	}
 	if rec.Header().Get("Alt-Svc") != "" {
 		t.Fatal("an ordinary probe advertised HTTP/3")
+	}
+}
+
+// Evidence a trusted proxy leaves ambiguous names no client, as admission refuses it.
+func TestProbeRefusesAmbiguousProxyEvidence(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "http://meter/probe", nil)
+	r.RemoteAddr = "10.0.0.2:1234"
+	rec := httptest.NewRecorder()
+	NewProbe([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "", nil).ServeHTTP(rec, r)
+	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "10.0.0.2") {
+		t.Fatalf("probe = %d %q, want 400 naming no address", rec.Code, rec.Body.String())
 	}
 }
 

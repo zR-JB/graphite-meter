@@ -29,7 +29,11 @@ func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Alt-Svc", `h3=":`+p.bootstrapPort+`"`)
 		w.Header().Set("Connection", "close")
 	}
-	client, _ := transport.ResolveClientAddress(r, p.trusted)
+	client, ok := transport.ResolveClientAddress(r, p.trusted)
+	if !ok {
+		http.Error(w, "ambiguous client address", http.StatusBadRequest)
+		return
+	}
 	noStoreJSON(w)
 	probe := wire.Probe{
 		ClientIP: client.Addr.String(), ClientIPVersion: client.Version,
