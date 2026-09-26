@@ -21,7 +21,7 @@ interface StageTrackModel extends Segment {
   execution: StagePresentation;
 }
 
-export function segmentState(stage: StagePresentation): Segment {
+function segmentState(stage: StagePresentation): Segment {
   return {
     state: stage.warming ? "warmup" : stage.status,
     fill: stage.fill,

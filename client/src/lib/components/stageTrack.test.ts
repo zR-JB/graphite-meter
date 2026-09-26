@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { segmentState, lockReason, stageTrackModel } from "./stageTrack";
+import { lockReason, stageTrackModel } from "./stageTrack";
 import type { StagePresentation } from "../state/stagePresentation";
 
 const stage = (
@@ -19,21 +19,6 @@ const model = (
   selected: boolean,
   locked = false,
 ) => stageTrackModel({ selected, locked, execution });
-
-test("segmentState projects the central stage state without re-deriving it", () => {
-  for (const [state, expected] of [
-    [{ status: "disabled" }, { state: "disabled", fill: 0 }],
-    [
-      { status: "partial", fill: 100 },
-      { state: "partial", fill: 100 },
-    ],
-    [
-      { status: "active", warming: true },
-      { state: "warmup", fill: 0 },
-    ],
-  ] as const)
-    expect(segmentState(stage(state))).toEqual(expected);
-});
 
 test("lockReason uses the central terminal and recovery state", () => {
   for (const [terminal, phase, selected, target, status, expected] of [

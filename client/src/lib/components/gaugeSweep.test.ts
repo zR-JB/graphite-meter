@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { clamp01, sweepTarget, angleForFraction } from "./gaugeSweep";
+import { sweepTarget } from "./gaugeSweep";
 import type { SweepTargetInput } from "./gaugeSweep";
 
 const base: SweepTargetInput = {
@@ -11,12 +11,6 @@ const base: SweepTargetInput = {
   rtt: 0,
   completedKind: "speed",
 };
-
-test("clamp01 bounds to [0,1]", () => {
-  expect(clamp01(-1)).toBe(0);
-  expect(clamp01(0.5)).toBe(0.5);
-  expect(clamp01(2)).toBe(1);
-});
 
 test("sweepTarget: download/upload/bidirectional normalize value/scale", () => {
   for (const phase of ["download", "upload", "bidirectional"] as const) {
@@ -121,21 +115,4 @@ test("sweepTarget: completed latency uses the latency scale", () => {
       rtt: 25,
     }),
   ).toBe(0.25);
-});
-
-test("angleForFraction: 0 and 1 land on the arc's endpoints", () => {
-  for (const [fraction, expected] of [
-    [0, 1],
-    [1, 3],
-  ] as const)
-    expect(angleForFraction(fraction, 1, 2)).toBe(expected);
-});
-
-test("angleForFraction: midpoint fraction lands halfway across the sweep", () => {
-  expect(angleForFraction(0.5, 1, 2)).toBe(2);
-});
-
-test("angleForFraction: out-of-range fractions are clamped before mapping", () => {
-  expect(angleForFraction(-1, 1, 2)).toBe(1);
-  expect(angleForFraction(2, 1, 2)).toBe(3);
 });

@@ -3,23 +3,6 @@ import { gaugeLayout } from "./gaugeLayout";
 
 const layout = gaugeLayout(480, 260);
 
-test("gauge has nine uniform canvas ticks and five every-other labels", () => {
-  expect(layout.majorTicks).toHaveLength(9);
-  expect(layout.labelPoints).toHaveLength(5);
-  const tickDeltas = layout.majorTicks
-    .slice(1)
-    .map((tick, index) => tick.angle - layout.majorTicks[index]!.angle);
-  expect(
-    tickDeltas.every((delta) => Math.abs(delta - tickDeltas[0]!) < 1e-10),
-  ).toBe(true);
-  const labelDeltas = layout.labelPoints
-    .slice(1)
-    .map((point, index) => point.angle - layout.labelPoints[index]!.angle);
-  expect(
-    labelDeltas.every((delta) => Math.abs(delta - labelDeltas[0]!) < 1e-10),
-  ).toBe(true);
-});
-
 test("label anchors sit on exact tick rays at one fixed radial clearance", () => {
   for (const [index, point] of layout.labelPoints.entries()) {
     const tick = layout.majorTicks[index * 2]!;

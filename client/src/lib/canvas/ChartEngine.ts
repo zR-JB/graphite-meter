@@ -10,7 +10,6 @@ import {
   latencyScaleForHistory,
 } from "../runner/latencyScale";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";
-import { throughputSamplesContinuous } from "./throughputContinuity";
 import { presentation, type PresentationHandle } from "./presentation";
 import { LatencyPhaseIndex } from "./latencyPhaseIndex";
 import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
@@ -21,6 +20,11 @@ import {
 } from "./chartLayout";
 import { canvasPixelRatio } from "./canvasResolution";
 import { traceSmoothLine } from "./smoothPath";
+// A throughput break is explicit runner lifecycle state, never a delivery gap.
+const throughputSamplesContinuous = (
+  left: ThroughputSample,
+  right: ThroughputSample,
+) => left.continuityId === right.continuityId;
 const CHART_TIME_CAMERA_TAU_MS = 120;
 const CHART_TIME_CAMERA_EPSILON_MS = 4;
 const LATENCY_GLYPH_ENTER_MS = 90;
