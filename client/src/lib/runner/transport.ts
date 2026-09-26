@@ -34,7 +34,6 @@ import {
   ROUTES,
 } from "./paths";
 import {
-  DIRECTION_PROGRESS_WINDOW_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
@@ -178,7 +177,7 @@ export const laneWorker = (kind: "fetch" | "wt"): Worker =>
         type: "module",
       });
 
-/** One direction's lanes: restarts, readiness and a measured-progress watchdog. */
+/** One direction's lanes: restarts, readiness and recovery reports; the run times their silence. */
 class LaneSet {
   measuring = false;
   stalled = false;
@@ -187,8 +186,6 @@ class LaneSet {
   #ready = new Set<number>();
   #seq = 0;
   #live = true;
-  #watchdog: ReturnType<typeof setTimeout> | undefined;
-  #progressAt = 0;
 
   constructor(
     readonly stage: ServerStage,
@@ -224,7 +221,6 @@ class LaneSet {
 
   measure(): void {
     this.measuring = true;
-    this.progress(0);
     if (this.dir === "up") return;
     this.#seq++;
     for (const lane of this.#lanes) lane?.measure(this.#seq);
@@ -241,28 +237,8 @@ class LaneSet {
     this.stage.stallChanged({ reason, detail, rotate, direction: this.dir });
   }
 
-  /** Measured progress re-arms one timer; silence past the window stalls this direction alone. */
   progress(bytes: number): void {
-    if (!this.measuring || !this.#live) return;
-    this.#progressAt = performance.now();
-    if (bytes > 0) this.setStalled(false);
-    if (this.#watchdog === undefined) this.#check(DIRECTION_PROGRESS_WINDOW_MS);
-  }
-
-  #check(delayMs: number): void {
-    this.#watchdog = setTimeout(() => {
-      this.#watchdog = undefined;
-      if (!this.measuring || !this.#live) return;
-      const quietMs = performance.now() - this.#progressAt;
-      if (quietMs < DIRECTION_PROGRESS_WINDOW_MS)
-        this.#check(DIRECTION_PROGRESS_WINDOW_MS - quietMs);
-      else
-        this.setStalled(
-          true,
-          `${this.dir} direction carried no data`,
-          "timeout",
-        );
-    }, delayMs);
+    if (this.measuring && this.#live && bytes > 0) this.setStalled(false);
   }
 
   #message(index: number, msg: WorkerMsg): void {
@@ -321,7 +297,6 @@ class LaneSet {
   }
 
   #clear(): void {
-    clearTimeout(this.#watchdog);
     for (const timer of this.#timers) clearTimeout(timer);
   }
 }
@@ -649,8 +624,7 @@ class UploadReceiver {
   #finishing: (() => void) | null = null;
   #feed: { finalize(): void; dispose(): void } | null = null;
   #poll = new AbortController();
-  #observedAt = performance.now();
-  #checkpointAt = -Infinity;
+  #advanced = true;
 
   /** A session lane carries its own feed and finalizes it; this side only backs that up. */
   constructor(
@@ -686,7 +660,10 @@ class UploadReceiver {
   async #watch(): Promise<void> {
     while (!this.#closed) {
       await new Promise((resolve) => setTimeout(resolve, 250));
-      if (this.#closed || performance.now() - this.#observedAt < 500) continue;
+      if (this.#closed || this.#advanced) {
+        this.#advanced = false;
+        continue;
+      }
       await this.stage.checkpoint(this.#poll.signal).catch(() => {});
     }
   }
@@ -694,8 +671,6 @@ class UploadReceiver {
   observe(checkpoint: ReceiverCheckpoint): void {
     if (this.#closed || checkpoint.id !== this.id) return;
     this.#open(true);
-    if (checkpoint.nanos > this.#nanos && checkpoint.bytes >= this.#bytes)
-      this.#checkpointAt = performance.now();
     this.#advance(checkpoint.bytes, checkpoint.nanos, checkpoint);
   }
 
@@ -712,8 +687,7 @@ class UploadReceiver {
         lanes!.setStalled(true, event.detail, event.reason, event.rotate);
       else this.stage.failed(event.reason, event.detail);
     } else if (event.type === "stall") {
-      if (measuring && performance.now() - this.#checkpointAt >= 500)
-        lanes!.setStalled(true, event.detail);
+      if (measuring) lanes!.setStalled(true, event.detail);
     } else {
       this.#advance(event.n, event.t);
       if (event.type === "complete") {
@@ -730,7 +704,7 @@ class UploadReceiver {
     checkpoint?: ReceiverCheckpoint,
   ): void {
     if (bytes < this.#bytes || nanos < this.#nanos) return;
-    if (nanos > this.#nanos) this.#observedAt = performance.now();
+    if (nanos > this.#nanos) this.#advanced = true;
     const delta = bytes - this.#bytes;
     [this.#bytes, this.#nanos] = [bytes, nanos];
     const lanes = this.stage.uploadLanes;

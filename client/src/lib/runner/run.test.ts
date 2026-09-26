@@ -43,6 +43,7 @@ interface Peer {
   /** Bytes per millisecond in each direction. */
   rate?: number;
   latency?: boolean;
+  silent?(activity: PhaseActivity, measuredMs: number): boolean;
   prepare?(
     activity: PhaseActivity,
     host: ParticipantHost,
@@ -112,6 +113,7 @@ async function harness(
           calls.push(`measure:${peer.id}`);
           if (activity.transfer.length)
             timer = setInterval(() => {
+              if (peer.silent?.(activity, performance.now() - started)) return;
               if (activity.transfer.includes("down")) host.download(rate * 20);
               if (
                 activity.transfer.includes("up") &&
@@ -613,15 +615,17 @@ test("an aborted stage end delivers no late events", async () => {
 });
 
 test("evidence that stops late in a stage fails that stage, and a sole server stalls the run", async () => {
+  const silent = (activity: PhaseActivity, ms: number) =>
+    activity.stage === "download" && ms >= 400;
   const stall = (host: ParticipantHost, activity: PhaseActivity) => {
     if (activity.stage === "download")
       setTimeout(
         () => host.stall({ reason: "connection-lost", detail: "quiet" }),
-        700,
+        400,
       );
   };
   const h = await harness(
-    two({ measure: stall }),
+    two({ silent, measure: stall }),
     { download: true, upload: true },
     { downloadMs: 1_000, uploadMs: 1_000 },
   );
@@ -633,26 +637,33 @@ test("evidence that stops late in a stage fails that stage, and a sole server st
   expect(result.multiServer.participants).toEqual(["b"]);
   expect(h.events.some((event) => event.type === "stall")).toBe(false);
 
-  // Evidence silent past the recovery window leaves the interval within the stage.
+  // Evidence silent past the progress window leaves the interval within the stage, reported or not.
   const early = await harness(
-    two({ measure: stall }),
+    two({ silent }),
     { download: true },
     { downloadMs: 3_500 },
   );
   early.start();
   const dropped = await early.result();
+  expect(dropped.multiServer.failures).toMatchObject([
+    {
+      serverId: "a",
+      reason: "timeout",
+      message: "down direction carried no data",
+    },
+  ]);
   const [, survivors] = dropped.multiServer.intervals;
   expect(survivors).toMatchObject({ reason: "dropout", participants: ["b"] });
   expect(survivors.startMs).toBeLessThan(2_300);
   near(dropped.download?.reportedBytesPerSec, 3_000);
 
   const sole = await harness(
-    [{ id: "self", measure: stall }],
+    [{ id: "self", silent, measure: stall }],
     { download: true },
     { downloadMs: 2_000 },
   );
   sole.start();
-  await advance(900);
+  await advance(1_000);
   expect(sole.events.filter((event) => event.type === "stall")).toHaveLength(1);
   expect(
     sole.events.findLast((event) => event.type === "progress"),
@@ -660,9 +671,33 @@ test("evidence that stops late in a stage fails that stage, and a sole server st
   await sole.result();
 });
 
+test("a stall report while evidence still flows keeps the server at its stage end", async () => {
+  const stall = (host: ParticipantHost) =>
+    setTimeout(
+      () =>
+        host.stall({
+          reason: "connection-lost",
+          detail: "feed",
+          direction: "up",
+        }),
+      900,
+    );
+  const h = await harness(
+    two({ measure: stall }),
+    { upload: true },
+    { uploadMs: 1_000 },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.outcome).toBe("complete");
+  expect(result.multiServer.failures).toEqual([]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+});
+
 test("a suspended page enters every segment in order and never folds the gap into evidence", async () => {
+  let lanes: ParticipantHost | undefined;
   const frozen = await harness(
-    [{ id: "self" }],
+    [{ id: "self", measure: (host) => (lanes = host) }],
     { download: true },
     {
       downloadMs: 4_000,
@@ -671,6 +706,11 @@ test("a suspended page enters every segment in order and never folds the gap int
   frozen.start();
   await advance(500);
   suspend(4_000);
+  lanes!.stall({
+    reason: "timeout",
+    detail: "down direction carried no data",
+    direction: "down",
+  });
   const lost = await frozen.result();
   expect(lost.stages.download).toBe("failed");
   expect(lost.multiServer.failures).toMatchObject([

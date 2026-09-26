@@ -288,7 +288,7 @@ test("a quiet feed is backed by same-receiver checkpoints", async () => {
   stage.discard();
 });
 
-test("a lane error stalls once and restarts after backoff, a refusal fails the stage, and silence stalls a direction", async () => {
+test("a lane error stalls once and restarts after backoff, and a refusal fails the stage", async () => {
   const h = await http();
   jest.useFakeTimers();
   try {
@@ -317,14 +317,6 @@ test("a lane error stalls once and restarts after backoff, a refusal fails the s
     });
     expect(h.failures).toEqual(["down stream 0 failed: HTTP 429"]);
     stage.discard();
-
-    const quiet = h.stage(activity("download"));
-    await quiet.prepare();
-    jest.advanceTimersByTime(1);
-    quiet.measure();
-    jest.advanceTimersByTime(1_600);
-    expect(h.stalls.at(-1)).toBe("down direction carried no data");
-    quiet.discard();
   } finally {
     jest.useRealTimers();
   }

@@ -41,6 +41,7 @@ import {
   truncateSegmentAt,
   type Segment,
 } from "./schedule";
+import { RunClock } from "./clock";
 import { LiveRates } from "./liveRates";
 import { LatencyPresentationBuckets } from "./series";
 import { fixedPingIntervalMs } from "./pingCadence";
@@ -66,7 +67,7 @@ export interface PreparedServer {
 const TICK_MS = 60;
 const STABILITY_CADENCE_MS = 100;
 const PROGRESS_CADENCE_MS = 250;
-const TIMER_GAP_MS = 1500;
+const STALL_QUIET_MS = 500;
 const SUMMARY_CADENCE_MS = 1000;
 const LATENCY_RECOVERY_BUDGET_MS =
   2 * (ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS) + LANE_RESTART_BACKOFF_MS;
@@ -81,13 +82,10 @@ interface Participant extends PreparedServer {
   down: number;
   /** Latest measured receiver evidence in the current stage. */
   up: ReceiverCheckpoint | null;
+  /** Run-clock active time of the last measured progress in each direction. */
   progressAt: Record<FlowDirection, number>;
-  recovery: {
-    abort: AbortController;
-    timer: ReturnType<typeof setTimeout>;
-    info: StallInfo;
-  } | null;
-  latencyTimer: ReturnType<typeof setTimeout> | null;
+  recovery: { abort: AbortController; info: StallInfo } | null;
+  latencyStall: { at: number; detail: string } | null;
   /** Ping interruptions of this server break its RTT variation pairs. */
   gaps: number;
   summaryAt: number;
@@ -117,12 +115,9 @@ export class Run {
   #active: Segment | null = null;
   #timer: ReturnType<typeof setTimeout> | null = null;
   #running = false;
-  #t0 = 0;
-  #startedAt = 0;
+  #clock = new RunClock();
   #elapsed = 0;
-  #lastRealNow = 0;
-  /** Stage preparation or finalization holds the timeline. */
-  #pending = false;
+  #tickAt = 0;
   #ending = false;
   #endRequested = false;
   /** Invalidates stage continuations after abort, finish or a newer stage. */
@@ -180,7 +175,7 @@ export class Run {
       up: null,
       progressAt: { down: 0, up: 0 },
       recovery: null,
-      latencyTimer: null,
+      latencyStall: null,
       gaps: 0,
       summaryAt: 0,
     }));
@@ -203,7 +198,7 @@ export class Run {
   }
 
   #now(): number {
-    return Math.max(0, performance.now() - this.#t0);
+    return this.#clock.read() - this.#clock.start;
   }
 
   #participants(): Participant[] {
@@ -234,7 +229,7 @@ export class Run {
     this.#release();
     this.#active = this.#activity = null;
     this.#elapsed = 0;
-    this.#pending = this.#ending = this.#endRequested = false;
+    this.#ending = this.#endRequested = false;
     this.#hasMeasured = this.#completed = this.#stalled = false;
     this.#completedEarly.clear();
     this.#entered.clear();
@@ -251,8 +246,8 @@ export class Run {
         rotated: false,
         gaps: 0,
       });
-    this.#t0 = this.#lastRealNow = performance.now();
-    this.#startedAt = Date.now();
+    this.#clock = new RunClock();
+    this.#tickAt = this.#clock.start;
     this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
@@ -283,7 +278,6 @@ export class Run {
     if (this.#timer) clearTimeout(this.#timer);
     this.#timer = null;
     this.#generation++;
-    this.#pending = false;
     if (this.#active)
       void this.#endStage(this.#active.activity, () => this.#complete());
     else this.#complete();
@@ -325,7 +319,7 @@ export class Run {
     this.#aggregate.close();
     for (const server of this.#servers) {
       this.#cancelRecovery(server);
-      this.#cancelLatencyTimer(server);
+      server.latencyStall = null;
       server.stage?.discard();
       server.stage = null;
     }
@@ -337,7 +331,7 @@ export class Run {
   }
 
   #arm(): void {
-    if (this.#timer || !this.#running || this.#pending) return;
+    if (this.#timer || !this.#running || this.#clock.held) return;
     const deadlines = [TICK_MS];
     const segment = segmentAt(this.#segments, this.#elapsed);
     if (segment) deadlines.push(segment.end - this.#elapsed);
@@ -357,17 +351,19 @@ export class Run {
   }
 
   #tick(): void {
-    const now = performance.now();
-    const dtWall = now - this.#lastRealNow;
-    this.#lastRealNow = now;
-    if (this.#pending) return;
+    const now = this.#clock.read();
+    const dtWall = now - this.#tickAt;
+    this.#tickAt = now;
+    if (this.#clock.held) return;
     // One tick never crosses the current segment's end, so a suspended page still enters every segment in order.
     const current = segmentAt(this.#segments, this.#elapsed);
     this.#elapsed = Math.min(
       this.#elapsed + Math.max(0, dtWall),
       current?.end ?? Infinity,
     );
-    if (dtWall > TIMER_GAP_MS && isMeasured(this.#phase)) this.#resetInterval();
+    if (this.#clock.takeGap() && isMeasured(this.#phase)) this.#resetInterval();
+    this.#expireSilence();
+    if (!this.#running) return;
     for (const server of this.#servers)
       for (const sample of server.buckets.closeThrough(this.#elapsed))
         this.#emit({
@@ -420,7 +416,7 @@ export class Run {
         return this.#measureStage();
       }
       const generation = ++this.#generation;
-      this.#pending = true;
+      this.#clock.hold();
       // The first stage keeps showing connection checks; later ones show no countdown until ready.
       if (previous) {
         show();
@@ -436,8 +432,7 @@ export class Run {
       this.#beginStage(segment.activity).then(
         () => {
           if (generation !== this.#generation || !this.#running) return;
-          this.#pending = false;
-          this.#lastRealNow = performance.now();
+          this.#tickAt = this.#clock.resume();
           if (!previous) show();
           if (segment.phase !== "warmup") this.#measureStage();
           this.#tick();
@@ -445,7 +440,6 @@ export class Run {
         },
         (cause) => {
           if (generation !== this.#generation) return;
-          this.#pending = false;
           this.#fail(
             classify(cause, "protocol-error"),
             cause instanceof Error ? cause.message : "Stage preparation failed",
@@ -477,7 +471,7 @@ export class Run {
       server.up = null;
       server.latency.failed.delete(activity.stage);
     }
-    const seed = `r${Math.round(this.#t0)}`;
+    const seed = `r${Math.round(this.#clock.start)}`;
     const results = await Promise.allSettled(
       participants.map(async (server) => {
         const streams = this.#streams[server.server.id];
@@ -523,12 +517,15 @@ export class Run {
         fixedPingIntervalMs(cadence),
       );
       if (activity.stage === "latency") server.latency.resetStability();
-      const now = performance.now();
+      const now = this.#clock.active();
       server.progressAt = { down: now, up: now };
       server.stage?.measure();
     }
     if (!isTransfer(activity.stage)) return;
-    this.#live.reset(Object.fromEntries(this.#ids().map((id) => [id, 0])));
+    this.#live.reset(
+      Object.fromEntries(this.#ids().map((id) => [id, 0])),
+      this.#clock.read(),
+    );
     this.#aggregate.begin(activity.stage, this.#ids(), this.#now());
     this.#boundary();
   }
@@ -587,9 +584,7 @@ export class Run {
         ? (this.#streams[id]?.up ?? 0)
         : 1;
     };
-    const elapsed =
-      this.#elapsed +
-      (this.#pending ? 0 : Math.max(0, now - this.#lastRealNow));
+    const elapsed = this.#position();
     this.#emit({
       type: "live",
       sample: {
@@ -611,7 +606,8 @@ export class Run {
   /** Each participant stops as soon as its own final evidence is known. */
   async #endStage(activity: PhaseActivity, then: () => void): Promise<void> {
     const generation = this.#generation;
-    this.#pending = this.#ending = true;
+    this.#ending = true;
+    this.#clock.hold();
     const ending = new Map<Participant, Promise<unknown>>();
     const end = (server: Participant) => {
       if (!ending.has(server) && server.stage)
@@ -624,14 +620,17 @@ export class Run {
       await this.#finalBoundary(end);
     this.#measuring = false;
     // Evidence that stopped in this stage fails this stage, not the next one.
-    for (const server of this.#participants())
-      if (server.recovery || server.latencyTimer)
+    for (const server of this.#participants()) {
+      if (server.latencyStall)
+        this.#failLatency(server, activity.stage, server.latencyStall.detail);
+      const info = server.recovery?.info;
+      if (info && this.#recovering(server))
         this.#remove(
           server,
-          server.recovery?.info.reason ?? "connection-lost",
-          server.recovery?.info.detail ??
-            "Server stopped delivering measured data",
+          info.reason,
+          info.detail ?? "Server stopped delivering measured data",
         );
+    }
     for (const server of this.#stageParticipants(activity)) end(server);
     await Promise.all(ending.values());
     if (generation !== this.#generation) return;
@@ -646,12 +645,12 @@ export class Run {
         summary,
       });
       this.#cancelRecovery(server);
-      this.#cancelLatencyTimer(server);
+      server.latencyStall = null;
       server.stage = null;
     }
     this.#emit({ type: "serverDetails", details: this.details() });
-    this.#pending = this.#ending = false;
-    this.#lastRealNow = performance.now();
+    this.#ending = false;
+    this.#tickAt = this.#clock.resume();
     if (this.#endRequested) this.#complete();
     else then();
     this.#arm();
@@ -676,8 +675,10 @@ export class Run {
     if (upload)
       participants.forEach((server, index) => {
         const result = results[index];
-        boundary.up[server.server.id] =
-          result.status === "fulfilled" ? result.value : null;
+        const checkpoint = result.status === "fulfilled" ? result.value : null;
+        if (checkpoint && checkpoint.bytes > (server.up?.bytes ?? -1))
+          server.progressAt.up = this.#clock.active();
+        boundary.up[server.server.id] = checkpoint;
       });
     this.#observe(boundary, true);
     this.#aggregate.close();
@@ -713,16 +714,16 @@ export class Run {
         )
           return;
         server.down += bytes;
-        server.progressAt.down = performance.now();
+        server.progressAt.down = run.#clock.active();
         run.#aggregate.addDownload(stage, id, bytes);
       },
       receiver(checkpoint) {
         if (!run.#measuring || !live()) return;
         if (checkpoint.bytes > (server.up?.bytes ?? -1))
-          server.progressAt.up = performance.now();
+          server.progressAt.up = run.#clock.active();
         server.up = checkpoint;
         if (!run.#stalled)
-          run.#live.receiver(id, checkpoint, performance.now());
+          run.#live.receiver(id, checkpoint, run.#clock.read());
         if (run.#boundary()) run.#tick();
       },
       latency: (sample) => run.#latency(server, sample),
@@ -742,9 +743,10 @@ export class Run {
       },
       stall: (info) => run.#stall(server, info),
       resume() {
-        if (server.recovery) run.#live.restart(id, server.down);
+        if (server.recovery)
+          run.#live.restart(id, server.down, run.#clock.read());
         run.#cancelRecovery(server);
-        run.#cancelLatencyTimer(server);
+        server.latencyStall = null;
         run.#updateStalled();
       },
       stallLatency(detail) {
@@ -753,7 +755,7 @@ export class Run {
       },
       resumeLatency() {
         server.gaps++;
-        run.#cancelLatencyTimer(server);
+        server.latencyStall = null;
         run.#updateStalled();
       },
       fail: (reason, message) => run.#remove(server, reason, message),
@@ -766,18 +768,23 @@ export class Run {
       },
       uploadHint(lane, bytes, elapsedMs) {
         if (live())
-          run.#live.hint(id, lane, bytes, elapsedMs, performance.now());
+          run.#live.hint(id, lane, bytes, elapsedMs, run.#clock.read());
       },
     };
   }
 
+  #position(): number {
+    return (
+      this.#elapsed +
+      (this.#clock.held ? 0 : Math.max(0, this.#clock.read() - this.#tickAt))
+    );
+  }
+
   /** Translates a window-clock observation using the last timeline tick, not its delivery time. */
   #observationTime(observedAtMs: number): number {
-    const projected =
-      this.#elapsed + Math.max(0, performance.now() - this.#lastRealNow);
     return Math.max(
       this.#active?.start ?? 0,
-      Math.min(projected, this.#elapsed + observedAtMs - this.#lastRealNow),
+      Math.min(this.#position(), this.#elapsed + observedAtMs - this.#tickAt),
     );
   }
 
@@ -794,7 +801,7 @@ export class Run {
         sample.timedOut,
       ))
         this.#emit({ type: "serverLatency", serverId: id, sample: bucket });
-    const now = performance.now();
+    const now = this.#clock.read();
     if (now - server.summaryAt >= SUMMARY_CADENCE_MS) {
       server.summaryAt = now;
       const summary = server.latency.stages[stage].summary();
@@ -830,26 +837,10 @@ export class Run {
     if (server.removed || server.recovery || !activity) return;
     if (activity.stage === "latency")
       return this.#stallLatency(server, info.detail ?? "Latency interrupted");
+    if (!this.#measuring) return;
     const abort = new AbortController();
-    const now = performance.now();
-    // Silence across a page timer gap is the page's, not the server's.
-    const quietMs =
-      now - this.#lastRealNow > TIMER_GAP_MS
-        ? 0
-        : now - server.progressAt[info.direction ?? activity.transfer[0]];
-    const timer = setTimeout(
-      () => {
-        if (server.recovery?.abort === abort)
-          this.#remove(
-            server,
-            info.reason,
-            info.detail ?? "Server stopped delivering measured data",
-          );
-      },
-      Math.max(0, DIRECTION_PROGRESS_WINDOW_MS - quietMs),
-    );
-    server.recovery = { abort, timer, info };
-    this.#live.restart(server.server.id, server.down);
+    server.recovery = { abort, info };
+    this.#live.restart(server.server.id, server.down, this.#clock.read());
     this.#cancelEarly();
     this.#resetStability();
     this.#updateStalled();
@@ -866,29 +857,63 @@ export class Run {
       server.removed ||
       !stage ||
       server.latency.failed.has(stage) ||
-      server.latencyTimer
+      server.latencyStall
     )
       return;
-    server.latencyTimer = setTimeout(() => {
-      server.latencyTimer = null;
-      server.latency.failed.add(stage);
-      server.latency.stages[stage].markIncomplete();
-      this.#failure(server, "latency", "connection-lost", detail);
-      this.#updateStalled();
-    }, LATENCY_RECOVERY_BUDGET_MS);
+    server.latencyStall = { at: this.#clock.active(), detail };
     this.#updateStalled();
   }
 
-  #cancelRecovery(server: Participant): void {
-    if (!server.recovery) return;
-    clearTimeout(server.recovery.timer);
-    server.recovery.abort.abort();
-    server.recovery = null;
+  #failLatency(
+    server: Participant,
+    stage: TransportRole,
+    detail: string,
+  ): void {
+    server.latencyStall = null;
+    server.latency.failed.add(stage);
+    server.latency.stages[stage].markIncomplete();
+    this.#failure(server, "latency", "connection-lost", detail);
   }
 
-  #cancelLatencyTimer(server: Participant): void {
-    if (server.latencyTimer) clearTimeout(server.latencyTimer);
-    server.latencyTimer = null;
+  /** Silence counts only active run time, so a page timer gap is never a server's stall. */
+  #expireSilence(): void {
+    const activity = this.#activity;
+    if (!activity) return;
+    const active = this.#clock.active();
+    for (const server of this.#participants()) {
+      const stall = server.latencyStall;
+      if (stall && active - stall.at >= LATENCY_RECOVERY_BUDGET_MS)
+        this.#failLatency(server, activity.stage, stall.detail);
+      if (!this.#measuring) continue;
+      const silent = activity.transfer.find(
+        (dir) =>
+          active - server.progressAt[dir] >= DIRECTION_PROGRESS_WINDOW_MS,
+      );
+      if (silent)
+        this.#remove(
+          server,
+          server.recovery?.info.reason ?? "timeout",
+          server.recovery?.info.detail ?? `${silent} direction carried no data`,
+        );
+    }
+    this.#updateStalled();
+  }
+
+  /** A reported stall counts once its direction's evidence is quiet on the run clock too. */
+  #recovering(server: Participant): boolean {
+    const activity = this.#activity;
+    if (activity?.stage === "latency") return !!server.latencyStall;
+    const dir = server.recovery?.info.direction ?? activity?.transfer[0];
+    return (
+      !!server.recovery &&
+      !!dir &&
+      this.#clock.active() - server.progressAt[dir] >= STALL_QUIET_MS
+    );
+  }
+
+  #cancelRecovery(server: Participant): void {
+    server.recovery?.abort.abort();
+    server.recovery = null;
   }
 
   /** The run is stalled while every participant is recovering its measured evidence. */
@@ -897,14 +922,13 @@ export class Run {
     const servers = latencyStage
       ? this.#latencyParticipants()
       : this.#participants();
-    const recovering = (server: Participant) =>
-      !!server.recovery || (latencyStage && !!server.latencyTimer);
-    const stalled = servers.length > 0 && servers.every(recovering);
+    const stalled =
+      servers.length > 0 && servers.every((server) => this.#recovering(server));
     if (stalled === this.#stalled || !this.#running) return;
     this.#stalled = stalled;
     this.#breakContinuity();
     if (!stalled) {
-      this.#live.reset(this.#counts());
+      this.#live.reset(this.#counts(), this.#clock.read());
       return this.#emit({ type: "resume" });
     }
     const info = servers.find((server) => server.recovery)?.recovery?.info;
@@ -964,7 +988,7 @@ export class Run {
     if (activity?.stage === "latency") {
       server.latency.failed.add("latency");
       server.latency.stages.latency.markIncomplete();
-      this.#cancelLatencyTimer(server);
+      server.latencyStall = null;
       this.#failure(server, "latency", reason, message);
       this.#updateStalled();
       if (!this.#latencyParticipants().length) this.#skipStage();
@@ -972,7 +996,7 @@ export class Run {
     }
     server.removed = true;
     this.#cancelRecovery(server);
-    this.#cancelLatencyTimer(server);
+    server.latencyStall = null;
     // Failed-stage shutdown accounts for buffered probes before the worker is terminated.
     server.stage?.discard(true);
     server.stage = null;
@@ -1020,7 +1044,7 @@ export class Run {
   #resetInterval(): void {
     this.#cancelEarly();
     this.#resetStability();
-    this.#live.reset(this.#counts());
+    this.#live.reset(this.#counts(), this.#clock.read());
     this.#breakContinuity();
     const stage = this.#activity?.stage;
     if (!this.#measuring || !stage || !isTransfer(stage)) return;
@@ -1069,19 +1093,18 @@ export class Run {
     const confidence = this.#confidence(segment.phase);
     if (segment.phase !== "latency")
       this.#aggregate.trackStable(confidence.score);
-    this.#stabilityAt = performance.now();
+    this.#stabilityAt = this.#clock.read();
     return this.#updateEarly(segment, segment.phase, confidence);
   }
 
   #canComplete(phase: TransportRole): boolean {
-    if (phase !== "latency")
-      return (
-        this.#aggregate.sufficient &&
-        this.#participants().every((server) => !server.recovery)
-      );
-    const servers = this.#latencyParticipants();
+    const latency = phase === "latency";
+    const servers = latency
+      ? this.#latencyParticipants()
+      : this.#participants();
     return (
-      servers.length > 0 && servers.every((server) => !server.latencyTimer)
+      (latency ? servers.length > 0 : this.#aggregate.sufficient) &&
+      !servers.some((server) => this.#recovering(server))
     );
   }
 
@@ -1182,7 +1205,7 @@ export class Run {
     this.#completed = true;
     const cfg = this.#cfg!;
     this.#finalize(this.#phase);
-    const durationMs = Math.max(0, performance.now() - this.#t0);
+    const durationMs = this.#now();
     const source = this.#latencySource.latency;
     const bidirectional = cfg.stages.bidirectional
       ? this.#aggregate.result(
@@ -1213,7 +1236,7 @@ export class Run {
         : this.#failures.length
           ? "partial"
           : "complete",
-      startedAt: this.#startedAt,
+      startedAt: this.#clock.startedAt,
       durationMs,
     };
     this.#release();

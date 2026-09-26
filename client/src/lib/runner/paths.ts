@@ -24,6 +24,7 @@ import {
   isLoopbackHostname,
   type ServerEntry,
 } from "../servers/catalog";
+import { epochMs } from "./clock";
 
 export type ThroughputTarget =
   FetchThroughputTarget | WebTransportThroughputTarget;
@@ -684,7 +685,7 @@ export function preparedPaths(
   const stale = (role: ConnectionRole) =>
     roleNeedsValidation(config, validation, role, discovery) ||
     ((role === "throughput" || latencyPathNeeded(config)) &&
-      Date.now() - validation[role].path!.verifiedAt > maxAgeMs);
+      epochMs() - validation[role].path!.verifiedAt > maxAgeMs);
   if (
     !discovery ||
     uploadCapabilityFailure(config, discovery) ||

@@ -13,6 +13,7 @@ import {
   type prepareConnections,
 } from "./real/prepare";
 import { findCause, isNetworkFailure, withinBudget } from "./abortable";
+import { epochMs } from "./clock";
 import { isLoopbackHostname, type ServerEntry } from "../servers/catalog";
 import {
   ServerAuthenticationRequired,
@@ -130,7 +131,7 @@ export class ServerConnection {
     }
     if (
       this.#discovery &&
-      Date.now() - this.#discovery.fetchedAt > CONNECTION_FRESH_MS
+      epochMs() - this.#discovery.fetchedAt > CONNECTION_FRESH_MS
     ) {
       for (const role of CONNECTION_ROLES) this.#cancelRole(role, false);
       this.#discovery = undefined;
@@ -140,7 +141,7 @@ export class ServerConnection {
       const key = connectionDraftRoleKey(config, role);
       const path = this.#validation[role].path;
       const expired =
-        !!path && Date.now() - path.verifiedAt > CONNECTION_FRESH_MS;
+        !!path && epochMs() - path.verifiedAt > CONNECTION_FRESH_MS;
       if (slot.key === key && !expired) continue;
       slot.key = key;
       const stale = expired || this.#needsCheck(role);
@@ -183,7 +184,7 @@ export class ServerConnection {
     );
     const config = this.config;
     if (!discovery || !config || signal?.aborted || this.#closed) return;
-    const now = Date.now();
+    const now = epochMs();
     const roles = this.#required().filter((r) => {
       const { state, path } = this.#validation[r];
       if (force && (!role || r === role)) return true;
@@ -265,7 +266,7 @@ export class ServerConnection {
     if (!this.config) {
       const stale =
         !this.#discovery ||
-        Date.now() - this.#discovery.fetchedAt > CONNECTION_FRESH_MS;
+        epochMs() - this.#discovery.fetchedAt > CONNECTION_FRESH_MS;
       if (this.host.metadata() && stale)
         at = Math.min(at, discovering.backoff.at);
     } else if (!this.#discovery || this.#error)
@@ -281,7 +282,7 @@ export class ServerConnection {
   }
 
   #due(): void {
-    if (!this.host.active() || this.dueAt() > Date.now()) return this.#sync();
+    if (!this.host.active() || this.dueAt() > epochMs()) return this.#sync();
     if (this.#expired() && !this.#discovering.backoff.signIn)
       this.requireSignIn();
     else void this.check({ due: true });
@@ -294,7 +295,7 @@ export class ServerConnection {
     const job = this.#discovering;
     if (job.task && !job.task.signal.aborted) return job.task.promise;
     const known = this.#discovery;
-    if (known && !this.#error && Date.now() - known.fetchedAt < maxAgeMs)
+    if (known && !this.#error && epochMs() - known.fetchedAt < maxAgeMs)
       return Promise.resolve(known);
     this.#error = undefined;
     return this.#job(
@@ -466,7 +467,7 @@ export class ServerConnection {
     clearTimeout(this.#timer);
     const at = this.host.active() ? this.dueAt() : Infinity;
     if (Number.isFinite(at))
-      this.#timer = setTimeout(() => this.#due(), Math.max(0, at - Date.now()));
+      this.#timer = setTimeout(() => this.#due(), Math.max(0, at - epochMs()));
   }
 
   #view(): ServerView {
@@ -554,7 +555,7 @@ export class ServerConnection {
   #expired(): boolean {
     return (
       this.credentials.kind === "grant" &&
-      (this.credentials.expiresAt ?? 0) <= Date.now()
+      (this.credentials.expiresAt ?? 0) <= epochMs()
     );
   }
   #setRole(
@@ -570,7 +571,7 @@ export class ServerConnection {
     backoff.signIn = !!findCause(error, ServerAuthenticationRequired);
     backoff.at = backoff.signIn
       ? Infinity
-      : Date.now() + connectionFailureBackoff(++backoff.attempts);
+      : epochMs() + connectionFailureBackoff(++backoff.attempts);
   }
   #cancel(job: Job<unknown>): void {
     const task = job.task;

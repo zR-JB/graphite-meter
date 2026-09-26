@@ -29,6 +29,7 @@ import {
   validateServerDiscovery,
 } from "../../servers/catalog";
 import { BUILD } from "../../buildenv";
+import { epochMs, pageMs } from "../clock";
 import { median } from "../measure";
 import {
   blockedSelectionReason,
@@ -59,6 +60,8 @@ export class PreflightUnavailableError extends Error {}
 /** A browser policy restriction whose message gives a known configuration remedy. */
 export class BrowserOriginBlockedError extends Error {}
 
+let probes = 0;
+
 export interface ConnectionPreparation {
   discovery: TransportDiscovery;
   validation: ConnectionValidation;
@@ -80,7 +83,7 @@ export async function discoverServer(
   if (restriction) throw new BrowserOriginBlockedError(restriction);
   try {
     const ident = `?client=web&client_version=${encodeURIComponent(BUILD.clientVersion)}`;
-    const startedAt = performance.now();
+    const startedAt = pageMs();
     const response = await measurementFetch(
       credentials,
       `${credentials?.server.url ?? ""}${ROUTES.preflight}${ident}`,
@@ -92,7 +95,7 @@ export async function discoverServer(
     if (!response.ok)
       throw new Error(`preflight returned HTTP ${response.status}`);
     const data = await readJSONResponse(response);
-    const preflightMs = performance.now() - startedAt;
+    const preflightMs = pageMs() - startedAt;
     const pf = parsePreflight(data);
     if (credentials) validateServerDiscovery(credentials.server, pf);
     const origin = new URL(response.url, location.href).origin;
@@ -115,7 +118,7 @@ export async function discoverServer(
       generation: pf.generation,
       engineVersion: pf.engineVersion,
       server: pf.server,
-      fetchedAt: Date.now(),
+      fetchedAt: epochMs(),
       preflightMs,
     };
   } catch (cause) {
@@ -288,7 +291,7 @@ async function prepareThroughput(
           Math.min(250, 50 * 2 ** (attempt - 1)),
           probeSignal,
         );
-      const url = `${fetchTarget.origin}${ROUTES.probe}?cb=${performance.now()}-${attempt}`;
+      const url = `${fetchTarget.origin}${ROUTES.probe}?cb=${++probes}`;
       const answer = await pathProbe(url, probeSignal, credentials);
       probe = answer.probe;
       browserProtocol = await resourceProtocol(
@@ -322,7 +325,7 @@ async function prepareThroughput(
     probe: probe!,
     browserProtocol,
     generation: discovery.generation,
-    verifiedAt: Date.now(),
+    verifiedAt: epochMs(),
   };
 }
 
@@ -340,7 +343,7 @@ async function prepareLatency(
     const collecting = idle
       .verifyReady(signal)
       .then(() => idle.collectRtts(signal));
-    const url = `${target.origin}${ROUTES.probe}?cb=${performance.now()}`;
+    const url = `${target.origin}${ROUTES.probe}?cb=${++probes}`;
     const [{ probe }, rtts] = await Promise.all([
       pathProbe(url, signal, credentials),
       collecting,
@@ -353,7 +356,7 @@ async function prepareLatency(
       probe,
       rttMs,
       generation: discovery.generation,
-      verifiedAt: Date.now(),
+      verifiedAt: epochMs(),
     };
     return { idle, path };
   } catch (cause) {

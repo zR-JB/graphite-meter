@@ -16,6 +16,7 @@ import {
 import { httpToWs, ROUTES } from "../paths";
 import { ESTABLISH_BUDGET_MS, ESTABLISH_MARGIN_MS } from "./budgets";
 import { singleLatencyBucket } from "../series";
+import { pageMs } from "../clock";
 import { fixedPingIntervalMs } from "../pingCadence";
 import { PROBE_DEADLINE } from "../workers/rttEstimator";
 import {
@@ -165,7 +166,7 @@ export class LatencyChannel {
     if (!this.#worker) return Promise.resolve();
     const worker = this.#worker;
     this.#clearEstablishTimer();
-    this.#cutoffEpochMs = this.#timeOriginMs + performance.now();
+    this.#cutoffEpochMs = this.#timeOriginMs + pageMs();
     let resolve!: () => void;
     const promise = new Promise<void>((done) => {
       resolve = done;

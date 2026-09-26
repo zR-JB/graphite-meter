@@ -133,8 +133,7 @@ export class LiveRates {
   #servers = new Map<string, ServerRates>();
   #seen = { down: false, up: false };
 
-  /** Starts every series again from each server's current download count. */
-  reset(counts: Record<string, number>, now = performance.now()): void {
+  reset(counts: Record<string, number>, now: number): void {
     this.#servers.clear();
     this.#seen = { down: false, up: false };
     for (const [id, downBytes] of Object.entries(counts))
@@ -142,7 +141,7 @@ export class LiveRates {
   }
 
   /** One server's presentation starts again; a stalled server contributes nothing. */
-  restart(id: string, downBytes: number, now = performance.now()): void {
+  restart(id: string, downBytes: number, now: number): void {
     this.#servers.set(id, {
       down: new GrowingRateEstimator(),
       up: new GrowingRateEstimator(),

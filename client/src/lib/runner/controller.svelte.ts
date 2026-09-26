@@ -38,6 +38,7 @@ import type {
 } from "../state/store.svelte";
 import { readStored, writeStored } from "../state/persistence";
 import { adaptWarmup, buildSegments } from "./schedule";
+import { epochMs, pageMs } from "./clock";
 import {
   CONNECTION_ROLES,
   latencyPathNeeded,
@@ -546,7 +547,7 @@ export function createApplicationController(
     for (const connection of servers) {
       const { credentials, server } = connection;
       if (credentials.kind !== "grant") continue;
-      const remainingMs = (credentials.expiresAt ?? 0) - Date.now();
+      const remainingMs = (credentials.expiresAt ?? 0) - epochMs();
       if (remainingMs < plannedMs) {
         connection.requireSignIn(
           "Sign in again to cover the planned test duration",
@@ -559,7 +560,7 @@ export function createApplicationController(
         budget = {
           remainingMs,
           maximumLifetimeMs: remainingMs,
-          checkedAt: performance.now(),
+          checkedAt: pageMs(),
         };
     }
     sessionBudget = budget;

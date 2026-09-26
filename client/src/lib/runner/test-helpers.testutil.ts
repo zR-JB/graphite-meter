@@ -3,6 +3,7 @@ import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
 import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
 import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery } from "./paths";
+import { epochMs, pageMs } from "./clock";
 import type { ServerCatalog } from "../servers/catalog";
 import type { ConnectionPreparation } from "./real/prepare";
 
@@ -55,7 +56,7 @@ export function testParticipantHost(
   const ignore = () => {};
   return {
     config,
-    now: () => performance.now(),
+    now: pageMs,
     download: ignore,
     receiver: ignore,
     latency: ignore,
@@ -127,7 +128,7 @@ export function testPreparedPaths(
     uploadCheckpoint: true,
     engineVersion: "1.2.3",
     server: { name: "node-a", location: "Somewhere" },
-    fetchedAt: Date.now(),
+    fetchedAt: epochMs(),
   };
   const throughput = discovery.throughput[origin]
     .targets[0] as FetchThroughputTarget;
@@ -147,7 +148,7 @@ export function testPreparedPaths(
       probe: { ...probe, load: { active: 3, max: 4 } },
       browserProtocol: "http/1.1",
       generation: discovery.generation,
-      verifiedAt: Date.now(),
+      verifiedAt: epochMs(),
     },
     latency: {
       requested: latency,
@@ -155,7 +156,7 @@ export function testPreparedPaths(
       probe,
       rttMs: 12,
       generation: discovery.generation,
-      verifiedAt: Date.now(),
+      verifiedAt: epochMs(),
     },
     ...overrides,
   };
