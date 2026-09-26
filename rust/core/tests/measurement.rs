@@ -185,18 +185,18 @@ fn measured_zero_is_distinct_from_missing_and_recovery_keeps_unique_bytes() {
     );
     engine.observe(missing);
     let result = engine.result(Stage::Upload, Direction::Up);
-    assert_eq!(result.mean_bytes_per_sec, None);
+    assert_eq!(result.mean_bytes_per_sec, Some(0.0));
     assert_eq!(result.total_bytes, 400);
     engine.observe(boundary(1500, &[], &[("a", "id", 700, 1600)]));
     engine.observe(boundary(2500, &[], &[("a", "id", 1700, 2600)]));
     let result = engine.result(Stage::Upload, Direction::Up);
     assert_eq!(
         (result.mean_bytes_per_sec, result.total_bytes),
-        (Some(1000.0), 1600)
+        (Some(640.0), 1600)
     );
     assert_eq!(
         engine.intervals().back().unwrap().reason,
-        IntervalReason::EvidenceResumed
+        IntervalReason::StageStart
     );
 }
 
@@ -428,4 +428,51 @@ fn download_regression_never_credits_replayed_bytes_or_keeps_old_rate() {
     let result = engine.result(Stage::Download, Direction::Down);
     assert_eq!(result.mean_bytes_per_sec, Some(500.0));
     assert_eq!(result.total_bytes, 1400);
+}
+
+#[test]
+fn checkpoint_misses_span_only_a_bounded_gap() {
+    for (resume_ms, spans) in [(1500, true), (2501, false)] {
+        let mut engine = AggregateMeasurements::default();
+        start(
+            &mut engine,
+            Stage::Upload,
+            &["a", "b"],
+            0,
+            IntervalReason::StageStart,
+        );
+        engine.observe(boundary(0, &[], &[("a", "a", 0, 1), ("b", "b", 0, 1)]));
+        engine.observe(boundary(
+            500,
+            &[],
+            &[("a", "a", 500, 501), ("b", "b", 1000, 501)],
+        ));
+        assert!(
+            engine
+                .observe(boundary(1000, &[], &[("a", "a", 1000, 1001)]))
+                .is_none()
+        );
+        let sample = engine.observe(boundary(
+            resume_ms,
+            &[],
+            &[
+                ("a", "a", resume_ms, resume_ms + 1),
+                ("b", "b", resume_ms * 2, resume_ms + 1),
+            ],
+        ));
+        assert_eq!(sample.is_some(), spans);
+        assert_eq!(
+            engine.result(Stage::Upload, Direction::Up).total_bytes,
+            resume_ms * 3
+        );
+        if spans {
+            assert_eq!(sample.unwrap().up_bytes_per_sec, Some(3000.0));
+            assert_eq!(engine.intervals().len(), 1);
+        } else {
+            assert_eq!(
+                engine.intervals().back().unwrap().reason,
+                IntervalReason::EvidenceResumed
+            );
+        }
+    }
 }

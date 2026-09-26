@@ -2,6 +2,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+pub const SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+pub const CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
+pub const FINAL_CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
+pub const MAX_CHECKPOINT_GAP: std::time::Duration =
+    SAMPLE_INTERVAL.saturating_add(CHECKPOINT_BUDGET);
+
 pub const MIN_SURVIVOR_NANOS: u64 = 800_000_000;
 pub const MAX_INTERVALS: usize = 128;
 
@@ -190,7 +196,6 @@ impl AggregateMeasurements {
         self.samples = 0;
     }
 
-    /// Returns a coordinated adjacent-boundary sample, when all members have valid evidence.
     pub fn observe(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
         self.intervals.back()?;
         self.ledger(&boundary);
@@ -200,13 +205,16 @@ impl AggregateMeasurements {
                 (!interval.stage.needs_down() || boundary.down.contains_key(id))
                     && (!interval.stage.needs_up() || boundary.up.contains_key(id))
             });
+        let gap_too_large = self.last.as_ref().is_some_and(|last| {
+            boundary.at_nanos.saturating_sub(last.at_nanos) > MAX_CHECKPOINT_GAP.as_nanos() as u64
+        });
+        if gap_too_large {
+            self.intervals.back_mut().unwrap().complete = false;
+        }
         if !valid {
-            let interval = self.intervals.back_mut().unwrap();
-            interval.complete = false;
-            interval.end_nanos = boundary.at_nanos;
             return None;
         }
-        if !interval.complete {
+        if !self.intervals.back().unwrap().complete {
             return self.resume_at(boundary);
         }
         if self.first.is_none() {
