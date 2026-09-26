@@ -25,8 +25,11 @@ type PreparedRun struct {
 	Catalog      wire.ServerCatalog
 	Servers      []PreparedServer
 	LatencyFocus string
-	configKey    string
+	VerifiedAt   time.Time
+	key          PreparationKey
 }
+
+const PreparationFreshness = 30 * time.Second
 
 func (p *PreparedRun) Ready() bool {
 	failed := func(s PreparedServer) bool { return s.Err != nil || s.Connection == nil }
@@ -41,33 +44,9 @@ func (p *PreparedRun) SelectedIDs() []string {
 	return ids
 }
 
+// FreshFor reports whether a ready run was prepared for these settings recently enough to start.
 func (p *PreparedRun) FreshFor(cfg Config) bool {
-	if !p.Ready() || p.configKey != selectionPreparationKey(cfg) {
-		return false
-	}
-	if ids := cfg.ServerIDs; len(ids) > 0 {
-		if len(ids) != len(p.Servers) {
-			return false
-		}
-		for _, s := range p.Servers {
-			if !slices.Contains(ids, s.Server.ID) {
-				return false
-			}
-		}
-	}
-	return !slices.ContainsFunc(p.Servers, func(s PreparedServer) bool {
-		return !s.Connection.FreshFor(s.config) ||
-			needsCheckpoint(cfg) && !s.Connection.Preflight.Capabilities.UploadCheckpoint
-	})
-}
-
-func needsCheckpoint(cfg Config) bool { return cfg.Stages.Upload || cfg.Stages.Bidirectional }
-
-func selectionPreparationKey(cfg Config) string {
-	if canonical, err := wire.CanonicalOrigin(cfg.BaseURL); err == nil {
-		cfg.BaseURL = canonical
-	}
-	return preparationKey(cfg.normalized())
+	return p.Ready() && p.key == cfg.PreparationKey() && time.Since(p.VerifiedAt) <= PreparationFreshness
 }
 
 func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
@@ -105,7 +84,7 @@ func prepareRun(
 		}
 	}()
 	cfg = cfg.normalized()
-	requestKey := selectionPreparationKey(cfg)
+	verified := time.Now()
 	base, err := wire.CanonicalOrigin(cfg.BaseURL)
 	if err != nil {
 		return nil, err
@@ -116,11 +95,12 @@ func prepareRun(
 	if err != nil {
 		return nil, err
 	}
-	prepared := &PreparedRun{Catalog: catalog, configKey: requestKey}
 	ids := cfg.ServerIDs
 	if len(ids) == 0 {
 		ids = catalog.DefaultSelection
 	}
+	cfg.ServerIDs = ids
+	prepared := &PreparedRun{Catalog: catalog, VerifiedAt: verified, key: cfg.PreparationKey()}
 	if err := catalog.ValidateSelection(ids); err != nil {
 		return prepared, err
 	}
@@ -145,7 +125,7 @@ func prepareRun(
 		work.Go(func() {
 			server := &prepared.Servers[i]
 			server.Connection, server.Err = prepare(ctx, server.config)
-			if server.Err == nil && needsCheckpoint(cfg) && !server.Connection.Preflight.Capabilities.UploadCheckpoint {
+			if server.Err == nil && cfg.needsCheckpoint() && !server.Connection.Preflight.Capabilities.UploadCheckpoint {
 				server.Err = errors.New("receiver checkpoint support is required; upgrade this measurement server")
 			}
 		})

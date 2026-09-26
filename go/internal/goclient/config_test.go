@@ -155,10 +155,12 @@ func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 	}
 }
 
-func TestPreparedConnectionFreshness(t *testing.T) {
+func TestPreparedRunFreshness(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
-	prepared := &PreparedConnection{VerifiedAt: time.Now(), configKey: preparationKey(cfg.normalized())}
+	cfg.ServerIDs, cfg.Stages = []string{"b", "a"}, StageSet{Latency: true, Download: true}
+	prepared := &PreparedRun{VerifiedAt: time.Now(), key: cfg.PreparationKey(), Servers: []PreparedServer{
+		{Connection: &PreparedConnection{}}}}
 	if !prepared.FreshFor(cfg) {
 		t.Fatal("fresh matching preparation was rejected")
 	}
@@ -172,7 +174,16 @@ func TestPreparedConnectionFreshness(t *testing.T) {
 	if prepared.FreshFor(changed) {
 		t.Fatal("preparation survived a ping-interval change")
 	}
-	prepared.VerifiedAt = time.Now().Add(-preparationFreshness - time.Second)
+	changed = cfg
+	changed.Stages.Latency, changed.DownloadDuration, changed.ServerIDs = false, time.Minute, []string{"a", "b"}
+	if !prepared.FreshFor(changed) {
+		t.Fatal("a change the preparation does not depend on made it stale")
+	}
+	changed.Stages.Bidirectional = true
+	if prepared.FreshFor(changed) {
+		t.Fatal("preparation without receiver checkpoints survived an upload stage")
+	}
+	prepared.VerifiedAt = time.Now().Add(-PreparationFreshness - time.Second)
 	if prepared.FreshFor(cfg) {
 		t.Fatal("expired preparation was accepted")
 	}

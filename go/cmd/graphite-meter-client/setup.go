@@ -284,14 +284,8 @@ func shortOrigin(base, target string) string {
 	return u.Host
 }
 
-func preparationInputs(c goclient.Config) string {
-	return fmt.Sprint(c.BaseURL, c.ServerIDs, c.ThroughputTarget, c.ThroughputProtocol, c.ThroughputTransport,
-		c.LatencyTarget, c.LatencyTransport, c.Stages, c.LoadedLatency, c.PingInterval, c.LoadedPingInterval,
-		c.TransferStreams, c.InsecureSkipTLSVerify)
-}
-
 func (m model) recheckIfPathsChanged(before goclient.Config) (tea.Model, tea.Cmd) {
-	if preparationInputs(before) == preparationInputs(m.cfg) {
+	if before.PreparationKey() == m.cfg.PreparationKey() {
 		return m, nil
 	}
 	return m.reprepare()

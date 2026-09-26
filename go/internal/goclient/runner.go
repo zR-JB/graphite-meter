@@ -27,8 +27,6 @@ type PreparedConnection struct {
 	Preflight        wire.Preflight
 	ThroughputTarget wire.ThroughputTarget
 	LatencyTarget    *wire.LatencyTarget
-	VerifiedAt       time.Time
-	configKey        string
 	grantOrigins     []string
 }
 
@@ -39,14 +37,6 @@ type PreparationError struct {
 
 func (e *PreparationError) Error() string { return e.Err.Error() }
 func (e *PreparationError) Unwrap() error { return e.Err }
-
-const preparationFreshness = 30 * time.Second
-
-func preparationKey(cfg Config) string {
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget,
-		cfg.ThroughputProtocol, cfg.ThroughputTransport, cfg.LatencyTarget, cfg.LatencyTransport, cfg.PingInterval,
-		cfg.LoadedPingInterval, cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.grant != "")
-}
 
 type authTransport struct {
 	cfg  Config
@@ -104,12 +94,6 @@ func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
 		}
 	}
 	return client
-}
-
-func (p *PreparedConnection) FreshFor(cfg Config) bool {
-	return p != nil &&
-		p.configKey == preparationKey(cfg.normalized()) &&
-		time.Since(p.VerifiedAt) <= preparationFreshness
 }
 
 func ConnectionSummary(transport, protocol string, tls bool) string {
@@ -194,7 +178,7 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
 	branches, cancel := context.WithCancel(ctx)
 	defer cancel()
-	prepared := &PreparedConnection{Preflight: pf, configKey: preparationKey(cfg), grantOrigins: cfg.grantOrigins}
+	prepared := &PreparedConnection{Preflight: pf, grantOrigins: cfg.grantOrigins}
 	var throughputErr, latencyErr error
 	var work sync.WaitGroup
 	work.Go(func() {
@@ -216,7 +200,6 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 		}
 		return nil, &PreparationError{Preflight: pf, Err: err}
 	}
-	prepared.VerifiedAt = time.Now()
 	return prepared, nil
 }
 

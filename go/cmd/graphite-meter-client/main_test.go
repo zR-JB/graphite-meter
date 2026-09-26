@@ -215,8 +215,9 @@ func TestRowActivation(t *testing.T) {
 		check        func(model) bool
 		recheck      bool
 	}{
-		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, true},
-		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, true},
+		{1, 2, func(m model) bool { return !m.cfg.Stages.Upload }, true},
+		{1, 3, func(m model) bool { return m.cfg.Stages.Bidirectional }, false},
+		{1, 4, func(m model) bool { return !m.cfg.LoadedLatency }, false},
 		{1, 7, func(m model) bool { return m.edit != nil && m.edit.row == sections[1].rows[7] }, false},
 		{2, 0, func(m model) bool { return m.cfg.PingInterval == goclient.PingFast }, true},
 		{2, 1, func(m model) bool { return m.cfg.LoadedPingInterval == goclient.PingSlow }, true},

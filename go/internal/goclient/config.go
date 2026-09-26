@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -36,6 +37,37 @@ func (c Config) Plan() []StagePlan {
 	add(c.Stages.Upload, StageUpload, c.UploadDuration, Up)
 	add(c.Stages.Bidirectional, StageBidirectional, c.BidirectionalDuration, Down, Up)
 	return plan
+}
+
+func (c Config) needsCheckpoint() bool { return c.Stages.Upload || c.Stages.Bidirectional }
+
+// PreparationKey holds every setting a prepared run depends on; durations do not.
+type PreparationKey struct {
+	base, servers, throughputTarget, throughputProtocol, throughputTransport string
+	latencyTarget, latencyTransport                                          string
+	ping, loadedPing                                                         time.Duration
+	insecure, latency, checkpoint                                            bool
+	streams                                                                  TransferStreamPolicy
+}
+
+func (c Config) PreparationKey() PreparationKey {
+	c = c.normalized()
+	canonical, _ := wire.CanonicalOrigin(c.BaseURL)
+	return PreparationKey{
+		base:                cmp.Or(canonical, c.BaseURL),
+		servers:             strings.Join(slices.Sorted(slices.Values(c.ServerIDs)), "\n"),
+		throughputTarget:    c.ThroughputTarget,
+		throughputProtocol:  c.ThroughputProtocol,
+		throughputTransport: c.ThroughputTransport,
+		latencyTarget:       c.LatencyTarget,
+		latencyTransport:    c.LatencyTransport,
+		ping:                c.PingInterval,
+		loadedPing:          c.LoadedPingInterval,
+		insecure:            c.InsecureSkipTLSVerify,
+		latency:             c.needsLatency(),
+		checkpoint:          c.needsCheckpoint(),
+		streams:             c.TransferStreams,
+	}
 }
 
 func (c Config) needsLatency() bool {
