@@ -12,8 +12,6 @@ permissions:
 
 env:
   MISE_AUTO_INSTALL: '0'
-  SKOPEO_IMAGE: quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00
-  SKOPEO_VERSION: 1.22.3
 
 concurrency:
   group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -182,8 +180,6 @@ jobs:
         with: {go: 'true', bun: 'true', client-deps: 'true'}
       - name: Build and verify representative release packages
         run: mise run release-check
-      - name: Verify pinned Skopeo runtime contract
-        run: python3 scripts/ci/verify_oci.py
 
   security:
     name: Security scan

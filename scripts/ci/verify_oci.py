@@ -24,19 +24,12 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 PLATFORMS = {"amd64", "arm64"}
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
-SKOPEO_VERSION_RE = re.compile(r"skopeo version (\S+)(?: commit: [0-9a-fA-F]+)?")
 ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
 
 
 class VerificationError(ControlPlaneError):
     pass
-
-
-def parse_skopeo_version(output: str) -> str:
-    if (match := SKOPEO_VERSION_RE.fullmatch(output.strip())) is None:
-        raise VerificationError(f"unexpected Skopeo --version output: {output!r}")
-    return match.group(1)
 
 
 def validate_index_descriptors(index: JsonObject) -> dict[str, str]:
@@ -95,20 +88,11 @@ def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> 
                image, *args)
 
 
-def verify_skopeo_runtime() -> tuple[str, str]:
-    engine, image = select_engine(), env("SKOPEO_IMAGE")
-    output = skopeo(engine, image, "--version")
-    print(output)
-    if (actual := parse_skopeo_version(output)) != (expected := env("SKOPEO_VERSION")):
-        raise VerificationError(f"Skopeo version is {actual!r}; expected {expected!r}")
-    return engine, image
-
-
 def verify(version: str, revision: str, archive: Path) -> str:
     """Verify the archive and return its manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         raise VerificationError(f"OCI archive is missing, empty, or not a regular file: {archive}")
-    engine, image = verify_skopeo_runtime()
+    engine, image = select_engine(), env("SKOPEO_IMAGE")
     repository = env("REPOSITORY")
 
     def inspect(*args: str) -> JsonObject:
@@ -137,15 +121,3 @@ def verify(version: str, revision: str, archive: Path) -> str:
         raise VerificationError(f"OCI archive digest is {digest!r}")
     print(f"OCI verification passed: {version} @ {revision} as {digest}")
     return digest
-
-
-def main() -> None:
-    try:
-        verify_skopeo_runtime()
-    except ControlPlaneError as exc:
-        raise SystemExit(f"Skopeo runtime check failed: {exc}") from exc
-    print("Skopeo runtime contract passed")
-
-
-if __name__ == "__main__":
-    main()

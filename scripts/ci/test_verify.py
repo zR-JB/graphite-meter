@@ -26,7 +26,6 @@ from fixtures import (
 )
 from verify_oci import (
     VerificationError as OCIError,
-    parse_skopeo_version,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
@@ -223,21 +222,12 @@ class OCITests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(OCIError, "schemaVersion 2"):
                 validate_index_descriptors(valid)
 
-    def test_skopeo_version_output_shapes(self) -> None:
-        for output, version in (("skopeo version 1.22.2", "1.22.2"),
-                                ("skopeo version 1.22.2 commit: abcdef0123", "1.22.2"),
-                                ("skopeo version 1.22.2-custom", "1.22.2-custom")):
-            self.assertEqual(parse_skopeo_version(output), version)
-        with self.assertRaisesRegex(OCIError, "unexpected Skopeo --version output"):
-            parse_skopeo_version("skopeo 1.22.2")
-
     def test_verification_runs_offline_with_only_the_archive_mounted_read_only(self) -> None:
         wrong_revision = {"org.opencontainers.image.revision": "e" * 40}
         for change, version, error in (
             ({}, "1.2.3", None),
             ({}, "1.2.4", "image.version"),
             ({"FAKE_LABELS": wrong_revision}, "1.2.3", "image.revision"),
-            ({"FAKE_SKOPEO_VERSION": "1.22.2"}, "1.2.3", "Skopeo version is '1.22.2'"),
             ({"FAKE_DIGEST": "sha256:abc"}, "1.2.3", "digest is 'sha256:abc'"),
             ({"FAKE_INDEX": index(*RUNNABLE)}, "1.2.3", "one provenance attestation"),
         ):

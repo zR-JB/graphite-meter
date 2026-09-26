@@ -68,10 +68,6 @@ def pin(name: str, root: Path = ROOT) -> str:
     return load_pins(root)[section][key]
 
 
-def skopeo_version(root: Path = ROOT) -> str:
-    return pin("images.skopeo", root).split(":v", 1)[1].split("@", 1)[0].removesuffix("-immutable")
-
-
 def runtime_pins(root: Path = ROOT) -> dict[str, str]:
     return load_pins(root)["runtime"]
 
@@ -91,12 +87,9 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
         ],
     }
-    for name in ("ci", "release"):
-        replacements[f".github/workflows/{name}.yml"] = [
-            (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$",
-             rf"\g<1>{pins['images']['skopeo']}"),
-            (r"(?m)^(\s*SKOPEO_VERSION: )\d+\.\d+\.\d+$", rf"\g<1>{skopeo_version(root)}"),
-        ]
+    replacements[".github/workflows/release.yml"] = [
+        (r"(?m)^(\s*SKOPEO_IMAGE: )quay.io/containers/skopeo:\S+$", rf"\g<1>{pins['images']['skopeo']}"),
+    ]
     # Mise must bootstrap before Python can read project metadata. Keep this
     # unavoidable literal checked and synced in every direct action invocation.
     for path in (root / ".github").rglob("*.yml"):

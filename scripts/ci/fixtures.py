@@ -18,7 +18,6 @@ from verify_release_assets import TARGETS, TUI_FILES, tui_archives
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
-SKOPEO_VERSION = "1.22.3"
 # Serves `gh api` from exact argv; a list answers successive calls, repeating its last item.
 GH = """import json, os, sys
 path = os.environ["FAKE_GH"]
@@ -35,7 +34,6 @@ print(json.dumps(answers[min(index, len(answers) - 1)]))
 ENGINE = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_ENGINE_LOG"
 case "$*" in
-  *" --version") echo "skopeo version $FAKE_SKOPEO_VERSION" ;;
   *" inspect --raw "*) printf '%s\\n' "$FAKE_INDEX" ;;
   *"{{json .Labels}}"*) printf '%s\\n' "$FAKE_LABELS" ;;
   *"{{.Digest}}"*) echo "$FAKE_DIGEST" ;;
@@ -139,7 +137,6 @@ def engine(directory: Path, repository: str, version: str, revision: str) -> dic
         "CONTAINER_ENGINE": "docker", "FAKE_ENGINE_LOG": str(directory / "engine.log"),
         "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}",
         "SKOPEO_IMAGE": "quay.io/containers/skopeo:v1.22.3@sha256:" + "e" * 64,
-        "SKOPEO_VERSION": SKOPEO_VERSION, "FAKE_SKOPEO_VERSION": SKOPEO_VERSION,
         "FAKE_INDEX": json.dumps(index(*RUNNABLE, *ATTESTED)), "FAKE_LABELS": json.dumps(labels),
         "FAKE_DIGEST": AMD, "REPOSITORY": repository,
     }
