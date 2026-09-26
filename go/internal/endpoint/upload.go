@@ -30,7 +30,7 @@ type Upload struct {
 }
 
 const (
-	// uploadReadTimeout bounds a single stuck lane's body read so a half-open lane cannot pin a goroutine.
+	// uploadReadTimeout ends a lane idle this long, so a half-open lane cannot pin a goroutine.
 	uploadReadTimeout = 120 * time.Second
 	// Reads rarely exceed a socket or stream buffer; a larger one only costs memory (BenchmarkUploadBufferSize).
 	uploadBufSize           = 64 * 1024
@@ -47,6 +47,11 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
+type bodyDeadline struct {
+	io.Reader
+	*http.ResponseController
+}
+
 // discardSink records chunks on the receiver; it has no ReadFrom, so io.CopyBuffer uses the pooled buffer.
 type discardSink struct {
 	upload *Upload
@@ -60,12 +65,10 @@ func (s discardSink) Write(p []byte) (int, error) {
 }
 
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	deadline := time.Now().Add(uploadReadTimeout)
-	if requestDeadline, ok := r.Context().Deadline(); ok && requestDeadline.Before(deadline) {
-		deadline = requestDeadline
-	}
-	_ = http.NewResponseController(w).SetReadDeadline(deadline)
-	n, err := u.Receive(r.Context(), r.URL.Query().Get("id"), UploadOwner(r, u.trusted), r.Body)
+	limit, _ := r.Context().Deadline()
+	body := &idleTimeoutReader{str: bodyDeadline{r.Body, http.NewResponseController(w)}, timeout: uploadReadTimeout,
+		limit: limit}
+	n, err := u.Receive(r.Context(), r.URL.Query().Get("id"), UploadOwner(r, u.trusted), body)
 	if err != nil {
 		if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 			writeUploadAccessError(w, refusal.access)

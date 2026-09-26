@@ -513,6 +513,11 @@ func TestRefusedWebTransportUploadLaneIsReset(t *testing.T) {
 	base, httpBase, wtTransport := wtTestServer(t, nil, nil)
 	id := mintUploadID(t, httpBase)
 	sess := dialWT(t, wtTransport, base+"/wt/upload?id="+id)
+	// The feed's ready record is the server's word that the receiver exists.
+	feed, err := sess.AcceptUniStream(t.Context())
+	if err != nil || !firstProgressTypeIs(t, bufio.NewScanner(feed), "ready") {
+		t.Fatalf("progress feed: %v", err)
+	}
 	// A finished receiver refuses every later lane.
 	finish, _ := http.NewRequest(http.MethodDelete, httpBase+"/upload/progress?id="+id, nil)
 	if res, err := http.DefaultClient.Do(finish); err != nil || res.StatusCode != http.StatusNoContent {

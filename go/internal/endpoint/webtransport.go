@@ -286,6 +286,7 @@ func drainDatagrams(ctx context.Context, receive ReceiveFunc, conn datagramConn,
 type idleTimeoutReader struct {
 	str     deadlineReader
 	timeout time.Duration
+	limit   time.Time // an absolute bound no re-arming passes, if set
 	live    *sessionActivity
 	armed   time.Time
 }
@@ -297,7 +298,11 @@ type deadlineReader interface {
 
 func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 	if now := time.Now(); now.Sub(r.armed) > r.timeout/8 {
-		_ = r.str.SetReadDeadline(now.Add(r.timeout))
+		deadline := now.Add(r.timeout)
+		if !r.limit.IsZero() && r.limit.Before(deadline) {
+			deadline = r.limit
+		}
+		_ = r.str.SetReadDeadline(deadline)
 		r.armed = now
 	}
 	n, err := r.str.Read(p)

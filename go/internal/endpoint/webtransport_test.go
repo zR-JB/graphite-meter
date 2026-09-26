@@ -128,7 +128,8 @@ func (s *deadlineRecordingStream) Read(p []byte) (int, error) { return len(p), n
 func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		stream := &deadlineRecordingStream{}
-		reader := &idleTimeoutReader{str: stream, timeout: 8 * time.Second}
+		limit := time.Now().Add(11 * time.Second)
+		reader := &idleTimeoutReader{str: stream, timeout: 8 * time.Second, limit: limit}
 		buf := make([]byte, 8)
 		for range 3 {
 			_, _ = reader.Read(buf)
@@ -140,6 +141,11 @@ func TestIdleTimeoutReaderReArmsItsDeadlineWithTheClock(t *testing.T) {
 		_, _ = reader.Read(buf)
 		if len(stream.deadlines) != 2 || !stream.deadlines[1].Equal(time.Now().Add(8*time.Second)) {
 			t.Fatalf("deadlines = %v, want a second one a full timeout after the later read", stream.deadlines)
+		}
+		time.Sleep(2 * time.Second)
+		_, _ = reader.Read(buf)
+		if len(stream.deadlines) != 3 || !stream.deadlines[2].Equal(limit) {
+			t.Fatalf("deadlines = %v, want the last capped at the lane's lifetime", stream.deadlines)
 		}
 	})
 }
