@@ -337,7 +337,9 @@ test("a run keeps its RTT-adapted plan; live settings reject invalid plans", asy
     for (const stage of Object.keys(stages) as (keyof typeof stages)[])
       stages[stage] = false;
     const negative = { ...previous.duration, uploadMs: -1 };
+    const skipped = { ...previous.duration, latencyMs: 0 };
     expect(controller.configureRun({ duration: negative })).toBe(false);
+    expect(controller.configureRun({ duration: skipped })).toBe(false);
     expect(controller.configureRun({ stages })).toBe(false);
     expect(store.config).toEqual(previous);
     expect(store.run?.config).toEqual(plan);

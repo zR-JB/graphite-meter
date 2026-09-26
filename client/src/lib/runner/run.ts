@@ -1217,8 +1217,9 @@ export class Run {
   #settle(stage: TransportRole): StageStatus {
     const settled = this.#settled[stage];
     if (settled) return settled;
-    if (!planned(this.#cfg!, stage)) return (this.#settled[stage] = "not-run");
     const entered = this.#entered.has(stage);
+    if (!entered && !planned(this.#cfg!, stage))
+      return (this.#settled[stage] = "not-run");
     if (entered) this.#reduce(stage);
     const lanes = stageLanes(this.#results, stage);
     const failed = this.#failed(stage);
@@ -1280,7 +1281,6 @@ export class Run {
   }
 
   details(): MultiServerResult {
-    const cfg = this.#cfg;
     const aggregate = this.#aggregate;
     return {
       selection: this.#servers.map((server) => server.server),
@@ -1296,13 +1296,12 @@ export class Run {
           latency: latency.result(),
           download: result("download", "down"),
           upload: result("upload", "up"),
-          bidirectional:
-            cfg && planned(cfg, "bidirectional")
-              ? {
-                  down: result("bidirectional", "down"),
-                  up: result("bidirectional", "up"),
-                }
-              : null,
+          bidirectional: this.#entered.has("bidirectional")
+            ? {
+                down: result("bidirectional", "down"),
+                up: result("bidirectional", "up"),
+              }
+            : null,
         };
         const status = (stage: TransportRole): StageStatus =>
           (this.#settled[stage] ?? "not-run") === "not-run" ||

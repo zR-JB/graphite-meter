@@ -642,7 +642,7 @@ export function createApplicationController(
       ) ||
       STAGES.some(
         (stage) =>
-          config.stages[stage] !== store.config.stages[stage] &&
+          planned(config, stage) !== planned(store.config, stage) &&
           !store.canToggleStage(stage),
       )
     )

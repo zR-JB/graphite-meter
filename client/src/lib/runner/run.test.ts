@@ -608,6 +608,25 @@ test("each server's stage statuses follow the run's rule on its own lanes and fa
   ]);
 });
 
+test("a stage cut to 0 ms while it runs is settled by what it measured", async () => {
+  const h = await harness(
+    [{ id: "self", rate: 2 }],
+    { download: true, upload: true },
+    { downloadMs: 2_000, uploadMs: 1_000 },
+  );
+  h.start();
+  await advance(1_200);
+  const { stages, duration, adaptive } = h.config;
+  h.run.reconfigure({
+    stages,
+    adaptive,
+    duration: { ...duration, downloadMs: 0 },
+  });
+  const result = await h.result();
+  expect(result.stages.download).toBe("complete");
+  near(result.download?.reportedBytesPerSec, 2_000);
+});
+
 test("a 0 ms stage is not planned, and a plan without a stage is refused", async () => {
   const h = await harness(
     [{ id: "self", rate: 2 }],
