@@ -310,7 +310,8 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 		live := c.Participants
 		for _, b := range c.Boundaries {
 			if len(b.Dropout) > 0 {
-				live = slices.DeleteFunc(slices.Clone(live), func(id string) bool { return slices.Contains(b.Dropout, id) })
+				dropped := func(id string) bool { return slices.Contains(b.Dropout, id) }
+				live = slices.DeleteFunc(slices.Clone(live), dropped)
 				a.restart(live, time.Duration(b.AtMs)*time.Millisecond, ReasonDropout)
 			}
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})

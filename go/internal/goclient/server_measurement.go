@@ -338,7 +338,8 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 			}
 			continue
 		}
-		result.MeanBps, result.PeakBps, result.Samples = *rate, interval.combined.peak.of(dir), interval.combined.samples
+		stats := interval.combined
+		result.MeanBps, result.PeakBps, result.Samples = *rate, stats.peak.of(dir), stats.samples
 		result.Elapsed = interval.End - interval.Start
 		if dir == Up {
 			result.Elapsed = slices.MaxFunc(components, func(x, y ComponentWindow) int {
