@@ -77,7 +77,7 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 		if !server.ready() {
 			c.servers = append(c.servers, &participant{prepared: server, removed: true})
 			failure := ServerFailure{ServerID: server.Server.ID, Scope: ScopeThroughput, Err: server.Err}
-			failure.Reason = failureReason(server.Err)
+			failure.Reason = failureReason(server.Err, true)
 			if plan := c.cfg.Plan(); len(plan) > 0 {
 				failure.Stage = plan[0].Name
 			}
@@ -215,7 +215,8 @@ func (c *coordinator) noSurvivors() error {
 	return fmt.Errorf("%w: %w", errNoSurvivors, c.failures[len(c.failures)-1].Err)
 }
 
-func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
+func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time,
+	preparing bool) {
 	scope := ScopeThroughput
 	if role == roleLatency {
 		scope = ScopeLatency
@@ -236,7 +237,7 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		ServerID: server.id(),
 		Stage:    stage.Name,
 		Scope:    scope,
-		Reason:   failureReason(err),
+		Reason:   failureReason(err, preparing),
 		Err:      err,
 		At:       at.Sub(c.started),
 	}

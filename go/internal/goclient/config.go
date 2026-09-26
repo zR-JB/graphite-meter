@@ -86,8 +86,8 @@ const (
 	PingSlow   = 600 * time.Millisecond
 )
 
-// MaxStreams keeps a bidirectional stage inside a server's 32 measurements per client.
-const MaxStreams = 15
+// MaxStreams keeps a bidirectional stage, its feed, checkpoints and ping inside 32 measurements per client.
+const MaxStreams = 14
 
 const (
 	transferBytesPerStream = 64 << 30

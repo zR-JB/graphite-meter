@@ -119,16 +119,27 @@ func lane(r *runner, dir Direction, base string) func(context.Context) error {
 	return func(ctx context.Context) error { return r.uploadLane(ctx, "id", 0, make([]byte, 64*1024), func() {}) }
 }
 
-func TestLanesFailOnAdmissionRejection(t *testing.T) {
+func TestLanesRetryABusyServerAndStopOnARefusal(t *testing.T) {
 	t.Parallel()
-	for _, dir := range []Direction{Down, Up} {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			w.WriteHeader(http.StatusServiceUnavailable)
-		}))
-		err := lane(testRunner(srv), dir, srv.URL)(t.Context())
-		srv.Close()
-		if err == nil {
-			t.Errorf("%s lane ignored HTTP 503", dir)
+	for _, c := range []struct {
+		status  int
+		want    FailureReason
+		retried bool
+	}{{http.StatusTooManyRequests, FailureServerBusy, true}, {http.StatusServiceUnavailable, FailureServerBusy, true},
+		{http.StatusGone, FailureProtocol, false}} {
+		for _, dir := range []Direction{Down, Up} {
+			synctest.Test(t, func(t *testing.T) {
+				requests := 0
+				transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					requests++
+					return &http.Response{StatusCode: c.status, Body: http.NoBody, Request: req}, nil
+				})
+				r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
+				err := lane(r, dir, "http://meter.test/download")(t.Context())
+				if failureReason(err, false) != c.want || (requests > 1) != c.retried {
+					t.Errorf("%s %d: %v after %d requests", dir, c.status, err, requests)
+				}
+			})
 		}
 	}
 }

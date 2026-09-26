@@ -63,7 +63,7 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 		}
 		defer res.Body.Close()
 		if res.StatusCode != http.StatusOK {
-			return false, refusal{unexpectedStatus(res)}
+			return false, laneRefusal(res)
 		}
 		ready()
 		moved := false

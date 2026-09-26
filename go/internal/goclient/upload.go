@@ -81,7 +81,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if out.UploadID == "" || len(out.UploadID) > 8192 {
-		return "", errors.New("upload session returned invalid uploadId")
+		return "", fmt.Errorf("%w: invalid uploadId", errProtocol)
 	}
 	return out.UploadID, nil
 }
@@ -116,7 +116,7 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 		_ = res.Body.Close()
 		idle := res.StatusCode == http.StatusRequestTimeout && res.Header.Get("X-Graphite-Upload-Refusal") == "idle"
 		if res.StatusCode != http.StatusOK && !idle {
-			return false, refusal{unexpectedStatus(res)}
+			return false, laneRefusal(res)
 		}
 		return body.moved.Load(), nil
 	})

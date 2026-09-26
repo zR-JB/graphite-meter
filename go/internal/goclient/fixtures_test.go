@@ -180,7 +180,7 @@ func writeDownload(w http.ResponseWriter, _ *http.Request) {
 func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if interrupt != nil && interrupt() {
-			w.WriteHeader(http.StatusServiceUnavailable)
+			w.WriteHeader(http.StatusGone)
 			return
 		}
 		buf := make([]byte, 32*1024)

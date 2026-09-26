@@ -157,7 +157,7 @@ func (s *stageRun) missing(server *stageServer) []string {
 }
 
 func (s *stageRun) fail(server *stageServer, role string, err error, at time.Time) {
-	s.c.failure(server, s.plan, role, err, at)
+	s.c.failure(server, s.plan, role, err, at, !s.measuring)
 }
 
 func (s *stageRun) handle(outcome resourceOutcome) error {

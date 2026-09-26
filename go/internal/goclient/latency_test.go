@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
@@ -125,11 +128,44 @@ func TestLaneEndingsNameTheirReason(t *testing.T) {
 				t.Errorf("close %d: %v after %d connections", c.code, err, accepted.Load())
 			}
 			closed := &webtransport.SessionError{Remote: true, ErrorCode: c.session}
-			if got := failureReason(laneEnding(websocket.CloseError{Code: c.code})); got != c.want ||
-				failureReason(laneEnding(closed)) != c.want {
+			if got := failureReason(laneEnding(websocket.CloseError{Code: c.code}), false); got != c.want ||
+				failureReason(laneEnding(closed), false) != c.want {
 				t.Errorf("close %d reads as %s, want %s", c.code, got, c.want)
 			}
 		})
+	}
+}
+
+func TestLaneEndingReadsEveryPinnedEnding(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../../api/laneendings.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "|")
+		name := strings.TrimSpace(fields[0])
+		ws, _ := strconv.Atoi(strings.TrimSpace(fields[1]))
+		wt, _ := strconv.Atoi(strings.TrimSpace(fields[2]))
+		for _, closed := range []error{websocket.CloseError{Code: websocket.StatusCode(ws)},
+			&webtransport.SessionError{Remote: true, ErrorCode: webtransport.SessionErrorCode(wt)}} {
+			got := laneEnding(closed)
+			end, ended := errors.AsType[laneEnd](got)
+			_, auth := errors.AsType[*AuthRequiredError](got)
+			wrong := !ended || end.Name != name
+			switch name {
+			case "finished":
+				wrong = got != closed
+			case "revoked":
+				wrong = !auth
+			}
+			if wrong {
+				t.Errorf("%s ending %v reads as %v", name, closed, got)
+			}
+		}
 	}
 }
 

@@ -121,7 +121,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			mux.Handle("/ws/ping", pingHandler(answerAll, 0))
 			mux.HandleFunc("/download", func(w http.ResponseWriter, _ *http.Request) {
 				if canInterrupt.Load() && interruption == "download failure" {
-					w.WriteHeader(http.StatusServiceUnavailable)
+					w.WriteHeader(http.StatusGone)
 					return
 				}
 				time.Sleep(time.Millisecond)
@@ -182,7 +182,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatal(err)
 				}
-			} else if err != nil || !strings.Contains(failure.Error(), "503") {
+			} else if err != nil || !strings.Contains(failure.Error(), "410") {
 				t.Fatal(err, failure)
 			}
 			if time.Since(started) > 2*time.Second {

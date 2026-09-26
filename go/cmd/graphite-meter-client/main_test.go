@@ -326,7 +326,7 @@ func TestCommitEdit(t *testing.T) {
 		{streamsRow, true, "9", func(c goclient.Config) bool {
 			return c.TransferStreams.Forced == 9 && c.TransferStreams.AutomaticMax == 6
 		}, ""},
-		{streamsRow, false, "16", nil, "1 to 15"},
+		{streamsRow, false, "15", nil, "1 to 14"},
 	} {
 		m := testModel(t)
 		if c.forced {

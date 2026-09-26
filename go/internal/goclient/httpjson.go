@@ -28,7 +28,7 @@ func controlJSON(
 		if err := authResponseError(res); err != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("%s returned HTTP %d", what, res.StatusCode)
+		return nil, statusError{res.StatusCode, what}
 	}
 	return res, readControlJSON(res.Body, out)
 }
@@ -37,7 +37,7 @@ func unexpectedStatus(res *http.Response) error {
 	if err := authResponseError(res); err != nil {
 		return err
 	}
-	return fmt.Errorf("HTTP %d from %s", res.StatusCode, res.Request.URL.Redacted())
+	return statusError{res.StatusCode, res.Request.URL.Redacted()}
 }
 
 const maxControlBytes = 64 * 1024
@@ -48,7 +48,10 @@ func readControlJSON(body io.Reader, out any) error {
 		return err
 	}
 	if len(data) > maxControlBytes {
-		return fmt.Errorf("control response exceeds %d bytes", maxControlBytes)
+		return fmt.Errorf("%w: control response exceeds %d bytes", errProtocol, maxControlBytes)
 	}
-	return json.Unmarshal(data, out)
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("%w: %w", errProtocol, err)
+	}
+	return nil
 }

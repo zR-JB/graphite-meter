@@ -78,9 +78,13 @@ var outcomeLabels = map[goclient.Outcome]string{
 }
 
 var failureLabels = map[goclient.FailureReason]string{
-	goclient.FailureConnectionLost: "Connection lost",
-	goclient.FailureTimeout:        "Connection timed out",
-	goclient.FailureSignIn:         "Sign-in required",
+	goclient.FailurePreparation:          "Couldn't prepare the connection",
+	goclient.FailureConnectionLost:       "Connection lost",
+	goclient.FailureTimeout:              "Stopped delivering data",
+	goclient.FailureSignIn:               "Sign-in required",
+	goclient.FailureServerBusy:           "Server at capacity",
+	goclient.FailureProtocol:             "Unexpected server response",
+	goclient.FailureInsufficientEvidence: "Too little measured time",
 }
 
 var transportLabels = map[string]string{
