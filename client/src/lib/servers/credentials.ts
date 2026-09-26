@@ -37,19 +37,18 @@ export function serverCredentials(server: ServerEntry): ServerCredentials {
   };
 }
 export function requestOptions(
-  context: ServerCredentials | undefined,
+  context: ServerCredentials,
   input: string,
   method = "GET",
 ): { headers: Record<string, string>; credentials: RequestCredentials } {
   if (
-    context &&
     !allowsServerOrigin(
       context.server,
       new URL(input, context.server.url).origin,
     )
   )
     throw new Error("Request destination is outside the selected server");
-  if (context?.kind === "grant") {
+  if (context.kind === "grant") {
     const target = new URL(input, context.server.url);
     if (target.protocol !== "https:")
       throw new Error("Measurement grants require HTTPS");
@@ -63,11 +62,10 @@ export function requestOptions(
       credentials: "omit",
     };
   }
-  if (context?.kind === "public") return { headers: {}, credentials: "omit" };
+  if (context.kind === "public") return { headers: {}, credentials: "omit" };
   // The page's CSRF token and cookies reach only its own secure hostname, never an additional origin.
-  const target = context && new URL(input, location.origin);
+  const target = new URL(input, location.origin);
   if (
-    target &&
     target.origin !== location.origin &&
     (target.protocol !== "https:" || target.hostname !== location.hostname)
   )
@@ -78,15 +76,14 @@ export function requestOptions(
   };
 }
 export async function measurementFetch(
-  context: ServerCredentials | undefined,
+  context: ServerCredentials,
   input: string,
   init?: RequestInit,
 ): Promise<Response> {
   // Receiver checkpoints and session control must stay responsive during bulk transfers.
   init = { priority: "high", ...init };
   const options = requestOptions(context, input, init?.method);
-  if (!context || context.kind === "session")
-    return authenticatedFetch(input, init);
+  if (context.kind === "session") return authenticatedFetch(input, init);
   const response = await fetch(input, {
     ...init,
     ...options,
@@ -103,31 +100,30 @@ export async function measurementFetch(
   return response;
 }
 export function socketMint(
-  context: ServerCredentials | undefined,
+  context: ServerCredentials,
   origin: string,
   path: string,
   kind: "ws" | "wt",
 ): WtMint | undefined {
-  const protectedServer = context ? context.kind !== "public" : authEnabled();
-  if (!protectedServer || (kind === "ws" && context?.kind !== "grant"))
+  if (context.kind === "public" || (kind === "ws" && context.kind !== "grant"))
     return undefined;
   const url = `${origin}/${kind}/session?target=${encodeURIComponent(origin + path)}`;
   return { url, ...requestOptions(context, url, "POST") };
 }
 /** The page login owns session failures; a remote grant belongs to its participant's host. */
 export function reportServerAuthentication(
-  context: ServerCredentials | undefined,
+  context: ServerCredentials,
   host?: { authenticationRequired?(role: "throughput" | "latency"): void },
   role: "throughput" | "latency" = "throughput",
 ): void {
-  if (!context || context.kind === "session") reportAuthenticationRequired();
+  if (context.kind === "session") reportAuthenticationRequired();
   else host?.authenticationRequired?.(role);
 }
 export async function classifyServerAuthentication(
-  context?: ServerCredentials,
+  context: ServerCredentials,
   signal?: AbortSignal,
 ): Promise<boolean> {
-  return !context || context.kind === "session"
+  return context.kind === "session"
     ? classifyAuthenticationFailure(signal)
     : false;
 }

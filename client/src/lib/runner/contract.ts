@@ -293,7 +293,7 @@ export interface ReceiverCheckpoint {
 }
 
 export interface PreparedPaths {
-  credentials?: ServerCredentials;
+  credentials: ServerCredentials;
   discovery: TransportDiscovery;
   throughput: VerifiedThroughputPath;
   latency: VerifiedLatencyPath | null;

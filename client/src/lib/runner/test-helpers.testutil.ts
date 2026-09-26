@@ -5,6 +5,7 @@ import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery } from "./paths";
 import { epochMs, pageMs } from "./clock";
 import type { ServerCatalog } from "../servers/catalog";
+import { serverCredentials } from "../servers/credentials";
 import type { ConnectionPreparation } from "./real/prepare";
 
 /** A real self-server selection for controller tests with injected network operations. */
@@ -111,6 +112,10 @@ export function testWtConfig(
   return config;
 }
 
+/** The page's own server, as the controller hands it to preparation. */
+export const testSelfCredentials = () =>
+  serverCredentials({ id: "self", name: "Test server", url: location.origin });
+
 /** Complete verified connection values for lifecycle and privacy boundary fixtures. */
 export function testPreparedPaths(
   overrides: Partial<PreparedPaths> = {},
@@ -140,6 +145,10 @@ export function testPreparedPaths(
     protocolNegotiated: "http/1.1" as const,
   };
   return {
+    credentials: {
+      server: { id: "self", name: "node-a", url: origin },
+      kind: "public",
+    },
     discovery,
     throughput: {
       requested: throughput,

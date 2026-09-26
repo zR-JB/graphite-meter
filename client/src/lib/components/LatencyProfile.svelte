@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import ServerScope from "./ServerScope.svelte";
-  import { failureDetail } from "./failurePresentation";
+  import { reasonLabel } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
 
@@ -53,8 +53,8 @@
   {/if}
   {#if store.stagePresentation.latency.status === "failed"}
     <p class="notice" data-tone="err" role="alert">
-      Latency skipped — {store.stagePresentation.latency.failure
-        ? failureDetail(store.stageFailures.latency?.message)
+      Latency skipped — {store.stageFailures.latency
+        ? reasonLabel(store.stageFailures.latency.reason)
         : "unavailable"}
     </p>
   {/if}

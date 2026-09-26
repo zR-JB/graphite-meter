@@ -315,6 +315,26 @@ test("a late dropout leaves the headline unavailable while the failed stage keep
   ]);
 });
 
+test("server failure text is bounded and dropped when it could disguise itself", async () => {
+  const say = (message: string) => (host: ParticipantHost) =>
+    setTimeout(() => host.fail("protocol-error", message), 100);
+  const h = await harness(
+    [
+      { id: "a", rate: 1, measure: say("paid ‮evil") },
+      { id: "b", rate: 1, measure: say("x".repeat(300)) },
+      { id: "c", rate: 1 },
+    ],
+    { download: true },
+    { downloadMs: 1_400 },
+  );
+  h.start();
+  const { failures } = (await h.result()).multiServer;
+  expect(failures.map((failure) => failure.message)).toEqual([
+    "",
+    "x".repeat(256),
+  ]);
+});
+
 test("several servers that all fail end the run; a sole server skips to its next stage", async () => {
   let downloadFailures = 0;
   const drop = {

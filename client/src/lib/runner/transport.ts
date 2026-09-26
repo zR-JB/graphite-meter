@@ -630,7 +630,7 @@ class UploadReceiver {
     readonly stage: ServerStage,
     readonly id: string,
     readonly url: string,
-    readonly credentials: ServerCredentials | undefined,
+    readonly credentials: ServerCredentials,
     readonly session: boolean,
   ) {
     const timer = setTimeout(

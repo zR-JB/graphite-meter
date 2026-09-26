@@ -73,11 +73,11 @@ export interface ConnectionPreparation {
 /** Bounded discovery has no measurement sockets or path-validation side effects. */
 export async function discoverServer(
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
 ): Promise<TransportDiscovery> {
   signal.throwIfAborted();
   const restriction = browserOriginRestriction(
-    credentials?.server.url ?? location.origin,
+    credentials.server.url,
     location.origin,
   );
   if (restriction) throw new BrowserOriginBlockedError(restriction);
@@ -86,7 +86,7 @@ export async function discoverServer(
     const startedAt = pageMs();
     const response = await measurementFetch(
       credentials,
-      `${credentials?.server.url ?? ""}${ROUTES.preflight}${ident}`,
+      `${credentials.server.url}${ROUTES.preflight}${ident}`,
       {
         cache: "no-store",
         signal,
@@ -97,7 +97,7 @@ export async function discoverServer(
     const data = await readJSONResponse(response);
     const preflightMs = pageMs() - startedAt;
     const pf = parsePreflight(data);
-    if (credentials) validateServerDiscovery(credentials.server, pf);
+    validateServerDiscovery(credentials.server, pf);
     const origin = new URL(response.url, location.href).origin;
     const timing = performance
       .getEntriesByName(response.url, "resource")
@@ -134,7 +134,7 @@ export async function prepareConnections(
   previous: ConnectionValidation,
   roles: ConnectionRole[],
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
   knownDiscovery?: TransportDiscovery,
 ): Promise<ConnectionPreparation> {
   const discovery =
@@ -247,7 +247,7 @@ async function prepareRole<
 async function pathProbe(
   url: string,
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
 ) {
   try {
     const response = await measurementFetch(credentials, url, {
@@ -268,7 +268,7 @@ async function prepareThroughput(
   discovery: TransportDiscovery,
   requested: ThroughputTarget,
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
 ): Promise<VerifiedThroughputPath> {
   const wt = requested.transport !== "fetch-stream";
   const fetchTarget: FetchThroughputTarget = {
@@ -334,9 +334,9 @@ async function prepareLatency(
   discovery: TransportDiscovery,
   target: LatencyTarget,
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
 ): Promise<{ path: VerifiedLatencyPath; idle: IdleKeepalive }> {
-  const idle = new IdleKeepalive(target, performance.timeOrigin, credentials);
+  const idle = new IdleKeepalive(target, credentials);
   const abort = () => idle.stop();
   signal.addEventListener("abort", abort, { once: true });
   try {
@@ -371,7 +371,7 @@ async function prepareLatency(
 async function verifyWtThroughput(
   target: WebTransportThroughputTarget,
   signal: AbortSignal,
-  credentials?: ServerCredentials,
+  credentials: ServerCredentials,
 ): Promise<void> {
   let established = false;
   try {

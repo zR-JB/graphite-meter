@@ -204,18 +204,15 @@ export class ServerConnection {
   }
 
   paths(maxAgeMs = CONNECTION_FRESH_MS): PreparedPaths | null {
-    const prepared = this.#prepared(maxAgeMs);
-    return prepared && { ...prepared, credentials: this.credentials };
-  }
-  #prepared(maxAgeMs: number): PreparedPaths | null {
     if (!this.config || this.#expired() || this.#error || this.#offline())
       return null;
-    return preparedPaths(
+    const prepared = preparedPaths(
       this.config,
       this.#discovery ?? null,
       this.#validation,
       maxAgeMs,
     );
+    return prepared && { ...prepared, credentials: this.credentials };
   }
 
   invalidate(roles: readonly ConnectionRole[]): void {
@@ -509,7 +506,7 @@ export class ServerConnection {
       expired ||
       (!!this.#error && this.#discovering.backoff.signIn) ||
       roles.some((role) => this.#roles[role].backoff.signIn);
-    const paths = this.#prepared(Infinity);
+    const paths = this.paths(Infinity);
     return {
       server: this.server,
       discovery: this.#discovery ?? null,

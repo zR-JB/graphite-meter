@@ -681,7 +681,7 @@ export function preparedPaths(
   discovery: TransportDiscovery | null,
   validation: ConnectionValidation,
   maxAgeMs = CONNECTION_FRESH_MS,
-): PreparedPaths | null {
+): Omit<PreparedPaths, "credentials"> | null {
   const stale = (role: ConnectionRole) =>
     roleNeedsValidation(config, validation, role, discovery) ||
     ((role === "throughput" || latencyPathNeeded(config)) &&

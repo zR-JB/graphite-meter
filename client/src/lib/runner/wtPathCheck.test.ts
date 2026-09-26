@@ -9,6 +9,7 @@ import {
   TEST_BUILD_TOKENS,
   TEST_WT_ORIGIN,
   TEST_WT_PREFLIGHT,
+  testSelfCredentials,
   testWtConfig,
 } from "./test-helpers.testutil";
 const dials: string[] = [];
@@ -85,6 +86,7 @@ async function withPathCheck(
         emptyConnectionValidation(),
         ["throughput", "latency"],
         signal,
+        testSelfCredentials(),
       );
       result.idle?.stop();
       if (result.failure) throw result.failure;

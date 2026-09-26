@@ -6,7 +6,6 @@ import type {
   PingCadence,
 } from "../contract";
 import type { LatencyTarget } from "../../api/endpoints";
-import { authEnabled } from "../../auth";
 import {
   socketMint,
   reportServerAuthentication,
@@ -43,7 +42,7 @@ const IDLE_RESPAWN_MS = 2000;
 /** Starts a ping worker on the target's bus; `failed` hears a worker that cannot load. */
 function startPingWorker(
   target: LatencyTarget,
-  credentials: ServerCredentials | undefined,
+  credentials: ServerCredentials,
   pacing: { intervalMs: number; replyDriven: boolean; maxInFlight: number },
   on: (msg: PingWorkerEvent) => void,
   failed: (detail: string) => void,
@@ -64,15 +63,13 @@ function startPingWorker(
     ...pacing,
     deadlineK: PROBE_DEADLINE.k,
     deadlineFloorMs: PROBE_DEADLINE.floorMs,
-    checkAuthentication: credentials
-      ? credentials.kind === "session"
-      : authEnabled(),
+    checkAuthentication: credentials.kind === "session",
   });
   return worker;
 }
 
 interface LatencyChannelDeps {
-  credentials?: ServerCredentials;
+  credentials: ServerCredentials;
   host: Pick<
     ParticipantHost,
     | "latency"
@@ -302,7 +299,7 @@ export class IdleKeepalive {
     return this.#emit;
   }
   #target: LatencyTarget;
-  #credentials?: ServerCredentials;
+  #credentials: ServerCredentials;
   #timeOriginMs: number;
   #worker: Worker | null = null;
   #active = false;
@@ -316,8 +313,8 @@ export class IdleKeepalive {
 
   constructor(
     target: LatencyTarget,
+    credentials: ServerCredentials,
     timeOriginMs = performance.timeOrigin,
-    credentials?: ServerCredentials,
   ) {
     this.#target = target;
     this.#credentials = credentials;
@@ -427,7 +424,7 @@ export class IdleKeepalive {
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
-      if (this.#credentials?.kind === "grant")
+      if (this.#credentials.kind === "grant")
         this.#probeReady?.finish(
           new ServerAuthenticationRequired(this.#credentials.server),
         );

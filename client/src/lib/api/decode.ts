@@ -54,6 +54,10 @@ export function displayText(value: unknown, max: number, allowEmpty = false) {
   return text;
 }
 
+/** Free-form detail keeps at most `max` characters, or none when it could disguise itself. */
+export const safeDetail = (text: string, max: number) =>
+  UNSAFE_TEXT.test(text) ? "" : text.slice(0, max);
+
 function member<T extends string>(value: unknown, values: readonly T[]): T {
   if (typeof value !== "string" || !values.includes(value as T))
     throw new Error("unsupported control response value");

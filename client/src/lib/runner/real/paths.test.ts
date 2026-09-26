@@ -25,6 +25,7 @@ import { DEFAULT_CONFIG } from "../../state/defaults";
 import {
   TEST_BUILD_TOKENS,
   testParticipantHost,
+  testSelfCredentials,
   testTransfer,
 } from "../test-helpers.testutil";
 type ThroughputAdvertisement = Parameters<
@@ -439,7 +440,7 @@ for (const { name, lanes, warmupMs, baseMs, expected } of [
     expect(laneStaggerMs(lanes, warmupMs, baseMs)).toBe(expected);
   });
 
-async function preparationHarness() {
+async function preparationHarness(additionalOrigins: string[] = []) {
   const { prepareConnections } = await import("./prepare");
   let validation = emptyConnectionValidation();
   let idle: import("./prepare").ConnectionPreparation["idle"];
@@ -451,11 +452,14 @@ async function preparationHarness() {
       roles: ConnectionRole[] = ["throughput", "latency"],
       signal = new AbortController().signal,
     ): Promise<PreparedPaths> {
+      const credentials = testSelfCredentials();
+      credentials.server.additionalOrigins = additionalOrigins;
       const result = await prepareConnections(
         config,
         validation,
         roles,
         signal,
+        credentials,
       );
       validation = result.validation;
       discoveries.push(result.discovery);
@@ -467,6 +471,7 @@ async function preparationHarness() {
       if (!validation.throughput.path)
         throw new Error("throughput path missing");
       return {
+        credentials,
         discovery: result.discovery,
         throughput: validation.throughput.path,
         latency: validation.latency.path,
@@ -831,7 +836,7 @@ test("cross-origin IPv6 discovery and path preparation fail with DNS guidance be
       emptyConnectionValidation(),
       ["throughput"],
       new AbortController().signal,
-      undefined,
+      testSelfCredentials(),
       known,
     );
     expect(prepared.failure).toBeInstanceOf(BrowserOriginBlockedError);
@@ -925,7 +930,10 @@ test("catalog preflight timing includes the complete response body without probi
   performance.now = () => now;
   try {
     const { discoverServer } = await import("./prepare");
-    const result = await discoverServer(new AbortController().signal);
+    const result = await discoverServer(
+      new AbortController().signal,
+      testSelfCredentials(),
+    );
     expect(result.preflightMs).toBe(45);
     expect(requests).toBe(1);
     expect(result.server.name).toBe("test");
@@ -1017,7 +1025,7 @@ test("a WebTransport-less browser is refused by mechanism, not by availability",
     }),
   );
   try {
-    const preparation = await preparationHarness();
+    const preparation = await preparationHarness(["https://wt.meter.test"]);
     const config = {
       ...probeConfig(false),
       transports: { throughputTarget: "auto", latencyTarget: "auto" },
@@ -1180,7 +1188,7 @@ test("a throughput-role probe keeps the latency bus the last check committed to"
     const config = probeConfig(true);
     config.stages.download = false;
     config.transports.throughputTarget = "https://meter.test";
-    const preparation = await preparationHarness();
+    const preparation = await preparationHarness(["https://fallback.test"]);
     let settled = false;
     const degrading = preparation.check(config).then(
       (info) => {

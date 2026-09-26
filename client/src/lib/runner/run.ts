@@ -18,6 +18,7 @@ import type {
   ThroughputResult,
   TransportRole,
 } from "./contract";
+import { safeDetail } from "../api/decode";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { planServerStreams, validateServerStreams } from "./paths";
@@ -970,14 +971,14 @@ export class Run {
       )
     )
       return;
-    // Server-supplied detail is bounded before it can reach saved history.
+    // Server-supplied detail is bounded and filtered before it can reach saved history.
     const failure: ServerFailure = {
       serverId,
       stage,
       atMs: this.#now(),
       scope,
       reason,
-      message: message.slice(0, 256),
+      message: safeDetail(message, 256),
     };
     this.#failures.push(failure);
     return failure;

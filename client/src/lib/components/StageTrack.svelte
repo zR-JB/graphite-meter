@@ -5,8 +5,7 @@
   import { getApplicationController } from "../runner/controllerContext";
   import { tooltip } from "../actions/tooltip";
   import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
-  import { failureDetail } from "./failurePresentation";
-  import { STAGE, STATUS } from "../presentation/vocabulary";
+  import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
   import { STAGE_ORDER } from "../state/stagePresentation";
 
   const controller = getApplicationController();
@@ -25,7 +24,7 @@
       const label = STAGE[key].short;
       const failure = execution.failure ? store.stageFailures[key] : undefined;
       const hint = failure
-        ? failureDetail(failure.message)
+        ? reasonLabel(failure.reason)
         : key === "bidirectional" && !locked
           ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
           : reason === STATUS["not-run"] && !locked

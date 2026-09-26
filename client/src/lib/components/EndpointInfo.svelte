@@ -18,7 +18,11 @@
     serverLoadSummary,
     endpointPathStatus,
   } from "./endpointInfo";
-  import { MISSING, transportLabel } from "../presentation/vocabulary";
+  import {
+    MISSING,
+    reasonLabel,
+    transportLabel,
+  } from "../presentation/vocabulary";
   import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
@@ -214,7 +218,7 @@
             : "Connections captured for the displayed result."}
       </p>
       {#each failures as failure}
-        <p class="endpoint-failure">{failure.message}</p>
+        <p class="endpoint-failure">{reasonLabel(failure.reason)}</p>
       {/each}
     </article>
 

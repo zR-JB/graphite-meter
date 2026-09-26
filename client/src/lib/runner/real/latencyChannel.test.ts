@@ -17,6 +17,10 @@ const target: LatencyTarget = {
   protocol: "http1",
   tls: false,
 };
+const credentials = {
+  server: { id: "self", name: "Test server", url: target.origin },
+  kind: "public" as const,
+};
 
 type ChannelHost = ConstructorParameters<typeof LatencyChannel>[0]["host"];
 const host = (overrides: Partial<ParticipantHost>): ChannelHost => ({
@@ -44,7 +48,7 @@ beforeEach(() => {
 test("a peer socket authorization refusal preserves the sign-in cause during readiness validation", async () => {
   const server = { id: "peer", name: "Private", url: "https://peer.example" };
   const secureTarget = { ...target, origin: server.url, tls: true };
-  const keepalive = new IdleKeepalive(secureTarget, performance.timeOrigin, {
+  const keepalive = new IdleKeepalive(secureTarget, {
     server,
     kind: "grant",
     token: "a".repeat(43),
@@ -60,7 +64,7 @@ test("a peer socket authorization refusal preserves the sign-in cause during rea
 
 // The older wait settles itself, but the slot it settles from belongs to the newer one: clearing it drops the ready.
 test("a superseded readiness wait does not silence the newer one", async () => {
-  const keepalive = new IdleKeepalive(target);
+  const keepalive = new IdleKeepalive(target, credentials);
   const abort = new AbortController();
   const superseded = keepalive.verifyReady(abort.signal);
   let ready = false;
@@ -78,7 +82,7 @@ test("a superseded readiness wait does not silence the newer one", async () => {
 
 test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
   const events: IdleEvent[] = [];
-  const keepalive = new IdleKeepalive(target);
+  const keepalive = new IdleKeepalive(target, credentials);
   keepalive.onEvent = (event) => events.push(event);
   keepalive.start();
   const old = TestWorker.last!;
@@ -104,7 +108,7 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
 
 test("idle latency buckets use each worker observation time", () => {
   const events: IdleEvent[] = [];
-  const keepalive = new IdleKeepalive(target, 10_000);
+  const keepalive = new IdleKeepalive(target, credentials, 10_000);
   keepalive.onEvent = (event) => events.push(event);
 
   keepalive.start();
@@ -127,7 +131,7 @@ test("idle latency buckets use each worker observation time", () => {
 
 test("timeout-only keepalive batches do not recover offline connectivity", () => {
   const states: string[] = [];
-  const keepalive = new IdleKeepalive(target);
+  const keepalive = new IdleKeepalive(target, credentials);
   keepalive.onEvent = (event) => {
     if (event.type === "connectivity") states.push(event.state);
   };
@@ -148,7 +152,7 @@ test("timeout-only keepalive batches do not recover offline connectivity", () =>
 });
 
 test("adoption replays a provisional stall but does not infer offline from readiness alone", () => {
-  const idle = new IdleKeepalive(target);
+  const idle = new IdleKeepalive(target, credentials);
   idle.start();
   TestWorker.last!.emit({ type: "ready" });
   const events: IdleEvent[] = [];
@@ -162,7 +166,7 @@ test("adoption replays a provisional stall but does not infer offline from readi
 });
 
 test("adopting a verified idle monitor replays its proven connectivity without replaying RTTs", () => {
-  const keepalive = new IdleKeepalive(target);
+  const keepalive = new IdleKeepalive(target, credentials);
   keepalive.start();
   TestWorker.last!.emit({
     type: "samples",
@@ -187,6 +191,7 @@ test("stage latency preserves distinct times from one worker batch", () => {
   const channel = new LatencyChannel({
     host: host({ latency: (sample) => observations.push(sample.observedAtMs) }),
     target,
+    credentials,
     timeOriginMs: 10_000,
   });
 
@@ -209,6 +214,7 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
   const channel = new LatencyChannel({
     host: host({ resumeLatency: () => resumes++ }),
     target,
+    credentials,
   });
 
   channel.prime("medium", true);
@@ -233,6 +239,7 @@ test("a stage timeout reaches the population as a timeout and does not resume re
       resumeLatency: () => resumes++,
     }),
     target,
+    credentials,
   });
   channel.prime("medium", true);
   channel.measure();
@@ -246,7 +253,7 @@ test("a stage timeout reaches the population as a timeout and does not resume re
 });
 
 test("path preparation collects only replies, never timeouts", async () => {
-  const keepalive = new IdleKeepalive(target, 0);
+  const keepalive = new IdleKeepalive(target, credentials, 0);
   const collecting = keepalive.collectRtts();
   const reply = (rtt: number, timedOut = false) => ({
     rtt,
@@ -276,6 +283,7 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
   const channel = new LatencyChannel({
     host: host({ stallLatency: (detail) => failures.push(detail) }),
     target,
+    credentials,
   });
 
   channel.prime("medium", true);
@@ -305,6 +313,7 @@ function finalizingChannel() {
       stallLatency: (detail) => stalls.push(detail),
     }),
     target,
+    credentials,
   });
   channel.prime("medium", true);
   channel.measure();
