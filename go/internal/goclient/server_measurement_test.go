@@ -27,7 +27,7 @@ func TestCoordinatedReceiverWindows(t *testing.T) {
 		"a": nativeReceiver("a", 100, 100),
 		"b": nativeReceiver("b", 200, 100),
 	}))
-	sample := a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{
+	sample, _ := a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{
 		"a": nativeReceiver("a", 1100, 1100),
 		"b": nativeReceiver("b", 6200, 2100),
 	}))
@@ -328,6 +328,40 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 				t.Errorf("%s interval %d: %s complete=%v window=%+v, want %+v", c.Name, i, got.Reason, got.Complete,
 					w, want)
 			}
+		}
+	}
+}
+
+func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
+	t.Parallel()
+	p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+	var live []ThroughputSample
+	co := &coordinator{servers: []*participant{p}, emit: func(e Event) { live = append(live, e.Throughput) }}
+	stage := StagePlan{Name: StageUpload, Directions: []Direction{Up}}
+	initial := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)})
+	co.aggregate.begin(stage.Name, []string{"a"}, 0, "stage-start")
+	co.aggregate.observe(initial)
+	s := &sampler{c: co, stage: stage}
+	s.begin(time.Now(), initial)
+	own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
+	for i, step := range []struct {
+		receiver *ReceiverSnapshot
+		want     []ThroughputSample
+	}{
+		{nativeReceiver("r1", 1000, 2000), []ThroughputSample{{BytesPerSec: 1000, TotalBytes: 1000}}},
+		{nil, nil},
+		{nativeReceiver("r1", 1500, 2000), nil},
+		{nativeReceiver("r2", 100, 100), []ThroughputSample{{Unavailable: true}}},
+	} {
+		live = nil
+		up := map[string]*ReceiverSnapshot{"a": step.receiver}
+		sample := sampledBoundary{boundary: nativeBoundary(1000*(i+1), nil, up)}
+		if step.receiver == nil {
+			sample.misses = map[string]error{"a": errors.New("missed")}
+		}
+		s.observe(sample, own)
+		if !reflect.DeepEqual(live, step.want) {
+			t.Errorf("step %d: live rates %+v, want %+v", i, live, step.want)
 		}
 	}
 }

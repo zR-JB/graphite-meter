@@ -178,33 +178,35 @@ func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
 	a.uploads[id] = next
 }
 
-func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow {
+// observe returns the boundary's sample window, and whether the boundary restarted the interval.
+func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow, bool) {
 	interval := a.current()
 	if interval == nil {
-		return nil
+		return nil, false
 	}
 	a.ledger(b)
 	if len(interval.Participants) == 0 || slices.ContainsFunc(interval.Participants, func(id string) bool {
 		_, down := b.down[id]
 		return interval.Stage != StageUpload && !down || interval.Stage != StageDownload && b.up[id] == nil
 	}) {
-		return nil
+		return nil, false
 	}
 	if a.first == nil {
 		a.first, a.last, a.peakFrom = new(b), new(b), new(b)
 		interval.Start = b.at
 		interval.End = b.at
-		return nil
+		return nil, false
 	}
 	sample, err := aggregateWindow(*a.last, b, *interval)
 	if errors.Is(err, errStaleBoundary) {
-		return nil
+		return nil, false
 	}
 	full, fullErr := aggregateWindow(*a.first, b, *interval)
 	if err != nil || fullErr != nil {
 		interval.Complete = false
 		a.begin(interval.Stage, interval.Participants, b.at, "evidence-resumed")
-		return a.observe(b)
+		a.observe(b)
+		return nil, true
 	}
 	a.last = new(b)
 	interval.End = b.at
@@ -217,7 +219,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 		a.peakFrom = new(b)
 		a.recordPeak(peak)
 	}
-	return sample
+	return sample, false
 }
 
 // shortest is the least span any clock covered; checkpoint retries can shrink a receiver's span.

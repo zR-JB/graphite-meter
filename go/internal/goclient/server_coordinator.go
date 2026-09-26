@@ -609,7 +609,9 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 		s.capture(s.ending)
 		return false, nil
 	}
-	c.emitRates(s.stage, c.aggregate.observe(sample.boundary))
+	if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
+		c.emitRates(s.stage, window)
+	}
 	removed := false
 	for _, server := range servers {
 		if server.removed {
