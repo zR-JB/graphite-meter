@@ -51,8 +51,7 @@
   span {
     white-space: nowrap;
   }
-  /* Reserved widths keep a changing phase or number from moving its neighbours;
-     the countdown comes last so its arrival and exit move nothing. */
+  /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
   .label {
     min-width: 14ch;
     color: var(--text);

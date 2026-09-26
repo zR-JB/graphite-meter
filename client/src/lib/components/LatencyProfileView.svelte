@@ -37,7 +37,6 @@
   let motion = $state(false);
 
   const scale = $derived(profileDomain(lanes));
-  // Only the live view animates and shows current values and probe timeouts.
   const live = $derived(variant === "bare");
   const ticks = $derived([
     scale.min,
