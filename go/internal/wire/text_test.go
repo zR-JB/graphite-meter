@@ -16,6 +16,9 @@ func TestTextPolicyKeepsTerminalControlsOut(t *testing.T) {
 		{"del\x7f", 64, "del ", false},
 		{"two\nlines", 64, "two lines", false},
 		{"bad\xffutf8", 64, "bad�utf8", false},
+		{"evil\u202egnp.exe", 64, "evil gnp.exe", false},
+		{"iso\u2066late\u2069", 64, "iso late ", false},
+		{"arabic\u061cmark", 64, "arabic mark", false},
 		{"123456789", 5, "1234…", true},
 	} {
 		if got := CleanText(c.in, c.limit); got != c.clean {
