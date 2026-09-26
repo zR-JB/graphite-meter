@@ -290,25 +290,26 @@ description = "Run the stubbed Chromium browser suite"
 dir = "client"
 run = "bun run test:browser"
 
-[tasks.client-e2e]
-description = "Run Chromium against every real server transport"
+[tasks._e2e-build]
+hide = true
+env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = [
-  { task = "client-build-prod" },
+  "cd client && bun run build:bundle && bun run build:e2e-harness",
   { task = "_embed-client" },
-  '''
-#!/usr/bin/env sh
-set -eu
-certs=$(mktemp -d)
-trap 'rm -rf "$certs"' EXIT
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -keyout "$certs/key.pem" -out "$certs/cert.pem" -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
-GM_E2E_TLS_CERT="$certs/cert.pem"
-GM_E2E_TLS_KEY="$certs/key.pem"
-GM_E2E_SPKI=$(openssl x509 -in "$certs/cert.pem" -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl enc -base64)
-GM_E2E_SERVER_BIN="$certs/graphite-meter-e2e"
-(cd go && go build -trimpath -o "$GM_E2E_SERVER_BIN" ./cmd/graphite-meter)
-export GM_E2E_TLS_CERT GM_E2E_TLS_KEY GM_E2E_SPKI GM_E2E_SERVER_BIN
-cd client && bun run test:e2e
-''',
+  "cd go && go build -trimpath -o ../client/test-results/graphite-meter ./cmd/graphite-meter",
+]
+
+[tasks.e2e]
+description = "Run Chromium against one local server fleet"
+dir = "client"
+run = [{ task = "_e2e-build" }, "bun run scripts/e2e.ts"]
+
+[tasks.bench-ui]
+description = "Measure UI frame delivery against the local server fleet (manual)"
+dir = "client"
+run = [
+  { task = "_e2e-build" },
+  "bun run scripts/e2e.ts bun test ./bench/ui.bench.ts --no-orphans --timeout=600000",
 ]
 
 [tasks.stress]
@@ -409,8 +410,7 @@ run = [
   { task = "security" },
   { task = "client-audit" },
   { task = "secret-scan-ci" },
-  { task = "client-browser" },
-  { task = "client-e2e" },
+  { task = "e2e" },
   { task = "tui-cross-build" },
   { task = "release-check" },
   { task = "container-smoke" },

@@ -1,6 +1,6 @@
 import { afterAll } from "bun:test";
 import { resolve, sep } from "node:path";
-import { expect, test } from "../browser/webview";
+import { expect, test } from "../e2e/webview";
 
 const host = process.env.GM_BENCH_HOST ?? "127.0.0.1";
 const ports = { h1: 7246, h1tls: 7247, h2: 7248, h3: 7249 };

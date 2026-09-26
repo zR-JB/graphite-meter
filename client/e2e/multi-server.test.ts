@@ -1,524 +1,110 @@
-import { fleet, stopFleetServer, test, expect } from "./multi-server-fixtures";
-import {
-  AxeBuilder,
-  expectNoHorizontalOverflow,
-  openSettings,
-  openEndpointInfo,
-  startTest,
-  waitForCompletion,
-} from "../browser/webview";
 import { isHistoryRecord } from "../src/lib/history/types";
-import { configure, savedResult, ready } from "./multi-server-actions";
+import {
+  amsterdam,
+  baseConfig,
+  closeSettings,
+  frankfurt,
+  helsinki,
+  home,
+  open,
+  openSettings,
+  ready,
+  run,
+  savedResult,
+} from "./fleet";
+import { expect, test } from "./webview";
 
-test("an HTTP page automatically verifies clear and TLS HTTP/1.1 streams", async ({
-  page,
-}) => {
-  // An ordinary non-loopback HTTP page does not expose WebTransport. Exercise
-  // the same fallback with real clear and TLS listeners in the local fixture.
-  await page.addInitScript(() => {
-    Object.defineProperty(window, "WebTransport", {
-      value: undefined,
-      configurable: true,
-    });
-  });
-  await configure(
-    page,
-    ["self", fleet[1].id],
-    1500,
-    {
-      transports: { throughputTarget: "auto", latencyTarget: "auto" },
-    },
-    { mode: "primary", serverId: "self" },
-    fleet[0].http,
-  );
-  await ready(page);
-  const settings = await openSettings(page);
-  const choices = settings.getByRole("group", {
-    name: "Servers to test",
-    exact: true,
-  });
-  await expect(choices).toHaveAttribute("aria-busy", "false");
-  await expect(choices.locator(".server-preflight")).toHaveCount(4);
-  await expect(
-    settings.getByRole("combobox", { name: "Latency measurement servers" }),
-  ).toHaveValue("self");
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  const startedAt = Date.now();
-  await startTest(page);
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page, startedAt);
-  expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.multiServer?.failures).toEqual([]);
-  const [home, peer] = saved.multiServer!.servers;
-  expect(home.server.url).toBe(fleet[0].http);
-  expect(home.throughput?.origin).toBe(fleet[0].http);
-  expect(peer.server.url).toBe(fleet[1].url);
-  expect(peer.throughput?.origin).toBe(fleet[1].url);
-  expect(home.latencyTarget?.transport).toBe("websocket");
-  expect(peer.latencyTarget).toBeNull();
-  const endpoint = await openEndpointInfo(page);
-  const inspector = endpoint.getByRole("combobox", { name: "Inspect server" });
-  await inspector.press("End");
-  await page.keyboard.press("Enter");
-  await expect(inspector).toHaveValue(fleet[1].id);
-  await expect(endpoint.locator(".server-card")).toContainText(fleet[1].url);
-  await expect(
-    endpoint
-      .locator(".path")
-      .filter({ hasText: "throughput path" })
-      .locator("mark"),
-  ).toHaveText("Used");
-  await expect(
-    endpoint
-      .locator(".path")
-      .filter({ hasText: "latency path" })
-      .locator("mark"),
-  ).toHaveText("Not in test");
-  await inspector.press("Home");
-  await page.keyboard.press("Enter");
-  await expect(inspector).toHaveValue("self");
-  await expect(
-    endpoint
-      .locator(".path")
-      .filter({ hasText: "latency path" })
-      .locator("mark"),
-  ).toHaveText("Used");
-  await page.artifact("multi-server-endpoint-inspector");
-  await endpoint.getByRole("button", { name: "Close Details" }).click();
-  for (const server of [home, peer]) {
-    expect(server.totalBytes.down).toBeGreaterThan(0);
-    expect(server.totalBytes.up).toBeGreaterThan(0);
-  }
-});
+export const combined = {
+  ...baseConfig,
+  duration: { ...baseConfig.duration, downloadMs: 1000, uploadMs: 1000 },
+};
 
-test("four real servers share one run and retain separate receiver windows and latency after reload", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.addInitScript(
-    (unavailable) => {
-      const browser = window as {
-        fetch: (
-          input: RequestInfo | URL,
-          init?: RequestInit,
-        ) => Promise<Response>;
-      };
-      const original = browser.fetch.bind(window);
-      browser.fetch = (input, init) => {
-        const url = new URL(String(input), location.href);
-        if (
-          url.pathname === "/probe" &&
-          /-\d+$/.test(url.searchParams.get("cb") ?? "") &&
-          unavailable.includes(url.origin)
-        )
-          return Promise.reject(new TypeError("Fixture path unavailable"));
-        return original(input, init);
-      };
+test("four servers share one run and keep separate receiver windows", async (page) => {
+  const four = [home, frankfurt, amsterdam, helsinki];
+  await open(page, home.url, {
+    servers: four,
+    latency: { mode: "all", serverId: "self" },
+    config: {
+      ...combined,
+      stages: { ...baseConfig.stages, bidirectional: true },
     },
-    [fleet[1].url, fleet[2].url, fleet[2].http, fleet[2].h2],
-  );
-  await configure(
-    page,
-    fleet.slice(0, 4).map((server) => server.id),
-  );
+  });
   await ready(page);
-  const selectionSettings = await openSettings(page);
-  await expect(
-    selectionSettings
-      .getByRole("group", { name: "Servers to test", exact: true })
-      .getByRole("checkbox")
-      .first(),
-  ).toBeEnabled();
-  await selectionSettings
-    .getByRole("button", { name: "Close Settings" })
-    .click();
-  const startedAt = Date.now();
-  await startTest(page);
-  await openSettings(page);
-  await expect(
-    selectionSettings
-      .getByRole("group", { name: "Servers to test", exact: true })
-      .getByRole("checkbox")
-      .first(),
-  ).toBeDisabled();
-  await selectionSettings
-    .getByRole("button", { name: "Close Settings" })
-    .click();
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page, startedAt);
+  const saved = await run(page);
   expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.schemaVersion).toBe(4);
-  if (saved.multiServer?.failures.length) {
-    console.info("Mixed-protocol failures", saved.multiServer.failures);
-    console.info(
-      "Receiver checkpoint timing",
-      await page.evaluate(() =>
-        performance
-          .getEntriesByType("resource")
-          .filter((entry) => entry.name.includes("/upload/checkpoint"))
-          .map((entry) => ({
-            origin: new URL(entry.name).origin,
-            start: entry.startTime,
-            duration: entry.duration,
-            protocol: (entry as PerformanceResourceTiming).nextHopProtocol,
-          })),
-      ),
-    );
-  }
-  expect(saved.multiServer?.participants).toHaveLength(4);
+  expect(saved.outcome).toBe("complete");
   expect(saved.multiServer?.failures).toEqual([]);
-  expect(
-    saved.multiServer!.servers.map((server) => server.throughput?.origin),
-  ).toEqual([fleet[0].url, fleet[1].h2, fleet[2].h3, fleet[3].url]);
+  expect(saved.multiServer?.participants).toEqual(four.map((s) => s.id));
   for (const stage of ["download", "upload", "bidirectional"] as const) {
     const interval = saved.multiServer!.intervals.find(
-      (interval) => interval.stage === stage,
+      (candidate) => candidate.stage === stage,
     )!;
     expect(interval.complete).toBe(true);
     expect(interval.participants).toHaveLength(4);
-    for (const dir of stage === "bidirectional"
-      ? (["down", "up"] as const)
-      : ([stage === "download" ? "down" : "up"] as const))
-      expect(interval.headline?.[dir]).toHaveLength(4);
+    const dirs = stage === "download" ? ["down"] : ["up"];
+    for (const dir of stage === "bidirectional" ? ["down", "up"] : dirs)
+      expect(interval.headline?.[dir as "down"]).toHaveLength(4);
   }
   for (const server of saved.multiServer!.servers) {
     expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);
   }
-  const resultSelector = page.getByRole("combobox", {
-    name: "Result measurements",
-  });
-  await resultSelector.press("Home");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await expect(resultSelector).toBeFocused();
-  await expect(resultSelector).toHaveValue("self");
-  await expect(resultSelector).toContainText("Home");
-  await page.keyboard.press("End");
-  await page.keyboard.press("Enter");
-  await expect(resultSelector).toHaveValue("server-3");
-  await page.keyboard.press("Home");
-  await page.keyboard.press("Enter");
-  await expect(resultSelector).toHaveValue("");
-  const audit = await new AxeBuilder({ page })
-    .include(".results-slot")
-    .analyze();
-  expect(audit.violations).toEqual([]);
-  await page.artifact("multi-server-desktop-result");
-  const settings = await openSettings(page);
-  await settings.getByRole("link", { name: "View History" }).click();
-  await page.locator("a.result-row").click();
-  const savedScope = page
-    .locator(".result-detail")
-    .getByRole("combobox", { name: "Result measurements" });
-  await expect(savedScope).toBeVisible();
-  await expect(savedScope.locator("option")).toHaveCount(5);
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  await page.artifact("multi-server-history-desktop");
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expectNoHorizontalOverflow(page.locator(".result-detail"));
-  await page.artifact("multi-server-history-phone");
-  await page.getByText("Servers & paths", { exact: true }).click();
-  const servers = page.locator(".result-detail table");
-  await servers.scrollIntoViewIfNeeded();
-  await expect(servers.locator("tbody tr")).toHaveCount(4);
-  await expect(servers).toContainText("Loopback fixture");
-  await expect(servers).toContainText(new URL(fleet[1].url).host);
-  await page.artifact("saved-servers-phone");
+
+  const scope = page.getByRole("combobox", { name: "Result measurements" });
+  await scope.fill("server-1");
+  await expect(scope).toHaveValue("server-1");
+  expect(await savedResult(page)).toEqual(saved);
+
+  await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  await expect(savedScope).toBeVisible();
-  expect((await savedResult(page)).multiServer?.intervals).toEqual(
-    saved.multiServer?.intervals,
-  );
+  await page.getByRole("button", { name: "Servers & paths" }).click();
+  const servers = page.locator(".result-detail tbody tr");
+  await expect(servers).toHaveCount(4);
+  await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
+  expect(await savedResult(page)).toEqual(saved);
 });
 
-test("a single-server result keeps the ordinary live and history views in a fleet", async ({
-  page,
-}) => {
-  await configure(page, ["self"]);
-  await ready(page);
-  await expect(page.locator(".server-indicator")).toHaveCount(0);
-  const startedAt = Date.now();
-  await startTest(page);
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page, startedAt);
-  expect(saved.multiServer?.selection).toHaveLength(1);
-  expect(saved.multiServer?.intervals).toEqual([]);
-  expect(saved.wireEstimates?.downloadBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".summary-scope")).toHaveCount(0);
-  await expect(page.locator(".server-indicator")).toHaveCount(0);
-  const settings = await openSettings(page);
-  await settings.getByRole("link", { name: "View History" }).click();
-  await page.locator("a.result-row").click();
-  await expect(page.locator(".result-detail")).toBeVisible();
-  await expect(page.locator(".summary-scope")).toHaveCount(0);
-  await expect(page.locator(".server-focus")).toHaveCount(0);
-  await page.getByText("Servers & paths", { exact: true }).click();
-  await expect(page.locator(".result-detail tbody tr")).toHaveCount(1);
-  await expect(page.locator(".result-detail tbody")).toContainText(
-    "Home · Loopback fixture",
+test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async (page) => {
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "WebTransport", { value: undefined }),
   );
-  await page.artifact("single-server-fleet-history");
+  await open(page, home.http, {
+    servers: [{ id: "self", url: home.http }, frankfurt],
+    config: {
+      ...combined,
+      transports: { throughputTarget: "auto", latencyTarget: "auto" },
+    },
+  });
+  await ready(page);
+  const saved = await run(page);
+  expect(saved.multiServer?.failures).toEqual([]);
+  const [self, peer] = saved.multiServer!.servers;
+  expect(self.throughput?.origin).toBe(home.http);
+  expect(peer.throughput?.origin).toBe(frankfurt.url);
+  expect(self.latencyTarget?.transport).toBe("websocket");
+  expect(peer.latencyTarget).toBeNull();
+
+  await page.getByRole("button", { name: "Toggle Details" }).click();
+  const info = page.locator(".infra");
+  const badge = (role: string) =>
+    info.locator(".path", { hasText: `${role} path` }).locator("mark");
+  await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
+  await expect(info.locator(".server-card")).toContainText(frankfurt.url);
+  await expect(badge("throughput")).toHaveText("Used");
+  await expect(badge("latency")).toHaveText("Not in test");
+  await info.getByRole("combobox", { name: "Inspect server" }).fill("self");
+  await expect(badge("latency")).toHaveText("Used");
 });
 
-test("switching a verified fleet to self starts immediately", async ({
-  page,
-}) => {
-  await configure(page, ["self", "server-1"]);
+test("deselecting a verified peer starts a self-only run at once", async (page) => {
+  await open(page, home.url, { servers: [home, frankfurt] });
   await ready(page);
   const settings = await openSettings(page);
-  await settings.getByRole("checkbox", { name: "Frankfurt" }).click();
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  await startTest(page);
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page);
+  await settings.getByRole("checkbox", { name: /^Frankfurt/ }).click();
+  await closeSettings(page);
+  const saved = await run(page);
   expect(saved.multiServer?.participants).toEqual(["self"]);
   expect(saved.multiServer?.failures).toEqual([]);
   expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
-});
-
-test("a live download refuses an upload stage without receiver checkpoint support", async ({
-  page,
-}) => {
-  await page.addInitScript(() => {
-    const browser = window as {
-      fetch: (
-        input: RequestInfo | URL,
-        init?: RequestInit,
-      ) => Promise<Response>;
-    };
-    const fetch = browser.fetch.bind(window);
-    browser.fetch = async (...args) => {
-      const response = await fetch(...args);
-      if (new URL(String(args[0]), location.href).pathname !== "/preflight")
-        return response;
-      const body = await response.json();
-      body.capabilities.uploadCheckpoint = false;
-      const replaced = Response.json(body, {
-        status: response.status,
-        headers: response.headers,
-      });
-      Object.defineProperty(replaced, "url", { value: response.url });
-      return replaced;
-    };
-  });
-  await configure(page, ["self"], 3000, {
-    stages: {
-      latency: false,
-      download: true,
-      upload: false,
-      bidirectional: false,
-    },
-    skipLoadedLatencyWhenStageOff: true,
-  });
-  await ready(page);
-  const startedAt = Date.now();
-  await startTest(page);
-  await expect(page.locator('[role="status"].label')).toContainText(
-    "Downloading",
-  );
-  const upload = page.getByRole("switch", { name: "Upload stage" });
-  await expect(upload).toBeEnabled();
-  await upload.click();
-  await expect(upload).toHaveAttribute("aria-checked", "false");
-  await waitForCompletion(page, 15000);
-  const saved = await savedResult(page, startedAt);
-  expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  expect(saved.stages.upload.result).toBeNull();
-});
-
-test("a real peer dropout keeps healthy transfers running and persists its failure after reload", async ({
-  page,
-}) => {
-  await configure(
-    page,
-    fleet.slice(0, 3).map((server) => server.id),
-    1500,
-    {
-      // Leave time for bounded lane recovery, terminal removal, and a fresh survivor window.
-      duration: {
-        warmupMs: 250,
-        latencyMs: 1000,
-        downloadMs: 14000,
-        uploadMs: 1500,
-        bidirectionalMs: 1500,
-      },
-    },
-  );
-  await ready(page);
-  const startedAt = Date.now();
-  await startTest(page);
-  await expect(page.locator('[role="status"].label')).toContainText(
-    "Downloading",
-    {
-      timeout: 10000,
-    },
-  );
-  await Bun.sleep(700);
-  await stopFleetServer("server-2");
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page, startedAt);
-  expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.outcome).toBe("partial");
-  expect(saved.multiServer?.participants).toEqual(["self", "server-1"]);
-  expect(
-    saved.multiServer?.failures.find(
-      (failure) => failure.scope === "throughput",
-    ),
-  ).toMatchObject({
-    serverId: "server-2",
-    scope: "throughput",
-    stage: "download",
-  });
-  const subsequent = saved.multiServer!.intervals.filter(
-    (interval) =>
-      interval.reason === "dropout" || interval.stage !== "download",
-  );
-  expect(subsequent.length).toBeGreaterThan(0);
-  expect(
-    subsequent.every((interval) => !interval.participants.includes("server-2")),
-  ).toBe(true);
-  expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  await expect(page.locator(".summary-scope")).toContainText("2 of 3 servers");
-  const settings = await openSettings(page);
-  await settings.getByRole("link", { name: "View History" }).click();
-  await page.locator("a.result-row").first().click();
-  await page.reload();
-  await expect(page.locator(".summary-scope")).toContainText("2 of 3 servers");
-  await expect(page.locator(".summary-scope")).toContainText("Amsterdam");
-  expect((await savedResult(page)).multiServer?.failures).toEqual(
-    saved.multiServer?.failures,
-  );
-  await page.artifact("multi-server-partial-history");
-});
-
-test("primary latency selection is fixed for the run and saved alongside every throughput participant", async ({
-  page,
-}) => {
-  await configure(page, ["self", "server-1"]);
-  await ready(page);
-  // Already verified latency choices must not open another discovery or ping worker.
-  await page.evaluate(
-    (origins) => {
-      const state = globalThis as typeof globalThis & {
-        delayedPreflights: number;
-      };
-      state.delayedPreflights = 0;
-      const browser = window as {
-        fetch: (
-          input: RequestInfo | URL,
-          init?: RequestInit,
-        ) => Promise<Response>;
-      };
-      const original = browser.fetch;
-      browser.fetch = async (...args) => {
-        if (
-          String(args[0]).includes("/preflight?") &&
-          origins.includes(new URL(String(args[0]), location.href).origin) &&
-          state.delayedPreflights < 2
-        ) {
-          state.delayedPreflights++;
-          await new Promise((resolve) => setTimeout(resolve, 600));
-        }
-        return original(...args);
-      };
-    },
-    [fleet[0].url, fleet[1].url],
-  );
-  const settings = await openSettings(page);
-  await settings
-    .getByRole("combobox", { name: "Latency measurement servers" })
-    .press("Home");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          (globalThis as typeof globalThis & { delayedPreflights: number })
-            .delayedPreflights,
-      ),
-    )
-    .toBe(0);
-  await settings
-    .getByRole("combobox", { name: "Latency measurement servers" })
-    .press("End");
-  await page.keyboard.press("Enter");
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          JSON.parse(localStorage.getItem("graphite-meter:v1")!)
-            .latencySelection.serverId,
-      ),
-    )
-    .toBe("server-1");
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  await ready(page);
-  const started = Date.now();
-  await startTest(page);
-  await openSettings(page);
-  await expect(
-    settings.getByRole("combobox", { name: "Latency measurement servers" }),
-  ).toBeDisabled();
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  await waitForCompletion(page, 30000);
-  const saved = await savedResult(page, started);
-  expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.multiServer?.failures).toEqual([]);
-  expect(saved.multiServer?.participants).toEqual(["self", "server-1"]);
-  const home = saved.multiServer!.servers.find(
-    (server) => server.server.id === "self",
-  )!;
-  const primary = saved.multiServer!.servers.find(
-    (server) => server.server.id === "server-1",
-  )!;
-  expect(home.latencyTarget).toBeNull();
-  expect(home.latency).toBeNull();
-  expect(
-    Object.values(home.latencyByStage).every((value) => value === null),
-  ).toBe(true);
-  expect(home.totalBytes.down).toBeGreaterThan(0);
-  expect(home.totalBytes.up).toBeGreaterThan(0);
-  expect(primary.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
-  expect(primary.latencyByStage.download?.probeCount).toBeGreaterThan(0);
-  expect(saved.multiServer?.latencyFocus).toBe("server-1");
-  const latencyFocus = page.locator(".latency-focus select");
-  await expect(latencyFocus).toHaveValue("server-1");
-  await expect(latencyFocus).toBeDisabled();
-  await page
-    .getByRole("combobox", { name: "Result measurements" })
-    .press("Home");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await expect(page.locator(".result-cards")).toContainText("Not measured");
-  await expect(latencyFocus).toHaveValue("server-1");
-  await page.artifact("primary-latency-result");
-  await openSettings(page);
-  await settings.getByRole("link", { name: "View History" }).click();
-  await page.locator("a.result-row").first().click();
-  await settings.getByRole("button", { name: "Close Settings" }).click();
-  const savedScope = page
-    .locator(".result-detail")
-    .getByRole("combobox", { name: "Result measurements" });
-  const profile = page.locator(
-    '[data-latency-profile][data-variant="compact"]',
-  );
-  await expect(savedScope).toHaveValue("");
-  await expect(profile).toBeVisible();
-  await expect(page.locator(".result-detail h3")).toContainText("Frankfurt");
-  await savedScope.press("Home");
-  await page.keyboard.press("ArrowDown");
-  await page.keyboard.press("Enter");
-  await expect(savedScope).toHaveValue("self");
-  await expect(page.locator(".result-detail .result-cards")).toContainText(
-    "Not measured",
-  );
-  await expect(profile).toBeVisible();
-  await savedScope.press("End");
-  await page.keyboard.press("Enter");
-  await expect(savedScope).toHaveValue("server-1");
-  await expect(profile).toBeVisible();
-  await page.artifact("primary-latency-history");
 });

@@ -10,6 +10,7 @@
     "browser/**/*.ts",
     "bench/**/*.ts",
     "e2e/**/*.ts",
+    "scripts/**/*.ts",
     "vite.config.ts",
     "vite.e2e.config.ts"
   ],

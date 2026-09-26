@@ -269,6 +269,7 @@
       <h3 class="caps">Connection paths</h3>
       <span
         class="badge"
+        data-readiness={readiness}
         data-tone={readiness === "verified"
           ? "ok"
           : readiness === "failed"

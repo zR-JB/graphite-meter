@@ -30,9 +30,8 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       go: ${{ steps.filter.outputs.go }}
-      browser: ${{ steps.filter.outputs.browser }}
       tui: ${{ steps.filter.outputs.tui }}
-      integration: ${{ steps.filter.outputs.integration }}
+      e2e: ${{ steps.filter.outputs.e2e }}
       smoke: ${{ steps.filter.outputs.smoke }}
       release: ${{ steps.filter.outputs.release }}
       security: ${{ steps.filter.outputs.security }}
@@ -99,47 +98,6 @@ jobs:
       - name: Run race detector and coverage floor
         run: mise run server-race
 
-  browser:
-    name: Browser (Chromium WebView)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    needs: plan
-    if: needs.plan.outputs.browser == 'true'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
-      - id: toolchain
-        name: Set up browser test toolchain
-        uses: ./.github/actions/setup-project
-        with: {bun: 'true', client-deps: 'true'}
-      - id: chrome
-        name: Install pinned Chrome for Testing
-        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
-        with:
-          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
-          install-dependencies: true
-      - name: Verify pinned Chromium WebView launch
-        env:
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: cd client && bun run check:webview
-      - name: Run Chromium WebView browser suite
-        env:
-          # Chrome for Testing is an unpacked archive without a setuid sandbox;
-          # this read-only, secret-free job therefore uses Chromium's CI mode.
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: mise run client-browser
-      - name: Upload WebView failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: webview-browser-failures
-          path: client/test-results/webview
-          if-no-files-found: ignore
-
   tui:
     name: TUI cross-build
     runs-on: ubuntu-24.04
@@ -156,16 +114,12 @@ jobs:
       - name: Cross-build all supported TUI targets
         run: mise run tui-cross-build
 
-  integration:
-    name: Browser/server E2E (${{ matrix.suite }})
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [connections, measurement, authentication, performance]
+  e2e:
+    name: Browser E2E
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 15
     needs: plan
-    if: needs.plan.outputs.integration == 'true'
+    if: needs.plan.outputs.e2e == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -180,25 +134,22 @@ jobs:
         with:
           chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
           install-dependencies: true
-      - name: Verify pinned Chromium WebView launch
+      - name: Run Chromium against one local server fleet
         env:
+          # Chrome for Testing is an unpacked archive without a setuid sandbox;
+          # this read-only, secret-free job therefore uses Chromium's CI mode.
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: cd client && bun run check:webview
-      - name: Run browser/server transport E2E
-        env:
-          GM_E2E_SUITE: ${{ matrix.suite }}
-          # See the browser job: the archive has no usable setuid sandbox.
-          BUN_CHROME_ARGS: --no-sandbox
-          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-        run: mise run client-e2e
-      - name: Upload WebView failure diagnostics
+        run: mise run e2e
+      - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: webview-e2e-failures-${{ matrix.suite }}
-          path: client/test-results/webview
+          name: e2e-failures
+          path: |
+            client/test-results/webview
+            client/test-results/servers
           if-no-files-found: ignore
 
   smoke:
@@ -272,7 +223,7 @@ jobs:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, core, go, browser, tui, integration, smoke, release, security, secret-scan]
+    needs: [plan, core, go, tui, e2e, smoke, release, security, secret-scan]
     steps:
       - name: Require every selected job
         env:

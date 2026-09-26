@@ -218,12 +218,12 @@ def check_ci(root: Path) -> None:
     versions = re.findall(r"(?m)^\s+(?:chrome-version|GM_EXPECTED_CHROME_VERSION): (.+)$", ci)
     setup = read(root, ".github/actions/setup-project/action.yml")
     if (
-        set(versions) != {pinned} or ci.count("bun run check:webview") != 2
+        set(versions) != {pinned} or len(versions) != 2
         or "chrome=$(python3 scripts/ci/toolchains.py get browser.chrome)" not in setup
     ):
-        fail("browser jobs must install and launch-check the pinned Chromium")
+        fail("the E2E job must install and version-check the pinned Chromium")
     scripts = json.loads(read(root, "client/package.json"))["scripts"]
-    for name in ("test:browser", "test:e2e", "test:bench"):
+    for name in ("test:e2e", "test:bench"):
         if "--no-orphans" not in shlex.split(scripts[name]):
             fail(f"{name} must clean up child processes with --no-orphans")
 

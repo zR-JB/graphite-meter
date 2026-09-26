@@ -26,16 +26,11 @@ go:
   - 'client/src/auth/**'
   - 'client/src/app.css'
 
-browser:
-  - *workflow
-  - 'api/**'
-  - 'client/**'
-
 tui:
   - *workflow
   - 'go/**'
 
-integration:
+e2e:
   - *workflow
   - 'api/**'
   - 'client/**'

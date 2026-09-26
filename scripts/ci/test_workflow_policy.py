@@ -64,7 +64,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "mise run server-race", "mise run server-test", "local gate step server-test"),
     (".github/ci-paths.yml", "  - 'client/src/app.css'\n", "", "client/src/app.css"),
     (W + "ci.yml", "chrome-version: ${{ steps", "chrome-version: latest #", "pinned Chromium"),
-    ("client/package.json", "e2e.sh --no-orphans", "e2e.sh", "no-orphans"),
+    ("client/package.json", "--parallel=3 --no-orphans", "--parallel=3", "no-orphans"),
     ("certs/dev.txt", None, "local development certificate", "TLS certificate/key paths"),
     ("notes.txt", None, "-----BEGIN " + "PRIVATE KEY-----", "PEM"),
 )
