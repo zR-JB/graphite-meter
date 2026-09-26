@@ -149,13 +149,24 @@ type laneWriter struct {
 	moved bool
 }
 
+// laneActivityBytes bounds how much a slow but draining peer must take before the session counts as active.
+const laneActivityBytes = 16 * 1024
+
 func (c *laneWriter) Write(p []byte) (int, error) {
-	n, err := c.w.Write(p)
-	if n > 0 {
-		c.moved = true
-		c.live.bump()
+	total := 0
+	for len(p) > 0 {
+		n, err := c.w.Write(p[:min(len(p), laneActivityBytes)])
+		if n > 0 {
+			total += n
+			c.moved = true
+			c.live.bump()
+		}
+		if err != nil {
+			return total, err
+		}
+		p = p[n:]
 	}
-	return n, err
+	return total, nil
 }
 
 func withWTWriteStream(ctx context.Context, str *webtransport.SendStream, serve func()) {
