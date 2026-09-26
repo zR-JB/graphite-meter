@@ -166,7 +166,7 @@ func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
 
 func TestCheckpointMissesRemoveServers(t *testing.T) {
 	t.Parallel()
-	s := &sampler{misses: map[string]int{}}
+	s := &stageRun{misses: map[string]int{}}
 	refused := errors.New("refused")
 	for i, final := range []bool{false, false, true} {
 		if s.dropsServer("a", refused, final) {
@@ -210,7 +210,7 @@ func TestMissingRequiredResultsAreNotComplete(t *testing.T) {
 				co.aggregate.observe(nativeBoundary(1000, map[string]uint64{"a": 1000},
 					map[string]*ReceiverSnapshot{"a": nativeReceiver("u", 1000, 1000)}))
 			}
-			co.finishTransferStage(stage, nil)
+			(&stageRun{c: co, plan: stage}).finish(nil)
 		}
 		if got := co.outcome(t.Context(), nil); got != c.want {
 			t.Errorf("%s: outcome %v, want %v", c.name, got, c.want)
@@ -251,11 +251,10 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
 		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
 		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-		s := &sampler{c: co, stage: stage, results: make(chan sampledBoundary, 1)}
-		s.begin(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
 		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
-		sample := sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)}
-		s.observe(sample, []*stageServer{own})
+		s := &stageRun{c: co, plan: stage, servers: []*stageServer{own}}
+		s.beginSampling(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
+		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)})
 		if p.removed != c.removed {
 			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
 		}
@@ -356,12 +355,12 @@ func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {
 		initial := nativeBoundary(0, map[string]uint64{"a": 0}, nil)
 		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 		co.aggregate.observe(initial)
-		s := &sampler{c: co, stage: stage}
-		s.begin(time.Now(), initial)
 		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 1000}, nil)}, own)
+		s := &stageRun{c: co, plan: stage, servers: own}
+		s.beginSampling(time.Now(), initial)
+		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 1000}, nil)})
 		final := sampledBoundary{boundary: nativeBoundary(1250, map[string]uint64{"a": 1000 + moved}, nil), final: true}
-		if done, err := s.observe(final, own); !done || err != nil {
+		if done, err := s.observe(final); !done || err != nil {
 			t.Fatalf("final boundary did not end the stage: %v %v", done, err)
 		}
 		want := 1250 * time.Millisecond
@@ -383,9 +382,9 @@ func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	initial := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)})
 	co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 	co.aggregate.observe(initial)
-	s := &sampler{c: co, stage: stage}
-	s.begin(time.Now(), initial)
 	own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
+	s := &stageRun{c: co, plan: stage, servers: own}
+	s.beginSampling(time.Now(), initial)
 	for i, step := range []struct {
 		receiver *ReceiverSnapshot
 		want     []ThroughputSample
@@ -401,7 +400,7 @@ func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 		if step.receiver == nil {
 			sample.misses = map[string]error{"a": errors.New("missed")}
 		}
-		s.observe(sample, own)
+		s.observe(sample)
 		if !reflect.DeepEqual(live, step.want) {
 			t.Errorf("step %d: live rates %+v, want %+v", i, live, step.want)
 		}
