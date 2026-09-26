@@ -26,8 +26,6 @@ export type Phase =
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
-/** Advertised transfer target id or automatic/grouped target selection. */
-export type ThroughputTargetSelection = string;
 export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
 /* Warmup and measurement share one activity object, so preparation primes the connections measurement reuses. */
@@ -105,7 +103,7 @@ export interface RunnerConfig {
   experimentalDatagramThroughput: boolean;
   /** Independently selected throughput and latency targets. */
   transports: {
-    throughputTarget: ThroughputTargetSelection;
+    throughputTarget: "auto" | string;
     latencyTarget: "auto" | string;
   };
   /** Confidence-based early exit. */
@@ -150,7 +148,7 @@ export interface LatencyBucket {
   continuityId: number;
 }
 
-export interface PhaseTransition {
+interface PhaseTransition {
   from: Phase;
   to: Phase;
   stage: TransportRole | null;
