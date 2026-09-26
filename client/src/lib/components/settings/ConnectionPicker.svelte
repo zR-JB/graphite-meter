@@ -26,7 +26,7 @@
   );
   const simultaneous = $derived(serverIds.length > 1);
   const roleSummary = $derived(
-    summarizeRoleValidation(store.config, role, serverIds, store.servers),
+    summarizeRoleValidation(role, serverIds, store.servers),
   );
   const validation = $derived(
     simultaneous

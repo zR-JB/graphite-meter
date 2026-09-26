@@ -170,21 +170,13 @@ export class ServerConnection {
     if (force)
       for (const r of this.#required())
         if (!role || r === role) this.#cancelRole(r);
-    const keys = this.#keys();
     const discovery = await this.#discover(
       fresh || !this.config,
       force,
       signal,
     );
     const config = this.config;
-    if (
-      !discovery ||
-      !config ||
-      signal?.aborted ||
-      this.#closed ||
-      keys !== this.#keys()
-    )
-      return;
+    if (!discovery || !config || signal?.aborted || this.#closed) return;
     const now = Date.now();
     const roles = this.#required().filter((r) => {
       const { state, path } = this.#validation[r];
@@ -479,25 +471,31 @@ export class ServerConnection {
     const failed = roles.find(
       (role) => this.#validation[role].state === "failed",
     );
+    const capability = config
+      ? uploadCapabilityFailure(config, this.#discovery)
+      : undefined;
     const message = expired
       ? new ServerAuthenticationRequired(this.server).message
       : this.#error
         ? failureMessage(this.#error, this.server)
-        : (config && uploadCapabilityFailure(config, this.#discovery)) ||
-          (failed && this.#validation[failed].message) ||
-          undefined;
+        : capability || (failed && this.#validation[failed].message);
     let validation = this.#validation;
-    if (config && (discovering || this.#error))
-      for (const role of roles)
-        validation = {
-          ...validation,
-          [role]: {
-            selection: connectionSelection(config, role),
-            state: discovering ? "checking" : "failed",
-            path: null,
-            ...(message ? { message } : {}),
-          },
-        };
+    // The view reports what a run could use now; the evidence itself stays for the next check.
+    for (const role of roles) {
+      const own = validation[role];
+      const shown =
+        discovering || this.#error
+          ? {
+              selection: own.selection,
+              state: discovering ? ("checking" as const) : ("failed" as const),
+              path: null,
+              ...(message ? { message } : {}),
+            }
+          : role === "throughput" && capability
+            ? { ...own, state: "failed" as const, message: capability }
+            : own;
+      validation = { ...validation, [role]: shown };
+    }
     const signIn =
       expired ||
       (!!this.#error && this.#discovering.backoff.signIn) ||
@@ -539,9 +537,6 @@ export class ServerConnection {
       this.credentials.kind === "grant" &&
       (this.credentials.expiresAt ?? 0) <= Date.now()
     );
-  }
-  #keys(): string {
-    return CONNECTION_ROLES.map((role) => this.#roles[role].key).join("\n");
   }
   #setRole(
     role: ConnectionRole,

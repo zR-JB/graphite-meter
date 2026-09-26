@@ -118,6 +118,23 @@ test("a failed role keeps the other role's verified path", async () => {
   expect(connection.paths()).toBeNull();
 });
 
+test("the view fails throughput without upload checkpoints but keeps its probe evidence", async () => {
+  const paths = evidence();
+  paths.discovery.uploadCheckpoint = false;
+  const connection = connect({
+    discover: async () => paths.discovery,
+    prepare: async (config) => preparation(config, paths),
+  });
+  await connection.check();
+  expect(connection.view).toMatchObject({
+    readiness: "failed",
+    message: expect.stringContaining("checkpoint"),
+  });
+  const { throughput, latency } = connection.view.validation;
+  expect(throughput).toMatchObject({ state: "failed", path: paths.throughput });
+  expect(latency.state).toBe("verified");
+});
+
 test("an intent change cancels only its role and discards the late result", async () => {
   const held = { throughput: deferred<void>(), latency: deferred<void>() };
   const signals: Partial<Record<string, AbortSignal>> = {};

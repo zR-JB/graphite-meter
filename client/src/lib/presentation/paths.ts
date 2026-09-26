@@ -13,9 +13,7 @@ import {
   connectionSelection,
   httpProtocolLabel,
   locateTarget,
-  roleNeedsValidation,
   selectTarget,
-  uploadCapabilityFailure,
   webTransportGap,
   type AnyTarget,
   type ConnectionValidation,
@@ -272,7 +270,7 @@ export interface ConnectionPresentation {
   verifiedAt?: number;
 }
 
-/** A verified or selected path per role, as the connection rows and details show it. */
+/** A server view's path per role, or the run's own paths, as the connection rows and details show it. */
 export function presentConnections(
   config: RunnerConfig,
   discovery: TransportDiscovery | null,
@@ -282,18 +280,10 @@ export function presentConnections(
   const make = (role: ConnectionRole): ConnectionPresentation => {
     const selection = connectionSelection(config, role);
     const check = validation[role];
-    const path = active
-      ? active[role]
-      : roleNeedsValidation(config, validation, role, discovery)
-        ? null
-        : check.path;
+    const path = active ? active[role] : check.path;
     const target =
       path?.target ??
       (discovery ? selectTarget(discovery, role, selection) : null);
-    const capabilityFailure =
-      !active && role === "throughput"
-        ? uploadCapabilityFailure(config, discovery)
-        : undefined;
     const observedProtocol =
       path && "fetch" in path ? path.fetch.protocol : undefined;
     const described =
@@ -320,16 +310,12 @@ export function presentConnections(
       selection,
       target,
       availability: state,
-      validation: active
-        ? "verified"
-        : capabilityFailure
-          ? "failed"
-          : check.state,
+      validation: active ? "verified" : check.state,
       label:
         described?.label ??
         (role === "throughput" ? "Throughput path" : "Latency path"),
       summary: described?.summary ?? "Selection unresolved",
-      message: active ? undefined : (capabilityFailure ?? check.message),
+      message: active ? undefined : check.message,
       observedProtocol,
       browserProtocol:
         path && "browserProtocol" in path ? path.browserProtocol : undefined,

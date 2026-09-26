@@ -12,7 +12,6 @@ import {
   WT_MAX_LANES,
   type ConnectionValidation,
 } from "./paths";
-import { presentConnections } from "../presentation/paths";
 import type {
   PhaseActivity,
   PreparedPaths,
@@ -186,25 +185,18 @@ test("prepared runs require fresh verified evidence for every needed role", () =
   expect(preparedPaths(config(), null, validation)).toBeNull();
 });
 
-test("old evidence is hidden after a target descriptor or generation change", () => {
+test("old evidence needs a check after a target descriptor or generation change", () => {
   const paths = testPreparedPaths();
   const validation = verified(paths);
   const changed = structuredClone(paths.discovery);
-  changed.throughput[paths.throughput.target.origin].targets[0].protocol =
-    "http2";
-  expect(roleNeedsValidation(config(), validation, "throughput", changed)).toBe(
-    true,
-  );
-  expect(roleNeedsValidation(config(), validation, "latency", changed)).toBe(
-    false,
-  );
+  const origin = paths.throughput.target.origin;
+  changed.throughput[origin].targets[0].protocol = "http2";
+  const needs = (role: "throughput" | "latency") =>
+    roleNeedsValidation(config(), validation, role, changed);
+  expect([needs("throughput"), needs("latency")]).toEqual([true, false]);
   changed.generation = "gen-b";
-  expect(roleNeedsValidation(config(), validation, "latency", changed)).toBe(
-    true,
-  );
-  const model = presentConnections(config(), changed, validation);
-  expect(model.throughput.serverProtocol).toBeUndefined();
-  expect(model.latency.preTestPingMs).toBeUndefined();
+  expect(needs("latency")).toBe(true);
+  expect(preparedPaths(config(), changed, validation)).toBeNull();
 });
 
 test("role summaries never borrow another role's failure or checking state", () => {
@@ -212,11 +204,11 @@ test("role summaries never borrow another role's failure or checking state", () 
   const failing = verified(paths);
   failing.throughput = { selection: "auto", state: "failed", path: null };
   const servers = new Map([
-    ["a", { discovery: paths.discovery, validation: verified(paths) }],
-    ["b", { discovery: paths.discovery, validation: failing }],
+    ["a", { validation: verified(paths) }],
+    ["b", { validation: failing }],
   ]);
   const summary = (role: "throughput" | "latency", ids = ["a", "b"]) =>
-    summarizeRoleValidation(config(), role, ids, servers);
+    summarizeRoleValidation(role, ids, servers);
   expect(summary("throughput")).toEqual({
     state: "failed",
     verified: 1,
@@ -229,11 +221,6 @@ test("role summaries never borrow another role's failure or checking state", () 
   });
   failing.throughput.state = "checking";
   expect(summary("throughput").state).toBe("checking");
-  servers.set("b", {
-    discovery: { ...paths.discovery, generation: "new" },
-    validation: failing,
-  });
-  expect(summary("latency")).toEqual({ state: "stale", verified: 1, total: 2 });
   expect(summary("latency", ["a", "missing"])).toEqual({
     state: "stale",
     verified: 1,
@@ -241,37 +228,18 @@ test("role summaries never borrow another role's failure or checking state", () 
   });
 });
 
-test("missing upload checkpoints block prepared paths without erasing probe evidence", () => {
+test("missing upload checkpoints block prepared paths only while uploads run", () => {
   const paths = testPreparedPaths();
   paths.discovery.uploadCheckpoint = false;
   const validation = verified(paths);
   const cfg = config();
-  cfg.stages = {
-    latency: true,
-    download: true,
-    upload: false,
-    bidirectional: false,
-  };
+  cfg.stages.upload = cfg.stages.bidirectional = false;
   const key = connectionDraftRoleKey(cfg, "throughput");
   expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
   cfg.stages.upload = true;
   expect(connectionDraftRoleKey(cfg, "throughput")).not.toBe(key);
+  expect(uploadCapabilityFailure(cfg, paths.discovery)).toContain("checkpoint");
   expect(preparedPaths(cfg, paths.discovery, validation)).toBeNull();
-  expect(
-    roleNeedsValidation(cfg, validation, "throughput", paths.discovery),
-  ).toBe(false);
-  const view = presentConnections(cfg, paths.discovery, validation);
-  expect(view.throughput).toMatchObject({
-    validation: "failed",
-    message: uploadCapabilityFailure(cfg, paths.discovery),
-  });
-  expect(view.latency.validation).toBe("verified");
-  const servers = new Map([
-    ["self", { discovery: paths.discovery, validation }],
-  ]);
-  expect(
-    summarizeRoleValidation(cfg, "throughput", ["self"], servers).state,
-  ).toBe("failed");
   paths.discovery.uploadCheckpoint = true;
   expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
 });

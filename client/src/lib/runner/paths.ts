@@ -703,33 +703,14 @@ export function preparedPaths(
 
 /** A role card reports only its own evidence across the participating servers. */
 export function summarizeRoleValidation(
-  config: RunnerConfig,
   role: ConnectionRole,
   ids: readonly string[],
-  servers: ReadonlyMap<string, Pick<ServerView, "discovery" | "validation">>,
+  servers: ReadonlyMap<string, Pick<ServerView, "validation">>,
 ): { state: ConnectionValidationState; verified: number; total: number } {
-  const states = ids.map((id): ConnectionValidationState => {
-    const server = servers.get(id);
-    if (!server) return "stale";
-    if (
-      role === "throughput" &&
-      uploadCapabilityFailure(config, server.discovery)
-    )
-      return "failed";
-    const check = server.validation[role];
-    if (check.state === "verified")
-      return roleNeedsValidation(
-        config,
-        server.validation,
-        role,
-        server.discovery,
-      )
-        ? "stale"
-        : "verified";
-    return check.selection === connectionSelection(config, role)
-      ? check.state
-      : "stale";
-  });
+  const states = ids.map(
+    (id): ConnectionValidationState =>
+      servers.get(id)?.validation[role].state ?? "stale",
+  );
   const worst = (["checking", "failed", "stale"] as const).find((state) =>
     states.includes(state),
   );
