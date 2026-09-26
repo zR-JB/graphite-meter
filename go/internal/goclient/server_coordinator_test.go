@@ -60,6 +60,7 @@ type serverFixture struct {
 	catalog              wire.ServerCatalog
 	failed               atomic.Bool
 	checkpointFailed     atomic.Bool
+	checkpointRefusals   atomic.Int32
 	checkpointDelayNanos atomic.Int64
 	handlers, conns      sync.WaitGroup
 	catalogReads         atomic.Int32
@@ -131,7 +132,8 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 				}
 			}
 		}
-		if r.URL.Path == route.UploadCheckpoint && f.checkpointFailed.Load() {
+		refused := func() bool { return f.checkpointFailed.Load() || f.checkpointRefusals.Add(-1) >= 0 }
+		if r.URL.Path == route.UploadCheckpoint && refused() {
 			http.Error(w, "fixture checkpoint unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -394,19 +396,16 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refuse := func(after time.Duration) {
-		time.AfterFunc(after, func() {
-			a.checkpointFailed.Store(true)
-			time.AfterFunc(300*time.Millisecond, func() { a.checkpointFailed.Store(false) })
-		})
-	}
 	var upload Result
+	samples := 0
 	err = runSelected(t.Context(), cfg, prepared, func(e Event) {
 		switch {
 		case e.Kind == EventStage && e.Phase == PhaseWarmup:
-			refuse(0)
-		case e.Kind == EventStage && e.Phase == PhaseMeasuring:
-			refuse(cfg.UploadDuration - 100*time.Millisecond)
+			a.checkpointRefusals.Store(3)
+		case e.Kind == EventThroughput && e.Direction == Up:
+			if samples++; samples == 3 {
+				a.checkpointRefusals.Store(3)
+			}
 		case e.Kind == EventResult && e.Direction == Up:
 			upload = *e.Result
 		}
