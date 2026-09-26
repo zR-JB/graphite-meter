@@ -145,8 +145,9 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 	}
 	defer res.Body.Close()
 	if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") ||
-		!strings.Contains(csp, "connect-src 'self'") || res.Header.Get("X-Frame-Options") != "DENY" {
-		t.Fatalf("public page may be framed: %v", res.Header)
+		!strings.Contains(csp, "object-src 'none'") || !strings.Contains(csp, "connect-src 'self'") ||
+		res.Header.Get("X-Frame-Options") != "DENY" || res.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("public page lacks its hardening headers: %v", res.Header)
 	}
 }
 

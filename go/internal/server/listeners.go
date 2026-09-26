@@ -184,6 +184,7 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		spa = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Security-Policy", e.discovery.PagePolicy(endpoint.RequestHost(r)))
 			w.Header().Set("X-Frame-Options", "DENY")
+			auth.HardeningHeaders(w.Header())
 			page.ServeHTTP(w, r)
 		})
 	}

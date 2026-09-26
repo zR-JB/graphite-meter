@@ -19,11 +19,11 @@ var appScriptHash = static.AppScriptCSPHash()
 
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
-	hardeningHeaders(h)
+	HardeningHeaders(h)
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
 
-func hardeningHeaders(h http.Header) {
+func HardeningHeaders(h http.Header) {
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
@@ -70,7 +70,7 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Strict-Transport-Security", hstsThisHostOnly)
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Content-Security-Policy", appCSP(appScriptHash, s.connectSrc))
-	hardeningHeaders(h)
+	HardeningHeaders(h)
 }
 
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust) {

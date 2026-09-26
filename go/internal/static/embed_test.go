@@ -41,6 +41,8 @@ func TestHandlerRoutes(t *testing.T) {
 		{name: "backslash", path: `/foo\..\bar`, wantStatus: http.StatusNotFound},
 		{name: "deep traversal", path: "/../../../etc/passwd", wantStatus: http.StatusNotFound},
 		{name: "trailing slash", path: "/settings/", wantStatus: http.StatusNotFound},
+		{name: "directory", path: "/assets", wantStatus: http.StatusNotFound},
+		{name: "directory listing", path: "/assets/", wantStatus: http.StatusNotFound},
 		{name: "index file is not a second shell", path: "/index.html", wantStatus: http.StatusNotFound},
 		{name: "empty FS", fs: fstest.MapFS{}, path: "/", wantStatus: http.StatusNotFound},
 	} {

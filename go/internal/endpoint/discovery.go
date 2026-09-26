@@ -112,7 +112,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 			sources = append(sources, raw)
 		}
 	}
-	h.csp = "frame-ancestors 'none'; connect-src " + strings.Join(sources, " ")
+	h.csp = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; connect-src " + strings.Join(sources, " ")
 	return h
 }
 

@@ -66,8 +66,7 @@ func handler(fsys fs.FS, authenticated, resultHistoryDefault bool) http.Handler 
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
 		if fs.ValidPath(name) && name != "." && name != "index.html" {
-			if f, err := fsys.Open(name); err == nil {
-				_ = f.Close()
+			if info, err := fs.Stat(fsys, name); err == nil && !info.IsDir() {
 				if strings.HasPrefix(name, "assets/") {
 					// The bundler names every file under assets/ by its content hash.
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
