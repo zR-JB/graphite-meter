@@ -117,8 +117,14 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	if server, ok := m.catalogServer(m.challengedServer()); ok {
 		expected = server.URL
 	}
-	if msg.err != nil {
+	switch {
+	case errors.Is(msg.err, goclient.ErrApprovalExpired):
+		m.prepare, m.prepareErr = prepareSignIn, ""
+		m.notice = "Sign-in expired. Press v to request a new code."
+		return m, nil
+	case msg.err != nil:
 		m.prepare, m.prepareErr = prepareFailed, errorText(msg.err)
+		m.notice = ""
 		return m, nil
 	}
 	if issuer, err := wire.CanonicalOrigin(expected); err != nil || !strings.EqualFold(issuer, msg.origin) {

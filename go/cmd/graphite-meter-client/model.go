@@ -189,6 +189,9 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleRunKey(msg)
 	case m.auth != nil:
 		return m.handleSignInKey(msg)
+	case m.prepare == prepareSignIn && key.Matches(msg, keys.start):
+		m.notice = "Sign in first. Press v to request a new code."
+		return m, nil
 	}
 	return m.handleSetupKey(msg)
 }
@@ -221,10 +224,8 @@ func (m model) handleSignInKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.notice = "Sign-in page opened in the browser."
 	case key.Matches(msg, keys.cancelSignIn):
 		m.invalidatePreparation()
-		m.prepare, m.prepareErr = prepareFailed, "Sign-in canceled."
-		m.notice = "Sign-in canceled. Press v to check the paths again."
-	case key.Matches(msg, keys.sections), key.Matches(msg, keys.rows):
-		m.navigate(msg)
+		m.prepare, m.prepareErr = prepareSignIn, ""
+		m.notice = "Sign-in canceled. Press v to request a new code."
 	}
 	return m, nil
 }

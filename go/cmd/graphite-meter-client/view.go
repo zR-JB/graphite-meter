@@ -211,7 +211,7 @@ func (m model) planView(w int) string {
 	if m.prepareErr != "" {
 		lines = append(lines, m.st.warn.Width(max(w, 4)).Render(m.prepareErr))
 	}
-	if m.canUseAvailable() {
+	if m.canUseAvailable() && m.auth == nil {
 		lines = append(lines, m.st.muted.Render("u Use available servers"))
 	}
 	throughput, latency := m.pathSummaries()
@@ -276,12 +276,13 @@ func (m model) signInView(w int) (string, string) {
 		status = "Waiting for approval…"
 	}
 	waited := m.now.Sub(m.auth.since)
+	code := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(m.st.border.GetForeground()).
+		Padding(0, 1).Render(m.st.value.Render(m.auth.pending.Code))
 	lines := []string{
-		m.spin.View() + " " + m.st.accent.Render(status), "",
-		m.st.text.Render("Match this code ") + m.st.title.Render(m.auth.pending.Code),
+		m.spin.View() + " " + m.st.accent.Render(status),
+		lipgloss.JoinHorizontal(lipgloss.Center, m.st.text.Render("Match this code "), code),
 		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s",
-			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))),
-		m.st.text.Render("enter Open sign-in page · esc Cancel sign-in"), "",
+			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))), "",
 		m.st.muted.Width(w).Render(m.auth.pending.BrowserURL),
 	}
 	return "Sign in to " + issuer, strings.Join(lines, "\n")

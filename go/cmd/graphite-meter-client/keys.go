@@ -71,7 +71,7 @@ func (m model) ShortHelp() []key.Binding {
 		bindings = append(bindings, keys.details)
 		return append(bindings, keys.help, keys.quit)
 	case m.auth != nil:
-		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.sections, keys.rows, keys.help, keys.quit}
+		return []key.Binding{keys.openSignIn, keys.cancelSignIn, keys.help, keys.quit}
 	}
 	bindings := []key.Binding{keys.sections, keys.rows, keys.change, keys.start, keys.recheck}
 	if m.canChooseServers() {

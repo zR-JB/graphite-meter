@@ -372,13 +372,21 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 		}
 	}
 	if screen := view(m); !strings.Contains(screen, "Waiting for approval…") ||
-		!strings.Contains(screen, "Open sign-in page") || !strings.Contains(screen, "ABCD") {
+		!strings.Contains(screen, "open sign-in page") || !strings.Contains(screen, "ABCD") {
 		t.Fatalf("sign-in popup: %q", screen)
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
-	if m.auth != nil || m.prepareSeq == seq || m.prepare != prepareFailed {
+	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "v") {
 		t.Fatalf("esc did not cancel sign-in: auth=%v prepare=%v", m.auth, m.prepare)
+	}
+	if m, _ = modelAndCmd(m.Update(press("r"))); m.run != nil {
+		t.Fatal("r started a run that still needs sign-in")
+	}
+	m.auth = &signIn{pending: pending, since: time.Now()}
+	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, err: goclient.ErrApprovalExpired}))
+	if m.auth != nil || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "expired") {
+		t.Fatalf("expiry reads %q / %q", m.statusLabel(), m.notice)
 	}
 }
 
