@@ -31,7 +31,7 @@ export function mountHistoryPersistence(
         store.historyCandidate = null;
       permanentHistoryWarning = true;
       store.historyWarning =
-        "This result could not be saved because it was malformed.";
+        "This result could not be saved in browser storage.";
     },
     () => {
       store.historyWarning =

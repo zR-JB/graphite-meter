@@ -1,33 +1,10 @@
 import { expect, test } from "bun:test";
 import { HistoryWriteQueue } from "./writeQueue";
-import {
-  InvalidHistoryRecordError,
-  StaleHistoryGenerationError,
-} from "./errors";
-import { historyChanges } from "./changes";
+import { historyChanges, StaleHistoryGenerationError } from "./changes";
 import type { HistoryRecord } from "./types";
 import { historyRecord } from "./test-helpers.test";
 
 const valid = historyRecord();
-
-test("permanent candidates are dropped while later valid candidates proceed", async () => {
-  const saved: string[] = [];
-  const dropped: string[] = [];
-  const queue = new HistoryWriteQueue(
-    async (record) => {
-      saved.push(record.id);
-    },
-    async () => undefined,
-    () => undefined,
-    (record) => dropped.push(record.id),
-    () => undefined,
-  );
-  queue.enqueue({ ...valid, id: "bad" } as unknown as HistoryRecord);
-  queue.enqueue(valid);
-  await queue.flush();
-  expect(dropped).toEqual(["bad"]);
-  expect(saved).toEqual([valid.id]);
-});
 
 test("a permanent repository rejection cannot block the next accepted write", async () => {
   const first = historyRecord(16);
@@ -36,7 +13,8 @@ test("a permanent repository rejection cannot block the next accepted write", as
   const dropped: string[] = [];
   const queue = new HistoryWriteQueue(
     async (record) => {
-      if (record.id === first.id) throw new InvalidHistoryRecordError();
+      if (record.id === first.id)
+        throw new DOMException("uncloneable", "DataCloneError");
     },
     async () => undefined,
     (record) => saved.push(record.id),

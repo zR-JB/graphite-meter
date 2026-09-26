@@ -1,9 +1,6 @@
 import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecord } from "./types";
 import {
-  InvalidHistoryRecordError,
   StaleHistoryGenerationError,
-} from "./errors";
-import {
   currentHistoryGeneration,
   isHistoryGeneration,
   newRepairHistoryGeneration,
@@ -91,7 +88,6 @@ export class HistoryRepository {
     record: HistoryRecord,
     generation = currentHistoryGeneration(),
   ): Promise<void> {
-    if (!isHistoryRecord(record)) throw new InvalidHistoryRecordError();
     const db = await this.db();
     const tx = db.transaction(
       [HISTORY_DB.resultsStore, HISTORY_DB.metadataStore],

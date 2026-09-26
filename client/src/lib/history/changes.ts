@@ -94,3 +94,13 @@ export function broadcastHistory(change: HistoryChange): void {
   channel.postMessage(change);
   channel.close();
 }
+
+export class StaleHistoryGenerationError extends Error {
+  readonly generation: string;
+
+  constructor(generation: string) {
+    super(`History generation is stale; current generation is ${generation}`);
+    this.name = "StaleHistoryGenerationError";
+    this.generation = generation;
+  }
+}

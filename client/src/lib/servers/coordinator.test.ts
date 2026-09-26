@@ -14,7 +14,6 @@ import type {
   RunnerEvent,
 } from "../runner/contract";
 import type { ParticipantTransport } from "./coordinator";
-import { isMultiServerResult } from "./serialization";
 import { buildHistoryRecord, isHistoryRecord } from "../history/types";
 import { ServerAuthenticationRequired } from "./credentials";
 
@@ -184,7 +183,6 @@ test("one coordinated stage reports the combined path, and v4 evidence survives 
   ]);
   expect(result.download?.reportedBytesPerSec).toBeCloseTo(4000, 0);
   expect(result.outcome).toBe("complete");
-  expect(isMultiServerResult(result.multiServer)).toBe(true);
   const saved = buildHistoryRecord(result, { paths: null, clientBuild: "t" });
   expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
 });
