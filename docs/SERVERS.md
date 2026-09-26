@@ -83,9 +83,13 @@ History share one **Combined** / per-server selector; with Every server the init
 the lowest preparation RTT. Switching focus never changes what was measured.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
-back off, sign-in failures wait for Sign in or Retry. Start rechecks selected servers whose evidence is missing or
-expired. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish and
-display settings stay live.
+back off (30 s doubling to 5 min, reset when the page or network returns), sign-in failures wait for Sign in or
+Retry. A selected server without idle latency pings re-reads its `/preflight` every 30 s and whenever the page
+returns, so a server that stopped answering shows Unavailable; an offline device blocks remote servers until it is
+back. Start re-reads every selected server's `/preflight` and rechecks paths older than two minutes; a failed run
+invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit) is shown
+before Start. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish
+and display settings stay live.
 
 There is one throughput and one latency path preference. Automatic checks each server independently: throughput
 tries HTTP/1.1 bulk streams, HTTP/2, HTTP/3, proxy-negotiated HTTP, then WebTransport streams; latency tries
