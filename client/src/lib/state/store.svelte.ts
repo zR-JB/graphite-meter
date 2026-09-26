@@ -348,6 +348,7 @@ class AppStore {
   stallInfo = $state.raw<StallInfo | null>(null);
   runSeq = $state(0);
 
+  /** The idle monitor's verdict; it stands only while its evidence does. */
   connectivity = $state<ConnectivityState>("connected");
   /** The selected server single-path views describe: the latency primary, else this server. */
   representativeServerId = $derived.by(() => {
@@ -510,9 +511,11 @@ class AppStore {
         ? "checking"
         : "degraded";
     }
-    if (this.connectivity === "offline") return "offline";
+    if (this.isRunning) return connectionQuality(this.latency);
     // Completed-run samples stay on the chart, but cannot classify a new idle connection.
-    return connectionQuality(this.isRunning ? this.latency : this.idleLatency);
+    if (this.connectivity === "offline" && this.idleLatency.length)
+      return "offline";
+    return connectionQuality(this.idleLatency);
   });
 
   totalEtaMs = $derived(buildSegments(this.config).totalMs);
