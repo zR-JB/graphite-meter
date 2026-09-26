@@ -72,20 +72,20 @@ own origin and the native client accept literals.
 ## Browser controls
 
 **Settings → Connection paths → Test servers** is a checklist shown when the catalogue has more than one server.
-Select one to four; the last one cannot be cleared. Each entry shows its status (Checking…, Ready, Unavailable,
-Sign in) and its **preflight request time**: the HTTP discovery request including connection setup, not a latency
-measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve individual
-entries; **Use available servers** repairs a stale saved selection.
+Select one to four; the last one cannot be cleared. Each entry shows its status (Checking, Ready, Recheck needed,
+Failed, Sign in) and its **preflight request time**: the HTTP discovery request including connection setup, not a
+latency measurement. Hover or focus shows name, location and host. Inline **Retry** and **Sign in** resolve
+individual entries; **Use available servers** repairs a stale saved selection.
 
 With several servers, **Latency server** picks the one probed for latency (default: the first selected) or
-**Every server**. The choice is saved and fixed during the run; unprobed servers have no latency result. Results and
-History share one **Combined** / per-server selector; with Every server the initial latency focus is the server with
-the lowest preparation RTT. Switching focus never changes what was measured.
+**Combined** for every server; the choice is saved and fixed during the run
+([latency definitions](MEASUREMENTS.md#latency-probing)). Results and History share one **Combined** / per-server
+selector.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
 back off (30 s doubling to 5 min, reset when the page or network returns), sign-in failures wait for Sign in or
 Retry. A selected server without idle latency pings re-reads its `/preflight` every 30 s and whenever the page
-returns, so a server that stopped answering shows Unavailable; an offline device blocks remote servers until it is
+returns, so a server that stopped answering shows Failed; an offline device blocks remote servers until it is
 back. Start re-reads every selected server's `/preflight` and rechecks paths older than two minutes; a failed run
 invalidates its paths. A known blocker (offline, sign-in, missing capability, a stream plan that cannot fit) is shown
 before Start. Server, path, stream and probe settings lock during a run; durations of unstarted stages, early finish
@@ -116,8 +116,6 @@ their measurements; other servers continue. Grant, approval and socket-ticket li
 
 ## Results and failure
 
-A server that cannot be prepared, before or during the run, or that fails later is dropped for the rest of the run
-while the others continue; the run fails only when none survives. See [coordinated servers](MEASUREMENTS.md#coordinated-servers) for
-intervals, dropouts, headlines and missing data. Each server's own result uses its window under the shared load;
-per-server headlines do not add up to the Combined value. Saved records keep failure times and reasons, up to 128
-recent intervals and whole-run byte totals ([history](MEASUREMENTS.md#saved-history)).
+A server that fails in preparation or mid-run is dropped while the others continue; each server's own result covers
+its window under the shared load. Intervals, dropouts, headlines and saved records are defined in
+[coordinated servers](MEASUREMENTS.md#coordinated-servers) and [saved history](MEASUREMENTS.md#saved-history).
