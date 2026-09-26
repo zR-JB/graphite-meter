@@ -118,6 +118,51 @@ function reportPolicyViolations() {
   );
 }
 
+/** Every page: no readout ever shows NaN or Infinity, and the dial moves while a transfer shows a rate. */
+function watchDisplay() {
+  const TRANSFER = ["download", "upload", "bidirectional"];
+  let reported = false;
+  let phase = "";
+  let rated = 0;
+  const needles = new Set<string>();
+  const report = (message: string) => {
+    if (reported) return;
+    reported = true;
+    console.error(message);
+  };
+  const settleTransfer = () => {
+    if (TRANSFER.includes(phase) && rated >= 5 && needles.size < 2)
+      report(`dial indicator did not move during ${phase}`);
+    rated = 0;
+    needles.clear();
+  };
+  const sample = () => {
+    const app = document.querySelector("#console");
+    if (!app) return;
+    const bad = /\b(NaN|Infinity)\b/.exec(app.outerHTML);
+    if (bad) {
+      const at = app.outerHTML.indexOf(bad[0]);
+      report(
+        `page shows ${bad[0]}: ${app.outerHTML.slice(Math.max(0, at - 120), at + 40)}`,
+      );
+    }
+    const next = app.getAttribute("data-phase") ?? "";
+    if (next !== phase) {
+      settleTransfer();
+      phase = next;
+    }
+    if (!TRANSFER.includes(phase)) return;
+    if (!/\d/.test(document.querySelector(".gauge-value")?.textContent ?? ""))
+      return;
+    rated++;
+    needles.add(
+      document.querySelector<HTMLElement>(".live-head")?.style.transform ?? "",
+    );
+  };
+  Object.assign(window, { __gmCheckDisplay: sample });
+  setInterval(sample, 100);
+}
+
 function firstElement(elements: Element[]) {
   if (!elements[0]) throw new Error("no element");
   return elements[0];
@@ -257,9 +302,10 @@ export class Page {
     this.ready ??= (async () => {
       await this.raw.navigate("about:blank");
       await this.raw.cdp("Runtime.enable");
-      await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
-        source: `(${reportPolicyViolations})()`,
-      });
+      for (const guard of [reportPolicyViolations, watchDisplay])
+        await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
+          source: `(${guard})()`,
+        });
       this.raw.addEventListener("Runtime.exceptionThrown", (event: any) => {
         const details = event.data.exceptionDetails;
         this.errors.push(details.exception?.description ?? details.text);
@@ -383,6 +429,7 @@ export function test(name: string, fn: (page: Page) => Promise<unknown>) {
     const page = new Page();
     try {
       await fn(page);
+      await page.evaluate("window.__gmCheckDisplay?.()").catch(() => undefined);
       if (page.errors.length) throw new Error(page.errors.join("\n"));
     } catch (error) {
       await page.artifact(name).catch(() => {});

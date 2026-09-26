@@ -69,17 +69,21 @@ export class Smoothed {
   /** The value at a frame time, for readers outside the reactive graph. */
   at(now: number): number {
     const since = Math.max(0, now - this.#at);
-    const truth = Math.min(this.#max, this.#to + this.#rate * since);
+    const truth = this.#rate
+      ? Math.min(this.#max, this.#to + this.#rate * since)
+      : this.#to;
     // The offset from the sample fades linearly, so a clock keeps its own pace.
-    return (
-      truth + (this.#from - this.#to) * Math.max(0, 1 - since / this.#glide)
-    );
+    const fade = Math.max(0, 1 - since / this.#glide);
+    return fade > 0 ? truth + (this.#from - this.#to) * fade : truth;
   }
 
+  /** A value that is not a finite number holds the last one; the first sample snaps. */
   set(value: number, correction: Correction = {}): void {
     const { rate = 0, max = Infinity, now = performance.now() } = correction;
+    if (!Number.isFinite(value) || !Number.isFinite(rate)) return;
     const gap = now - this.#at;
-    this.#from = correction.snap || still() ? value : this.at(now);
+    const snap = correction.snap || still() || !Number.isFinite(gap);
+    this.#from = snap ? value : this.at(now);
     if (correction.over !== undefined) this.#glide = correction.over;
     else if (gap < SAMPLE_GAP_MS)
       this.#glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, gap));

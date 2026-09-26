@@ -126,3 +126,17 @@ test("formatting matches the shared vectors", () => {
       formatHistoryRate(bytesPerSec, { base: "base10", kind: "bits" }),
     ).toBe(out);
 });
+
+test("no formatter renders a non-finite value as NaN or Infinity", () => {
+  for (const bad of [NaN, Infinity, -Infinity])
+    for (const text of [
+      fmtSpeed(bad),
+      fixedMs(bad),
+      fmtMs(bad),
+      fmtMsTick(bad),
+      fmtAddedMs(bad),
+      fmtDuration(bad),
+      fmtBytes(bad, "base10"),
+    ])
+      expect(text).toBe("—");
+});

@@ -34,3 +34,13 @@ test("a fixed glide overrides the sample interval", () => {
   expect(value.at(500)).toBe(400);
   expect(value.at(900)).toBe(0);
 });
+
+test("the first sample and non-finite samples never make the value non-finite", () => {
+  const value = new Smoothed();
+  value.set(42, { now: 1_000 });
+  expect(value.at(1_000)).toBe(42);
+  for (const bad of [NaN, Infinity, undefined as unknown as number])
+    value.set(bad, { now: 1_100 });
+  expect(value.at(1_100)).toBe(42);
+  expect(value.current).toBe(42);
+});
