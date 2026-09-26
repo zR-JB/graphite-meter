@@ -121,29 +121,39 @@ export function stabilityPct(rates: readonly number[]): number {
   return sampleCount >= 2 ? Math.max(0, 1 - varianceRatio) * 100 : 0;
 }
 
-/** score = 1 − 1.2·(median deviation / max(median, 20 ms)) − 3.6·timeout ratio. */
-export function latencyConfidence(
-  outcomes: readonly { t: number; rtt: number | null }[],
-): ConfidenceScore {
-  const latest = outcomes.at(-1)?.t ?? 0;
-  const window = outcomes.filter((outcome) => outcome.t > latest - WINDOW_MS);
-  const values = window.flatMap((outcome) =>
-    outcome.rtt == null ? [] : [outcome.rtt],
-  );
-  if (values.length < 2)
-    return {
-      score: 0,
-      jitterRatio: 1,
-      timeoutRatio: 1,
-      sampleCount: window.length,
-    };
-  const center = median(values);
-  const jitterRatio =
-    median(values.map((v) => Math.abs(v - center))) / Math.max(center, 20);
-  const timeoutRatio = (window.length - values.length) / window.length;
-  const score = clamp01(1 - jitterRatio * 1.2 - timeoutRatio * 3.6);
-  return { score, jitterRatio, timeoutRatio, sampleCount: window.length };
+/** The k-th smallest of the first n values by selection; leaves smaller values before it. */
+function select(values: Float64Array, n: number, k: number): number {
+  let lo = 0;
+  let hi = n - 1;
+  while (lo < hi) {
+    const pivot = values[(lo + hi) >> 1];
+    let i = lo;
+    let j = hi;
+    while (i <= j) {
+      while (values[i] < pivot) i++;
+      while (values[j] > pivot) j--;
+      if (i > j) break;
+      const swap = values[i];
+      values[i++] = values[j];
+      values[j--] = swap;
+    }
+    if (k <= j) hi = j;
+    else if (k >= i) lo = i;
+    else break;
+  }
+  return values[k];
 }
+
+/** The midpoint median of the first n values, in linear time. */
+function selectMedian(values: Float64Array, n: number): number {
+  const upper = select(values, n, n >> 1);
+  if (n % 2) return upper;
+  let lower = -Infinity;
+  for (let i = 0; i < n >> 1; i++) lower = Math.max(lower, values[i]);
+  return (lower + upper) / 2;
+}
+
+let scratch = new Float64Array(1024);
 
 /** Schmitt trigger: enter at the threshold, leave 0.08 below it. */
 export function isStillStable(
@@ -318,7 +328,9 @@ export class ServerLatency {
     bidirectional: new LatencyPopulation(),
   };
   readonly failed = new Set<TransportRole>();
-  #window: { t: number; rtt: number | null }[] = [];
+  /** Idle outcome times and RTTs (NaN for a timeout) since `#head`. */
+  #times: number[] = [];
+  #rtts: number[] = [];
   #head = 0;
   #stableStart = -1;
   #candidate = -1;
@@ -333,20 +345,47 @@ export class ServerLatency {
   ): void {
     this.stages[stage].observe(sample, continuity);
     if (stage !== "latency" || sample.rttEligible === false) return;
-    this.#window.push({ t, rtt: sample.timedOut ? null : sample.rttMs });
-    while (this.#window[this.#head]?.t <= t - WINDOW_MS) this.#head++;
+    this.#times.push(t);
+    this.#rtts.push(sample.timedOut ? NaN : sample.rttMs);
+    while (this.#times[this.#head] <= t - WINDOW_MS) this.#head++;
     // Amortized trimming keeps dense reply-driven windows linear.
     if (this.#head < 4096) return;
-    this.#window.splice(0, this.#head);
+    this.#times.splice(0, this.#head);
+    this.#rtts.splice(0, this.#head);
     this.#head = 0;
   }
 
+  /** score = 1 − 1.2·(median deviation / max(median, 20 ms)) − 3.6·timeout ratio over the last 4 s. */
   confidence(): ConfidenceScore {
-    return latencyConfidence(this.#window.slice(this.#head));
+    const latest = this.#times.at(-1) ?? 0;
+    if (scratch.length < this.#times.length)
+      scratch = new Float64Array(this.#times.length * 2);
+    let outcomes = 0;
+    let replies = 0;
+    for (let i = this.#head; i < this.#times.length; i++) {
+      if (this.#times[i] <= latest - WINDOW_MS) continue;
+      outcomes++;
+      if (!Number.isNaN(this.#rtts[i])) scratch[replies++] = this.#rtts[i];
+    }
+    if (replies < 2)
+      return {
+        score: 0,
+        jitterRatio: 1,
+        timeoutRatio: 1,
+        sampleCount: outcomes,
+      };
+    const center = selectMedian(scratch, replies);
+    for (let i = 0; i < replies; i++)
+      scratch[i] = Math.abs(scratch[i] - center);
+    const jitterRatio = selectMedian(scratch, replies) / Math.max(center, 20);
+    const timeoutRatio = (outcomes - replies) / outcomes;
+    const score = clamp01(1 - jitterRatio * 1.2 - timeoutRatio * 3.6);
+    return { score, jitterRatio, timeoutRatio, sampleCount: outcomes };
   }
 
   resetStability(): void {
-    this.#window = [];
+    this.#times = [];
+    this.#rtts = [];
     this.#head = 0;
     this.#stableStart = -1;
   }

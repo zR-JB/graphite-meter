@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import {
   confidenceSampleFloor,
-  latencyConfidence,
   LatencyPopulation,
   RateBuckets,
   ServerLatency,
@@ -202,6 +201,14 @@ test("rate buckets split exact byte/time evidence independently of callback chun
   expect(whole.rates).toEqual([1_000, 1_000, 1_000, 1_000]);
   expect(stabilityPct(whole.rates)).toBe(100);
 });
+
+/** The idle window's confidence after these outcomes; a null RTT is a timeout. */
+function latencyConfidence(outcomes: { t: number; rtt: number | null }[]) {
+  const latency = new ServerLatency();
+  for (const { t, rtt } of outcomes)
+    latency.observe("latency", reply(rtt ?? 250, rtt === null), t, 0);
+  return latency.confidence();
+}
 
 test("confidence scores punish variance, drift, jitter and timeouts", () => {
   expect(transferConfidence([1_000]).score).toBe(0);
