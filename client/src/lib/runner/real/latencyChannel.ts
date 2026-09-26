@@ -129,7 +129,7 @@ export class LatencyChannel {
 
     this.#cutoffEpochMs = null;
     this.#active = true;
-    // A bus that never establishes reports nothing at all — a hung handshake produces no samples and no stall — so.
+    // A hung handshake yields no samples and no stall, so establishment has its own deadline.
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
       this.#deps.host.stallLatency("ping connection could not be established");
