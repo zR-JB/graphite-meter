@@ -919,9 +919,10 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	if err == nil {
 		t.Fatal("a download refused for the rest of its window returned no error: the shortfall became a rate")
 	}
-	const want = "webtransport session lost and not replaced within 2s"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("stage err = %q, want it to name the unreplaced session (%q)", err, want)
+	// Whichever detector wins, the error names the lost session or its stalled lane.
+	if !strings.Contains(err.Error(), "webtransport session lost and not replaced within 2s") &&
+		!strings.Contains(err.Error(), "stopped delivering bytes") {
+		t.Fatalf("stage err = %q, want it to name the unreplaced session or its stall", err)
 	}
 	if len(downloadResults) != 1 {
 		t.Fatalf("failed download emitted %d results, want one incomplete receiver window", len(downloadResults))

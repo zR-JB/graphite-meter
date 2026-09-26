@@ -212,6 +212,14 @@ func (c *coordinator) missingResults() bool {
 	return c.unavailable
 }
 
+// noSurvivors names the last server failure so the run error keeps its cause.
+func (c *coordinator) noSurvivors() error {
+	if len(c.failures) == 0 {
+		return errNoSurvivors
+	}
+	return fmt.Errorf("%w: %w", errNoSurvivors, c.failures[len(c.failures)-1].Err)
+}
+
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
 	scope := "throughput"
 	if role == roleLatency {
@@ -444,7 +452,7 @@ func (c *coordinator) stage(ctx context.Context, stage StagePlan, handover bool)
 					}
 				}
 				if len(c.ids()) == 0 {
-					return errNoSurvivors
+					return c.noSurvivors()
 				}
 			case phaseWarmup:
 				started, initial, err := c.openWindow(stageCtx, stage, servers, outcomes, handle)
@@ -495,7 +503,7 @@ func (c *coordinator) openWindow(
 			}
 		}
 		if len(c.ids()) == 0 {
-			return time.Time{}, initial, errNoSurvivors
+			return time.Time{}, initial, c.noSurvivors()
 		}
 	}
 	for drained := false; !drained; {
@@ -634,7 +642,7 @@ func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool,
 	switch {
 	case len(c.ids()) == 0:
 		c.aggregate.begin(s.stage.Name, nil, time.Since(c.started), "dropout")
-		return true, errNoSurvivors
+		return true, c.noSurvivors()
 	case removed:
 		s.reset()
 	case sample.final:
