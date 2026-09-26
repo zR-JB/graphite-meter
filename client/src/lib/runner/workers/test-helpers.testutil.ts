@@ -1,3 +1,5 @@
+import { jest } from "bun:test";
+
 const globals = globalThis as Record<string, unknown>;
 
 export const messageEvent = <T>(data: T): MessageEvent<T> =>
@@ -60,4 +62,24 @@ export async function bootWorker<Out>(
     posted,
     send: (message) => handler(messageEvent(message)),
   };
+}
+
+/** One real task turn, which settles every queued continuation without reading a clock. */
+export const taskTurn = (): Promise<void> =>
+  new Promise((resolve) => {
+    const { port1, port2 } = new MessageChannel();
+    port1.onmessage = (): void => {
+      port1.close();
+      port2.close();
+      resolve();
+    };
+    port2.postMessage(0);
+  });
+
+export async function elapse(ms: number): Promise<void> {
+  for (let elapsed = 0; elapsed < ms; elapsed += 5) {
+    await taskTurn();
+    jest.advanceTimersByTime(5);
+  }
+  await taskTurn();
 }

@@ -1,5 +1,10 @@
-import { test, expect, afterEach } from "bun:test";
-import { bootWorker, type WorkerRealm } from "./test-helpers.testutil";
+import { test, expect, afterEach, beforeEach, jest } from "bun:test";
+import {
+  bootWorker,
+  elapse,
+  taskTurn,
+  type WorkerRealm,
+} from "./test-helpers.testutil";
 
 const globals = globalThis as Record<string, unknown>;
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";
@@ -32,8 +37,6 @@ type In =
 
 type Timing = "micro" | "macro";
 const park = (): Promise<void> => new Promise(() => {});
-const macroTurn = (): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve));
 
 class FeedStream {
   #controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -58,7 +61,7 @@ function fakeDatagrams(timing: Timing, tick: () => void) {
   let reads = 0;
   let collapseAfter = Infinity;
   const turn = (): Promise<void> | undefined =>
-    timing === "macro" ? macroTurn() : undefined;
+    timing === "macro" ? taskTurn() : undefined;
   return {
     get writes() {
       return writes;
@@ -101,7 +104,6 @@ let mints = 0;
 const dialUrls: string[] = [];
 const tokenOf = (url: string): string =>
   new URL(url).searchParams.get("token") ?? "";
-let clockMs = 0;
 const dialed: FakeSession[] = [];
 class FakeSession {
   readonly ready =
@@ -110,7 +112,7 @@ class FakeSession {
       ? Promise.reject(new Error("connect refused"))
       : Promise.resolve());
   readonly closed = park();
-  readonly datagrams = fakeDatagrams(timing, () => (clockMs += 1));
+  readonly datagrams = fakeDatagrams(timing, () => jest.advanceTimersByTime(1));
   readonly feed = new FeedStream();
   closes = 0;
   lanes = 0;
@@ -143,7 +145,6 @@ const session = (): FakeSession => dialed[dialed.length - 1];
 const realFetch = globalThis.fetch;
 const realPost = globals.postMessage;
 const realWebTransport = globals.WebTransport;
-const realNow = performance.now.bind(performance);
 const fakeFetch = async (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -173,15 +174,14 @@ function install(sinkTiming: Timing = "macro"): void {
   dialRefuses = false;
   dialReady = undefined;
   mints = 0;
-  clockMs = 0;
   dialUrls.length = 0;
   dialed.length = 0;
   globals.WebTransport = FakeSession;
   globalThis.fetch = fakeFetch as typeof fetch;
-  performance.now = () => realNow() + clockMs;
 }
+beforeEach(() => jest.useFakeTimers());
 afterEach(() => {
-  performance.now = realNow;
+  jest.useRealTimers();
   globalThis.fetch = realFetch;
   globals.postMessage = realPost;
   globalThis.onmessage = null;
@@ -229,14 +229,10 @@ async function packetsBeforeStopSeen(
   install(sinkTiming);
   const realm = await boot();
   startTransfer(realm, { dir, lanes: 0, datagrams: true });
-  let seen = -1;
-  setTimeout(() => {
-    seen =
-      dir === "up" ? session().datagrams.writes : session().datagrams.reads;
-    realm.send({ type: "stop" });
-  });
-  await Bun.sleep(30);
-  return seen;
+  await taskTurn();
+  const { writes, reads } = session().datagrams;
+  realm.send({ type: "stop" });
+  return dir === "up" ? writes : reads;
 }
 test("the datagram upload loop yields to its own message queue", async () => {
   const micro = await packetsBeforeStopSeen("up", "micro");
@@ -254,11 +250,11 @@ test("the datagram download loop yields to its own message queue", async () => {
 });
 test("a progress feed that ends without a terminal record is reported", async () => {
   const realm = await bootTransfer();
-  await Bun.sleep(5);
+  await taskTurn();
   session().feed.push({ type: "ready" });
   session().feed.push({ type: "progress", bytes: 100, nanos: 1 });
   session().feed.close();
-  await Bun.sleep(5);
+  await taskTurn();
 
   expect(
     realm.posted
@@ -275,14 +271,14 @@ test("a progress feed that ends without a terminal record is reported", async ()
 });
 test("a later upload refusal stream preserves its structural cause", async () => {
   const realm = await bootTransfer();
-  await Bun.sleep(5);
+  await taskTurn();
   session().feed.push({ type: "ready" });
   session().refusal({
     type: "error",
     code: "invalid",
     message: "unknown upload id",
   });
-  await Bun.sleep(5);
+  await taskTurn();
 
   expect(
     realm.posted.filter((msg) => msg.type === "upload-progress").at(-1),
@@ -298,9 +294,9 @@ test("a later upload refusal stream preserves its structural cause", async () =>
 });
 test("a datagram size that collapses to zero is reported", async () => {
   const realm = await bootTransfer({ lanes: 0, datagrams: true });
-  await Bun.sleep(0);
+  await taskTurn();
   session().datagrams.collapseAfter = 3;
-  await Bun.sleep(20);
+  await elapse(20);
 
   expect(errors(realm)).toEqual([
     {
@@ -319,9 +315,9 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
     { dir: "down", mint: { url: mintUrl } },
     () => (dialRefuses = true),
   );
-  await Bun.sleep(5);
+  await taskTurn();
   startDownload(realm, mintUrl);
-  await Bun.sleep(5);
+  await taskTurn();
 
   expect(dialUrls.length).toBe(2);
   expect(tokenOf(dialUrls[1])).toBe(tokenOf(dialUrls[0]));
@@ -330,9 +326,9 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
 test("a session that established never offers its token again", async () => {
   const mintUrl = "https://spent.meter.test/wt/session";
   const realm = await bootTransfer({ dir: "down", mint: { url: mintUrl } });
-  await Bun.sleep(5);
+  await taskTurn();
   startDownload(realm, mintUrl);
-  await Bun.sleep(5);
+  await taskTurn();
 
   expect(dialUrls.length).toBe(2);
   expect(tokenOf(dialUrls[1])).not.toBe(tokenOf(dialUrls[0]));
@@ -343,11 +339,11 @@ test("a stop after auth-required is still acknowledged", async () => {
     { mint: { url: MINT_URL } },
     () => (mintRefuses = true),
   );
-  await Bun.sleep(5);
+  await taskTurn();
   expect(realm.posted.map((msg) => msg.type)).toEqual(["auth-required"]);
 
   realm.send({ type: "stop" });
-  await Bun.sleep(5);
+  await taskTurn();
 
   expect(realm.posted.map((msg) => msg.type)).toEqual([
     "auth-required",
@@ -371,9 +367,9 @@ test("authenticated WebTransport upload cleanup refuses redirects for session an
         return fakeFetch(input, init);
       }) as typeof fetch;
     });
-    await Bun.sleep(5);
+    await taskTurn();
     realm.send({ type: "stop" });
-    await Bun.sleep(5);
+    await taskTurn();
     expect(cleanup).toBeDefined();
     expect(cleanup!.credentials).toBe(credentials);
     expect(cleanup!.headers).toEqual(headers);
@@ -388,12 +384,12 @@ test("stopping a pending WebTransport dial cannot publish late establishment", a
       ready = resolve;
     });
   });
-  await Bun.sleep(5);
+  await taskTurn();
   const pendingSession = session();
   realm.send({ type: "stop" });
   expect(pendingSession.closes).toBe(1);
   ready();
-  await Bun.sleep(5);
+  await taskTurn();
   expect(realm.posted.map((message) => message.type)).toEqual(["stopped"]);
   expect(pendingSession.lanes).toBe(0);
   expect(pendingSession.incomingUnidirectionalStreams.locked).toBe(false);
