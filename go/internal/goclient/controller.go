@@ -20,8 +20,6 @@ const AuthorizationTimeout = 2 * time.Minute
 
 type Controller struct {
 	mu          sync.Mutex
-	catalog     *wire.ServerCatalog
-	selection   []wire.ServerEntry
 	grants      map[string]string
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -41,22 +39,23 @@ func NewController(parent context.Context) *Controller {
 }
 
 type Preparation struct {
-	owner *Controller
-	ctx   context.Context
-	cfg   Config
+	owner    *Controller
+	ctx      context.Context
+	cfg      Config
+	previous *PreparedRun
 }
 
-func (c *Controller) NewPreparation(cfg Config) *Preparation {
+// NewPreparation replaces any pending one; previous is the run whose server origins were last reviewed.
+func (c *Controller) NewPreparation(cfg Config, previous *PreparedRun) *Preparation {
 	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
-	if c.ctx.Err() != nil {
-		return &Preparation{owner: c, ctx: c.ctx, cfg: cfg}
+	p := &Preparation{owner: c, ctx: c.ctx, cfg: cfg, previous: previous}
+	if c.ctx.Err() == nil {
+		p.ctx, c.preparation = context.WithCancel(c.ctx)
 	}
-	ctx, cancel := context.WithCancel(c.ctx)
-	c.preparation = cancel
-	return &Preparation{owner: c, ctx: ctx, cfg: cfg}
+	return p
 }
 
 func (c *Controller) cancelPreparation() {
@@ -86,46 +85,22 @@ func (p *Preparation) PrepareRun() (*PreparedRun, error) {
 		return nil, err
 	}
 	defer done()
-	previous, grants := p.owner.snapshot()
-	prepared, err := prepareRun(ctx, p.cfg, previous, grants)
-	p.owner.mu.Lock()
-	defer p.owner.mu.Unlock()
-	if prepared != nil && p.ctx.Err() == nil {
-		p.owner.catalog = new(prepared.Catalog)
-		if prepared.Ready() {
-			p.owner.selection = nil
-			for _, server := range prepared.Servers {
-				p.owner.selection = append(p.owner.selection, server.Server)
-			}
-		}
-	}
-	return prepared, err
+	return prepareRun(ctx, p.cfg, p.previous, p.owner.snapshot())
 }
 
-func (c *Controller) snapshot() ([]wire.ServerEntry, map[string]string) {
+func (c *Controller) snapshot() map[string]string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return slices.Clone(c.selection), maps.Clone(c.grants)
+	return maps.Clone(c.grants)
 }
 
-func (p *Preparation) BeginAuthorization(serverID, authURL string) (*PendingAuthorization, error) {
+// BeginAuthorization starts sign-in at the origin that asked for it: the catalogue or one of its servers.
+func (p *Preparation) BeginAuthorization(origin, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
 	}
 	cfg := p.cfg
-	p.owner.mu.Lock()
-	found := serverID == ""
-	if p.owner.catalog != nil && !found {
-		for _, server := range p.owner.catalog.Servers {
-			if server.ID == serverID {
-				cfg.BaseURL, found = server.URL, true
-			}
-		}
-	}
-	p.owner.mu.Unlock()
-	if !found {
-		return nil, errors.New("server is no longer in the catalogue")
-	}
+	cfg.BaseURL = origin
 	return beginAuthorization(cfg, authURL)
 }
 
@@ -155,26 +130,8 @@ func (c *Controller) AcceptAuthorization(origin, token string) error {
 	return nil
 }
 
-func (c *Controller) SelectServers(ids []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.catalog == nil {
-		return errors.New("server catalogue is unavailable")
-	}
-	if err := c.catalog.ValidateSelection(ids); err != nil {
-		return err
-	}
-	c.selection = nil
-	for _, server := range c.catalog.Servers {
-		if slices.Contains(ids, server.ID) {
-			c.selection = append(c.selection, server)
-		}
-	}
-	return nil
-}
-
 func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
-	previous, grants := c.snapshot()
+	grants := c.snapshot()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -197,7 +154,7 @@ func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
 		if !prepared.FreshFor(cfg) {
 			ctx, cancelPreparation := context.WithTimeout(measurement, preparationTimeout)
 			var err error
-			prepared, err = prepareRun(ctx, cfg, previous, grants)
+			prepared, err = prepareRun(ctx, cfg, prepared, grants)
 			cancelPreparation()
 			if err != nil {
 				emit(Event{Kind: EventDone, At: time.Now(), Err: err})

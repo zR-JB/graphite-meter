@@ -189,6 +189,7 @@ func TestPrepareThroughH2ProxyToH1Backend(t *testing.T) {
 		_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{
 			Name: "proxied",
 		}, EngineVersion: "test", Generation: "test", Capabilities: wire.Capabilities{
+			UploadCheckpoint: true,
 			ThroughputTargets: []wire.ThroughputTarget{
 				{Origin: ".", Protocol: "negotiated", Transport: wire.TransportFetchStream},
 			},

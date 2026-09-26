@@ -2,6 +2,7 @@ package goclient
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -131,6 +132,32 @@ func TestConfigValidate(t *testing.T) {
 	}
 }
 
+func TestPrepareRefusesUploadsWithoutReceiverCheckpoints(t *testing.T) {
+	t.Parallel()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/preflight", func(w http.ResponseWriter, r *http.Request) {
+		origin := "http://" + r.Host
+		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{
+			ThroughputTargets: []wire.ThroughputTarget{testTransfer("fetch", origin, "http1", false)},
+			LatencyTargets:    []wire.LatencyTarget{testChannel("ws", origin, false)},
+		}})
+	})
+	mux.HandleFunc("/probe", writeProbe)
+	mux.Handle("/ws/ping", pingHandler(answerAll, 0))
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	cfg := DefaultConfig()
+	cfg.BaseURL = srv.URL
+	_, err := prepare(t.Context(), cfg)
+	if failed, ok := errors.AsType[*PreparationError](err); !ok || failed.Preflight.Generation != "test" {
+		t.Fatalf("upload stage without receiver checkpoints = %v, want a refusal that keeps discovery", err)
+	}
+	cfg.Stages = StageSet{Latency: true, Download: true}
+	if _, err := prepare(t.Context(), cfg); err != nil {
+		t.Fatalf("download-only run refused: %v", err)
+	}
+}
+
 func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 	t.Parallel()
 	mux := http.NewServeMux()
@@ -139,6 +166,7 @@ func TestPrepareFallsBackFromAnUnreachableWebTransportBus(t *testing.T) {
 		wt := testChannel("wt", origin, false)
 		wt.Transport, wt.Protocol = wire.TransportWebTransport, "http3"
 		_ = json.MarshalWrite(w, wire.Preflight{Generation: "test", Capabilities: wire.Capabilities{
+			UploadCheckpoint:  true,
 			ThroughputTargets: []wire.ThroughputTarget{testTransfer("fetch", origin, "http1", false)},
 			LatencyTargets:    []wire.LatencyTarget{testChannel("ws", origin, false), wt},
 		}})

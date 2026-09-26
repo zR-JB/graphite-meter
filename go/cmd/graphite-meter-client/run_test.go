@@ -72,7 +72,7 @@ func TestQuitAndShutdownCancelOwnedWork(t *testing.T) {
 		if _, cmd := modelAndCmd(m.Update(press("ctrl+c"))); !quits(cmd) {
 			t.Fatal("ctrl+c did not quit")
 		}
-		for _, p := range []*goclient.Preparation{preparation, m.controller.NewPreparation(m.cfg)} {
+		for _, p := range []*goclient.Preparation{preparation, m.controller.NewPreparation(m.cfg, nil)} {
 			if _, err := p.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatalf("quit left preparation work possible: %v", err)
 			}
@@ -92,7 +92,7 @@ func TestPreparationCancellationReachesQueuedApprovalPoll(t *testing.T) {
 	cfg.BaseURL = "https://meter.test"
 	m := newModel(cfg)
 	t.Cleanup(m.close)
-	pending, err := m.preparation.BeginAuthorization("", cfg.BaseURL+"/login")
+	pending, err := m.preparation.BeginAuthorization(cfg.BaseURL, cfg.BaseURL+"/login")
 	if err != nil {
 		t.Fatal(err)
 	}

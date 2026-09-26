@@ -175,6 +175,10 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 			return nil, &PreparationError{Preflight: pf, Err: err}
 		}
 	}
+	if cfg.needsCheckpoint() && !pf.Capabilities.UploadCheckpoint {
+		err := errors.New("receiver checkpoint support is required; upgrade this measurement server")
+		return nil, &PreparationError{Preflight: pf, Err: err}
+	}
 	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
 	branches, cancel := context.WithCancel(ctx)
 	defer cancel()

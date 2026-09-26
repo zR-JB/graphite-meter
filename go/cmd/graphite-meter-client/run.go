@@ -30,7 +30,7 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil
-	m.preparation = m.controller.NewPreparation(m.cfg)
+	m.preparation = m.controller.NewPreparation(m.cfg, m.preparedRun)
 }
 
 func (m model) reprepare() (tea.Model, tea.Cmd) {
@@ -50,9 +50,9 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	if authErr, ok := errors.AsType[*goclient.AuthRequiredError](msg.err); ok {
 		m.prepare, m.prepareErr = prepareSignIn, ""
 		m.notice = "Sign-in required. Preparing the sign-in page…"
-		preparation, seq, serverID := m.preparation, m.prepareSeq, m.challengedServer()
+		preparation, seq, origin := m.preparation, m.prepareSeq, m.challengedOrigin()
 		return m, func() tea.Msg {
-			pending, err := preparation.BeginAuthorization(serverID, authErr.URL)
+			pending, err := preparation.BeginAuthorization(origin, authErr.URL)
 			return authChallengeMsg{seq: seq, pending: pending, err: err}
 		}
 	}
@@ -90,6 +90,14 @@ func (m model) challengedServer() string {
 	return m.preparedRun.Servers[i].Server.ID
 }
 
+// challengedOrigin is the server that asked for sign-in, or the catalogue itself.
+func (m model) challengedOrigin() string {
+	if server, ok := m.catalogServer(m.challengedServer()); ok {
+		return server.URL
+	}
+	return m.cfg.BaseURL
+}
+
 func (m model) handleAuthChallenge(msg authChallengeMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.prepareSeq {
 		return m, nil
@@ -113,10 +121,6 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.auth = nil
-	expected := m.cfg.BaseURL
-	if server, ok := m.catalogServer(m.challengedServer()); ok {
-		expected = server.URL
-	}
 	switch {
 	case errors.Is(msg.err, goclient.ErrApprovalExpired):
 		m.prepare, m.prepareErr = prepareSignIn, ""
@@ -127,7 +131,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		m.notice = ""
 		return m, nil
 	}
-	if issuer, err := wire.CanonicalOrigin(expected); err != nil || !strings.EqualFold(issuer, msg.origin) {
+	if issuer, err := wire.CanonicalOrigin(m.challengedOrigin()); err != nil || !strings.EqualFold(issuer, msg.origin) {
 		m.notice = "The server changed while sign-in was pending, so the approval was discarded."
 		return m.reprepare()
 	}

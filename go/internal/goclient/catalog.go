@@ -75,7 +75,7 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 func prepareRun(
 	ctx context.Context,
 	cfg Config,
-	previous []wire.ServerEntry,
+	previous *PreparedRun,
 	grants map[string]string,
 ) (result *PreparedRun, resultErr error) {
 	defer func() {
@@ -111,10 +111,10 @@ func prepareRun(
 		if !slices.Contains(ids, server.ID) {
 			continue
 		}
-		for _, old := range previous {
-			if old.ID == server.ID && old.URL != server.URL {
-				return prepared, fmt.Errorf("%s changed origin; review and apply the server selection", server.Name)
-			}
+		if previous.Ready() && slices.ContainsFunc(previous.Servers, func(old PreparedServer) bool {
+			return old.Server.ID == server.ID && old.Server.URL != server.URL
+		}) {
+			return prepared, fmt.Errorf("%s changed origin; review the server selection and check again", server.Name)
 		}
 		own := cfg
 		own.BaseURL, own.server, own.grant = server.URL, new(server), grants[server.URL]
@@ -125,9 +125,6 @@ func prepareRun(
 		work.Go(func() {
 			server := &prepared.Servers[i]
 			server.Connection, server.Err = prepare(ctx, server.config)
-			if server.Err == nil && cfg.needsCheckpoint() && !server.Connection.Preflight.Capabilities.UploadCheckpoint {
-				server.Err = errors.New("receiver checkpoint support is required; upgrade this measurement server")
-			}
 		})
 	}
 	work.Wait()

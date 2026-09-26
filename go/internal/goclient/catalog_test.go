@@ -34,8 +34,10 @@ func TestNativeCatalogSelectionAndReconciliation(t *testing.T) {
 	if !selected.FreshFor(cfg) {
 		t.Fatal("fresh selection rejected")
 	}
-	changed := []wire.ServerEntry{{ID: "b", URL: "https://previous.example", Name: "B"}}
-	if _, err = prepareRun(t.Context(), cfg, changed, nil); err == nil ||
+	moved := *selected
+	moved.Servers = []PreparedServer{{Server: wire.ServerEntry{ID: "b", URL: "https://previous.example"},
+		Connection: &PreparedConnection{}}}
+	if _, err = prepareRun(t.Context(), cfg, &moved, nil); err == nil ||
 		!strings.Contains(err.Error(), "changed origin") {
 		t.Fatalf("replaced identity accepted: %v", err)
 	}

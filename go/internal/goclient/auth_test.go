@@ -267,7 +267,7 @@ func TestAcceptAuthorizationKeysGrantsByCanonicalOrigin(t *testing.T) {
 	if err := c.AcceptAuthorization("https://meter.example", "grant"); err != nil {
 		t.Fatal(err)
 	}
-	if _, grants := c.snapshot(); len(grants) != 1 || grants["https://meter.example"] != "grant" {
+	if grants := c.snapshot(); len(grants) != 1 || grants["https://meter.example"] != "grant" {
 		t.Fatalf("grants = %v, want one under the canonical origin", grants)
 	}
 }

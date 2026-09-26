@@ -107,7 +107,7 @@ func newModel(cfg goclient.Config) model {
 	h.Styles = st.helpStyles()
 	return model{
 		controller:   controller,
-		preparation:  controller.NewPreparation(cfg),
+		preparation:  controller.NewPreparation(cfg, nil),
 		cfg:          cfg,
 		st:           st,
 		openApproval: (*goclient.PendingAuthorization).Open,

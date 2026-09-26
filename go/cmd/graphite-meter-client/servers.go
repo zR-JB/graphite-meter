@@ -117,12 +117,7 @@ func (m model) readinessSummary() string {
 }
 
 func (m model) useAvailableServers() (tea.Model, tea.Cmd) {
-	ids := m.readyServers()
-	if err := m.controller.SelectServers(ids); err != nil {
-		m.notice = err.Error()
-		return m, nil
-	}
-	m.cfg.ServerIDs = ids
+	m.cfg.ServerIDs = m.readyServers()
 	m.notice = "Using the available servers."
 	return m.reprepare()
 }
@@ -178,10 +173,6 @@ func (m model) handleServerChooserKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			m.notice = "At most four servers share one test."
 		}
 	case key.Matches(msg, keys.apply):
-		if err := m.controller.SelectServers(m.serverDraft); err != nil {
-			m.notice = err.Error()
-			return m, nil
-		}
 		m.cfg.ServerIDs = slices.Clone(m.serverDraft)
 		m.popup = popupNone
 		m.notice = "Checking the selected servers…"

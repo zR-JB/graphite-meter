@@ -24,7 +24,7 @@ func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
 	cfg.BaseURL = srv.URL
 	for range 20 {
 		owner := NewController(t.Context())
-		preparation := owner.NewPreparation(cfg)
+		preparation := owner.NewPreparation(cfg, nil)
 		pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
 		start := make(chan struct{})
 		var work sync.WaitGroup
@@ -33,14 +33,15 @@ func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
 		work.Go(func() { <-start; owner.Close() })
 		close(start)
 		work.Wait()
-		for _, token := range []*Preparation{preparation, owner.NewPreparation(cfg)} {
+		for _, token := range []*Preparation{preparation, owner.NewPreparation(cfg, nil)} {
 			if _, err := token.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation started work: %v", err)
 			}
 			if _, err := token.PollAuthorization(pending); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed approval started work: %v", err)
 			}
-			if _, err := token.BeginAuthorization("", "https://meter.test/login"); !errors.Is(err, context.Canceled) {
+			_, err := token.BeginAuthorization("https://meter.test", "https://meter.test/login")
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation created an approval: %v", err)
 			}
 		}
@@ -191,7 +192,7 @@ func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
 	defer srv.Close()
 	owner := NewController(t.Context())
 	defer owner.Close()
-	preparation := owner.NewPreparation(DefaultConfig())
+	preparation := owner.NewPreparation(DefaultConfig(), nil)
 	pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
 	done := make(chan error, 1)
 	go func() { _, err := preparation.PollAuthorization(pending); done <- err }()
@@ -200,7 +201,7 @@ func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("approval did not reach the server")
 	}
-	owner.NewPreparation(DefaultConfig())
+	owner.NewPreparation(DefaultConfig(), nil)
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
