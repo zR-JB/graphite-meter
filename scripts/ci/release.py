@@ -24,6 +24,7 @@ from github_api import (
     expect_object,
     int_field,
     object_field,
+    runner_path,
     str_field,
 )
 from trust import (
@@ -167,7 +168,7 @@ def command_prepare() -> None:
     if not pr and os.environ.get("SHA"):
         refuse("stable releases build current main; leave sha empty")
     release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
-    out = Path(env("OUT_DIR"))
+    out = runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     request = {
         "schemaVersion": 2, "repository": repository, "tag": release.tag,
@@ -216,7 +217,7 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
 
 
 def command_verify() -> None:
-    request_dir, handoff = Path(env("REQUEST_DIR")), Path(env("HANDOFF_DIR"))
+    request_dir, handoff = runner_path("REQUEST_DIR"), runner_path("HANDOFF_DIR")
     release, publish = verify_request(request_dir)
     if publish:
         require_protected_environment(env("REPOSITORY"))
@@ -258,7 +259,7 @@ def command_recheck() -> None:
     pr = env_int("PR") if os.environ.get("PR") else 0
     release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
     require_checkout(main)
-    handoff = Path(env("HANDOFF_DIR"))
+    handoff = runner_path("HANDOFF_DIR")
     exact_files(handoff / "image", {OCI})
     if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
         refuse("approved OCI handoff does not match the verified archive")

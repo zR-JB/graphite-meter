@@ -87,8 +87,24 @@ def int_field(value: Mapping[str, JsonValue], key: str, context: str) -> int:
     return item
 
 
+def confined_path(value: str, *roots: str) -> Path:
+    """Resolve `value`, following links, and require it to lie strictly inside one of `roots`."""
+    path = os.path.realpath(value)
+    if path.startswith(tuple(os.path.join(os.path.realpath(root), "") for root in roots)):
+        return Path(path)
+    raise ControlPlaneError(f"{value} is outside {', '.join(roots) or 'every allowed root'}")
+
+
+def runner_path(name: str) -> Path:
+    """Return the path in environment variable `name`, which must lie inside RUNNER_TEMP."""
+    value, root = os.environ.get(name), os.environ.get("RUNNER_TEMP")
+    if not value or not root:
+        raise ControlPlaneError(f"{name} and RUNNER_TEMP are required")
+    return confined_path(value, root)
+
+
 def append_output(**values: object) -> None:
-    with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+    with runner_path("GITHUB_OUTPUT").open("a", encoding="utf-8") as handle:
         for key, value in values.items():
             if "\n" in (text := str(value)) or "\r" in text:
                 raise ValueError(f"output {key!r} must be single-line")
@@ -96,5 +112,5 @@ def append_output(**values: object) -> None:
 
 
 def append_summary(text: str) -> None:
-    with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+    with runner_path("GITHUB_STEP_SUMMARY").open("a", encoding="utf-8") as handle:
         handle.write(text.rstrip() + "\n")

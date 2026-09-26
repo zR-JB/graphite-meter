@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError
+from github_api import ControlPlaneError, confined_path, runner_path
 from fixtures import AMD, Answers, engine, fake, gh, git_head, pages, write_release_assets
 from release import (
     OCI,
@@ -364,6 +364,21 @@ class RequestTests(unittest.TestCase):
             with self.assertRaisesRegex(TrustError, "not a regular file"):
                 exact_files(root, {"request.json"})
 
+    def test_runner_paths_stay_inside_the_runner_temporary_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "runner"
+            (root / "request").mkdir(parents=True)
+            (root / "escape").symlink_to(directory)
+            self.assertEqual(confined_path(str(root / "request" / "new"), str(root)),
+                             root.resolve() / "request" / "new")
+            for path in (root, root / "request/../..", root / "escape", Path(directory)):
+                with self.subTest(path=path), self.assertRaisesRegex(ControlPlaneError, "outside"):
+                    confined_path(str(path), str(root))
+            for env in ({"OUT_DIR": str(root / "out")}, {"RUNNER_TEMP": str(root)}):
+                with (self.subTest(env=env), patch.dict(os.environ, env, clear=True),
+                      self.assertRaisesRegex(ControlPlaneError, "RUNNER_TEMP are required")):
+                    runner_path("OUT_DIR")
+
     def test_prepare_accepts_only_owner_dispatches_of_well_formed_requests(self) -> None:
         base = {
             "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "ACTOR": "zR-JB",
@@ -387,7 +402,8 @@ class RequestTests(unittest.TestCase):
         ):
             with tempfile.TemporaryDirectory() as directory, self.subTest(change=change):
                 output = Path(directory) / "output"
-                env = base | change | {"OUT_DIR": directory, "GITHUB_OUTPUT": str(output)}
+                env = base | change | {"OUT_DIR": directory, "GITHUB_OUTPUT": str(output),
+                                       "RUNNER_TEMP": tempfile.gettempdir()}
                 with patch.dict(os.environ, env):
                     if error is not None:
                         with self.assertRaisesRegex(TrustError, error):
@@ -534,7 +550,7 @@ class CommandTests(unittest.TestCase):
                     "REQUEST_RUN_ID": "4242", "REQUEST_DIR": str(request_dir),
                     "HANDOFF_DIR": str(root / "handoff"),
                     "GITHUB_OUTPUT": str(root / "output"),
-                    "GITHUB_STEP_SUMMARY": str(root / "summary"),
+                    "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
                 } | engine(root, REPO, release.version, release.sha) | git_head(root, MAIN) | gh(
                     root, trusted(stable, mode) | responses) | env
                 limit = int(env.get("LIMIT", 1 << 30))
@@ -578,6 +594,7 @@ class CommandTests(unittest.TestCase):
                     "OCI_SHA256": hashlib.sha256(b"verified").hexdigest(),
                     "ASSETS_SHA256": assets_sha256(handoff / "assets"),
                     "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
+                    "RUNNER_TEMP": tempfile.gettempdir(),
                 } | git_head(Path(directory), env.get("HEAD", MAIN)) | gh(
                     Path(directory), trusted(stable) | responses) | env
                 with patch.dict(os.environ, variables):
