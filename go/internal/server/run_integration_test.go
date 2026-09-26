@@ -144,9 +144,10 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 		t.Fatalf("GET /: %v", err)
 	}
 	defer res.Body.Close()
-	if csp := res.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") ||
-		!strings.Contains(csp, "object-src 'none'") || !strings.Contains(csp, "connect-src 'self'") ||
-		res.Header.Get("X-Frame-Options") != "DENY" || res.Header.Get("X-Content-Type-Options") != "nosniff" {
+	if csp := res.Header.Get("Content-Security-Policy"); !strings.HasPrefix(csp, "default-src 'self'; ") ||
+		!strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "connect-src 'self'") ||
+		res.Header.Get("X-Frame-Options") != "DENY" || res.Header.Get("X-Content-Type-Options") != "nosniff" ||
+		res.Header.Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("public page lacks its hardening headers: %v", res.Header)
 	}
 }

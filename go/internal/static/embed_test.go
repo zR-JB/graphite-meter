@@ -3,6 +3,7 @@ package static
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -116,7 +117,7 @@ func TestShellMetadata(t *testing.T) {
 	}
 }
 
-func TestScriptCSPHash(t *testing.T) {
+func TestInlineCSPHash(t *testing.T) {
 	// The exact inline pre-paint script the client build emits.
 	const inline = `try{e=localStorage.getItem("graphite-meter:v1"),t=e?JSON.parse(e).theme:null,` +
 		`r=t==="light"||t==="dark"?t:matchMedia("(prefers-color-scheme: light)").matches?"light":"dark",` +
@@ -128,8 +129,29 @@ func TestScriptCSPHash(t *testing.T) {
 		`<html><body>no scripts</body></html>`: "",
 		`<script src="/a.js"></script>`:        "",
 	} {
-		if got := scriptCSPHash([]byte(html)); got != want {
-			t.Errorf("scriptCSPHash(%.40q) = %q, want %q", html, got, want)
+		if got := inlineCSPHash([]byte(html), "script"); got != want {
+			t.Errorf("inlineCSPHash(%.40q) = %q, want %q", html, got, want)
 		}
+	}
+	if got := inlineCSPHash([]byte(`<head><style>x</style></head>`), "style"); got !=
+		"LXEWQrcmsEQBYnyp+6wy9chTD7GQPMTbAiWHF5IaSIE=" {
+		t.Errorf("inline style hash = %q", got)
+	}
+}
+
+func TestPagePolicy(t *testing.T) {
+	built := pagePolicy("S", "T", []string{"https://meter.example:*", "wss://meter.example:*"})
+	for _, want := range []string{
+		"default-src 'self'", "script-src 'self' 'sha256-S'", "style-src 'self' 'sha256-T'", "img-src 'self' data:",
+		"font-src 'self'", "worker-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'",
+		"frame-ancestors 'none'", "connect-src 'self' https://meter.example:* wss://meter.example:*",
+	} {
+		if !slices.Contains(strings.Split(built, "; "), want) {
+			t.Errorf("policy lacks %q: %s", want, built)
+		}
+	}
+	if bare := pagePolicy("", "", nil); strings.Contains(bare, "sha256") ||
+		!strings.HasSuffix(bare, "; connect-src 'self'") {
+		t.Errorf("policy without a build = %s", bare)
 	}
 }

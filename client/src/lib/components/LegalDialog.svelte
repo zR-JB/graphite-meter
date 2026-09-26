@@ -40,8 +40,8 @@
   labelledby="legal-dialog-title"
   lightDismiss
   shortcuts={["h"]}
-  --dialog-width="880px"
-  --dialog-height="min(86svh, 760px)"
+  width="880px"
+  height="min(86svh, 760px)"
 >
   <header class="surface-head legal-head">
     <h2 id="legal-dialog-title">About &amp; legal</h2>

@@ -17,8 +17,6 @@ const (
 	preflightMaxAge    = "7200"
 )
 
-var appScriptHash = static.AppScriptCSPHash()
-
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
 	HardeningHeaders(h)
@@ -57,21 +55,10 @@ func (s *Service) loginSecurityHeaders(h http.Header) {
 	}
 }
 
-func appCSP(scriptHash, connectExtra string) string {
-	csp := "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; form-action 'self'; connect-src 'self'"
-	if connectExtra != "" {
-		csp += " " + connectExtra
-	}
-	if scriptHash != "" {
-		csp += "; script-src 'self' 'sha256-" + scriptHash + "'"
-	}
-	return csp
-}
-
 func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Strict-Transport-Security", hstsThisHostOnly)
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Content-Security-Policy", appCSP(appScriptHash, s.connectSrc))
+	h.Set("Content-Security-Policy", static.PagePolicy(s.connectSources))
 	HardeningHeaders(h)
 }
 

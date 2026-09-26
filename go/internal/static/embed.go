@@ -15,21 +15,50 @@ import (
 //go:embed all:dist
 var distFS embed.FS
 
-// AppScriptCSPHash is the CSP 'sha256-...' digest of the single inline pre-paint <script> in the embedded index.html.
-func AppScriptCSPHash() string {
+// The CSP digests of index.html's inline pre-paint <script> and <style>; both are empty without a build.
+var inlineScript, inlineStyle = inlineHash("script"), inlineHash("style")
+
+func inlineHash(tag string) string {
 	b, _ := fs.ReadFile(distFS, "dist/index.html")
-	return scriptCSPHash(b)
+	return inlineCSPHash(b, tag)
 }
 
-// scriptCSPHash returns the base64 sha256 of the one attribute-less inline <script>'s exact text.
-func scriptCSPHash(html []byte) string {
-	_, afterOpen, opened := bytes.Cut(html, []byte("<script>"))
-	content, _, closed := bytes.Cut(afterOpen, []byte("</script>"))
+// inlineCSPHash returns the base64 sha256 of the first attribute-less inline tag's exact text.
+func inlineCSPHash(html []byte, tag string) string {
+	_, afterOpen, opened := bytes.Cut(html, []byte("<"+tag+">"))
+	content, _, closed := bytes.Cut(afterOpen, []byte("</"+tag+">"))
 	if !opened || !closed {
 		return ""
 	}
 	sum := sha256.Sum256(content)
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// PagePolicy is the client shell's Content-Security-Policy; connect names the peers it reaches beyond 'self'.
+func PagePolicy(connect []string) string {
+	return pagePolicy(inlineScript, inlineStyle, connect)
+}
+
+func pagePolicy(script, style string, connect []string) string {
+	sources := func(directive, hash string) string {
+		if hash == "" {
+			return directive + " 'self'"
+		}
+		return directive + " 'self' 'sha256-" + hash + "'"
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		sources("script-src", script),
+		sources("style-src", style),
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"worker-src 'self'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		strings.Join(append([]string{"connect-src 'self'"}, connect...), " "),
+	}, "; ")
 }
 
 // Handler serves the client shell at / and otherwise only embedded files. The shell carries the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
+	"github.com/zR-JB/graphite-meter/go/internal/static"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -105,14 +106,14 @@ func (d *Discovery) build(host string) *hostDiscovery {
 	if h.servers, h.serversErr = d.serversFor(h.connect); h.serversErr != nil {
 		log.Printf("[gm:discovery] server catalogue for host %q: %v", host, h.serversErr)
 	}
-	sources := append([]string{"'self'"}, d.cfg.ServerCatalog.ConnectSources()...)
+	sources := d.cfg.ServerCatalog.ConnectSources()
 	for _, raw := range h.connect {
 		parsed := strings.Replace(strings.Replace(raw, "wss://", "https://", 1), "ws://", "http://", 1)
 		if _, err := wire.CanonicalOrigin(parsed); err == nil && wire.BrowserConnectSourceSupported(raw) {
 			sources = append(sources, raw)
 		}
 	}
-	h.csp = "frame-ancestors 'none'; base-uri 'none'; object-src 'none'; connect-src " + strings.Join(sources, " ")
+	h.csp = static.PagePolicy(sources)
 	return h
 }
 

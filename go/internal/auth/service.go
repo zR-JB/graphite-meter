@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,7 +61,7 @@ type Service struct {
 	oidc             *oidcState
 	verbose          bool
 	counters         [counters]atomic.Uint64
-	connectSrc       string
+	connectSources   []string
 }
 
 func authModes(mode string) (password, oidc bool) {
@@ -68,13 +69,9 @@ func authModes(mode string) (password, oidc bool) {
 }
 
 func (s *Service) SetConnectOrigins(origins []string) {
-	sources := make([]string, 0, len(origins))
-	for _, origin := range origins {
-		if wire.BrowserConnectSourceSupported(origin) {
-			sources = append(sources, origin)
-		}
-	}
-	s.connectSrc = strings.Join(sources, " ")
+	s.connectSources = slices.DeleteFunc(slices.Clone(origins), func(origin string) bool {
+		return !wire.BrowserConnectSourceSupported(origin)
+	})
 }
 
 func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, verbose bool) (*Service, error) {

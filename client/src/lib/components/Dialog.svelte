@@ -15,6 +15,9 @@
     invoker?: HTMLElement | null;
     /** Unmodified keys that still reach the application's shortcuts. */
     shortcuts?: readonly string[];
+    /** CSS sizes; a component custom property would need an inline style the CSP refuses. */
+    width?: string;
+    height?: string;
     children: Snippet;
   }
   let {
@@ -26,6 +29,8 @@
     lightDismiss = false,
     invoker,
     shortcuts = [],
+    width,
+    height,
     children,
   }: Props = $props();
   let dialog: HTMLDialogElement;
@@ -62,6 +67,8 @@
 <dialog
   bind:this={dialog}
   class="float"
+  style:--dialog-width={width}
+  style:--dialog-height={height}
   {role}
   aria-labelledby={labelledby}
   aria-describedby={describedby}

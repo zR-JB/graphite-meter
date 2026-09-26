@@ -318,8 +318,8 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 		withSessionCookie(secureRequest(http.MethodGet, "/", nil), raw))
 	policy := rr.Header().Get("Content-Security-Policy")
 	for _, want := range []string{
-		"frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'", "form-action 'self'",
-		"connect-src 'self' https://meter.example:* wss://meter.example:*",
+		"default-src 'self'", "frame-ancestors 'none'", "base-uri 'none'", "object-src 'none'",
+		"form-action 'self'", "connect-src 'self' https://meter.example:* wss://meter.example:*",
 	} {
 		if !strings.Contains(policy, want) {
 			t.Fatalf("CSP missing %q: %s", want, policy)
@@ -328,12 +328,6 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 	if strings.Contains(policy, "[") || rr.Header().Get("Strict-Transport-Security") == "" ||
 		rr.Header().Get("X-Frame-Options") != "DENY" || rr.Header().Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("headers=%v", rr.Header())
-	}
-	if base := appCSP("", ""); strings.Contains(base, "script-src") {
-		t.Fatalf("appCSP pinned script-src without a build: %s", base)
-	}
-	if pinned := appCSP("ABC123", ""); !strings.Contains(pinned, "script-src 'self' 'sha256-ABC123'") {
-		t.Fatalf("appCSP with a hash did not pin script-src: %s", pinned)
 	}
 }
 
