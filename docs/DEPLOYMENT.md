@@ -18,13 +18,9 @@ Pin `:X.Y.Z` or an image digest instead of `:latest` for reproducible deployment
 
 ## Fast local deployment
 
-```sh
-docker run -d --name graphite-meter --restart unless-stopped \
-  -p 7246:7246 ghcr.io/zr-jb/graphite-meter:latest
-```
-
-Open <http://localhost:7246>. Clear HTTP gives fetch-stream throughput and WebSocket latency. Browsers expose
-WebTransport only in a secure context, so remote WebTransport needs HTTPS and the native HTTP/3 listener.
+Start the [quick start](../README.md#quick-start) container and open <http://localhost:7246>. Clear HTTP gives
+fetch-stream throughput and WebSocket latency. Browsers expose WebTransport only in a secure context, so remote
+WebTransport needs HTTPS and the native HTTP/3 listener.
 
 ## Docker Compose
 
@@ -74,16 +70,10 @@ stamps the version and source revision.
 
 ## Native listeners
 
-Each listener has its own address and advertised origin, so a client can select a protocol deterministically.
-
-| Listener | Default | Serves |
-| --- | --- | --- |
-| `GM_H1_ADDR` | `:7246` | Clear HTTP/1.1: UI, discovery, fetch transfers, progress, WebSocket latency. Required. |
-| `GM_H1_TLS_ADDR` | disabled | HTTPS HTTP/1.1 fetch transfers and secure WebSocket latency. |
-| `GM_H2_ADDR` | disabled | TLS restricted to HTTP/2: fetch transfers and progress. |
-| `GM_H3_ADDR` | disabled | HTTP/3 over UDP: probes, fetch transfers, progress, WebTransport; TCP on the same address serves the Alt-Svc bootstrap. |
-
-HTTP/3 needs TCP and UDP on its port end to end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`; a valid
+Each listener has its own address and advertised origin, so a client can select a protocol deterministically. The
+clear HTTP/1.1 listener (`GM_H1_ADDR`) also serves the UI and discovery and is required; the others are off until
+given an address ([server reference](#server-reference)). HTTP/3 serves WebTransport and needs TCP (the Alt-Svc
+bootstrap) and UDP on its port end to end. All TLS listeners share `GM_TLS_CERT` and `GM_TLS_KEY`; a valid
 replacement PEM pair is hot-reloaded, and an incomplete renewal keeps the previous pair.
 
 ```env
@@ -206,10 +196,8 @@ revokes it. The client refuses authenticated operation over HTTP or with `--inse
 
 ## Podman and Quadlet
 
-[The Quadlet guide](../container/quadlet/README.md) has a published-image unit, source-build units (Podman 5+), a
-[native TLS + Certbot DNS-01](../container/quadlet/graphite-meter-tls/README.md) deployment and a
-[Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md). Rootless userspace networking can cap
-throughput; `Network=host` avoids it but gives up the network namespace, so apply host firewall policy.
+See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace networking can cap throughput;
+`Network=host` avoids it but gives up the network namespace, so apply host firewall policy.
 
 ## Native terminal client
 
@@ -225,21 +213,21 @@ Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the conta
 | `--throughput-protocol` | `auto` | `http1`, `http2` or `http3` for a negotiated origin. |
 | `--throughput-transport` | `auto` | `fetch-stream` or `webtransport`. |
 | `--latency-transport` | `auto` | `websocket` or `webtransport`. |
-| `--stages` | `latency,download,upload` | Comma-separated; add `bidirectional`. Unknown tokens are ignored. |
-| `--warmup` | `800ms` | Per transfer stage, 0–4 s. |
-| `--latency-duration` | `4s` | Measured windows, 500 ms–5 min. |
-| `--download-/--upload-/--bidirectional-duration` | `10s` | |
-| `--auto-streams` | `6` | Maximum HTTP/1.1 streams per direction. |
-| `--streams` | `0` | Exact streams per server and direction; `0` keeps automatic. |
-| `--ping` | `reply-driven` | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or a duration ≥ 80 ms. |
+| `--stages` | `latency,download,upload` | Comma-separated; add `bidirectional`. An unknown name is an error. |
+| `--warmup` | `800ms` | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s. |
+| `--latency-duration` | `4s` | Measured window, 1 s–5 min, checked even for a stage that is off. |
+| `--download-/--upload-/--bidirectional-duration` | `10s` | Same bounds. |
+| `--auto-streams` | `6` | Maximum HTTP/1.1 streams per direction, 1–14. |
+| `--streams` | `0` | Exact streams per server and direction, at most 14; `0` keeps automatic. |
+| `--ping` | `reply-driven` | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms–15 s. |
 | `--loaded-ping` | `medium` | Cadence during transfers, same values. |
 | `--loaded-latency` | `true` | Measure latency during transfer stages. |
 | `--insecure` | `false` | Skip TLS verification; refuses sign-in. |
 | `--report` | `false` | Run once without the interface; automatic when stdout is not a terminal. |
 | `--version` / `--legal` | | Print the version or third-party notices and exit. |
 
-Fixed cadences are capped at 15 s (half the server's idle bound). Headless runs print stage
-progress to stderr and the plain report to stdout; an interactive run prints the same report on exit.
+Fixed cadences are capped at 15 s, half the server's idle bound. Headless runs print stage progress to stderr and
+the plain report to stdout; an interactive run prints the same report on exit.
 
 | Exit | Meaning |
 | --- | --- |
@@ -253,21 +241,25 @@ group. The footer names what enter does on the focused row; `?` shows every key 
 
 | Key | Where | Action |
 | --- | --- | --- |
-| ↑/↓ (tab), ←/→, enter, space | setup | Move, change the value, start or open, stage on/off. |
-| r | setup / finished | Start test / Run again (enter also runs again). |
-| v, s, u, a | setup | Recheck paths, choose servers, keep available servers, Automatic paths. |
-| space, enter, esc | server chooser | Toggle, apply, cancel. |
-| esc | running / finished | Stop test (asks to confirm) / back to setup. |
-| d, l | running / finished | Details (servers, intervals, failures); rotate the latency server. |
+| ↑/↓ (k/j, tab), ←/→ | setup | Move; change the focused value. |
+| enter, space | setup | Start test on **Start test**, else open the row; space turns a stage on or off. |
+| r, v, s, u, a | setup | Start test, recheck paths, test servers, use available servers, automatic paths. |
+| ←/→, home/end, enter, esc | editing a value | Move the cursor, apply, cancel. |
+| space, enter, esc | server chooser | Select, apply, cancel. |
+| enter (o), esc | sign-in | Open the approval page, cancel. |
+| esc | running | Stop test; a second esc confirms. |
+| enter (r), esc | finished | Run again; back to setup. |
+| d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
 | ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| q, ctrl+c | any | Quit. |
+| ?, q, ctrl+c | any | Keys for this screen; quit. |
 
 ## Upgrading
 
-Upgrade the server and native clients together and reload open tabs; mixed versions are refused by the wire and
-discovery contracts. Existing deployments stay single-server until you add a [catalogue](SERVERS.md). Browser
-history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads schema 4; older records stay in storage but
-are skipped. Unknown or obsolete browser preferences fall back to defaults.
+Upgrade the server and native clients together and reload open tabs; wire changes stay additive, and discovery
+treats the engine version as metadata, not a compatibility test. Existing deployments stay single-server until you
+add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
+schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
+defaults.
 
 ## Troubleshooting
 
@@ -280,8 +272,7 @@ are skipped. Unknown or obsolete browser preferences fall back to defaults.
 | A browser IPv6 peer needs a hostname | Use a DNS name for IPv6 outside the page's origin; the native client accepts literals. |
 | Uploads fail behind a proxy | Disable request buffering and body-size limits; allow streaming progress and long requests. |
 | Throughput is lower than expected | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener. |
-| Timeouts or "—" appear | Inspect stage evidence: unresolved probes and missing receiver counters are not zero. |
-| A client stopped working after upgrading | Match server and client versions; reload the browser. |
+| Timeouts or "—" appear | Inspect stage evidence: unfinished probes and missing receiver counters are not zero. |
 
 ## Server reference
 
