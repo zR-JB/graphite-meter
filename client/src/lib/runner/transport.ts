@@ -52,7 +52,6 @@ export interface ParticipantHost {
   readonly config: RunnerConfig;
   /** Milliseconds on the run's timeline, which saved evidence shares. */
   now(): number;
-  /** Measured client-consumed download bytes. */
   download(bytes: number): void;
   /** Upload receiver evidence, pushed by its feed or answered by a checkpoint. */
   receiver(checkpoint: ReceiverCheckpoint): void;

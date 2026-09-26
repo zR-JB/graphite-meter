@@ -1013,7 +1013,6 @@ export class Run {
         reason,
         `All selected servers failed. ${server.server.name}: ${message}`,
       );
-    // Survivors start a fresh fixed-membership interval.
     if (activity && this.#measuring && isTransfer(activity.stage))
       this.#aggregate.begin(activity.stage, survivors, this.#now(), "dropout");
     this.#cancelEarly();
@@ -1059,7 +1058,6 @@ export class Run {
       for (const server of this.#servers) server.latency.resetStability();
   }
 
-  /** Ends every presentation series at a lifecycle boundary. */
   #breakContinuity(): void {
     this.#flushLatency();
     this.#continuity++;
