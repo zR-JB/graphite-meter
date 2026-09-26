@@ -128,10 +128,10 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
   const config = await page.evaluate(
     () => JSON.parse(localStorage.getItem("graphite-meter:v1")!).config,
   );
-  expect(incoherence(record!, config)).toEqual([]);
+  expect(incoherence(record!.result, config)).toEqual([]);
   // History views have no stage track; the live view must show what was saved.
   for (const stage of STAGES) {
-    const { status } = record!.stages[stage];
+    const status = record!.result.stages[stage];
     const name = new RegExp(`^${STAGE[stage].short} stage`);
     const track = page.getByRole("switch", { name });
     if (status !== "not-run" && (await track.state()).length)

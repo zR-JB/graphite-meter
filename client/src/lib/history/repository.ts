@@ -1,4 +1,4 @@
-import { HISTORY_LIMIT, isHistoryRecord, type HistoryRecord } from "./types";
+import { HISTORY_LIMIT, readHistoryRecord, type HistoryRecord } from "./types";
 import { HISTORY_DB } from "./dbSchema";
 
 const CHANNEL = "graphite-meter-history";
@@ -136,7 +136,7 @@ export class HistoryRepository {
       store.index(HISTORY_DB.completedAtIndex).getAll(),
     );
     const total = await request(store.count());
-    const records = values.filter(isHistoryRecord);
+    const records = values.flatMap((value) => readHistoryRecord(value) ?? []);
     return {
       records: records.reverse().slice(0, HISTORY_LIMIT),
       malformedCount: total - records.length,
@@ -154,9 +154,8 @@ export class HistoryRepository {
       tx.objectStore(HISTORY_DB.resultsStore).get(id),
     );
     if (value === undefined) return { status: "missing" };
-    return isHistoryRecord(value)
-      ? { status: "ready", record: value }
-      : { status: "malformed" };
+    const record = readHistoryRecord(value);
+    return record ? { status: "ready", record } : { status: "malformed" };
   }
 
   async delete(id: string): Promise<void> {

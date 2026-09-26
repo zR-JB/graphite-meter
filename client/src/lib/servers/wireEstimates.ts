@@ -4,29 +4,27 @@ import {
   type CompensationEstimate,
 } from "../compensation";
 import type { FlowDirection, TransportKind } from "../runner/contract";
-import type { MultiServerResult, TransferStage } from "../runner/measure";
+import {
+  MIN_EVIDENCE_MS,
+  type AggregateWindow,
+  type ServerMeasurementSummary,
+} from "../runner/measure";
 
-/** Estimate each component of the chosen common window using that participant's evidence. */
-export function serverWireEstimate(
-  details: MultiServerResult | null,
-  stage: TransferStage,
+/** Estimate each component of the headline window using that participant's own path. */
+export function headlineWire(
+  window: AggregateWindow | null | undefined,
   dir: FlowDirection,
+  path: (serverId: string) => ServerMeasurementSummary["throughput"] | null,
 ): CompensationEstimate | null {
-  const interval = details?.intervals.findLast(
-    (interval) => interval.stage === stage,
-  );
-  const components = interval?.complete ? interval.headline?.[dir] : null;
+  const components = window?.[dir];
   if (
     !components?.length ||
-    !details ||
-    components.some((component) => component.durationMs < 800)
+    components.some((component) => component.durationMs < MIN_EVIDENCE_MS)
   )
     return null;
   const estimates: CompensationEstimate[] = [];
   for (const component of components) {
-    const evidence = details.servers.find(
-      (server) => server.server.id === component.serverId,
-    )?.throughput;
+    const evidence = path(component.serverId);
     if (
       !evidence?.clientIpVersion ||
       (evidence.transport === "fetch-stream" && !evidence.browserProtocol)

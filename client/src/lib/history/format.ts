@@ -1,4 +1,4 @@
-import { MISSING, type Outcome } from "../presentation/vocabulary";
+import { MISSING } from "../presentation/vocabulary";
 import {
   fmtMs,
   fmtSpeed,
@@ -6,7 +6,6 @@ import {
   rateValueAt,
   throughputUnitIndex,
 } from "../format";
-import type { HistoryRecord } from "./types";
 
 interface HistoryUnits {
   base: "base10" | "base2";
@@ -46,17 +45,4 @@ export function formatRecentCompletion(
 
 export function formatLatency(value: number | null | undefined): string {
   return value == null ? MISSING : `${fmtMs(value)} ms`;
-}
-
-/** One completeness rule for the list badge and the detail. */
-export function historyOutcome(record: HistoryRecord): Outcome {
-  if (record.outcome === "incomplete") return "incomplete";
-  const { latency, download, upload, bidirectional } = record.stages;
-  return record.outcome === "partial" ||
-    (record.multiServer?.failures.length ?? 0) > 0 ||
-    [latency, download, upload, bidirectional].some(
-      ({ status }) => status === "partial" || status === "failed",
-    )
-    ? "partial"
-    : "complete";
 }

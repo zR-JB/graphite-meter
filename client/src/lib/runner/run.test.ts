@@ -11,7 +11,7 @@ import type {
   RunnerEvent,
 } from "./contract";
 import type { ParticipantHost, StageTransport } from "./transport";
-import { buildHistoryRecord, isHistoryRecord } from "../history/types";
+import { buildHistoryRecord, readHistoryRecord } from "../history/types";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { STAGES } from "./schedule";
 
@@ -278,8 +278,9 @@ test("one server runs every stage in order and its saved record describes the ru
   expect(result.outcome).toBe("complete");
   expect(result.multiServer.participants).toEqual(["self"]);
   expect(h.events.filter((event) => event.type === "complete")).toHaveLength(1);
-  const saved = buildHistoryRecord(result, { paths: null, clientBuild: "t" });
-  expect(isHistoryRecord(JSON.parse(JSON.stringify(saved)))).toBe(true);
+  const saved = buildHistoryRecord(result, { build: "t", engine: "e" });
+  expect(readHistoryRecord(JSON.parse(JSON.stringify(saved)))).toEqual(saved);
+  expect(result.download?.wire?.totalMultiplier).toBeGreaterThan(1);
 });
 
 test("two servers sum their windows, and terminal evidence after the final boundary changes nothing", async () => {

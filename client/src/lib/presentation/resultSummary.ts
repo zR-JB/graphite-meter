@@ -1,7 +1,4 @@
-import {
-  compensationTooltip,
-  type CompensationEstimate,
-} from "../compensation";
+import { compensationTooltip, type WireModel } from "../compensation";
 import { fmtAddedMs, fmtBytes, fmtMs } from "../format";
 import type { TransportRole } from "../runner/contract";
 import type { MultiServerResult } from "../runner/measure";
@@ -14,6 +11,7 @@ type Throughput = {
   reportedBytesPerSec: number;
   totalBytes: number;
   stabilityPct: number;
+  wire?: WireModel | null;
 };
 type Latency = { reportedMs: number; jitterMs: number | null };
 type WireStage = "download" | "upload" | "bidirectional";
@@ -31,11 +29,14 @@ export interface SummaryEvidence {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   download: Throughput | null;
   upload: Throughput | null;
-  bidirectional: { down: Throughput | null; up: Throughput | null } | null;
+  bidirectional: {
+    down: Throughput | null;
+    up: Throughput | null;
+    wire?: WireModel | null;
+  } | null;
   latency: Latency | null;
   added: Added | null;
   latencySource?: string;
-  wire: Partial<Record<WireStage, WireView | null>>;
 }
 export interface SummaryCard {
   key: TransportRole;
@@ -66,19 +67,21 @@ const shownStatus = (stages: Record<TransportRole, string>) =>
     Object.entries(stages).filter(([, value]) => SHOWN_STATUS.has(value)),
   ) as SummaryEvidence["status"];
 
-export const wireOverhead = (multiplier: number) =>
+const wireOverhead = (multiplier: number) =>
   multiplier < 1.005 ? null : `+${((multiplier - 1) * 100).toFixed(1)}%`;
 
-export function liveWire(
-  estimate: CompensationEstimate | null,
+function wireView(
+  wire: WireModel | null | undefined,
+  measuredBytesPerSec: number,
 ): WireView | null {
-  const pct = estimate && wireOverhead(estimate.totalMultiplier);
-  if (!estimate || !pct) return null;
-  return {
-    bytesPerSec: estimate.estimatedBytesPerSec,
-    pct,
-    tooltip: compensationTooltip(estimate),
-  };
+  const pct = wire && wireOverhead(wire.totalMultiplier);
+  return pct
+    ? {
+        bytesPerSec: measuredBytesPerSec * wire.totalMultiplier,
+        pct,
+        tooltip: compensationTooltip(wire),
+      }
+    : null;
 }
 
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
@@ -117,6 +120,7 @@ export function summaryCards(
   evidence: SummaryEvidence,
   rate: Rate,
   base: "base10" | "base2",
+  showWire: boolean,
 ): SummaryCard[] {
   return CARD_ORDER.flatMap((key): SummaryCard[] => {
     const status = evidence.status[key];
@@ -163,6 +167,7 @@ export function summaryCards(
     }
     let value: number | null;
     let stabilityPct: number | null;
+    let wire: WireModel | null | undefined;
     if (key === "bidirectional") {
       const lanes = evidence.bidirectional;
       const model = bidirectionalResultPresentation(
@@ -170,6 +175,7 @@ export function summaryCards(
         lanes?.up?.reportedBytesPerSec,
       );
       value = model.combinedBytesPerSec;
+      wire = lanes?.wire;
       stabilityPct =
         lanes?.down && lanes.up
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
@@ -189,6 +195,7 @@ export function summaryCards(
       const result = evidence[key];
       value = result?.reportedBytesPerSec ?? null;
       stabilityPct = result?.stabilityPct ?? null;
+      wire = result?.wire;
       if (result)
         card.detail = `${fmtBytes(result.totalBytes, base)} transferred`;
     }
@@ -196,16 +203,15 @@ export function summaryCards(
     if (added != null) card.added = fmtAddedMs(added);
     if (value === null) return [card];
     const shown = rate(value);
-    const wire = evidence.wire[key];
+    const view = showWire && status === "complete" && wireView(wire, value);
     return [
       {
         ...card,
         ...shown,
         quality: status === "complete" ? quality(stabilityPct) : null,
-        wire:
-          wire && status === "complete"
-            ? { ...wire, num: inUnit(rate, wire.bytesPerSec, shown.unit) }
-            : null,
+        wire: view
+          ? { ...view, num: inUnit(rate, view.bytesPerSec, shown.unit) }
+          : null,
       },
     ];
   });
@@ -225,6 +231,5 @@ export function serverEvidence(
     bidirectional: server.bidirectional,
     latency: server.latency,
     added: server.bufferbloat,
-    wire: {},
   };
 }

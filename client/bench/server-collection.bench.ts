@@ -84,11 +84,11 @@ test("coordinated server collection cell", async () => {
         maxMs: frames.at(-1),
       };
     });
-    const details = record.multiServer!;
+    const details = record.result.multiServer;
     if (
       details.failures.length ||
       details.participants.length !== count ||
-      !record.stages.download.result
+      !record.result.download
     )
       throw new Error(
         `Invalid measurement cell: ${JSON.stringify(details.failures)}`,
@@ -97,8 +97,7 @@ test("coordinated server collection cell", async () => {
       "GM_BENCH_END " +
         JSON.stringify({
           count,
-          downloadMbps:
-            (record.stages.download.result.reportedBytesPerSec * 8) / 1e6,
+          downloadMbps: (record.result.download.reportedBytesPerSec * 8) / 1e6,
           receiverWindows: details.intervals.filter(
             (interval) => interval.stage === "download",
           ),
@@ -108,7 +107,7 @@ test("coordinated server collection cell", async () => {
             loaded: server.latencyByStage.download,
           })),
           frames,
-          durationMs: record.durationMs,
+          durationMs: record.result.durationMs,
         }),
     );
     // Give the external process sampler time to capture the final live browser tree.

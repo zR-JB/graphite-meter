@@ -1,6 +1,5 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
-  import { historyWirePresentation } from "../../history/wire";
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
@@ -8,7 +7,6 @@
   import {
     formatHistoryRate,
     formatLatency,
-    historyOutcome,
     historyRate,
   } from "../../history/format";
   import type { HistoryRecord } from "../../history/types";
@@ -48,35 +46,21 @@
   let { record, onClose, onDelete, region = $bindable() }: Props = $props();
 
   let shown = $state("");
-  const details = $derived(
-    (record.multiServer?.selection.length ?? 0) > 1 ? record.multiServer : null,
-  );
+  const result = $derived(record.result);
+  const run = $derived(result.multiServer);
+  const details = $derived(run.selection.length > 1 ? run : null);
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
-  const outcome = $derived(historyOutcome(record));
   const completed = $derived(new Date(record.completedAt));
 
   const cards = $derived.by(() => {
-    const wire = (key: "download" | "upload" | "bidirectional") =>
-      store.showWireEstimates ? historyWirePresentation(record, key) : null;
-    const { latency, download, upload, bidirectional } = record.stages;
     const evidence = summaryEvidence(
+      result.stages,
       {
-        latency: latency.status,
-        download: download.status,
-        upload: upload.status,
-        bidirectional: bidirectional.status,
-      },
-      {
-        download: download.result,
-        upload: upload.result,
-        bidirectional,
-        latency: latency.result,
-        added: record.bufferbloat,
-        wire: {
-          download: wire("download"),
-          upload: wire("upload"),
-          bidirectional: wire("bidirectional"),
-        },
+        download: result.download,
+        upload: result.upload,
+        bidirectional: result.bidirectional,
+        latency: result.latency,
+        added: result.bufferbloat,
       },
       details,
       shown,
@@ -86,22 +70,20 @@
       evidence,
       (value) => historyRate(value, units),
       store.unitBase,
+      store.showWireEstimates,
     );
   });
 
   // Latency follows the chosen server when it measured latency, else the headline server.
   const latencyServer = $derived(
-    details?.servers.find(
+    run.servers.find(
       (server) => server.server.id === shown && server.latencyTarget,
-    ) ??
-      details?.servers.find(
-        (server) => server.server.id === details.latencyFocus,
-      ),
+    ) ?? run.servers.find((server) => server.server.id === run.latencyFocus),
   );
   const lanes = $derived.by(() => {
-    const saved = latencyServer
-      ? latencyLanes(latencyServer.latencyByStage)
-      : record.stages.latency.lanes;
+    const saved = latencyLanes(
+      latencyServer?.latencyByStage ?? result.latencyByStage,
+    );
     return LATENCY_LANES.flatMap((meta) => {
       const lane = saved[meta.key];
       return lane ? [{ ...meta, ...lane }] : [];
@@ -116,9 +98,7 @@
   );
   const accounting = $derived(
     savedLatencyHasProbeEvidence(
-      latencyServer
-        ? (latencyServer.latencyTarget?.transport ?? null)
-        : record.transport.latency.kind,
+      latencyServer?.latencyTarget?.transport ?? null,
     )
       ? lanes.filter(
           (lane) =>
@@ -155,70 +135,50 @@
   const rate = (value: number | null | undefined) =>
     formatHistoryRate(value, units);
   const serverRows = $derived(
-    details
-      ? details.selection.map((server) => {
-          const measured = details.servers.find(
-            (entry) => entry.server.id === server.id,
-          );
-          return {
-            id: server.id,
-            name: serverLabel(server),
-            host: URL.parse(server.url)?.host ?? "",
-            down: rate(measured?.download?.reportedBytesPerSec),
-            up: rate(measured?.upload?.reportedBytesPerSec),
-            latency: formatLatency(measured?.latency?.reportedMs),
-            throughputPath: measured
-              ? path(
-                  "throughput",
-                  measured.throughput.transport,
-                  measured.throughput.protocol,
-                  measured.throughput.browserProtocol,
-                )
-              : "Not measured",
-            latencyPath: measured?.latencyTarget
-              ? path("latency", measured.latencyTarget.transport)
-              : "Not measured",
-          };
-        })
-      : [
-          {
-            id: "single",
-            name: serverLabel({
-              name: record.server.name,
-              location: record.server.location ?? undefined,
-            }),
-            host: "",
-            down: rate(record.stages.download.result?.reportedBytesPerSec),
-            up: rate(record.stages.upload.result?.reportedBytesPerSec),
-            latency: formatLatency(record.stages.latency.result?.reportedMs),
-            throughputPath: path(
+    run.selection.map((server) => {
+      const measured = run.servers.find(
+        (entry) => entry.server.id === server.id,
+      );
+      return {
+        id: server.id,
+        name: serverLabel(server),
+        host: URL.parse(server.url)?.host ?? "",
+        down: rate(measured?.download?.reportedBytesPerSec),
+        up: rate(measured?.upload?.reportedBytesPerSec),
+        latency: formatLatency(measured?.latency?.reportedMs),
+        throughputPath: measured
+          ? path(
               "throughput",
-              record.transport.throughput.kind,
-              record.transport.throughput.protocol,
-            ),
-            latencyPath: path(
-              "latency",
-              record.transport.latency.kind,
-              record.transport.latency.protocol,
-            ),
-          },
-        ],
+              measured.throughput.transport,
+              measured.throughput.protocol,
+              measured.throughput.browserProtocol,
+            )
+          : "Not measured",
+        latencyPath: measured?.latencyTarget
+          ? path("latency", measured.latencyTarget.transport)
+          : "Not measured",
+      };
+    }),
   );
   const issues = $derived(
-    (record.multiServer?.failures ?? []).map((failure) =>
+    run.failures.map((failure) =>
       [
-        serverName(record.multiServer!.selection, failure.serverId),
+        serverName(run.selection, failure.serverId),
         STAGE[failure.stage].label +
           (failure.scope === "latency" ? " latency" : ""),
         reasonLabel(failure.reason),
       ].join(" · "),
     ),
   );
+  const ipVersion = $derived(
+    run.servers.find((server) => server.server.id === run.latencyFocus)
+      ?.throughput.clientIpVersion,
+  );
   const environment = $derived(
     [
-      ["IP family", record.ipVersion ? `IPv${record.ipVersion}` : null],
-      ["Client build", record.client.build],
-      ["Server engine", record.server.engine],
+      ["IP family", ipVersion ? `IPv${ipVersion}` : null],
+      ["Client build", record.build],
+      ["Server engine", record.engine],
     ].filter((row): row is [string, string] => !!row[1]),
   );
 </script>
@@ -250,13 +210,16 @@
             minute: "2-digit",
           })}</time
         >
-        {#if outcome !== "complete"}
-          <span class="badge" data-tone="warn">{OUTCOME[outcome]}</span>
+        {#if result.outcome !== "complete"}
+          <span class="badge" data-tone="warn">{OUTCOME[result.outcome]}</span>
         {/if}
       </h2>
       <p>
-        {fmtDuration(record.durationMs)} · {fmtBytes(
-          record.totalBytes,
+        {fmtDuration(result.durationMs)} · {fmtBytes(
+          run.servers.reduce(
+            (sum, { totalBytes }) => sum + totalBytes.down + totalBytes.up,
+            0,
+          ),
           store.unitBase,
         )} transferred
       </p>

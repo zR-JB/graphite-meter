@@ -76,8 +76,8 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   await open(page, home.url, { servers: [home, frankfurt], config: http1 });
   await ready(page);
   const saved = await run(page);
-  expect(saved.outcome).toBe("complete");
-  expect(saved.multiServer?.participants).toEqual(["self", "server-1"]);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
 
   const settings = await openSettings(page);
   const choices = settings.getByRole("group", { name: "Servers to test" });
@@ -129,7 +129,7 @@ test("a saved unreachable peer stays selected through cancel and retry", async (
   await closeSettings(page);
   await ready(page);
   expect(await selection(page)).toEqual(["self"]);
-  expect((await run(page)).multiServer?.participants).toEqual(["self"]);
+  expect((await run(page)).result.multiServer.participants).toEqual(["self"]);
 });
 
 test("a result finished after the network is blocked is still saved", async (page) => {
@@ -145,7 +145,7 @@ test("a result finished after the network is blocked is still saved", async (pag
   await expect(phase(page, "download")).toHaveCount(1);
   await page.blockRequests(["*"]);
   const saved = await savedResult(page, startedAt);
-  expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("a blocked latency probe fails only its path and Retry stays scoped", async (page) => {

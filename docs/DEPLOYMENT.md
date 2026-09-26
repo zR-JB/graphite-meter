@@ -266,8 +266,8 @@ the keys for the current screen.
 
 Upgrade the server and native clients together and reload open tabs; mixed versions are refused by the wire and
 discovery contracts. Existing deployments stay single-server until you add a [catalogue](SERVERS.md). Browser
-history reads [schema 4](MEASUREMENTS.md#saved-history) only; older records stay in storage but are skipped. Unknown
-or obsolete browser preferences fall back to defaults.
+history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads schema 4; older records stay in storage but
+are skipped. Unknown or obsolete browser preferences fall back to defaults.
 
 ## Troubleshooting
 

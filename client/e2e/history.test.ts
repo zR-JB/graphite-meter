@@ -1,5 +1,4 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import type { HistoryRecord } from "../src/lib/history/types";
 import { home, open, ready, run, runButton } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
@@ -34,7 +33,7 @@ function record(index: number, completedAt = base - index * 60_000) {
     sendFailureCount: 0,
     count: 100,
   };
-  const value: HistoryRecord = {
+  return {
     schemaVersion: 4,
     id: id(index),
     startedAt: completedAt - 65_432,
@@ -67,9 +66,9 @@ function record(index: number, completedAt = base - index * 60_000) {
     },
     ipVersion: 6,
     client: { build: "e2e" },
+    failures: [],
     wireEstimates: null,
   };
-  return value;
 }
 
 interface Archive {
@@ -195,7 +194,10 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
     { ...record(3), schemaVersion: 2 },
     record(4, 1e20),
   ];
-  const broken = { ...record(5), multiServer: { selection: [{}, {}] } };
+  const broken = {
+    ...record(5),
+    multiServer: { selection: [], servers: [], failures: 5 },
+  };
   await seed(page, { records: [current, broken, ...old] });
   const before = await stored(page);
   await history(page);

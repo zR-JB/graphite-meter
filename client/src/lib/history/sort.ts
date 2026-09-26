@@ -23,23 +23,23 @@ export function naturalDescending(sort: HistorySort): boolean {
   return sort !== "idle" && sort !== "loaded";
 }
 
-export function historyMetrics(
-  record: HistoryRecord,
-): Record<HistorySort, number | null> {
-  const { stages } = record;
+export function historyMetrics({
+  completedAt,
+  result,
+}: HistoryRecord): Record<HistorySort, number | null> {
   // The highest loaded median, as the detail lanes centre on it, with or without idle latency.
   const loaded = (["download", "upload", "bidirectional"] as const).flatMap(
-    (stage) => stages.latency.lanes[stage]?.center ?? [],
+    (stage) => result.latencyByStage[stage]?.p50Ms ?? [],
   );
   return {
-    date: record.completedAt,
-    download: stages.download.result?.reportedBytesPerSec ?? null,
-    upload: stages.upload.result?.reportedBytesPerSec ?? null,
+    date: completedAt,
+    download: result.download?.reportedBytesPerSec ?? null,
+    upload: result.upload?.reportedBytesPerSec ?? null,
     bidirectional: bidirectionalResultPresentation(
-      stages.bidirectional.down?.reportedBytesPerSec,
-      stages.bidirectional.up?.reportedBytesPerSec,
+      result.bidirectional?.down?.reportedBytesPerSec,
+      result.bidirectional?.up?.reportedBytesPerSec,
     ).combinedBytesPerSec,
-    idle: stages.latency.result?.reportedMs ?? null,
+    idle: result.latency?.reportedMs ?? null,
     loaded: loaded.length ? Math.max(...loaded) : null,
   };
 }

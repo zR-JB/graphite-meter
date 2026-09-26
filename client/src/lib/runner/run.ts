@@ -20,6 +20,8 @@ import { safeDetail } from "../api/decode";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { planServerStreams, validatePlan } from "./paths";
+import { combineCompensationEstimates, wireModel } from "../compensation";
+import { headlineWire } from "../servers/wireEstimates";
 import {
   EARLY_FINISH,
   pathEvidence,
@@ -1177,21 +1179,39 @@ export class Run {
   }
 
   #reduce(stage: TransportRole): void {
-    const early = this.#completedEarly.has(stage);
     const results = this.#results;
     if (stage === "latency") {
       results.latency = this.#latencySource.latency.result();
       if (results.latency)
         this.#emit({ type: "stageResult", stage, result: results.latency });
-    } else if (stage === "bidirectional")
-      results.bidirectional = this.#aggregate.result(stage, early);
-    else {
-      const result = this.#aggregate.result(stage, early)[
-        stage === "download" ? "down" : "up"
-      ];
-      results[stage] = result;
-      if (result) this.#emit({ type: "stageResult", stage, result });
+      return;
     }
+    const lanes = this.#aggregate.result(
+      stage,
+      this.#completedEarly.has(stage),
+    );
+    const window = this.#aggregate.intervals.findLast(
+      (interval) => interval.stage === stage,
+    )?.headline;
+    const path = (id: string) => {
+      const server = this.#servers.find((entry) => entry.server.id === id);
+      return server ? pathEvidence(server.paths).throughput : null;
+    };
+    const [down, up] = (["down", "up"] as const).map((dir) =>
+      lanes[dir] ? headlineWire(window, dir, path) : null,
+    );
+    if (stage === "bidirectional") {
+      results.bidirectional = {
+        ...lanes,
+        wire: down && up && wireModel(combineCompensationEstimates([down, up])),
+      };
+      return;
+    }
+    const estimate = stage === "download" ? down : up;
+    const lane = lanes[stage === "download" ? "down" : "up"];
+    const result = lane && { ...lane, wire: estimate && wireModel(estimate) };
+    results[stage] = result;
+    if (result) this.#emit({ type: "stageResult", stage, result });
   }
 
   /** A stage's results and status are reduced and emitted once, the moment it ends. */

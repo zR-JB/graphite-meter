@@ -41,9 +41,7 @@ for (const count of [1, 4])
     await ready(page);
     const saved = await run(page, 60_000);
     for (const stage of ["download", "upload"] as const)
-      expect(saved.stages[stage].result?.reportedBytesPerSec).toBeGreaterThan(
-        0,
-      );
+      expect(saved.result[stage]?.reportedBytesPerSec).toBeGreaterThan(0);
     const metrics = await page.evaluate(() =>
       Object.entries((window as any).phases as Record<string, Frames>).map(
         ([phase, { frames, tasks }]) => {

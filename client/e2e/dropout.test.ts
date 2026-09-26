@@ -43,27 +43,29 @@ test("a peer dropout keeps healthy transfers and persists its failure", async (p
     const startedAt = Date.now();
     await killDuringDownload(page, oslo);
     const saved = await savedResult(page, startedAt, 30_000);
-    expect(saved.outcome).toBe("partial");
-    expect(saved.multiServer?.participants).toEqual(["self", "server-1"]);
-    const failure = saved.multiServer?.failures.find(
+    expect(saved.result.outcome).toBe("partial");
+    expect(saved.result.multiServer.participants).toEqual(["self", "server-1"]);
+    const failure = saved.result.multiServer.failures.find(
       (candidate) => candidate.scope === "throughput",
     );
     expect(failure?.serverId).toBe("oslo");
-    const later = saved.multiServer!.intervals.filter(
+    const later = saved.result.multiServer.intervals.filter(
       (interval) =>
         interval.reason === "dropout" || interval.stage !== "download",
     );
     expect(later.length).toBeGreaterThan(0);
     for (const interval of later)
       expect(interval.participants).not.toContain("oslo");
-    expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+    expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 
     await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
     await page.reload();
     await expect(page.locator(".result-detail .summary-scope")).toContainText(
       "2 of 3 servers",
     );
-    expect((await savedResult(page)).multiServer).toEqual(saved.multiServer);
+    expect((await savedResult(page)).result.multiServer).toEqual(
+      saved.result.multiServer,
+    );
   } finally {
     oslo.kill();
     bergen.kill();

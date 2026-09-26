@@ -206,7 +206,7 @@ test("the first result saves after the application server becomes unreachable", 
     await expect(phase(page, "download")).toHaveCount(1, { timeout: 10_000 });
     oslo.kill("SIGKILL");
     const saved = await savedResult(page, startedAt, 20_000);
-    expect(saved.stages.download.status).toBe("complete");
+    expect(saved.result.stages.download).toBe("complete");
   } finally {
     oslo.kill();
   }

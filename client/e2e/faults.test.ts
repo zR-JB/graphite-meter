@@ -120,12 +120,12 @@ for (const fault of faults)
         config.duration.downloadMs = fault.editDownloadMs;
       }
       const saved = await savedResult(page, startedAt, 30_000);
-      expect(incoherence(saved, { ...config, adaptive: false })).toEqual([]);
-      expect(saved.outcome).toBe(fault.outcome);
-      const failures = saved
-        .multiServer!.failures.filter(
-          (failure) => failure.scope === "throughput",
-        )
+      expect(incoherence(saved.result, { ...config, adaptive: false })).toEqual(
+        [],
+      );
+      expect(saved.result.outcome).toBe(fault.outcome);
+      const failures = saved.result.multiServer.failures
+        .filter((failure) => failure.scope === "throughput")
         .map(({ serverId, stage, reason }) => ({ serverId, stage, reason }));
       if (fault.failure) expect(failures).toContainEqual(fault.failure);
       else expect(failures).toEqual([]);

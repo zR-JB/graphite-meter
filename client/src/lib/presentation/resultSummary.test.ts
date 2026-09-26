@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  liveWire,
-  summaryCards,
-  summaryEvidence,
-  wireOverhead,
-} from "./resultSummary";
+import { summaryCards, summaryEvidence } from "./resultSummary";
 
 test("run evidence keeps only stages with a result and names no single source", () => {
   const evidence = summaryEvidence(
@@ -20,7 +15,6 @@ test("run evidence keeps only stages with a result and names no single source", 
       bidirectional: null,
       latency: null,
       added: null,
-      wire: {},
     },
     null,
     "",
@@ -30,18 +24,44 @@ test("run evidence keeps only stages with a result and names no single source", 
   expect(evidence.latencySource).toBeUndefined();
 });
 
-test("live wire overhead appears from half a percent", () => {
-  const estimate = { totalMultiplier: 1.004 } as Parameters<typeof liveWire>[0];
-  expect(liveWire(estimate)).toBeNull();
-  expect(wireOverhead(1.05)).toBe("+5.0%");
-});
-
 const lane = (reportedBytesPerSec: number) => ({
   reportedBytesPerSec,
   totalBytes: 1_000_000,
   stabilityPct: 95,
 });
 const rate = (value: number) => ({ num: String(value), unit: "B/s" });
+
+test("a saved wire overhead shows from half a percent and only when chosen", () => {
+  const wire = (totalMultiplier: number, show = true) =>
+    summaryCards(
+      {
+        status: { download: "complete" },
+        download: {
+          ...lane(100),
+          wire: {
+            factors: [],
+            transport: "http2",
+            transportSource: "detected",
+            framing: null,
+            mtuBytes: 1500,
+            ipVersion: 4,
+            ipVersionSource: "detected",
+            totalMultiplier,
+          },
+        },
+        upload: null,
+        bidirectional: null,
+        latency: null,
+        added: null,
+      },
+      rate,
+      "base10",
+      show,
+    )[0].wire;
+  expect(wire(1.004)).toBeNull();
+  expect(wire(1.05)).toMatchObject({ pct: "+5.0%", num: "105" });
+  expect(wire(1.05, false)).toBeNull();
+});
 
 test("a one-lane bidirectional result has no combined value, only its surviving lane", () => {
   const [card] = summaryCards(
@@ -52,10 +72,10 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
       bidirectional: { down: lane(40), up: null },
       latency: null,
       added: null,
-      wire: {},
     },
     rate,
     "base10",
+    true,
   );
   expect(card).toMatchObject({
     num: "—",
@@ -73,10 +93,10 @@ test("cards show signed added latency, the grade, and one pip rule", () => {
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { addedMs: { download: 8.25, upload: -0.04 }, grade: "B" },
-      wire: {},
     },
     rate,
     "base10",
+    true,
   );
   const shown = cards.map((card) => [
     card.added,
@@ -99,10 +119,10 @@ test("records saved before per-stage added latency show only the grade", () => {
       bidirectional: null,
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { grade: "C" },
-      wire: {},
     },
     rate,
     "base10",
+    true,
   );
   expect(latency.grade).toBe("Grade C");
 });

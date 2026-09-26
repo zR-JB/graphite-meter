@@ -1,4 +1,4 @@
-import { isHistoryRecord } from "../src/lib/history/types";
+import { readHistoryRecord } from "../src/lib/history/types";
 import {
   baseConfig,
   home,
@@ -26,20 +26,26 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   });
   await ready(page);
   const saved = await run(page);
-  expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.outcome).toBe("complete");
-  expect(saved.multiServer?.failures).toEqual([]);
+  expect(readHistoryRecord(saved)).toBe(saved);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.multiServer.failures).toEqual([]);
   const preflight = await fetch(`${home.http}/preflight`);
   const identity = await preflight.json();
-  expect(saved.server.name).toBe(identity.server.name);
-  expect(saved.server.engine).toBe(identity.engineVersion);
+  expect(saved.result.multiServer.selection[0].name).toBe(identity.server.name);
+  expect(saved.engine).toBe(identity.engineVersion);
   for (const stage of ["latency", "download", "upload"] as const)
-    expect(saved.stages[stage].status).toBe("complete");
-  expect(saved.stages.latency.lanes.latency?.count).toBeGreaterThan(0);
-  expect(saved.stages.download.result?.reportedBytesPerSec).toBeGreaterThan(0);
-  expect(saved.transport.throughput.kind).toBe("fetch-stream");
-  expect(saved.transport.latency.kind).toBe("websocket");
-  expect(saved.multiServer?.servers[0].throughput?.origin).toBe(home.http);
+    expect(saved.result.stages[stage]).toBe("complete");
+  expect(saved.result.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
+  expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.result.multiServer.servers[0].throughput.transport).toBe(
+    "fetch-stream",
+  );
+  expect(saved.result.multiServer.servers[0].latencyTarget?.transport).toBe(
+    "websocket",
+  );
+  expect(saved.result.multiServer.servers[0].throughput?.origin).toBe(
+    home.http,
+  );
 
   const row = page.locator(`a.result-row[data-history-id="${saved.id}"]`);
   await page.getByRole("button", { name: "Open History" }).click();
@@ -67,7 +73,7 @@ test("stopping during download freezes elapsed time and a rerun completes", asyn
   });
   expect(await elapsed.textContent()).toBe(frozen);
   const saved = await run(page);
-  expect(saved.outcome).toBe("complete");
+  expect(saved.result.outcome).toBe("complete");
 });
 
 test("reduced motion still updates every readout and completes", async (page) => {
@@ -85,7 +91,7 @@ test("reduced motion still updates every readout and completes", async (page) =>
     .toBe(true);
   await expect(page.locator(".gauge-value")).toHaveText(/\d/);
   const saved = await savedResult(page);
-  expect(saved.outcome).toBe("complete");
+  expect(saved.result.outcome).toBe("complete");
 });
 
 test("a run in a hidden tab completes and saves", async (page) => {
@@ -100,7 +106,7 @@ test("a run in a hidden tab completes and saves", async (page) => {
   expect(await page.evaluate(() => document.visibilityState)).toBe("hidden");
   const saved = await savedResult(page, startedAt, 20_000);
   await bounds("normal");
-  expect(saved.outcome).toBe("complete");
+  expect(saved.result.outcome).toBe("complete");
   await expect(phase(page, "complete")).toHaveCount(1);
 });
 

@@ -15,7 +15,6 @@
     formatHistoryRate,
     formatLatency,
     formatRecentCompletion,
-    historyOutcome,
   } from "../history/format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
@@ -214,24 +213,23 @@
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
 
   function metric(record: HistoryRecord, column: HistoryColumn): string {
-    const { stages } = record;
+    const { stages, bidirectional } = record.result;
     const value = historyMetrics(record)[column];
     if (column === "loaded")
       return value == null ? MISSING : formatLatency(value);
     if (column === "idle")
       return value == null
-        ? stageStatusLabel(stages.latency.status)
+        ? stageStatusLabel(stages.latency)
         : formatLatency(value);
     if (value != null) return formatHistoryRate(value, units);
-    if (column !== "bidirectional")
-      return stageStatusLabel(stages[column].status);
+    if (column !== "bidirectional") return stageStatusLabel(stages[column]);
     const { survivingDirection } = bidirectionalResultPresentation(
-      stages.bidirectional.down?.reportedBytesPerSec,
-      stages.bidirectional.up?.reportedBytesPerSec,
+      bidirectional?.down?.reportedBytesPerSec,
+      bidirectional?.up?.reportedBytesPerSec,
     );
     return survivingDirection
       ? `${survivingDirection === "down" ? "Down" : "Up"} only`
-      : stageStatusLabel(stages.bidirectional.status);
+      : stageStatusLabel(stages.bidirectional);
   }
 
   function historyRow(record: HistoryRecord) {
@@ -240,7 +238,7 @@
       dateStyle: "medium",
       timeStyle: "short",
     });
-    const outcome = historyOutcome(record);
+    const { outcome } = record.result;
     const metrics = columns.map((column) => metric(record, column));
     return {
       record,

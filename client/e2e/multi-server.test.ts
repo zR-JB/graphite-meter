@@ -1,4 +1,4 @@
-import { isHistoryRecord } from "../src/lib/history/types";
+import { readHistoryRecord } from "../src/lib/history/types";
 import {
   amsterdam,
   baseConfig,
@@ -31,12 +31,12 @@ test("four servers share one run and keep separate receiver windows", async (pag
   });
   await ready(page);
   const saved = await run(page);
-  expect(isHistoryRecord(saved)).toBe(true);
-  expect(saved.outcome).toBe("complete");
-  expect(saved.multiServer?.failures).toEqual([]);
-  expect(saved.multiServer?.participants).toEqual(four.map((s) => s.id));
+  expect(readHistoryRecord(saved)).toBe(saved);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.multiServer.failures).toEqual([]);
+  expect(saved.result.multiServer.participants).toEqual(four.map((s) => s.id));
   for (const stage of ["download", "upload", "bidirectional"] as const) {
-    const interval = saved.multiServer!.intervals.find(
+    const interval = saved.result.multiServer.intervals.find(
       (candidate) => candidate.stage === stage,
     )!;
     expect(interval.complete).toBe(true);
@@ -45,7 +45,7 @@ test("four servers share one run and keep separate receiver windows", async (pag
     for (const dir of stage === "bidirectional" ? ["down", "up"] : dirs)
       expect(interval.headline?.[dir as "down"]).toHaveLength(4);
   }
-  for (const server of saved.multiServer!.servers) {
+  for (const server of saved.result.multiServer.servers) {
     expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
     expect(server.totalBytes.down).toBeGreaterThan(0);
     expect(server.totalBytes.up).toBeGreaterThan(0);
@@ -78,8 +78,8 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   });
   await ready(page);
   const saved = await run(page);
-  expect(saved.multiServer?.failures).toEqual([]);
-  const [self, peer] = saved.multiServer!.servers;
+  expect(saved.result.multiServer.failures).toEqual([]);
+  const [self, peer] = saved.result.multiServer.servers;
   expect(self.throughput?.origin).toBe(home.http);
   expect(peer.throughput?.origin).toBe(frankfurt.url);
   expect(self.latencyTarget?.transport).toBe("websocket");
@@ -104,9 +104,9 @@ test("deselecting a verified peer starts a self-only run at once", async (page) 
   await settings.getByRole("checkbox", { name: /^Frankfurt/ }).click();
   await closeSettings(page);
   const saved = await run(page);
-  expect(saved.multiServer?.participants).toEqual(["self"]);
-  expect(saved.multiServer?.failures).toEqual([]);
-  expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.result.multiServer.participants).toEqual(["self"]);
+  expect(saved.result.multiServer.failures).toEqual([]);
+  expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("one missed upload checkpoint keeps the interval and the run", async (page) => {
@@ -133,9 +133,9 @@ test("one missed upload checkpoint keeps the interval and the run", async (page)
   }, frankfurt.url);
   const saved = await run(page);
   expect(await page.evaluate(() => (window as any).missed)).toBe(1);
-  expect(saved.outcome).toBe("complete");
-  expect(saved.multiServer?.failures).toEqual([]);
-  const upload = saved.multiServer!.intervals.filter(
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.multiServer.failures).toEqual([]);
+  const upload = saved.result.multiServer.intervals.filter(
     (interval) => interval.stage === "upload",
   );
   expect(upload).toHaveLength(1);
@@ -144,7 +144,7 @@ test("one missed upload checkpoint keeps the interval and the run", async (page)
     complete: true,
     participants: ["self", "server-1"],
   });
-  expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+  expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("switching the latency server after completion keeps the saved record", async (page) => {
@@ -161,7 +161,7 @@ test("switching the latency server after completion keeps the saved record", asy
   });
   const saved = await run(page);
   expect(await page.evaluate(() => (window as any).saves)).toBe(1);
-  const source = saved.multiServer!.latencyFocus;
+  const source = saved.result.multiServer.latencyFocus;
   const other = source === "self" ? "server-1" : "self";
   const focus = page.getByRole("combobox", {
     name: "Latency server shown in gauge, profile and chart",

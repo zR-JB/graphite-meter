@@ -41,12 +41,12 @@ test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
     await closeSettings(page);
     await ready(page);
     const saved = await run(page);
-    expect(saved.multiServer?.participants).toEqual(["self"]);
-    expect(saved.multiServer?.failures).toEqual([]);
-    expect(saved.transport.throughput.kind).toBe(kind);
-    const [self] = saved.multiServer!.servers;
+    expect(saved.result.multiServer.participants).toEqual(["self"]);
+    expect(saved.result.multiServer.failures).toEqual([]);
+    expect(saved.result.multiServer.servers[0].throughput.transport).toBe(kind);
+    const [self] = saved.result.multiServer.servers;
     expect(self.throughput?.browserProtocol).toBe(protocol);
-    expect(saved.stages.upload.result?.reportedBytesPerSec).toBeGreaterThan(0);
+    expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
   }
 });
 
@@ -226,8 +226,8 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
   await ready(page);
   await page.cdp("Network.clearBrowserCookies");
   const saved = await run(page);
-  expect(saved.multiServer?.participants).toEqual(["self", "server-4"]);
-  expect(saved.multiServer?.failures).toEqual([]);
+  expect(saved.result.multiServer.participants).toEqual(["self", "server-4"]);
+  expect(saved.result.multiServer.failures).toEqual([]);
   expect(JSON.stringify(saved)).not.toContain("Bearer");
 });
 
@@ -260,8 +260,8 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
     approval.close();
   }
   const saved = await savedResult(page, startedAt, 20_000);
-  expect(saved.outcome).toBe("partial");
-  const revoked = saved.multiServer!.failures.find(
+  expect(saved.result.outcome).toBe("partial");
+  const revoked = saved.result.multiServer.failures.find(
     (failure) => failure.scope === "throughput",
   );
   expect(revoked).toMatchObject({

@@ -34,6 +34,21 @@ export interface CompensationEstimate extends CompensationBreakdown {
   confidence: CompensationConfidence;
 }
 
+/** The saved part of an estimate: its model and the multiplier over the measured rate. */
+export type WireModel = CompensationBreakdown & { totalMultiplier: number };
+
+export function wireModel(estimate: CompensationEstimate): WireModel {
+  const {
+    measuredBytesPerSec,
+    estimatedBytesPerSec,
+    lowerBytesPerSec,
+    upperBytesPerSec,
+    confidence,
+    ...model
+  } = estimate;
+  return model;
+}
+
 const CONFIDENCE: CompensationConfidence[] = ["high", "medium", "low"];
 const MIXED_LABELS: Record<FactorKey, string> = {
   "application-framing": "Application framing",

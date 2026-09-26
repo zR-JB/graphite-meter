@@ -150,12 +150,13 @@ is emitted.
 
 ## Saved history
 
-The browser accepts only history schema 4 with wire estimates version 2. Other or malformed records stay in storage
-but are skipped and reported; a database of another version is refused unchanged. Nothing is migrated. Up to 2,000
-results are kept; Complete, Partial and Incomplete runs are saved when saving is on.
+The browser saves history schema 5: the run's own result with the client build and the headline server's engine.
+Schema 4 records from earlier releases are read as a one-server result and stay unchanged in storage. Other or
+malformed records stay in storage but are skipped and reported; a database of another version is refused unchanged.
+Up to 2,000 results are kept; Complete, Partial and Incomplete runs are saved when saving is on.
 
-A record holds the selected servers and survivors, per-server transport evidence, stage latency populations with
-exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent intervals,
-with an explicit omitted count), structured failures, one status per stage, unique byte totals, the headline
-(`reportedBytesPerSec`) with its peak and stability, and the latency focus. Missing measurements stay null. Grants and socket tickets
-never enter history or preferences.
+A record holds the selected servers and survivors, per-server transport evidence and stage statuses, stage latency
+populations with exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent
+intervals, with an explicit omitted count), structured failures, one status per stage, unique byte totals, the
+headline (`reportedBytesPerSec`) with its peak, stability and wire estimate model, and the latency focus. Missing
+measurements stay null. Grants and socket tickets never enter history or preferences.

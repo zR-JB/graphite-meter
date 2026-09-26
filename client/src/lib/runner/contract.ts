@@ -1,6 +1,7 @@
 // Shared runner contract for phases, config, events, results, and backend interfaces.
 
 import type { ServerCredentials } from "../servers/credentials";
+import type { WireModel } from "../compensation";
 import type { Probe } from "../api/decode";
 import type {
   FetchThroughputTarget,
@@ -170,6 +171,8 @@ export interface RunResult {
   bidirectional: {
     down: ThroughputResult | null;
     up: ThroughputResult | null;
+    /** The combined wire estimate, only when both lanes have a headline. */
+    wire?: WireModel | null;
   } | null;
   latency: LatencyResult | null;
   latencyByStage: Record<TransportRole, StageLatencySummary | null>;
@@ -187,6 +190,8 @@ export interface ThroughputResult {
   totalBytes: number;
   /** Headline bytes/second from the selected full or stable measurement window. */
   reportedBytesPerSec: number;
+  /** Link occupancy of the headline window; absent without verified path evidence. */
+  wire?: WireModel | null;
 }
 
 /** Diagnostic means over in-window replies with negotiated timing; replies without it are left out. */

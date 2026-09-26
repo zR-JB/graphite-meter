@@ -8,7 +8,6 @@
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
     CARD_ORDER,
-    liveWire,
     summaryCards,
     summaryEvidence,
   } from "../presentation/resultSummary";
@@ -34,8 +33,6 @@
     num: fmtSpeed(store.toUnit(bytesPerSec)),
     unit: store.unitLabel,
   });
-  const wire = (estimate: Parameters<typeof liveWire>[0]) =>
-    store.showWireEstimates ? liveWire(estimate) : null;
 
   const cards = $derived.by(() => {
     if (compact) return [];
@@ -50,17 +47,17 @@
         bidirectional: store.result?.bidirectional ?? null,
         latency: store.stageResults.latency,
         added: store.result?.bufferbloat ?? null,
-        wire: {
-          download: wire(store.downloadCompensation),
-          upload: wire(store.uploadCompensation),
-          bidirectional: wire(store.bidirectionalCompensation),
-        },
       },
       details,
       shown,
       details?.latencyFocus,
     );
-    return summaryCards(evidence, rate, store.unitBase);
+    return summaryCards(
+      evidence,
+      rate,
+      store.unitBase,
+      store.showWireEstimates,
+    );
   });
 
   // Animated rates are visual only; accessible values use receiver accounting.

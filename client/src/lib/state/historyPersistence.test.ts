@@ -112,10 +112,10 @@ test("UI and history use the raw stage summary even when chart samples disagree"
     store.ingest({ type: "complete", result: completed });
     expect(store.stageResults.download).toEqual(completed.download);
     expect(store.stageResults.upload).toBeNull();
-    expect(store.historyCandidate?.schemaVersion).toBe(4);
-    expect(store.historyCandidate?.stages.latency.lanes.download).toMatchObject(
-      { min: 10, p90: 100, jitter: 90, count: 4, timeoutRatio: 0 },
-    );
+    expect(store.historyCandidate?.schemaVersion).toBe(5);
+    expect(
+      store.historyCandidate?.result.latencyByStage.download,
+    ).toMatchObject({ minMs: 10, p90Ms: 100, jitterMs: 90, probeCount: 4 });
   } finally {
     store.resultHistoryPreference = previousPreference;
     store.reset();
@@ -136,20 +136,22 @@ test("only an enabled complete event creates an immutable history candidate", as
       servers: [{ server: completed.multiServer.selection[0], paths }],
     };
     store.ingest({ type: "complete", result: completed });
-    const candidate = store.historyCandidate;
-    expect(candidate?.stages.upload.status).toBe("failed");
-    expect(candidate?.multiServer?.failures[0]).toMatchObject({
+    const candidate = store.historyCandidate!;
+    expect(candidate.engine).toBe(paths.discovery.engineVersion);
+    expect(candidate.result.stages.upload).toBe("failed");
+    expect(candidate.result.multiServer.failures[0]).toMatchObject({
       stage: "upload",
       reason: "timeout",
     });
     completed.download!.reportedBytesPerSec = 1;
     completed.multiServer.selection[0].name = "Next server";
-    paths.throughput.probe.clientIp = "192.0.2.254";
-    expect(candidate?.server.name).toBe("Measured server");
-    expect(JSON.stringify(candidate)).not.toContain("192.0.2.254");
-    expect(candidate?.stages.download.result?.reportedBytesPerSec).toBe(
-      12_500_000,
+    expect(candidate.result.multiServer.selection[0].name).toBe(
+      "Measured server",
     );
+    expect(JSON.stringify(candidate)).not.toContain(
+      paths.throughput.probe.clientIp,
+    );
+    expect(candidate.result.download?.reportedBytesPerSec).toBe(12_500_000);
 
     store.reset();
     store.resultHistoryPreference = "disabled";
@@ -174,57 +176,6 @@ test("only an enabled complete event creates an immutable history candidate", as
   } finally {
     store.reset();
     store.resultHistoryPreference = previousPreference;
-    for (const key of Object.keys(TEST_BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
-  }
-});
-
-test("wire snapshots are independent of their display preference", async () => {
-  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
-  const { store } = await import("./store.svelte");
-  const previousPreference = store.resultHistoryPreference;
-  const previousShowWireEstimates = store.showWireEstimates;
-  try {
-    store.reset();
-    store.showWireEstimates = false;
-    store.resultHistoryPreference = "enabled";
-    store.ingest({ type: "complete", result: result() });
-    const hiddenWireCandidate = store.historyCandidate;
-    expect(
-      hiddenWireCandidate?.wireEstimates?.downloadBytesPerSec,
-    ).toBeGreaterThan(throughput.reportedBytesPerSec);
-    expect(hiddenWireCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
-    expect(
-      hiddenWireCandidate?.wireEstimates?.bidirectionalBytesPerSec,
-    ).toBeNull();
-    expect(JSON.stringify(hiddenWireCandidate)).not.toContain("127.0.0.1");
-
-    store.showWireEstimates = true;
-    expect(store.historyCandidate).toBe(hiddenWireCandidate);
-
-    store.reset();
-    store.showWireEstimates = false;
-    store.resultHistoryPreference = "enabled";
-    const loopback = testPreparedPaths();
-    loopback.throughput.probe.clientIp = "127.0.0.1";
-    loopback.latency!.probe.clientIp = "127.0.0.1";
-    const completed = result();
-    store.run = {
-      config: store.config,
-      servers: [
-        { server: completed.multiServer.selection[0], paths: loopback },
-      ],
-    };
-    store.ingest({ type: "complete", result: completed });
-    expect(
-      store.historyCandidate?.wireEstimates?.downloadBytesPerSec,
-    ).toBeGreaterThan(throughput.reportedBytesPerSec);
-    expect(store.historyCandidate?.wireEstimates?.uploadBytesPerSec).toBeNull();
-    expect(JSON.stringify(store.historyCandidate)).not.toContain("127.0.0.1");
-  } finally {
-    store.reset();
-    store.resultHistoryPreference = previousPreference;
-    store.showWireEstimates = previousShowWireEstimates;
     for (const key of Object.keys(TEST_BUILD_TOKENS))
       Reflect.deleteProperty(globalThis, key);
   }

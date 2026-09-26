@@ -1,11 +1,9 @@
 import { SvelteMap } from "svelte/reactivity";
 import { connectionQuality } from "./connectionHealth";
-import { historyWireEstimates } from "../history/wire";
 import type {
   RunnerEvent,
   Phase,
   ConnectivityState,
-  PreparedPaths,
   RunResult,
   RunnerConfig,
   RunnerError,
@@ -28,10 +26,6 @@ import {
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
-import {
-  combineCompensationEstimates,
-  type CompensationEstimate,
-} from "../compensation";
 import { rateUnit, rateValueAt, rawRateFrom } from "../format";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
@@ -64,7 +58,6 @@ import {
 } from "./persistence";
 import { BUILD } from "../buildenv";
 import { buildHistoryRecord, type HistoryRecord } from "../history/types";
-import { serverWireEstimate } from "../servers/wireEstimates";
 import {
   selectedInCatalogOrder,
   type ServerCatalog,
@@ -338,14 +331,6 @@ class AppStore {
   run = $state.raw<{ config: RunnerConfig; servers: PreparedServer[] } | null>(
     null,
   );
-  /** The headline latency server's paths, which history records describe. */
-  #runPaths = $derived<PreparedPaths | null>(
-    (
-      this.run?.servers.find(
-        (entry) => entry.server.id === this.serverDetails?.latencyFocus,
-      ) ?? this.run?.servers[0]
-    )?.paths ?? null,
-  );
   connections = $derived(
     presentConnections(
       this.config,
@@ -484,36 +469,6 @@ class AppStore {
 
   latencyEnabled = $derived(latencyPathNeeded(this.config));
 
-  #bidirectionalWire(
-    details: MultiServerResult | null,
-  ): CompensationEstimate | null {
-    const estimates = [
-      serverWireEstimate(details, "bidirectional", "down"),
-      serverWireEstimate(details, "bidirectional", "up"),
-    ];
-    return estimates.every(
-      (value): value is CompensationEstimate => value !== null,
-    )
-      ? combineCompensationEstimates(estimates)
-      : null;
-  }
-
-  downloadCompensation = $derived(
-    this.stageResults.download &&
-      serverWireEstimate(this.serverDetails, "download", "down"),
-  );
-
-  uploadCompensation = $derived(
-    this.stageResults.upload &&
-      serverWireEstimate(this.serverDetails, "upload", "up"),
-  );
-
-  bidirectionalCompensation = $derived(
-    this.result?.bidirectional
-      ? this.#bidirectionalWire(this.serverDetails)
-      : null,
-  );
-
   scales = $derived(
     throughputScales(
       this.throughput,
@@ -573,22 +528,15 @@ class AppStore {
       latency: result.latency,
     };
     this.serverDetails = result.multiServer;
+    const focus =
+      this.run?.servers.find(
+        ({ server }) => server.id === result.multiServer.latencyFocus,
+      ) ?? this.run?.servers[0];
     this.historyCandidate = this.savingResults
-      ? buildHistoryRecord(
-          result,
-          {
-            paths: this.#runPaths,
-            clientBuild: BUILD.clientVersion,
-            wireEstimates: historyWireEstimates(
-              this.downloadCompensation,
-              this.uploadCompensation,
-              result.bidirectional?.down && result.bidirectional.up
-                ? this.bidirectionalCompensation
-                : null,
-            ),
-          },
-          result.startedAt + result.durationMs,
-        )
+      ? buildHistoryRecord(result, {
+          build: BUILD.clientVersion,
+          engine: focus?.paths.discovery.engineVersion ?? "unknown",
+        })
       : null;
     this.phase = "complete";
   }
