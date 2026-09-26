@@ -68,8 +68,6 @@ def validate_index_descriptors(index: JsonObject) -> list[str]:
 
 def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
     """Decode a JSON blob of the OCI layout after checking its size and digest."""
-    if DIGEST_RE.fullmatch(digest) is None:
-        fail(f"invalid OCI blob digest {digest!r}")
     try:
         member = archive.getmember("blobs/sha256/" + digest.removeprefix("sha256:"))
     except KeyError:
@@ -83,18 +81,8 @@ def blob(archive: tarfile.TarFile, digest: str) -> JsonObject:
     return expect_object(decode_json(data.decode(errors="replace"), digest), digest)
 
 
-def provenance_source(archive: tarfile.TarFile, attestation: str, repository: str) -> str:
-    """Return the commit that the SLSA provenance in `attestation` says BuildKit built."""
-    statements = []
-    for item in expect_array(blob(archive, attestation).get("layers"), attestation):
-        layer = expect_object(item, attestation)
-        annotations = object_field(layer, "annotations", attestation)
-        if annotations.get("in-toto.io/predicate-type") == SLSA:
-            statements.append(str_field(layer, "digest", attestation))
-    if len(statements) != 1:
-        fail(f"{attestation} needs exactly one SLSA provenance statement")
-    statement = blob(archive, statements[0])
-
+def source_commit(statement: JsonObject, repository: str) -> str:
+    """Return the commit a BuildKit SLSA provenance statement says it built from `repository`."""
     def nested(*keys: str) -> JsonObject:
         value = statement
         for key in keys:
@@ -114,6 +102,19 @@ def provenance_source(archive: tarfile.TarFile, attestation: str, repository: st
     if statement.get("predicateType") != SLSA or origin != expected:
         fail(f"provenance built {origin!r}, not {expected!r}")
     return commit
+
+
+def provenance_sources(archive: tarfile.TarFile, attestation: str, repository: str) -> set[str]:
+    """Return the commits that the SLSA statements in `attestation` say BuildKit built."""
+    sources = set()
+    for item in expect_array(blob(archive, attestation).get("layers"), attestation):
+        layer = expect_object(item, attestation)
+        if object_field(layer, "annotations", attestation).get("in-toto.io/predicate-type") == SLSA:
+            statement = blob(archive, str_field(layer, "digest", attestation))
+            sources.add(source_commit(statement, repository))
+    if not sources:
+        fail(f"{attestation} holds no SLSA provenance statement")
+    return sources
 
 
 def select_engine() -> str:
@@ -155,7 +156,8 @@ def verify(version: str, revision: str, archive: Path) -> str:
     attestations = validate_index_descriptors(inspect("--raw"))
     try:
         with tarfile.open(archive, mode="r:") as tar:
-            sources = {provenance_source(tar, digest, repository) for digest in attestations}
+            sources = set().union(*(provenance_sources(tar, digest, repository)
+                                    for digest in attestations))
     except tarfile.TarError as exc:
         raise ControlPlaneError(f"cannot read OCI archive layout: {exc}") from exc
     if sources != {revision}:

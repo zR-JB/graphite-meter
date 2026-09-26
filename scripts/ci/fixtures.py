@@ -125,7 +125,7 @@ ATTESTED = (descriptor("unknown", "unknown", "sha256:" + "c" * 64, AMD),
 
 
 def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
-              tamper: bool = False) -> JsonObject:
+              tamper: bool = False, predicate: str = SLSA) -> JsonObject:
     """Write BuildKit-shaped provenance for both images into an OCI archive; return its index."""
     blobs: dict[str, bytes] = {}
 
@@ -144,7 +144,7 @@ def write_oci(path: Path, repository: str, revision: str, *, remote: bool,
         "buildDefinition": {"externalParameters": {"configSource": source}},
         "runDetails": {"metadata": {"buildkit_metadata": {} if remote else {"vcs": vcs}}}}})
     layer = {"mediaType": "application/vnd.in-toto+json", "digest": statement,
-             "annotations": {"in-toto.io/predicate-type": SLSA}}
+             "annotations": {"in-toto.io/predicate-type": predicate}}
     attested = [descriptor("unknown", "unknown", add({"layers": [layer]}), image)
                 for image in (AMD, ARM)]
     with tarfile.open(path, "w") as archive:

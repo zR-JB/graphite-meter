@@ -22,10 +22,12 @@ from fixtures import (
     source_members,
     write_checksums,
     write_release_assets,
+    SLSA,
     write_oci,
     write_tar,
 )
 from verify_oci import (
+    BLOB_LIMIT,
     select_engine,
     validate_index_descriptors,
     verify as verify_oci,
@@ -256,21 +258,25 @@ class OCITests(unittest.TestCase):
                     self.assertIn(" copy --all oci-archive:/work/image.oci.tar ", log)
 
     def test_provenance_records_the_release_commit_of_this_repository(self) -> None:
-        for remote, repository, commit, tamper, error in (
-            (True, "example/repo", "f" * 40, False, None),
-            (False, "example/repo", "f" * 40, False, None),
-            (True, "example/repo", "e" * 40, False, "records sources \\['e"),
-            (False, "example/repo", "e" * 40, False, "records sources \\['e"),
-            (True, "example/fork", "f" * 40, False, "example/fork.git"),
-            (False, "example/fork", "f" * 40, False, "example/fork"),
-            (False, "example/repo", "f" * 40, True, "does not match its digest"),
+        spdx = "https://spdx.dev/Document"
+        for remote, repository, commit, tamper, predicate, limit, error in (
+            (True, "example/repo", "f" * 40, False, SLSA, BLOB_LIMIT, None),
+            (False, "example/repo", "f" * 40, False, SLSA, BLOB_LIMIT, None),
+            (True, "example/repo", "e" * 40, False, SLSA, BLOB_LIMIT, "records sources \\['e"),
+            (False, "example/repo", "e" * 40, False, SLSA, BLOB_LIMIT, "records sources \\['e"),
+            (True, "example/fork", "f" * 40, False, SLSA, BLOB_LIMIT, "example/fork.git"),
+            (False, "example/fork", "f" * 40, False, SLSA, BLOB_LIMIT, "example/fork"),
+            (False, "example/repo", "f" * 40, True, SLSA, BLOB_LIMIT, "does not match its digest"),
+            (False, "example/repo", "f" * 40, False, spdx, BLOB_LIMIT, "no SLSA provenance"),
+            (False, "example/repo", "f" * 40, False, SLSA, 16, "not a bounded regular file"),
         ):
             with (tempfile.TemporaryDirectory() as directory,
                   self.subTest(remote=remote, repository=repository, error=error)):
                 archive = Path(directory) / "image.oci.tar"
-                oci = write_oci(archive, repository, commit, remote=remote, tamper=tamper)
+                oci = write_oci(archive, repository, commit, remote=remote, tamper=tamper,
+                                predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
-                with patch.dict(os.environ, env):
+                with patch.dict(os.environ, env), patch("verify_oci.BLOB_LIMIT", limit):
                     if error is None:
                         verify_oci("1.2.3", "f" * 40, archive)
                     else:
