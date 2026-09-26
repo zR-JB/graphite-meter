@@ -92,6 +92,7 @@ type model struct {
 	runSeq      int
 	events      <-chan goclient.Event
 	run         *runState
+	next        *runState
 	stopPrompt  bool
 	quitting    bool
 	interrupted bool
@@ -124,8 +125,9 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(tea.RequestBackgroundColor, m.prepareAfter(0), m.spin.Tick)
 }
 
-func (m model) running() bool  { return m.run != nil && m.run.outcome == goclient.OutcomeRunning }
-func (m model) finished() bool { return m.run != nil && m.run.outcome != goclient.OutcomeRunning }
+// running covers a started run until its first server report, while the previous run stays on screen.
+func (m model) running() bool  { return m.next != nil || m.run != nil && m.run.live() }
+func (m model) finished() bool { return m.run != nil && !m.running() }
 
 func (m model) animating() bool {
 	return m.running() || m.run == nil && (m.prepare == prepareChecking || m.auth != nil)
@@ -191,7 +193,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.page), m.run != nil && key.Matches(msg, keys.scroll):
 		m.scrollBody(msg)
 		return m, nil
-	case m.run != nil:
+	case m.run != nil || m.next != nil:
 		return m.handleRunKey(msg)
 	case m.auth != nil:
 		return m.handleSignInKey(msg)

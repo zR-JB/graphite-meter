@@ -158,7 +158,7 @@ func runHeadless(m model) model {
 		m = next.(model)
 	}
 	if m.run == nil {
-		fail(1, errors.New("sign-in required; run graphite-meter-client in a terminal to sign in"))
+		fail(1, errors.New(m.notice))
 	}
 	return m
 }

@@ -244,19 +244,24 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 	m.runSeq++
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
-	m.run = newRunState(m.cfg, focus, m.now)
+	m.next = newRunState(m.cfg, focus, m.now)
 	m.stopPrompt, m.popup = false, popupNone
-	m.notice = "Test started. Press esc to stop."
+	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
 
 func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
-	if msg.seq != m.runSeq || m.run == nil {
+	if msg.seq != m.runSeq || !m.running() {
 		return m, nil
 	}
 	m.now = time.Now()
 	for _, event := range msg.events {
-		if event.Kind == goclient.EventDone {
+		switch {
+		case m.next != nil && event.Kind == goclient.EventDone:
+			return m.startFailed(event)
+		case m.next != nil && event.Kind == goclient.EventServers:
+			m.run, m.next, m.notice = m.next, nil, "Test started. Press esc to stop."
+		case event.Kind == goclient.EventDone:
 			return m.finishRun(event)
 		}
 		m.apply(event)
@@ -264,8 +269,24 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	return m, waitEvents(m.runSeq, m.events)
 }
 
+func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
+	m.next, m.stopPrompt, m.last = nil, false, done.Outcome()
+	switch {
+	case m.quitting:
+		return m, tea.Quit
+	case isAuthRequired(done.Err):
+		m.run = nil
+		m.notice = "Sign-in required; run graphite-meter-client in a terminal to sign in."
+		return m.reprepare()
+	case m.last == goclient.OutcomeStopped:
+		m.notice = "Test stopped before it started."
+	default:
+		m.notice = "Test not started: " + errorText(done.Err)
+	}
+	return m, nil
+}
+
 func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
-	m.controller.CancelRun()
 	m.stopPrompt = false
 	r := m.run
 	r.adopt(done.Servers)
@@ -360,6 +381,8 @@ func appendPoint(points []point, p point) []point {
 	return append(points, p)
 }
 
+func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
+
 func (r *runState) adopt(details *goclient.RunDetails) {
 	if details == nil {
 		return
@@ -394,6 +417,9 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 }
 
 func (m model) statusLabel() string {
+	if m.next != nil {
+		return "Checking paths"
+	}
 	if r := m.run; r != nil {
 		switch {
 		case r.outcome != goclient.OutcomeRunning:

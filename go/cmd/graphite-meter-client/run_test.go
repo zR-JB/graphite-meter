@@ -151,8 +151,9 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	}
 	m, _ = modelAndCmd(m.Update(press("esc")))
 	within(t, left, "stopping left the run's request alive")
-	if done := finishFrom(t, m); done.run.outcome != goclient.OutcomeStopped || done.statusLabel() != "Stopped" {
-		t.Fatalf("stopped run reads %q", done.statusLabel())
+	if done := finishFrom(t, m); done.last != goclient.OutcomeStopped || done.run != nil ||
+		!strings.Contains(done.notice, "stopped") {
+		t.Fatalf("stopped start reads %q", done.notice)
 	}
 }
 
@@ -213,8 +214,8 @@ func TestQuitDuringARunStopsAndReports(t *testing.T) {
 		}
 		m, cmd = modelAndCmd(m.Update(msg))
 	}
-	if m.run.outcome == goclient.OutcomeRunning || m.finalReport() == "" {
-		t.Fatal("quitting lost the run's report")
+	if m.running() || m.last != goclient.OutcomeStopped {
+		t.Fatalf("quitting before the first server report ended as %q", m.last)
 	}
 }
 
@@ -604,6 +605,24 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	m.preparedRun.VerifiedAt = time.Now().Add(-goclient.PreparationFreshness - time.Second)
 	if plan := m.planView(80); !strings.Contains(plan, "Recheck needed") || strings.Contains(plan, "Ready") {
 		t.Fatalf("an expired preparation still reads ready: %q", plan)
+	}
+}
+
+func TestRunAgainKeepsTheLastResultsUntilTheNextRunStarts(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{
+		{Kind: goclient.EventDone, Servers: &goclient.RunDetails{Outcome: goclient.OutcomeComplete}},
+	}}))
+	previous, refusing := m.run, httptest.NewServer(http.NotFoundHandler())
+	defer refusing.Close()
+	m.cfg.BaseURL = refusing.URL
+	m, _ = modelAndCmd(m.Update(press("r")))
+	if m.run != previous || m.statusLabel() != "Checking paths" || !m.running() {
+		t.Fatalf("run again replaced the results before the run started: %q", m.statusLabel())
+	}
+	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test not started:") {
+		t.Fatalf("a failed start lost the previous run or its reason: %q", m.notice)
 	}
 }
 

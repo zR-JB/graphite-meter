@@ -23,7 +23,10 @@ func (m model) View() tea.View {
 	v.AltScreen = true
 	v.WindowTitle = "Graphite Meter · " + m.statusLabel()
 	v.Cursor = cursor
-	if m.running() {
+	switch {
+	case m.next != nil:
+		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
+	case m.running():
 		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarDefault, m.progress())
 	}
 	return v
@@ -405,7 +408,7 @@ func (m model) testView(w int, compact bool) string {
 	switch {
 	case compact:
 		return strings.Join(m.stageTrack(w), "\n")
-	case r.details == nil && m.running():
+	case r.details == nil && r.live():
 		field("Servers", m.spin.View()+m.st.muted.Render(" Checking paths…"))
 	case r.details == nil:
 		field("Servers", m.st.muted.Render(missing))
@@ -460,7 +463,7 @@ func (m model) stageTrack(w int) []string {
 		case stageStopped:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render("stopped"))
 		case stagePending:
-			if !m.running() {
+			if !m.run.live() {
 				lines = append(lines, name+m.st.muted.Render(missing+" not run"))
 				continue
 			}
@@ -476,9 +479,9 @@ func (m model) liveView(w, h int) string {
 	r := m.run
 	i := slices.IndexFunc(r.plan, func(s goclient.StagePlan) bool { return s.Name == r.stage })
 	switch {
-	case i < 0 && !m.running():
+	case i < 0 && !r.live():
 		return m.st.muted.Render(missing)
-	case i < 0 || r.phase == goclient.PhasePreparing && m.running():
+	case i < 0 || r.phase == goclient.PhasePreparing && r.live():
 		return m.spin.View() + m.st.muted.Render(" Checking paths…")
 	}
 	stage := r.plan[i]
@@ -490,7 +493,7 @@ func (m model) liveView(w, h int) string {
 		sample, sampled := r.rates[dir]
 		value := m.st.value.Render(fmtRate(r.shown[dir]))
 		switch {
-		case !sampled || !m.running() || r.phase != goclient.PhaseMeasuring:
+		case !sampled || !r.live() || r.phase != goclient.PhaseMeasuring:
 			value = m.st.muted.Render(missing)
 		case sample.Unavailable:
 			value = m.st.muted.Render(missing + " window restarting")
@@ -505,10 +508,10 @@ func (m model) liveView(w, h int) string {
 			label = "Idle latency "
 		}
 		value := m.st.muted.Render(missing)
-		if sample, ok := r.latest[r.focus]; ok && m.running() {
+		if sample, ok := r.latest[r.focus]; ok && r.live() {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 && m.running() {
+		if streak := r.timeouts[r.focus]; streak > 0 && r.live() {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -593,7 +596,7 @@ func (m model) resultsView(w int) string {
 				failed(directionLabel(result), result.Err)
 			}
 			measured = measured || found
-			if !found && !m.running() {
+			if !found && !r.live() {
 				row[1], found = unmeasured(i), true
 			}
 			if found {
@@ -617,7 +620,7 @@ func (m model) resultsView(w int) string {
 				note(reflectorTimingFacts(timing))
 			}
 			failed(label, population.Err)
-		case len(stage.Directions) == 0 && !m.running():
+		case len(stage.Directions) == 0 && !r.live():
 			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), unmeasured(i)})
 		}
 	}
