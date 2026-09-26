@@ -18,6 +18,7 @@
   } from "../../presentation/vocabulary";
   import { fmtDuration } from "../../format";
   import { untrack } from "svelte";
+  import { announce } from "../../presentation/announcer.svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
 
   let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
@@ -114,23 +115,34 @@
       controller.configureRun({ duration: { ...DURATION_PRESETS[preset] } });
     }
   }
+  const TRANSFER_MIN_MS = 1000;
+  let rejected = $state<"duration" | "gauge" | "streams" | null>(null);
   function commitNumber(
     event: Event,
+    field: NonNullable<typeof rejected>,
     current: number,
     normalize: (value: number) => number,
-    commit: (value: number) => void,
+    commit: (value: number) => boolean,
   ) {
     const input = event.currentTarget as HTMLInputElement;
     const raw = input.valueAsNumber;
     const value = Number.isFinite(raw) ? normalize(raw) : current;
-    input.value = String(value);
-    if (value !== current) commit(value);
+    const accepted = value === current || commit(value);
+    input.value = String(accepted ? value : current);
+    rejected = accepted ? null : field;
+    if (!accepted) announce(rejection);
   }
+  const rejection = $derived(
+    store.startError || "This change cannot apply to the current run.",
+  );
   function setDuration(key: DurationKey, event: Event) {
+    const transfer = key !== "warmupMs" && key !== "latencyMs";
     commitNumber(
       event,
+      "duration",
       store.config.duration[key],
-      (value) => Math.max(0, value),
+      (value) =>
+        value <= 0 ? 0 : transfer ? Math.max(TRANSFER_MIN_MS, value) : value,
       (value) =>
         controller.configureRun({
           duration: { ...store.config.duration, [key]: value },
@@ -187,6 +199,7 @@
     const current = Number(vizDisplay.toFixed(2));
     commitNumber(
       event,
+      "gauge",
       current,
       (value) => (value > 0 ? value : current),
       (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
@@ -201,6 +214,12 @@
     stale: "Recheck needed",
   } as const;
 </script>
+
+{#snippet rejectedHint(field: typeof rejected)}
+  {#if rejected === field}<p class="notice" data-tone="warn">
+      {rejection}
+    </p>{/if}
+{/snippet}
 
 <div class="setup-grid">
   <h2 class="caps tier-label">Test</h2>
@@ -270,6 +289,7 @@
           </label>
         {/each}
       </div>
+      <p class="hint">Transfer stages run at least 1 s; 0 skips a stage.</p>
     {:else}
       <div class="dur-summary">
         {#each presetCells as cell}
@@ -280,6 +300,7 @@
         {/each}
       </div>
     {/if}
+    {@render rejectedHint("duration")}
     {#if running}
       <p class="hint">
         Active and future durations, plus unstarted stages, update this run.
@@ -377,6 +398,7 @@
         />
       </label>
     {/if}
+    {@render rejectedHint("gauge")}
     <p class="hint">
       {#if vizAuto}
         The chart follows the measured peak. The gauge starts at 1 Gbit/s and
@@ -470,12 +492,14 @@
         onchange={(event) =>
           commitNumber(
             event,
+            "streams",
             store.config.transferStreams.count,
             normalizeStreamCount,
             (count) => streams({ count }),
           )}
       />
     </label>
+    {@render rejectedHint("streams")}
     {#if store.config.transferStreams.mode === "forced"}
       <p class="hint">
         Starts exactly {store.config.transferStreams.count} requests per server and

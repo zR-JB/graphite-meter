@@ -36,6 +36,7 @@
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
   import { returnToLiveIndicator } from "../history/returnToLive";
+  import { announcements } from "../presentation/announcer.svelte";
   import {
     activatePanel,
     appRoute,
@@ -747,6 +748,9 @@
   </SidePanel>
 
   <PhaseToast />
+  <div class="sr-only" aria-live="polite">
+    {#each announcements as { id, text } (id)}<p>{text}</p>{/each}
+  </div>
 
   <ConfirmDialog
     open={resetConfirmOpen}
