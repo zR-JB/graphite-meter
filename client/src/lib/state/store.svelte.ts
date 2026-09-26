@@ -108,6 +108,7 @@ const EMPTY_STAGE_RESULTS: StageResults = Object.freeze({
 });
 
 const SCALE_DWELL_MS = 700;
+const NO_LATENCY: LatencyBucket[] = [];
 const MAX_IDLE_SAMPLES = 60;
 
 export type StageKey = TransportRole;
@@ -219,20 +220,37 @@ class AppStore {
   /** Display focus only; the saved latency headline is fixed by the runner. */
   latencyFocus = $state("self");
   serverDetails = $state.raw<MultiServerResult | null>(null);
-  /** Per-server presentation evidence that a focus change can replay. */
+  /** Per-server presentation evidence; the focused server's is the latency view. */
   readonly latencyByServer = new Map<string, LatencyBucket[]>();
   readonly summariesByServer = new Map<string, LatencySummaries>();
+  #latencyTail = $state(0);
+  #summaryTail = $state(0);
+  get latency(): LatencyBucket[] {
+    void this.#latencyTail;
+    return this.latencyByServer.get(this.latencyFocus) ?? NO_LATENCY;
+  }
+  #focused = $derived(
+    this.serverDetails?.servers.find(
+      ({ server }) => server.id === this.latencyFocus,
+    ),
+  );
+  /** Saved summaries once complete, streamed ones while running. */
+  latencySummaries = $derived.by((): LatencySummaries => {
+    void this.#summaryTail;
+    const saved = this.#focused?.latencyByStage;
+    return (
+      (this.phase === "complete" && saved) ||
+      this.summariesByServer.get(this.latencyFocus) ||
+      saved ||
+      {}
+    );
+  });
+  latencyRevision = $state(0);
 
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
-    const server = this.serverDetails?.servers.find(
-      (server) => server.server.id === id,
-    );
-    this.latency = [...(this.latencyByServer.get(id) ?? [])];
     this.latencyRevision++;
-    this.latencySummaries = {
-      ...(this.summariesByServer.get(id) ?? server?.latencyByStage ?? {}),
-    };
+    const server = this.#focused;
     if (server)
       this.stageResults = { ...this.stageResults, latency: server.latency };
     this.#latencyScale.reset();
@@ -284,18 +302,6 @@ class AppStore {
   #sustainedPeakBytesPerSec = $state(0);
   bytesTransferred = $state(0);
   uploadPresentationBytesPerSec = $state<number | null>(null);
-  #latency = $state.raw<LatencyBucket[]>([]);
-  #latencyTail = $state(0);
-  get latency(): LatencyBucket[] {
-    void this.#latencyTail;
-    return this.#latency;
-  }
-  set latency(value: LatencyBucket[]) {
-    this.#latency = value;
-    this.#latencyTail++;
-  }
-  latencySummaries = $state.raw<LatencySummaries>({});
-  latencyRevision = $state(0);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
   #idleLatencyTail = $state(0);
   get idleLatency(): LatencyBucket[] {
@@ -668,12 +674,6 @@ class AppStore {
     this.#throughputTail++;
   }
 
-  #ingestLatency(sample: LatencyBucket): void {
-    if (upsertLatencyBucket(this.#latency, sample)) this.latencyRevision++;
-    this.#latencyTail++;
-    this.latencyScaleMs = this.#latencyScale.observe(sample);
-  }
-
   #complete(result: RunResult): void {
     this.uploadPresentationBytesPerSec = null;
     this.result = result;
@@ -683,7 +683,6 @@ class AppStore {
       latency: result.latency,
     };
     this.serverDetails = result.multiServer;
-    this.latencySummaries = result.latencyByStage;
     this.historyCandidate = this.savingResults
       ? buildHistoryRecord(
           result,
@@ -716,14 +715,13 @@ class AppStore {
           this.#idleLatencyTail++;
           break;
         }
-        let history = this.latencyByServer.get(event.serverId);
-        if (!history) {
-          history = [];
-          this.latencyByServer.set(event.serverId, history);
-        }
-        upsertLatencyBucket(history, event.sample);
-        if (event.serverId === this.latencyFocus)
-          this.#ingestLatency(event.sample);
+        const history = this.latencyByServer.get(event.serverId) ?? [];
+        this.latencyByServer.set(event.serverId, history);
+        const moved = upsertLatencyBucket(history, event.sample);
+        if (event.serverId !== this.latencyFocus) break;
+        if (moved) this.latencyRevision++;
+        this.#latencyTail++;
+        this.latencyScaleMs = this.#latencyScale.observe(event.sample);
         break;
       }
       case "serverLatencySummary":
@@ -731,11 +729,7 @@ class AppStore {
           ...this.summariesByServer.get(event.serverId),
           [event.stage]: event.summary,
         });
-        if (event.serverId === this.latencyFocus)
-          this.latencySummaries = {
-            ...this.latencySummaries,
-            [event.stage]: event.summary,
-          };
+        this.#summaryTail++;
         break;
       case "serverDetails":
         this.serverDetails = event.details;
@@ -827,6 +821,8 @@ class AppStore {
   reset() {
     this.latencyByServer.clear();
     this.summariesByServer.clear();
+    this.#latencyTail++;
+    this.#summaryTail++;
     Object.assign(this, {
       startError: "",
       preparationStatus: "idle",
@@ -834,10 +830,8 @@ class AppStore {
       throughputRevision: 0,
       liveThroughput: [],
       bytesTransferred: 0,
-      latency: [],
       idleLatency: [],
       serverDetails: null,
-      latencySummaries: {},
       phase: "idle" as const,
       phaseStage: null,
       phaseStartedAtMs: 0,
