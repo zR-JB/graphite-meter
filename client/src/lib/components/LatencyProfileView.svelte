@@ -182,11 +182,11 @@
               : "waiting"
             : `median ${fmtMs(lane.center)} ms`}</strong
         >
-        {#if lane.jitter != null}
-          <em class="term jit" use:tooltip={JARGON.jitter}
-            >{fmtMs(lane.jitter)} ms jitter</em
-          >
-        {/if}
+        <em class="term jit" use:tooltip={JARGON.jitter}
+          >{lane.jitter == null
+            ? `jitter ${MISSING}`
+            : `${fmtMs(lane.jitter)} ms jitter`}</em
+        >
         <em class="range-label">
           {lane.min == null || lane.max == null
             ? `range ${MISSING}`
@@ -376,7 +376,9 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
+  /* Fixed bases keep changing numbers from moving the median. */
   .lane-meta em {
+    flex: 0 1 14ch;
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);

@@ -176,8 +176,10 @@
     gap: var(--space-1);
   }
   .chip-val .num {
+    min-width: 5ch;
     font: var(--w-heavy) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
+    text-align: end;
   }
   .chip-val .unit {
     color: var(--text-soft);

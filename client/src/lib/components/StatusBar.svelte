@@ -58,13 +58,13 @@
   }
   /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
   .label {
-    min-width: 14ch;
+    min-width: 16ch;
     color: var(--text);
     font-weight: var(--w-strong);
   }
   .readout {
     display: inline-block;
-    min-width: 7ch;
+    min-width: 9ch;
     font-variant-numeric: tabular-nums;
     text-align: end;
   }

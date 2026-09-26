@@ -243,6 +243,8 @@
   .seg-tag {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    min-width: 12ch;
     height: 18px;
     margin-left: auto;
     padding: 0 6px;
@@ -287,6 +289,7 @@
     }
     .seg-tag {
       justify-self: start;
+      min-width: 0;
       height: 12px;
       margin: 0;
       padding: 0;
