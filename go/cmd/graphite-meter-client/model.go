@@ -33,6 +33,7 @@ type (
 		seq    int
 		events []goclient.Event
 	}
+	freshnessMsg struct{}
 )
 
 type prepareState int
@@ -153,6 +154,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAuthToken(msg)
 	case eventsMsg:
 		return m.handleEvents(msg)
+	case freshnessMsg:
 	default:
 		if m.edit != nil {
 			return m.updateEdit(msg)

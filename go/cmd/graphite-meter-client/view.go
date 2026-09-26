@@ -272,6 +272,8 @@ func (m model) planView(w int) string {
 			glyph = m.st.warn.Render("○")
 		case "Unavailable":
 			glyph = m.st.err.Render("✗")
+		case "Recheck needed":
+			glyph = m.st.muted.Render("○")
 		}
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
 		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(r.label))

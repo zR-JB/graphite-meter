@@ -67,7 +67,7 @@ func readyConnection(name string) *goclient.PreparedConnection {
 }
 
 func preparedFixture(errs ...error) *goclient.PreparedRun {
-	run := &goclient.PreparedRun{}
+	run := &goclient.PreparedRun{VerifiedAt: time.Now()}
 	for i, err := range errs {
 		id := string(rune('a' + i))
 		server := wire.ServerEntry{ID: id, Name: strings.ToUpper(id), URL: "https://" + id + ".example"}

@@ -599,6 +599,11 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 	if m.notice == "" {
 		t.Fatal("use available servers gave no feedback")
 	}
+	m.prepare = prepareReady
+	m.preparedRun.VerifiedAt = time.Now().Add(-goclient.PreparationFreshness - time.Second)
+	if plan := m.planView(80); !strings.Contains(plan, "Recheck needed") || strings.Contains(plan, "Ready") {
+		t.Fatalf("an expired preparation still reads ready: %q", plan)
+	}
 }
 
 func TestServerChooserFlow(t *testing.T) {

@@ -44,6 +44,12 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.preparedRun = msg.run
+	var expiry tea.Cmd
+	if msg.run.Ready() {
+		expiry = tea.Tick(time.Until(msg.run.VerifiedAt.Add(goclient.PreparationFreshness)), func(time.Time) tea.Msg {
+			return freshnessMsg{}
+		})
+	}
 	if msg.run != nil && len(msg.run.Servers) > 0 {
 		m.cfg.ServerIDs = msg.run.SelectedIDs()
 	}
@@ -69,9 +75,10 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.openChooser && msg.run != nil {
 		m.openChooser = false
-		return m.openServerChooser()
+		next, cmd := m.openServerChooser()
+		return next, tea.Batch(cmd, expiry)
 	}
-	return m, nil
+	return m, expiry
 }
 
 func isAuthRequired(err error) bool {

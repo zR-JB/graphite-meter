@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
@@ -70,6 +71,8 @@ func (m model) readiness() []readiness {
 			if s.Err != nil {
 				r.detail = errorText(s.Err)
 			}
+		case time.Since(m.preparedRun.VerifiedAt) > goclient.PreparationFreshness:
+			r.label = "Recheck needed"
 		}
 		out = append(out, r)
 	}
