@@ -14,10 +14,8 @@ ARG CLIENT_VERSION
 # Stage: client - build the Svelte app with bun.
 # ---------------------------------------------------------------------------
 FROM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS client
-# Build-time client config (override with --build-arg). Defaults to a
-# real-only production bundle. ARG must be promoted
+# Build-time client config (override with --build-arg). ARG must be promoted
 # to ENV so it reaches `bun run build`'s process.env.
-ARG GM_CLIENT_ALLOW_DUMMY=0
 ARG GM_CLIENT_BUILD_PROFILE=prod
 ARG GM_CLIENT_REVISION=source
 # Keep standalone/local Docker builds self-validating. CI sets this to 0 only
@@ -25,8 +23,7 @@ ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
 ARG VERSION
 ARG CLIENT_VERSION
-ENV GM_CLIENT_ALLOW_DUMMY=$GM_CLIENT_ALLOW_DUMMY \
-    GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
+ENV GM_CLIENT_BUILD_PROFILE=$GM_CLIENT_BUILD_PROFILE \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
     VERSION=$CLIENT_VERSION
 WORKDIR /app/client

@@ -40,8 +40,6 @@ import type {
   TransportDiscovery,
 } from "./contract";
 import { abortable, withinBudget } from "./abortable";
-import { RunnerCore } from "./core";
-import { DummyBackend } from "./dummy";
 import { RealBackend } from "./RealRunner";
 import {
   discoverServer,
@@ -194,26 +192,11 @@ export function createApplicationController(
   store: typeof applicationStore,
   dependencies: Partial<ApplicationDependencies> = {},
 ) {
-  const dummy =
-    __GM_ALLOW_DUMMY__ &&
-    typeof window !== "undefined" &&
-    new URLSearchParams(window.location.search).get("engine") === "dummy";
-  const prepare =
-    dependencies.prepare ?? (dummy ? DummyBackend.prepare : prepareConnections);
-  const fetchCatalog =
-    dependencies.loadCatalog ??
-    (dummy ? DummyBackend.loadCatalog : loadServerCatalog);
-  const discover =
-    dependencies.discover ?? (dummy ? DummyBackend.discover : discoverServer);
-  const createRunner =
-    dependencies.createRunner ??
-    ((servers: PreparedServer[], focus: string) =>
-      dummy
-        ? new RunnerCore(new DummyBackend())
-        : createServerRunner(servers, focus));
-  const describe =
-    dependencies.describe ??
-    (dummy ? DummyBackend.describe : RealBackend.describe);
+  const prepare = dependencies.prepare ?? prepareConnections;
+  const fetchCatalog = dependencies.loadCatalog ?? loadServerCatalog;
+  const discover = dependencies.discover ?? discoverServer;
+  const createRunner = dependencies.createRunner ?? createServerRunner;
+  const describe = dependencies.describe ?? RealBackend.describe;
 
   const servers = new Map<string, ServerState>();
   const limiter = originLimiter();

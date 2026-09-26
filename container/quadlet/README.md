@@ -18,8 +18,8 @@ Two ways to run it:
   image (`ghcr.io/zr-jb/graphite-meter`); nothing is built locally, no checkout
   needed beyond this one file.
 - **`graphite-meter-source.container` + `graphite-meter.build` - build from
-  source.** For developers or custom builds (e.g. with the dummy engine
-  compiled in). The `.container` references the `.build` unit via
+  source.** For developers or custom builds. The `.container` references the
+  `.build` unit via
   `Image=graphite-meter.build`, so a start builds first, then runs. Requires
   **Podman 5.0+** (`.build` unit support).
 
@@ -126,7 +126,7 @@ see [upgrade notes](../../docs/DEPLOYMENT.md#upgrading-to-07).
 
 ## Build and networking
 
-- Override client build knobs (dummy runner / label) by uncommenting
+- Override client build knobs (version / label) by uncommenting
   the `BuildArg=` lines in `graphite-meter.build`.
 - On rootless Podman, pasta user-mode networking can significantly limit
   measured throughput - uncomment `Network=host` in the `.container` unit for

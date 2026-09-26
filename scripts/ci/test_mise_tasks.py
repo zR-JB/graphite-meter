@@ -38,7 +38,7 @@ class MiseTaskBehaviorTests(unittest.TestCase):
         for name in ("client", "go", "bin", "config", "state", "data", "cache"):
             (self.root / name).mkdir()
         self.trace = self.root / "trace.jsonl"
-        keys = ("VERSION", "GM_CLIENT_REVISION", "GM_CLIENT_BUILD_PROFILE", "GM_CLIENT_ALLOW_DUMMY", "GM_BENCH_FILTER")
+        keys = ("VERSION", "GM_CLIENT_REVISION", "GM_CLIENT_BUILD_PROFILE", "GM_BENCH_FILTER")
         spy = f'''#!{sys.executable}
 import json, os, sys
 from pathlib import Path
@@ -83,7 +83,6 @@ with open(os.environ["GM_TASK_TRACE"], "a") as output:
         self.assertEqual([call["tool"] for call in calls], ["bun", "bun", "go"])
         self.assertEqual(calls[0]["args"], ["run", "build"])
         self.assertEqual(calls[0]["env"]["GM_CLIENT_BUILD_PROFILE"], "prod")
-        self.assertEqual(calls[0]["env"]["GM_CLIENT_ALLOW_DUMMY"], "0")
         self.assertEqual(calls[0]["env"]["VERSION"], "0.7.0-rc.1")
         self.assertEqual(calls[1]["args"][0], "-e")
         self.assertIn("fs.cpSync('client/dist'", calls[1]["args"][1])

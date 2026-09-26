@@ -3,12 +3,7 @@ import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
-// Build-time GM_CLIENT_* literals enable tree-shaking for optional browser fixtures.
 const env = process.env;
-
-// Boolean knobs default ON; only an explicit "0"/"false" turns them off.
-const off = (v: string | undefined) => v === "0" || v === "false";
-const allowDummy = !off(env.GM_CLIENT_ALLOW_DUMMY);
 
 const buildProfile = env.GM_CLIENT_BUILD_PROFILE ?? "dev";
 const releaseVersion = env.VERSION || null;
@@ -156,7 +151,6 @@ export default defineConfig({
     outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
   },
   define: {
-    __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy),
     __GM_BUILD_PROFILE__: JSON.stringify(buildProfile),
     __GM_RELEASE_VERSION__: JSON.stringify(releaseVersion),
     __GM_SOURCE_REVISION__: JSON.stringify(sourceRevision),

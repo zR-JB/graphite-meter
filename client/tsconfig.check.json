@@ -7,7 +7,6 @@
     "src/**/*.ts",
     "src/**/*.js",
     "src/**/*.svelte",
-    "browser/**/*.ts",
     "bench/**/*.ts",
     "e2e/**/*.ts",
     "scripts/**/*.ts",

@@ -329,7 +329,7 @@ export interface RunnerError {
 
 /* Engine identity & capabilities ---------- Static self-description of a runner backend. */
 export interface EngineInfo {
-  /** Engine id, e.g. "real" | "dummy". */
+  /** Engine id, e.g. "real". */
   name: string;
   /* Per-engine version. */
   version: string;

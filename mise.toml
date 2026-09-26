@@ -124,7 +124,7 @@ run = "bun run build"
 [tasks.client-build-prod]
 description = "Build the production client"
 dir = "client"
-env = { GM_CLIENT_BUILD_PROFILE = "prod", GM_CLIENT_ALLOW_DUMMY = "{{env.GM_CLIENT_ALLOW_DUMMY | default(value='0')}}" }
+env = { GM_CLIENT_BUILD_PROFILE = "prod" }
 run = "bun run build"
 
 [tasks._legal-run]
@@ -284,11 +284,6 @@ total=$(go tool cover -func=cover.out | awk '/^total:/ {print $3}' | tr -d '%')
 echo "total statement coverage: ${total}%"
 awk -v t="$total" 'BEGIN { exit (t + 0 >= 75.0) ? 0 : 1 }' || { echo "coverage ${total}% is below the 75% floor" >&2; exit 1; }
 '''
-
-[tasks.client-browser]
-description = "Run the stubbed Chromium browser suite"
-dir = "client"
-run = "bun run test:browser"
 
 [tasks._e2e-build]
 hide = true

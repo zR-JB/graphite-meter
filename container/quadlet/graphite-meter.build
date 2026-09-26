@@ -30,7 +30,6 @@ Arch=arm64
 # BuildArg=VERSION=0.6.0
 # BuildArg=CLIENT_VERSION=0.6.0
 # BuildArg=GM_CLIENT_REVISION=abc1234
-# BuildArg=GM_CLIENT_ALLOW_DUMMY=1
 
 
 PodmanArgs=--build-arg-file=%t/graphite-meter-build.args

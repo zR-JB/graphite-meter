@@ -17,7 +17,6 @@ export async function testServerDiscovery() {
 }
 
 export const TEST_BUILD_TOKENS = {
-  __GM_ALLOW_DUMMY__: false,
   __GM_BUILD_PROFILE__: "test",
   __GM_RELEASE_VERSION__: null,
   __GM_SOURCE_REVISION__: "test-revision",

@@ -8,7 +8,7 @@ import {
   LANE_RESTART_BACKOFF_MS,
 } from "./budgets";
 
-// Match the core/dummy cadence so both engines feed the UI at the same rate.
+// Match the core cadence so the UI receives throughput at one rate.
 const THROUGHPUT_CADENCE_MS = 60;
 
 // Stagger lanes so their TCP slow-start/loss cycles do not line up perfectly.
