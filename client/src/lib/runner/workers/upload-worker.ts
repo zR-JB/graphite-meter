@@ -6,7 +6,7 @@ import {
   authenticationRequired,
 } from "../../request-auth";
 import { incompressibleBlock } from "./payload";
-import { classifyUploadFailure } from "../uploadFailure";
+import { classifyUploadFailure } from "./progressFeed";
 import type { RecoveryCause } from "../contract";
 
 /* The lane is stopped by terminating the worker, so there is no shutdown message. */

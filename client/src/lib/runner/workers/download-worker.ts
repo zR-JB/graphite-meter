@@ -5,8 +5,12 @@ import {
   sessionAuthenticationRequired,
   authenticationRequired,
 } from "../../request-auth";
-import { progressWindow, type ProgressDelta } from "./progressWindow";
-import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
+import {
+  progressWindow,
+  READ_BUF_BYTES,
+  REPORT_GAP_MS,
+  type ProgressDelta,
+} from "./progressWindow";
 
 /* Main → worker. */
 type InMsg =

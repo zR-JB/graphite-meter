@@ -41,8 +41,11 @@ import {
   STOP_GRACE_MS,
 } from "./real/budgets";
 import { LatencyChannel } from "./real/latencyChannel";
-import { readProgressFeed, type ProgressEvent } from "./workers/progressFeed";
-import { classifyUploadFailure } from "./uploadFailure";
+import {
+  classifyUploadFailure,
+  readProgressFeed,
+  type ProgressEvent,
+} from "./workers/progressFeed";
 
 /** What a server's stage resources report to the run that owns them. */
 export interface ParticipantHost {

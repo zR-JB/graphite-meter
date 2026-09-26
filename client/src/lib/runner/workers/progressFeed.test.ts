@@ -1,5 +1,6 @@
 import { test, expect, afterEach } from "bun:test";
 import {
+  decodeUploadProgress,
   readProgressFeed,
   type ProgressEvent,
   type ProgressFeedState,
@@ -279,3 +280,23 @@ test("an explicit zero receiver window is a terminal observation", async () => {
   expect(end).toBe("complete");
   expect(events).toEqual([{ type: "complete", n: 0, t: 0 }]);
 });
+
+const fixtures: { name: string; record: unknown; valid: boolean }[] =
+  await Bun.file(
+    new URL(
+      "../../../../../api/upload-progress.testvectors.json",
+      import.meta.url,
+    ),
+  ).json();
+
+for (const { name, record, valid } of fixtures) {
+  test(`upload progress conformance: ${name}`, () => {
+    const decoded = decodeUploadProgress(record);
+    expect(decoded !== null).toBe(valid);
+    if (decoded !== null) {
+      expect(decodeUploadProgress(JSON.parse(JSON.stringify(decoded)))).toEqual(
+        decoded,
+      );
+    }
+  });
+}

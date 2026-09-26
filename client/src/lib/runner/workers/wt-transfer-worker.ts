@@ -4,8 +4,12 @@ import { mintWtToken, spendWtToken, withWtToken, type WtMint } from "./wtToken";
 import { ESTABLISH_BUDGET_MS, PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
-import { progressWindow, type ProgressDelta } from "./progressWindow";
-import { READ_BUF_BYTES, REPORT_GAP_MS } from "./tuning";
+import {
+  progressWindow,
+  READ_BUF_BYTES,
+  REPORT_GAP_MS,
+  type ProgressDelta,
+} from "./progressWindow";
 import { redirectForCredentials } from "../../request-auth";
 
 type InMsg =
