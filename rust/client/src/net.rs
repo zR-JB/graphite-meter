@@ -545,7 +545,7 @@ async fn read_bounded_body(response: Response) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 fn destination_origin(raw: &str) -> Result<String> {
-    Ok(split_url(raw)?.0.key())
+    Ok(canonical_origin(&split_url(raw)?.0.key())?)
 }
 
 fn validated_login(source: &str, raw: &str) -> Result<String> {
@@ -661,6 +661,7 @@ mod tests {
             "https://127.0.0.1.",
             "https://BÜCHER.example",
             "https://xn--a.example",
+            "https://meter.example:0",
         ] {
             assert!(
                 http.builder(Method::GET, &format!("{origin}/probe"))
