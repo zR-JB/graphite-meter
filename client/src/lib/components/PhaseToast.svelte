@@ -147,7 +147,7 @@
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     padding: var(--space-2) var(--space-3);
     opacity: 0;
     transform: translateY(4px);

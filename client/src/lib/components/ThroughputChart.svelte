@@ -569,7 +569,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     font-family: var(--font-mono);
     font-size: var(--type-xs);
   }

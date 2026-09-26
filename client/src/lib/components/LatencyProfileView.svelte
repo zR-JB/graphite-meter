@@ -623,7 +623,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
-    box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
+    box-shadow: var(--elev-tooltip);
     pointer-events: none;
     transform: translateY(-50%);
   }

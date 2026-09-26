@@ -2,7 +2,6 @@ import { defineConfig, type Plugin } from "vite";
 import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
-import tailwindcss from "@tailwindcss/vite";
 
 // Build-time GM_CLIENT_* literals enable tree-shaking for optional browser fixtures.
 const env = process.env;
@@ -152,7 +151,7 @@ const minifyHtml = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [svelte(), tailwindcss(), versionFile(), minifyHtml(), legalScan()],
+  plugins: [svelte(), versionFile(), minifyHtml(), legalScan()],
   build: {
     outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
   },

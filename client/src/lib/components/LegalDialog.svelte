@@ -191,7 +191,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     overflow: hidden;
   }
   .legal-head {

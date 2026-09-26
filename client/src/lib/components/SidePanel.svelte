@@ -230,7 +230,7 @@
     background:
       linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%),
       var(--surface-1);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     padding: var(--space-4);
     pointer-events: auto;
     transition: transform var(--dur-slide) var(--ease-out);

@@ -127,17 +127,16 @@ interface ThemeColors {
   textSoft: string;
   brand: string;
 }
-function hexToRgb(hex: string): { r: number; g: number; b: number } {
-  const h = hex.replace("#", "").trim();
-  const full =
-    h.length === 3
-      ? h
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : h;
-  const n = parseInt(full || "888888", 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+// Computed style resolves colours to rgb()/rgba(); fallbacks are six-digit hex.
+function toRgb(color: string): { r: number; g: number; b: number } {
+  if (color.startsWith("#")) {
+    const n = parseInt(color.slice(1, 7), 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  const [r = 136, g = 136, b = 136] = (color.match(/[\d.]+/g) ?? []).map(
+    Number,
+  );
+  return { r, g, b };
 }
 function fillCircle(
   ctx: CanvasRenderingContext2D,
@@ -342,15 +341,21 @@ export class ChartEngine {
     return data.throughput.length || data.latency.length ? info : null;
   }
   #resolveColors(): void {
-    const cs = getComputedStyle(document.documentElement);
-    const g = (v: string, fb: string) => cs.getPropertyValue(v).trim() || fb;
+    // Palette tokens are light-dark() pairs, so the canvas's own computed
+    // colour resolves each one for the active colour scheme.
+    const probe = this.#canvas?.style ? this.#canvas : null;
+    const cs = probe && getComputedStyle(probe);
+    const g = (v: string, fb: string) => {
+      probe?.style.setProperty("color", `var(${v})`);
+      return cs?.color || fb;
+    };
     const download = g("--phase-download", "#6db0b8");
     const upload = g("--phase-upload", "#bda36c");
     this.#colors = {
       download,
-      downloadRgb: hexToRgb(download),
+      downloadRgb: toRgb(download),
       upload,
-      uploadRgb: hexToRgb(upload),
+      uploadRgb: toRgb(upload),
       bidirectional: g("--phase-bidirectional", "#a695c8"),
       signal: g("--signal", "#8ba3ba"),
       warn: g("--warn", "#c4a568"),
@@ -359,6 +364,7 @@ export class ChartEngine {
       textSoft: g("--text-soft", "#8b929a"),
       brand: g("--brand", "#6db0b8"),
     };
+    probe?.style.removeProperty("color");
     this.#gradH = -1;
   }
   #areaGrad(

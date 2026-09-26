@@ -650,17 +650,12 @@
   use:observeWidth={(width) => (consoleWidth = width)}
   data-phase={store.phase}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
-  class="bg-bg text-text"
 >
   <!-- TOPBAR -->
-  <header
-    bind:this={topbar}
-    class="zone topbar flex items-center gap-3 border-b border-border px-4"
-    class:authenticated={authEnabled}
-  >
+  <header bind:this={topbar} class="topbar" class:authenticated={authEnabled}>
     <button
       type="button"
-      class="brand-btn font-mono text-sm font-bold tracking-tight"
+      class="brand-btn"
       aria-label={measurementOpen
         ? "Graphite Meter — return to a fresh, blank test"
         : "Graphite Meter — return to live meter"}
@@ -694,7 +689,7 @@
     >
     <span class="chrome-divider" aria-hidden="true"></span>
     <div class="connectivity"><ConnectivityIndicator /></div>
-    <div class="topbar-spacer flex-1"></div>
+    <div class="topbar-spacer"></div>
     {#if awayRunIndicator}<button
         class="return-live"
         data-tone={awayRunIndicator.tone}
@@ -769,9 +764,7 @@
        it, the chart stays compact so the default fits the viewport without
        vertical scroll. Advancing a phase never resizes this section. -->
   {#if currentRoute.kind === "not-found"}
-    <section
-      class="zone stage history-stage flex min-w-0 flex-col overflow-y-auto"
-    >
+    <section class="stage history-stage">
       <div class="route-not-found">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -779,9 +772,7 @@
       </div>
     </section>
   {:else if historyOpen}
-    <section
-      class="zone stage history-stage flex min-w-0 flex-col overflow-y-auto"
-    >
+    <section class="stage history-stage">
       {#if HistoryWorkspace}<HistoryWorkspace
           selectedId={currentRoute.kind === "app" &&
           currentRoute.workspace.kind === "history"
@@ -803,7 +794,7 @@
     </section>
   {:else}
     <section
-      class="zone stage measurement-stage flex min-w-0 flex-col overflow-y-auto"
+      class="stage measurement-stage"
       aria-label="Measurement workspace"
       tabindex="-1"
     >
@@ -812,9 +803,7 @@
   {/if}
 
   <!-- STATUS BAR -->
-  <footer
-    class="zone status flex items-center gap-4 border-t border-border bg-surface-1 px-4 font-mono text-soft"
-  >
+  <footer class="status">
     <StatusBar />
     <ShortcutHints />
   </footer>
@@ -882,21 +871,31 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    gap: 0;
+    background: var(--bg);
+    color: var(--text);
   }
 
   .topbar {
     grid-area: topbar;
+    display: flex;
+    align-items: center;
     gap: var(--space-2);
+    padding-inline: var(--space-4);
+    border-bottom: 1px solid var(--border);
   }
   .topbar > :global(*) {
     flex-shrink: 0;
   }
   .topbar-spacer {
+    flex: 1;
     min-width: 0;
   }
   .stage {
     grid-area: stage;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow-y: auto;
     /* The hero gauge flexes to fill, chart and chips keep their compact
        intrinsic height. This is the flat faceplate, the wells carry the depth. */
     padding: var(--space-2) var(--space-3);
@@ -937,12 +936,17 @@
   }
   .status {
     grid-area: status;
-    font-size: 11px;
-    container: status / inline-size;
-    padding-bottom: env(safe-area-inset-bottom, 0px);
+    display: flex;
+    align-items: center;
     gap: var(--space-3);
     min-width: 0;
     overflow: hidden;
+    padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--border);
+    background: var(--surface-1);
+    color: var(--text-soft);
+    font: var(--type-xs) var(--font-mono);
+    container: status / inline-size;
   }
 
   /* The logo doubles as a "home" action: it reads as the wordmark, with a
@@ -953,11 +957,10 @@
     gap: 7px;
     padding: 4px 6px;
     margin-left: -6px;
-    border: 0;
     border-radius: var(--r-chrome);
-    background: transparent;
     color: var(--text);
-    cursor: pointer;
+    font: 700 var(--type-md) / 1.4 var(--font-mono);
+    letter-spacing: -0.025em;
     transition: color var(--dur-hover) var(--ease-out);
   }
   /* The lattice-needle glyph (see public/favicon.svg): hexagon in the brand

@@ -115,7 +115,7 @@
     border-radius: var(--r-chrome);
     background: var(--surface-2);
     color: var(--text);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     font: var(--type-sm)/1.5 var(--font-sans);
   }
   header {
@@ -141,11 +141,6 @@
   .details-body {
     padding: var(--space-3);
     overflow-wrap: anywhere;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    .diagnostic-details:popover-open {
-      animation: gm-reveal var(--dur-hover) var(--ease-out);
-    }
   }
   @media (pointer: coarse) {
     button {

@@ -227,8 +227,14 @@
           offset=".5"
           stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
         />
-        <stop offset=".64" stop-color="rgba(var(--shadow-ink), .03)" />
-        <stop offset="1" stop-color="rgba(var(--shadow-ink), .08)" />
+        <stop
+          offset=".64"
+          stop-color="color-mix(in srgb, var(--shade) 3%, transparent)"
+        />
+        <stop
+          offset="1"
+          stop-color="color-mix(in srgb, var(--shade) 8%, transparent)"
+        />
       </radialGradient>
     </defs>
     <g fill="none" stroke-linecap="round">

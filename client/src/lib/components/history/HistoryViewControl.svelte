@@ -118,7 +118,7 @@
   {#if open}
     <div
       bind:this={popover}
-      class="view-popover gm-reveal"
+      class="view-popover"
       role="dialog"
       tabindex="-1"
       aria-label="History view options"
@@ -132,7 +132,7 @@
       <div class="group-head">
         <span>Visible columns</span><small>Date is always shown</small>
       </div>
-      <div class="options gm-menu-list">
+      <div class="options menu">
         {#each HISTORY_COLUMNS as column}
           <button
             type="button"
@@ -152,7 +152,7 @@
         <div class="group-head sort-head">
           <span>Sort cards</span><small>Missing values stay last</small>
         </div>
-        <div class="options gm-menu-list">
+        <div class="options menu">
           {#each HISTORY_SORTS as option}
             <button
               type="button"
@@ -168,7 +168,7 @@
           {/each}
         </div>
         <div
-          class="direction-options gm-menu-list"
+          class="direction-options menu"
           role="group"
           aria-label={`Order for ${HISTORY_SORT_LABEL[sort]}`}
         >
@@ -240,7 +240,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
     transform-origin: top right;
   }
   .view-control.compact .view-popover {

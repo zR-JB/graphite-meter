@@ -64,7 +64,7 @@
     <div
       bind:this={menu}
       id={menuId}
-      class="more-menu gm-menu-list gm-reveal"
+      class="more-menu menu"
       role="menu"
       tabindex="-1"
       aria-label={label}
@@ -113,7 +113,7 @@
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
   }
   .more-menu :global(button) {
     grid-template-columns: 24px minmax(0, 1fr);

@@ -10,58 +10,12 @@ interface TooltipOptions {
 }
 type TooltipParam = string | TooltipOptions;
 let uid = 0;
-const STYLE_ID = "gm-tooltip-styles";
 const HOVER_DELAY_MS = 350;
 const TOUCH_DISMISS_MS = 4000;
-function ensureStyles() {
-  if (typeof document === "undefined") return;
-  if (document.getElementById(STYLE_ID)) return;
-  const style = document.createElement("style");
-  style.id = STYLE_ID;
-  style.textContent = `
-    .gm-tooltip {
-      position: fixed;
-      inset: auto;
-      margin: 0;
-      z-index: 200;
-      max-width: min(300px, calc(100vw - 16px));
-      padding: var(--space-2) var(--space-3);
-      border: 1px solid var(--border-strong);
-      border-radius: var(--r-chrome);
-      background: var(--surface-2);
-      color: var(--text);
-      box-shadow: 0 4px 12px rgba(var(--shadow-ink), 0.18);
-      font-family: var(--font-sans);
-      font-size: var(--type-sm);
-      line-height: 1.4;
-      font-weight: 500;
-      letter-spacing: 0;
-      text-transform: none;
-      white-space: pre-line;
-      overflow-wrap: anywhere;
-      pointer-events: none;
-      opacity: 0;
-      transform: translateY(2px);
-    }
-    @media (prefers-reduced-motion: no-preference) {
-      .gm-tooltip {
-        transition:
-          opacity var(--dur-hover) var(--ease-out),
-          transform var(--dur-hover) var(--ease-out);
-      }
-    }
-    .gm-tooltip[data-show="true"] {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  `;
-  document.head.appendChild(style);
-}
 function normalize(param: TooltipParam): TooltipOptions {
   return typeof param === "string" ? { text: param } : param;
 }
 export function tooltip(node: HTMLElement, param: TooltipParam) {
-  ensureStyles();
   let opts = normalize(param);
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
@@ -106,7 +60,7 @@ export function tooltip(node: HTMLElement, param: TooltipParam) {
   function show() {
     if (opts.disabled || bubble || !opts.text) return;
     bubble = document.createElement("div");
-    bubble.className = "gm-tooltip";
+    bubble.className = "tooltip";
     bubble.id = id;
     bubble.setAttribute("role", "tooltip");
     bubble.textContent = opts.text;

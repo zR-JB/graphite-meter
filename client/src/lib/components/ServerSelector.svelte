@@ -180,7 +180,7 @@
 <div
   bind:this={menu}
   id={`${descriptionId}-list`}
-  class="server-menu gm-menu-list"
+  class="server-menu menu"
   popover="auto"
   role="listbox"
   aria-label={label}
@@ -256,7 +256,7 @@
     border-radius: var(--r-chrome);
     background: var(--surface-2);
     color: var(--text);
-    box-shadow: var(--shadow-float);
+    box-shadow: var(--elev-float);
   }
   .server-menu:not(:popover-open) {
     display: none;
