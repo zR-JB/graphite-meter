@@ -165,10 +165,7 @@ func (m model) handleServerChooserKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		id := servers[m.serverRow].ID
 		switch {
 		case slices.Contains(m.serverDraft, id):
-			m.serverDraft = slices.DeleteFunc(
-				slices.Clone(m.serverDraft),
-				func(value string) bool { return value == id },
-			)
+			m.serverDraft = slices.DeleteFunc(slices.Clone(m.serverDraft), func(v string) bool { return v == id })
 		case len(m.serverDraft) < wire.MaxSelectedServers:
 			m.serverDraft = append(slices.Clone(m.serverDraft), id)
 		default:
@@ -300,17 +297,8 @@ func (m model) detailsView(w int) string {
 	if len(details.Failures) > 0 {
 		lines = append(lines, "", mutedStyle.Render("Left the test"))
 		for _, f := range details.Failures {
-			lines = append(
-				lines,
-				fmt.Sprintf(
-					"%s · %s %s · at %s · %s",
-					r.serverName(f.ServerID),
-					compactStage(f.Stage),
-					f.Scope,
-					fmtClock(f.At),
-					f.Message,
-				),
-			)
+			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s",
+				r.serverName(f.ServerID), compactStage(f.Stage), f.Scope, fmtClock(f.At), f.Message))
 		}
 	}
 	if details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
@@ -320,30 +308,13 @@ func (m model) detailsView(w int) string {
 			if interval.Complete && interval.Window != nil {
 				state = "measured window"
 			}
-			lines = append(
-				lines,
-				mutedStyle.Render(
-					fmt.Sprintf(
-						"%s %.1f–%.1f s · %s · %s",
-						compactStage(interval.Stage),
-						interval.Start.Seconds(),
-						interval.End.Seconds(),
-						strings.Join(interval.Participants, ", "),
-						state,
-					),
-				),
-			)
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s",
+				compactStage(interval.Stage), interval.Start.Seconds(), interval.End.Seconds(),
+				strings.Join(interval.Participants, ", "), state)))
 		}
 		if details.OmittedIntervals > 0 {
-			lines = append(
-				lines,
-				mutedStyle.Render(
-					fmt.Sprintf(
-						"%d older intervals omitted; byte totals retain the full run",
-						details.OmittedIntervals,
-					),
-				),
-			)
+			lines = append(lines, mutedStyle.Render(fmt.Sprintf(
+				"%d older intervals omitted; byte totals retain the full run", details.OmittedIntervals)))
 		}
 	}
 	return fitBlock(strings.Join(lines, "\n"), w)

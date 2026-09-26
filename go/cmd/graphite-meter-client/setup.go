@@ -441,11 +441,7 @@ func nextChoice(current string, choices []string) string {
 	return choices[(slices.Index(choices, current)+1)%len(choices)]
 }
 
-func (m model) singleDiscovery() *wire.Preflight {
-	if m.preparedRun == nil || len(m.preparedRun.Servers) != 1 {
-		return nil
-	}
-	server := m.preparedRun.Servers[0]
+func discovery(server goclient.PreparedServer) *wire.Preflight {
 	if server.Connection != nil {
 		return &server.Connection.Preflight
 	}
@@ -455,51 +451,64 @@ func (m model) singleDiscovery() *wire.Preflight {
 	return nil
 }
 
-func (m model) throughputPaths() []pathChoice {
+func (m model) singleDiscovery() *wire.Preflight {
+	if m.preparedRun == nil || len(m.preparedRun.Servers) != 1 {
+		return nil
+	}
+	return discovery(m.preparedRun.Servers[0])
+}
+
+type discoveredPath struct {
+	origin, transport, protocol string
+	tls                         bool
+}
+
+func discoveredPaths(pf *wire.Preflight, latency bool) []discoveredPath {
+	if pf == nil {
+		return nil
+	}
+	var paths []discoveredPath
+	if latency {
+		for _, t := range pf.Capabilities.LatencyTargets {
+			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS})
+		}
+		return paths
+	}
+	for _, t := range pf.Capabilities.ThroughputTargets {
+		if t.Transport != wire.TransportWebTransportDatagram {
+			paths = append(paths, discoveredPath{t.Origin, t.Transport, t.Protocol, t.TLS})
+		}
+	}
+	return paths
+}
+
+func (m model) throughputPaths() []pathChoice { return m.pathChoices(false) }
+
+func (m model) latencyPaths() []pathChoice { return m.pathChoices(true) }
+
+func (m model) pathChoices(latency bool) []pathChoice {
 	pf := m.singleDiscovery()
 	if pf == nil {
-		return m.sharedPaths(false)
+		return m.sharedPaths(latency)
 	}
 	resolved := ""
 	if c := m.preparedRun.Servers[0].Connection; c != nil {
-		resolved = "→ " + shortOrigin(m.cfg.BaseURL, c.ThroughputTarget.Origin)
+		if !latency {
+			resolved = "→ " + shortOrigin(m.cfg.BaseURL, c.ThroughputTarget.Origin)
+		} else if c.LatencyTarget != nil {
+			resolved = "→ " + shortOrigin(m.cfg.BaseURL, c.LatencyTarget.Origin)
+		}
 	}
 	choices := []pathChoice{{target: "auto", transport: "auto", label: "Automatic", note: resolved}}
-	for _, t := range pf.Capabilities.ThroughputTargets {
-		if t.Transport == wire.TransportWebTransportDatagram ||
-			slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(t.Origin, t.Transport) }) {
-			continue
+	for _, p := range discoveredPaths(pf, latency) {
+		if !slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(p.origin, p.transport) }) {
+			choices = append(choices, pathChoice{
+				target:    p.origin,
+				transport: p.transport,
+				label:     goclient.ConnectionSummary(p.transport, p.protocol, p.tls),
+				note:      shortOrigin(m.cfg.BaseURL, p.origin),
+			})
 		}
-		choices = append(choices, pathChoice{
-			target:    t.Origin,
-			transport: t.Transport,
-			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()),
-			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
-		})
-	}
-	return choices
-}
-
-func (m model) latencyPaths() []pathChoice {
-	pf := m.singleDiscovery()
-	if pf == nil {
-		return m.sharedPaths(true)
-	}
-	resolved := ""
-	if c := m.preparedRun.Servers[0].Connection; c != nil && c.LatencyTarget != nil {
-		resolved = "→ " + shortOrigin(m.cfg.BaseURL, c.LatencyTarget.Origin)
-	}
-	choices := []pathChoice{{target: "auto", transport: "auto", label: "Automatic", note: resolved}}
-	for _, t := range pf.Capabilities.LatencyTargets {
-		if slices.ContainsFunc(choices, func(c pathChoice) bool { return c.selects(t.Origin, t.Transport) }) {
-			continue
-		}
-		choices = append(choices, pathChoice{
-			target:    t.Origin,
-			transport: t.Transport,
-			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()),
-			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
-		})
 	}
 	return choices
 }
@@ -514,13 +523,8 @@ func (m model) sharedPaths(latency bool) []pathChoice {
 		var unavailable []string
 		if m.preparedRun != nil {
 			for _, server := range m.preparedRun.Servers {
-				var pf wire.Preflight
-				if server.Connection != nil {
-					pf = server.Connection.Preflight
-				} else if failed, ok := errors.AsType[*goclient.PreparationError](server.Err); ok {
-					pf = failed.Preflight
-				}
-				if !offers(pf, latency, kind) {
+				offered := func(p discoveredPath) bool { return p.transport == kind }
+				if !slices.ContainsFunc(discoveredPaths(discovery(server), latency), offered) {
 					unavailable = append(unavailable, server.Server.Name)
 				}
 			}
@@ -532,20 +536,6 @@ func (m model) sharedPaths(latency bool) []pathChoice {
 		choices = append(choices, pathChoice{target: "auto", transport: kind, label: mechanisms[kind], note: note})
 	}
 	return choices
-}
-
-func offers(pf wire.Preflight, latency bool, kind string) bool {
-	for _, t := range pf.Capabilities.LatencyTargets {
-		if latency && t.Transport == kind {
-			return true
-		}
-	}
-	for _, t := range pf.Capabilities.ThroughputTargets {
-		if !latency && t.Transport == kind {
-			return true
-		}
-	}
-	return false
 }
 
 func (m model) selectedThroughputPath() *wire.ThroughputTarget {
