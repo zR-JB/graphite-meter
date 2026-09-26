@@ -39,11 +39,13 @@ class PlanTests(unittest.TestCase):
     def test_changed_paths_select_component_gates(self) -> None:
         go = "go/internal/server/listeners.go"
         for paths, plan in (
-            (("api/routes.txt",), precommit.CheckPlan(pipeline=False, recipes=("check",))),
-            (("mise.lock", go), precommit.CheckPlan(pipeline=False, recipes=("check",))),
-            ((go,), precommit.CheckPlan(pipeline=False, recipes=(
-                "check-generated", "server-check", "server-test", "legal-check"))),
-            ((".github/workflows/ci.yml",), precommit.CheckPlan(pipeline=True, recipes=())),
+            (("api/routes.txt",), ("check",)),
+            (("mise.lock", go), ("check",)),
+            ((go,), ("check-generated", "server-check", "server-test", "legal-check")),
+            ((".github/workflows/ci.yml",), ("workflow-check", "pipeline-test")),
+            (("scripts/legal/model.py",), ("workflow-check", "pipeline-test", "legal-check")),
+            (("client/src/auth/login.tmpl",), ("check-generated", "client-ci", "legal-check")),
+            (("docs/DEVELOPMENT.md",), ()),
         ):
             with self.subTest(paths=paths):
                 self.assertEqual(precommit.plan_checks(paths), plan)
@@ -253,7 +255,7 @@ print('staged hook')
 
             with patch.dict(os.environ, git_bindings), patch.object(precommit, "command", side_effect=command), patch.object(precommit, "run_gitleaks") as scan:
                 with self.assertRaisesRegex(precommit.PrecommitError, "staged gate failed"):
-                    precommit.run_staged_checks(repo, precommit.CheckPlan(pipeline=False, recipes=("client-ci",)))
+                    precommit.run_staged_checks(repo, ("client-ci",))
             scan.assert_called_once()
             self.assertEqual(len(checked), 1)
             self.assertFalse(checked[0].exists())
