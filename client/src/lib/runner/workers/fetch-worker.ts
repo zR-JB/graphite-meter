@@ -7,7 +7,7 @@ import {
 } from "../../request-auth";
 import {
   progressWindow,
-  READ_BUF_BYTES,
+  readBytes,
   REPORT_GAP_MS,
   type ProgressDelta,
 } from "./progressWindow";
@@ -192,7 +192,7 @@ async function download(url: string): Promise<void> {
           recoverable: recoverableDownloadStatus(res.status),
           detail: `HTTP ${res.status}`,
         });
-      await readBody(res.body, (n) =>
+      await readBytes(res.body, (n) =>
         postProgress(progress.add(n, performance.now())),
       );
       postProgress(progress.flush());
@@ -201,35 +201,6 @@ async function download(url: string): Promise<void> {
       // The main thread decides whether to restart this lane.
       return failed(err);
     }
-  }
-}
-
-/* Read a response body to completion, feeding each chunk's byte count to `count`. */
-async function readBody(
-  body: ReadableStream<Uint8Array>,
-  count: (n: number) => void,
-): Promise<void> {
-  let byob: ReadableStreamBYOBReader | null = null;
-  try {
-    byob = body.getReader({ mode: "byob" });
-  } catch {
-    // Not a byte stream: read its chunks instead.
-  }
-  if (byob) {
-    let buf = new ArrayBuffer(READ_BUF_BYTES);
-    for (;;) {
-      const chunk = await byob.read(new Uint8Array(buf));
-      if (chunk.done) return;
-      if (chunk.value.byteLength) count(chunk.value.byteLength);
-      // Reusing read()'s returned backing store keeps the loop allocation-free.
-      buf = chunk.value.buffer as ArrayBuffer;
-    }
-  }
-  const reader = body.getReader();
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) return;
-    if (value) count(value.byteLength);
   }
 }
 

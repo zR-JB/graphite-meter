@@ -12,7 +12,7 @@ import { incompressibleBlock } from "./payload";
 import { readProgressFeed, type ProgressEvent } from "./progressFeed";
 import {
   progressWindow,
-  READ_BUF_BYTES,
+  readBytes,
   REPORT_GAP_MS,
   type ProgressDelta,
 } from "./progressWindow";
@@ -236,31 +236,11 @@ async function acceptDownloadStreams(): Promise<void> {
   }
 }
 
-/* The reused BYOB buffer is the read-side ceiling at multi-Gbit/s: a default reader allocates per chunk, and one. */
 async function drainLane(lane: ReadableStream<Uint8Array>): Promise<void> {
   try {
-    let byob: ReadableStreamBYOBReader | null = null;
-    try {
-      byob = lane.getReader({ mode: "byob" });
-    } catch {
-      byob = null;
-    }
-    if (byob) {
-      let buf = new ArrayBuffer(READ_BUF_BYTES);
-      for (;;) {
-        const chunk = await byob.read(new Uint8Array(buf));
-        if (chunk.done || stopped) return;
-        if (chunk.value.byteLength) countDownload(chunk.value.byteLength);
-        // read() detaches the buffer and hands back the same backing store.
-        buf = chunk.value.buffer as ArrayBuffer;
-      }
-    }
-    const reader = lane.getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done || stopped) return;
-      countDownload(value.byteLength);
-    }
+    await readBytes(lane, (n) => {
+      if (!stopped) countDownload(n);
+    });
   } catch (err) {
     if (!stopped) fail(true, String(err));
   }
