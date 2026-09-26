@@ -29,9 +29,15 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
 test("camera keeps a run-wide origin and eases a large live time advance", () => {
   let current = data();
   let published!: ChartPresentation;
+  let publishes = 0;
+  let timeScale = 0;
   const engine = new ChartEngine(
     () => current,
-    (next) => (published = next),
+    (next) => {
+      published = next;
+      publishes++;
+    },
+    (tMax) => (timeScale = tMax),
   );
 
   expect(engine.render(100)).toBe(false);
@@ -41,22 +47,27 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   engine.wake();
   expect(engine.render(116)).toBe(true);
   expect(published.layout.viewport.tMin).toBe(0);
-  expect(published.layout.viewport.tMax).toBeGreaterThan(4_000);
-  expect(published.layout.viewport.tMax).toBeLessThan(7_000);
+  expect(timeScale).toBeGreaterThan(4_000);
+  expect(timeScale).toBeLessThan(7_000);
 
   current = { ...current, phase: "upload", timelineT: 8_000 };
-  engine.wake();
+  engine.retarget();
   expect(engine.render(132)).toBe(true);
   expect(published.layout.viewport.tMin).toBe(0);
 
   let now = 148;
   let active = true;
+  let frames = 0;
+  publishes = 0;
   for (let i = 0; i < 200 && active; i++) {
     active = engine.render(now);
     now += 16;
+    frames++;
   }
   expect(active).toBe(false);
+  expect(publishes).toBeLessThan(frames / 2);
   expect(published.layout.viewport.tMax).toBe(10_000);
+  expect(timeScale).toBe(10_000);
 
   const throughput = current.throughput;
   const latency = current.latency;

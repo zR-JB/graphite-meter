@@ -25,15 +25,12 @@
   let engine: ChartEngine;
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  let position = $state<number | null>(null);
+  let selectedT = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
   const instructionsId = `${componentId}-instructions`;
   const viewport = $derived(chartPresentation?.layout.viewport);
-  const selectedTime = $derived(
-    (viewport?.tMin ?? 0) +
-      (position ?? 0) * ((viewport?.tMax ?? 0) - (viewport?.tMin ?? 0)),
-  );
+  const selectedTime = $derived(selectedT ?? viewport?.tMin ?? 0);
   const hasData = $derived(
     store.throughput.length > 0 || store.latency.length > 0,
   );
@@ -138,7 +135,6 @@
     void store.throughputRevision;
     void store.latency.length;
     void store.latencyRevision;
-    void store.phaseElapsedMs;
     void store.latencyEnabled;
     void store.chartScaleBytesPerSec; // re-arm if the chart scale / pinned ceiling shifts while parked
     void store.latencyScaleMs;
@@ -151,6 +147,10 @@
     void store.unitKind;
     void store.unitLabel;
     engine?.wake();
+  });
+  $effect(() => {
+    void store.phaseElapsedMs;
+    engine?.retarget();
   });
 
   function onMove(e: PointerEvent) {
@@ -169,19 +169,19 @@
   }
   function selectX(x: number) {
     if (!chartPresentation || !hasData) return;
-    const { plot } = chartPresentation.layout;
-    position =
-      (Math.max(plot.left, Math.min(plot.right, x)) - plot.left) /
-      (plot.right - plot.left);
-    updateHover();
+    hover = engine.inspect(x);
+    selectedT = hover?.t ?? null;
   }
   function selectTime(t: number) {
-    if (chartPresentation) selectX(chartPresentation.layout.x(t));
+    const { tMin, tMax } = engine.viewport;
+    selectedT = Math.max(tMin, Math.min(tMax, t));
+    updateHover();
   }
   function onKeyDown(e: KeyboardEvent) {
-    if (!viewport || !hasData) return;
+    if (!chartPresentation || !hasData) return;
     pointerY = null;
-    const step = (viewport.tMax - viewport.tMin) / 100;
+    const current = engine.viewport;
+    const step = (current.tMax - current.tMin) / 100;
     switch (e.key) {
       case "ArrowRight":
       case "ArrowUp":
@@ -192,10 +192,10 @@
         selectTime(selectedTime - step);
         break;
       case "Home":
-        selectTime(viewport.tMin);
+        selectTime(current.tMin);
         break;
       case "End":
-        selectTime(viewport.tMax);
+        selectTime(current.tMax);
         break;
       case "Escape":
         clearSelection();
@@ -209,7 +209,7 @@
   function onFocus() {
     pointerY = null;
     retainSelection = true;
-    selectTime(position == null ? (viewport?.tMin ?? 0) : selectedTime);
+    selectTime(selectedTime);
   }
   function onPointerUp(e: PointerEvent) {
     if (e.pointerType === "mouse") return;
@@ -224,16 +224,16 @@
     );
   }
   function updateHover() {
-    hover =
-      position == null || !chartPresentation
-        ? null
-        : engine.inspect(chartPresentation.layout.x(selectedTime));
+    hover = selectedT == null ? null : engine.inspectTime(selectedT);
   }
   function clearSelection() {
     if (pointerFrame) cancelAnimationFrame(pointerFrame);
     pointerFrame = 0;
-    position = null;
+    selectedT = null;
     hover = null;
+  }
+  function setTimeScale(tMax: number) {
+    plotEl?.style.setProperty("--t-max", String(tMax));
   }
   function onLeave() {
     if (!retainSelection) clearSelection();
@@ -270,7 +270,12 @@
       }),
       (next) => {
         chartPresentation = next;
+        setTimeScale(next.layout.viewport.tMax);
         updateHover();
+      },
+      (tMax) => {
+        setTimeScale(tMax);
+        if (selectedT != null) updateHover();
       },
     );
     engine.attach(canvasEl!);
@@ -355,9 +360,10 @@
           {/each}
         {/if}
         {#each presentation.layout.timeMajorTicks as tick (tick.t)}
+          {@const { left, right } = presentation.layout.plot}
           <span
             class="time-label"
-            style:left={`${tick.x}px`}
+            style:left={`calc(${left}px + ${right - left}px * ${tick.t} / var(--t-max))`}
             style:top={`${presentation.layout.timeLabelY}px`}
             >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >

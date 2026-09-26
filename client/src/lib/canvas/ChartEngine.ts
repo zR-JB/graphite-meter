@@ -157,6 +157,8 @@ function fillCircle(
 export class ChartEngine {
   #get: () => ChartData;
   #onPresentation: ((presentation: ChartPresentation) => void) | null;
+  #onTimeScale: ((tMax: number) => void) | null;
+  #presentationKey = "";
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
   #scene: HTMLCanvasElement | null = null;
@@ -219,12 +221,18 @@ export class ChartEngine {
     textSoft: "#8b929a",
     brand: "#6db0b8",
   };
+  /** onPresentation runs when labels or scales change; onTimeScale on every camera frame. */
   constructor(
     get: () => ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
+    onTimeScale?: (tMax: number) => void,
   ) {
     this.#get = get;
     this.#onPresentation = onPresentation ?? null;
+    this.#onTimeScale = onTimeScale ?? null;
+  }
+  get viewport(): ChartViewport {
+    return this.#vp;
   }
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
@@ -244,8 +252,13 @@ export class ChartEngine {
     this.invalidateTheme();
   }
   #restoreSurface = (): void => this.invalidateTheme();
+  /** Data or scale changed: redraw the cached scene. */
   wake(): void {
     this.#sceneDirty = true;
+    this.retarget();
+  }
+  /** Only the live clock moved: re-aim the camera and keep the scene. */
+  retarget(): void {
     this.#dirty = true;
     this.#presentation?.invalidate();
   }
@@ -282,6 +295,9 @@ export class ChartEngine {
     }
     this.#resolveColors();
     this.wake();
+  }
+  inspectTime(t: number): HoverInfo | null {
+    return this.inspect(this.#layout.x(t));
   }
   /** Read the plotted evidence without scheduling or painting a chart frame. */
   inspect(pointerX: number): HoverInfo | null {
@@ -403,10 +419,10 @@ export class ChartEngine {
     const cameraMoving = this.#stepCamera(now);
     const cameraChanged = this.#displayTMax !== previousDisplayTMax;
     if (cameraChanged) {
-      const d = this.#get();
       this.#vp = { ...this.#vp, tMin: 0, tMax: this.#displayTMax };
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
-      this.#publishPresentation(d);
+      this.#onTimeScale?.(this.#displayTMax);
+      this.#publishPresentation(this.#get(), !cameraMoving);
     }
     if (this.#sceneDirty) {
       this.#rebuildScene(now);
@@ -526,9 +542,21 @@ export class ChartEngine {
     this.#displayTMax += delta * alpha;
     return true;
   }
-  #publishPresentation(data: ChartData): void {
+  #publishPresentation(data: ChartData, force = false): void {
     if (!this.#onPresentation) return;
-    const { plot } = this.#layout;
+    const { plot, width, height, viewport, timeMajorTicks } = this.#layout;
+    const key = [
+      width,
+      height,
+      viewport.bytesPerSecMax,
+      viewport.rttMax,
+      data.latencyEnabled,
+      this.#hasThroughputScale,
+      this.#result,
+      ...timeMajorTicks.map((tick) => tick.t),
+    ].join();
+    if (!force && !this.#result && key === this.#presentationKey) return;
+    this.#presentationKey = key;
     let warmupLabelled = false;
     const phaseLabels = this.#result
       ? this.#spans.flatMap((span) => {
