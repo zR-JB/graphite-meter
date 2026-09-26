@@ -44,10 +44,10 @@ from trust import (
     actor_login,
     require_check_run,
     require_ci_gate,
+    require_control_plane_matches_main,
     require_current_main,
     require_exact_artifact,
     require_exact_current_main,
-    require_file_matches_main,
     require_pr,
     workflow_id,
 )
@@ -59,44 +59,6 @@ PRERELEASE_RE = re.compile(
 )
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
-# A prerelease may change arbitrary application source, but the orchestration
-# that defines Gate/publication authority must match exact current main. Pipeline
-# changes merge first; payload PRs then rebase before prerelease authorization.
-PRERELEASE_CI_CONTROL_PLANE: tuple[str, ...] = (
-    "mise.toml",
-    "mise.lock",
-    ".github/workflows/ci.yml",
-    ".github/workflows/prerelease-request.yml",
-    ".github/workflows/prerelease-publish.yml",
-    ".github/workflows/release-request.yml",
-    ".github/workflows/release.yml",
-    ".github/workflows/_publish-oci.yml",
-    ".github/workflows/_publish-release.yml",
-    ".github/workflows/_promote-oci.yml",
-    ".github/ci-paths.yml",
-    ".github/actions/setup-project/action.yml",
-    ".github/actions/build-oci/action.yml",
-    "scripts/ci/toolchains.py",
-    "scripts/ci/test_toolchains.py",
-    "scripts/__init__.py",
-    "scripts/auth_assets.py",
-    "scripts/legal/__init__.py",
-    "scripts/legal/__main__.py",
-    "scripts/legal/model.py",
-    "scripts/legal/review.py",
-    "scripts/legal/discovery.py",
-    "scripts/legal/artifacts.py",
-    "scripts/legal/test_legal.py",
-    "scripts/legal/test_artifacts.py",
-    "scripts/ci/github_api.py",
-    "scripts/ci/prerelease.py",
-    "scripts/ci/release.py",
-    "scripts/ci/test_pipeline.py",
-    "scripts/ci/trust.py",
-    "scripts/ci/verify_oci.py",
-    "scripts/ci/verify_release_assets.py",
-    "scripts/ci/workflow_policy.py",
-)
 OCI_LIMIT = 1024 * 1024 * 1024
 CANDIDATE_ARTIFACT_LIMIT = OCI_LIMIT + 1024 * 1024
 CANDIDATE_KEYS = {
@@ -173,17 +135,6 @@ def pr_head_ref(pr: JsonObject, pr_number: int) -> str:
         return str_field(head, "ref", f"PR #{pr_number}.head")
     except JsonShapeError as exc:
         die(str(exc))
-
-
-def require_prerelease_ci_control_plane(
-    repository: str,
-    pr_sha: str,
-    main_sha: str,
-    *,
-    api: APICall = default_api,
-) -> None:
-    for path in PRERELEASE_CI_CONTROL_PLANE:
-        require_file_matches_main(repository, path, pr_sha, main_sha, api=api)
 
 
 def exact_file_set(directory: Path, expected: set[str], label: str) -> None:
@@ -438,7 +389,7 @@ def command_publish_validate() -> None:
     current_main = require_current_main(repository, pr_number, expected_sha)
     if current_main != publisher_sha:
         die("current main differs from trusted publisher tooling; start a fresh prerelease request")
-    require_prerelease_ci_control_plane(repository, expected_sha, current_main)
+    require_control_plane_matches_main(repository, expected_sha, current_main)
     ci_run_id = require_ci_gate(
         repository,
         expected_sha,

@@ -155,38 +155,26 @@ def require_current_main(
     return main_sha
 
 
-def require_file_matches_main(
+CONTROL_PLANE = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
+
+
+def require_control_plane_matches_main(
     repository: str,
-    path: str,
     pr_sha: str,
     main_sha: str,
     *,
     api: APICall = default_api,
-) -> str:
-    """Require a security-sensitive PR file to be byte-identical to current main."""
+) -> None:
+    def entries(ref: str) -> dict[str, JsonValue]:
+        tree = _object(api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
+        items = [_object(item, "tree entry") for item in _optional_array(tree, "tree", "tree")]
+        return {str(item.get("path")): item.get("sha") for item in items}
 
-    def blob_sha(ref: str) -> str:
-        value = _object(
-            api(query(f"repos/{repository}/contents/{path}", ref=ref)),
-            f"{path} at {ref}",
-        )
-        try:
-            sha = str_field(value, "sha", f"{path} at {ref}")
-        except JsonShapeError as exc:
-            raise TrustError(str(exc)) from exc
-        if len(sha) != 40:
-            raise TrustError(f"could not resolve {path} at {ref}")
-        return sha
-
-    main_blob = blob_sha(main_sha)
-    pr_blob = blob_sha(pr_sha)
-    if pr_blob != main_blob:
+    pr, main = entries(pr_sha), entries(main_sha)
+    if changed := [path for path in CONTROL_PLANE if pr.get(path) != main.get(path)]:
         raise TrustError(
-            f"PR changes {path}; prerelease authorization requires this CI control-plane file to match current main"
+            f"PR changes {', '.join(changed)}; prereleases require the current main CI control plane"
         )
-    return main_blob
-
-
 
 
 def workflow_id(

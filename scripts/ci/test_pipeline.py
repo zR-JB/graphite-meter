@@ -17,7 +17,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 
-from github_api import JsonObject, JsonValue
+from github_api import APICall, JsonObject, JsonValue
 from precommit import (
     CheckPlan,
     StagedChange,
@@ -26,10 +26,8 @@ from precommit import (
     plan_checks,
 )
 from prerelease import (
-    PRERELEASE_CI_CONTROL_PLANE,
     PRERELEASE_RE,
     exact_file_set,
-    require_prerelease_ci_control_plane,
     validate_request_run,
 )
 from verify_oci import (
@@ -62,7 +60,7 @@ from trust import (
     require_ci_gate,
     require_current_main,
     require_exact_current_main,
-    require_file_matches_main,
+    require_control_plane_matches_main,
     require_check_run,
     require_main_codeql,
 )
@@ -102,23 +100,18 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(TrustError, "no longer current main"):
             require_exact_current_main("zR-JB/graphite-meter", OLD_MAIN, api=current_main)
 
-    def test_prerelease_publisher_workflow_must_match_current_main(self) -> None:
-        workflow_path = ".github/workflows/prerelease-publish.yml"
+    def test_prerelease_control_plane_must_match_main(self) -> None:
+        def trees(scripts_at_head: str) -> APICall:
+            def api(path: str, **_: object) -> JsonValue:
+                scripts = scripts_at_head if path.endswith(HEAD) else "b" * 40
+                return {"tree": [{"path": ".github", "sha": "a" * 40},
+                                 {"path": "scripts", "sha": scripts}, {"path": "go", "sha": HEAD}]}
+            return api
 
-        def good(path: str, **_: object) -> JsonValue:
-            if f"contents/{workflow_path}" in path and "ref=" in path:
-                return {"sha": "a" * 40}
-            raise AssertionError(path)
-
-        self.assertEqual(require_file_matches_main("zR-JB/graphite-meter", workflow_path, HEAD, MAIN, api=good), "a" * 40)
-
-        def bad(path: str, **_: object) -> JsonValue:
-            if f"contents/{workflow_path}" in path:
-                return {"sha": ("b" if f"ref={HEAD}" in path else "a") * 40}
-            raise AssertionError(path)
-
-        with self.assertRaisesRegex(TrustError, "changes .*prerelease-publish.yml"):
-            require_file_matches_main("zR-JB/graphite-meter", workflow_path, HEAD, MAIN, api=bad)
+        repo = "zR-JB/graphite-meter"
+        require_control_plane_matches_main(repo, HEAD, MAIN, api=trees("b" * 40))
+        with self.assertRaisesRegex(TrustError, "PR changes scripts"):
+            require_control_plane_matches_main(repo, HEAD, MAIN, api=trees("c" * 40))
 
     def test_main_codeql_uses_newest_result_per_analysis_identity(self) -> None:
         def fake(path: str, *, paginate: bool = False, **_: object) -> JsonValue:
@@ -319,35 +312,6 @@ class PipelineTests(unittest.TestCase):
         for value in ("v01.5.2-alpha.0", "v0.5.2-alpha.00", "v0.05.2-rc.1"):
             self.assertIsNone(SEMVER_RE.fullmatch(value), value)
             self.assertIsNone(PRERELEASE_RE.fullmatch(value), value)
-
-    def test_prerelease_gate_control_plane_is_bound_to_current_main(self) -> None:
-        from unittest.mock import patch
-
-        required = {
-            "mise.toml",
-            ".github/workflows/ci.yml",
-            ".github/workflows/prerelease-request.yml",
-            ".github/workflows/prerelease-publish.yml",
-            ".github/workflows/release-request.yml",
-            ".github/workflows/release.yml",
-            ".github/workflows/_publish-oci.yml",
-            ".github/workflows/_publish-release.yml",
-            ".github/workflows/_promote-oci.yml",
-            ".github/ci-paths.yml",
-            ".github/actions/setup-project/action.yml",
-            ".github/actions/build-oci/action.yml",
-            "mise.toml",
-            "scripts/ci/workflow_policy.py",
-            "scripts/ci/test_pipeline.py",
-        }
-        self.assertTrue(required.issubset(set(PRERELEASE_CI_CONTROL_PLANE)))
-        with patch("prerelease.require_file_matches_main") as match_file:
-            require_prerelease_ci_control_plane("zR-JB/graphite-meter", HEAD, MAIN)
-        self.assertEqual(match_file.call_count, len(PRERELEASE_CI_CONTROL_PLANE))
-        self.assertEqual(
-            {call.args[1] for call in match_file.call_args_list},
-            set(PRERELEASE_CI_CONTROL_PLANE),
-        )
 
     def test_candidate_artifact_file_set_rejects_extras_and_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as td:
