@@ -30,12 +30,12 @@ func cliPageRequest(challenge, cookie string) *http.Request {
 
 func cliExchange(s *Service, body string) *httptest.ResponseRecorder {
 	rr := httptest.NewRecorder()
-	s.cliToken(rr, secureRequest("POST", "/auth/cli/token", strings.NewReader(body)))
+	s.token(rr, secureRequest("POST", "/auth/cli/token", strings.NewReader(body)))
 	return rr
 }
 
 func approveCLI(s *Service, sess *session, verifier string) {
-	s.approvals[challengeFor(verifier)] = &cliApproval{session: sess, expires: time.Now().Add(time.Minute),
+	s.approvals[challengeFor(verifier)] = &approval{session: sess, expires: time.Now().Add(time.Minute),
 		approved: true}
 }
 
@@ -119,7 +119,7 @@ func TestCliApprove(t *testing.T) {
 		"expired approval":  approveRequest(s, sess, expired, sess.csrf, s.origin),
 	} {
 		rr := httptest.NewRecorder()
-		s.cliApprove(rr, r)
+		s.approve(rr, r)
 		if rr.Code != http.StatusForbidden {
 			t.Errorf("%s: code=%d, want 403", name, rr.Code)
 		}
@@ -128,7 +128,7 @@ func TestCliApprove(t *testing.T) {
 		t.Fatal("a rejected request still marked an approval approved")
 	}
 	rr := httptest.NewRecorder()
-	s.cliApprove(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
+	s.approve(rr, approveRequest(s, sess, challenge, sess.csrf, s.origin))
 	if rr.Code != http.StatusOK || !s.approvals[challenge].approved {
 		t.Fatalf("approve code=%d, want 200 and an approved approval", rr.Code)
 	}
@@ -171,13 +171,9 @@ func TestCLIExchangeIsSingleUseAndRevokedWithSession(t *testing.T) {
 func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 	s := testService(t)
 	_, sess, _ := s.createSession("subject", "Name", "local")
-	var browser []*browserGrant
+	var browser []*grant
 	addBrowserGrant := func() {
-		ctx, cancel := context.WithCancel(sess.ctx)
-		g := &browserGrant{sess: sess, origin: requestingUI, ctx: ctx, cancel: cancel}
-		h := sha256.Sum256([]byte(randomToken(32)))
-		s.grantSeq++
-		s.browserGrants[h], sess.grants[h] = g, s.grantSeq
+		_, g := addGrant(s, sess, requestingUI)
 		browser = append(browser, g)
 	}
 	exchange := func(i int) int {
@@ -195,10 +191,9 @@ func TestCLIGrantSetIsBoundedWithoutEvictingBrowserGrants(t *testing.T) {
 		t.Fatalf("grants=%d browser grant cancelled=%v, want %d grants with the browser grant live",
 			len(sess.grants), browser[0].ctx.Err() != nil, maxSessionGrants)
 	}
-	for grant := range sess.grants {
-		if s.browserGrants[grant] == nil {
-			delete(sess.grants, grant)
-			s.deleteGrantLocked(grant)
+	for _, g := range sess.grants {
+		if g.origin == "" {
+			s.deleteGrantLocked(g)
 		}
 	}
 	for len(browser) < maxSessionGrants {

@@ -10,15 +10,20 @@ import (
 	"testing"
 )
 
-func grantFor(t *testing.T, s *Service, sess *session) string {
-	t.Helper()
-	grant := randomToken(32)
-	h := sha256.Sum256([]byte(grant))
+func addGrant(s *Service, sess *session, origin string) (string, *grant) {
+	raw := randomToken(32)
+	ctx, cancel := context.WithCancel(sess.ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess.grants[h] = 0
-	s.grants[h] = sess
-	return grant
+	s.grantSeq++
+	g := &grant{sess: sess, key: sha256.Sum256([]byte(raw)), origin: origin, seq: s.grantSeq, ctx: ctx, cancel: cancel}
+	s.grants[g.key], sess.grants[g.key] = g, g
+	return raw, g
+}
+
+func grantFor(t *testing.T, s *Service, sess *session) string {
+	raw, _ := addGrant(s, sess, "")
+	return raw
 }
 
 func TestPasswordLoginRotatesTheSuppliedSession(t *testing.T) {

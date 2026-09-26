@@ -21,10 +21,9 @@ var errSessionEnded = errors.New("authentication session ended")
 type Principal struct {
 	Subject, Name, Provider string
 	Expires                 time.Time
-	session                 *session
 	Bearer                  bool
-	BrowserOrigin           string
-	browserGrant            *browserGrant
+	session                 *session
+	grant                   *grant
 }
 
 func sessionPrincipal(sess *session, provider string, bearer bool) Principal {
@@ -61,15 +60,8 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 			_ = controller.SetReadDeadline(time.Now().Add(15 * time.Second))
 			defer controller.SetReadDeadline(time.Time{})
 		}
-		if r.Method == http.MethodOptions && t.Secure && t.Canonical && s.browserPreflight(w, r) {
-			return
-		}
-		if r.Method == http.MethodOptions && isMeasurementRoute(r.URL.Path) {
-			s.corsPreflight(w, r, t.Secure)
-			return
-		}
-		if r.Method == http.MethodConnect && listener.WebTransport && isWebTransportRoute(r.URL.Path) {
-			s.serveWebTransportConnect(w, r, next, listener, t)
+		if r.Method == http.MethodOptions && (isMeasurementRoute(r.URL.Path) || r.URL.Path == "/auth/browser/token") {
+			s.corsPreflight(w, r, t)
 			return
 		}
 		if (r.URL.Path == "/login" || strings.HasPrefix(r.URL.Path, "/auth/")) && (!listener.UI || !t.Canonical) {
@@ -90,16 +82,22 @@ func (s *Service) Enforce(next http.Handler, listener Listener) http.Handler {
 
 func (s *Service) serveAuthenticated(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener,
 	t trust) {
-	if !t.Secure {
-		s.writeAuthRequired(w, r, listener)
-		return
+	var p Principal
+	ok := t.Secure
+	if ok && r.Method == http.MethodConnect && listener.WebTransport && isWebTransportRoute(r.URL.Path) {
+		// A CONNECT never uses the cookie and always spends its ticket.
+		ticket, spent := s.consumeWebTransportToken(r.URL.Query().Get("token"), r)
+		if p, ok = s.authenticateBearer(r); !ok {
+			p, ok = ticket, spent
+		}
+	} else if ok {
+		p, ok = s.authenticate(r)
 	}
-	p, ok := s.authenticate(r)
 	if !ok {
 		s.writeAuthRequired(w, r, listener)
 		return
 	}
-	if p.Bearer && (!isMeasurementRoute(r.URL.Path) || p.BrowserOrigin != "" && !browserGrantRoute(r.URL.Path)) ||
+	if p.Bearer && (!isMeasurementRoute(r.URL.Path) || p.browserOrigin() != "" && !browserGrantRoute(r.URL.Path)) ||
 		!s.validRequestOrigin(r, p) {
 		forbidden(w)
 		return
@@ -140,7 +138,7 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 		}
 	}
 	if len(r.Header.Values("Authorization")) != 0 {
-		return s.authenticateNonAmbient(r)
+		return s.authenticateBearer(r)
 	}
 	c := uniqueCookie(r, sessionCookie)
 	if c == nil {
@@ -160,13 +158,12 @@ func (s *Service) authenticate(r *http.Request) (Principal, bool) {
 	return sessionPrincipal(sess, sess.provider, false), true
 }
 
-func (s *Service) authenticateNonAmbient(r *http.Request) (Principal, bool) {
+func (s *Service) authenticateBearer(r *http.Request) (Principal, bool) {
 	values := r.Header.Values("Authorization")
 	if len(values) != 1 {
 		return Principal{}, false
 	}
-	raw := values[0]
-	raw, ok := strings.CutPrefix(raw, "Bearer ")
+	raw, ok := strings.CutPrefix(values[0], "Bearer ")
 	if !ok {
 		return Principal{}, false
 	}
@@ -182,17 +179,17 @@ func (s *Service) authenticateGrant(raw string) (Principal, bool) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if g := s.browserGrants[h]; g != nil && now.Before(g.sess.expires) && g.ctx.Err() == nil {
-		p := sessionPrincipal(g.sess, "browser", true)
-		p.BrowserOrigin = g.origin
-		p.browserGrant = g
-		return p, true
+	g := s.grants[h]
+	if g == nil || !now.Before(g.sess.expires) || g.ctx.Err() != nil {
+		return Principal{}, false
 	}
-	sess := s.grants[h]
-	if sess != nil && now.Before(sess.expires) && sess.ctx.Err() == nil {
-		return sessionPrincipal(sess, "cli", true), true
+	provider := "cli"
+	if g.origin != "" {
+		provider = "browser"
 	}
-	return Principal{}, false
+	p := sessionPrincipal(g.sess, provider, true)
+	p.grant = g
+	return p, true
 }
 
 func (s *Service) writeAuthRequired(w http.ResponseWriter, r *http.Request, listener Listener) {

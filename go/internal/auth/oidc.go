@@ -4,12 +4,10 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"crypto/x509"
 	"errors"
 	"io"
 	"log"
 	"maps"
-	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -46,7 +44,6 @@ type oidcState struct {
 	secret     string
 	verbose    bool
 	discovered atomic.Pointer[oidcDiscovery] // nil until discovery succeeds
-	retrying   atomic.Bool
 	mu         sync.Mutex
 	tx         map[[32]byte]oidcTransaction
 }
@@ -98,9 +95,8 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	ctx = oidc.ClientContext(ctx, providerHTTPClient())
 	p, err := oidc.NewProvider(ctx, o.cfg.OIDCIssuer)
 	if err != nil {
-		failure := classifyDiscoveryFailure(err)
-		debugln(o.verbose, "OIDC discovery failed reason="+failure.reason)
-		return nil, failure
+		debugln(o.verbose, "OIDC discovery failed: "+err.Error())
+		return nil, err
 	}
 	var meta struct {
 		ResponseIssuer bool   `json:"authorization_response_iss_parameter_supported"`
@@ -111,8 +107,7 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	ep := p.Endpoint()
 	if !validProviderURL(ep.AuthURL) || !validProviderURL(ep.TokenURL) || !validProviderURL(meta.UserInfo) ||
 		!validProviderURL(meta.JWKS) {
-		debugln(o.verbose, "OIDC discovery failed reason=invalid_endpoint_metadata")
-		return nil, &discoveryFailure{reason: "invalid_endpoint_metadata"}
+		return nil, errors.New("provider metadata names a non-HTTPS endpoint")
 	}
 	ep.AuthStyle = oauth2.AuthStyleInHeader
 	return &oidcDiscovery{
@@ -127,46 +122,12 @@ func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscove
 	}, nil
 }
 
-type discoveryFailure struct{ reason string }
-
-func (e *discoveryFailure) Error() string { return "provider unavailable" }
-
-func classifyDiscoveryFailure(err error) *discoveryFailure {
-	reason := "discovery_response"
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		reason = "timeout"
-	case errors.Is(err, context.Canceled):
-		reason = "cancelled"
-	default:
-		if _, ok := errors.AsType[*oidc.IssuerMismatchError](err); ok {
-			reason = "issuer_mismatch"
-		} else if _, ok := errors.AsType[*net.DNSError](err); ok {
-			reason = "dns"
-		} else if _, ok := errors.AsType[x509.UnknownAuthorityError](err); ok {
-			reason = "tls_verification"
-		} else if _, ok := errors.AsType[x509.HostnameError](err); ok {
-			reason = "tls_verification"
-		} else if _, ok := errors.AsType[*net.OpError](err); ok {
-			reason = "connection"
-		}
-	}
-	return &discoveryFailure{reason: reason}
-}
-
 func validProviderURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Scheme == "https" && u.Hostname() != "" && u.User == nil
 }
 
-func (o *oidcState) startRetry(ctx context.Context, public *url.URL) {
-	if o.retrying.CompareAndSwap(false, true) {
-		go o.retryDiscovery(ctx, public)
-	}
-}
-
 func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
-	defer o.retrying.Store(false)
 	delay := time.Second
 	for attempt := 0; ; attempt++ {
 		discovery, err := o.discover(ctx, public)

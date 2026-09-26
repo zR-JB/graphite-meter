@@ -20,7 +20,6 @@ const (
 
 // Socket tickets carry the authenticated principal, including its narrower grant lifetime.
 type wtToken struct {
-	sess           *session
 	principal      Principal
 	target, origin string
 	expires        time.Time
@@ -37,7 +36,7 @@ const (
 
 func (s *Service) MintSocketToken(r *http.Request, kind route.Kind) (string, time.Time, WTMint) {
 	p, ok := PrincipalFromContext(r.Context())
-	if !ok || p.session == nil || p.Bearer && p.browserGrant == nil {
+	if !ok || p.session == nil || p.Bearer && p.browserOrigin() == "" {
 		return "", time.Time{}, WTMintNoSession
 	}
 	target, err := url.Parse(r.URL.Query().Get("target"))
@@ -63,13 +62,18 @@ func (s *Service) MintSocketToken(r *http.Request, kind route.Kind) (string, tim
 		return "", time.Time{}, WTMintNoSession
 	}
 	s.expireWTTokensLocked(now)
-	if len(p.session.wtTokens) >= maxSessionWTTokens {
+	held := 0
+	for t := range maps.Values(s.wtTokens) {
+		if t.principal.session == p.session {
+			held++
+		}
+	}
+	if held >= maxSessionWTTokens {
 		return "", time.Time{}, WTMintAtCapacity
 	}
 	p.Bearer = true
-	p.session.wtTokens[h] = struct{}{}
-	s.wtTokens[h] = wtToken{sess: p.session, principal: p, target: origin + target.Path,
-		origin: r.Header.Get("Origin"), expires: expires}
+	s.wtTokens[h] = wtToken{principal: p, target: origin + target.Path, origin: r.Header.Get("Origin"),
+		expires: expires}
 	return token, expires, WTMintOK
 }
 
@@ -86,7 +90,6 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 		return Principal{}, false
 	}
 	delete(s.wtTokens, h)
-	delete(t.sess.wtTokens, h)
 	origin, err := wire.CanonicalOrigin("https://" + r.Host)
 	if err != nil || t.target != origin+r.URL.Path || t.origin != r.Header.Get("Origin") || !now.Before(t.expires) ||
 		t.principal.measurementContext().Err() != nil {
@@ -96,40 +99,12 @@ func (s *Service) consumeWebTransportToken(raw string, r *http.Request) (Princip
 }
 
 func (s *Service) expireWTTokensLocked(now time.Time) {
-	maps.DeleteFunc(s.wtTokens, func(h [32]byte, t wtToken) bool {
-		if now.Before(t.expires) && t.principal.measurementContext().Err() == nil {
-			return false
-		}
-		delete(t.sess.wtTokens, h)
-		return true
+	maps.DeleteFunc(s.wtTokens, func(_ [32]byte, t wtToken) bool {
+		return !now.Before(t.expires) || t.principal.measurementContext().Err() != nil
 	})
 }
 
 func isWebTransportRoute(path string) bool {
 	spec, ok := route.Lookup(path)
 	return ok && spec.Kind == route.WebTransport
-}
-
-func (s *Service) serveWebTransportConnect(w http.ResponseWriter, r *http.Request, next http.Handler, listener Listener,
-	t trust) {
-	if !t.Secure {
-		s.writeAuthRequired(w, r, listener)
-		return
-	}
-	token := r.URL.Query().Get("token")
-	p, ok := s.authenticateNonAmbient(r)
-	if ok {
-		if token != "" {
-			s.consumeWebTransportToken(token, r)
-		}
-	} else {
-		p, ok = s.consumeWebTransportToken(token, r)
-	}
-	if !ok || p.session == nil || !s.validRequestOrigin(r, p) {
-		s.writeAuthRequired(w, r, listener)
-		return
-	}
-	r, end := withPrincipal(r, p)
-	defer end()
-	next.ServeHTTP(w, r)
 }

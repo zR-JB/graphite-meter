@@ -48,16 +48,15 @@ type Service struct {
 	argon            chan struct{}
 	mu               sync.Mutex
 	sessions         map[[32]byte]*session
-	grants           map[[32]byte]*session
+	grants           map[[32]byte]*grant
 	grantSeq         uint64
-	browserGrants    map[[32]byte]*browserGrant
 	wtTokens         map[[32]byte]wtToken
 	attempts         map[string][]time.Time
 	exchanges        map[string][]time.Time
 	approvalAttempts map[string][]time.Time
 	globalAttempts   []time.Time
 	ceilingLogged    map[string]time.Time
-	approvals        map[string]*cliApproval
+	approvals        map[string]*approval
 	oidc             *oidcState
 	verbose          bool
 	counters         [counters]atomic.Uint64
@@ -83,14 +82,13 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		cfg:              cfg,
 		trusted:          trusted,
 		sessions:         map[[32]byte]*session{},
-		grants:           map[[32]byte]*session{},
-		browserGrants:    map[[32]byte]*browserGrant{},
+		grants:           map[[32]byte]*grant{},
 		wtTokens:         map[[32]byte]wtToken{},
 		attempts:         map[string][]time.Time{},
 		exchanges:        map[string][]time.Time{},
 		approvalAttempts: map[string][]time.Time{},
 		ceilingLogged:    map[string]time.Time{},
-		approvals:        map[string]*cliApproval{},
+		approvals:        map[string]*approval{},
 		argon:            make(chan struct{}, 2),
 		verbose:          verbose,
 	}
@@ -128,7 +126,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 			s.oidc.discovered.Store(discovery)
 			log.Printf("[gm:auth] OIDC provider ready")
 		} else {
-			s.oidc.startRetry(ctx, s.public)
+			go s.oidc.retryDiscovery(ctx, s.public)
 		}
 	}
 	log.Printf("[gm:auth] mode=%s origin=%s provider=%s issuer=%s allowed-groups=%d session-lifetime=%s",
@@ -203,11 +201,11 @@ func (s *Service) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /auth/session", s.sessionInfo)
 	mux.HandleFunc("POST /auth/logout", s.logout)
 	mux.HandleFunc("GET /auth/browser", s.browserPage)
-	mux.HandleFunc("POST /auth/browser/approve", s.cliApprove)
-	mux.HandleFunc("POST /auth/browser/token", s.browserToken)
+	mux.HandleFunc("POST /auth/browser/approve", s.approve)
+	mux.HandleFunc("POST /auth/browser/token", s.token)
 	mux.HandleFunc("GET /auth/cli", s.cliPage)
-	mux.HandleFunc("POST /auth/cli/approve", s.cliApprove)
-	mux.HandleFunc("POST /auth/cli/token", s.cliToken)
+	mux.HandleFunc("POST /auth/cli/approve", s.approve)
+	mux.HandleFunc("POST /auth/cli/token", s.token)
 	mux.HandleFunc("/login", http.NotFound)
 	mux.HandleFunc("/auth/", http.NotFound)
 }

@@ -36,8 +36,7 @@ type session struct {
 	expires, created        time.Time
 	ctx                     context.Context
 	cancel                  context.CancelFunc
-	grants                  map[[32]byte]uint64 // grant hash -> issue order
-	wtTokens                map[[32]byte]struct{}
+	grants                  map[[32]byte]*grant
 	csrf                    string
 }
 
@@ -50,7 +49,7 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 	ctx, cancel := context.WithDeadline(context.Background(), expires)
 	sess := &session{hash: h, id: id, subject: subject, name: name, provider: provider, expires: expires,
 		created: now, ctx: ctx, cancel: cancel, csrf: csrf,
-		grants: map[[32]byte]uint64{}, wtTokens: map[[32]byte]struct{}{}}
+		grants: map[[32]byte]*grant{}}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expireLocked(now)
@@ -78,15 +77,11 @@ func (s *Service) createSession(subject, name, provider string) (string, *sessio
 
 func (s *Service) deleteSessionLocked(sess *session) {
 	delete(s.sessions, sess.hash)
-	maps.DeleteFunc(sess.grants, func(grant [32]byte, _ uint64) bool {
-		s.deleteGrantLocked(grant)
-		return true
-	})
-	maps.DeleteFunc(sess.wtTokens, func(token [32]byte, _ struct{}) bool {
-		delete(s.wtTokens, token)
-		return true
-	})
-	maps.DeleteFunc(s.approvals, func(_ string, approval *cliApproval) bool { return approval.session == sess })
+	for g := range maps.Values(sess.grants) {
+		s.deleteGrantLocked(g)
+	}
+	maps.DeleteFunc(s.wtTokens, func(_ [32]byte, t wtToken) bool { return t.principal.session == sess })
+	maps.DeleteFunc(s.approvals, func(_ string, a *approval) bool { return a.session == sess })
 	sess.cancel()
 }
 

@@ -9,6 +9,12 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/static"
 )
 
+const (
+	measurementMethods = "GET, POST, DELETE, OPTIONS"
+	authExposed        = "Graphite-Meter-Auth, Graphite-Meter-Auth-URL"
+	hstsThisHostOnly   = "max-age=31536000"
+)
+
 var appScriptHash = static.AppScriptCSPHash()
 
 func securityHeaders(h http.Header) {
@@ -60,8 +66,6 @@ func appCSP(scriptHash, connectExtra string) string {
 	return csp
 }
 
-const hstsThisHostOnly = "max-age=31536000"
-
 func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	h.Set("Strict-Transport-Security", hstsThisHostOnly)
 	h.Set("X-Frame-Options", "DENY")
@@ -69,28 +73,42 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	hardeningHeaders(h)
 }
 
-func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, secure bool) {
+// corsPreflight answers the grant exchange, a grant's measurement routes from its browser origin, and the UI origin.
+func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust) {
 	origin := r.Header.Get("Origin")
 	method := r.Header.Get("Access-Control-Request-Method")
-	clientOrigin, valid := secureBrowserOrigin(origin)
-	if secure && valid && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
-		headers, allowed := requestedHeaders(r, "authorization", "content-type")
-		if !allowed || !slices.Contains(headers, "authorization") || !allowedCORSMethod(r.URL.Path, method) {
+	clientOrigin, browser := secureBrowserOrigin(origin)
+	if r.URL.Path == "/auth/browser/token" {
+		if _, ok := requestedHeaders(r, "content-type"); !ok || !t.Secure || !t.Canonical || !browser ||
+			method != http.MethodPost {
 			forbidden(w)
 			return
 		}
-		bearerCORS(w.Header(), clientOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", measurementMethods)
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		w.WriteHeader(http.StatusNoContent)
+		allowBearerPreflight(w, clientOrigin, http.MethodPost, "Content-Type")
 		return
 	}
-	_, allowed := requestedHeaders(r, "authorization", "content-type", "x-csrf-token")
-	if !secure || origin != s.origin || !allowedCORSMethod(r.URL.Path, method) || !allowed {
+	if t.Secure && browser && clientOrigin != s.origin && browserGrantRoute(r.URL.Path) {
+		headers, ok := requestedHeaders(r, "authorization", "content-type")
+		if !ok || !slices.Contains(headers, "authorization") || !allowedCORSMethod(r.URL.Path, method) {
+			forbidden(w)
+			return
+		}
+		allowBearerPreflight(w, clientOrigin, measurementMethods, "Authorization, Content-Type")
+		return
+	}
+	_, ok := requestedHeaders(r, "authorization", "content-type", "x-csrf-token")
+	if !t.Secure || origin != s.origin || !allowedCORSMethod(r.URL.Path, method) || !ok {
 		forbidden(w)
 		return
 	}
 	s.MeasurementCORS(w.Header(), r)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func allowBearerPreflight(w http.ResponseWriter, origin, methods, headers string) {
+	bearerCORS(w.Header(), origin)
+	w.Header().Set("Access-Control-Allow-Methods", methods)
+	w.Header().Set("Access-Control-Allow-Headers", headers)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -112,4 +130,48 @@ func requestedHeaders(r *http.Request, allowed ...string) ([]string, bool) {
 func allowedCORSMethod(path, method string) bool {
 	spec, ok := route.Lookup(path)
 	return ok && spec.AllowsCORSMethod(method)
+}
+
+// MeasurementCORS exposes a measurement response or refusal to the origin allowed to read it:
+// any origin in public mode, a grant's own origin, the UI origin with credentials, or an
+// unauthenticated secure origin reading the refusal that starts its grant.
+func (s *Service) MeasurementCORS(h http.Header, r *http.Request) {
+	if !s.Enabled() {
+		h.Set("Access-Control-Allow-Origin", "*")
+		h.Set("Timing-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			h.Set("Access-Control-Allow-Methods", measurementMethods)
+			h.Set("Access-Control-Allow-Headers", "*")
+		}
+		return
+	}
+	p, authenticated := PrincipalFromContext(r.Context())
+	origin := r.Header.Get("Origin")
+	switch {
+	case p.browserOrigin() != "":
+		bearerCORS(h, p.browserOrigin())
+	case origin == s.origin:
+		h.Set("Access-Control-Allow-Origin", origin)
+		h.Set("Access-Control-Allow-Credentials", "true")
+		h.Set("Access-Control-Expose-Headers", authExposed)
+		h.Set("Timing-Allow-Origin", origin)
+		h.Add("Vary", "Origin")
+		if r.Method == http.MethodOptions {
+			h.Set("Access-Control-Allow-Methods", measurementMethods)
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-CSRF-Token")
+		}
+	case !authenticated && isMeasurementRoute(r.URL.Path):
+		if canonical, valid := secureBrowserOrigin(origin); valid {
+			bearerCORS(h, canonical)
+		}
+	}
+}
+
+// bearerCORS exposes a grant-authorized response without ambient cookies.
+func bearerCORS(h http.Header, origin string) {
+	h.Set("Access-Control-Allow-Origin", origin)
+	h.Del("Access-Control-Allow-Credentials")
+	h.Set("Access-Control-Expose-Headers", authExposed+", Graphite-Meter-Browser-Auth")
+	h.Set("Timing-Allow-Origin", origin)
+	h.Add("Vary", "Origin")
 }

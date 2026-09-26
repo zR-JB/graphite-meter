@@ -15,7 +15,7 @@ func TestCORSPreflight(t *testing.T) {
 		r.Header.Set("Access-Control-Request-Method", method)
 		r.Header.Set("Access-Control-Request-Headers", headers)
 		rr := httptest.NewRecorder()
-		s.corsPreflight(rr, r, secure)
+		s.corsPreflight(rr, r, trust{Secure: secure, Canonical: secure})
 		return rr
 	}
 	rr := preflight("/download", s.origin, http.MethodGet, "authorization,x-csrf-token", true)

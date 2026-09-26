@@ -98,8 +98,8 @@ func (s *Service) authClientAddress(r *http.Request) (netip.Addr, bool) {
 
 func (s *Service) validRequestOrigin(r *http.Request, p Principal) bool {
 	origin := r.Header.Get("Origin")
-	if p.BrowserOrigin != "" {
-		return origin == p.BrowserOrigin && browserGrantRoute(r.URL.Path)
+	if p.browserOrigin() != "" {
+		return origin == p.browserOrigin() && browserGrantRoute(r.URL.Path)
 	}
 	if origin != "" && origin != s.origin {
 		return false

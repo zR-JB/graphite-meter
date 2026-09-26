@@ -518,7 +518,7 @@ func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 	ctx, cancel := context.WithCancel(sess.ctx)
 	cancel()
 	p := sessionPrincipal(sess, "browser", true)
-	p.browserGrant = &browserGrant{sess: sess, ctx: ctx}
+	p.grant = &grant{sess: sess, origin: requestingUI, ctx: ctx}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
 	if _, _, status := s.MintSocketToken(r, route.WebTransport); status != WTMintNoSession {

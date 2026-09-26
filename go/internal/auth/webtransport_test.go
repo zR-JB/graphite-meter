@@ -126,8 +126,8 @@ func tokensExpireAndCapPerSession(t *testing.T) {
 		time.Sleep(time.Second)
 		tokens = append(tokens, mintForSession(t, s, sess))
 	}
-	if len(sess.wtTokens) != maxSessionWTTokens {
-		t.Fatalf("session holds %d tokens, want the %d cap", len(sess.wtTokens), maxSessionWTTokens)
+	if len(s.wtTokens) != maxSessionWTTokens {
+		t.Fatalf("session holds %d tokens, want the %d cap", len(s.wtTokens), maxSessionWTTokens)
 	}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, Principal{Subject: sess.subject, session: sess}))
@@ -179,8 +179,8 @@ func TestWebTransportMintRefusesABearerGrant(t *testing.T) {
 			t.Fatalf("mint %d from a bearer grant returned a token", i+1)
 		}
 	}
-	if len(sess.wtTokens) != 0 {
-		t.Fatalf("a grant parked %d tokens on the login's session", len(sess.wtTokens))
+	if len(s.wtTokens) != 0 {
+		t.Fatalf("a grant parked %d tokens on the login's session", len(s.wtTokens))
 	}
 	// The starvation the refusal prevents: the browser's own mint still lands.
 	if reached, status := wtConnect(t, s, "/wt/ping?token="+mintForSession(t, s, sess)); !reached {
