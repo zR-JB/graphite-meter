@@ -3,9 +3,9 @@
 Workflow YAML owns events, jobs, permissions and environments. `mise` owns
 pinned tools and project commands. Stdlib-only, type-checked Python in this
 directory owns trust decisions, GitHub JSON validation and artifact
-verification. `publish.sh` holds the registry and GitHub Release writes;
-`test_release_transaction.py` runs it against a stateful fake GitHub, Docker
-and Skopeo. `fixtures.py` fakes `gh` by exact API path and pagination, the
+verification. `publish.sh` holds the Skopeo registry writes and `release.py
+publish` the GitHub Release; `test_release_transaction.py` runs both against a
+stateful fake GitHub, Docker and Skopeo. `fixtures.py` fakes `gh` by exact API path and pagination, the
 checked-out commit and the container engine, so trust tests run the real
 commands.
 

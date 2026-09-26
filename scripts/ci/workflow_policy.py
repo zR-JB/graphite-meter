@@ -49,7 +49,7 @@ ORDERED = {
         "run: python3 scripts/ci/release.py verify",
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
-        "run: scripts/ci/publish.sh release", "run: scripts/ci/publish.sh aliases",
+        "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
     ),
     "actions/build-oci/action.yml": (
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "no-cache: true", "provenance: mode=max",
@@ -70,7 +70,7 @@ CONTEXT = {
         "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
-    "run: scripts/ci/publish.sh release": {
+    "run: python3 scripts/ci/release.py publish": {
         "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
     },
 }

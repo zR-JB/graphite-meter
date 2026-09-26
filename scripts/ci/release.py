@@ -9,14 +9,20 @@ import json
 import os
 import re
 import shutil
+import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypeVar
+from urllib.parse import quote
 
 import verify_oci
 import verify_release_assets
 from github_api import (
     APICall,
     ControlPlaneError,
+    JsonObject,
     api as default_api,
     append_output,
     append_summary,
@@ -54,6 +60,9 @@ TAG_RE = re.compile(rf"v{N}\.{N}\.{N}(-(?:alpha|beta|rc)\.{N})?")
 OCI = "graphite-meter.oci.tar"
 OCI_LIMIT = 1024 * 1024 * 1024
 ASSETS_LIMIT = 2 * OCI_LIMIT
+# Seconds between reads while GitHub's read path catches up with a write.
+DELAYS = (0.25, 0.5, 1, 2, 4, 8)
+T = TypeVar("T")
 REQUEST_KEYS = {
     "schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId",
     "requestRunAttempt",
@@ -102,15 +111,13 @@ def main_workflow(repository: str, name: str) -> str:
     return f"{repository}/.github/workflows/{name}@refs/heads/main"
 
 
-def require_compatible_release_tag(
-    repository: str, tag: str, expected_sha: str, *, api: APICall = default_api,
-) -> None:
-    """Refuse before publication if the exact tag already names another commit."""
+def release_tag_target(repository: str, tag: str, *, api: APICall = default_api) -> str | None:
+    """Return the commit the exact tag names, through an annotated tag, or None without the tag."""
     refs = expect_array(api(f"repos/{repository}/git/matching-refs/tags/{tag}"), tag)
     exact = [expect_object(ref, tag) for ref in refs
              if isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"]
     if not exact:
-        return
+        return None
     if len(exact) != 1:
         fail(f"multiple exact refs unexpectedly match {tag}")
     target = object_field(exact[0], "object", tag)
@@ -119,8 +126,26 @@ def require_compatible_release_tag(
         target = object_field(expect_object(annotated, tag), "object", tag)
     if target.get("type") != "commit":
         fail(f"{tag} does not reference a commit")
-    if (sha := str_field(target, "sha", tag)) != expected_sha:
+    return str_field(target, "sha", tag)
+
+
+def require_compatible_release_tag(
+    repository: str, tag: str, expected_sha: str, *, api: APICall = default_api,
+) -> None:
+    """Refuse before publication if the exact tag already names another commit."""
+    if (sha := release_tag_target(repository, tag, api=api)) not in (None, expected_sha):
         fail(f"{tag} already exists at {sha}, expected {expected_sha}")
+
+
+def converge(what: str, probe: Callable[[], T | None]) -> T:
+    """Return the first value `probe` reads, waiting for GitHub's read path to show a write."""
+    for delay in (0, *DELAYS):
+        if delay:
+            print(f"::notice::waiting {delay}s for {what}", file=sys.stderr)
+            time.sleep(delay)
+        if (value := probe()) is not None:
+            return value
+    fail(f"{what} did not become visible in time")
 
 
 def require_publishable(
@@ -271,7 +296,126 @@ def command_recheck() -> None:
     )
 
 
-COMMANDS = {"prepare": command_prepare, "verify": command_verify, "recheck": command_recheck}
+def release_assets(repository: str, release_id: int) -> list[JsonObject]:
+    pages = default_api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
+    return [expect_object(item, "asset") for page in expect_array(pages, "assets")
+            for item in expect_array(page, "assets")]
+
+
+def asset_digests(repository: str, release_id: int) -> dict[str, str]:
+    assets = release_assets(repository, release_id)
+    return {str_field(asset, "name", "asset"): str(asset.get("digest") or "") for asset in assets}
+
+
+def source_notice(release: Release, source: str) -> str:
+    return (
+        "## Source availability\n\n"
+        f"Graphite Meter source for this release is the repository snapshot at tag **{release.tag}** "
+        f"(commit **{release.sha}**). GitHub provides that tagged project source below as "
+        "**Source code (zip)** and **Source code (tar.gz)**.\n\n"
+        "Source for third-party components included in the distributed artifacts is attached as "
+        f"**{source}**. Together, the tagged repository source and that archive form the source "
+        "offer for this release."
+    )
+
+
+def command_publish() -> None:
+    """Publish the verified assets as the stable GitHub Release at its exact tag, idempotently."""
+    gh, repository = default_api, env("REPOSITORY")
+    release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
+    tag, base = release.tag, f"repos/{repository}"
+    assets = runner_path("ASSETS_DIR")
+    exact_files(assets, names := {entry.name for entry in assets.iterdir()})
+    local = {name: "sha256:" + file_sha256(assets / name) for name in names}
+    source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
+    if source not in local:
+        fail(f"release handoff is missing the third-party source asset {source}")
+    notice = source_notice(release, source)
+
+    def require_tag() -> None:
+        if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:
+            fail(f"{tag} resolves to {sha}, expected {release.sha}")
+
+    require_compatible_release_tag(repository, tag, release.sha)
+    pages = expect_array(gh(f"{base}/releases?per_page=100", paginate=True), "releases")
+    matches = [expect_object(item, "release") for page in pages
+               for item in expect_array(page, "releases") if isinstance(item, dict)
+               and item.get("tag_name") == tag]
+    if len(matches) > 1:
+        fail(f"multiple releases unexpectedly use tag {tag}")
+    if matches and matches[0].get("prerelease") is not False:
+        fail(f"{tag} already exists as a prerelease")
+    if matches and matches[0].get("draft") is False:
+        if asset_digests(repository, int_field(matches[0], "id", "release")) != local:
+            fail(f"{tag} is published but asset names/digests differ")
+        require_tag()
+        if not str(matches[0].get("body") or "").startswith(notice):
+            fail(f"{tag} is published but its source-availability notice is missing or stale")
+        print(f"::notice::{tag} is already published with the expected source, assets and notice")
+        return
+    if not matches:
+        draft: JsonObject = {"tag_name": tag, "target_commitish": release.sha, "draft": True,
+                             "prerelease": False, "generate_release_notes": True, "body": notice}
+        matches = [expect_object(gh(f"{base}/releases", method="POST", body=draft), "release")]
+    release_id = int_field(matches[0], "id", "release")
+
+    current = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+    if current.get("tag_name") != tag or current.get("draft") is not True:
+        fail(f"release {release_id} must remain the {tag} draft during asset upload")
+    body = str(current.get("body") or "")
+    if not body.startswith(notice):
+        if "## Source availability" in body:
+            fail(f"{tag} draft contains a stale source-availability notice")
+        edit: JsonObject = {"body": f"{notice}\n\n{body}" if body else notice}
+        current = expect_object(gh(f"{base}/releases/{release_id}", method="PATCH", body=edit),
+                                "release")
+    upload = str_field(current, "upload_url", "release").split("{", 1)[0]
+    if not upload.startswith("https://uploads.github.com/"):
+        fail(f"unexpected release upload URL {upload}")
+    # A retry starts from an empty draft so it cannot keep stale files.
+    for asset in release_assets(repository, release_id):
+        gh(f"{base}/releases/assets/{int_field(asset, 'id', 'asset')}", method="DELETE")
+    for name in sorted(local):
+        gh(f"{upload}?name={quote(name)}", method="POST", upload=assets / name)
+    if asset_digests(repository, release_id) != local:
+        fail("draft release asset names/digests do not match verified local files")
+
+    if release_tag_target(repository, tag) is None:
+        try:
+            gh(f"{base}/git/refs", method="POST", body={"ref": f"refs/tags/{tag}", "sha": release.sha})
+        except ControlPlaneError as exc:
+            if "already exists" not in str(exc):
+                fail(f"GitHub rejected creation of {tag} at {release.sha}: {exc}")
+            print(f"::warning::{tag} creation raced with another writer; verifying the winner")
+    require_tag()
+    try:
+        gh(f"{base}/releases/{release_id}", method="PATCH",
+           body={"draft": False, "prerelease": False, "make_latest": "legacy"})
+    except ControlPlaneError as exc:
+        print(f"::warning::publishing {tag} failed ({exc}); reconciling release state")
+
+    def published() -> JsonObject | None:
+        try:
+            item = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+        except ControlPlaneError as exc:
+            if "(HTTP 404)" in str(exc):
+                return None
+            raise
+        if item.get("tag_name") != tag or item.get("prerelease") is not False:
+            fail(f"release {release_id} is no longer the stable {tag} release")
+        return item if item.get("draft") is False else None
+
+    final = converge(f"{tag} publication", published)
+    require_tag()
+    if not str(final.get("body") or "").startswith(notice):
+        fail("published release lost its source-availability notice")
+    print(f"::notice::published {tag} with verified SHA-256 assets and source notice")
+
+
+COMMANDS = {
+    "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
+    "publish": command_publish,
+}
 
 
 def main() -> None:

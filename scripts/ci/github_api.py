@@ -38,12 +38,20 @@ class APICall(Protocol):
         """Return the decoded JSON at `path`, every page of it when `paginate` is set."""
 
 
-def api(path: str, *, paginate: bool = False) -> JsonValue:
+def api(path: str, *, paginate: bool = False, method: str = "GET", body: JsonValue = None,
+        upload: Path | None = None) -> JsonValue:
+    """Call `gh api`, sending `body` as JSON or `upload` as bytes; the token stays in GH_TOKEN."""
     if not os.environ.get("GH_TOKEN"):
         fail("GH_TOKEN is required")
-    pages = ["--paginate", "--slurp"] if paginate else []
-    result = subprocess.run(["gh", "api", *pages, path], capture_output=True, text=True,
-                            check=False)
+    args = ["--paginate", "--slurp"] if paginate else []
+    if method != "GET":
+        args += ["--method", method]
+    if upload is not None:
+        args += ["--header", "Content-Type: application/octet-stream", "--input", str(upload)]
+    elif body is not None:
+        args += ["--input", "-"]
+    result = subprocess.run(["gh", "api", *args, path], input=None if body is None else json.dumps(body),
+                            capture_output=True, text=True, check=False)
     if result.returncode != 0:
         detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
         fail(f"gh api {path}: {detail}")

@@ -98,7 +98,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, "group: release-publish-${{ github.repository }}",
      "group: release-publish-${{ github.run_id }}", "group: release-publish"),
     (RELEASE, "cancel-in-progress: false", "cancel-in-progress: true", "cancel-in-progress"),
-    (RELEASE, "run: scripts/ci/publish.sh release", "run: echo released", "publish.sh release"),
+    (RELEASE, "run: python3 scripts/ci/release.py publish", "run: echo released",
+     "release.py publish"),
     (RELEASE, "run: scripts/ci/publish.sh aliases", "run: echo promoted", "publish.sh aliases"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
      "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha"),
@@ -150,7 +151,7 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
         for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
-                             (RELEASE, "publish.sh release")):
+                             (RELEASE, "release.py publish")):
             text = (ROOT / name).read_text()
             step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
             for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z_]+): \$\{\{ github\.", step):

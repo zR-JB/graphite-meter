@@ -186,7 +186,7 @@ jobs:
           TAG: ${{ needs.verify.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
           ASSETS_DIR: ${{ runner.temp }}/handoff/assets
-        run: scripts/ci/publish.sh release
+        run: python3 scripts/ci/release.py publish
 
       - name: Promote stable aliases without rollback
         if: needs.verify.outputs.stable == 'true'
