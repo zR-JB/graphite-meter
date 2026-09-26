@@ -4,8 +4,8 @@ use crate::net::Http;
 use bytes::{Buf, Bytes};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::capsule;
+use graphite_meter_webtransport::{PendingReset, ResetQueue};
 use h3::{ConnectionState, quic::RecvStream as _, stream::BufRecvStream};
-use h3_noq::webtransport_send::{PendingReset, ResetQueue};
 use http::Request;
 use std::{
     collections::HashMap,
@@ -24,7 +24,7 @@ use tokio::{
     time::timeout,
 };
 
-pub use h3_noq::webtransport_send::SendStream;
+pub use graphite_meter_webtransport::SendStream;
 type RawReceive = BufRecvStream<h3_noq::RecvStream, Bytes>;
 const CANCEL: u64 = 0x52e4a40fa8db;
 const QUEUE: usize = 32;

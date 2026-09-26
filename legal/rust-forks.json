@@ -1,0 +1,114 @@
+[
+  {
+    "fork": "https://github.com/zR-JB/h3",
+    "branch": "graphite-meter/h3-v0.0.8",
+    "rev": "cc8145161aa75bf3c7f5505da526579d79438757",
+    "upstream": "https://github.com/hyperium/h3",
+    "baseTag": "h3-quinn-v0.0.10",
+    "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
+    "diffSha256": "2ff2a220dbb6d177f434661fa653b230db5c6c6c1a46549f680c6caae7e203b2",
+    "modifiedPackages": [
+      "h3",
+      "h3-noq"
+    ],
+    "commits": [
+      {
+        "subject": "h3: expose unidirectional streams awaiting their header",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "h3: recognize current WebTransport settings",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "h3: accept the webtransport-h3 CONNECT protocol",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "h3: keep the full CONNECT stream ID as WebTransport session ID",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "h3: expose WebTransport settings on the client builder",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "h3-noq: copy h3-quinn 0.0.10",
+        "origin": "hyperium/h3 h3-quinn 0.0.10, unchanged"
+      },
+      {
+        "subject": "h3-noq: adapt the h3-quinn transport to Noq",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Test the Graphite Meter fork",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Install Clippy for fork CI",
+        "origin": "graphite-meter"
+      }
+    ],
+    "metadataFiles": [
+      ".github/workflows/graphite-meter.yml"
+    ]
+  },
+  {
+    "fork": "https://github.com/zR-JB/noq",
+    "branch": "graphite-meter/noq-v1.3.0",
+    "rev": "e87d1c05c860f0d8e3c39cb98cb87fd27545ce96",
+    "upstream": "https://github.com/n0-computer/noq",
+    "baseTag": "noq-v1.3.0",
+    "base": "c1f411562e6078852749b8bcf1190523096a107f",
+    "diffSha256": "1b2397d06b96a6a9793557695637f231b5e7527ee539428f5ddbebdd956369c7",
+    "modifiedPackages": [
+      "noq",
+      "noq-proto"
+    ],
+    "commits": [
+      {
+        "subject": "feat: reset_stream_at TransportParameter",
+        "origin": "n0-computer/noq#805 b7a4d3663e904d5d9b20fa3d2fa28295aacfb4f5"
+      },
+      {
+        "subject": "Add the frame type itself",
+        "origin": "n0-computer/noq#805 a03d4ffa3f90df0825ba973f17051e0eac023707"
+      },
+      {
+        "subject": "impl retransmit of RESET_STREAM_AT",
+        "origin": "n0-computer/noq#805 c39c57eb8ad5a9a88110c16ea4d6816f944b30a3"
+      },
+      {
+        "subject": "allow sending the RESET_STREAM_AT",
+        "origin": "n0-computer/noq#805 a4a97fdebe9e21dfd358e222440417d7da674091"
+      },
+      {
+        "subject": "wip: thanks to claude",
+        "origin": "n0-computer/noq#805 ca4b44552c6df355906f45c58e992ddbb7986bbb"
+      },
+      {
+        "subject": "noq-proto: release reset receive credit exactly once",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "noq-proto: advertise reset_stream_at on 0x1d and the draft codepoint",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "noq-proto: compute the Retry integrity tag with ring or aws-lc-rs",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Require the security-fixed rustls release",
+        "origin": "n0-computer/noq#821 92361d2283346c9b6a414016c080a170e4d4049b, dependency updates with rustls 0.23.45 minimum"
+      },
+      {
+        "subject": "Test the Graphite Meter fork",
+        "origin": "graphite-meter"
+      }
+    ],
+    "metadataFiles": [
+      ".github/workflows/graphite-meter.yml"
+    ]
+  }
+]

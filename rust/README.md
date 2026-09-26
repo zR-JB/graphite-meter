@@ -116,5 +116,11 @@ lost the final prefix byte when a read returned that byte with a reset error.
 The current-only Go probe exercises the draft-09+ transport parameter; it is
 not evidence of Safari browser parity.
 
-The QUIC stack uses an experimental Noq commit and local HTTP/3 patches; see
-[vendor/PATCHES.md](vendor/PATCHES.md) for provenance and limitations.
+The QUIC stack uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
+and [HTTP/3](https://github.com/zR-JB/h3) forks. No third-party source is vendored
+in this checkout. [Fork provenance](../legal/rust-forks.json) records upstream
+bases, changes and reviewed revisions. `rust-check` validates locked sources
+offline; release packaging also verifies fork branches, upstream tags and diffs.
+The shared `webtransport` crate owns association-preserving cancellation, with
+plain RESET fallback when peers do not support reliable reset. The forks remain
+experimental; current-codepoint tests do not establish Safari compatibility.

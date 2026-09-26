@@ -161,8 +161,8 @@ def expected_rust_artifacts(version: str, selection: str) -> set[str]:
 def verify_rust_server_source(dist: Path, version: str) -> None:
     source = dist / f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz"
     names = archive_names(source)
-    if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= names:
-        raise VerificationError("Rust server source offer lacks inventory, notices, or patch provenance")
+    if not {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"} <= names:
+        raise VerificationError("Rust server source offer lacks inventory, notices, or fork provenance")
     if not read_tar_text(source, "LEGAL.txt").strip():
         raise VerificationError("Rust server source offer has empty notices")
     inventory = decode_json(
@@ -247,8 +247,8 @@ def verify_rust_client_archive(dist: Path, version: str) -> None:
         raise VerificationError("Rust package has no legal report")
     source = dist / f"{base}_third-party-source.tar.gz"
     source_names = archive_names(source)
-    if not {"inventory.json", "LEGAL.txt", "rust/vendor/PATCHES.md"} <= source_names:
-        raise VerificationError("Rust source archive is missing inventory, notices, or patch provenance")
+    if not {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"} <= source_names:
+        raise VerificationError("Rust source archive is missing inventory, notices, or fork provenance")
     if not any(name.startswith("third_party/cargo/") for name in source_names):
         raise VerificationError("Rust source archive contains no Cargo sources")
     if read_tar_text(source, "LEGAL.txt") != report:

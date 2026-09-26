@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import io
+import os
+import shutil
+import subprocess
+import tarfile
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from copy import deepcopy
 
-from scripts.legal.model import LegalError
-from scripts.legal.rust import artifacts
+from scripts.legal.model import Component, LegalError
+from scripts.legal.rust import add_cargo_sources, artifacts, cargo
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -41,6 +49,52 @@ class RustArtifactTests(unittest.TestCase):
             messages[0]['target']['kind'] = [kind]
             with self.subTest(kind=kind), self.assertRaises(LegalError):
                 artifacts(messages, 'application', 'application')
+
+
+class RustSourceTests(unittest.TestCase):
+    def test_git_workspace_source_builds_without_its_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            upstream = root / 'upstream'
+            (upstream / 'dependency/src').mkdir(parents=True)
+            (upstream / 'Cargo.toml').write_text(
+                '[workspace]\nmembers = ["dependency"]\nresolver = "2"\n'
+                '[workspace.package]\nversion = "1.0.0"\nedition = "2021"\n')
+            (upstream / 'dependency/Cargo.toml').write_text(
+                '[package]\nname = "source-fixture"\nversion.workspace = true\nedition.workspace = true\n')
+            (upstream / 'dependency/src/lib.rs').write_text('pub fn value() -> u32 { 42 }\n')
+            (upstream / 'LICENSE').write_text('fixture license\n')
+            (upstream / 'dependency/LICENSE').symlink_to('../LICENSE')
+            for args in (('init', '-q'), ('add', '.'), ('commit', '-qm', 'fixture')):
+                subprocess.run(['git', '-C', str(upstream), '-c', 'user.name=fixture',
+                                '-c', 'user.email=fixture@example.invalid', '-c', 'commit.gpgsign=false',
+                                *args], check=True)
+            revision = subprocess.check_output(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], text=True).strip()
+            repo = root / 'repo'
+            (repo / 'rust/src').mkdir(parents=True)
+            shutil.copyfile(Path(__file__).resolve().parents[2] / 'rust/rust-toolchain.toml',
+                            repo / 'rust/rust-toolchain.toml')
+            (repo / 'rust/Cargo.toml').write_text(
+                '[package]\nname = "consumer"\nversion = "1.0.0"\nedition = "2021"\n'
+                f'[dependencies]\nsource-fixture = {{ git = "{upstream.as_uri()}", rev = "{revision}" }}\n')
+            (repo / 'rust/src/lib.rs').write_text('pub use source_fixture::value;\n')
+            with patch.dict(os.environ, {'CARGO_HOME': str(root / 'cargo-home')}):
+                subprocess.run(cargo(repo, 'generate-lockfile'), cwd=repo / 'rust', check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                payload = io.BytesIO()
+                with tarfile.open(fileobj=payload, mode='w') as archive:
+                    add_cargo_sources(archive, repo, [Component('source-fixture', '1.0.0', 'cargo',
+                                                               upstream.as_uri(), '')])
+                shutil.rmtree(upstream)
+                shutil.rmtree(root / 'cargo-home')
+                payload.seek(0)
+                with tarfile.open(fileobj=payload) as archive:
+                    archive.extractall(root / 'unpacked', filter='data')
+                package = root / 'unpacked/third_party/cargo/source-fixture-1.0.0'
+                self.assertEqual((package / 'LICENSE').read_text(), 'fixture license\n')
+                self.assertFalse((package / 'LICENSE').is_symlink())
+                subprocess.run(cargo(repo, 'build', '--offline', '--manifest-path', str(package / 'Cargo.toml')),
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
 if __name__ == '__main__':

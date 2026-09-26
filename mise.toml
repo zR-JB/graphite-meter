@@ -283,6 +283,7 @@ description = "Check experimental Rust formatting, dependencies, lints, and test
 dir = "rust"
 run = [
   "cargo fmt --all --check",
+  "python3 ../scripts/legal/check_git_sources.py",
   "python3 ../scripts/ci/rust_crate_budget.py",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo test --workspace --all-targets --locked",
@@ -427,6 +428,7 @@ run = '''
 #!/usr/bin/env sh
 set -eu
 python3 scripts/ci/release.py rust-artifacts --selection "$usage_rust_artifacts"
+[ "$usage_rust_artifacts" = none ] || python3 scripts/legal/check_git_sources.py --verify
 VERSION=$usage_version
 export VERSION
 if [ "$usage_rust_artifacts" = server ] || [ "$usage_rust_artifacts" = both ]; then

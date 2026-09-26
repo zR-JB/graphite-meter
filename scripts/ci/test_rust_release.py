@@ -52,7 +52,7 @@ class RustArchiveBoundaryTests(unittest.TestCase):
             with tarfile.open(dist / f"{base}_third-party-source.tar.gz", "w:gz") as archive:
                 for name, payload in {
                     "inventory.json": json.dumps(inventory).encode(),
-                    "LEGAL.txt": b"fixture notices\n", "rust/vendor/PATCHES.md": b"fixture",
+                    "LEGAL.txt": b"fixture notices\n", "legal/rust-forks.json": b"[]",
                     "third_party/cargo/example-1.0/source.rs": b"fixture",
                 }.items():
                     member = tarfile.TarInfo(name)
@@ -108,14 +108,14 @@ class RustServerReleaseTests(unittest.TestCase):
                 files = {
                     "inventory.json": json.dumps(metadata).encode(),
                     "LEGAL.txt": b"notices",
-                    "rust/vendor/PATCHES.md": b"patch provenance",
+                    "legal/rust-forks.json": b"[]",
                 }
                 if mutation != "missing":
                     files["third_party/cargo/example-1.0/source.rs"] = b"source"
                 if mutation == "cargo_fixture":
                     files["third_party/cargo/example-1.0/tests/test_vector.pem"] = b"public upstream fixture"
                 if mutation == "first_party_key":
-                    files["rust/vendor/.dev-certs/private.key"] = b"must not ship"
+                    files["rust/.dev-certs/private.key"] = b"must not ship"
                 if mutation == "undeclared_tree":
                     files["third_party/cargo/other-2.0/tests/key.pem"] = b"not in inventory"
                 archive_path = dist / next(iter(expected_rust_artifacts("1.2.3", "server")))

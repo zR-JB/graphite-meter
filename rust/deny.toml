@@ -18,7 +18,7 @@ confidence-threshold = 0.93
 
 [bans]
 multiple-versions = "warn"
-wildcards = "warn"
+wildcards = "deny"
 allow-wildcard-paths = true
 deny = [
   { crate = "openidconnect", reason = "OIDC is auth/oidc.rs + auth/jwt.rs on ring" },
@@ -32,6 +32,7 @@ deny = [
   { crate = "p256", reason = "ring verifies ECDSA" },
   { crate = "p384", reason = "ring verifies ECDSA" },
   { crate = "ed25519-dalek", reason = "ring verifies Ed25519" },
+  { crate = "aes-gcm", reason = "D4: ring only (noq Retry tag moved to ring::aead in the fork)" },
   { crate = "time", reason = "one RFC 3339 formatter in auth/http.rs" },
   { crate = "chrono", reason = "no calendar dependency" },
   { crate = "x509-cert", reason = "tls.rs reads leaf validity; webpki parses the rest" },
@@ -54,4 +55,4 @@ deny = ["aws_lc_rs", "aws-lc-rs", "fips"]
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/n0-computer/noq"]
+allow-git = ["https://github.com/zR-JB/noq", "https://github.com/zR-JB/h3"]

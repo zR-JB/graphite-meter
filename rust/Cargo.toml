@@ -1,7 +1,6 @@
 [workspace]
-members = ["core", "server", "client", "net"]
+members = ["core", "server", "client", "net", "webtransport"]
 resolver = "3"
-exclude = ["vendor/h3", "vendor/h3-noq", "vendor/noq-proto"]
 
 [workspace.package]
 version = "0.8.6"
@@ -19,7 +18,5 @@ codegen-units = 1
 strip = "symbols"
 
 [patch.crates-io]
-h3 = { path = "vendor/h3" }
-
-[patch."https://github.com/n0-computer/noq"]
-noq-proto = { path = "vendor/noq-proto" }
+h3 = { git = "https://github.com/zR-JB/h3", rev = "cc8145161aa75bf3c7f5505da526579d79438757" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "e87d1c05c860f0d8e3c39cb98cb87fd27545ce96" }

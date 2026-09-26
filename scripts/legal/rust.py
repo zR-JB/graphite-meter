@@ -14,13 +14,14 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import tomllib
 from dataclasses import replace
 from pathlib import Path
 
 from .artifacts import add_bytes, add_tree, notices
 from .discovery import discover_browser
-from .model import Component, LegalError, Project, Provenance, Review, array, marshal, read_json, sha256
+from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
 from .review import add_provenance, component_legal_files, validate_review
 from .rust_platform import notice as platform_notice, verify_dynamic_runtime
 
@@ -52,6 +53,16 @@ def capture(repo: Path, package: str, target: str, profile: str,
     metadata = subprocess.check_output(cargo(repo, 'metadata', '--locked', '--format-version=1'),
                                        cwd=repo / 'rust', text=True)
     return json.loads(metadata), messages
+
+
+def add_cargo_sources(archive: tarfile.TarFile, repo: Path, components: list[Component]) -> None:
+    with tempfile.TemporaryDirectory(prefix='rust-sources-') as scratch:
+        destination = Path(scratch) / 'vendor'
+        subprocess.run(cargo(repo, 'vendor', '--locked', '--versioned-dirs', str(destination)),
+                       cwd=repo / 'rust', stdout=subprocess.DEVNULL, check=True, timeout=600)
+        for component in components:
+            name = f'{component.name}-{component.version}'
+            add_tree(archive, destination / name, f'third_party/cargo/{name}')
 
 
 def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, dict]:
@@ -88,7 +99,9 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
     packages = {item['id']: item for item in metadata['packages']}
     own = {item['id'] for item in packages.values()
            if Path(item['manifest_path']).resolve().parent in
-           {repo / 'rust' / name for name in ('client', 'server', 'core', 'net')}}
+           {repo / 'rust' / name for name in ('client', 'server', 'core', 'net', 'webtransport')}}
+    forks = {(text(fork, 'fork'), text(fork, 'rev')): strings(fork, 'modifiedPackages')
+             for fork in map(obj, array(read_json(repo / 'legal/rust-forks.json')))}
     root = next((item['id'] for item in packages.values() if item['name'] == package and item['id'] in own), None)
     if root is None:
         raise LegalError(f'workspace package is missing: {package}')
@@ -101,11 +114,16 @@ def discover(repo: Path, metadata: dict, messages: list[dict], package: str,
         if identity in own:
             continue
         directory = Path(item['manifest_path']).resolve().parent
-        modified = item['source'] is None
-        if modified and not directory.is_relative_to(repo / 'rust/vendor'):
+        source = item['source']
+        if source is None:
             raise LegalError(f'unrecognized local dependency: {directory}')
-        source = (f'https://github.com/zR-JB/graphite-meter/tree/main/{directory.relative_to(repo)}'
-                  if modified else item['source'])
+        modified = False
+        if source.startswith('git+'):
+            location, _, revision = source[4:].partition('?rev=')
+            modified_packages = forks.get((location, revision.partition('#')[0]))
+            if modified_packages is None:
+                raise LegalError(f'unreviewed Cargo git source: {identity}')
+            modified = item['name'] in modified_packages
         matching = [review for review in reviews if (review.name, review.reviewedVersion, review.upstream)
                     == (item['name'], item['version'], source)]
         if len(matching) > 1:
@@ -250,9 +268,8 @@ def main() -> None:
                  else notices(components + browser_components) + '\n\nRust sysroot and platform notices\n\n' + extra))
     (output / 'LEGAL.txt').write_text(report)
     # Snapshot dependency-selection inputs; build.rs rejects stale supplied reports.
-    inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml', 'rust/rust-toolchain.toml']
-    if (repo / 'rust/vendor/PATCHES.md').exists():
-        inputs.append('rust/vendor/PATCHES.md')
+    inputs = ['rust/legal_build.rs', 'rust/client/build.rs', 'rust/server/build.rs', 'rust/Cargo.lock', 'rust/Cargo.toml',
+              'rust/rust-toolchain.toml', 'legal/rust-forks.json']
     for reviewed_input in (args.reviews, args.supplement):
         if reviewed_input is not None:
             resolved = reviewed_input.resolve()
@@ -295,14 +312,14 @@ def main() -> None:
     with (output / 'THIRD_PARTY_SOURCE.tar.gz').open('wb') as destination:
         with gzip.GzipFile(filename='', mode='wb', fileobj=destination, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode='w') as archive:
-                for component in components + browser_components:
+                add_cargo_sources(archive, repo, components)
+                for component in browser_components:
                     if component.source_path is not None:
                         add_tree(archive, component.source_path,
                                  f'third_party/{component.ecosystem}/{component.name}-{component.version}')
                 add_bytes(archive, 'inventory.json', (output / 'inventory.json').read_bytes())
                 add_bytes(archive, 'LEGAL.txt', (output / 'LEGAL.txt').read_bytes())
-                if (repo / 'rust/vendor/PATCHES.md').exists():
-                    add_bytes(archive, 'rust/vendor/PATCHES.md', (repo / 'rust/vendor/PATCHES.md').read_bytes())
+                add_bytes(archive, 'legal/rust-forks.json', (repo / 'legal/rust-forks.json').read_bytes())
                 for entry in provenance + browser_provenance:
                     for file in entry.localLegalFiles:
                         add_bytes(archive, file.name, (repo / file.name).read_bytes())
