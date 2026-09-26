@@ -32,7 +32,6 @@ type AggregateWindow struct {
 }
 
 type AggregationInterval struct {
-	ID           int
 	Stage        Stage
 	Participants []string
 	Start, End   time.Duration
@@ -41,12 +40,20 @@ type AggregationInterval struct {
 	Window       *AggregateWindow
 }
 
+type FailureScope string
+
+const (
+	ScopeThroughput FailureScope = "throughput"
+	ScopeLatency    FailureScope = "latency"
+)
+
+// ServerFailure records a server leaving the run; a throughput failure removes it, a latency one keeps it.
 type ServerFailure struct {
-	ServerID      string
-	Stage         Stage
-	Scope, Reason string
-	Err           error
-	At            time.Duration
+	ServerID string
+	Stage    Stage
+	Scope    FailureScope
+	Err      error
+	At       time.Duration
 }
 
 type measurementBoundary struct {
@@ -109,7 +116,6 @@ func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duratio
 		a.omitted++
 	}
 	a.intervals = append(a.intervals, AggregationInterval{
-		ID:           a.omitted + len(a.intervals),
 		Stage:        stage,
 		Participants: slices.Clone(ids),
 		Start:        at,

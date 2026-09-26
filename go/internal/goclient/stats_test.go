@@ -48,8 +48,6 @@ func TestLatencyDefinitionFixtures(t *testing.T) {
 	mixed.add(0, false, 0)
 	got := mixed.snapshot()
 	if got.Count != 4 ||
-		got.Min != ms(10) ||
-		got.Mean != ms(25) ||
 		got.P50 != ms(25) ||
 		got.P95 != ms(40) ||
 		got.Jitter != ms(70)/3 ||
@@ -62,7 +60,7 @@ func TestLatencyDefinitionFixtures(t *testing.T) {
 		alternating.add(ms(rtt), false, 0)
 	}
 	got = alternating.snapshot()
-	if got.Jitter != ms(90) || got.JitterPairs != 3 || got.P50 != ms(55) || got.P10 != ms(10) || got.P90 != ms(100) {
+	if got.Jitter != ms(90) || got.JitterPairs != 3 || got.P50 != ms(55) || got.P95 != ms(100) {
 		t.Fatalf("alternating fixture: %+v", got)
 	}
 	alternating.add(ms(10), false, 0)
@@ -83,7 +81,7 @@ func TestLatencyDefinitionFixtures(t *testing.T) {
 
 	var timeouts latencyStats
 	timeouts.add(0, true, 0)
-	if got := timeouts.snapshot(); got.Count != 0 || got.P50 != 0 || got.Mean != 0 || timeoutRatio(t, got) != 1 {
+	if got := timeouts.snapshot(); got.Count != 0 || got.P50 != 0 || timeoutRatio(t, got) != 1 {
 		t.Fatalf("timeout-only fixture: %+v", got)
 	}
 	if got := (&latencyStats{}).snapshot(); got != (LatencyStats{}) {

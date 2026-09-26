@@ -63,7 +63,7 @@ func TestReflectorTimingDurationBounds(t *testing.T) {
 			var stats latencyStats
 			stats.add(time.Duration(math.MaxInt64), false, nanos)
 			got := stats.snapshot()
-			if got.Count != 1 || got.Mean != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
+			if got.Count != 1 || got.P50 != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
 				t.Fatalf("optional duration changed raw reply: %+v", got)
 			}
 			if nanos > math.MaxInt64 {

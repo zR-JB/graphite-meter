@@ -156,7 +156,6 @@ func (r *runner) measureLatency(
 	}()
 	finish := func(err error) (LatencyStats, error) { return probes.finish(time.Now(), duration), err }
 	emit := func(at time.Time, sample LatencySample) {
-		sample.UnderLoad = underLoad
 		r.emit(Event{Kind: EventLatency, At: at, Stage: stage, Latency: sample})
 	}
 	startReader := func(bus pingBus) {

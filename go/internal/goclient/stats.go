@@ -68,15 +68,8 @@ func (s *latencyStats) snapshot() LatencyStats {
 	if len(s.values) == 0 {
 		return out
 	}
-	xs := slices.Clone(s.values)
-	slices.Sort(xs)
-	var sum time.Duration
-	for _, v := range xs {
-		sum += v
-	}
-	out.Min, out.Max, out.Mean = xs[0], xs[len(xs)-1], sum/time.Duration(len(xs))
-	out.P10, out.P50 = percentile(xs, 0.10), median(xs)
-	out.P90, out.P95 = percentile(xs, 0.90), percentile(xs, 0.95)
+	xs := slices.Sorted(slices.Values(s.values))
+	out.P50, out.P95 = median(xs), percentile(xs, 0.95)
 	return out
 }
 

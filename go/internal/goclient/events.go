@@ -88,9 +88,8 @@ type ThroughputSample struct {
 }
 
 type LatencySample struct {
-	RTT       time.Duration
-	UnderLoad bool
-	TimedOut  bool
+	RTT      time.Duration
+	TimedOut bool
 }
 
 type Result struct {
@@ -110,15 +109,15 @@ func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
 type LatencyStats struct {
-	ReflectorTiming                    *ReflectorTimingStats // Nil when no valid timing pairs were observed.
-	Min, Max, P10, P50, P90, P95, Mean time.Duration
-	Jitter                             time.Duration
-	Count                              int // Successful replies within the measured stage and probe deadline.
-	JitterPairs                        int // Zero means variation is unavailable, not zero.
-	Timeouts                           int
-	Unresolved                         int
-	SendFailures                       int
-	Elapsed                            time.Duration
+	ReflectorTiming *ReflectorTimingStats // Nil when no valid timing pairs were observed.
+	P50, P95        time.Duration
+	Jitter          time.Duration
+	Count           int // Successful replies within the measured stage and probe deadline.
+	JitterPairs     int // Zero means variation is unavailable, not zero.
+	Timeouts        int
+	Unresolved      int
+	SendFailures    int
+	Elapsed         time.Duration
 }
 
 // ReflectorTimingStats contains means over one paired population of successful in-window replies.

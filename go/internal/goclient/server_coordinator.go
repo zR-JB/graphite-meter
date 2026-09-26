@@ -12,11 +12,10 @@ import (
 )
 
 type ServerRunSummary struct {
-	Server                     wire.ServerEntry
-	Throughput                 wire.ThroughputTarget
-	LatencyTarget              *wire.LatencyTarget
-	Results                    []Result
-	TotalDownload, TotalUpload uint64
+	Server        wire.ServerEntry
+	Throughput    wire.ThroughputTarget
+	LatencyTarget *wire.LatencyTarget
+	Results       []Result
 }
 
 type RunDetails struct {
@@ -156,15 +155,12 @@ func (c *coordinator) details(outcome Outcome) *RunDetails {
 		details.LatencyFocus = c.prepared.LatencyFocus
 	}
 	for _, server := range c.servers {
-		total := c.aggregate.totals[server.id()]
 		connection := server.prepared.Connection
 		details.Servers = append(details.Servers, ServerRunSummary{
 			Server:        server.prepared.Server,
 			Throughput:    connection.ThroughputTarget,
 			LatencyTarget: connection.LatencyTarget,
 			Results:       slices.Clone(server.results),
-			TotalDownload: total.down,
-			TotalUpload:   total.up,
 		})
 	}
 	return details
@@ -224,9 +220,9 @@ func (c *coordinator) noSurvivors() error {
 }
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
-	scope := "throughput"
+	scope := ScopeThroughput
 	if role == roleLatency {
-		scope = "latency"
+		scope = ScopeLatency
 		if server.latencyFailed || server.removed {
 			return
 		}
@@ -240,17 +236,7 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		server.cancelTransfer(err)
 		server.cancelLatency(err)
 	}
-	failure := ServerFailure{
-		ServerID: server.id(),
-		Stage:    stage.Name,
-		Scope:    scope,
-		Reason:   "connection-lost",
-		Err:      err,
-		At:       at.Sub(c.started),
-	}
-	if _, ok := errors.AsType[*AuthRequiredError](err); ok {
-		failure.Reason = "authentication-required"
-	}
+	failure := ServerFailure{ServerID: server.id(), Stage: stage.Name, Scope: scope, Err: err, At: at.Sub(c.started)}
 	c.failures = append(c.failures, failure)
 	c.emit(Event{
 		Kind:     EventServerFailure,
@@ -272,11 +258,6 @@ func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
 		result.Err = nil
 	}
 	p := outcome.server.participant
-	sameStage := func(old Result) bool { return old.Stage == result.Stage && old.Direction == "" }
-	if i := slices.IndexFunc(p.results, sameStage); i >= 0 {
-		p.results[i] = result
-		return
-	}
 	p.results = append(p.results, result)
 	if result.Stage == StageLatency && result.Latency.P50 > 0 {
 		p.transport.idleRTT = result.Latency.P50
