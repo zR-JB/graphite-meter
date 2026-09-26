@@ -73,7 +73,6 @@ func (s *Service) authenticatedSecurityHeaders(h http.Header) {
 	hardeningHeaders(h)
 }
 
-// corsPreflight answers the grant exchange, a grant's measurement routes from its browser origin, and the UI origin.
 func (s *Service) corsPreflight(w http.ResponseWriter, r *http.Request, t trust) {
 	origin := r.Header.Get("Origin")
 	method := r.Header.Get("Access-Control-Request-Method")

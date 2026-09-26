@@ -27,7 +27,6 @@ func Key(raw string) string {
 	return scheme + "://" + host
 }
 
-// Equal reports whether two origins normalize to the same key.
 func Equal(a, b string) bool {
 	return Key(a) == Key(b)
 }

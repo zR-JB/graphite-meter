@@ -60,7 +60,6 @@ func (u *Upload) leave(a *uploadAgg) {
 	a.setLanesLocked(a.lanes - 1)
 }
 
-// claimFeed supersedes any earlier feed of a.
 func (u *Upload) claimFeed(a *uploadAgg) chan struct{} {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -270,7 +269,6 @@ func (u *Upload) sweep(ttl time.Duration) {
 	}
 }
 
-// RunSweeper reaps idle receivers until ctx is cancelled.
 func (u *Upload) RunSweeper(ctx context.Context) {
 	ticker := time.Tick(uploadSweepInterval)
 	for {

@@ -11,10 +11,8 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
-// StreamFunc writes n download bytes to w until ctx ends.
 type StreamFunc func(ctx context.Context, n int64, w io.Writer)
 
-// ReceiveFunc counts src into owner's upload receiver id.
 type ReceiveFunc func(ctx context.Context, id, owner string, src io.Reader) (int64, error)
 
 // ClientKey keys upload ownership and admission by subject, IPv4 address, or IPv6 /64.

@@ -12,7 +12,6 @@ import (
 // LoadFunc reports the server's measurement occupancy: active wrapped handlers and the configured ceiling.
 type LoadFunc func() (active, max int)
 
-// Probe returns evidence for the actual selected connection.
 type Probe struct {
 	trusted       []netip.Prefix
 	bootstrapPort string
@@ -43,7 +42,6 @@ func (p *Probe) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.MarshalWrite(w, probe)
 }
 
-// httpProtocol names the HTTP wire protocol the request actually used.
 func httpProtocol(r *http.Request) string {
 	switch r.ProtoMajor {
 	case 3:

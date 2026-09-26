@@ -71,7 +71,6 @@ var catalog = map[string]Spec{
 	WTPing:           {WebTransport, Request, []string{http.MethodConnect}},
 }
 
-// Lookup matches an exact measurement path and returns its fixed policy.
 func Lookup(path string) (Spec, bool) {
 	spec, ok := catalog[path]
 	return spec, ok

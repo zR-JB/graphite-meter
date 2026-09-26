@@ -27,7 +27,6 @@ func newBudget(limit, clientLimit int) budget {
 	return budget{limit: limit, clientLimit: clientLimit, clients: make(map[string]int)}
 }
 
-// clientFull reports and counts a per-client refusal; the empty key is exempt.
 func (b *budget) clientFull(key string) bool {
 	if key != "" && b.clients[key] >= b.clientLimit {
 		b.rejectedClient++
@@ -36,7 +35,6 @@ func (b *budget) clientFull(key string) bool {
 	return false
 }
 
-// full reports and counts a global refusal.
 func (b *budget) full() bool {
 	if b.active >= b.limit {
 		b.rejectedGlobal++
@@ -62,7 +60,6 @@ func (b *budget) give(key string) {
 	}
 }
 
-// snapshot copies the counters without the per-client map.
 func (b *budget) snapshot() budget {
 	c := *b
 	c.clients = nil
@@ -84,7 +81,6 @@ func newRequestAdmission(globalMax, clientMax, sessionMax, sessionClientMax int,
 	}
 }
 
-// acquire admits a request for key, or a session for sessionKey when set.
 func (a *requestAdmission) acquire(key, sessionKey string) (release func(), status int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -227,7 +223,6 @@ func (a *connectionAdmission) verifySourceAddress(net.Addr) bool {
 	return a.connections.active >= a.connections.limit/4
 }
 
-// connContext admits an Initial that passed source-address policy.
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {
 	release, ok := a.acquire(info.RemoteAddr)
 	if !ok {

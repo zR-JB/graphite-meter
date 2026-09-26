@@ -88,7 +88,6 @@ func loginRedirect(w http.ResponseWriter, r *http.Request, challenge string) {
 	http.Redirect(w, r, "/login?challenge="+url.QueryEscape(challenge), http.StatusSeeOther)
 }
 
-// approvalRoomLocked prunes expired approvals and reports whether sess and client may start another.
 func (s *Service) approvalRoomLocked(sess *session, client string, now time.Time) (bool, bool) {
 	maps.DeleteFunc(s.approvals, func(_ string, a *approval) bool { return !now.Before(a.expires) })
 	bySession, byClient := 0, 0

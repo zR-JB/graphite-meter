@@ -169,7 +169,6 @@ func readSecret(inline, file string, limit int64) (string, error) {
 	return v, nil
 }
 
-// Enabled reports whether the authentication boundary is in force.
 func (s *Service) Enabled() bool { return s.cfg.Mode != "off" }
 
 // PublicOrigin is the canonical origin the boundary accepts, or "" when authentication is off.

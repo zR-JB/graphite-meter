@@ -136,7 +136,6 @@ func baseServer(handler http.Handler, protocols *http.Protocols) *http.Server {
 		}}
 }
 
-// Run validates the config and certificate, binds every configured listener.
 func Run(ctx context.Context, cfg *config.Config) error {
 	return runWithSockets(ctx, cfg, systemListenerSockets{})
 }
@@ -175,7 +174,6 @@ func newListenerBuild(ctx context.Context, cfg *config.Config, sockets listenerS
 		authn.SetConnectOrigins(slices.Concat(e.discovery.ConnectOrigins(authn.PublicHostname()),
 			cfg.ServerCatalog.ConnectSources()))
 	} else {
-		// Public pages use the same configured destination boundary as authenticated pages.
 		page := static.Handler(false, cfg.ResultHistoryDefault)
 		spa = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Security-Policy", e.discovery.PagePolicy(endpoint.RequestHost(r)))

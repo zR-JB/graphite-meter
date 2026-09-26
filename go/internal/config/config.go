@@ -40,7 +40,6 @@ type PublicOrigins struct {
 	Both, Throughput, Latency []string
 }
 
-// AuthConfig holds the authentication settings read from GM_AUTH_*.
 type AuthConfig struct {
 	// Explicit is true when the operator sets any GM_AUTH_* variable other than the mode, even to its default value.
 	Explicit          bool
@@ -56,7 +55,6 @@ type AuthConfig struct {
 	OIDCProviderName  string
 }
 
-// Config is the resolved server configuration.
 type Config struct {
 	ServerCatalog wire.ServerCatalog
 	Native        NativeEndpoints // listen addresses
@@ -110,7 +108,6 @@ func (c Config) Natives() []Native {
 	}
 }
 
-// TLSEnabled reports whether any native listener needs the certificate.
 func (c Config) TLSEnabled() bool {
 	return c.Native.H1TLS != "" || c.Native.H2 != "" || c.Native.H3 != ""
 }
@@ -272,7 +269,6 @@ func (c *Config) apply(s setting, value string) error {
 	return s.set(value)
 }
 
-// Load reads every setting from its environment variable over the defaults.
 func Load() (Config, error) {
 	c := Default()
 	for _, s := range c.settings() {
@@ -289,7 +285,6 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// RegisterFlags binds every setting that has a flag to fs, over c's current values.
 func RegisterFlags(fs *flag.FlagSet, c *Config) {
 	for _, s := range c.settings() {
 		if s.flag != "" {
@@ -363,7 +358,6 @@ func validOrigin(value, scheme string) bool {
 	return err == nil && (scheme == "" || strings.HasPrefix(canonical, scheme+"://"))
 }
 
-// Validate returns the first inconsistency in the configuration, or nil.
 func (c Config) Validate() error {
 	if len(c.ServerCatalog.Servers) > 0 {
 		if err := c.ServerCatalog.Validate(); err != nil {

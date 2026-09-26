@@ -59,7 +59,6 @@ func (s discardSink) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// ServeHTTP drains one POST /upload lane.
 func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	deadline := time.Now().Add(uploadReadTimeout)
 	if requestDeadline, ok := r.Context().Deadline(); ok && requestDeadline.Before(deadline) {
@@ -91,7 +90,6 @@ func (u *Upload) Receive(_ context.Context, id, owner string, src io.Reader) (in
 	return io.CopyBuffer(discardSink{upload: u, agg: agg}, src, *bufp)
 }
 
-// ServeSession mints an upload id without storing state.
 func (u *Upload) ServeSession(w http.ResponseWriter, _ *http.Request) {
 	noStoreJSON(w)
 	_ = json.MarshalWrite(w, struct {

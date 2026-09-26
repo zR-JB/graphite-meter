@@ -67,7 +67,6 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	return rejectDotSegments(m.mux)
 }
 
-// handle mounts h for each method the route publishes; other methods get a 405.
 func (m *mounter) handle(path string, h http.Handler) {
 	spec, ok := route.Lookup(path)
 	if !ok {
@@ -81,7 +80,6 @@ func (m *mounter) handle(path string, h http.Handler) {
 	}
 }
 
-// http mounts an HTTP route behind its CORS answer and, when proto is set, a protocol check.
 func (m *mounter) http(path string, h http.Handler, proto int) {
 	m.handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m.authn.MeasurementCORS(w.Header(), r)
@@ -114,7 +112,6 @@ func (m *mounter) minter(kind route.Kind) endpoint.SocketTokenMinter {
 // wsPingReadLimit bounds a probe frame; a valid PING is at most 15 bytes.
 const wsPingReadLimit = 2048
 
-// webSocketPing serves the WebSocket latency bus, one probe per text frame.
 func (m *mounter) webSocketPing() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		allowed := m.authn.PublicOrigin()
@@ -174,7 +171,6 @@ func (m *mounter) webSocketPing() http.Handler {
 	})
 }
 
-// webTransport upgrades a CONNECT and serves the session until either side ends it.
 func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.SessionHandler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sess, err := server.Upgrade(w, r)

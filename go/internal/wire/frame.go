@@ -59,7 +59,6 @@ func EncodePong(id uint32, handlingNanos uint64) string {
 // MaxPongLen is the longest PONG frame: both counters at their maximum.
 const MaxPongLen = len("PONG,4294967295,18446744073709551615")
 
-// AppendPong appends a PONG frame to dst.
 func AppendPong(dst []byte, id uint32, handlingNanos uint64) []byte {
 	dst = append(dst, "PONG,"...)
 	dst = strconv.AppendUint(dst, uint64(id), 10)

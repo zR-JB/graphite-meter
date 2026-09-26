@@ -41,7 +41,6 @@ func NewDiscovery(cfg *config.Config) *Discovery {
 	return &Discovery{cfg: cfg, generation: rand.Text(), hosts: make(map[string]*hostDiscovery)}
 }
 
-// RequestHost is the hostname a request addressed, without port or IPv6 brackets.
 func RequestHost(r *http.Request) string { return (&url.URL{Host: r.Host}).Hostname() }
 
 func (d *Discovery) forHost(host string) *hostDiscovery {
@@ -73,10 +72,8 @@ func (d *Discovery) ServeServers(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(h.servers)
 }
 
-// ConnectOrigins lists distinct cross-origin measurement targets for host.
 func (d *Discovery) ConnectOrigins(host string) []string { return d.forHost(host).connect }
 
-// PagePolicy is the public page's Content-Security-Policy for host.
 func (d *Discovery) PagePolicy(host string) string { return d.forHost(host).csp }
 
 func (d *Discovery) build(host string) *hostDiscovery {

@@ -21,20 +21,17 @@ type Preflight struct {
 	Capabilities  Capabilities `json:"capabilities"`
 }
 
-// ServerInfo identifies the server behind a Preflight document.
 type ServerInfo struct {
 	Name     string `json:"name"`
 	Location string `json:"location,omitempty"`
 }
 
-// Capabilities lists the measurement targets a server offers.
 type Capabilities struct {
 	UploadCheckpoint  bool               `json:"uploadCheckpoint,omitzero"`
 	ThroughputTargets []ThroughputTarget `json:"throughput"`
 	LatencyTargets    []LatencyTarget    `json:"latency"`
 }
 
-// Transport names the mechanism that reaches a target.
 const (
 	TransportFetchStream          = "fetch-stream"
 	TransportWebSocket            = "websocket"
@@ -48,7 +45,6 @@ const WTMaxStreams = 16
 // WTIdleBound is the published inactivity target for a WebTransport session, per api/wire.md.
 const WTIdleBound = 30 * time.Second
 
-// ThroughputTarget is one download/upload endpoint.
 type ThroughputTarget struct {
 	ID        string           `json:"-"`
 	Origin    string           `json:"baseUrl"`
@@ -58,13 +54,11 @@ type ThroughputTarget struct {
 	Routes    ThroughputRoutes `json:"-"`
 }
 
-// ThroughputRoutes are the paths a ThroughputTarget serves.
 type ThroughputRoutes struct {
 	Probe, Download, Upload, UploadSession, UploadProgress, UploadCheckpoint string
 	WTSession, WTDownload, WTUpload                                          string
 }
 
-// LatencyTarget is one ping endpoint.
 type LatencyTarget struct {
 	ID        string        `json:"-"`
 	Origin    string        `json:"baseUrl"`
@@ -74,10 +68,8 @@ type LatencyTarget struct {
 	Routes    LatencyRoutes `json:"-"`
 }
 
-// LatencyRoutes are the paths a LatencyTarget serves.
 type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
 
-// DefaultThroughputRoutes returns the paths a discovered target serves.
 func DefaultThroughputRoutes() ThroughputRoutes {
 	return ThroughputRoutes{
 		Probe: route.Probe, Download: route.Download, Upload: route.Upload,
@@ -87,12 +79,10 @@ func DefaultThroughputRoutes() ThroughputRoutes {
 	}
 }
 
-// DefaultLatencyRoutes returns the latency-target counterpart of DefaultThroughputRoutes, pinned the same way.
 func DefaultLatencyRoutes() LatencyRoutes {
 	return LatencyRoutes{Probe: route.Probe, Ping: route.Ping, WTSession: route.WTSession, WTPing: route.WTPing}
 }
 
-// UnmarshalJSON reads the wire shape and derives the client-side fields.
 func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		BaseURL   string `json:"baseUrl"`
@@ -118,7 +108,6 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// UnmarshalJSON reads the wire shape and derives the client-side fields.
 func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		BaseURL   string `json:"baseUrl"`
@@ -150,7 +139,6 @@ type Probe struct {
 	Load               *ProbeLoad `json:"load,omitempty"`
 }
 
-// ProbeLoad is measurement-handler occupancy at probe time.
 type ProbeLoad struct {
 	Active int `json:"active"`
 	Max    int `json:"max"`

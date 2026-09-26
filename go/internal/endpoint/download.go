@@ -7,7 +7,6 @@ import (
 	"strconv"
 )
 
-// Download streams incompressible random bytes for the client's download measurement.
 type Download struct {
 	block []byte
 	meter *Meter // optional verbose per-second logger; nil unless -verbose
@@ -22,7 +21,6 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-// ServeHTTP streams the requested bytes; HEAD stops at the framing and generates nothing.
 func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	n := parseBytes(r.URL.Query().Get("bytes"))
 	w.Header().Set("Content-Type", "application/octet-stream")

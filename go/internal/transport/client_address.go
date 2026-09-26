@@ -9,24 +9,19 @@ import (
 	"strings"
 )
 
-// ClientIPSource names the origin of a resolved client address.
 type ClientIPSource string
 
 const (
-	// ClientIPSocket is the peer address of the connection itself.
-	ClientIPSocket ClientIPSource = "socket"
-	// ClientIPForwarded is an address taken from a proxy header.
+	ClientIPSocket    ClientIPSource = "socket"
 	ClientIPForwarded ClientIPSource = "forwarded"
 )
 
-// ClientAddress is the address a request is attributed to, with its provenance.
 type ClientAddress struct {
 	Addr    netip.Addr
 	Version int
 	Source  ClientIPSource
 }
 
-// ResolveClientAddress attributes a request to a client IP.
 func ResolveClientAddress(r *http.Request, trusted []netip.Prefix) ClientAddress {
 	peer, ok := parseAddress(r.RemoteAddr)
 	if !ok {

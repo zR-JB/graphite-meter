@@ -20,7 +20,6 @@ import (
 // SessionHandler serves one WebTransport session; ctx ends with it and the adapter closes it on return.
 type SessionHandler func(ctx context.Context, sess *webtransport.Session, r *http.Request)
 
-// datagramConn is the datagram half of a WebTransport session.
 type datagramConn interface {
 	SendDatagram(b []byte) error
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
@@ -85,7 +84,6 @@ func lingerForPeer(ctx context.Context, sess *webtransport.Session, bound time.D
 	}
 }
 
-// WTPing serves the latency bus over datagrams.
 func WTPing(idleBound time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, _ *http.Request) {
 		ctx, live := watchSession(ctx, idleBound)
@@ -209,11 +207,9 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request) {
 		query := r.URL.Query()
 		id := query.Get("id")
-		// The CONNECT identifies the owner of every lane.
 		owner := UploadOwner(r, upload.trusted)
 		agg, access := upload.accessFor(id, owner, false)
 		if access != uploadAccessOK {
-			// Report the refusal and release the session slot.
 			serveRefusal(ctx, sess, access)
 			lingerForPeer(ctx, sess, wtRefusalLinger)
 			return
@@ -233,7 +229,6 @@ func WTUpload(upload *Upload, receive ReceiveFunc, idleBound time.Duration) Sess
 		if wtDatagramMode(query) {
 			wg.Go(func() { drainDatagrams(ctx, receive, sess, agg, id, owner, live) })
 		}
-		// Client-opened lanes share the download lane cap.
 		lanes := make(chan struct{}, wire.WTMaxStreams)
 		for {
 			str, err := sess.AcceptUniStream(ctx)
@@ -259,10 +254,8 @@ func serveUploadLane(ctx context.Context, receive ReceiveFunc, sess *webtranspor
 	defer transport.UnblockReadsOnDone(ctx, str)()
 	_, err := receive(ctx, id, owner, &idleTimeoutReader{str: str, timeout: uploadReadTimeout, live: live})
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
-		// Stream uploads have no response headers.
 		serveRefusal(ctx, sess, refusal.access)
 	}
-	// Whatever ended the lane — a refusal, the idle bound, or a clean end — the stream is reset.
 	str.CancelRead(0)
 }
 
@@ -303,7 +296,6 @@ type deadlineReader interface {
 }
 
 func (r *idleTimeoutReader) Read(p []byte) (int, error) {
-	// Re-arm at most once per eighth of the timeout.
 	if now := time.Now(); now.Sub(r.armed) > r.timeout/8 {
 		_ = r.str.SetReadDeadline(now.Add(r.timeout))
 		r.armed = now
