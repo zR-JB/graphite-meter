@@ -87,7 +87,7 @@ func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus
 	}
 }
 
-func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, gate *stageGate) (result LatencyStats, failure error) {
+func (r *runner) measureLatency(ctx context.Context, stage Stage, underLoad bool, duration time.Duration, gate *stageGate) (result LatencyStats, failure error) {
 	if r.latencyTarget == nil {
 		return LatencyStats{}, fmt.Errorf("no latency target selected")
 	}
@@ -166,13 +166,13 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			}
 			rtt := now.Sub(sent)
 			timedOut := rtt >= timeoutAfter
-			handling := stats.add(rtt, timedOut, f.HandlingNanos)
+			stats.add(rtt, timedOut, f.HandlingNanos)
 			mu.Unlock()
 			r.emit(Event{
 				Kind:    EventLatency,
 				At:      now,
 				Stage:   stage,
-				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, TimedOut: timedOut, ReflectorHandling: handling},
+				Latency: LatencySample{RTT: rtt, UnderLoad: underLoad, TimedOut: timedOut},
 			})
 		}
 	}
@@ -290,7 +290,7 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 					Kind:    EventLatency,
 					At:      now,
 					Stage:   stage,
-					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, TimedOut: true},
+					Latency: LatencySample{UnderLoad: underLoad, TimedOut: true},
 				})
 			}
 		}

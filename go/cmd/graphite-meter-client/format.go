@@ -21,7 +21,7 @@ func protocolChoiceLabel(protocol string) string {
 func stageSummary(s goclient.StageSet) string {
 	var parts []string
 	for _, stage := range (goclient.Config{Stages: s}).Plan() {
-		parts = append(parts, stage.Name)
+		parts = append(parts, string(stage.Name))
 	}
 	if len(parts) == 0 {
 		return "none"

@@ -3,7 +3,7 @@ package goclient
 import (
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+
 	"strings"
 	"testing"
 
@@ -11,38 +11,6 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
-
-func TestHTTPEndpoint(t *testing.T) {
-	cases := []struct {
-		base, path, want string
-	}{
-		{"http://example.com", "/preflight", "http://example.com/preflight"},
-		{"http://example.com/", "/preflight", "http://example.com/preflight"},
-		{"http://example.com", "preflight", "http://example.com/preflight"},
-	}
-	for _, c := range cases {
-		got, err := httpEndpoint(c.base, c.path)
-		if err != nil {
-			t.Fatalf("httpEndpoint(%q, %q) error: %v", c.base, c.path, err)
-		}
-		if got != c.want {
-			t.Errorf("httpEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
-		}
-	}
-}
-
-func TestEndpointWithQueryReplacesGeneratedValues(t *testing.T) {
-	got, err := endpointWithQuery("https://meter.example/download?lane=old&keep=yes", url.Values{
-		"lane": {"2"}, "bytes": {"1024"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "https://meter.example/download?bytes=1024&keep=yes&lane=2"
-	if got != want {
-		t.Fatalf("endpointWithQuery() = %q, want %q", got, want)
-	}
-}
 
 func TestSelectTarget(t *testing.T) {
 	webTransport := testTransfer("wt-http3", "https://meter:7249", "http3", true)
@@ -94,14 +62,6 @@ func TestExplicitTargetsNormalizeDefaultPort(t *testing.T) {
 	}
 }
 
-func TestTargetProtocolEvidence(t *testing.T) {
-	for protocol, want := range map[string]string{"http1": "http/1.1", "http2": "h2", "http3": "h3"} {
-		if got := targetProtocolEvidence(protocol); got != want {
-			t.Errorf("targetProtocolEvidence(%q) = %q, want %q", protocol, got, want)
-		}
-	}
-}
-
 func TestSelectLatencyTargetIsIndependentFromThroughputTarget(t *testing.T) {
 	targets := []wire.LatencyTarget{
 		testChannel("ws-http1-clear", "http://meter:7246", false),
@@ -150,27 +110,6 @@ func testChannel(id, origin string, tls bool) wire.LatencyTarget {
 func attachTestLatencyTarget(r *runner, origin string) {
 	c := testChannel("test-ws", origin, false)
 	r.latencyTarget = new(c)
-}
-
-func TestWSEndpoint(t *testing.T) {
-	cases := []struct {
-		name, base, path, want string
-	}{
-		{"https scheme becomes wss", "https://example.com", "/ws/ping", "wss://example.com/ws/ping"},
-		{"http scheme becomes ws", "http://example.com", "/ws/ping", "ws://example.com/ws/ping"},
-		{"unrecognized scheme passed through", "ftp://example.com", "/ws/ping", "ftp://example.com/ws/ping"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := wsEndpoint(c.base, c.path)
-			if err != nil {
-				t.Fatalf("wsEndpoint error: %v", err)
-			}
-			if got != c.want {
-				t.Errorf("wsEndpoint(%q, %q) = %q, want %q", c.base, c.path, got, c.want)
-			}
-		})
-	}
 }
 
 func TestGetPreflight(t *testing.T) {

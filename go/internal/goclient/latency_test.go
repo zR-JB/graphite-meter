@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -359,9 +360,9 @@ func TestMeasureLatencyRejectsRepliesAfterTheirDeadline(t *testing.T) {
 }
 
 func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
-	for _, stage := range []string{"latency", "download"} {
+	for _, stage := range []Stage{StageLatency, StageDownload} {
 		for _, reply := range []bool{false, true} {
-			t.Run(stage+fmt.Sprint("/reply=", reply), func(t *testing.T) {
+			t.Run(string(stage)+fmt.Sprint("/reply=", reply), func(t *testing.T) {
 				var accepts atomic.Int64
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					if req.URL.Path == "/download" {
@@ -394,51 +395,41 @@ func TestLatencyFailurePreservesItsMeasuredPopulation(t *testing.T) {
 					}
 				}))
 				defer srv.Close()
-				var results []Result
+				var throughput *Result
 				var details *RunDetails
-				cfg := Config{
-					BaseURL:                srv.URL,
-					PingInterval:           20 * time.Millisecond,
-					LoadedLatency:          stage == "download",
-					DownloadBytesPerStream: 32 * 1024,
-				}.normalized()
+				cfg := Config{BaseURL: srv.URL, PingInterval: 20 * time.Millisecond, LoadedLatency: stage == StageDownload}.normalized()
 				r := &runner{
 					cfg:     cfg,
 					streams: streamCounts{down: 1},
 					http:    srv.Client(),
 					emit: func(e Event) {
 						if e.Kind == EventResult {
-							results = append(results, *e.Result)
+							throughput = e.Result
 						}
-						if e.Kind == EventServers {
+						if e.Kind == EventDone {
 							details = e.Servers
 						}
 					},
 				}
 				attachTestLatencyTarget(r, srv.URL)
 				err := r.runTestStage(t.Context(), stage, time.Second)
-				wantResults := 1
-				if cfg.LoadedLatency {
-					wantResults++
+				if err != nil || details == nil || details.Outcome != OutcomePartial || len(details.Participants) != 1 || len(details.Failures) != 1 || details.Failures[0].Scope != "latency" {
+					t.Fatalf("latency failure removed throughput membership: %v %+v", err, details)
 				}
-				if err != nil || len(results) != wantResults || results[0].Err == nil {
-					t.Fatalf("error=%v; partial results=%+v", err, results)
+				results := details.Servers[0].Results
+				i := slices.IndexFunc(results, func(r Result) bool { return r.Direction == "" })
+				if i < 0 || results[i].Err == nil {
+					t.Fatalf("partial latency population = %+v", results)
 				}
-				if details == nil || details.Outcome != "partial" || len(details.Participants) != 1 || len(details.Failures) != 1 || details.Failures[0].Scope != "latency" {
-					t.Fatalf("latency failure removed throughput membership: %+v", details)
-				}
-				stats := results[0].Latency
+				stats := results[i].Latency
 				if (stats.Count > 0) != reply || stats.Timeouts == 0 || stats.Unresolved == 0 {
 					t.Fatalf("failure discarded probe outcomes: %+v", stats)
 				}
-				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[0].Elapsed != stats.Elapsed {
-					t.Fatalf("failure reports requested duration rather than measured window: %+v", results[0])
+				if stats.Elapsed <= 0 || stats.Elapsed >= time.Second || results[i].Elapsed != stats.Elapsed {
+					t.Fatalf("failure reports requested duration rather than measured window: %+v", results[i])
 				}
-				if cfg.LoadedLatency {
-					throughput := results[1]
-					if throughput.Direction != Down || throughput.Unavailable || throughput.TotalBytes == 0 || throughput.Err != nil {
-						t.Fatalf("latency failure discarded throughput: %+v", throughput)
-					}
+				if cfg.LoadedLatency && (throughput == nil || throughput.Direction != Down || throughput.Unavailable || throughput.TotalBytes == 0 || throughput.Err != nil) {
+					t.Fatalf("latency failure discarded throughput: %+v", throughput)
 				}
 			})
 		}

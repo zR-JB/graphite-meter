@@ -53,19 +53,19 @@ func TestReflectorTimingDurationBounds(t *testing.T) {
 	for _, nanos := range []uint64{0, math.MaxInt64, math.MaxInt64 + 1, math.MaxUint64} {
 		t.Run(fmt.Sprint(nanos), func(t *testing.T) {
 			var stats latencyStats
-			handling := stats.add(time.Duration(math.MaxInt64), false, nanos)
+			stats.add(time.Duration(math.MaxInt64), false, nanos)
 			got := stats.snapshot()
 			if got.Count != 1 || got.Mean != time.Duration(math.MaxInt64) || got.Timeouts != 0 {
 				t.Fatalf("optional duration changed raw reply: %+v", got)
 			}
 			if nanos > math.MaxInt64 {
-				if handling != nil || got.ReflectorTiming != nil {
-					t.Fatalf("unrepresentable duration produced a diagnostic: %v, %+v", handling, got.ReflectorTiming)
+				if got.ReflectorTiming != nil {
+					t.Fatalf("unrepresentable duration produced a diagnostic: %+v", got.ReflectorTiming)
 				}
 				return
 			}
-			if handling == nil || uint64(*handling) != nanos || got.ReflectorTiming == nil || uint64(got.ReflectorTiming.MeanHandling) != nanos {
-				t.Fatalf("representable duration was not retained: %v, %+v", handling, got.ReflectorTiming)
+			if got.ReflectorTiming == nil || uint64(got.ReflectorTiming.MeanHandling) != nanos {
+				t.Fatalf("representable duration was not retained: %+v", got.ReflectorTiming)
 			}
 		})
 	}
@@ -135,19 +135,15 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 			if stats.Count == 0 || len(samples) != stats.Count {
 				t.Fatalf("raw/connection observations: stats=%+v events=%d", stats, len(samples))
 			}
-			paired := 0
-			for _, sample := range samples {
-				if sample.ReflectorHandling != nil {
-					paired++
-				}
-			}
 			if scenario == "impossible" {
-				if stats.ReflectorTiming != nil || paired != 0 {
+				if stats.ReflectorTiming != nil {
 					t.Fatalf("unavailable timing manufactured a diagnostic: %+v", stats.ReflectorTiming)
 				}
 			} else {
-				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired || paired == 0 {
-					t.Fatalf("paired summary=%+v events=%d", stats.ReflectorTiming, paired)
+				// Every in-window reply carried a valid zero handling time, so every one pairs.
+				paired := stats.Count
+				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired {
+					t.Fatalf("paired summary=%+v replies=%d", stats.ReflectorTiming, paired)
 				}
 				if stats.ReflectorTiming.MeanHandling != 0 || stats.ReflectorTiming.MeanAdjustedRTT != stats.ReflectorTiming.MeanRawRTT {
 					t.Fatalf("zero handling altered RTT: %+v", stats.ReflectorTiming)

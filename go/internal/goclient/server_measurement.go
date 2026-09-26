@@ -9,11 +9,11 @@ import (
 const minimumSurvivorEvidence = 800 * time.Millisecond
 const maximumIntervals = 128
 
-// ReceiverSnapshot retains one clock domain plus the client's request/response bracket.
+// ReceiverSnapshot is one upload receiver's counter on its own clock. Only snapshots of the same
+// upload ID share a clock domain.
 type ReceiverSnapshot struct {
-	ID                      string
-	Bytes, Nanos            uint64
-	RequestedAt, ReceivedAt time.Duration
+	ID           string
+	Bytes, Nanos uint64
 }
 
 type ComponentWindow struct {
@@ -32,9 +32,10 @@ type AggregateWindow struct {
 	DownBytesPerSec, UpBytesPerSec *float64
 }
 
+// AggregationInterval is a span with constant membership. A rate spans only one interval.
 type AggregationInterval struct {
 	ID           int
-	Stage        string
+	Stage        Stage
 	Participants []string
 	Start, End   time.Duration
 	Complete     bool
@@ -42,9 +43,12 @@ type AggregationInterval struct {
 	Window       *AggregateWindow
 }
 
+// ServerFailure records a server, or only its latency population (Scope "latency"), leaving the run.
 type ServerFailure struct {
-	ServerID, Stage, Scope, Reason, Message string
-	At                                      time.Duration
+	ServerID               string
+	Stage                  Stage
+	Scope, Reason, Message string
+	At                     time.Duration // Since the run started.
 }
 
 type measurementBoundary struct {
@@ -55,6 +59,14 @@ type measurementBoundary struct {
 }
 
 type byteLedger struct{ down, up uint64 }
+
+func (b byteLedger) of(dir Direction) uint64 {
+	if dir == Up {
+		return b.up
+	}
+	return b.down
+}
+
 type uploadLedger struct {
 	id      string
 	maximum uint64
@@ -68,16 +80,16 @@ type aggregateMeasurements struct {
 	peaks       map[Direction]float64
 	samples     int
 	totals      map[string]byteLedger
-	stageTotals map[string]map[string]byteLedger
+	stageTotals map[Stage]map[string]byteLedger
 	uploads     map[string]uploadLedger
 	downSeen    map[string]uint64
-	stage       string
+	stage       Stage
 }
 
-func (a *aggregateMeasurements) begin(stage string, ids []string, at time.Duration, reason string) {
+func (a *aggregateMeasurements) begin(stage Stage, ids []string, at time.Duration, reason string) {
 	if a.totals == nil {
 		a.totals = map[string]byteLedger{}
-		a.stageTotals = map[string]map[string]byteLedger{}
+		a.stageTotals = map[Stage]map[string]byteLedger{}
 	}
 	if reason == "stage-start" {
 		a.uploads = map[string]uploadLedger{}
@@ -172,11 +184,11 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) *AggregateWindow 
 	a.ledger(b)
 	valid := len(interval.Participants) > 0
 	for _, id := range interval.Participants {
-		if interval.Stage != "upload" {
+		if interval.Stage != StageUpload {
 			_, ok := b.down[id]
 			valid = valid && ok
 		}
-		if interval.Stage != "download" {
+		if interval.Stage != StageDownload {
 			valid = valid && b.up[id] != nil
 		}
 	}
@@ -223,7 +235,7 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 	}
 	window := &AggregateWindow{Start: first.at, End: last.at}
 	for _, id := range interval.Participants {
-		if interval.Stage != "upload" {
+		if interval.Stage != StageUpload {
 			start, ok := first.down[id]
 			end, okEnd := last.down[id]
 			if !ok || !okEnd || end < start {
@@ -236,7 +248,7 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 			}
 			*window.DownBytesPerSec += rate
 		}
-		if interval.Stage != "download" {
+		if interval.Stage != StageDownload {
 			start, end := first.up[id], last.up[id]
 			if start == nil || end == nil || start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos <= start.Nanos {
 				return nil, fmt.Errorf("missing or regressing receiver counter")
@@ -255,14 +267,10 @@ func aggregateWindow(first, last measurementBoundary, interval AggregationInterv
 	}
 	return window, nil
 }
-func (a *aggregateMeasurements) result(stage string, dir Direction) Result {
-	result := Result{Stage: stage, Direction: dir, ServerAuth: dir == Up, Unavailable: true}
+func (a *aggregateMeasurements) result(stage Stage, dir Direction) Result {
+	result := Result{Stage: stage, Direction: dir, Unavailable: true}
 	for _, total := range a.stageTotals[stage] {
-		if dir == Down {
-			result.TotalBytes += total.down
-		} else {
-			result.TotalBytes += total.up
-		}
+		result.TotalBytes += total.of(dir)
 	}
 	interval := a.current()
 	if interval == nil || interval.Stage != stage || !interval.Complete || interval.Window == nil || interval.End-interval.Start < minimumSurvivorEvidence {

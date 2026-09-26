@@ -402,7 +402,7 @@ func (m model) summaryView(w int) string {
 	latency := m.runPath(m.latencyTransport, m.latencyProtocol, m.latencyTarget)
 	streams := m.cfg.TransferStreams.Label(m.throughputProtocol, m.throughputTransport)
 	if m.hasServerBreakdown() {
-		names := make([]string, 0, len(m.runDetails.Selection))
+		names := make([]string, 0, len(m.runDetails.Servers))
 		paths := []string{}
 		for _, participant := range m.runDetails.Servers {
 			names = append(names, participant.Server.Name)
@@ -528,7 +528,7 @@ func (m model) resultsView(w int) string {
 			peak = fmtRate(r.PeakBps)
 		}
 		note := "peak " + peak + "  " + fmtBytes(r.TotalBytes)
-		if r.ServerAuth {
+		if r.ReceiverTimed() {
 			note += "  server-clock"
 		}
 		rate := fmtRate(r.MeanBps)
@@ -536,7 +536,7 @@ func (m model) resultsView(w int) string {
 			rate = "--"
 		}
 		b := row{
-			head: mutedStyle.Render(pad(r.Stage, 13)) + " " + accentStyle.Render(pad(dir, 4)) + " ",
+			head: mutedStyle.Render(pad(string(r.Stage), 13)) + " " + accentStyle.Render(pad(dir, 4)) + " ",
 			tail: "  " + valueStyle.Render(fmt.Sprintf("%13s", rate)) + "  " + mutedStyle.Render(note),
 		}
 		bars = append(bars, b)
@@ -548,7 +548,7 @@ func (m model) resultsView(w int) string {
 	for _, r := range m.visibleResults() {
 		if isLatencyResult(r) {
 			lines = append(lines, fmt.Sprintf("%s %s   p50 %s  p95 %s  %s",
-				mutedStyle.Render(pad(r.Stage, 13)),
+				mutedStyle.Render(pad(string(r.Stage), 13)),
 				labelStyle.Render("latency"),
 				valueStyle.Render(fmtMs(r.Latency.P50)),
 				valueStyle.Render(fmtMs(r.Latency.P95)),

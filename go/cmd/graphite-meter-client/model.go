@@ -153,7 +153,7 @@ func (m model) connectionChecks() []check {
 	switch {
 	case m.prepareStatus == "authorizing":
 		auth.state, auth.note = checkActive, "browser approval"
-	case m.cfg.AuthToken != "":
+	case m.approved:
 		auth.state, auth.note = checkDone, "client approved"
 	case m.prepareStep == stepReady:
 		auth.state, auth.note = checkSkipped, "not required"
@@ -191,6 +191,7 @@ type model struct {
 	latencyByServer    map[string]goclient.LatencySample
 	lostByServer       map[string]int
 	authServerID       string
+	approved           bool
 	controller         *goclient.Controller
 
 	cfg   goclient.Config
@@ -498,10 +499,6 @@ func (m *model) commitURL(raw string) {
 		m.editRejected("Use an http:// or https:// URL with a host, for example https://meter.example.")
 		return
 	}
-	if raw != m.cfg.BaseURL {
-		m.cfg.AuthToken = ""
-		m.cfg.AuthOrigin = ""
-	}
 	m.cfg.BaseURL = raw
 	m.editAccepted("Custom server URL set.")
 }
@@ -566,10 +563,6 @@ func (m model) activate() (tea.Model, tea.Cmd) {
 	case sectionServers:
 		if m.row < len(serverPresets) {
 			preset := serverPresets[m.row]
-			if preset.url != m.cfg.BaseURL {
-				m.cfg.AuthToken = ""
-				m.cfg.AuthOrigin = ""
-			}
 			m.cfg.BaseURL = preset.url
 			m.notice = "Selected " + preset.name + "."
 			return m, nil

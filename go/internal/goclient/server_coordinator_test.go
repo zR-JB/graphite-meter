@@ -160,7 +160,6 @@ func fixtureConfig(a *serverFixture) Config {
 	cfg.BidirectionalDuration = 1400 * time.Millisecond
 	cfg.TransferStreams = TransferStreamPolicy{Forced: 1}
 	cfg.LoadedLatency = false
-	cfg.UploadBytesPerStream = 128 * 1024
 	return cfg
 }
 func TestNativeCoordinatorRealBidirectional(t *testing.T) {
@@ -171,10 +170,10 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	cfg.PingInterval = 25 * time.Millisecond
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var mu sync.Mutex
-	var phases []StagePhase
+	var phases []Phase
 	var results []Result
 	var details *RunDetails
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
+	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch e.Kind {
@@ -191,7 +190,7 @@ func TestNativeCoordinatorRealBidirectional(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(phases, []StagePhase{StagePreparing, StageWarmup, StageMeasuring, StageFinished}) {
+	if !slices.Equal(phases, []Phase{PhasePreparing, PhaseWarmup, PhaseMeasuring, PhaseFinished}) {
 		t.Fatalf("more than one stage schedule: %v", phases)
 	}
 	if len(results) != 2 || details == nil || len(details.Participants) != 2 {
@@ -231,17 +230,17 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 	var measureEventLag time.Duration
 	var details *RunDetails
 	var mu sync.Mutex
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
+	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
 		mu.Lock()
 		defer mu.Unlock()
-		if e.Kind == EventStage && e.Phase == StageMeasuring {
+		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 			measuredAt = time.Now()
 			measureEventLag = measuredAt.Sub(e.At)
 		}
-		if e.Kind == EventStage && e.Phase == StageFinished {
+		if e.Kind == EventStage && e.Phase == PhaseFinished {
 			finishedAt = time.Now()
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 	})
@@ -255,8 +254,8 @@ func TestNativeCoordinatorWaitsForCheckpointsBeforeStartingClientPopulations(t *
 		t.Fatalf("missing receiver window: %+v", details)
 	}
 	for _, component := range details.Intervals[0].Window.Up {
-		if component.StartReceiver == nil || component.StartReceiver.ReceivedAt > details.Intervals[0].Start {
-			t.Fatalf("initial receiver bracket was retimed: %+v", component)
+		if component.StartReceiver == nil || component.Clock != "receiver" {
+			t.Fatalf("initial receiver snapshot missing: %+v", component)
 		}
 	}
 	for _, server := range details.Servers {
@@ -282,8 +281,8 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			var details *RunDetails
 			var result Result
 			var timer *time.Timer
-			err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
-				if e.Kind == EventStage && e.Phase == StageMeasuring {
+			err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 					timer = time.AfterFunc(scenario.at, func() {
 						a.failed.Store(true)
 						if scenario.all {
@@ -291,7 +290,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 						}
 					})
 				}
-				if e.Kind == EventServers {
+				if e.Servers != nil {
 					details = e.Servers
 				}
 				if e.Kind == EventResult && e.ServerID == "" {
@@ -310,7 +309,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			if details == nil || len(details.Failures) == 0 || slices.Contains(details.Participants, "self") {
 				t.Fatalf("failed participant retained: %+v", details)
 			}
-			if scenario.all && details.Outcome != "incomplete" {
+			if scenario.all && details.Outcome != OutcomeIncomplete {
 				t.Fatalf("all failed outcome=%q", details.Outcome)
 			}
 		})
@@ -334,11 +333,11 @@ func TestTransientCheckpointRefusalKeepsTheReceiverWindow(t *testing.T) {
 		})
 	}
 	var upload Result
-	err = RunSelection(t.Context(), cfg, prepared, func(e Event) {
+	err = runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
 		switch {
-		case e.Kind == EventStage && e.Phase == StageWarmup:
+		case e.Kind == EventStage && e.Phase == PhaseWarmup:
 			refuse(0)
-		case e.Kind == EventStage && e.Phase == StageMeasuring:
+		case e.Kind == EventStage && e.Phase == PhaseMeasuring:
 			refuse(cfg.UploadDuration - 100*time.Millisecond)
 		case e.Kind == EventResult && e.Direction == Up:
 			upload = *e.Result

@@ -16,6 +16,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type AuthRequiredError struct{ URL string }
@@ -32,37 +34,7 @@ func authResponseError(res *http.Response) error {
 	return nil
 }
 
-func ClassifyAuthFailure(ctx context.Context, cfg Config, runErr error) error {
-	if runErr == nil || ctx.Err() != nil || cfg.authToken() == "" {
-		return runErr
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	tr := baseTransport(cfg)
-	defer tr.CloseIdleConnections()
-	return classifyAuthFailure(checkCtx, authenticatedClient(cfg, tr), cfg.BaseURL, runErr)
-}
-
-func classifyAuthFailure(ctx context.Context, client *http.Client, baseURL string, runErr error) error {
-	target, err := url.JoinPath(baseURL, "/preflight")
-	if err != nil {
-		return runErr
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return runErr
-	}
-	res, err := client.Do(req)
-	if err != nil {
-		return runErr
-	}
-	defer res.Body.Close()
-	if authErr := authResponseError(res); authErr != nil {
-		return authErr
-	}
-	return runErr
-}
-
+// PendingAuthorization is one browser approval. Origin names the issuer whose grant it yields.
 type PendingAuthorization struct {
 	BrowserURL, Code   string
 	Origin             string
@@ -71,7 +43,7 @@ type PendingAuthorization struct {
 	close              func()
 }
 
-func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
+func beginAuthorization(cfg Config, authURL string) (*PendingAuthorization, error) {
 	if cfg.InsecureSkipTLSVerify {
 		return nil, errors.New("authenticated operation refuses -insecure")
 	}
@@ -79,7 +51,7 @@ func BeginAuthorization(cfg Config, authURL string) (*PendingAuthorization, erro
 	if err != nil || base.Scheme != "https" {
 		return nil, errors.New("authenticated operation requires an HTTPS -url")
 	}
-	issuingOrigin, err := canonicalOrigin(cfg.BaseURL)
+	issuingOrigin, err := wire.CanonicalOrigin(cfg.BaseURL)
 	if err != nil {
 		return nil, errors.New("authenticated operation requires an HTTPS -url")
 	}

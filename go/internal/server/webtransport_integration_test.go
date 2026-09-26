@@ -712,25 +712,22 @@ func TestGoClientRunsOverWebTransport(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	prepared, err := goclient.Prepare(ctx, clientCfg)
-	if err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	if got := prepared.ThroughputTarget.Transport; got != wire.TransportWebTransport {
-		t.Fatalf("throughput transport = %q, want webtransport", got)
-	}
-	if got := prepared.LatencyTarget.Transport; got != wire.TransportWebTransport {
-		t.Fatalf("latency transport = %q, want webtransport", got)
-	}
-
 	results := map[string]goclient.Result{}
-	err = goclient.RunPrepared(ctx, clientCfg, prepared, func(e goclient.Event) {
-		if e.Kind == goclient.EventResult && e.Result != nil {
-			results[e.Stage] = *e.Result
+	var details *goclient.RunDetails
+	err := goclient.Run(ctx, clientCfg, func(e goclient.Event) {
+		collectStageResults(e, results)
+		if e.Kind == goclient.EventDone {
+			details = e.Servers
 		}
 	})
 	if err != nil {
 		t.Fatalf("run: %v", err)
+	}
+	if got := details.Servers[0].Throughput.Transport; got != wire.TransportWebTransport {
+		t.Fatalf("throughput transport = %q, want webtransport", got)
+	}
+	if got := details.Servers[0].LatencyTarget.Transport; got != wire.TransportWebTransport {
+		t.Fatalf("latency transport = %q, want webtransport", got)
 	}
 	if got := results["latency"].Latency.Count; got == 0 {
 		t.Error("latency stage collected no samples over datagrams")
@@ -764,11 +761,7 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()
 	results := map[string]goclient.Result{}
-	err := goclient.Run(ctx, clientCfg, func(e goclient.Event) {
-		if e.Kind == goclient.EventResult && e.Result != nil {
-			results[e.Stage] = *e.Result
-		}
-	})
+	err := goclient.Run(ctx, clientCfg, func(e goclient.Event) { collectStageResults(e, results) })
 	if err != nil {
 		t.Fatalf("run under lifetime caps: %v", err)
 	}
@@ -778,6 +771,20 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	for _, stage := range []string{"download", "upload"} {
 		if got := results[stage].TotalBytes; got == 0 {
 			t.Errorf("%s stage moved no bytes across reconnects", stage)
+		}
+	}
+}
+
+// collectStageResults keeps each stage's combined transfer result and the single server's latency population.
+func collectStageResults(e goclient.Event, results map[string]goclient.Result) {
+	if e.Kind == goclient.EventResult {
+		results[string(e.Stage)] = *e.Result
+	}
+	if e.Kind == goclient.EventDone && e.Servers != nil && len(e.Servers.Servers) == 1 {
+		for _, result := range e.Servers.Servers[0].Results {
+			if result.Stage == goclient.StageLatency {
+				results[string(result.Stage)] = result
+			}
 		}
 	}
 }
@@ -921,7 +928,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch ev.Kind {
-		case goclient.EventServers:
+		case goclient.EventServers, goclient.EventDone:
 			details = ev.Servers
 		case goclient.EventThroughput:
 			// Bytes are moving inside the measured window, so the stage's own session is established.
@@ -952,7 +959,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		t.Fatalf("failed download emitted %d results, want one incomplete receiver window", len(downloadResults))
 	}
 	result := downloadResults[0]
-	if result.Err != err || result.TotalBytes == 0 || !result.Unavailable || result.ServerAuth {
+	if result.Err != err || result.TotalBytes == 0 || !result.Unavailable || result.ReceiverTimed() {
 		t.Fatalf("all servers failing must retain bytes and error with an unavailable headline: %+v; run error: %v", result, err)
 	}
 	if details == nil || len(details.Failures) != 1 || len(details.Intervals) < 2 || details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
@@ -984,7 +991,7 @@ func TestGoClientRunsMultipleLanesOverWebTransport(t *testing.T) {
 		results := map[string]goclient.Result{}
 		err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
 			if ev.Kind == goclient.EventResult && ev.Result != nil {
-				results[ev.Stage] = *ev.Result
+				results[string(ev.Stage)] = *ev.Result
 			}
 		})
 		if err != nil {
@@ -1037,7 +1044,7 @@ func TestWebTransportLaneResetLeavesTheSessionIntact(t *testing.T) {
 	results := map[string]goclient.Result{}
 	err := goclient.Run(ctx, clientCfg, func(ev goclient.Event) {
 		if ev.Kind == goclient.EventResult && ev.Result != nil {
-			results[ev.Stage] = *ev.Result
+			results[string(ev.Stage)] = *ev.Result
 		}
 	})
 	if err != nil {

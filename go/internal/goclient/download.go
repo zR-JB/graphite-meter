@@ -72,7 +72,7 @@ func (r *runner) downloadLane(ctx context.Context, base string, lane int, total 
 	buf := make([]byte, 1024*1024)
 	for ctx.Err() == nil {
 		u, err := endpointWithQuery(base, url.Values{
-			"bytes": {strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10)},
+			"bytes": {strconv.FormatInt(transferBytesPerStream, 10)},
 			"lane":  {strconv.Itoa(lane)},
 			"cb":    {strconv.FormatInt(time.Now().UnixNano(), 10)},
 		})

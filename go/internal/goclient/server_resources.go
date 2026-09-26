@@ -61,11 +61,11 @@ func waitCoordinatedTransfer(ctx context.Context, laneErr, progressErr <-chan er
 // checkpointRetry paces repeated checkpoint requests within one capture deadline.
 const checkpointRetry = 100 * time.Millisecond
 
-// receiverCheckpoint retries transient failures until ctx ends. Each attempt keeps its own request/response
-// bracket, so a late success never inherits an earlier attempt's timing.
-func (r *runner) receiverCheckpoint(ctx context.Context, started time.Time) (*ReceiverSnapshot, error) {
+// receiverCheckpoint retries transient failures until ctx ends. Each snapshot is the reply to its own request,
+// so a late success never stands in for an earlier boundary.
+func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {
 	for {
-		snapshot, err := r.receiverCheckpointOnce(ctx, started)
+		snapshot, err := r.receiverCheckpointOnce(ctx)
 		if _, authRequired := errors.AsType[*AuthRequiredError](err); err == nil || authRequired {
 			return snapshot, err
 		}
@@ -77,7 +77,7 @@ func (r *runner) receiverCheckpoint(ctx context.Context, started time.Time) (*Re
 	}
 }
 
-func (r *runner) receiverCheckpointOnce(ctx context.Context, started time.Time) (*ReceiverSnapshot, error) {
+func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot, error) {
 	id, _, _ := r.coordinated.upload()
 	if id == "" {
 		return nil, fmt.Errorf("upload receiver is not ready")
@@ -87,7 +87,6 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context, started time.Time) 
 		return nil, err
 	}
 	target := withUploadID(endpoint, id)
-	requested := time.Since(started)
 	var count struct {
 		Bytes uint64 `json:"bytes"`
 		Nanos uint64 `json:"nanos"`
@@ -98,5 +97,5 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context, started time.Time) 
 	if count.Nanos == 0 || count.Nanos > uint64(1<<63-1) {
 		return nil, fmt.Errorf("invalid receiver clock")
 	}
-	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos, RequestedAt: requested, ReceivedAt: time.Since(started)}, nil
+	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos}, nil
 }

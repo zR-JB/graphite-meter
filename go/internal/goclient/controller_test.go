@@ -26,19 +26,19 @@ func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
 		pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
 		start := make(chan struct{})
 		var work sync.WaitGroup
-		work.Go(func() { <-start; _, _ = preparation.Prepare() })
+		work.Go(func() { <-start; _, _ = preparation.PrepareRun() })
 		work.Go(func() { <-start; _, _ = preparation.PollAuthorization(pending) })
 		work.Go(func() { <-start; owner.Close() })
 		close(start)
 		work.Wait()
 		for _, token := range []*Preparation{preparation, owner.NewPreparation(cfg)} {
-			if _, err := token.Prepare(); !errors.Is(err, context.Canceled) {
+			if _, err := token.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation started work: %v", err)
 			}
 			if _, err := token.PollAuthorization(pending); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed approval started work: %v", err)
 			}
-			if _, err := token.BeginAuthorization("https://meter.test/login"); !errors.Is(err, context.Canceled) {
+			if _, err := token.BeginAuthorization("", "https://meter.test/login"); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation created an approval: %v", err)
 			}
 		}
@@ -82,20 +82,18 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 			switch operation {
 			case "cancel":
 				owner.CancelRun()
-				var result *Result
-				var terminal error
-				var doneCount int
+				var done []Event
 				for event := range events {
-					if event.Kind == EventResult {
-						result = event.Result
-					}
 					if event.Kind == EventDone {
-						doneCount++
-						terminal = event.Err
+						done = append(done, event)
 					}
 				}
-				if result == nil || result.Latency.Count == 0 || !errors.Is(result.Err, context.Canceled) || !errors.Is(terminal, context.Canceled) || doneCount != 1 {
-					t.Fatalf("user cancellation lost final evidence: result=%+v terminal=%v count=%d", result, terminal, doneCount)
+				if len(done) != 1 || !errors.Is(done[0].Err, context.Canceled) || done[0].Outcome() != OutcomeStopped || len(done[0].Servers.Servers) != 1 {
+					t.Fatalf("user cancellation lost its terminal outcome: %+v", done)
+				}
+				results := done[0].Servers.Servers[0].Results
+				if len(results) != 1 || results[0].Latency.Count == 0 || !errors.Is(results[0].Err, context.Canceled) {
+					t.Fatalf("user cancellation lost final evidence: %+v", results)
 				}
 			case "replace":
 				cfg.BaseURL = ":invalid"
@@ -122,41 +120,10 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 	}
 }
 
-func TestControllerCloseCancelsInFlightAuthenticationClassification(t *testing.T) {
-	entered, left := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(entered)
-		<-r.Context().Done()
-		close(left)
-	}))
-	defer srv.Close()
-	// Preparation refuses insecure authenticated operation; its failure triggers the grant recheck.
-	cfg := Config{BaseURL: srv.URL, AuthOrigin: srv.URL, AuthToken: "test-grant", InsecureSkipTLSVerify: true}
-	owner := NewController(t.Context())
-	defer owner.Close()
-	owner.Start(cfg, nil)
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("run failure did not reach authentication classification")
-	}
-	closed := make(chan struct{})
-	go func() { owner.Close(); close(closed) }()
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown waited for the background authentication timeout")
-	}
-	select {
-	case <-left:
-	case <-time.After(time.Second):
-		t.Fatal("authentication request survived shutdown")
-	}
-}
 func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
-	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone}, {Kind: EventServers, Servers: &RunDetails{Outcome: "incomplete"}}} {
+	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}}} {
 		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
 			delivery, abandon := context.WithCancel(t.Context())
 			defer abandon()

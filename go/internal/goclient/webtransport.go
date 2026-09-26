@@ -51,9 +51,9 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 		u += "?" + query.Encode()
 	}
 	var hdr http.Header
-	if token := cfg.authToken(); token != "" {
+	if token := cfg.grant; token != "" {
 		parsed, err := url.Parse(u)
-		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.AuthOrigin)) {
+		if err != nil || parsed.Scheme != "https" || !strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.BaseURL)) {
 			return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
 		}
 		hdr = http.Header{"Authorization": {"Bearer " + token}}
@@ -259,7 +259,7 @@ func runWTLane(ctx context.Context, host *wtStageSession, lane func(ctx context.
 
 func (r *runner) wtDownloadQuery() url.Values {
 	return url.Values{
-		"bytes":   {strconv.FormatInt(r.cfg.DownloadBytesPerStream, 10)},
+		"bytes":   {strconv.FormatInt(transferBytesPerStream, 10)},
 		"streams": {strconv.Itoa(r.streams.of(Down))},
 	}
 }

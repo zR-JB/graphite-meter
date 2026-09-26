@@ -17,6 +17,27 @@ import (
 	"time"
 )
 
+// receiveUpload counts a body as it arrives. Once interrupt reports true it drops the connection, then refuses new lanes.
+func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if interrupt() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			received.Add(uint64(n))
+			if err != nil {
+				return
+			}
+			if interrupt() {
+				panic(http.ErrAbortHandler)
+			}
+		}
+	}
+}
+
 // The fixture preserves the upload receiver's counters and closes its feed on
 // DELETE so teardown timing cannot hide a delayed sibling cancellation.
 func mountStageUpload(mux *http.ServeMux, received *atomic.Uint64, upload http.HandlerFunc) {
@@ -71,10 +92,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			mux := http.NewServeMux()
 			mux.HandleFunc("/download", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(make([]byte, 32*1024)) })
 			mux.Handle("/ws/ping", echoPingHandler())
-			mountStageUpload(mux, &uploaded, func(w http.ResponseWriter, r *http.Request) {
-				n, _ := io.Copy(io.Discard, r.Body)
-				uploaded.Add(uint64(n))
-			})
+			mountStageUpload(mux, &uploaded, receiveUpload(&uploaded, func() bool { return false }))
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				delay := delayed == "download lane" && r.URL.Path == "/download" && r.URL.Query().Get("lane") == "1" ||
 					delayed == "upload session" && r.URL.Path == "/upload/session" ||
@@ -91,7 +109,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 				mux.ServeHTTP(w, r)
 			}))
 			defer srv.Close()
-			cfg := Config{BaseURL: srv.URL, Warmup: 80 * time.Millisecond, LoadedLatency: true, PingInterval: 10 * time.Millisecond, DownloadBytesPerStream: 32 * 1024, UploadBytesPerStream: 32 * 1024}.normalized()
+			cfg := Config{BaseURL: srv.URL, Warmup: 80 * time.Millisecond, LoadedLatency: true, PingInterval: 10 * time.Millisecond}.normalized()
 			var mu sync.Mutex
 			var phases []Event
 			var samples int
@@ -119,7 +137,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			}
 			time.Sleep(120 * time.Millisecond) // Longer than warmup: setup must not consume it.
 			mu.Lock()
-			if len(phases) != 1 || phases[0].Phase != StagePreparing || samples != 0 {
+			if len(phases) != 1 || phases[0].Phase != PhasePreparing || samples != 0 {
 				t.Errorf("before transport ready: phases=%v samples=%d", phases, samples)
 			}
 			mu.Unlock()
@@ -130,7 +148,7 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if len(phases) != 4 || phases[1].Phase != StageWarmup || phases[2].Phase != StageMeasuring || phases[3].Phase != StageFinished {
+			if len(phases) != 4 || phases[1].Phase != PhaseWarmup || phases[2].Phase != PhaseMeasuring || phases[3].Phase != PhaseFinished {
 				t.Fatalf("phases=%v", phases)
 			}
 			if phases[1].At.Before(releasedAt) || phases[2].At.Sub(phases[1].At) < cfg.Warmup {
@@ -160,18 +178,10 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 				time.Sleep(time.Millisecond)
 				_, _ = w.Write(make([]byte, 32*1024))
 			})
-			mountStageUpload(mux, &uploaded, func(w http.ResponseWriter, r *http.Request) {
-				if canInterrupt.Load() && interruption == "upload failure" {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
-				}
-				n, _ := io.Copy(io.Discard, r.Body)
-				uploaded.Add(uint64(n))
-				time.Sleep(time.Millisecond)
-			})
+			mountStageUpload(mux, &uploaded, receiveUpload(&uploaded, func() bool { return canInterrupt.Load() && interruption == "upload failure" }))
 			srv := httptest.NewServer(mux)
 			defer srv.Close()
-			cfg := Config{BaseURL: srv.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond, DownloadBytesPerStream: 32 * 1024, UploadBytesPerStream: 32 * 1024}.normalized()
+			cfg := Config{BaseURL: srv.URL, LoadedLatency: true, PingInterval: 10 * time.Millisecond}.normalized()
 			var mu sync.Mutex
 			seen := map[Direction]bool{}
 			var results []Result
@@ -180,10 +190,10 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(e Event) {
 				mu.Lock()
 				defer mu.Unlock()
-				if e.Kind == EventStage && e.Phase == StageMeasuring {
+				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 					measuredAt = e.At
 				}
-				if e.Kind == EventServers {
+				if e.Servers != nil {
 					details = e.Servers
 				}
 				if e.Kind == EventResult {
@@ -217,23 +227,21 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if len(results) != 3 || results[0].Latency.Count == 0 {
-				t.Fatalf("partial results=%+v", results)
+			want := OutcomeIncomplete
+			if interruption == "cancel" {
+				want = OutcomeStopped
 			}
-			if details == nil || details.Outcome != "incomplete" || len(details.Servers) != 1 || len(details.Servers[0].Results) != 3 {
-				t.Fatalf("interruption lost the terminal summary: %+v", details)
+			if len(results) != 2 || details == nil || details.Outcome != want || len(details.Servers) != 1 || len(details.Servers[0].Results) != 3 {
+				t.Fatalf("interruption lost the terminal summary: results=%+v details=%+v", results, details)
+			}
+			if latency := details.Servers[0].Results[0]; latency.Direction != "" || latency.Latency.Count == 0 || latency.Err == nil || latency.Elapsed <= 0 || latency.Elapsed >= 3*time.Second {
+				t.Fatalf("latency population: %+v", latency)
 			}
 			for _, result := range results {
 				if result.Err == nil {
 					t.Fatalf("partial population lost its cause: %+v", result)
 				}
-				if result.Direction == "" {
-					if result.Elapsed <= 0 || result.Elapsed >= 3*time.Second {
-						t.Fatalf("latency window: %+v", result)
-					}
-					continue
-				}
-				if result.TotalBytes == 0 || result.ServerAuth != (result.Direction == Up) {
+				if result.TotalBytes == 0 {
 					t.Fatalf("missing receiver attribution: %+v", result)
 				}
 				if interruption == "cancel" {
@@ -253,10 +261,7 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 	var rejectProgress atomic.Bool
 	var uploaded atomic.Uint64
 	mux := http.NewServeMux()
-	mountStageUpload(mux, &uploaded, func(_ http.ResponseWriter, r *http.Request) {
-		n, _ := io.Copy(io.Discard, r.Body)
-		uploaded.Add(uint64(n))
-	})
+	mountStageUpload(mux, &uploaded, receiveUpload(&uploaded, func() bool { return false }))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/upload/progress" && r.Method == http.MethodGet {
 			if rejectProgress.Load() {
@@ -281,13 +286,13 @@ func TestUploadProgressFailureCancelsTheStageBeforeWarmupEnds(t *testing.T) {
 		mux.ServeHTTP(w, r)
 	}))
 	defer srv.Close()
-	cfg := Config{BaseURL: srv.URL, Warmup: 4 * time.Second, UploadBytesPerStream: 32 * 1024}.normalized()
+	cfg := Config{BaseURL: srv.URL, Warmup: 4 * time.Second}.normalized()
 	var measuring atomic.Bool
 	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
-		if e.Kind == EventStage && e.Phase == StageWarmup {
+		if e.Kind == EventStage && e.Phase == PhaseWarmup {
 			rejectProgress.Store(true)
 		}
-		if e.Kind == EventStage && e.Phase == StageMeasuring || e.Kind == EventResult {
+		if e.Kind == EventStage && e.Phase == PhaseMeasuring || e.Kind == EventResult {
 			measuring.Store(true)
 		}
 	}}
@@ -339,15 +344,15 @@ func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 	defer srv.Close()
 	var measured bool
 	var details *RunDetails
-	cfg := Config{BaseURL: srv.URL, Warmup: 20 * time.Millisecond, UploadBytesPerStream: 32 * 1024}.normalized()
+	cfg := Config{BaseURL: srv.URL, Warmup: 20 * time.Millisecond}.normalized()
 	r := &runner{cfg: cfg, streams: streamCounts{up: 1}, http: srv.Client(), emit: func(e Event) {
-		if e.Kind == EventStage && e.Phase == StageWarmup {
+		if e.Kind == EventStage && e.Phase == PhaseWarmup {
 			close(warmup)
 		}
-		if e.Kind == EventResult || e.Kind == EventStage && e.Phase == StageMeasuring {
+		if e.Kind == EventResult || e.Kind == EventStage && e.Phase == PhaseMeasuring {
 			measured = true
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 	}}
@@ -358,7 +363,7 @@ func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "receiver checkpoint unavailable before measurement") {
 		t.Fatalf("silent checkpoint cause = %v", err)
 	}
-	if measured || details == nil || details.Outcome != "incomplete" || len(details.Intervals) != 0 {
+	if measured || details == nil || details.Outcome != OutcomeFailed || len(details.Intervals) != 0 {
 		t.Fatalf("preparation became measurement: measured=%v details=%+v", measured, details)
 	}
 	select {
@@ -377,23 +382,27 @@ func TestUploadSilentFeedAfterWarmupHasBoundedCheckpoint(t *testing.T) {
 }
 
 func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
-	for _, stage := range []string{"download", "upload"} {
-		for _, duration := range []time.Duration{100 * time.Millisecond, time.Second, 3 * time.Second} {
-			t.Run(stage+"/"+duration.String(), func(t *testing.T) {
+	for _, stage := range []Stage{StageDownload, StageUpload} {
+		for _, duration := range []time.Duration{100 * time.Millisecond, 3 * time.Second} {
+			t.Run(string(stage)+"/"+duration.String(), func(t *testing.T) {
 				var srv *httptest.Server
-				if stage == "download" {
-					srv = newSilentDownloadServer()
+				if stage == StageDownload {
+					srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						w.WriteHeader(http.StatusOK)
+						w.(http.Flusher).Flush()
+						<-r.Context().Done()
+					}))
 				} else {
 					srv = newStalledUploadServer()
 				}
 				defer srv.Close()
 				var details *RunDetails
 				r := &runner{
-					cfg:     Config{BaseURL: srv.URL, UploadBytesPerStream: 32 * 1024}.normalized(),
+					cfg:     Config{BaseURL: srv.URL}.normalized(),
 					streams: streamCounts{down: 1, up: 1},
 					http:    srv.Client(),
 					emit: func(e Event) {
-						if e.Kind == EventServers {
+						if e.Servers != nil {
 							details = e.Servers
 						}
 					},
@@ -412,7 +421,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 				} else if err != nil {
 					t.Fatal(err)
 				}
-				if result.TotalBytes != 0 || result.MeanBps != 0 || result.ServerAuth != (stage == "upload") {
+				if result.TotalBytes != 0 || result.MeanBps != 0 {
 					t.Fatalf("zero progress invented data: %+v", result)
 				}
 				wantUnavailable := duration < minimumSurvivorEvidence || duration > busRedialWindow
@@ -428,11 +437,11 @@ func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
 	for _, cancelEarly := range []bool{false, true} {
 		t.Run(fmt.Sprint(cancelEarly), func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				var phases []StagePhase
+				var phases []Phase
 				var details *RunDetails
 				var active atomic.Int64
 				r := &runner{
-					cfg:     Config{BaseURL: "http://fixture.invalid", DownloadBytesPerStream: 1024}.normalized(),
+					cfg:     Config{BaseURL: "http://fixture.invalid"}.normalized(),
 					streams: streamCounts{down: 1},
 					http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 						active.Add(1)
@@ -444,7 +453,7 @@ func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
 						if e.Kind == EventStage {
 							phases = append(phases, e.Phase)
 						}
-						if e.Kind == EventServers {
+						if e.Servers != nil {
 							details = e.Servers
 						}
 						if e.Kind == EventResult || e.Kind == EventThroughput {
@@ -469,7 +478,7 @@ func TestCoordinatorSetupTimeoutAndCancellationCannotMeasure(t *testing.T) {
 				if err == nil || cancelEarly && !errors.Is(err, context.Canceled) {
 					t.Fatalf("setup cause=%v", err)
 				}
-				if active.Load() != 0 || !slices.Equal(phases, []StagePhase{StagePreparing}) || details == nil || details.Outcome != "incomplete" {
+				if want := map[bool]Outcome{false: OutcomeFailed, true: OutcomeStopped}[cancelEarly]; active.Load() != 0 || !slices.Equal(phases, []Phase{PhasePreparing}) || details == nil || details.Outcome != want {
 					t.Fatalf("setup cleanup: active=%d phases=%v details=%+v", active.Load(), phases, details)
 				}
 			})
@@ -486,7 +495,7 @@ func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
 		var preparedAt, measuredAt time.Time
 		var details *RunDetails
 		r := &runner{
-			cfg:     Config{BaseURL: "http://fixture.invalid", Warmup: 100 * time.Millisecond, DownloadBytesPerStream: preparationBytes}.normalized(),
+			cfg:     Config{BaseURL: "http://fixture.invalid", Warmup: 100 * time.Millisecond}.normalized(),
 			streams: streamCounts{down: 1},
 			http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				requests++
@@ -497,13 +506,13 @@ func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
 				return nil, req.Context().Err()
 			})},
 			emit: func(e Event) {
-				if e.Kind == EventServers {
+				if e.Servers != nil {
 					details = e.Servers
 				}
-				if e.Kind == EventStage && e.Phase == StagePreparing {
+				if e.Kind == EventStage && e.Phase == PhasePreparing {
 					preparedAt = e.At
 				}
-				if e.Kind == EventStage && e.Phase == StageMeasuring {
+				if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 					measuredAt = e.At
 				}
 			},

@@ -59,7 +59,7 @@ func TestReprepareCancelsActiveRequestAndDiscardsItsReply(t *testing.T) {
 func TestPreparationCancellationReachesQueuedAuthorizationPoll(t *testing.T) {
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = "https://meter.test"
-	pending, err := goclient.BeginAuthorization(cfg, cfg.BaseURL+"/login")
+	pending, err := goclient.NewController(t.Context()).NewPreparation(cfg).BeginAuthorization("", cfg.BaseURL+"/login")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +92,10 @@ func TestQuitCancelsPreparationInConfigurationAndEditor(t *testing.T) {
 			if _, ok := command().(tea.QuitMsg); !ok {
 				t.Fatal("quit key did not quit")
 			}
-			if _, err := preparation.Prepare(); !errors.Is(err, context.Canceled) {
+			if _, err := preparation.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatal("quit left the queued preparation active")
 			}
-			if _, err := m.controller.NewPreparation(m.cfg).Prepare(); !errors.Is(err, context.Canceled) {
+			if _, err := m.controller.NewPreparation(m.cfg).PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatal("quit allowed new preparation work")
 			}
 		})
@@ -106,7 +106,7 @@ func TestApplicationShutdownCancelsWorkOwnedByUpdatedModel(t *testing.T) {
 	initial := newModel(goclient.DefaultConfig())
 	updated, _ := modelAndCmd(initial.reprepare(nil))
 	initial.controller.Close()
-	if _, err := updated.preparation.Prepare(); !errors.Is(err, context.Canceled) {
+	if _, err := updated.preparation.PrepareRun(); !errors.Is(err, context.Canceled) {
 		t.Fatal("program exit did not cancel work created by an updated model")
 	}
 }
@@ -119,7 +119,7 @@ func TestStartingRunCancelsPreparationAndItsQueuedMessages(t *testing.T) {
 	m, _ = modelAndCmd(m.reprepare(nil))
 	preparation, seq := m.preparation, m.prepareSeq
 	m, _ = m.startRun()
-	if _, err := preparation.Prepare(); !errors.Is(err, context.Canceled) || m.prepareSeq == seq {
+	if _, err := preparation.PrepareRun(); !errors.Is(err, context.Canceled) || m.prepareSeq == seq {
 		t.Fatal("starting a run left its preparation active")
 	}
 	if _, command := modelAndCmd(m.handlePrepareDue(prepareDueMsg{seq: seq})); command != nil {

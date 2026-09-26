@@ -1,10 +1,10 @@
 package goclient
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"sync"
@@ -16,16 +16,17 @@ import (
 // PreparedServer keeps transport evidence and credentials under one catalogue identity.
 type PreparedServer struct {
 	Server     wire.ServerEntry
-	Connection *PreparedConnection
+	Connection *PreparedConnection // Nil when Err is set before its paths were checked.
 	Err        error
 	config     Config
 }
 
+// PreparedRun is one catalogue selection. Failed servers stay listed with their errors.
 type PreparedRun struct {
 	Err          error
 	Catalog      wire.ServerCatalog
 	Servers      []PreparedServer
-	LatencyFocus string
+	LatencyFocus string // The ready server with the lowest latency probe time.
 	configKey    string
 }
 
@@ -46,9 +47,11 @@ func (p *PreparedRun) FreshFor(cfg Config) bool {
 		return false
 	}
 	return !slices.ContainsFunc(p.Servers, func(s PreparedServer) bool {
-		return !s.Connection.FreshFor(s.config) || (cfg.Stages.Upload || cfg.Stages.Bidirectional) && !s.Connection.Preflight.Capabilities.UploadCheckpoint
+		return !s.Connection.FreshFor(s.config) || needsCheckpoint(cfg) && !s.Connection.Preflight.Capabilities.UploadCheckpoint
 	})
 }
+
+func needsCheckpoint(cfg Config) bool { return cfg.Stages.Upload || cfg.Stages.Bidirectional }
 
 func selectionPreparationKey(cfg Config) string {
 	if canonical, err := wire.CanonicalOrigin(cfg.BaseURL); err == nil {
@@ -78,6 +81,7 @@ func getCatalog(ctx context.Context, cfg Config) (wire.ServerCatalog, error) {
 	return catalog, catalog.Validate()
 }
 
+// prepareRun checks every selected server concurrently. Each server receives only the grant its own origin issued.
 func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, grants map[string]string) (result *PreparedRun, resultErr error) {
 	defer func() {
 		if result != nil {
@@ -91,10 +95,7 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 		return nil, err
 	}
 	cfg.BaseURL = base
-	if token := grants[base]; token != "" {
-		cfg.AuthOrigin = base
-		cfg.AuthToken = token
-	}
+	cfg.grant = grants[base]
 	catalog, err := getCatalog(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -120,45 +121,33 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 			}
 		}
 		own := cfg
-		own.BaseURL = server.URL
-		own.server = new(server)
-		own.AuthOrigin = server.URL
-		own.AuthToken = grants[server.URL]
-		if server.URL == base && own.AuthToken == "" {
-			own.AuthToken = cfg.authToken()
-		}
+		own.BaseURL, own.server, own.grant = server.URL, new(server), grants[server.URL]
 		prepared.Servers = append(prepared.Servers, PreparedServer{Server: server, config: own})
 	}
 	var work sync.WaitGroup
 	for i := range prepared.Servers {
 		work.Go(func() {
 			server := &prepared.Servers[i]
-			server.Connection, server.Err = Prepare(ctx, server.config)
-			if server.Err == nil && (cfg.Stages.Upload || cfg.Stages.Bidirectional) && !server.Connection.Preflight.Capabilities.UploadCheckpoint {
+			server.Connection, server.Err = prepare(ctx, server.config)
+			if server.Err == nil && needsCheckpoint(cfg) && !server.Connection.Preflight.Capabilities.UploadCheckpoint {
 				server.Err = errors.New("receiver checkpoint support is required; upgrade this measurement server")
 			}
 		})
 	}
 	work.Wait()
+	var failures []error
+	var best time.Duration
 	for i := range prepared.Servers {
 		server := &prepared.Servers[i]
-		if server.Connection == nil {
-			continue
-		}
-		metadata := server.Connection.Preflight.Server
-		if metadata.Name != "" {
-			server.Server.Name = metadata.Name
-		}
-		server.Server.Location = metadata.Location
-		for j := range prepared.Catalog.Servers {
-			if prepared.Catalog.Servers[j].ID == server.Server.ID {
+		if server.Connection != nil {
+			// Discovery names the server; the catalogue entry is only its fallback.
+			metadata := server.Connection.Preflight.Server
+			server.Server.Name = cmp.Or(metadata.Name, server.Server.Name)
+			server.Server.Location = metadata.Location
+			if j := slices.IndexFunc(prepared.Catalog.Servers, func(s wire.ServerEntry) bool { return s.ID == server.Server.ID }); j >= 0 {
 				prepared.Catalog.Servers[j] = server.Server
 			}
 		}
-	}
-	var failures []error
-	var best time.Duration
-	for _, server := range prepared.Servers {
 		if server.Err != nil {
 			failures = append(failures, fmt.Errorf("%s: %w", server.Server.Name, server.Err))
 			continue
@@ -176,91 +165,4 @@ func prepareRun(ctx context.Context, cfg Config, previous []wire.ServerEntry, gr
 		return prepared, err
 	}
 	return prepared, nil
-}
-
-func (p *Preparation) PrepareRun() (*PreparedRun, error) {
-	ctx, done, err := p.begin(preparationTimeout)
-	if err != nil {
-		return nil, err
-	}
-	defer done()
-	p.owner.mu.Lock()
-	previous := slices.Clone(p.owner.selection)
-	grants := maps.Clone(p.owner.grants)
-	p.owner.mu.Unlock()
-	prepared, err := prepareRun(ctx, p.cfg, previous, grants)
-	p.owner.mu.Lock()
-	defer p.owner.mu.Unlock()
-	if prepared != nil && p.ctx.Err() == nil {
-		p.owner.catalog = new(prepared.Catalog)
-		if prepared.Ready() {
-			p.owner.selection = nil
-			for _, server := range prepared.Servers {
-				p.owner.selection = append(p.owner.selection, server.Server)
-			}
-		}
-	}
-	return prepared, err
-}
-
-// SelectServers acknowledges the identities displayed by the most recently loaded catalogue.
-func (c *Controller) SelectServers(ids []string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.catalog == nil {
-		return errors.New("server catalogue is unavailable")
-	}
-	if err := c.catalog.ValidateSelection(ids); err != nil {
-		return err
-	}
-	c.selection = nil
-	for _, server := range c.catalog.Servers {
-		if slices.Contains(ids, server.ID) {
-			c.selection = append(c.selection, server)
-		}
-	}
-	return nil
-}
-
-func (p *Preparation) BeginServerAuthorization(id, authURL string) (*PendingAuthorization, error) {
-	if err := p.ctx.Err(); err != nil {
-		return nil, err
-	}
-	cfg := p.cfg
-	if id != "" {
-		found := false
-		p.owner.mu.Lock()
-		if p.owner.catalog != nil {
-			for _, server := range p.owner.catalog.Servers {
-				if server.ID == id {
-					cfg.BaseURL = server.URL
-					found = true
-					break
-				}
-			}
-		}
-		p.owner.mu.Unlock()
-		if !found {
-			return nil, errors.New("server is no longer in the catalogue")
-		}
-	}
-	return BeginAuthorization(cfg, authURL)
-}
-
-// AcceptAuthorization keeps native grants in memory, indexed by their exact issuer origin.
-func (c *Controller) AcceptAuthorization(origin, token string) error {
-	canonical, err := wire.CanonicalOrigin(origin)
-	if err != nil || canonical != origin {
-		return errors.New("invalid authorization origin")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if token == "" || len(token) > 8192 {
-		return errors.New("invalid authorization grant")
-	}
-	if _, exists := c.grants[origin]; !exists && len(c.grants) >= wire.MaxCatalogServers {
-		return errors.New("too many authorized servers; restart the client to clear unused grants")
-	}
-	c.grants[origin] = token
-	return nil
 }

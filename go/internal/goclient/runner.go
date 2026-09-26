@@ -42,31 +42,10 @@ func (e *PreparationError) Unwrap() error { return e.Err }
 const preparationFreshness = 30 * time.Second
 
 func preparationKey(cfg Config) string {
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.ThroughputTransport, cfg.LatencyTarget, cfg.LatencyTransport, cfg.PingInterval, cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.authToken() != "")
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s\n%s\n%s\n%t\n%t\n%t", cfg.BaseURL, cfg.ThroughputTarget, cfg.ThroughputProtocol, cfg.ThroughputTransport, cfg.LatencyTarget, cfg.LatencyTransport, cfg.PingInterval, cfg.InsecureSkipTLSVerify, cfg.needsLatency(), cfg.grant != "")
 }
 
-func (c Config) needsLatency() bool {
-	return c.Stages.Latency || (c.LoadedLatency && (c.Stages.Download || c.Stages.Upload || c.Stages.Bidirectional))
-}
-
-func canonicalOrigin(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		return "", errors.New("invalid server URL")
-	}
-	return strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host), nil
-}
-
-func CanonicalServerOrigin(raw string) (string, error) { return canonicalOrigin(raw) }
-
-func (c Config) authToken() string {
-	serverOrigin, err := canonicalOrigin(c.BaseURL)
-	if err != nil || !strings.EqualFold(serverOrigin, c.AuthOrigin) {
-		return ""
-	}
-	return c.AuthToken
-}
-
+// authTransport sends a grant only to its issuer's HTTPS hostname, on any port that hostname serves.
 type authTransport struct {
 	token, hostname string
 	base            http.RoundTripper
@@ -95,9 +74,8 @@ func pinnedHostname(origin string) string {
 }
 
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
-	token := cfg.authToken()
-	client := &http.Client{Transport: authTransport{token: token, hostname: pinnedHostname(cfg.AuthOrigin), base: base}}
-	if token != "" || cfg.server != nil {
+	client := &http.Client{Transport: authTransport{token: cfg.grant, hostname: pinnedHostname(cfg.BaseURL), base: base}}
+	if cfg.grant != "" || cfg.server != nil {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
 		}
@@ -160,12 +138,11 @@ func baseTransport(cfg Config) *http.Transport {
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          cfg.MaxIdleConnsPerHost * 2,
-		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
-		MaxConnsPerHost:       0,
+		MaxIdleConns:          maxIdleConnsPerHost * 2,
+		MaxIdleConnsPerHost:   maxIdleConnsPerHost,
 		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
-		ExpectContinueTimeout: cfg.ExpectContinueTimeout,
+		ResponseHeaderTimeout: responseHeaderTimeout,
+		ExpectContinueTimeout: expectContinueTimeout,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: cfg.InsecureSkipTLSVerify}, //nolint:gosec
 		WriteBufferSize:       256 * 1024,
 		ReadBufferSize:        256 * 1024,
@@ -185,9 +162,10 @@ func websocketClient(cfg Config) (*http.Client, func()) {
 	return authenticatedClient(cfg, tr), tr.CloseIdleConnections
 }
 
-func Prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
+// prepare checks one server's discovery and both of its paths.
+func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 	cfg = cfg.normalized()
-	if cfg.authToken() != "" {
+	if cfg.grant != "" {
 		u, err := url.Parse(cfg.BaseURL)
 		if err != nil || u.Scheme != "https" || cfg.InsecureSkipTLSVerify {
 			return nil, fmt.Errorf("authenticated operation requires verified HTTPS -url")
@@ -328,27 +306,7 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 	return nil
 }
 
-func Run(ctx context.Context, cfg Config, emit func(Event)) error {
-	return RunPrepared(ctx, cfg, nil, emit)
-}
-
-// RunPrepared runs a direct, single-server connection through the same coordinator
-// used by catalogue selections. The controller owns catalogue-based preparation.
-func RunPrepared(ctx context.Context, cfg Config, prepared *PreparedConnection, emit func(Event)) error {
-	cfg = cfg.normalized()
-	if !prepared.FreshFor(cfg) {
-		var err error
-		prepared, err = Prepare(ctx, cfg)
-		if err != nil {
-			emit(Event{Kind: EventDone, At: time.Now(), Err: err})
-			return err
-		}
-	}
-	identity := wire.ServerEntry{ID: "self", URL: cfg.BaseURL, Name: prepared.Preflight.Server.Name}
-	selection := &PreparedRun{Servers: []PreparedServer{{Server: identity, Connection: prepared, config: cfg}}, LatencyFocus: "self"}
-	return RunSelection(ctx, cfg, selection, emit)
-}
-
+// runner owns one server's connections within a run; the coordinator owns its stage schedule and windows.
 type runner struct {
 	coordinated   *participantCounters
 	cfg           Config
@@ -492,29 +450,6 @@ func selectTargetOver(cfg Config, pf wire.Preflight, mechanism string) (*wire.Th
 		}
 	}
 	return nil, fmt.Errorf("%s target unavailable over %s", selection, mechanism)
-}
-
-func latencyBusEvidence(target *wire.LatencyTarget, probe *wire.Probe) string {
-	if target.Transport == wire.TransportWebTransport {
-		return targetProtocolEvidence("http3")
-	}
-	if probe == nil {
-		return ""
-	}
-	return probe.ProtocolNegotiated
-}
-
-func targetProtocolEvidence(protocol string) string {
-	switch protocol {
-	case "http1":
-		return "http/1.1"
-	case "http2":
-		return "h2"
-	case "http3":
-		return "h3"
-	default:
-		return protocol
-	}
 }
 
 func protocolFromEvidence(protocol string) string {

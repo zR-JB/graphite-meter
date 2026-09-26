@@ -986,32 +986,6 @@ func TestActivate_NetworkCases(t *testing.T) {
 	}
 }
 
-func TestAuthTokenResultIsBoundToCurrentServer(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.cfg.BaseURL = "https://new.example"
-	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://old.example"}))
-	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
-		t.Fatal("stale authorization result was retained")
-	}
-
-	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, token: "secret", origin: "https://new.example"}))
-	if m.cfg.AuthToken != "secret" || m.cfg.AuthOrigin != "https://new.example" {
-		t.Fatal("matching authorization result was not retained")
-	}
-}
-
-func TestChangingServerClearsAuthorization(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.cfg.BaseURL = "https://old.example"
-	m.cfg.AuthToken = "secret"
-	m.cfg.AuthOrigin = "https://old.example"
-	m.edit = beginEdit(editURL, "url", "https://new.example")
-	m.commitEdit()
-	if m.cfg.AuthToken != "" || m.cfg.AuthOrigin != "" {
-		t.Fatal("authorization was retained after editing the server")
-	}
-}
-
 func TestHandleEditKey_TypeBackspaceCommitCancel(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.edit = beginEdit(editURL, "url", "")
@@ -1373,16 +1347,6 @@ func TestHandleEditKey_ApplyRechecksOnlyWhatChanged(t *testing.T) {
 	}
 }
 
-func TestCommitEdit_RetypingTheSameURLKeepsAuthorization(t *testing.T) {
-	m := newModel(goclient.DefaultConfig())
-	m.cfg.AuthToken, m.cfg.AuthOrigin = "grant", m.cfg.BaseURL
-	m.edit = beginEdit(editURL, "url", "  "+m.cfg.BaseURL+"  ")
-	m.commitEdit()
-	if m.cfg.AuthToken != "grant" {
-		t.Errorf("authorization dropped by retyping the same URL, token = %q", m.cfg.AuthToken)
-	}
-}
-
 func TestHandleKey_RunMode_CancelTakesTwoEscapes(t *testing.T) {
 	m, canceled := startPendingRun(t)
 	m, _ = modelAndCmd(m.handleKey(tea.KeyMsg{Type: tea.KeyEsc}))
@@ -1489,7 +1453,7 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 	for _, outcome := range []error{nil, context.Canceled, errors.New("transfer failed"), fmt.Errorf("transfer: %w", context.Canceled), errors.New("server said context canceled")} {
 		t.Run(fmt.Sprint(outcome), func(t *testing.T) {
 			events := make(chan goclient.Event, 3)
-			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down, TotalBytes: 24}}
+			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Direction: goclient.Down}}
 			events <- goclient.Event{Kind: goclient.EventResult, Result: &goclient.Result{Stage: "bidirectional", Latency: goclient.LatencyStats{Unresolved: 2}, Err: outcome}}
 			events <- goclient.Event{Kind: goclient.EventDone, Err: outcome}
 			close(events)
@@ -1499,9 +1463,9 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 			m, cmd := modelAndCmd(m.Update(waitEvents(m.runSeq, events)()))
 			wantStatus, wantErr := "complete", outcome
 			if errors.Is(outcome, context.Canceled) {
-				wantStatus, wantErr = "canceled", nil
+				wantStatus, wantErr = "stopped", nil
 			} else if outcome != nil {
-				wantStatus = "error"
+				wantStatus = "failed"
 			}
 			if m.status != wantStatus || m.err != wantErr {
 				t.Fatalf("terminal status/error = %q/%v, want %q/%v", m.status, m.err, wantStatus, wantErr)
@@ -1516,8 +1480,8 @@ func TestTerminalOutcomeFollowsBufferedResults(t *testing.T) {
 func TestResultsViewSharedScaleBars(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.results = []goclient.Result{
-		{Stage: "download", Direction: goclient.Down, MeanBps: 1000, PeakBps: 1000, TotalBytes: 10},
-		{Stage: "upload", Direction: goclient.Up, MeanBps: 500, PeakBps: 500, TotalBytes: 5, ServerAuth: true},
+		{Stage: "download", Direction: goclient.Down, MeanBps: 1000, PeakBps: 1000},
+		{Stage: "upload", Direction: goclient.Up, MeanBps: 500, PeakBps: 500},
 	}
 	out := m.resultsView(120)
 	if !strings.Contains(out, "download") || !strings.Contains(out, "upload") {
@@ -1570,13 +1534,13 @@ func TestUpdate_EventsMsg(t *testing.T) {
 	m.mode = modeRun
 	m.events = make(chan goclient.Event)
 	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{
-		Kind: goclient.EventPreflight, Preflight: &wire.Preflight{Server: wire.ServerInfo{Name: "srv", Location: "ams"}},
+		Kind: goclient.EventServers, Servers: &goclient.RunDetails{Servers: []goclient.ServerRunSummary{{Server: wire.ServerEntry{ID: "self", Name: "srv", Location: "ams"}}}},
 	}}}))
-	if m.status != "connected" || !strings.Contains(m.server, "srv") {
-		t.Fatalf("preflight: status=%q server=%q", m.status, m.server)
+	if !strings.Contains(m.server, "srv") {
+		t.Fatalf("server details: server=%q", m.server)
 	}
 	m, cmd := modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{
-		{Kind: goclient.EventStage, Stage: "bidirectional", Phase: goclient.StageMeasuring},
+		{Kind: goclient.EventStage, Stage: "bidirectional", Phase: goclient.PhaseMeasuring},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 100}},
 		{Kind: goclient.EventThroughput, Direction: goclient.Up, Throughput: goclient.ThroughputSample{BytesPerSec: 40}},
 		{Kind: goclient.EventThroughput, Direction: goclient.Down, Throughput: goclient.ThroughputSample{BytesPerSec: 200}},
@@ -1647,8 +1611,8 @@ func BenchmarkViewTransfer(b *testing.B) {
 	m.width = 100
 	m.stage = "bidirectional"
 	m.status = "measure"
-	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
-	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000, TotalBytes: 1 << 30}
+	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000}
+	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000}
 	m.peaks[goclient.Down] = 140_000_000
 	m.peaks[goclient.Up] = 80_000_000
 	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
@@ -1699,8 +1663,8 @@ func TestStaleAuthMessagesDoNotClobberNewerPreparation(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got, _ := modelAndCmd(m.Update(c.msg))
-			if got.prepareStatus != "ready" || got.prepareError != "" || got.cfg.AuthToken != "" {
-				t.Errorf("stale auth changed state: status=%q error=%q token=%q", got.prepareStatus, got.prepareError, got.cfg.AuthToken)
+			if got.prepareStatus != "ready" || got.prepareError != "" || got.approved {
+				t.Errorf("stale auth changed state: status=%q error=%q approved=%v", got.prepareStatus, got.prepareError, got.approved)
 			}
 		})
 	}
@@ -1799,7 +1763,7 @@ func TestFinalReport(t *testing.T) {
 
 	m := newModel(goclient.DefaultConfig())
 	m.width = 120
-	m.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e6, PeakBps: 2e6, TotalBytes: 5e6}}
+	m.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e6, PeakBps: 2e6}}
 	if report := m.finalReport(); report != "" {
 		t.Errorf("report before the run completed = %q, want none", report)
 	}
@@ -1814,142 +1778,6 @@ func TestFinalReport(t *testing.T) {
 	}
 }
 
-func TestConnectionChecksFollowTheHandshake(t *testing.T) {
-	cases := []struct {
-		name  string
-		setup func(*model)
-		want  []checkState
-	}{
-		{
-			name:  "not checked",
-			setup: func(m *model) {},
-			want:  []checkState{checkPending, checkPending, checkPending, checkPending},
-		},
-		{
-			name: "checking",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "checking", stepReach
-			},
-			want: []checkState{checkActive, checkPending, checkPending, checkPending},
-		},
-		{
-			name: "unreachable",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "failed", stepReach
-			},
-			want: []checkState{checkFailed, checkPending, checkPending, checkPending},
-		},
-		{
-			name: "authorization demanded by the preflight itself",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "authorizing", stepPreflight
-			},
-			want: []checkState{checkDone, checkPending, checkActive, checkPending},
-		},
-		{
-			name: "authorization demanded by a target probe",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "authorizing", stepOrigins
-			},
-			want: []checkState{checkDone, checkDone, checkActive, checkPending},
-		},
-		{
-			name: "target selection failed",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "failed", stepOrigins
-			},
-			want: []checkState{checkDone, checkDone, checkPending, checkFailed},
-		},
-		{
-			name: "ready on a server that asks for nothing",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "ready", stepReady
-			},
-			want: []checkState{checkDone, checkDone, checkSkipped, checkDone},
-		},
-		{
-			name: "ready with a granted token",
-			setup: func(m *model) {
-				m.prepareStatus, m.prepareStep = "ready", stepReady
-				m.cfg.AuthToken = "grant"
-			},
-			want: []checkState{checkDone, checkDone, checkDone, checkDone},
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			m := newModel(goclient.DefaultConfig())
-			c.setup(&m)
-			checks := m.connectionChecks()
-			if len(checks) != len(c.want) {
-				t.Fatalf("checks = %d, want %d", len(checks), len(c.want))
-			}
-			for i, want := range c.want {
-				if checks[i].state != want {
-					t.Errorf("%q state = %v, want %v", checks[i].label, checks[i].state, want)
-				}
-			}
-		})
-	}
-}
-
-func TestPreparationMessageRecordsHowFarItGot(t *testing.T) {
-	pf := wire.Preflight{Server: wire.ServerInfo{Name: "srv"}}
-	cases := []struct {
-		name       string
-		msg        preparationMsg
-		wantStep   prepareStep
-		wantStatus string
-	}{
-		{
-			name:       "transport failure proves nothing",
-			msg:        preparationMsg{err: errors.New("connection refused")},
-			wantStep:   stepReach,
-			wantStatus: "failed",
-		},
-		{
-			name:       "a preflight body proves the server answered",
-			msg:        preparationMsg{err: &goclient.PreparationError{Preflight: pf, Err: errors.New("no usable endpoint")}},
-			wantStep:   stepOrigins,
-			wantStatus: "failed",
-		},
-		{
-			name:       "a challenge at the preflight proves reachability only",
-			msg:        preparationMsg{err: &goclient.AuthRequiredError{URL: "https://meter.example/login"}},
-			wantStep:   stepPreflight,
-			wantStatus: "authorizing",
-		},
-		{
-			name: "a challenge at a target probe proves the preflight too",
-			msg: preparationMsg{err: &goclient.PreparationError{
-				Preflight: pf,
-				Err:       &goclient.AuthRequiredError{URL: "https://meter.example/login"},
-			}},
-			wantStep:   stepOrigins,
-			wantStatus: "authorizing",
-		},
-		{
-			name:       "success proves the whole handshake",
-			msg:        preparationMsg{connection: &goclient.PreparedConnection{Preflight: pf}},
-			wantStep:   stepReady,
-			wantStatus: "ready",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			m := newModel(goclient.DefaultConfig())
-			c.msg.seq = m.prepareSeq
-			m, _ = modelAndCmd(m.Update(c.msg))
-			if c.wantStatus == "failed" && !strings.Contains(m.prepareError, c.msg.err.Error()) {
-				t.Fatalf("failure reason was lost: %q", m.prepareError)
-			}
-			if m.prepareStep != c.wantStep || m.prepareStatus != c.wantStatus {
-				t.Fatalf("step/status = %v/%q, want %v/%q", m.prepareStep, m.prepareStatus, c.wantStep, c.wantStatus)
-			}
-		})
-	}
-}
-
 func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.stages = plannedStages(m.cfg)
@@ -1958,7 +1786,7 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	}
 
 	start := m.now
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: start, Stage: "latency", Phase: goclient.StageMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: start, Stage: "latency", Phase: goclient.PhaseMeasuring})
 	if m.stages[0].state != stageMeasuring || !m.stages[0].since.Equal(start) {
 		t.Fatalf("latency = %v since %v, want measuring since %v", m.stages[0].state, m.stages[0].since, start)
 	}
@@ -1967,17 +1795,17 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	}
 
 	m.apply(goclient.Event{Kind: goclient.EventResult, Stage: "latency", Result: &goclient.Result{Stage: "latency"}})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "latency", Phase: goclient.StageFinished})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "latency", Phase: goclient.PhaseFinished})
 	if m.stages[0].state != stageDone {
 		t.Errorf("latency after its result = %v, want done", m.stages[0].state)
 	}
 
 	warmupAt := start.Add(4 * time.Second)
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt, Stage: "download", Phase: goclient.StageWarmup})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt, Stage: "download", Phase: goclient.PhaseWarmup})
 	if m.stages[1].state != stageWarmup {
 		t.Fatalf("download = %v, want warmup", m.stages[1].state)
 	}
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(time.Second), Stage: "download", Phase: goclient.StageMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(time.Second), Stage: "download", Phase: goclient.PhaseMeasuring})
 	if m.stages[1].state != stageMeasuring {
 		t.Fatalf("download = %v, want measuring", m.stages[1].state)
 	}
@@ -1987,12 +1815,12 @@ func TestStageTimelineFollowsStageEvents(t *testing.T) {
 	if m.stages[1].state != stageMeasuring {
 		t.Fatal("direction results completed the stage before its terminal phase")
 	}
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageFinished})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.PhaseFinished})
 	if m.stages[1].state != stageDone {
 		t.Errorf("download after its results = %v, want done", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(10 * time.Second), Stage: "upload", Phase: goclient.StageMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, At: warmupAt.Add(10 * time.Second), Stage: "upload", Phase: goclient.PhaseMeasuring})
 	m, _ = modelAndCmd(m.Update(eventsMsg{events: []goclient.Event{{Kind: goclient.EventDone, Err: errors.New("upload failed")}}}))
 	if m.stages[2].state != stageStopped {
 		t.Errorf("upload after the run failed = %v, want stopped", m.stages[2].state)
@@ -2055,13 +1883,13 @@ func TestStageTimelineIgnoresWhatItCannotPlace(t *testing.T) {
 		t.Errorf("download = %v after a result but no start, want pending", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StageMeasuring})
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: "cooldown"})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.PhaseMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.Phase(99)})
 	if m.stages[1].state != stageMeasuring {
 		t.Errorf("download = %v after an unnamed phase, want measuring", m.stages[1].state)
 	}
 
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "loaded-latency", Phase: goclient.StageMeasuring})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "loaded-latency", Phase: goclient.PhaseMeasuring})
 	if m.stages[0].state != stagePending || m.stages[2].state != stagePending {
 		t.Errorf("a stage with no row disturbed the timeline: %+v", m.stages)
 	}
@@ -2194,7 +2022,7 @@ func TestViewNeverExceedsTheTerminalWidth(t *testing.T) {
 		configure.notice = strings.Repeat("a long notice ", 12)
 		run := populatedRunModel(width)
 		run.server = "graphite-meter somewhere [https://a-very-long-hostname.internal.example.com:7248/http3]"
-		run.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9, TotalBytes: 1e10}}
+		run.results = []goclient.Result{{Stage: "download", Direction: goclient.Down, MeanBps: 1e9, PeakBps: 2e9}}
 		frames := map[string]string{"run": run.View()}
 		for _, sec := range []section{sectionServers, sectionConnections, sectionRun} {
 			configure.section = sec
@@ -2311,8 +2139,8 @@ func populatedRunModel(width int) model {
 	m.width = width
 	m.stage = "bidirectional"
 	m.status = "measure"
-	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000, TotalBytes: 1 << 30}
-	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000, TotalBytes: 1 << 30}
+	m.rates[goclient.Down] = goclient.ThroughputSample{BytesPerSec: 125_000_000}
+	m.rates[goclient.Up] = goclient.ThroughputSample{BytesPerSec: 75_000_000}
 	m.peaks[goclient.Down] = 940_000_000
 	m.peaks[goclient.Up] = 80_000_000
 	m.latency = goclient.LatencySample{RTT: 3 * time.Millisecond}
@@ -2360,7 +2188,7 @@ func TestRunViewNamesThePerDirectionLaneCount(t *testing.T) {
 func TestPreparingStageIsDistinctAndStopsOnCancellation(t *testing.T) {
 	m := newModel(goclient.DefaultConfig())
 	m.stages = plannedStages(m.cfg)
-	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.StagePreparing, At: time.Now()})
+	m.apply(goclient.Event{Kind: goclient.EventStage, Stage: "download", Phase: goclient.PhasePreparing, At: time.Now()})
 	if view := strings.Join(m.timelineView(100), "\n"); !strings.Contains(view, "preparing transports") || strings.Contains(view, "warmup") {
 		t.Fatalf("preparing timeline: %s", view)
 	}
@@ -2375,7 +2203,7 @@ func TestPreparingStageIsDistinctAndStopsOnCancellation(t *testing.T) {
 func TestPartialThroughputResultShowsItsFailure(t *testing.T) {
 	for _, dir := range []goclient.Direction{goclient.Down, goclient.Up} {
 		m := newModel(goclient.DefaultConfig())
-		m.results = []goclient.Result{{Stage: "bidirectional", Direction: dir, MeanBps: 125000, TotalBytes: 125000, Elapsed: time.Second, ServerAuth: dir == goclient.Up, Err: errors.New("transfer interrupted")}}
+		m.results = []goclient.Result{{Stage: "bidirectional", Direction: dir, MeanBps: 125000, TotalBytes: 125000, Elapsed: time.Second, Err: errors.New("transfer interrupted")}}
 		if view := m.resultsView(100); !strings.Contains(view, "Incomplete: transfer interrupted") || !strings.Contains(view, "bidirectional") || !strings.Contains(view, "peak --") || !strings.Contains(view, "█") {
 			t.Fatalf("partial throughput summary lost its attribution: %s", view)
 		}

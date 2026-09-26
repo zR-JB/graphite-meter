@@ -12,40 +12,46 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// ServerRunSummary is one selected server's part of a run.
 type ServerRunSummary struct {
 	Server                     wire.ServerEntry
 	Throughput                 wire.ThroughputTarget
 	LatencyTarget              *wire.LatencyTarget
-	Results                    []Result
+	Results                    []Result // Latency populations and this server's component of each transfer result.
 	TotalDownload, TotalUpload uint64
 }
 
+// RunDetails is the run's membership and per-server evidence, in selection order.
 type RunDetails struct {
-	Selection        []wire.ServerEntry
-	Participants     []string
-	LatencyFocus     string
 	Servers          []ServerRunSummary
+	Participants     []string // Servers still measuring throughput.
+	LatencyFocus     string
 	Intervals        []AggregationInterval
 	OmittedIntervals int
 	Failures         []ServerFailure
-	Outcome          string
+	Outcome          Outcome
 }
 
-type nativeParticipant struct {
+// Stage resources: one per active transfer direction, plus the latency population.
+const roleLatency = "latency"
+
+type participant struct {
 	prepared  PreparedServer
 	transport *runner
 	removed   bool
 	results   []Result
-	close     func()
 }
-type stageParticipant struct {
-	participant                   *nativeParticipant
+
+func (p *participant) id() string { return p.prepared.Server.ID }
+
+type stageServer struct {
+	*participant
 	cancelTransfer, cancelLatency context.CancelCauseFunc
 	latencyFailed                 bool
 }
 type readyResource struct{ serverID, role string }
 type resourceOutcome struct {
-	server *stageParticipant
+	server *stageServer
 	role   string
 	result Result
 	err    error
@@ -57,11 +63,10 @@ type sampledBoundary struct {
 	final    bool
 }
 
-type nativeCoordinator struct {
+type coordinator struct {
 	cfg         Config
 	prepared    *PreparedRun
-	servers     []*nativeParticipant
-	streams     map[string]streamCounts
+	servers     []*participant
 	aggregate   aggregateMeasurements
 	failures    []ServerFailure
 	started     time.Time
@@ -71,127 +76,122 @@ type nativeCoordinator struct {
 
 var errNoSurvivors = errors.New("all selected servers failed")
 
-// RunSelection has one stage schedule. Its participants own connections and credentials, never independent runs.
-func RunSelection(ctx context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) error {
-	return runSelection(ctx, nil, cfg, prepared, emit)
-}
-
-// runSelection releases server state within teardown, which the controller ends when delivery is abandoned.
+// runSelection has one stage schedule. Its participants own connections and credentials, never independent
+// runs. Server state is released within teardown, which the controller ends when delivery is abandoned.
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) (err error) {
-	defer func() { emit(Event{Kind: EventDone, At: time.Now(), Err: err}) }()
-	cfg = cfg.normalized()
+	c := &coordinator{cfg: cfg.normalized(), prepared: prepared, started: time.Now(), emit: emit}
+	defer func() {
+		emit(Event{Kind: EventDone, At: time.Now(), Err: err, Servers: c.details(c.outcome(ctx, err))})
+	}()
 	if prepared == nil || !prepared.Ready() {
 		return errors.New("resolve every selected server before starting")
 	}
-	streams, err := planRunStreams(cfg, prepared.Servers)
+	streams, err := planRunStreams(c.cfg, prepared.Servers)
 	if err != nil {
 		return err
 	}
-	c := &nativeCoordinator{cfg: cfg, prepared: prepared, streams: streams, started: time.Now(), emit: emit}
 	for _, server := range prepared.Servers {
+		// Paths and credentials are the server's; the schedule is the run's.
 		own := server.config
-		own.Stages = cfg.Stages
-		own.Warmup = cfg.Warmup
-		own.LatencyDuration = cfg.LatencyDuration
-		own.DownloadDuration = cfg.DownloadDuration
-		own.UploadDuration = cfg.UploadDuration
-		own.BidirectionalDuration = cfg.BidirectionalDuration
+		own.Warmup = c.cfg.Warmup
 		connection := server.Connection
 		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol, func() *http.Transport { return baseTransport(own) })
 		ws, closeWS := websocketClient(own)
-		transport := &runner{cfg: own, http: hc, websocketHTTP: ws, target: new(connection.ThroughputTarget), latencyTarget: connection.LatencyTarget, coordinated: &participantCounters{}, idleRTT: connection.PreflightRTT, teardown: teardown}
-		transport.emit = func(e Event) { e.ServerID = server.Server.ID; emit(e) }
-		participant := &nativeParticipant{prepared: server, transport: transport, close: func() { closeHTTP(); closeWS() }}
-		c.servers = append(c.servers, participant)
-		protocol := targetProtocolEvidence(connection.ThroughputTarget.Protocol)
-		if connection.ThroughputTarget.Protocol == "negotiated" {
-			protocol = connection.Probe.ProtocolNegotiated
-		}
-		event := Event{Kind: EventPreflight, At: time.Now(), ServerID: server.Server.ID, Preflight: new(connection.Preflight), Probe: new(connection.Probe), LatencyProbe: connection.LatencyProbe, ThroughputTarget: connection.ThroughputTarget.ID, ThroughputTransport: connection.ThroughputTarget.Transport, ThroughputProtocol: protocol}
-		if connection.LatencyTarget != nil {
-			event.LatencyTarget = connection.LatencyTarget.ID
-			event.LatencyTransport = connection.LatencyTarget.Transport
-			event.LatencyProtocol = latencyBusEvidence(connection.LatencyTarget, connection.LatencyProbe)
-		}
-		emit(event)
-		defer participant.close()
+		defer closeHTTP()
+		defer closeWS()
+		r := &runner{cfg: own, streams: streams[server.Server.ID], http: hc, websocketHTTP: ws, target: new(connection.ThroughputTarget), latencyTarget: connection.LatencyTarget, coordinated: &participantCounters{}, idleRTT: connection.PreflightRTT, teardown: teardown}
+		r.emit = func(e Event) { e.ServerID = server.Server.ID; emit(e) }
+		c.servers = append(c.servers, &participant{prepared: server, transport: r})
 	}
 	return c.run(ctx)
 }
 
-func (c *nativeCoordinator) active() []*nativeParticipant {
-	return slices.DeleteFunc(slices.Clone(c.servers), func(s *nativeParticipant) bool { return s.removed })
+func (c *coordinator) active() []*participant {
+	return slices.DeleteFunc(slices.Clone(c.servers), func(s *participant) bool { return s.removed })
 }
-func (c *nativeCoordinator) ids() []string {
+
+func (c *coordinator) ids() []string {
 	ids := []string{}
-	for _, server := range c.servers {
-		if !server.removed {
-			ids = append(ids, server.prepared.Server.ID)
-		}
+	for _, server := range c.active() {
+		ids = append(ids, server.id())
 	}
 	return ids
 }
-func (c *nativeCoordinator) details(outcome string) *RunDetails {
-	details := &RunDetails{Participants: c.ids(), LatencyFocus: c.prepared.LatencyFocus, Intervals: slices.Clone(c.aggregate.intervals), OmittedIntervals: c.aggregate.omitted, Failures: slices.Clone(c.failures), Outcome: outcome}
+
+func (c *coordinator) details(outcome Outcome) *RunDetails {
+	details := &RunDetails{Participants: c.ids(), Intervals: slices.Clone(c.aggregate.intervals), OmittedIntervals: c.aggregate.omitted, Failures: slices.Clone(c.failures), Outcome: outcome}
+	if c.prepared != nil {
+		details.LatencyFocus = c.prepared.LatencyFocus
+	}
 	for _, server := range c.servers {
-		identity := server.prepared.Server
-		details.Selection = append(details.Selection, identity)
-		total := c.aggregate.totals[identity.ID]
-		details.Servers = append(details.Servers, ServerRunSummary{Server: identity, Throughput: server.prepared.Connection.ThroughputTarget, LatencyTarget: server.prepared.Connection.LatencyTarget, Results: slices.Clone(server.results), TotalDownload: total.down, TotalUpload: total.up})
+		total := c.aggregate.totals[server.id()]
+		connection := server.prepared.Connection
+		details.Servers = append(details.Servers, ServerRunSummary{Server: server.prepared.Server, Throughput: connection.ThroughputTarget, LatencyTarget: connection.LatencyTarget, Results: slices.Clone(server.results), TotalDownload: total.down, TotalUpload: total.up})
 	}
 	return details
 }
-func (c *nativeCoordinator) publish(outcome string) {
-	c.emit(Event{Kind: EventServers, At: time.Now(), Servers: c.details(outcome)})
-}
-func (c *nativeCoordinator) run(ctx context.Context) error {
-	c.publish("running")
-	var err error
-	for _, stage := range c.cfg.Plan() {
-		if err = c.stage(ctx, stage); err != nil {
-			break
-		}
-		c.publish("running")
-		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StageFinished})
-	}
-	outcome := "complete"
-	if len(c.failures) > 0 {
-		outcome = "partial"
-	}
-	if err != nil {
-		outcome = "incomplete"
-	}
-	c.publish(outcome)
-	return err
+
+// publish shares membership and per-server results; it runs on membership changes and stage ends, not per sample.
+func (c *coordinator) publish() {
+	c.emit(Event{Kind: EventServers, At: time.Now(), Servers: c.details(OutcomeRunning)})
 }
 
-func (c *nativeCoordinator) failure(server *stageParticipant, stage StagePlan, role string, err error, at time.Time) {
+func (c *coordinator) run(ctx context.Context) error {
+	c.publish()
+	for _, stage := range c.cfg.Plan() {
+		if err := c.stage(ctx, stage); err != nil {
+			return err
+		}
+		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseFinished})
+		c.publish()
+	}
+	return nil
+}
+
+func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
+	switch {
+	case err == nil && len(c.failures) == 0:
+		return OutcomeComplete
+	case err == nil:
+		return OutcomePartial
+	case errors.Is(err, context.Canceled) && ctx.Err() != nil:
+		return OutcomeStopped
+	case c.hasMeasured:
+		return OutcomeIncomplete
+	}
+	return OutcomeFailed
+}
+
+// failure removes a server from the run, or only its latency population when that alone failed.
+func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time) {
 	scope := "throughput"
-	if role == "latency" {
+	if role == roleLatency {
 		scope = "latency"
-		if server.latencyFailed {
+		if server.latencyFailed || server.removed {
 			return
 		}
 		server.latencyFailed = true
 		server.cancelLatency(err)
 	} else {
-		if server.participant.removed {
+		if server.removed {
 			return
 		}
-		server.participant.removed = true
+		server.removed = true
 		server.cancelTransfer(err)
 		server.cancelLatency(err)
 	}
-	failure := ServerFailure{ServerID: server.participant.prepared.Server.ID, Stage: stage.Name, Scope: scope, Reason: "connection-lost", Message: err.Error(), At: at.Sub(c.started)}
+	failure := ServerFailure{ServerID: server.id(), Stage: stage.Name, Scope: scope, Reason: "connection-lost", Message: err.Error(), At: at.Sub(c.started)}
 	if _, ok := errors.AsType[*AuthRequiredError](err); ok {
 		failure.Reason = "authentication-required"
 	}
 	c.failures = append(c.failures, failure)
 	c.emit(Event{Kind: EventServerFailure, At: at, Stage: stage.Name, ServerID: failure.ServerID, Failure: new(failure)})
-	c.publish("running")
+	c.publish()
 }
-func (c *nativeCoordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
-	if outcome.role != "latency" {
+
+// retainLatency keeps one final population per server and stage, even when cleanup follows a failure.
+func (c *coordinator) retainLatency(outcome resourceOutcome, normalEnd bool) {
+	if outcome.role != roleLatency {
 		return
 	}
 	result := outcome.result
@@ -199,375 +199,367 @@ func (c *nativeCoordinator) retainLatency(outcome resourceOutcome, normalEnd boo
 		result.Err = nil
 	}
 	p := outcome.server.participant
-	// One final population per server and stage, even when cleanup follows a failure.
-	for i, old := range p.results {
-		if old.Stage == result.Stage && old.Direction == "" {
-			p.results[i] = result
-			return
-		}
+	if i := slices.IndexFunc(p.results, func(old Result) bool { return old.Stage == result.Stage && old.Direction == "" }); i >= 0 {
+		p.results[i] = result
+		return
 	}
 	p.results = append(p.results, result)
-	if result.Stage == "latency" && result.Latency.P50 > 0 {
+	if result.Stage == StageLatency && result.Latency.P50 > 0 {
 		p.transport.idleRTT = result.Latency.P50
 	}
-	c.emit(Event{Kind: EventResult, At: time.Now(), Stage: result.Stage, ServerID: p.prepared.Server.ID, Result: new(result)})
 }
 
-func (c *nativeCoordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
-	stageCtx, cancel := context.WithCancelCause(ctx)
-	var work sync.WaitGroup
-	// Every resource reports readiness and its outcome at most once, so neither send can block.
-	resources := len(stage.Directions)
-	if len(stage.Directions) == 0 || c.cfg.LoadedLatency {
-		resources++
+func (s *stageServer) measure(ctx context.Context, stage StagePlan, role string, gate *stageGate) resourceOutcome {
+	outcome := resourceOutcome{server: s, role: role}
+	if role == roleLatency {
+		stats, err := s.transport.measureLatency(ctx, stage.Name, len(stage.Directions) > 0, stage.Duration, gate)
+		outcome.result = Result{Stage: stage.Name, Latency: stats, Elapsed: stats.Elapsed, Err: err}
+		outcome.err = err
+	} else {
+		outcome.err = s.transport.measureDirection(ctx, Direction(role), gate)
 	}
-	resources *= len(c.active())
-	ready := make(chan readyResource, resources)
-	outcomes := make(chan resourceOutcome, resources)
+	outcome.at = time.Now()
+	return outcome
+}
+
+type stagePhase int
+
+const (
+	phasePrepare stagePhase = iota
+	phaseWarmup
+	phaseMeasure
+)
+
+// stage runs one schedule over an expected-resource set: every resource prepares within stageReadyTimeout,
+// the run warms up, then one measured window starts for every population at once. A server that fails after
+// the first measured window leaves the run; before it, the run cannot start.
+func (c *coordinator) stage(ctx context.Context, stage StagePlan) (stageErr error) {
+	stageCtx, cancel := context.WithCancelCause(ctx)
+	transfer := len(stage.Directions) > 0
+	var roles []string
+	for _, dir := range stage.Directions {
+		roles = append(roles, string(dir))
+	}
+	if !transfer || c.cfg.LoadedLatency {
+		roles = append(roles, roleLatency)
+	}
+	// Every resource reports readiness and its outcome at most once, so neither send can block.
+	ready := make(chan readyResource, len(c.active())*len(roles))
+	outcomes := make(chan resourceOutcome, cap(ready))
 	start := make(chan struct{})
-	var servers []*stageParticipant
+	var work sync.WaitGroup
+	var servers []*stageServer
 	var gates []*stageGate
-	measuring := false
-	normalEnd := false
-	c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StagePreparing})
-	for _, participant := range c.active() {
+	c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhasePreparing})
+	for _, p := range c.active() {
+		s := &stageServer{participant: p}
 		transferCtx, cancelTransfer := context.WithCancelCause(stageCtx)
 		latencyCtx, cancelLatency := context.WithCancelCause(stageCtx)
-		server := &stageParticipant{participant: participant, cancelTransfer: cancelTransfer, cancelLatency: cancelLatency}
-		servers = append(servers, server)
-		r := participant.transport
-		r.coordinated = &participantCounters{}
-		r.streams = c.streams[participant.prepared.Server.ID]
-		launch := func(role string, ownCtx context.Context, ownCancel context.CancelCauseFunc) {
-			gate := &stageGate{cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{participant.prepared.Server.ID, role} }}
+		s.cancelTransfer, s.cancelLatency = cancelTransfer, cancelLatency
+		servers = append(servers, s)
+		p.transport.coordinated = &participantCounters{}
+		for _, role := range roles {
+			own, ownCancel := transferCtx, cancelTransfer
+			if role == roleLatency {
+				own, ownCancel = latencyCtx, cancelLatency
+			}
+			gate := &stageGate{cancel: ownCancel, start: start, reportReady: func() { ready <- readyResource{p.id(), role} }}
 			gates = append(gates, gate)
-			work.Go(func() {
-				var result Result
-				var err error
-				if role == "latency" {
-					stats, failure := r.measureLatency(ownCtx, stage.Name, len(stage.Directions) > 0, stage.Duration, gate)
-					err = failure
-					result = Result{Stage: stage.Name, Latency: stats, Samples: stats.Count, Elapsed: stats.Elapsed, Err: failure}
-				} else {
-					err = r.measureDirection(ownCtx, Direction(role), gate)
-				}
-				outcomes <- resourceOutcome{server: server, role: role, result: result, err: err, at: time.Now()}
-			})
-		}
-		for _, dir := range stage.Directions {
-			launch(string(dir), transferCtx, cancelTransfer)
-		}
-		if len(stage.Directions) == 0 || c.cfg.LoadedLatency {
-			launch("latency", latencyCtx, cancelLatency)
+			work.Go(func() { outcomes <- s.measure(own, stage, role, gate) })
 		}
 	}
+	measuring, normalEnd := false, false
+	sampling := &sampler{c: c, stage: stage, ctx: stageCtx, results: make(chan sampledBoundary, 1)}
 	defer func() {
+		sampling.stop()
 		cancel(stageErr)
 		work.Wait()
 		close(outcomes)
 		for outcome := range outcomes {
 			c.retainLatency(outcome, normalEnd)
 		}
-		if len(stage.Directions) > 0 && measuring {
+		if transfer && measuring {
 			c.finishTransferStage(stage, stageErr)
 		}
 	}()
+
 	seen := map[readyResource]bool{}
-	allReady := func() bool {
-		for _, server := range servers {
-			if server.participant.removed {
-				continue
-			}
-			id := server.participant.prepared.Server.ID
-			for _, dir := range stage.Directions {
-				if !seen[readyResource{id, string(dir)}] {
-					return false
-				}
-			}
-			if (len(stage.Directions) == 0 || c.cfg.LoadedLatency) && !server.latencyFailed && !seen[readyResource{id, "latency"}] {
-				return false
+	missing := func(s *stageServer) []string {
+		var out []string
+		for _, role := range roles {
+			if !s.removed && !(role == roleLatency && s.latencyFailed) && !seen[readyResource{s.id(), role}] {
+				out = append(out, role)
 			}
 		}
-		return true
+		return out
 	}
 	handle := func(outcome resourceOutcome) error {
 		c.retainLatency(outcome, false)
-		if outcome.err == nil || ctx.Err() != nil {
-			return nil
-		}
-		if outcome.server.participant.removed || outcome.role == "latency" && outcome.server.latencyFailed {
+		if outcome.err == nil || ctx.Err() != nil || outcome.server.removed || outcome.role == roleLatency && outcome.server.latencyFailed {
 			return nil
 		}
 		if !c.hasMeasured {
-			return fmt.Errorf("%s: %w; resolve the selection before starting", outcome.server.participant.prepared.Server.Name, outcome.err)
+			return fmt.Errorf("%s: %w; resolve the selection before starting", outcome.server.prepared.Server.Name, outcome.err)
 		}
 		c.failure(outcome.server, stage, outcome.role, outcome.err, outcome.at)
 		if len(c.ids()) == 0 {
-			if measuring && len(stage.Directions) > 0 {
+			if measuring && transfer {
 				c.aggregate.begin(stage.Name, nil, time.Since(c.started), "dropout")
 			}
 			return fmt.Errorf("%w: %w", errNoSurvivors, outcome.err)
 		}
 		return nil
 	}
-	prepareTimer := time.NewTimer(stageReadyTimeout)
-	defer prepareTimer.Stop()
-	for !allReady() {
+
+	phase := phasePrepare
+	timer := time.NewTimer(stageReadyTimeout)
+	defer timer.Stop()
+	var tick <-chan time.Time
+	for {
+		if phase == phasePrepare && !slices.ContainsFunc(servers, func(s *stageServer) bool { return len(missing(s)) > 0 }) {
+			phase = phaseWarmup
+			warmup := c.cfg.Warmup
+			for _, s := range servers {
+				if !s.removed {
+					warmup = max(warmup, adaptiveWarmup(c.cfg.Warmup, s.transport.idleRTT))
+				}
+			}
+			if warmup > 0 {
+				c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseWarmup})
+			}
+			timer.Reset(warmup)
+		}
 		select {
 		case <-ctx.Done():
 			return context.Cause(ctx)
-		case <-prepareTimer.C:
-			failure := fmt.Errorf("server resources were not ready within %v", stageReadyTimeout)
-			if !c.hasMeasured {
-				return failure
-			}
-			for _, server := range servers {
-				if server.participant.removed {
-					continue
-				}
-				id := server.participant.prepared.Server.ID
-				for _, dir := range stage.Directions {
-					if !seen[readyResource{id, string(dir)}] {
-						c.failure(server, stage, string(dir), failure, time.Now())
-						break
-					}
-				}
-				if !server.participant.removed && !server.latencyFailed && (len(stage.Directions) == 0 || c.cfg.LoadedLatency) && !seen[readyResource{id, "latency"}] {
-					c.failure(server, stage, "latency", failure, time.Now())
-				}
-			}
-			if len(c.ids()) == 0 {
-				return errNoSurvivors
-			}
 		case resource := <-ready:
 			seen[resource] = true
-		case outcome := <-outcomes:
-			if err := handle(outcome); err != nil {
-				return err
-			}
-		}
-	}
-	prepareTimer.Stop()
-	warmup := c.cfg.Warmup
-	for _, server := range servers {
-		if !server.participant.removed {
-			warmup = max(warmup, adaptiveWarmup(c.cfg.Warmup, server.participant.transport.idleRTT))
-		}
-	}
-	if warmup > 0 {
-		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: StageWarmup})
-		timer := time.NewTimer(warmup)
-		defer timer.Stop()
-	warm:
-		for {
-			select {
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			case <-timer.C:
-				break warm
-			case outcome := <-outcomes:
-				if err := handle(outcome); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	// All upload baselines must be available before the first measured interval opens.
-	initial := c.capture(stageCtx, stage, c.active())
-	if len(stage.Directions) > 0 && stage.Name != "download" {
-		for _, server := range servers {
-			if !server.participant.removed && initial.up[server.participant.prepared.Server.ID] == nil {
-				failure := errors.New("receiver checkpoint unavailable before measurement")
-				if !c.hasMeasured {
-					return fmt.Errorf("%s: %w", server.participant.prepared.Server.Name, failure)
-				}
-				c.failure(server, stage, "upload", failure, time.Now())
-			}
-		}
-		if len(c.ids()) == 0 {
-			return errNoSurvivors
-		}
-	}
-drain:
-	for {
-		select {
-		case outcome := <-outcomes:
-			if err := handle(outcome); err != nil {
-				return err
-			}
-		default:
-			break drain
-		}
-	}
-	// Checkpoint replies finish preparation. The client populations begin only
-	// now; receiver baselines keep their original request/response brackets.
-	started := time.Now()
-	initial.at = started.Sub(c.started)
-	for _, server := range c.active() {
-		initial.down[server.prepared.Server.ID] = server.transport.coordinated.download()
-	}
-	if len(stage.Directions) > 0 {
-		c.aggregate.begin(stage.Name, c.ids(), initial.at, "stage-start")
-		c.aggregate.observe(initial)
-	}
-	for _, gate := range gates {
-		gate.boundaryStart = started
-	}
-	measuring = true
-	c.hasMeasured = true
-	c.emit(Event{Kind: EventStage, At: started, Stage: stage.Name, Phase: StageMeasuring})
-	close(start)
-	end := time.NewTimer(max(0, time.Until(started.Add(stage.Duration))))
-	defer end.Stop()
-	if len(stage.Directions) == 0 {
-		for {
-			select {
-			case <-ctx.Done():
-				return context.Cause(ctx)
-			case <-end.C:
-				normalEnd = true
-				return nil
-			case outcome := <-outcomes:
-				if err := handle(outcome); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	sampled := make(chan sampledBoundary, 1)
-	epoch := 0
-	pending := false
-	ending := false
-	var sampleCancel context.CancelFunc
-	var samples sync.WaitGroup
-	defer func() {
-		if sampleCancel != nil {
-			sampleCancel()
-		}
-		samples.Wait()
-	}()
-	capture := func(final bool) {
-		if pending {
-			return
-		}
-		pending = true
-		ownCtx, ownCancel := context.WithCancel(stageCtx)
-		sampleCancel = ownCancel
-		participants := c.active()
-		ownEpoch := epoch
-		samples.Go(func() {
-			defer ownCancel()
-			sampled <- sampledBoundary{c.capture(ownCtx, stage, participants), ownEpoch, final}
-		})
-	}
-	lastBytes := map[string]byteLedger{}
-	lastMovement := map[string]map[Direction]time.Time{}
-	for _, server := range c.active() {
-		id := server.prepared.Server.ID
-		bytes := byteLedger{down: initial.down[id]}
-		if initial.up[id] != nil {
-			bytes.up = initial.up[id].Bytes
-		}
-		lastBytes[id] = bytes
-		lastMovement[id] = map[Direction]time.Time{Down: started, Up: started}
-	}
-	reset := func() {
-		epoch++
-		if sampleCancel != nil {
-			sampleCancel()
-		}
-		c.aggregate.begin(stage.Name, c.ids(), time.Since(c.started), "dropout")
-		c.emitUnavailable(stage)
-		if !pending {
-			capture(ending)
-		}
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return context.Cause(ctx)
 		case outcome := <-outcomes:
 			before := len(c.ids())
 			if err := handle(outcome); err != nil {
 				return err
 			}
-			if len(c.ids()) != before {
-				reset()
+			if phase == phaseMeasure && transfer && len(c.ids()) != before {
+				sampling.reset()
 			}
-		case <-end.C:
-			ending = true
-			capture(true)
-		case <-ticker.C:
-			if !ending {
-				capture(false)
+		case <-tick:
+			if !sampling.ending {
+				sampling.capture(false)
 			}
-		case sample := <-sampled:
-			pending = false
-			if sample.epoch != epoch {
-				capture(ending)
-				continue
+		case sample := <-sampling.results:
+			done, err := sampling.observe(sample, servers)
+			if done {
+				normalEnd = err == nil
+				return err
 			}
-			window := c.aggregate.observe(sample.boundary)
-			if window != nil {
-				c.emitRates(stage, *window)
-			} else {
-				c.emitUnavailable(stage)
-			}
-			removed := false
-			for _, server := range servers {
-				if server.participant.removed {
-					continue
+		case now := <-timer.C:
+			switch phase {
+			case phasePrepare:
+				failure := fmt.Errorf("server resources were not ready within %v", stageReadyTimeout)
+				if !c.hasMeasured {
+					return failure
 				}
-				id := server.participant.prepared.Server.ID
-				bytes := byteLedger{down: sample.boundary.down[id]}
-				if snapshot := sample.boundary.up[id]; snapshot != nil {
-					bytes.up = snapshot.Bytes
-				} else {
-					bytes.up = sample.boundary.observedUp[id].maximum
-				}
-				for _, dir := range stage.Directions {
-					advanced := dir == Down && bytes.down > lastBytes[id].down || dir == Up && bytes.up > lastBytes[id].up
-					if advanced {
-						lastMovement[id][dir] = time.Now()
-					} else if !ending && server.participant.transport.targetTransport() == wire.TransportFetchStream && time.Since(lastMovement[id][dir]) >= busRedialWindow {
-						c.failure(server, stage, string(dir), fmt.Errorf("%s stopped delivering bytes for %v", dir, busRedialWindow), time.Now())
-						removed = true
-						break
+				for _, s := range servers {
+					for _, role := range missing(s) {
+						c.failure(s, stage, role, failure, now)
 					}
 				}
-				lastBytes[id] = bytes
-			}
-			if len(c.ids()) == 0 {
-				c.aggregate.begin(stage.Name, nil, time.Since(c.started), "dropout")
-				return errNoSurvivors
-			}
-			if removed {
-				reset()
-				continue
-			}
-			if sample.final {
-				normalEnd = true
-				return nil
-			}
-			if ending {
-				capture(true)
+				if len(c.ids()) == 0 {
+					return errNoSurvivors
+				}
+			case phaseWarmup:
+				started, initial, err := c.openWindow(stageCtx, stage, servers, outcomes, handle)
+				if err != nil {
+					return err
+				}
+				for _, gate := range gates {
+					gate.boundaryStart = started
+				}
+				phase, measuring, c.hasMeasured = phaseMeasure, true, true
+				c.emit(Event{Kind: EventStage, At: started, Stage: stage.Name, Phase: PhaseMeasuring})
+				close(start)
+				timer.Reset(time.Until(started.Add(stage.Duration)))
+				if transfer {
+					ticker := time.NewTicker(250 * time.Millisecond)
+					defer ticker.Stop()
+					tick = ticker.C
+					sampling.begin(started, initial)
+				}
+			case phaseMeasure:
+				if !transfer {
+					normalEnd = true
+					return nil
+				}
+				sampling.ending = true
+				sampling.capture(true)
 			}
 		}
 	}
 }
 
-func (c *nativeCoordinator) capture(ctx context.Context, stage StagePlan, servers []*nativeParticipant) measurementBoundary {
-	boundary := measurementBoundary{at: time.Since(c.started), down: map[string]uint64{}, up: map[string]*ReceiverSnapshot{}, observedUp: map[string]uploadLedger{}}
-	for _, server := range servers {
-		boundary.down[server.prepared.Server.ID] = server.transport.coordinated.download()
-		id, bytes, _ := server.transport.coordinated.upload()
-		if id != "" {
-			boundary.observedUp[server.prepared.Server.ID] = uploadLedger{id, bytes}
+// openWindow captures the baseline for every population, then starts the measured window. Receiver
+// checkpoints finish preparation; the client populations begin only once they reply.
+func (c *coordinator) openWindow(ctx context.Context, stage StagePlan, servers []*stageServer, outcomes <-chan resourceOutcome, handle func(resourceOutcome) error) (time.Time, measurementBoundary, error) {
+	initial := c.capture(ctx, stage, c.active())
+	if stage.Name == StageUpload || stage.Name == StageBidirectional {
+		for _, s := range servers {
+			if !s.removed && initial.up[s.id()] == nil {
+				failure := errors.New("receiver checkpoint unavailable before measurement")
+				if !c.hasMeasured {
+					return time.Time{}, initial, fmt.Errorf("%s: %w", s.prepared.Server.Name, failure)
+				}
+				c.failure(s, stage, string(Up), failure, time.Now())
+			}
+		}
+		if len(c.ids()) == 0 {
+			return time.Time{}, initial, errNoSurvivors
 		}
 	}
-	if stage.Name != "upload" && stage.Name != "bidirectional" {
+	// A failure reported while the baselines were taken belongs before the window.
+	for drained := false; !drained; {
+		select {
+		case outcome := <-outcomes:
+			if err := handle(outcome); err != nil {
+				return time.Time{}, initial, err
+			}
+		default:
+			drained = true
+		}
+	}
+	started := time.Now()
+	initial.at = started.Sub(c.started)
+	for _, p := range c.active() {
+		initial.down[p.id()] = p.transport.coordinated.download()
+	}
+	if len(stage.Directions) > 0 {
+		c.aggregate.begin(stage.Name, c.ids(), initial.at, "stage-start")
+		c.aggregate.observe(initial)
+	}
+	return started, initial, nil
+}
+
+// sampler owns a transfer stage's periodic boundaries. One capture is in flight at a time; a membership
+// change starts a new epoch, so a boundary taken across it is discarded and retaken.
+type sampler struct {
+	c            *coordinator
+	stage        StagePlan
+	ctx          context.Context
+	results      chan sampledBoundary
+	epoch        int
+	inFlight     bool
+	ending       bool
+	cancel       context.CancelFunc
+	work         sync.WaitGroup
+	lastBytes    map[string]byteLedger
+	lastMovement map[string]map[Direction]time.Time
+}
+
+func (s *sampler) begin(started time.Time, initial measurementBoundary) {
+	s.lastBytes, s.lastMovement = map[string]byteLedger{}, map[string]map[Direction]time.Time{}
+	for _, p := range s.c.active() {
+		bytes := byteLedger{down: initial.down[p.id()]}
+		if snapshot := initial.up[p.id()]; snapshot != nil {
+			bytes.up = snapshot.Bytes
+		}
+		s.lastBytes[p.id()] = bytes
+		s.lastMovement[p.id()] = map[Direction]time.Time{Down: started, Up: started}
+	}
+}
+
+func (s *sampler) capture(final bool) {
+	if s.inFlight {
+		return
+	}
+	s.inFlight = true
+	ctx, cancel := context.WithCancel(s.ctx)
+	s.cancel = cancel
+	participants, epoch := s.c.active(), s.epoch
+	s.work.Go(func() {
+		defer cancel()
+		s.results <- sampledBoundary{s.c.capture(ctx, s.stage, participants), epoch, final}
+	})
+}
+
+// reset follows a membership change: the survivors start a new interval and their rate is unknown until it has two boundaries.
+func (s *sampler) reset() {
+	s.epoch++
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.c.aggregate.begin(s.stage.Name, s.c.ids(), time.Since(s.c.started), "dropout")
+	s.c.emitUnavailable(s.stage)
+	s.capture(s.ending)
+}
+
+func (s *sampler) stop() {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.work.Wait()
+}
+
+// observe folds one boundary into the aggregate and applies the fetch-stream liveness rule.
+// It reports done when the stage ends, with the error that ends it.
+func (s *sampler) observe(sample sampledBoundary, servers []*stageServer) (bool, error) {
+	c := s.c
+	s.inFlight = false
+	if sample.epoch != s.epoch {
+		s.capture(s.ending)
+		return false, nil
+	}
+	if window := c.aggregate.observe(sample.boundary); window != nil {
+		c.emitRates(s.stage, *window)
+	} else {
+		c.emitUnavailable(s.stage)
+	}
+	removed := false
+	for _, server := range servers {
+		if server.removed {
+			continue
+		}
+		id := server.id()
+		bytes := byteLedger{down: sample.boundary.down[id]}
+		if snapshot := sample.boundary.up[id]; snapshot != nil {
+			bytes.up = snapshot.Bytes
+		} else {
+			bytes.up = sample.boundary.observedUp[id].maximum
+		}
+		for _, dir := range s.stage.Directions {
+			if dir == Down && bytes.down > s.lastBytes[id].down || dir == Up && bytes.up > s.lastBytes[id].up {
+				s.lastMovement[id][dir] = time.Now()
+			} else if !s.ending && server.transport.targetTransport() == wire.TransportFetchStream && time.Since(s.lastMovement[id][dir]) >= busRedialWindow {
+				c.failure(server, s.stage, string(dir), fmt.Errorf("%s stopped delivering bytes for %v", dir, busRedialWindow), time.Now())
+				removed = true
+				break
+			}
+		}
+		s.lastBytes[id] = bytes
+	}
+	switch {
+	case len(c.ids()) == 0:
+		c.aggregate.begin(s.stage.Name, nil, time.Since(c.started), "dropout")
+		return true, errNoSurvivors
+	case removed:
+		s.reset()
+	case sample.final:
+		return true, nil
+	case s.ending:
+		s.capture(true)
+	}
+	return false, nil
+}
+
+// capture reads every participant's counters, then its receiver checkpoint. A checkpoint that keeps failing
+// for the capture deadline leaves that receiver without a boundary.
+func (c *coordinator) capture(ctx context.Context, stage StagePlan, servers []*participant) measurementBoundary {
+	boundary := measurementBoundary{at: time.Since(c.started), down: map[string]uint64{}, up: map[string]*ReceiverSnapshot{}, observedUp: map[string]uploadLedger{}}
+	for _, server := range servers {
+		boundary.down[server.id()] = server.transport.coordinated.download()
+		if id, bytes, _ := server.transport.coordinated.upload(); id != "" {
+			boundary.observedUp[server.id()] = uploadLedger{id, bytes}
+		}
+	}
+	if stage.Name != StageUpload && stage.Name != StageBidirectional {
 		return boundary
 	}
 	ctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
@@ -575,54 +567,48 @@ func (c *nativeCoordinator) capture(ctx context.Context, stage StagePlan, server
 	snapshots := make([]*ReceiverSnapshot, len(servers))
 	var work sync.WaitGroup
 	for i, server := range servers {
-		work.Go(func() { snapshots[i], _ = server.transport.receiverCheckpoint(ctx, c.started) })
+		work.Go(func() { snapshots[i], _ = server.transport.receiverCheckpoint(ctx) })
 	}
 	work.Wait()
 	for i, server := range servers {
-		boundary.up[server.prepared.Server.ID] = snapshots[i]
+		boundary.up[server.id()] = snapshots[i]
 	}
 	return boundary
 }
-func (c *nativeCoordinator) emitRates(stage StagePlan, window AggregateWindow) {
+
+func (c *coordinator) emitRates(stage StagePlan, window AggregateWindow) {
 	for _, dir := range stage.Directions {
 		rate := window.DownBytesPerSec
 		if dir == Up {
 			rate = window.UpBytesPerSec
 		}
-		if rate == nil {
-			continue
-		}
-		var total uint64
-		streams := 0
-		for _, bytes := range c.aggregate.stageTotals[stage.Name] {
-			if dir == Down {
-				total += bytes.down
-			} else {
-				total += bytes.up
+		if rate != nil {
+			var total uint64
+			for _, bytes := range c.aggregate.stageTotals[stage.Name] {
+				total += bytes.of(dir)
 			}
+			c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{BytesPerSec: *rate, TotalBytes: total}})
 		}
-		for _, server := range c.active() {
-			streams += server.transport.streams.of(dir)
-		}
-		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{Stage: stage.Name, Direction: dir, BytesPerSec: *rate, TotalBytes: total, StreamCount: streams, ServerAuth: dir == Up}})
 	}
 }
-func (c *nativeCoordinator) finishTransferStage(stage StagePlan, stageErr error) {
+
+func (c *coordinator) emitUnavailable(stage StagePlan) {
+	for _, dir := range stage.Directions {
+		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{Unavailable: true}})
+	}
+}
+
+// finishTransferStage publishes the combined result and gives each server its component of the latest window.
+func (c *coordinator) finishTransferStage(stage StagePlan, stageErr error) {
 	for _, dir := range stage.Directions {
 		result := c.aggregate.result(stage.Name, dir)
 		result.Err = stageErr
 		c.emit(Event{Kind: EventResult, At: time.Now(), Stage: stage.Name, Direction: dir, Result: new(result)})
 		for _, server := range c.servers {
-			id := server.prepared.Server.ID
-			own := Result{Stage: stage.Name, Direction: dir, ServerAuth: dir == Up, Unavailable: true}
-			total := c.aggregate.stageTotals[stage.Name][id]
-			if dir == Down {
-				own.TotalBytes = total.down
-			} else {
-				own.TotalBytes = total.up
-			}
+			own := Result{Stage: stage.Name, Direction: dir, Unavailable: true}
+			total := c.aggregate.stageTotals[stage.Name][server.id()]
+			own.TotalBytes = total.of(dir)
 			for _, interval := range slices.Backward(c.aggregate.intervals) {
-
 				if interval.Stage != stage.Name || interval.Window == nil {
 					continue
 				}
@@ -630,17 +616,9 @@ func (c *nativeCoordinator) finishTransferStage(stage StagePlan, stageErr error)
 				if dir == Up {
 					components = interval.Window.Up
 				}
-				found := false
-				for _, component := range components {
-					if component.ServerID == id {
-						own.MeanBps = component.BytesPerSec
-						own.Elapsed = component.Duration
-						own.Unavailable = component.Duration < minimumSurvivorEvidence
-						found = true
-						break
-					}
-				}
-				if found {
+				if i := slices.IndexFunc(components, func(w ComponentWindow) bool { return w.ServerID == server.id() }); i >= 0 {
+					own.MeanBps, own.Elapsed = components[i].BytesPerSec, components[i].Duration
+					own.Unavailable = components[i].Duration < minimumSurvivorEvidence
 					break
 				}
 			}
@@ -649,11 +627,5 @@ func (c *nativeCoordinator) finishTransferStage(stage StagePlan, stageErr error)
 			}
 			server.results = append(server.results, own)
 		}
-	}
-}
-
-func (c *nativeCoordinator) emitUnavailable(stage StagePlan) {
-	for _, dir := range stage.Directions {
-		c.emit(Event{Kind: EventThroughput, At: time.Now(), Stage: stage.Name, Direction: dir, Throughput: ThroughputSample{Stage: stage.Name, Direction: dir, Unavailable: true}})
 	}
 }

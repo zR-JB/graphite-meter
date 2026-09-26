@@ -5,30 +5,24 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func newCountingDownloadServer(size int) *httptest.Server {
-	var reqs atomic.Int32
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if reqs.Add(1) == 1 {
+func TestDownloadLaneCountsExactBytes(t *testing.T) {
+	t.Parallel()
+	const size = 256 * 1024
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
 			_, _ = w.Write(make([]byte, size))
 			return
 		}
 		<-r.Context().Done()
 	}))
-}
-
-func TestDownloadLaneCountsExactBytes(t *testing.T) {
-	const size = 256 * 1024
-	srv := newCountingDownloadServer(size)
 	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: size}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
+	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -38,7 +32,6 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 		_ = r.downloadLane(ctx, srv.URL, 0, &total, func() {})
 		close(done)
 	}()
-
 	deadline := time.After(2 * time.Second)
 	for total.Load() != size {
 		select {
@@ -47,7 +40,6 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
-
 	cancel()
 	select {
 	case <-done:
@@ -59,91 +51,42 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	}
 }
 
-func newBytesEchoDownloadServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n, err := strconv.ParseInt(r.URL.Query().Get("bytes"), 10, 64)
-		if err != nil || n <= 0 {
-			n = 64 * 1024
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = w.Write(make([]byte, n))
-	}))
-}
-
 func TestDownloadLaneReturnsAdmissionRejection(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
-	r := &runner{cfg: Config{DownloadBytesPerStream: 1024}, http: srv.Client()}
+	r := &runner{http: srv.Client()}
 	var total atomic.Uint64
 	if err := r.downloadLane(t.Context(), srv.URL, 0, &total, func() {}); err == nil {
 		t.Fatal("HTTP 429 did not fail the download lane")
 	}
 }
 
-func TestMeasureDownloadContextCancelStopsEarly(t *testing.T) {
-	srv := newBytesEchoDownloadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	time.AfterFunc(150*time.Millisecond, cancel)
-	defer cancel()
-
-	done := make(chan struct{})
-	begin := time.Now()
-	go func() {
-		// The window is long (5s), so a hang trips the test's own deadline well under the stage's configured window.
-		_, _ = r.testTransferResult(ctx, "download", 5*time.Second)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("measureDownload did not stop after context cancellation")
-	}
-	if elapsed := time.Since(begin); elapsed > 1500*time.Millisecond {
-		t.Errorf("measureDownload took %v to stop, want well under the 5s measurement window", elapsed)
-	}
-}
-
-func newAbruptCloseDownloadServer(partial int, requests *atomic.Int64) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests != nil {
-			requests.Add(1)
-		}
-		w.Header().Set("Content-Type", "application/octet-stream")
+func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
+	t.Parallel()
+	const partial = 64 * 1024
+	const window = 1500 * time.Millisecond
+	var requests atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(make([]byte, partial))
 		w.(http.Flusher).Flush()
 		panic(http.ErrAbortHandler)
 	}))
-}
-
-func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
-	const partial = 64 * 1024
-	const window = 1500 * time.Millisecond
-	var requests atomic.Int64
-	srv := newAbruptCloseDownloadServer(partial, &requests)
 	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: partial * 4}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
+	r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 1}, http: srv.Client()}
 
 	ctx, cancel := context.WithTimeout(t.Context(), window)
 	defer cancel()
 	var total atomic.Uint64
 	done := make(chan struct{})
-	start := time.Now()
 	go func() {
 		_ = r.downloadLane(ctx, srv.URL, 0, &total, func() {})
 		close(done)
 	}()
-
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
@@ -153,52 +96,50 @@ func TestDownloadLaneReopensAfterAbruptConnectionDropAtAPace(t *testing.T) {
 		t.Errorf("total = %d, want at least %d (the lane must reopen after the drop)", got, 2*partial)
 	}
 	if paced := int64(window/wtRedialBackoff) + 2; requests.Load() > paced {
-		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced",
-			requests.Load(), time.Since(start), paced)
+		t.Errorf("issued %d requests in %v, want at most %d: the reopen is not paced", requests.Load(), window, paced)
 	}
 }
 
-func newSilentDownloadServer() *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.WriteHeader(http.StatusOK)
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-}
-
-func TestMeasureDownloadCancelledEmptyWindowPreservesCancellation(t *testing.T) {
-	srv := newSilentDownloadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	time.AfterFunc(200*time.Millisecond, cancel)
-
-	res, err := r.testTransferResult(ctx, "download", 5*time.Second)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled stage returned %v, want context.Canceled", err)
-	}
-	if res.TotalBytes != 0 {
-		t.Errorf("TotalBytes = %d, want 0 from a server that wrote nothing", res.TotalBytes)
-	}
-}
-
-func TestMeasureDownloadReturnsImmediatelyWhenAlreadyCancelled(t *testing.T) {
-	srv := newBytesEchoDownloadServer()
-	defer srv.Close()
-
-	cfg := Config{BaseURL: srv.URL, TransferStreams: TransferStreamPolicy{Forced: 1}, DownloadBytesPerStream: 64 * 1024}.normalized()
-	r := &runner{cfg: cfg, streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
-
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-
-	_, err := r.testTransferResult(ctx, "download", time.Second)
-	if err == nil {
-		t.Fatal("want an error when the context is already cancelled")
+// Cancelling a download stage stops it well inside its window and reports the cancellation, not a result.
+func TestDownloadStageCancellation(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name        string
+		silent      bool
+		cancelAfter time.Duration // Negative cancels before the stage starts.
+	}{
+		{"streaming", false, 150 * time.Millisecond},
+		{"silent server", true, 150 * time.Millisecond},
+		{"already cancelled", false, -1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				if c.silent {
+					<-r.Context().Done()
+					return
+				}
+				_, _ = w.Write(make([]byte, 64*1024))
+			}))
+			defer srv.Close()
+			r := &runner{cfg: Config{BaseURL: srv.URL}.normalized(), streams: streamCounts{down: 1, up: 1}, http: srv.Client(), emit: func(Event) {}}
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if c.cancelAfter < 0 {
+				cancel()
+			} else {
+				time.AfterFunc(c.cancelAfter, cancel)
+			}
+			started := time.Now()
+			result, err := r.testTransferResult(ctx, StageDownload, 5*time.Second)
+			if !errors.Is(err, context.Canceled) || time.Since(started) > 1500*time.Millisecond {
+				t.Fatalf("stage returned %v after %v, want a prompt context.Canceled", err, time.Since(started))
+			}
+			if c.silent && result.TotalBytes != 0 {
+				t.Errorf("TotalBytes = %d, want 0 from a server that wrote nothing", result.TotalBytes)
+			}
+		})
 	}
 }

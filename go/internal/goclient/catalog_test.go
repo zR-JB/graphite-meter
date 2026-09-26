@@ -120,18 +120,18 @@ func TestNativeFourParticipantsAndCancellation(t *testing.T) {
 	defer cancel()
 	var details *RunDetails
 	doneCount := 0
-	err = RunSelection(ctx, cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Phase == StageMeasuring {
+	err = runSelection(ctx, nil, cfg, prepared, func(e Event) {
+		if e.Kind == EventStage && e.Phase == PhaseMeasuring {
 			time.AfterFunc(time.Second, cancel)
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 		if e.Kind == EventDone {
 			doneCount++
 		}
 	})
-	if !errors.Is(err, context.Canceled) || doneCount != 1 || details == nil || len(details.Servers) != 4 || details.Outcome != "incomplete" {
+	if !errors.Is(err, context.Canceled) || doneCount != 1 || details == nil || len(details.Servers) != 4 || details.Outcome != OutcomeStopped {
 		t.Fatalf("cancelled result: %v %+v done=%d", err, details, doneCount)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -153,11 +153,11 @@ func TestNativeLaterCheckpointFailureKeepsSurvivor(t *testing.T) {
 	prepared := prepareFixtureRun(t, cfg, a, b)
 	var details *RunDetails
 	var upload Result
-	err := RunSelection(t.Context(), cfg, prepared, func(e Event) {
-		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == StageFinished {
+	err := runSelection(t.Context(), nil, cfg, prepared, func(e Event) {
+		if e.Kind == EventStage && e.Stage == "latency" && e.Phase == PhaseFinished {
 			a.checkpointFailed.Store(true)
 		}
-		if e.Kind == EventServers {
+		if e.Servers != nil {
 			details = e.Servers
 		}
 		if e.Kind == EventResult && e.ServerID == "" && e.Direction == Up {

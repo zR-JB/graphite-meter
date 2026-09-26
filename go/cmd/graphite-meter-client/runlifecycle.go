@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type stageState int
@@ -35,7 +36,7 @@ type stageProgress struct {
 func plannedStages(cfg goclient.Config) []stageProgress {
 	var stages []stageProgress
 	for _, stage := range cfg.Plan() {
-		stages = append(stages, stageProgress{name: stage.Name, duration: stage.Duration})
+		stages = append(stages, stageProgress{name: string(stage.Name), duration: stage.Duration})
 	}
 	return stages
 }
@@ -53,7 +54,7 @@ func prepareConnection(preparation *goclient.Preparation, seq int) tea.Cmd {
 
 func beginAuthorization(preparation *goclient.Preparation, seq int, authURL string, serverID string) tea.Cmd {
 	return func() tea.Msg {
-		pending, err := preparation.BeginServerAuthorization(serverID, authURL)
+		pending, err := preparation.BeginAuthorization(serverID, authURL)
 		return authChallengeMsg{seq: seq, pending: pending, err: err}
 	}
 }
@@ -237,7 +238,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	currentOrigin, err := goclient.CanonicalServerOrigin(expectedOrigin)
+	currentOrigin, err := wire.CanonicalOrigin(expectedOrigin)
 	if err != nil || !strings.EqualFold(currentOrigin, msg.origin) {
 		m.notice = "Server changed while approval was pending. Authorization was discarded."
 		return m.reprepare(nil)
@@ -247,10 +248,7 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 		m.prepareError = err.Error()
 		return m, nil
 	}
-	if base, err := goclient.CanonicalServerOrigin(m.cfg.BaseURL); err == nil && base == msg.origin {
-		m.cfg.AuthToken = msg.token
-		m.cfg.AuthOrigin = msg.origin
-	}
+	m.approved = true
 	m.notice = "Client approved. Verifying authenticated transports…"
 	return m.reprepare(nil)
 }
@@ -262,7 +260,7 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	m.now = time.Now()
 	for _, event := range msg.events {
 		if event.Kind == goclient.EventDone {
-			return m.finishRun(event.Err)
+			return m.finishRun(event)
 		}
 		m.apply(event)
 	}
@@ -272,7 +270,8 @@ func (m model) handleEvents(msg eventsMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
+func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
+	err := done.Err
 	m.controller.CancelRun()
 	if _, ok := errors.AsType[*goclient.AuthRequiredError](err); ok {
 		m.complete = true
@@ -284,17 +283,10 @@ func (m model) finishRun(err error) (tea.Model, tea.Cmd) {
 		m.notice = "Authorization expired. Checking the selected servers…"
 		return m.reprepare(nil)
 	}
-	m.status = "complete"
-	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			m.status = "canceled"
-		} else {
-			m.err = err
-			m.status = "error"
-		}
-	}
-	if m.runDetails != nil && m.runDetails.Outcome == "incomplete" {
-		m.status = "incomplete"
+	m.adoptDetails(done.Servers)
+	m.status = string(done.Outcome())
+	if err != nil && !errors.Is(err, context.Canceled) {
+		m.err = err
 	}
 	m.stopStages()
 	m.complete = true
@@ -311,7 +303,7 @@ func (m model) startRun() (model, tea.Cmd) {
 		return m, nil
 	}
 	m.invalidatePreparation()
-	events := m.controller.StartSelection(m.cfg, m.preparedRun)
+	events := m.controller.Start(m.cfg, m.preparedRun)
 
 	m.mode = modeRun
 	m.runSeq++
@@ -348,33 +340,18 @@ func (m model) startRun() (model, tea.Cmd) {
 func (m *model) apply(e goclient.Event) {
 	switch e.Kind {
 	case goclient.EventServers:
-		m.runDetails = e.Servers
-		if m.latencyFocus == "" && e.Servers != nil {
-			m.latencyFocus = e.Servers.LatencyFocus
-		}
+		m.adoptDetails(e.Servers)
 		return
 	case goclient.EventServerFailure:
 		if e.Failure != nil {
 			m.notice = fmt.Sprintf("%s: %s", e.ServerID, e.Failure.Message)
 		}
 		return
-	case goclient.EventPreflight:
-		if e.Preflight != nil {
-			m.target = e.ThroughputTarget
-			if m.target == "" {
-				m.target = e.Message
-			}
-			m.latencyTarget = e.LatencyTarget
-			m.throughputProtocol = e.ThroughputProtocol
-			m.throughputTransport = e.ThroughputTransport
-			m.latencyTransport = e.LatencyTransport
-			m.latencyProtocol = e.LatencyProtocol
-			m.server = fmt.Sprintf("%s %s [%s]", e.Preflight.Server.Name, e.Preflight.Server.Location, e.Message)
-			m.status = "connected"
-		}
 	case goclient.EventStage:
-		m.stage = e.Stage
-		m.status = string(e.Phase)
+		m.stage = string(e.Stage)
+		if phases := []string{"prepare", "warmup", "measure", "finished"}; int(e.Phase) < len(phases) {
+			m.status = phases[e.Phase]
+		}
 		m.enterStage(e)
 	case goclient.EventThroughput:
 		m.rates[e.Direction] = e.Throughput
@@ -405,15 +382,35 @@ func (m *model) apply(e goclient.Event) {
 			m.latency = e.Latency
 		}
 	case goclient.EventResult:
-		if e.ServerID != "" && e.Result != nil {
-			if m.serverResults == nil {
-				m.serverResults = map[string][]goclient.Result{}
-			}
-			m.serverResults[e.ServerID] = append(m.serverResults[e.ServerID], *e.Result)
-			return
-		}
 		if e.Result != nil {
 			m.results = append(m.results, *e.Result)
+		}
+	}
+}
+
+// adoptDetails takes per-server paths and latency populations from the run's details.
+func (m *model) adoptDetails(details *goclient.RunDetails) {
+	if details == nil {
+		return
+	}
+	m.runDetails = details
+	if m.latencyFocus == "" {
+		m.latencyFocus = details.LatencyFocus
+	}
+	m.serverResults = map[string][]goclient.Result{}
+	for _, server := range details.Servers {
+		for _, result := range server.Results {
+			if result.Direction == "" {
+				m.serverResults[server.Server.ID] = append(m.serverResults[server.Server.ID], result)
+			}
+		}
+	}
+	if len(details.Servers) > 0 {
+		first := details.Servers[0]
+		m.server = strings.TrimSpace(first.Server.Name + " " + first.Server.Location)
+		m.target, m.throughputProtocol, m.throughputTransport = first.Throughput.Origin, first.Throughput.Protocol, first.Throughput.Transport
+		if latency := first.LatencyTarget; latency != nil {
+			m.latencyTarget, m.latencyProtocol, m.latencyTransport = latency.Origin, latency.Protocol, latency.Transport
 		}
 	}
 }
@@ -421,19 +418,19 @@ func (m *model) apply(e goclient.Event) {
 func (m *model) enterStage(e goclient.Event) {
 	var state stageState
 	switch e.Phase {
-	case goclient.StagePreparing:
+	case goclient.PhasePreparing:
 		state = stagePreparing
-	case goclient.StageWarmup:
+	case goclient.PhaseWarmup:
 		state = stageWarmup
-	case goclient.StageMeasuring:
+	case goclient.PhaseMeasuring:
 		state = stageMeasuring
-	case goclient.StageFinished:
+	case goclient.PhaseFinished:
 		state = stageDone
 	default:
 		return
 	}
 	for i := range m.stages {
-		if m.stages[i].name == e.Stage {
+		if m.stages[i].name == string(e.Stage) {
 			m.stages[i].state, m.stages[i].since = state, e.At
 		}
 	}

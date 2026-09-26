@@ -58,8 +58,8 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 		if err != nil {
 			return err
 		}
+		// Each session replacement accepts a fresh progress stream; that is WebTransport's only feed recovery.
 		defer host.close()
-		progress.work.Go(func() { r.reattachUploadProgress(progress, progressURL) })
 		lane = func(laneCtx context.Context, _ int, ready func()) error {
 			return runWTLane(laneCtx, host, func(lctx context.Context, sess *wtSession) (bool, error) {
 				return r.uploadLaneWT(lctx, sess, bodyBlock, ready)
@@ -155,13 +155,13 @@ func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []by
 }
 
 func (r *runner) newKnownLengthUpload(ctx context.Context, target string, block []byte) (*http.Request, error) {
-	body := &cyclingBody{ctx: ctx, block: block, limit: r.cfg.UploadBytesPerStream}
+	body := &cyclingBody{ctx: ctx, block: block, limit: transferBytesPerStream}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, body)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	req.ContentLength = r.cfg.UploadBytesPerStream
+	req.ContentLength = transferBytesPerStream
 	return req, nil
 }
 

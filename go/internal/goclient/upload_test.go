@@ -170,7 +170,7 @@ func TestUploadLaneReturnsAdmissionRejection(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	defer srv.Close()
-	r := &runner{cfg: Config{BaseURL: srv.URL, UploadBytesPerStream: 1024}, http: srv.Client()}
+	r := &runner{cfg: Config{BaseURL: srv.URL}, http: srv.Client()}
 	if err := r.uploadLane(t.Context(), "test-id", 0, make([]byte, 1024), func() {}); err == nil {
 		t.Fatal("HTTP 503 did not fail the upload lane")
 	}
@@ -299,9 +299,6 @@ func TestMeasureUploadReportsServerAuthoritativeTotal(t *testing.T) {
 	res, err := r.testTransferResult(ctx, "upload", 300*time.Millisecond)
 	if err != nil {
 		t.Fatalf("measureUpload: %v", err)
-	}
-	if !res.ServerAuth {
-		t.Error("upload Result.ServerAuth = false, want true")
 	}
 	if res.TotalBytes == 0 {
 		t.Error("reported TotalBytes = 0, want > 0")

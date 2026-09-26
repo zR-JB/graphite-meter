@@ -2,11 +2,13 @@ package goclient
 
 import (
 	"context"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
+	"errors"
 	"maps"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
@@ -17,13 +19,13 @@ const (
 // AuthorizationTimeout bounds approval polling and its displayed countdown.
 const AuthorizationTimeout = 2 * time.Minute
 
-// Controller owns preparation, approval polling, and measurement lifetimes for one client.
+// Controller owns preparation, approval polling, grants, and measurement lifetimes for one client.
 // UI sequence guards still decide whether an already queued reply belongs to the current view.
 type Controller struct {
+	mu          sync.Mutex
 	catalog     *wire.ServerCatalog
 	selection   []wire.ServerEntry
-	grants      map[string]string
-	mu          sync.Mutex
+	grants      map[string]string // Bearer grants by their issuer's canonical origin; the only copy.
 	ctx         context.Context
 	cancel      context.CancelFunc
 	preparation context.CancelFunc
@@ -48,6 +50,7 @@ type Preparation struct {
 	cfg   Config
 }
 
+// NewPreparation cancels the previous preparation, including its approval polling.
 func (c *Controller) NewPreparation(cfg Config) *Preparation {
 	cfg.ServerIDs = slices.Clone(cfg.ServerIDs)
 	c.mu.Lock()
@@ -82,20 +85,56 @@ func (p *Preparation) begin(timeout time.Duration) (context.Context, func(), err
 	}, nil
 }
 
-func (p *Preparation) Prepare() (*PreparedConnection, error) {
+// PrepareRun loads the catalogue and checks every selected server's paths with the controller's grants.
+func (p *Preparation) PrepareRun() (*PreparedRun, error) {
 	ctx, done, err := p.begin(preparationTimeout)
 	if err != nil {
 		return nil, err
 	}
 	defer done()
-	return Prepare(ctx, p.cfg)
+	previous, grants := p.owner.snapshot()
+	prepared, err := prepareRun(ctx, p.cfg, previous, grants)
+	p.owner.mu.Lock()
+	defer p.owner.mu.Unlock()
+	if prepared != nil && p.ctx.Err() == nil {
+		p.owner.catalog = new(prepared.Catalog)
+		if prepared.Ready() {
+			p.owner.selection = nil
+			for _, server := range prepared.Servers {
+				p.owner.selection = append(p.owner.selection, server.Server)
+			}
+		}
+	}
+	return prepared, err
 }
 
-func (p *Preparation) BeginAuthorization(authURL string) (*PendingAuthorization, error) {
+func (c *Controller) snapshot() ([]wire.ServerEntry, map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.selection), maps.Clone(c.grants)
+}
+
+// BeginAuthorization starts approval with the server that issued the challenge: the catalogue origin
+// when serverID is empty, otherwise that catalogue entry.
+func (p *Preparation) BeginAuthorization(serverID, authURL string) (*PendingAuthorization, error) {
 	if err := p.ctx.Err(); err != nil {
 		return nil, err
 	}
-	return BeginAuthorization(p.cfg, authURL)
+	cfg := p.cfg
+	p.owner.mu.Lock()
+	found := serverID == ""
+	if p.owner.catalog != nil && !found {
+		for _, server := range p.owner.catalog.Servers {
+			if server.ID == serverID {
+				cfg.BaseURL, found = server.URL, true
+			}
+		}
+	}
+	p.owner.mu.Unlock()
+	if !found {
+		return nil, errors.New("server is no longer in the catalogue")
+	}
+	return beginAuthorization(cfg, authURL)
 }
 
 func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, error) {
@@ -107,39 +146,47 @@ func (p *Preparation) PollAuthorization(pending *PendingAuthorization) (string, 
 	return pending.Poll(ctx)
 }
 
-// Start abandons a replaced run's delivery, then starts one bounded event stream.
-func (c *Controller) Start(cfg Config, prepared *PreparedConnection) <-chan Event {
-	return c.startEvents(func(ctx, teardown context.Context, emit func(Event)) {
-		_ = RunPrepared(ctx, cfg, prepared, func(event Event) {
-			if event.Kind == EventDone {
-				event.Err = ClassifyAuthFailure(ctx, cfg, event.Err)
-			}
-			emit(event)
-		})
-	})
-}
-
-func (c *Controller) StartSelection(cfg Config, prepared *PreparedRun) <-chan Event {
+// AcceptAuthorization keeps a native grant in memory, indexed by its exact issuer origin.
+func (c *Controller) AcceptAuthorization(origin, token string) error {
+	canonical, err := wire.CanonicalOrigin(origin)
+	if err != nil || canonical != origin {
+		return errors.New("invalid authorization origin")
+	}
+	if token == "" || len(token) > 8192 {
+		return errors.New("invalid authorization grant")
+	}
 	c.mu.Lock()
-	grants := maps.Clone(c.grants)
-	previous := slices.Clone(c.selection)
-	c.mu.Unlock()
-	return c.startEvents(func(ctx, teardown context.Context, emit func(Event)) {
-		if !prepared.FreshFor(cfg) {
-			preparation, cancel := context.WithTimeout(ctx, preparationTimeout)
-			var err error
-			prepared, err = prepareRun(preparation, cfg, previous, grants)
-			cancel()
-			if err != nil {
-				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
-				return
-			}
-		}
-		_ = runSelection(ctx, teardown, cfg, prepared, emit)
-	})
+	defer c.mu.Unlock()
+	if _, exists := c.grants[origin]; !exists && len(c.grants) >= wire.MaxCatalogServers {
+		return errors.New("too many authorized servers; restart the client to clear unused grants")
+	}
+	c.grants[origin] = token
+	return nil
 }
 
-func (c *Controller) startEvents(run func(measurement, teardown context.Context, emit func(Event))) <-chan Event {
+// SelectServers acknowledges the identities displayed by the most recently loaded catalogue.
+func (c *Controller) SelectServers(ids []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.catalog == nil {
+		return errors.New("server catalogue is unavailable")
+	}
+	if err := c.catalog.ValidateSelection(ids); err != nil {
+		return err
+	}
+	c.selection = nil
+	for _, server := range c.catalog.Servers {
+		if slices.Contains(ids, server.ID) {
+			c.selection = append(c.selection, server)
+		}
+	}
+	return nil
+}
+
+// Start abandons a replaced run's delivery, then runs the selection with one bounded event stream.
+// A stale preparation is repeated first; the stream always ends with one EventDone.
+func (c *Controller) Start(cfg Config, prepared *PreparedRun) <-chan Event {
+	previous, grants := c.snapshot()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.cancelPreparation()
@@ -151,6 +198,7 @@ func (c *Controller) startEvents(run func(measurement, teardown context.Context,
 		close(events)
 		return events
 	}
+	// Delivery outlives measurement, so a cancelled run still reports its results and teardown still ends on Close.
 	delivery, abandon := context.WithCancel(c.ctx)
 	measurement, cancel := context.WithCancel(delivery)
 	c.run = &activeRun{cancel: cancel, abandon: abandon}
@@ -158,9 +206,35 @@ func (c *Controller) startEvents(run func(measurement, teardown context.Context,
 		defer cancel()
 		defer abandon()
 		defer close(events)
-		run(measurement, delivery, func(event Event) { sendRunEvent(measurement, delivery, events, event) })
+		emit := func(event Event) { sendRunEvent(measurement, delivery, events, event) }
+		if !prepared.FreshFor(cfg) {
+			ctx, cancelPreparation := context.WithTimeout(measurement, preparationTimeout)
+			var err error
+			prepared, err = prepareRun(ctx, cfg, previous, grants)
+			cancelPreparation()
+			if err != nil {
+				emit(Event{Kind: EventDone, At: time.Now(), Err: err})
+				return
+			}
+		}
+		_ = runSelection(measurement, delivery, cfg, prepared, emit)
 	})
 	return events
+}
+
+// Run is Start for callers without a view: it prepares the selection, measures it to completion, and
+// delivers every event to emit on the calling goroutine. It returns the terminal event's error.
+func Run(ctx context.Context, cfg Config, emit func(Event)) error {
+	controller := NewController(ctx)
+	defer controller.Close()
+	var err error
+	for event := range controller.Start(cfg, nil) {
+		if event.Kind == EventDone {
+			err = event.Err
+		}
+		emit(event)
+	}
+	return err
 }
 
 // CancelRun stops measurement while retaining its final results and terminal event.
@@ -181,16 +255,16 @@ func (c *Controller) Close() {
 }
 
 func sendRunEvent(measurement, delivery context.Context, events chan<- Event, event Event) {
-	if event.Kind == EventThroughput || event.Kind == EventLatency {
+	switch event.Kind {
+	case EventThroughput, EventLatency:
 		// A live sample never delays the reader or timer that produced it; a slow view drops it.
 		select {
 		case events <- event:
 		default:
 		}
 		return
-	}
-	terminalServers := event.Kind == EventServers && event.Servers != nil && event.Servers.Outcome != "running"
-	if event.Kind == EventResult || event.Kind == EventDone || terminalServers {
+	case EventResult, EventDone:
+		// Outcomes survive cancelled measurement and wait until delivery is abandoned.
 		measurement = delivery
 	}
 	select {

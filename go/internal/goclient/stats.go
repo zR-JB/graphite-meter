@@ -75,13 +75,14 @@ type latencyStats struct {
 
 func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
 
-func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) *time.Duration {
+// add records one resolved probe. A reply's server handling time pairs with it only when it fits within the RTT.
+func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) {
 	if timeout {
 		s.timeouts++
-		return nil
+		return
 	}
 	if rtt <= 0 {
-		return nil
+		return
 	}
 	if s.hasPrevious {
 		delta := rtt - s.previous
@@ -94,16 +95,11 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 	s.previous, s.hasPrevious = rtt, true
 	s.values = append(s.values, rtt)
 	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
-	if handlingNanos <= math.MaxInt64 {
-		handling := time.Duration(handlingNanos)
-		if handling <= rtt {
-			s.timingCount++
-			s.timingRawSum += rtt
-			s.handlingSum += handling
-			return new(handling)
-		}
+	if handlingNanos <= math.MaxInt64 && time.Duration(handlingNanos) <= rtt {
+		s.timingCount++
+		s.timingRawSum += rtt
+		s.handlingSum += time.Duration(handlingNanos)
 	}
-	return nil
 }
 
 func (s *latencyStats) snapshot() LatencyStats {

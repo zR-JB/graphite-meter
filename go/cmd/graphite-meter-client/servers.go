@@ -16,7 +16,7 @@ func (m model) canChooseServers() bool {
 	return m.preparedRun != nil && len(m.preparedRun.Catalog.Servers) > 1
 }
 func (m model) hasServerBreakdown() bool {
-	return m.runDetails != nil && len(m.runDetails.Selection) > 1
+	return m.runDetails != nil && len(m.runDetails.Servers) > 1
 }
 func (m model) multipleServers() bool { return len(m.cfg.ServerIDs) > 1 }
 func (m model) openServerChooser() (tea.Model, tea.Cmd) {
@@ -177,12 +177,12 @@ func (m model) serverChooserView(w int) string {
 	return strings.Join(lines, "\n")
 }
 func (m *model) nextLatencyFocus() {
-	if m.runDetails == nil || len(m.runDetails.Selection) < 2 {
+	if m.runDetails == nil || len(m.runDetails.Servers) < 2 {
 		return
 	}
-	ids := make([]string, len(m.runDetails.Selection))
-	for i, server := range m.runDetails.Selection {
-		ids[i] = server.ID
+	ids := make([]string, len(m.runDetails.Servers))
+	for i, server := range m.runDetails.Servers {
+		ids[i] = server.Server.ID
 	}
 	m.latencyFocus = ids[(slices.Index(ids, m.latencyFocus)+1)%len(ids)]
 	m.latency = m.latencyByServer[m.latencyFocus]
@@ -190,9 +190,9 @@ func (m *model) nextLatencyFocus() {
 }
 func (m model) latencyServerName() string {
 	if m.hasServerBreakdown() {
-		for _, server := range m.runDetails.Selection {
-			if server.ID == m.latencyFocus {
-				return server.Name
+		for _, server := range m.runDetails.Servers {
+			if server.Server.ID == m.latencyFocus {
+				return server.Server.Name
 			}
 		}
 	}
@@ -205,14 +205,14 @@ func (m model) visibleResults() []goclient.Result {
 }
 func (m model) serverResultsView(w int) string {
 	details := m.runDetails
-	if details == nil || len(details.Selection) < 2 {
+	if details == nil || len(details.Servers) < 2 {
 		return ""
 	}
-	notice := fmt.Sprintf("%d selected servers", len(details.Selection))
-	if details.Outcome == "incomplete" {
+	notice := fmt.Sprintf("%d selected servers", len(details.Servers))
+	if details.Outcome == goclient.OutcomeIncomplete {
 		notice = "Measurement incomplete"
-	} else if details.Outcome != "running" && len(details.Participants) < len(details.Selection) {
-		notice = fmt.Sprintf("Completed with %d of %d servers", len(details.Participants), len(details.Selection))
+	} else if details.Outcome != goclient.OutcomeRunning && len(details.Participants) < len(details.Servers) {
+		notice = fmt.Sprintf("Completed with %d of %d servers", len(details.Participants), len(details.Servers))
 	} else if len(details.Failures) > 0 {
 		notice = "Latency interrupted"
 	}
@@ -227,20 +227,20 @@ func (m model) serverResultsView(w int) string {
 			if !result.Unavailable {
 				rate = fmtRate(result.MeanBps)
 			}
-			contributions = append(contributions, result.Stage+" "+string(result.Direction)+" "+rate)
+			contributions = append(contributions, string(result.Stage)+" "+string(result.Direction)+" "+rate)
 		}
 		lines = append(lines, fitLine(server.Server.Name+" · "+strings.Join(contributions, " · "), w))
 	}
 	for _, failure := range details.Failures {
 		name := failure.ServerID
-		for _, server := range details.Selection {
-			if server.ID == failure.ServerID {
-				name = server.Name
+		for _, server := range details.Servers {
+			if server.Server.ID == failure.ServerID {
+				name = server.Server.Name
 			}
 		}
 		lines = append(lines, fitLine(fmt.Sprintf("%s · %s %s · %.1fs · %s", name, failure.Stage, failure.Scope, failure.At.Seconds(), failure.Message), w))
 	}
-	if details.Outcome != "running" {
+	if details.Outcome != goclient.OutcomeRunning {
 		for _, interval := range details.Intervals {
 			state := "incomplete evidence"
 			if interval.Complete && interval.Window != nil {
@@ -257,22 +257,22 @@ func (m model) serverResultsView(w int) string {
 
 func (m model) serverResultNotice() string {
 	details := m.runDetails
-	if details == nil || len(details.Selection) < 2 {
+	if details == nil || len(details.Servers) < 2 {
 		return ""
 	}
-	if details.Outcome == "incomplete" {
+	if details.Outcome == goclient.OutcomeIncomplete {
 		return "Measurement incomplete"
 	}
-	if len(details.Participants) < len(details.Selection) {
+	if len(details.Participants) < len(details.Servers) {
 		if m.complete {
-			return fmt.Sprintf("Completed with %d of %d servers", len(details.Participants), len(details.Selection))
+			return fmt.Sprintf("Completed with %d of %d servers", len(details.Participants), len(details.Servers))
 		}
-		return fmt.Sprintf("%d of %d servers remaining", len(details.Participants), len(details.Selection))
+		return fmt.Sprintf("%d of %d servers remaining", len(details.Participants), len(details.Servers))
 	}
 	if len(details.Failures) > 0 {
 		return "Latency interrupted"
 	}
-	return fmt.Sprintf("%d selected servers", len(details.Selection))
+	return fmt.Sprintf("%d selected servers", len(details.Servers))
 }
 func (m model) handleServerDetailsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {

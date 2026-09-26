@@ -34,7 +34,7 @@ func TestRemoteAuthorizationExpiryRechecksTheSelection(t *testing.T) {
 	m.prepareStatus = "ready"
 	m.authServerID = "" // Successful preparation has no pending issuer.
 	seq := m.prepareSeq
-	next, command := m.finishRun(&goclient.AuthRequiredError{URL: "https://remote.example/login"})
+	next, command := m.finishRun(goclient.Event{Kind: goclient.EventDone, Err: &goclient.AuthRequiredError{URL: "https://remote.example/login"}})
 	m = next.(model)
 	if command == nil || m.prepareSeq <= seq || m.prepareStatus != "checking" || m.mode != modeConfigure || !m.complete {
 		t.Fatalf("expired remote grant did not restart selection discovery: %+v", m)
@@ -89,7 +89,7 @@ func TestServerChooserAndResultDetailsFitNarrowTerminal(t *testing.T) {
 		}
 	}
 	m.complete = true
-	m.runDetails = &goclient.RunDetails{Selection: m.preparedRun.Catalog.Servers[:3], Participants: []string{"0", "1"}, Outcome: "partial"}
+	m.runDetails = &goclient.RunDetails{Servers: summaries(m.preparedRun.Catalog.Servers[:3]...), Participants: []string{"0", "1"}, Outcome: "partial"}
 	if m.serverResultNotice() != "Completed with 2 of 3 servers" {
 		t.Fatal(m.serverResultNotice())
 	}
@@ -100,7 +100,7 @@ func TestServerChooserAndResultDetailsFitNarrowTerminal(t *testing.T) {
 }
 func TestLatencyFocusSwitchesTheWholePopulation(t *testing.T) {
 	m := chooserModel(t)
-	m.runDetails = &goclient.RunDetails{Selection: []wire.ServerEntry{{ID: "a", Name: "A"}, {ID: "b", Name: "B"}}}
+	m.runDetails = &goclient.RunDetails{Servers: summaries(wire.ServerEntry{ID: "a", Name: "A"}, wire.ServerEntry{ID: "b", Name: "B"})}
 	m.latencyFocus = "a"
 	m.latencyByServer = map[string]goclient.LatencySample{"a": {RTT: 10}, "b": {RTT: 90}}
 	m.lostByServer = map[string]int{"a": 0, "b": 3}
@@ -129,7 +129,7 @@ func TestSingletonHasNoSelectionOrResultControls(t *testing.T) {
 	// Single-server runs in a larger catalogue also retain the original result view.
 	m.preparedRun.Catalog.Servers = append(m.preparedRun.Catalog.Servers, wire.ServerEntry{ID: "peer", URL: "https://peer.example", Name: "Peer"})
 	m.mode, m.complete = modeRun, true
-	m.runDetails = &goclient.RunDetails{Selection: wire.SingletonCatalog().Servers, Participants: []string{"self"}, Outcome: "complete"}
+	m.runDetails = &goclient.RunDetails{Servers: summaries(wire.SingletonCatalog().Servers...), Participants: []string{"self"}, Outcome: "complete"}
 	if m.serverResultsView(80) != "" || m.serverResultNotice() != "" || m.latencyServerName() != "" {
 		t.Fatal("singleton rendered multi-server details")
 	}
@@ -142,4 +142,12 @@ func TestSingletonHasNoSelectionOrResultControls(t *testing.T) {
 	if next.(model).serverDetailsOpen {
 		t.Fatal("singleton opened result breakdown")
 	}
+}
+
+func summaries(servers ...wire.ServerEntry) []goclient.ServerRunSummary {
+	out := make([]goclient.ServerRunSummary, len(servers))
+	for i, server := range servers {
+		out[i].Server = server
+	}
+	return out
 }

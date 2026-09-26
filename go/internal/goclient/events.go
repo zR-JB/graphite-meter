@@ -1,9 +1,9 @@
 package goclient
 
 import (
+	"context"
+	"errors"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type Direction string
@@ -13,82 +13,109 @@ const (
 	Up   Direction = "up"
 )
 
+// Stage names one scheduled measurement stage.
+type Stage string
+
+const (
+	StageLatency       Stage = "latency"
+	StageDownload      Stage = "download"
+	StageUpload        Stage = "upload"
+	StageBidirectional Stage = "bidirectional"
+)
+
+// Phase is a stage's position in its schedule: transports connect, warm up, then one measured window runs.
+type Phase int
+
+const (
+	PhasePreparing Phase = iota
+	PhaseWarmup
+	PhaseMeasuring
+	PhaseFinished
+)
+
+// Outcome classifies a run. Every terminal value is final; only OutcomeRunning changes.
+type Outcome string
+
+const (
+	OutcomeRunning    Outcome = "running"
+	OutcomeComplete   Outcome = "complete"   // Every stage finished with every selected server.
+	OutcomePartial    Outcome = "partial"    // Every stage finished; a server or latency population dropped out.
+	OutcomeIncomplete Outcome = "incomplete" // A stage ended without its result after measurement began.
+	OutcomeStopped    Outcome = "stopped"    // The operator cancelled the run.
+	OutcomeFailed     Outcome = "failed"     // The run ended before any stage measured.
+)
+
 type EventKind int
 
 const (
-	EventPreflight EventKind = iota
-	EventStage
+	EventStage EventKind = iota
 	EventThroughput
 	EventLatency
 	EventResult
-	EventDone
 	EventServers
 	EventServerFailure
+	EventDone
 )
 
-type StagePhase string
-
-const (
-	StagePreparing StagePhase = "prepare"
-	StageWarmup    StagePhase = "warmup"
-	StageMeasuring StagePhase = "measure"
-	StageFinished  StagePhase = "finished"
-)
-
+// Event is one message from a run. A slow reader may miss live samples; every other kind is delivered.
 type Event struct {
-	ServerID                              string
-	Servers                               *RunDetails
-	Failure                               *ServerFailure
-	Kind                                  EventKind
-	At                                    time.Time
-	Stage                                 string
-	Phase                                 StagePhase
-	Direction                             Direction
-	Message                               string
-	ThroughputTarget, LatencyTarget       string
-	ThroughputProtocol, LatencyProtocol   string
-	ThroughputTransport, LatencyTransport string
-
-	Preflight    *wire.Preflight
-	Probe        *wire.Probe
-	LatencyProbe *wire.Probe
-	Throughput   ThroughputSample
-	Latency      LatencySample
-	Result       *Result
-	Err          error
+	Kind       EventKind
+	At         time.Time
+	Stage      Stage
+	Phase      Phase
+	Direction  Direction
+	ServerID   string // Latency samples and server failures.
+	Throughput ThroughputSample
+	Latency    LatencySample
+	Result     *Result        // The combined transfer result of one stage direction.
+	Servers    *RunDetails    // Membership and per-server results; EventDone carries the final copy.
+	Failure    *ServerFailure // A server or its latency population left the run.
+	Err        error          // EventDone: why the run did not complete.
 }
 
+// Outcome classifies a terminal event, including runs that failed before any server detail existed.
+func (e Event) Outcome() Outcome {
+	switch {
+	case e.Servers != nil:
+		return e.Servers.Outcome
+	case errors.Is(e.Err, context.Canceled):
+		return OutcomeStopped
+	case e.Err != nil:
+		return OutcomeFailed
+	}
+	return OutcomeComplete
+}
+
+// ThroughputSample is the combined rate of the latest window across the current participants.
 type ThroughputSample struct {
-	Unavailable bool
-	Stage       string
-	Direction   Direction
+	Unavailable bool // No window covers every participant, for example right after a dropout.
 	BytesPerSec float64
-	TotalBytes  uint64
-	StreamCount int
-	ServerAuth  bool
+	TotalBytes  uint64 // Moved in this stage and direction so far, across every participant.
 }
 
+// LatencySample is one resolved probe to the server named by its event.
 type LatencySample struct {
-	ReflectorHandling *time.Duration // Validated server interval from this reply; nil for an invalid clock pair.
-	Stage             string
-	RTT               time.Duration
-	UnderLoad         bool
-	TimedOut          bool
+	RTT       time.Duration
+	UnderLoad bool
+	TimedOut  bool
 }
 
+// Result is one stage population. Transfer results have a direction; latency populations have none.
 type Result struct {
-	Unavailable bool
-	Stage       string
+	Stage       Stage
 	Direction   Direction
-	MeanBps     float64
-	PeakBps     float64
-	TotalBytes  uint64
+	Unavailable bool
+	MeanBps     float64 // Bytes per second over the measured window.
+	PeakBps     float64 // Highest sampled window, never a sum of independent peaks.
+	TotalBytes  uint64  // Every byte moved in the stage, including windows without a rate.
 	Samples     int
-	ServerAuth  bool
 	Latency     LatencyStats
-	Elapsed     time.Duration
-	Err         error // Non-nil marks an incomplete stage summary and preserves its failure.
+	Elapsed     time.Duration // Length of the measured window behind MeanBps or the latency population.
+	Err         error         // Non-nil marks an incomplete stage summary and preserves its failure.
 }
+
+// ReceiverTimed reports whether the rate comes from the receiving server's clock.
+func (r Result) ReceiverTimed() bool { return r.Direction == Up }
 
 // LatencyStats summarizes one stage's application probes. Durations use the client monotonic clock.
 type LatencyStats struct {

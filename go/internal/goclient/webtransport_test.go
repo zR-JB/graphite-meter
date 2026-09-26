@@ -399,7 +399,7 @@ func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T
 
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.Stages, cfg.ThroughputTransport = srv.URL, StageSet{Download: true}, "auto"
-	_, err := Prepare(t.Context(), cfg)
+	_, err := prepare(t.Context(), cfg)
 	if err == nil {
 		t.Fatal("Prepare succeeded with no reachable throughput target")
 	}
@@ -422,7 +422,7 @@ func TestPrepareRejectsAnUnknownTransport(t *testing.T) {
 			cfg := c.cfg(DefaultConfig())
 			// An unreachable base URL proves the check runs before discovery: a typo is answerable without a server.
 			cfg.BaseURL = wtUnreachableOrigin
-			_, err := Prepare(t.Context(), cfg)
+			_, err := prepare(t.Context(), cfg)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("Prepare error = %v, want one containing %q", err, c.want)
 			}
