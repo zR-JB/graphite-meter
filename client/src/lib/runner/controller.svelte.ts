@@ -412,7 +412,6 @@ export function createApplicationController(
         connections.get(serverId)?.requireSignIn(message);
       else connections.get(serverId)?.invalidate([scope]);
     }
-    // A failed run proves nothing about its paths any more.
     if (event.type === "error")
       for (const connection of selected())
         connection.invalidate(CONNECTION_ROLES);

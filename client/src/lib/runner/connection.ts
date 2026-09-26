@@ -237,7 +237,6 @@ export class ServerConnection {
     this.#sync();
   }
 
-  /** Online or a regained page: backoff resets and an unmonitored server is re-read now. */
   resume(): void {
     for (const job of [this.#discovering, ...Object.values(this.#roles)])
       if (!job.backoff.signIn) job.backoff = backoff();
@@ -394,7 +393,6 @@ export class ServerConnection {
     );
   }
 
-  /** Runs one origin-limited job; a failure goes to `fail` only while the job is still current. */
   #job<T>(
     job: Job<T>,
     timeoutMs: number,

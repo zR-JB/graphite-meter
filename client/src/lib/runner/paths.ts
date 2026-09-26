@@ -593,7 +593,6 @@ export interface ServerView {
   readonly message?: string;
   /** A reason no connection check can clear: offline, sign-in or a missing server capability. */
   readonly blocked?: string;
-  /** Verified paths of any age, without credentials; a start refreshes old ones. */
   readonly paths: PreparedPaths | null;
   readonly metadataChecking: boolean;
 }
