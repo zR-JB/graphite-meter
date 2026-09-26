@@ -1,4 +1,5 @@
 import {
+  closeSettings,
   home,
   open,
   openSettings,
@@ -16,6 +17,8 @@ const catalog = (...servers: Server[]) => ({
     servers: servers.map(({ id, name, url }) => ({ id, name, url })),
   }),
 });
+
+const footer = (page: Page) => page.locator("footer.status .label");
 
 async function regainPage(page: Page) {
   const { windowId } = await page.cdp("Browser.getWindowForTarget");
@@ -41,7 +44,9 @@ test("a verified peer that dies fails its check when the page returns, and Start
       settings.locator(`.server-status[data-state="failed"]`),
     ).toHaveCount(1, { timeout: 10_000 });
     await runButton(page, "Start test").click();
-    await Bun.sleep(1_500);
+    await expect(footer(page)).toHaveText("Test could not start", {
+      timeout: 10_000,
+    });
     await expect(phase(page, "idle")).toHaveCount(1);
   } finally {
     oslo.kill();
@@ -55,8 +60,11 @@ test("a stream plan that cannot fit shows its reason before Start", async (page)
   });
   await ready(page);
   await expect(page.locator(".gauge-hint")).toContainText("Forced streams");
+  const settings = await openSettings(page);
+  await expect(settings.locator(".notice")).toContainText("Forced streams");
+  await closeSettings(page);
   await runButton(page, "Start test").click();
-  await Bun.sleep(500);
+  await expect(footer(page)).toHaveText("Test cannot start");
   await expect(phase(page, "idle")).toHaveCount(1);
 });
 

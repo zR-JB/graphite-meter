@@ -225,16 +225,21 @@ class AppStore {
       return views.length > 1
         ? `${blocked.server.name}: ${blocked.blocked}`
         : blocked.blocked!;
-    const servers = views.flatMap(({ server, paths }) =>
-      paths ? [{ id: server.id, paths }] : [],
-    );
+    return this.streamPlanError;
+  });
+  /** Why the stream settings cannot fit the verified selection; Settings shows it by the setting. */
+  streamPlanError = $derived.by((): string => {
+    const servers = this.selectedServers.flatMap((id) => {
+      const paths = this.servers.get(id)?.paths;
+      return paths ? [{ id, paths }] : [];
+    });
+    if (servers.length !== this.selectedServers.length) return "";
     try {
-      if (servers.length === this.selectedServers.length)
-        validateServerStreams(this.config, servers);
+      validateServerStreams(this.config, servers);
+      return "";
     } catch (cause) {
       return cause instanceof Error ? cause.message : String(cause);
     }
-    return "";
   });
   preparation = $derived.by<PreparationState>(() => ({
     status:

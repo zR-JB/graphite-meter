@@ -286,6 +286,7 @@ test("a stream plan that cannot fit blocks Start before the click", async () => 
         transferStreams: { mode: "forced", count: 12 },
       });
       expect(store.startBlocker).toContain("Forced streams");
+      expect(store.streamPlanError).toBe(store.startBlocker);
       expect(store.preparation.status).toBe("blocked");
       controller.toggleRun();
       await settle();

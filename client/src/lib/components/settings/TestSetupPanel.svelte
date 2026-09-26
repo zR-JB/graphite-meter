@@ -492,6 +492,11 @@
       />
     </label>
     {@render rejectedHint("streams")}
+    {#if store.streamPlanError}
+      <p class="notice" data-tone="warn" role="status">
+        {store.streamPlanError}
+      </p>
+    {/if}
     {#if store.config.transferStreams.mode === "forced"}
       <p class="hint">
         Starts exactly {store.config.transferStreams.count} requests per server and
