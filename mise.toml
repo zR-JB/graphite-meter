@@ -74,8 +74,7 @@ env = { GM_GITLEAKS_IMAGE = "{{vars.image_gitleaks}}" }
 run = '''
 #!/usr/bin/env sh
 set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "secret-scan-ci requires Docker or Podman" >&2; exit 2; }
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 expected=$(python3 scripts/ci/toolchains.py get tools.gitleaks)
 actual=$("$engine" run --rm "$GM_GITLEAKS_IMAGE" version | tr -d '\r')
 [ "${actual#v}" = "${expected#v}" ] || { echo "Gitleaks image version $actual != expected $expected" >&2; exit 1; }
@@ -394,15 +393,11 @@ done < scripts/tui-targets.txt
 
 [tasks.container-smoke]
 description = "Build and smoke-test the local production image"
-run = '''
-#!/usr/bin/env sh
-set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "container-smoke requires Docker or Podman" >&2; exit 2; }
-bun_version=$(python3 scripts/ci/toolchains.py get runtime.bun)
-"$engine" build -f container/Dockerfile -t graphite-meter:smoke --build-arg BUN_VERSION="$bun_version" --build-arg VERSION=0.0.0-ci --build-arg CLIENT_VERSION=0.0.0-ci --build-arg GM_CLIENT_BUILD_PROFILE=prod --build-arg GM_CLIENT_REVISION=local --build-arg GM_CLIENT_VALIDATE=0 --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
-scripts/verify-container.sh graphite-meter:smoke
-'''
+env = { VERSION = "0.0.0-ci", GM_CLIENT_REVISION = "local", GM_CLIENT_VALIDATE = "0" }
+run = [
+  { task = "container-build", args = ["graphite-meter:smoke"] },
+  "scripts/verify-container.sh graphite-meter:smoke",
+]
 
 [tasks.ci]
 description = "Run deterministic, race, advisory, browser, release, and container gates"
@@ -459,13 +454,15 @@ cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/config.
 
 [tasks.container-build]
 description = "Build the production Docker or Podman image"
+usage = 'arg "[tag]" default="graphite-meter:latest"'
 run = '''
 #!/usr/bin/env sh
 set -eu
-engine=${CONTAINER_ENGINE:-docker}
-command -v "$engine" >/dev/null 2>&1 || { echo "container-build requires Docker or Podman" >&2; exit 2; }
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
 bun_version=$(python3 scripts/ci/toolchains.py get runtime.bun)
 revision=${GM_CLIENT_REVISION:-$(git rev-parse --short HEAD 2>/dev/null || echo source)}
-version=${VERSION:-$revision}
-"$engine" build -f container/Dockerfile -t graphite-meter:latest --build-arg BUN_VERSION="$bun_version" --build-arg VERSION="$version" --build-arg CLIENT_VERSION="${VERSION:-}" --build-arg GM_CLIENT_BUILD_PROFILE=prod --build-arg GM_CLIENT_REVISION="$revision" .
+"$engine" build -f container/Dockerfile -t "$usage_tag" --build-arg BUN_VERSION="$bun_version" \
+  --build-arg VERSION="${VERSION:-$revision}" --build-arg CLIENT_VERSION="${VERSION:-}" \
+  --build-arg GM_CLIENT_REVISION="$revision" --build-arg GM_CLIENT_VALIDATE="${GM_CLIENT_VALIDATE:-1}" \
+  --label org.opencontainers.image.licenses=AGPL-3.0-or-later .
 '''
