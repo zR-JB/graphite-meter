@@ -111,6 +111,7 @@ for (const fault of faults)
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
+      await expect(page.locator(".remaining")).toHaveCount(1);
       await Bun.sleep(300);
       await fault.act?.(page, victim);
       if (fault.editDownloadMs) {
