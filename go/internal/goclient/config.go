@@ -151,8 +151,9 @@ type Config struct {
 	LoadedLatency         bool
 	InsecureSkipTLSVerify bool
 
-	server *wire.ServerEntry
-	grant  string
+	server       *wire.ServerEntry
+	grant        string
+	grantOrigins []string
 }
 
 func DefaultConfig() Config {

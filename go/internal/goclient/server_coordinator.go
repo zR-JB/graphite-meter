@@ -89,6 +89,7 @@ func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedR
 		own := server.config
 		own.Warmup = c.cfg.Warmup
 		connection := server.Connection
+		own.grantOrigins = connection.grantOrigins
 		hc, closeHTTP := protocolClient(own, connection.ThroughputTarget.Protocol)
 		ws, closeWS := websocketClient(own)
 		defer closeHTTP()

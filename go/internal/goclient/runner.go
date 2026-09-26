@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,7 @@ type PreparedConnection struct {
 	LatencyTarget    *wire.LatencyTarget
 	VerifiedAt       time.Time
 	configKey        string
+	grantOrigins     []string
 }
 
 type PreparationError struct {
@@ -47,41 +49,55 @@ func preparationKey(cfg Config) string {
 }
 
 type authTransport struct {
-	token, hostname string
-	unverified      bool
-	base            http.RoundTripper
+	cfg  Config
+	base http.RoundTripper
 }
 
 func (t authTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.token == "" {
+	if t.cfg.grant == "" {
 		return t.base.RoundTrip(r)
 	}
-	if r.URL.Scheme != "https" || !strings.EqualFold(r.URL.Hostname(), t.hostname) {
-		return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
+	if !grantAllowed(r.URL, t.cfg) {
+		return nil, fmt.Errorf("refusing to send authentication grant outside the server's HTTPS origins")
 	}
-	if t.unverified {
+	if t.cfg.InsecureSkipTLSVerify {
 		return nil, fmt.Errorf("refusing to send authentication grant without TLS verification")
 	}
 	clone := r.Clone(r.Context())
 	clone.Header = r.Header.Clone()
-	clone.Header.Set("Authorization", "Bearer "+t.token)
+	clone.Header.Set("Authorization", "Bearer "+t.cfg.grant)
 	return t.base.RoundTrip(clone)
 }
 
-func pinnedHostname(origin string) string {
-	u, err := url.Parse(origin)
-	if err != nil {
-		return ""
+func grantOrigins(base string, pf wire.Preflight) []string {
+	origins := []string{base}
+	sameHost := func(o string) {
+		u, err := url.Parse(o)
+		b, baseErr := url.Parse(base)
+		if err == nil && baseErr == nil && strings.EqualFold(u.Hostname(), b.Hostname()) {
+			origins = append(origins, o)
+		}
 	}
-	return u.Hostname()
+	for _, t := range pf.Capabilities.ThroughputTargets {
+		sameHost(t.Origin)
+	}
+	for _, t := range pf.Capabilities.LatencyTargets {
+		sameHost(t.Origin)
+	}
+	return origins
+}
+
+func grantAllowed(u *url.URL, cfg Config) bool {
+	origins := cfg.grantOrigins
+	if origins == nil {
+		origins = []string{cfg.BaseURL}
+	}
+	here := u.Scheme + "://" + u.Host
+	return u.Scheme == "https" && slices.ContainsFunc(origins, func(o string) bool { return origin.Equal(o, here) })
 }
 
 func authenticatedClient(cfg Config, base http.RoundTripper) *http.Client {
-	client := &http.Client{
-		Transport: authTransport{
-			token: cfg.grant, hostname: pinnedHostname(cfg.BaseURL), unverified: cfg.InsecureSkipTLSVerify, base: base,
-		},
-	}
+	client := &http.Client{Transport: authTransport{cfg, base}}
 	if cfg.grant != "" || cfg.server != nil {
 		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return errors.New("authenticated measurement endpoints must not redirect")
@@ -191,9 +207,10 @@ func prepare(ctx context.Context, cfg Config) (*PreparedConnection, error) {
 			return nil, &PreparationError{Preflight: pf, Err: err}
 		}
 	}
+	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
 	branches, cancel := context.WithCancel(ctx)
 	defer cancel()
-	prepared := &PreparedConnection{Preflight: pf, configKey: preparationKey(cfg)}
+	prepared := &PreparedConnection{Preflight: pf, configKey: preparationKey(cfg), grantOrigins: cfg.grantOrigins}
 	var throughputErr, latencyErr error
 	var work sync.WaitGroup
 	work.Go(func() {

@@ -45,32 +45,37 @@ func okResponse(r *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestAuthenticatedClientAddsBearerOnlyOnTheIssuerHTTPSHostname(t *testing.T) {
+func TestAuthenticatedClientAddsBearerOnlyOnAdvertisedHTTPSOrigins(t *testing.T) {
 	t.Parallel()
 	cfg := DefaultConfig()
 	cfg.BaseURL, cfg.grant = "https://meter.example", "secret"
-	cfg.server = &wire.ServerEntry{
-		ID:                "a",
-		URL:               "https://meter.example",
-		AdditionalOrigins: []string{"https://cdn.example"},
+	var pf wire.Preflight
+	pf.Capabilities.ThroughputTargets = []wire.ThroughputTarget{
+		{Origin: "https://meter.example:7247"},
+		{Origin: "https://cdn.example"},
 	}
+	cfg.grantOrigins = grantOrigins(cfg.BaseURL, pf)
 	seen := ""
 	client := authenticatedClient(cfg, roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		seen = r.Header.Get("Authorization")
 		return okResponse(r)
 	}))
-	req, _ := http.NewRequestWithContext(t.Context(), "GET", "https://meter.example:7247/probe", nil)
-	if _, err := client.Do(req); err != nil || seen != "Bearer secret" {
-		t.Fatalf("authorization=%q, %v", seen, err)
+	for _, target := range []string{"https://meter.example/probe", "https://meter.example:7247/probe"} {
+		seen = ""
+		req, _ := http.NewRequestWithContext(t.Context(), "GET", target, nil)
+		if _, err := client.Do(req); err != nil || seen != "Bearer secret" {
+			t.Fatalf("%s: authorization=%q, %v", target, seen, err)
+		}
 	}
 	for _, target := range []string{
+		"https://meter.example:9443/probe",
 		"https://other.example/probe",
 		"https://cdn.example/probe",
 		"http://meter.example/probe",
 	} {
 		bad, _ := http.NewRequest("GET", target, nil)
 		if _, err := client.Do(bad); err == nil {
-			t.Fatalf("grant sent to %s outside its issuer's HTTPS hostname", target)
+			t.Fatalf("grant sent to %s outside the server's advertised HTTPS origins", target)
 		}
 	}
 }

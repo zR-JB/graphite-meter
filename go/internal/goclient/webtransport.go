@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -54,11 +53,8 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 	var hdr http.Header
 	if token := cfg.grant; token != "" {
 		parsed, err := url.Parse(u)
-		if err != nil ||
-			parsed.Scheme != "https" ||
-			cfg.InsecureSkipTLSVerify ||
-			!strings.EqualFold(parsed.Hostname(), pinnedHostname(cfg.BaseURL)) {
-			return nil, fmt.Errorf("refusing to send authentication grant outside canonical HTTPS host")
+		if err != nil || cfg.InsecureSkipTLSVerify || !grantAllowed(parsed, cfg) {
+			return nil, fmt.Errorf("refusing to send authentication grant outside the server's HTTPS origins")
 		}
 		hdr = http.Header{"Authorization": {"Bearer " + token}}
 	}
