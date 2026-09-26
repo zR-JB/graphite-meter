@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/h3",
     "branch": "graphite-meter/h3-v0.0.8",
-    "rev": "cc8145161aa75bf3c7f5505da526579d79438757",
+    "rev": "28c16dfadfe21bddcbbc287b91e6a85d361cb750",
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
-    "diffSha256": "2ff2a220dbb6d177f434661fa653b230db5c6c6c1a46549f680c6caae7e203b2",
+    "diffSha256": "777ea5e5b42f651a58737a0d4752bcd9e1cac6a0693682f1b0481b8b9968b1c1",
     "modifiedPackages": [
       "h3",
       "h3-noq"
@@ -46,6 +46,10 @@
       },
       {
         "subject": "Install Clippy for fork CI",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Parse buffered stream headers before reading more data",
         "origin": "graphite-meter"
       }
     ],

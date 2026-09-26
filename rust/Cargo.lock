@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "h3"
 version = "0.0.8"
-source = "git+https://github.com/zR-JB/h3?rev=cc8145161aa75bf3c7f5505da526579d79438757#cc8145161aa75bf3c7f5505da526579d79438757"
+source = "git+https://github.com/zR-JB/h3?rev=28c16dfadfe21bddcbbc287b91e6a85d361cb750#28c16dfadfe21bddcbbc287b91e6a85d361cb750"
 dependencies = [
  "bytes",
  "fastrand",
@@ -724,7 +724,7 @@ dependencies = [
 [[package]]
 name = "h3-noq"
 version = "0.0.10"
-source = "git+https://github.com/zR-JB/h3?rev=cc8145161aa75bf3c7f5505da526579d79438757#cc8145161aa75bf3c7f5505da526579d79438757"
+source = "git+https://github.com/zR-JB/h3?rev=28c16dfadfe21bddcbbc287b91e6a85d361cb750#28c16dfadfe21bddcbbc287b91e6a85d361cb750"
 dependencies = [
  "bytes",
  "futures",
