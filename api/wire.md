@@ -1,14 +1,13 @@
 # Graphite Meter — Message-Bus Wire Protocol (normative)
 
-This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the
-WebTransport datagram bus (`/wt/ping`), plus the **WebTransport session routes**, defined by their CONNECT URL (see [WebTransport
-routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also
-open a receiver-progress stream. The plain request/response HTTP endpoints (`/preflight`, `/probe`,
-`/download`, `/upload/session`, `/upload`, `/upload/progress`) are **not** covered here — they use
-normal HTTP (query params, status codes, streaming bodies).
+This spec governs the **message-based channels**: the WebSocket latency bus (`/ws/ping`) and the WebTransport
+datagram bus (`/wt/ping`), plus the **WebTransport session routes**, defined by their CONNECT URL (see [WebTransport
+routes](#webtransport-routes)). Transfer streams carry raw payload bytes; upload sessions also open a
+receiver-progress stream. The plain request/response HTTP endpoints (`/preflight`, `/probe`, `/download`,
+`/upload/session`, `/upload`, `/upload/progress`) are **not** covered here — they use normal HTTP (query params,
+status codes, streaming bodies).
 
-The Go server/native client and TypeScript browser client share the conformance
-corpus `api/wire.testvectors.txt`. Deploy matching client and server versions.
+The Go server/native client and TypeScript browser client share the conformance corpus `api/wire.testvectors.txt`.
 
 Related contracts: [discovery and control responses](discovery.md),
 [upload sessions and progress](upload.md), and [measurement definitions](../docs/MEASUREMENTS.md).
@@ -36,6 +35,11 @@ Native preflight sends an actual probe; datagram verification retries within its
 bounded deadline. Browser warmup probes retain their existing measurement
 exclusion. Transport open/close owns the connection lifetime; there are no hello,
 ready, goodbye, capability, or error frames.
+
+Each client owns a per-bus `uint32` counter, `id = (id + 1) >>> 0`; the server keeps no per-probe state and echoes
+the parsed id. Only the in-flight window (at most 16 probes) is live, so a wrapped id never matches a pending one.
+Cadence, deadlines, the in-flight window and probe timeouts are client behaviour, defined in
+[latency probing](../docs/MEASUREMENTS.md#latency-probing).
 
 ## Reflector handling time
 
@@ -84,29 +88,26 @@ The upload `id` is minted by `POST /upload/session` and finalized by `DELETE /up
 over HTTP; only the measured bytes ride the session. The progress feed carries the same NDJSON
 records as `GET /upload/progress`; see the [upload contract](upload.md).
 
-The `GM_MAX_SESSION_DURATION` bound covers the two **transfer** session routes. `/wt/ping` is not
-one: it lives under the ordinary request bound (`GM_MAX_OPERATION_DURATION`), while sharing the
-inactivity bound below — which is what the native client's ping-cadence ceiling is derived from.
-
-A session ends on its lifetime bound, when the peer closes it — which a client does once the
-finalizing DELETE has returned — or on either of two server-side inactivity bounds: a session that
-carries nothing the **peer** sent for about **30 seconds** is closed, ping buses included (a
-server-generated progress heartbeat is not traffic, and neither is a server-generated datagram
-flood, so a `/wt/download?datagrams=` session the peer never speaks on closes on the same bound),
-and an establish-only `/wt/download?bytes=0` session — which serves nothing, so its answer is the
-handshake — is closed after a **5-second linger**. A client MUST treat a bound-driven close as a
-reconnect rather than a stage failure, and re-dial against the same upload `id`: the server keeps
-one aggregate per id, so the counters carry across.
-
 ### Lane endings
 
-Every lane shares one **30-second** idle bound: WebTransport sessions and the WebSocket bus close
-after about that long without peer traffic, an HTTP upload that stops sending is answered `408`, and
-an HTTP download the peer stops draining is closed. A server-ended bus or session names its cause;
-clients may ignore it and treat any close as a reconnect. A QUIC connection that carried only
-WebTransport sessions closes with `H3_NO_ERROR` once its last session ends (a second later when the
-server ended it, so the session's code arrives first), so it does not hold one of the client's
-connection slots.
+`GM_MAX_SESSION_DURATION` bounds the two transfer session routes; `/wt/ping` lives under the request bound
+(`GM_MAX_OPERATION_DURATION`). A session also ends when the peer closes it, which a client does once the finalizing
+DELETE has returned. An establish-only `/wt/download?bytes=0` session, whose answer is the handshake, closes after a
+5 s linger; a `/wt/upload` refused at connect sends its `error` record on a server stream and closes after a 2 s
+linger.
+
+Every lane shares one 30 s idle bound. WebSocket buses and WebTransport sessions close after 30–45 s without traffic
+from the peer (a progress heartbeat or datagram flood is the server's own, so a `/wt/download?datagrams=` session the
+peer never speaks on closes too); an HTTP upload that stops sending is answered `408` ([upload](upload.md)); an HTTP
+download the peer stops draining is closed. The native client derives its 15 s fixed-cadence ceiling from this bound.
+A client treats a bound-driven close as a reconnect, not a stage failure, and redials with the same upload `id`: the
+server keeps one aggregate per id, so the counters carry across.
+
+A server-ended bus or session names its cause ([laneendings.txt](laneendings.txt)); clients may treat any close as a
+reconnect. The browser acts only on `authentication required` (it asks for sign-in); the native client also redials
+idle and lifetime endings. A QUIC connection that carried only WebTransport sessions closes with `H3_NO_ERROR` once
+its last session ends (a second later when the server ended it, so the session's code arrives first), so it does not
+hold one of the client's connection slots.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |
@@ -115,9 +116,6 @@ connection slots.
 | Lifetime bound               | `4002 lifetime`                | `2 lifetime`                |
 | Sign-out or grant revocation | `1008 authentication required` | `3 authentication required` |
 | Server shutdown              | `1001 shutdown`                | `4 shutdown`                |
-
-**Discovery contract.** `transport` is required on every throughput and latency target;
-clients never infer a transport from its absence.
 
 ## Socket credentials
 
@@ -139,28 +137,3 @@ header with cookies omitted. The reusable grant never enters a URL. Browser sock
 constructors carry only the one-use ticket in `?token=`. Native bearer grants remain
 eligible for direct authenticated socket connections, under their existing origin
 rules; they do not use the browser-grant mint path.
-
-## Ids (PING/PONG)
-
-- The **client** owns a per-bus monotonic `uint32` counter: `id = (id + 1) >>> 0` (wraps at 2³²).
-- The **server keeps no per-probe state** — it echoes the parsed id in `PONG`. There is no
-  server-side id map or per-bus capability state.
-- Wraparound cannot collide: the live key space is only the in-flight window (a few hundred at most,
-  each id removed from the client's pending map within a bounded RTT), so a wrapped value can never
-  match a still-pending id.
-
-## RTT, probe timeouts, and reply-driven pacing (client behavior)
-
-- On `PING` send, the client records `pending[id] = now()`. On `PONG,<id>,<handling-ns>` it computes
-  `rtt = now() − pending[id]` and resolves that probe once.
-- Fixed cadences are start-to-start; a reply never advances the next send. Reply-driven pacing sends on
-  the reply, with a backup timer when it does not arrive. Neither changes which probes enter accounting.
-- Both clients bound the **in-flight window**: 16 idle at a fixed cadence, 4 reply-driven, 2 under load.
-  A full window leaves an unsent opportunity, never a timeout.
-- A timeout means a stalled channel or queue (WebSocket retransmits; datagrams may also be dropped by
-  endpoints), not physical or directional IP loss. See [latency probing](../docs/MEASUREMENTS.md#latency-probing).
-
-## Text representation
-
-The two message payloads are ASCII and share strict numeric validation across the Go and
-browser implementations. Inspecting them in a TLS or QUIC packet capture requires decryption.
