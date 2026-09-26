@@ -122,7 +122,7 @@ Without a terminal, or with `--report`, it runs once and prints the report; the 
 reflects the outcome.
 
 [Flags, keys and exit codes](docs/DEPLOYMENT.md#native-terminal-client) ·
-[Build from source](docs/DEVELOPMENT.md#development-commands) ·
+[Build from source](docs/DEVELOPMENT.md#commands) ·
 [Upgrading](docs/DEPLOYMENT.md#upgrading)
 
 ## Documentation
