@@ -54,16 +54,21 @@ export async function abortableDelay(
 }
 
 /** The first error of `type` in a cause chain. */
-export function findCause<T extends Error>(
-  error: unknown,
-  type: abstract new (...args: never[]) => T,
-): T | undefined {
+/** The error and its causes, outermost first; a cycle ends the walk. */
+export function* causes(error: unknown): Generator<Error> {
   for (
     const seen = new Set<unknown>();
     error instanceof Error && !seen.has(error);
     error = error.cause
   ) {
-    if (error instanceof type) return error;
     seen.add(error);
+    yield error;
   }
+}
+
+export function findCause<T extends Error>(
+  error: unknown,
+  type: abstract new (...args: never[]) => T,
+): T | undefined {
+  for (const cause of causes(error)) if (cause instanceof type) return cause;
 }

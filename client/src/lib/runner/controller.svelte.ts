@@ -36,7 +36,7 @@ import type {
   RunnerEvent,
   TransportDiscovery,
 } from "./contract";
-import { abortable, findCause, withinBudget } from "./abortable";
+import { abortable, causes, findCause, withinBudget } from "./abortable";
 import { engineInfo, Run, type PreparedServer } from "./run";
 import {
   BrowserOriginBlockedError,
@@ -112,6 +112,9 @@ const retryState = (): Retry => ({ attempts: 0, at: 0, authentication: false });
 const aborted = () =>
   new DOMException("Connection selection changed", "AbortError");
 
+const NETWORK_FAILURE =
+  /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i;
+
 function connectionFailureMessage(
   cause: unknown,
   server?: ServerEntry,
@@ -119,29 +122,13 @@ function connectionFailureMessage(
   const authentication = findCause(cause, ServerAuthenticationRequired);
   if (authentication) return authentication.message;
   if (cause instanceof BrowserOriginBlockedError) return cause.message;
-  if (cause instanceof PreflightUnavailableError) {
-    const seen = new Set<unknown>();
-    let error: unknown = cause.cause;
-    while (error && typeof error === "object" && !seen.has(error)) {
-      const detail = error as {
-        name?: string;
-        message?: string;
-        cause?: unknown;
-      };
-      if (
-        detail.name === "NetworkError" ||
-        /failed to fetch|fetch failed|network(?:error| request failed)|load failed|connection (?:refused|reset|lost)/i.test(
-          detail.message ?? "",
-        )
-      )
+  if (cause instanceof PreflightUnavailableError)
+    for (const { name, message } of causes(cause.cause))
+      if (name === "NetworkError" || NETWORK_FAILURE.test(message))
         return server?.url.startsWith("https://") &&
           location.protocol === "http:"
           ? "Server could not be reached. If it requires sign-in, open this interface over HTTPS."
           : "Server could not be reached";
-      seen.add(error);
-      error = detail.cause;
-    }
-  }
   return cause instanceof DOMException && cause.name === "TimeoutError"
     ? "Connection check timed out"
     : "Connection check failed";
@@ -367,26 +354,24 @@ export function createApplicationController(
     slot.idle = undefined;
     idle?.stop();
   }
+  function cancel(slot: Slot<unknown>): void {
+    const task = slot.task;
+    slot.task = undefined;
+    task?.abort.abort(aborted());
+  }
   function cancelRole(
     state: ServerState,
     role: ConnectionRole,
     discardIdle = true,
   ): void {
     const slot = state.roles[role];
-    const task = slot.task;
-    slot.task = undefined;
-    task?.abort.abort(aborted());
+    cancel(slot);
     if (discardIdle) stopIdle(slot);
     if (state.validation[role].state === "checking")
       setRole(state, role, { state: "stale", path: null });
   }
-  function cancelDiscovery(state: ServerState): void {
-    const task = state.preflight.task;
-    state.preflight.task = undefined;
-    task?.abort.abort(aborted());
-  }
   function cancelServer(state: ServerState): void {
-    cancelDiscovery(state);
+    cancel(state.preflight);
     for (const role of CONNECTION_ROLES) cancelRole(state, role);
   }
 
@@ -435,7 +420,7 @@ export function createApplicationController(
             cancelRole(state, role, false);
             state.roles[role].idle?.stop();
           }
-          if (!metadataWanted) cancelDiscovery(state);
+          if (!metadataWanted) cancel(state.preflight);
         }
         state.config = null;
         continue;
@@ -881,7 +866,7 @@ export function createApplicationController(
     if (!enabled)
       for (const state of servers.values())
         if (!state.config) {
-          cancelDiscovery(state);
+          cancel(state.preflight);
           publish(state);
         }
     schedule();
