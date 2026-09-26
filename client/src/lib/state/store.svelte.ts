@@ -460,35 +460,24 @@ class AppStore {
   );
 
   stagePresentation = $derived.by<Record<TransportRole, StagePresentation>>(
-    () => {
-      const bidi = this.result?.bidirectional;
-      return Object.fromEntries(
-        STAGE_ORDER.map((stage) => {
-          const failure = this.stageFailures[stage] != null;
-          const hasUsableResult =
-            stage === "bidirectional"
-              ? failure
-                ? !!(bidi?.down || bidi?.up)
-                : !!(bidi?.down && bidi?.up)
-              : this.stageResults[stage] != null;
-          return [
-            stage,
-            deriveStagePresentation(stage, {
-              configured: this.runConfig.stages[stage],
-              phase: this.phase,
-              phaseStage: this.phaseStage,
-              phaseFraction: this.phaseFraction,
-              measuring: this.measuring,
-              hasUsableResult,
-              finished:
-                this.phase === "complete" ||
-                this.completedStages.includes(stage),
-              hasFailure: failure,
-            }),
-          ];
-        }),
-      ) as Record<TransportRole, StagePresentation>;
-    },
+    () =>
+      Object.fromEntries(
+        STAGE_ORDER.map((stage) => [
+          stage,
+          deriveStagePresentation(stage, {
+            configured: this.runConfig.stages[stage],
+            settled: this.result?.stages[stage],
+            phase: this.phase,
+            phaseStage: this.phaseStage,
+            phaseFraction: this.phaseFraction,
+            measuring: this.measuring,
+            hasResult:
+              stage !== "bidirectional" && this.stageResults[stage] != null,
+            hasFailure: this.stageFailures[stage] != null,
+            finished: this.completedStages.includes(stage),
+          }),
+        ]),
+      ) as Record<TransportRole, StagePresentation>,
   );
 
   /** Only unstarted stages can change while a run is active. */

@@ -11,7 +11,6 @@ const stage = (
   fill: 0,
   warming: false,
   failure: false,
-  hasUsableResult: false,
   ...overrides,
 });
 const model = (
