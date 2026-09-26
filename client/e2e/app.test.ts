@@ -11,7 +11,7 @@ import {
   runButton,
   savedResult,
 } from "./fleet";
-import { criticalViolations, expect, test } from "./webview";
+import { seriousViolations, expect, test } from "./webview";
 
 test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (page) => {
   const version = await fetch(`${home.http}/version.json`);
@@ -90,7 +90,7 @@ const viewports = [
   [1920, 1080],
 ] as const;
 
-test("a completed run fits every layout and theme without critical violations", async (page) => {
+test("a completed run fits every layout and theme without serious violations", async (page) => {
   await open(page);
   await ready(page);
   await run(page);
@@ -126,16 +126,16 @@ test("a completed run fits every layout and theme without critical violations", 
       await expect
         .poll(layout)
         .toEqual({ width, page: true, overflow: [], gauge: true });
-      expect(await criticalViolations(page)).toEqual([]);
+      expect(await seriousViolations(page)).toEqual([]);
       await closeSettings(page);
     }
-  await page.getByRole("button", { name: "Toggle Details" }).click();
+  await page.getByRole("button", { name: "Details" }).click();
   const about = page.getByRole("button", { name: "About & legal" });
   await about.click();
   const dialog = page.getByRole("dialog", { name: "About & legal" });
   expect(await dialog.evaluate((el) => el.matches(":modal"))).toBe(true);
   await expect(dialog).toContainText("AGPL-3.0-or-later");
-  expect(await criticalViolations(page, '[role="dialog"]')).toEqual([]);
+  expect(await seriousViolations(page, '[role="dialog"]')).toEqual([]);
   await page.raw.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(about).toBeFocused();

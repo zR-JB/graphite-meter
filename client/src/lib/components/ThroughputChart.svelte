@@ -376,8 +376,7 @@
         {#each presentation.phaseStats as stat (stat.lane)}
           <span
             class="stat-label"
-            style:border-color={stat.stroke}
-            style:color={stat.stroke}
+            data-tone={stat.tone}
             style:left={`${stat.x}px`}
             style:top={`${stat.y}px`}
             >{fmtSpeed(store.toUnit(stat.bytesPerSec))} {store.unitLabel}</span
@@ -537,9 +536,10 @@
     max-width: 126px;
     overflow: hidden;
     padding: 2px 5px;
-    border: 1px solid;
+    border: 1px solid var(--tone);
     border-radius: var(--r-well);
     background: var(--surface-1);
+    color: var(--tone);
     font-weight: var(--w-heavy);
     text-overflow: ellipsis;
   }

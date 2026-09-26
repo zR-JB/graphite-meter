@@ -378,12 +378,14 @@ const axeSource = resolve(
   import.meta.dir,
   "../node_modules/axe-core/axe.min.js",
 );
-export async function criticalViolations(page: Page, selector = "document") {
+export async function seriousViolations(page: Page, selector = "document") {
   if (!(await page.evaluate("typeof axe === 'object'")))
     await page.evaluate(`(() => { ${await Bun.file(axeSource).text()} })()`);
   const context = selector === "document" ? selector : encode(selector);
   const result = await page.evaluate<{ violations: { impact: string }[] }>(
     `axe.run(${context}, { resultTypes: ["violations"] })`,
   );
-  return result.violations.filter(({ impact }) => impact === "critical");
+  return result.violations.filter(({ impact }) =>
+    ["critical", "serious"].includes(impact),
+  );
 }
