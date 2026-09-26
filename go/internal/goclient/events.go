@@ -15,13 +15,19 @@ const (
 
 type byDirection[T any] struct{ down, up T }
 
-func (b byDirection[T]) of(dir Direction) T { return *b.at(dir) }
-
-func (b *byDirection[T]) at(dir Direction) *T {
+func (b byDirection[T]) of(dir Direction) T {
 	if dir == Up {
-		return &b.up
+		return b.up
 	}
-	return &b.down
+	return b.down
+}
+
+func (b *byDirection[T]) set(dir Direction, v T) {
+	if dir == Up {
+		b.up = v
+	} else {
+		b.down = v
+	}
 }
 
 type Stage string

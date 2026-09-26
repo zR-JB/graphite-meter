@@ -154,8 +154,8 @@ func (a *aggregateMeasurements) credit(b measurementBoundary) {
 		case server.down == nil:
 			server.down = new(count)
 		case count >= *server.down:
-			*server.bytes.at(Down) += count - *server.down
-			*server.down = count
+			server.bytes.down += count - *server.down
+			server.down = new(count)
 		}
 	}
 	for id, observed := range b.observedUp {
@@ -177,11 +177,11 @@ func (a *aggregateMeasurements) creditUpload(id string, next uploadLedger) {
 		return
 	case server.upload == nil:
 	case server.upload.id != next.id:
-		*server.bytes.at(Up) += next.maximum
+		server.bytes.up += next.maximum
 	case next.maximum <= server.upload.maximum:
 		return
 	default:
-		*server.bytes.at(Up) += next.maximum - server.upload.maximum
+		server.bytes.up += next.maximum - server.upload.maximum
 	}
 	server.upload = &next
 }
@@ -224,7 +224,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 	for _, dir := range []Direction{Down, Up} {
 		components, _ := full.direction(dir)
 		for _, c := range components {
-			*a.servers[c.ServerID].window.at(dir) = new(c)
+			a.servers[c.ServerID].window.set(dir, new(c))
 		}
 	}
 	if peak, err := a.window(*a.peakFrom, b); err == nil && peak.shortest() >= minimumPeakWindow {
@@ -253,11 +253,11 @@ func (a *aggregateMeasurements) recordPeak(w *AggregateWindow) {
 	for _, dir := range []Direction{Down, Up} {
 		components, rate := w.direction(dir)
 		if rate != nil {
-			*a.peak.at(dir) = max(a.peak.of(dir), *rate)
+			a.peak.set(dir, max(a.peak.of(dir), *rate))
 		}
 		for _, c := range components {
 			server := a.servers[c.ServerID]
-			*server.peak.at(dir) = max(server.peak.of(dir), c.BytesPerSec)
+			server.peak.set(dir, max(server.peak.of(dir), c.BytesPerSec))
 		}
 	}
 }
@@ -273,13 +273,6 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 		return nil, errStaleBoundary
 	}
 	window := &AggregateWindow{Start: first.at, End: last.at}
-	add := func(components *[]ComponentWindow, sum **float64, c ComponentWindow) {
-		*components = append(*components, c)
-		if *sum == nil {
-			*sum = new(float64)
-		}
-		**sum += c.BytesPerSec
-	}
 	for _, id := range a.current().Participants {
 		if a.stage != StageUpload {
 			start, ok := first.down[id]
@@ -288,7 +281,7 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 				return nil, errors.New("missing or regressing download counter")
 			}
 			rate := float64(end-start) / elapsed.Seconds()
-			add(&window.Down, &window.DownBytesPerSec, ComponentWindow{id, end - start, elapsed, rate})
+			window.Down = append(window.Down, ComponentWindow{id, end - start, elapsed, rate})
 		}
 		if a.stage != StageDownload {
 			start, end := first.up[id], last.up[id]
@@ -300,10 +293,22 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 			}
 			duration := time.Duration(end.Nanos - start.Nanos)
 			rate := float64(end.Bytes-start.Bytes) / duration.Seconds()
-			add(&window.Up, &window.UpBytesPerSec, ComponentWindow{id, end.Bytes - start.Bytes, duration, rate})
+			window.Up = append(window.Up, ComponentWindow{id, end.Bytes - start.Bytes, duration, rate})
 		}
 	}
+	window.DownBytesPerSec, window.UpBytesPerSec = sumRates(window.Down), sumRates(window.Up)
 	return window, nil
+}
+
+func sumRates(components []ComponentWindow) *float64 {
+	if len(components) == 0 {
+		return nil
+	}
+	var sum float64
+	for _, c := range components {
+		sum += c.BytesPerSec
+	}
+	return &sum
 }
 
 func (a *aggregateMeasurements) result(dir Direction) Result {

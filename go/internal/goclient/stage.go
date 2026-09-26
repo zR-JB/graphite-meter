@@ -416,7 +416,7 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 		for _, dir := range s.plan.Directions {
 			switch {
 			case bytes.of(dir) > s.lastBytes[id].of(dir):
-				*s.lastMovement[id].at(dir) = time.Now()
+				s.lastMovement[id].set(dir, time.Now())
 			case sample.final:
 				stalled = true
 			case !s.ending && time.Since(s.lastMovement[id].of(dir)) >= redialWindow:
