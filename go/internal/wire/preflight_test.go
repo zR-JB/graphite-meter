@@ -56,9 +56,8 @@ func TestGoldenDocumentsMatchTheirSchemas(t *testing.T) {
 
 func TestMarshaledStructsMatchTheirSchemas(t *testing.T) {
 	throughput := ThroughputTarget{ID: "http1-clear", Origin: "http://speed.example:7246", Transport: "fetch-stream",
-		Protocol: "http1", Routes: DefaultThroughputRoutes()}
-	latency := LatencyTarget{ID: "ws-http1-clear", Origin: throughput.Origin, Transport: "websocket", Protocol: "http1",
-		Routes: DefaultLatencyRoutes()}
+		Protocol: "http1"}
+	latency := LatencyTarget{ID: "ws-http1-clear", Origin: throughput.Origin, Transport: "websocket", Protocol: "http1"}
 	values := []struct {
 		name  string
 		value any
@@ -149,9 +148,6 @@ func TestPreflightGoldenSurvivesARoundTrip(t *testing.T) {
 	}
 	if err := json.Unmarshal(data, &pf); err != nil {
 		t.Fatalf("unmarshal preflight golden: %v", err)
-	}
-	if got, want := pf.Capabilities.LatencyTargets[0].Routes.Ping, "/ws/ping"; got != want {
-		t.Fatalf("LatencyTargets[0].Routes.Ping = %q, want %q", got, want)
 	}
 	data, err = json.Marshal(pf)
 	if err != nil {

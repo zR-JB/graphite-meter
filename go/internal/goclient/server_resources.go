@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -79,7 +80,7 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 	if id == "" {
 		return nil, fmt.Errorf("upload receiver is not ready")
 	}
-	endpoint, err := r.endpoint(r.routes().UploadCheckpoint)
+	endpoint, err := r.endpoint(route.UploadCheckpoint)
 	if err != nil {
 		return nil, err
 	}

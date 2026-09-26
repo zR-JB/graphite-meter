@@ -199,8 +199,8 @@ func runModel(t *testing.T, servers ...string) model {
 	for _, id := range servers {
 		details.Servers = append(details.Servers, goclient.ServerRunSummary{
 			Server:        wire.ServerEntry{ID: id, Name: strings.ToUpper(id), Location: "Somewhere"},
-			Throughput:    wire.ThroughputTarget{Transport: wire.TransportFetchStream, Protocol: "http2", TLS: true},
-			LatencyTarget: &wire.LatencyTarget{Transport: wire.TransportWebSocket, Protocol: "http1", TLS: true},
+			Throughput:    wire.ThroughputTarget{Origin: "https://" + id, Transport: wire.TransportFetchStream, Protocol: "http2"},
+			LatencyTarget: &wire.LatencyTarget{Origin: "https://" + id, Transport: wire.TransportWebSocket, Protocol: "http1"},
 		})
 	}
 	m, _ = modelAndCmd(m.Update(eventsMsg{

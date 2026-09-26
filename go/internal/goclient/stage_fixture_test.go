@@ -38,7 +38,7 @@ func (r *runner) runTestStage(ctx context.Context, stage Stage, duration time.Du
 	} {
 		*d = duration
 	}
-	target := wire.ThroughputTarget{Origin: cfg.BaseURL, Transport: r.targetTransport(), Routes: r.routes()}
+	target := wire.ThroughputTarget{Origin: cfg.BaseURL, Transport: r.targetTransport()}
 	if r.target != nil {
 		target = *r.target
 	}

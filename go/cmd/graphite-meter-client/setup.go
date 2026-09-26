@@ -473,7 +473,7 @@ func (m model) throughputPaths() []pathChoice {
 		choices = append(choices, pathChoice{
 			target:    t.Origin,
 			transport: t.Transport,
-			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()),
 			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
 		})
 	}
@@ -497,7 +497,7 @@ func (m model) latencyPaths() []pathChoice {
 		choices = append(choices, pathChoice{
 			target:    t.Origin,
 			transport: t.Transport,
-			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS),
+			label:     goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()),
 			note:      shortOrigin(m.cfg.BaseURL, t.Origin),
 		})
 	}

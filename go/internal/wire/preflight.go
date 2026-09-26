@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 // Preflight is the discovery document a server serves at /preflight: who it is and which measurement targets it offers.
@@ -46,42 +44,23 @@ const WTMaxStreams = 16
 const WTIdleBound = 30 * time.Second
 
 type ThroughputTarget struct {
-	ID        string           `json:"-"`
-	Origin    string           `json:"baseUrl"`
-	Transport string           `json:"transport"`
-	Protocol  string           `json:"protocol"`
-	TLS       bool             `json:"-"`
-	Routes    ThroughputRoutes `json:"-"`
-}
-
-type ThroughputRoutes struct {
-	Probe, Download, Upload, UploadSession, UploadProgress, UploadCheckpoint string
-	WTSession, WTDownload, WTUpload                                          string
+	ID        string `json:"-"`
+	Origin    string `json:"baseUrl"`
+	Transport string `json:"transport"`
+	Protocol  string `json:"protocol"`
 }
 
 type LatencyTarget struct {
-	ID        string        `json:"-"`
-	Origin    string        `json:"baseUrl"`
-	Transport string        `json:"transport"`
-	Protocol  string        `json:"-"`
-	TLS       bool          `json:"-"`
-	Routes    LatencyRoutes `json:"-"`
+	ID        string `json:"-"`
+	Origin    string `json:"baseUrl"`
+	Transport string `json:"transport"`
+	Protocol  string `json:"-"`
 }
 
-type LatencyRoutes struct{ Probe, Ping, WTSession, WTPing string }
+// TLS reports whether the target's origin is HTTPS.
+func (t ThroughputTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
 
-func DefaultThroughputRoutes() ThroughputRoutes {
-	return ThroughputRoutes{
-		Probe: route.Probe, Download: route.Download, Upload: route.Upload,
-		UploadSession: route.UploadSession, UploadProgress: route.UploadProgress,
-		UploadCheckpoint: route.UploadCheckpoint,
-		WTSession:        route.WTSession, WTDownload: route.WTDownload, WTUpload: route.WTUpload,
-	}
-}
-
-func DefaultLatencyRoutes() LatencyRoutes {
-	return LatencyRoutes{Probe: route.Probe, Ping: route.Ping, WTSession: route.WTSession, WTPing: route.WTPing}
-}
+func (t LatencyTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
 
 func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	var raw struct {
@@ -92,7 +71,7 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	u, err := targetOrigin(raw.BaseURL)
+	_, err := targetOrigin(raw.BaseURL)
 	switch {
 	case err != nil:
 		return err
@@ -102,9 +81,7 @@ func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	case !slices.Contains([]string{"http1", "http2", "http3", "negotiated"}, raw.Protocol):
 		return fmt.Errorf("unsupported throughput protocol %q", raw.Protocol)
 	}
-	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol,
-		DefaultThroughputRoutes()
-	t.TLS = u.Scheme == "https"
+	t.ID, t.Origin, t.Transport, t.Protocol = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol
 	return nil
 }
 
@@ -116,7 +93,7 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	u, err := targetOrigin(raw.BaseURL)
+	_, err := targetOrigin(raw.BaseURL)
 	protocol := map[string]string{TransportWebSocket: "http1", TransportWebTransport: "http3"}[raw.Transport]
 	switch {
 	case err != nil:
@@ -124,9 +101,7 @@ func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
 	case protocol == "":
 		return fmt.Errorf("unsupported latency transport %q", raw.Transport)
 	}
-	t.ID, t.Origin, t.Transport, t.Protocol, t.Routes = raw.BaseURL, raw.BaseURL, raw.Transport, protocol,
-		DefaultLatencyRoutes()
-	t.TLS = u.Scheme == "https"
+	t.ID, t.Origin, t.Transport, t.Protocol = raw.BaseURL, raw.BaseURL, raw.Transport, protocol
 	return nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
 	"net/http"
 	"net/url"
@@ -79,7 +80,7 @@ func wtDial(ctx context.Context, cfg Config, origin, path string, query url.Valu
 func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.LatencyTarget) error {
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	sess, err := wtDial(verifyCtx, cfg, target.Origin, target.Routes.WTPing, nil)
+	sess, err := wtDial(verifyCtx, cfg, target.Origin, route.WTPing, nil)
 	if err != nil {
 		return err
 	}
@@ -109,7 +110,7 @@ func verifyLatencyWebTransport(ctx context.Context, cfg Config, target *wire.Lat
 func verifyThroughputWebTransport(ctx context.Context, cfg Config, target *wire.ThroughputTarget) error {
 	verifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	sess, err := wtDial(verifyCtx, cfg, target.Origin, target.Routes.WTDownload, url.Values{"bytes": {"0"}})
+	sess, err := wtDial(verifyCtx, cfg, target.Origin, route.WTDownload, url.Values{"bytes": {"0"}})
 	if err != nil {
 		return err
 	}

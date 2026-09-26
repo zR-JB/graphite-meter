@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
 	"net/http"
 	"net/http/httptrace"
@@ -32,7 +33,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 		return err
 	}
 
-	progressURL, err := r.endpoint(r.routes().UploadProgress)
+	progressURL, err := r.endpoint(route.UploadProgress)
 	if err != nil {
 		return err
 	}
@@ -42,7 +43,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
-			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTUpload, url.Values{"id": {id}})
+			return wtDial(dialCtx, r.cfg, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
 		}, func(establishCtx context.Context, sess *wtSession) error {
 			str, err := acceptUploadProgressWT(establishCtx, sess)
 			if err != nil {
@@ -101,7 +102,7 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) (failure er
 }
 
 func (r *runner) mintUploadID(ctx context.Context) (string, error) {
-	path := r.routes().UploadSession
+	path := route.UploadSession
 	u, err := r.endpoint(path)
 	if err != nil {
 		return "", err
@@ -119,7 +120,7 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 
 func (r *runner) uploadLane(ctx context.Context, id string, lane int, block []byte, ready func()) error {
 	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{WroteHeaders: ready})
-	path := r.routes().Upload
+	path := route.Upload
 	base, err := r.endpoint(path)
 	if err != nil {
 		return err

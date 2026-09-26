@@ -298,10 +298,10 @@ func (m model) testView(w int) string {
 		for _, server := range r.details.Servers {
 			names = append(names, server.Server.Name)
 			t := server.Throughput
-			throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS))
+			throughputs = appendUnique(throughputs, goclient.ConnectionSummary(t.Transport, t.Protocol, t.TLS()))
 			streams = m.cfg.TransferStreams.Label(t.Protocol, t.Transport)
 			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
-				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS)
+				latency = goclient.ConnectionSummary(l.Transport, l.Protocol, l.TLS())
 				if len(r.details.Servers) > 1 {
 					latency = server.Server.Name + " · " + latency
 				}

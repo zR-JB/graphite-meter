@@ -3,6 +3,7 @@ package goclient
 import (
 	"context"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net/http"
 	"net/url"
 	"strings"
@@ -47,16 +48,10 @@ func resolveSelfOrigins(pf *wire.Preflight, resolved string) {
 }
 
 func normalizeThroughputTarget(t *wire.ThroughputTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(
-		origin,
-		"https://",
-	), wire.DefaultThroughputRoutes()
+	t.ID, t.Origin = origin, strings.TrimRight(origin, "/")
 }
 func normalizeLatencyTarget(t *wire.LatencyTarget, origin string) {
-	t.ID, t.Origin, t.TLS, t.Routes = origin, strings.TrimRight(origin, "/"), strings.HasPrefix(
-		origin,
-		"https://",
-	), wire.DefaultLatencyRoutes()
+	t.ID, t.Origin = origin, strings.TrimRight(origin, "/")
 }
 
 func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPrefix string) (wire.Probe, string, error) {
@@ -84,7 +79,7 @@ func getJSONProbe(ctx context.Context, hc *http.Client, origin, path, statusPref
 }
 
 func verifyLatencyWebSocket(ctx context.Context, hc *http.Client, target *wire.LatencyTarget) error {
-	u, err := wsEndpoint(target.Origin, target.Routes.Ping)
+	u, err := wsEndpoint(target.Origin, route.Ping)
 	if err != nil {
 		return err
 	}

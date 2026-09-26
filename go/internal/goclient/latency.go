@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -39,13 +40,13 @@ func (b wsBus) Close() {
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	if r.latencyTarget.Transport == wire.TransportWebTransport {
-		sess, err := wtDial(ctx, r.cfg, r.latencyTarget.Origin, r.latencyTarget.Routes.WTPing, nil)
+		sess, err := wtDial(ctx, r.cfg, r.latencyTarget.Origin, route.WTPing, nil)
 		if err != nil {
 			return nil, err
 		}
 		return wtBus{sess: sess}, nil
 	}
-	u, err := wsEndpoint(r.latencyTarget.Origin, r.latencyTarget.Routes.Ping)
+	u, err := wsEndpoint(r.latencyTarget.Origin, route.Ping)
 	if err != nil {
 		return nil, err
 	}

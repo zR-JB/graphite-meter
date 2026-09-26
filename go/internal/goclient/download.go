@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"io"
 	"net/http"
 	"net/url"
@@ -29,7 +30,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) (failure 
 	var lane func(context.Context, int, func()) error
 	if r.targetTransport() == wire.TransportWebTransport {
 		host, err := newWTStageSession(ctx, func(dialCtx context.Context) (*wtSession, error) {
-			return wtDial(dialCtx, r.cfg, r.target.Origin, r.routes().WTDownload, r.wtDownloadQuery())
+			return wtDial(dialCtx, r.cfg, r.target.Origin, route.WTDownload, r.wtDownloadQuery())
 		}, nil)
 		if err != nil {
 			return err
@@ -42,7 +43,7 @@ func (r *runner) measureDownload(ctx context.Context, gate *stageGate) (failure 
 			})
 		}
 	} else {
-		base, err := r.endpoint(r.routes().Download)
+		base, err := r.endpoint(route.Download)
 		if err != nil {
 			return err
 		}

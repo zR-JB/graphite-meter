@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"net"
 	"net/http"
 	"net/url"
@@ -142,7 +143,7 @@ func (p *PreparedConnection) ThroughputSummary() string {
 		return "Not checked"
 	}
 	t := p.ThroughputTarget
-	return ConnectionSummary(t.Transport, t.Protocol, t.TLS)
+	return ConnectionSummary(t.Transport, t.Protocol, t.TLS())
 }
 
 func (p *PreparedConnection) LatencySummary() string {
@@ -150,7 +151,7 @@ func (p *PreparedConnection) LatencySummary() string {
 		return "Not selected"
 	}
 	t := p.LatencyTarget
-	return ConnectionSummary(t.Transport, t.Protocol, t.TLS)
+	return ConnectionSummary(t.Transport, t.Protocol, t.TLS())
 }
 
 func baseTransport(cfg Config) *http.Transport {
@@ -271,7 +272,7 @@ func prepareThroughput(ctx context.Context, cfg Config, prepared *PreparedConnec
 		func() *http.Transport { return baseTransport(cfg) },
 	)
 	defer closeTransfer()
-	probe, clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, target.Routes.Probe, "probe")
+	probe, clientProtocol, err := getJSONProbe(ctx, transfer, target.Origin, route.Probe, "probe")
 	if err != nil {
 		return err
 	}
@@ -316,7 +317,7 @@ func prepareLatency(ctx context.Context, cfg Config, prepared *PreparedConnectio
 	wsClient, closeWebSocket := websocketClient(cfg)
 	defer closeWebSocket()
 	probeStarted := time.Now()
-	probe, _, err := getJSONProbe(ctx, wsClient, target.Origin, target.Routes.Probe, "latency probe")
+	probe, _, err := getJSONProbe(ctx, wsClient, target.Origin, route.Probe, "latency probe")
 	if err != nil {
 		return err
 	}
@@ -408,13 +409,6 @@ func (r *runner) targetTransport() string {
 		return wire.TransportFetchStream
 	}
 	return r.target.Transport
-}
-
-func (r *runner) routes() wire.ThroughputRoutes {
-	if r.target != nil {
-		return r.target.Routes
-	}
-	return wire.DefaultThroughputRoutes()
 }
 
 func transportOrder(selection string, preferred, fallback string) []string {

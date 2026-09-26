@@ -157,8 +157,6 @@ func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
 		Origin:    origin,
 		Transport: "fetch-stream",
 		Protocol:  protocol,
-		TLS:       tls,
-		Routes:    wire.DefaultThroughputRoutes(),
 	}
 }
 
@@ -168,8 +166,6 @@ func testChannel(id, origin string, tls bool) wire.LatencyTarget {
 		Origin:    origin,
 		Transport: "websocket",
 		Protocol:  "http1",
-		TLS:       tls,
-		Routes:    wire.DefaultLatencyRoutes(),
 	}
 }
 

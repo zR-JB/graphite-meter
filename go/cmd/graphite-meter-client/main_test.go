@@ -49,13 +49,11 @@ func readyConnection(name string) *goclient.PreparedConnection {
 			Origin:    "https://" + name + ".example",
 			Transport: wire.TransportFetchStream,
 			Protocol:  "http2",
-			TLS:       true,
 		},
 		LatencyTarget: &wire.LatencyTarget{
 			Origin:    "https://" + name + ".example",
 			Transport: wire.TransportWebSocket,
 			Protocol:  "http1",
-			TLS:       true,
 		},
 	}
 }
