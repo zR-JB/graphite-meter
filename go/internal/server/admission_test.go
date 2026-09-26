@@ -18,6 +18,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func routeSpec(path string) route.Spec {
@@ -84,7 +85,7 @@ func TestUploadAdmissionReleasesStalledBody(t *testing.T) {
 				if (r.ProtoMajor == 2) != http2 {
 					t.Errorf("request protocol = %s, HTTP/2 enabled = %t", r.Proto, http2)
 				}
-				upload.ServeHTTP(w, r)
+				upload.Handler(wire.IdleBound).ServeHTTP(w, r)
 			}), routeSpec(route.Upload), nil, publicAuth(t))
 			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				h.ServeHTTP(w, r)

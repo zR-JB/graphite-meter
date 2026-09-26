@@ -131,7 +131,7 @@ func wtStreamCount(query url.Values) int {
 }
 
 // WTUpload counts client-opened lanes and serves the progress feed on one server stream.
-func WTUpload(upload *Upload) SessionHandler {
+func WTUpload(upload *Upload, idle time.Duration) SessionHandler {
 	return func(ctx context.Context, sess *webtransport.Session, r *http.Request, live *Activity) {
 		query := r.URL.Query()
 		id := query.Get("id")
@@ -166,7 +166,8 @@ func WTUpload(upload *Upload) SessionHandler {
 			case lanes <- struct{}{}:
 				wg.Go(func() {
 					defer func() { <-lanes }()
-					serveUploadLane(ctx, upload, sess, str, id, client, live)
+					serveUploadLane(ctx, upload, sess, str, id, client, &idleDeadline{set: str.SetReadDeadline,
+						bound: idle, live: live})
 				})
 			default:
 				str.CancelRead(0)
@@ -176,10 +177,10 @@ func WTUpload(upload *Upload) SessionHandler {
 }
 
 func serveUploadLane(ctx context.Context, upload *Upload, sess *webtransport.Session,
-	str *webtransport.ReceiveStream, id string, client uploadClient, live *Activity) {
+	str *webtransport.ReceiveStream, id string, client uploadClient, idle *idleDeadline) {
 	// A blocked read does not watch ctx.
 	defer transport.UnblockReadsOnDone(ctx, str)()
-	_, err := upload.Receive(id, client, str, &idleDeadline{set: str.SetReadDeadline, live: live})
+	_, err := upload.Receive(id, client, str, idle)
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {
 		serveRefusal(ctx, sess, refusal.access)
 	}

@@ -47,9 +47,14 @@ func NewUpload(meter *Meter, trusted []netip.Prefix) *Upload {
 
 var scratchPool = sync.Pool{New: func() any { return new(make([]byte, uploadBufSize)) }}
 
-func (u *Upload) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// Handler serves /upload, ending a lane that sends nothing for idle.
+func (u *Upload) Handler(idle time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { u.serve(w, r, idle) })
+}
+
+func (u *Upload) serve(w http.ResponseWriter, r *http.Request, bound time.Duration) {
 	limit, _ := r.Context().Deadline()
-	idle := &idleDeadline{set: http.NewResponseController(w).SetReadDeadline, limit: limit}
+	idle := &idleDeadline{set: http.NewResponseController(w).SetReadDeadline, bound: bound, limit: limit}
 	defer idle.endWith(r.Context())()
 	n, err := u.Receive(r.URL.Query().Get("id"), uploadClientOf(r, u.trusted), r.Body, idle)
 	if refusal, ok := errors.AsType[*uploadRefusalError](err); ok {

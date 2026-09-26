@@ -41,8 +41,8 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	}
 	if topo.transfers {
 		proto := topo.requiredProto
-		m.http(route.Download, e.download, proto)
-		m.http(route.Upload, e.upload, proto)
+		m.http(route.Download, e.download.Handler(e.idleBound), proto)
+		m.http(route.Upload, e.upload.Handler(e.idleBound), proto)
 		m.http(route.UploadSession, http.HandlerFunc(e.upload.ServeSession), proto)
 		m.http(route.UploadCheckpoint, http.HandlerFunc(e.upload.ServeCheckpoint), proto)
 		m.http(route.UploadProgress, http.HandlerFunc(e.upload.ServeProgress), proto)
@@ -54,7 +54,7 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	}
 	if topo.wt != nil {
 		m.handle(route.WTDownload, m.webTransport(topo.wt, endpoint.WTDownload(e.download)))
-		m.handle(route.WTUpload, m.webTransport(topo.wt, endpoint.WTUpload(e.upload)))
+		m.handle(route.WTUpload, m.webTransport(topo.wt, endpoint.WTUpload(e.upload, e.idleBound)))
 		m.handle(route.WTPing, m.webTransport(topo.wt, endpoint.WTPing))
 	}
 	if topo.spa {

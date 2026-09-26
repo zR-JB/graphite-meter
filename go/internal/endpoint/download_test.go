@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func randomBlock(n int) []byte {
@@ -20,7 +22,7 @@ func randomBlock(n int) []byte {
 
 func TestDownloadStreamsTheWrappedBlock(t *testing.T) {
 	block := randomBlock(256 * 1024)
-	srv := httptest.NewServer(NewDownload(block, nil))
+	srv := httptest.NewServer(NewDownload(block, nil).Handler(wire.IdleBound))
 	defer srv.Close()
 	const want = 300 << 10
 	get := func() []byte {
@@ -59,8 +61,8 @@ func TestDownloadStreamsTheWrappedBlock(t *testing.T) {
 func TestDownloadHEADDoesNotGenerateBodyOrCountBytes(t *testing.T) {
 	meter := NewMeter("test:download")
 	response := httptest.NewRecorder()
-	NewDownload(randomBlock(4096), meter).ServeHTTP(response,
-		httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil))
+	NewDownload(randomBlock(4096), meter).serve(response,
+		httptest.NewRequest(http.MethodHead, "/download?bytes=1048576", nil), wire.IdleBound)
 	if response.Code != http.StatusOK || response.Header().Get("Content-Length") != "1048576" {
 		t.Fatalf("HEAD status=%d content length=%q", response.Code, response.Header().Get("Content-Length"))
 	}

@@ -120,7 +120,7 @@ func TestIdleDeadlineReArmsWithTheClock(t *testing.T) {
 			deadlines = append(deadlines, d)
 			return nil
 		}
-		idle := &idleDeadline{set: set, limit: limit}
+		idle := &idleDeadline{set: set, bound: wire.IdleBound, limit: limit}
 		for range 3 {
 			idle.moved(time.Now())
 		}

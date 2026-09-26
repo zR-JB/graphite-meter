@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 // LaneEnd is how the reason a lane ended reaches its peer on each transport (api/wire.md#lane-endings).
@@ -86,6 +85,7 @@ func (a *Activity) watch(ctx context.Context, cancel context.CancelCauseFunc, bo
 // idleDeadline re-arms a lane's socket deadline, capped at limit, and counts each move as session activity.
 type idleDeadline struct {
 	set   func(time.Time) error
+	bound time.Duration
 	limit time.Time
 	live  *Activity
 	armed time.Time
@@ -95,10 +95,10 @@ type idleDeadline struct {
 
 func (d *idleDeadline) moved(now time.Time) {
 	d.live.Bump()
-	if d.set == nil || now.Sub(d.armed) <= wire.IdleBound/8 {
+	if d.set == nil || now.Sub(d.armed) <= d.bound/8 {
 		return
 	}
-	deadline := now.Add(wire.IdleBound)
+	deadline := now.Add(d.bound)
 	if !d.limit.IsZero() && d.limit.Before(deadline) {
 		deadline = d.limit
 	}

@@ -73,7 +73,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	registry.RegisterHTTP(route.UploadSession, http.HandlerFunc(upload.ServeSession))
 	registry.RegisterHTTP(route.UploadProgress, http.HandlerFunc(upload.ServeProgress))
 	registry.RegisterHTTP(route.UploadCheckpoint, http.HandlerFunc(upload.ServeCheckpoint))
-	registry.RegisterHTTP(route.Upload, upload)
+	registry.RegisterHTTP(route.Upload, upload.Handler(wire.IdleBound))
 	registry.RegisterHTTP(route.Preflight, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
 		return json.MarshalWrite(w, wire.Preflight{
 			Server:        wire.ServerInfo{Name: name},

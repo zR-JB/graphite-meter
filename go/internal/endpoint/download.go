@@ -22,14 +22,20 @@ func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-func (d *Download) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// Handler serves /download, ending a lane its peer stops draining for idle.
+func (d *Download) Handler(idle time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { d.serve(w, r, idle) })
+}
+
+func (d *Download) serve(w http.ResponseWriter, r *http.Request, idle time.Duration) {
 	n := parseBytes(r.URL.Query().Get("bytes"))
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
 	if r.Method != http.MethodHead {
 		limit, _ := r.Context().Deadline()
-		sink := &idleWriter{w: w, idle: idleDeadline{set: http.NewResponseController(w).SetWriteDeadline, limit: limit}}
+		controller := http.NewResponseController(w)
+		sink := &idleWriter{w: w, idle: idleDeadline{set: controller.SetWriteDeadline, bound: idle, limit: limit}}
 		sink.idle.moved(time.Now())
 		defer sink.idle.endWith(r.Context())()
 		d.Stream(r.Context(), n, sink)

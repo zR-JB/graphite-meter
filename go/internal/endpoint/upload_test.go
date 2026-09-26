@@ -83,7 +83,7 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 
 func TestUploadCountsEchoesAndAggregates(t *testing.T) {
 	store := NewUpload(nil, nil)
-	srv := httptest.NewServer(store)
+	srv := httptest.NewServer(store.Handler(wire.IdleBound))
 	defer srv.Close()
 	for _, n := range []int64{3*1024*1024 + 123, 0} {
 		id := store.Mint()
@@ -112,7 +112,7 @@ func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), strings.NewReader("12345"))
 	r.ContentLength = 1 << 30
 	w := httptest.NewRecorder()
-	store.ServeHTTP(w, r)
+	store.Handler(wire.IdleBound).ServeHTTP(w, r)
 	var echo struct {
 		Bytes int64 `json:"bytes"`
 	}
@@ -140,7 +140,7 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 			live := store.live()
 			body := strings.NewReader("must not be drained")
 			rec := httptest.NewRecorder()
-			store.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
+			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
 			if rec.Code != tc.want || body.Len() != len("must not be drained") || store.live() != live {
 				t.Fatalf("refusal = %d, unread = %d, live %d -> %d", rec.Code, body.Len(), live, store.live())
 			}
@@ -164,7 +164,7 @@ func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
 	store := NewUpload(nil, nil)
 	id := store.Mint()
 	rec := httptest.NewRecorder()
-	store.ServeHTTP(rec,
+	store.Handler(wire.IdleBound).ServeHTTP(rec,
 		httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096}))
 	if rec.Body.Len() != 0 {
 		t.Fatalf("aborted upload published response %q", rec.Body.String())
@@ -234,7 +234,7 @@ func TestUploadBoundsItsBodyRead(t *testing.T) {
 			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
 			store := NewUpload(nil, nil)
 			before := time.Now()
-			store.ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
+			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
 				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
 			if remaining != 0 && remaining < wire.IdleBound {
 				if !rec.read.Equal(want) {
