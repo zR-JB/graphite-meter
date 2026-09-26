@@ -185,6 +185,11 @@ def check_workflows(root: Path) -> None:
             actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
+    release = (workflows / "release.yml").read_text(encoding="utf-8")
+    publish = "needs.verify.outputs.publish == 'true'"
+    for job in re.split(r"(?m)^  (?=[a-z-]+:$)", release.split("\njobs:\n", 1)[1]):
+        if "uses: ./.github/workflows/" in job and publish not in job:
+            fail("release.yml: every publication job must require publish mode")
     request = (workflows / "release-request.yml").read_text(encoding="utf-8")
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:

@@ -156,6 +156,7 @@ jobs:
 
   publish-image:
     name: Publish exact version image
+    if: needs.verify.outputs.publish == 'true'
     needs: [verify, recheck]
     uses: ./.github/workflows/_publish-oci.yml
     permissions:
@@ -177,7 +178,7 @@ jobs:
 
   publish-release:
     name: Publish verified stable GitHub Release
-    if: needs.verify.outputs.stable == 'true'
+    if: needs.verify.outputs.publish == 'true' && needs.verify.outputs.stable == 'true'
     needs: [verify, publish-image]
     uses: ./.github/workflows/_publish-release.yml
     permissions:
@@ -190,7 +191,7 @@ jobs:
 
   promote:
     name: Promote stable aliases without rollback
-    if: needs.verify.outputs.stable == 'true'
+    if: needs.verify.outputs.publish == 'true' && needs.verify.outputs.stable == 'true'
     needs: [verify, publish-image, publish-release]
     uses: ./.github/workflows/_promote-oci.yml
     permissions:

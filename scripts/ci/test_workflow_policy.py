@@ -20,7 +20,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
     (W + "release.yml", 'run: echo "::notice::', 'run: echo "${{ github.head_ref }}',
      "through env"),
-    (OCI, "        if [[ -z", "        echo ${{ inputs.version }}\n        if [[ -z", "through env"),
+    (OCI, "        if [[ -z", "        echo ${{ inputs.version }}\n        if [[ -z",
+     "through env"),
     ("container/Dockerfile", None, "FROM docker.io/library/alpine:3 AS extra\n", "digest-pinned"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (W + "ci.yml", "persist-credentials: false", "fetch-depth: 1", "persist-credentials"),
@@ -43,6 +44,8 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, PREPARE, PREPARE + "\n      - run: echo \"$RAW\"\n        env:\n"
      "          RAW: ${{ inputs.sha }}\n", "only the request validator"),
     (W + "release.yml", "environment: ghcr-release", "", "environment"),
+    (W + "release.yml", "    if: needs.verify.outputs.publish == 'true'\n    needs: [verify, r",
+     "    needs: [verify, r", "require publish mode"),
     (W + "release.yml", "  approval:\n", "  publish-image:\n    uses: ./x.yml\n  approval:\n",
      "misorders invariant: publish-image"),
     (W + "release.yml", "on:\n", "on:\n  push:\n    tags: ['v*']\n", "triggered only by"),
