@@ -100,6 +100,9 @@ In a restricted sandbox set writable `GOCACHE`, `XDG_CONFIG_HOME` and `XDG_CACHE
 the pinned browser, and allow browser processes and loopback sockets. If Bun's parallel workers stall there, use
 `bun test src --parallel=1` locally and rely on CI for the parallel gate.
 
+`mise run codeql` repeats the CodeQL scan offline with the [bundle](https://github.com/github/codeql-action/releases)
+release in `vars.codeql`, installed at `~/.local/share/codeql-bundle` or named by `CODEQL`.
+
 `mise run check-generated` and `mise run legal-check` detect drift in authentication assets and legal inventories.
 Regenerate legal outputs (`mise run legal-generate`) only after an intentional dependency or artifact change.
 
@@ -140,6 +143,7 @@ Never create or move release tags in ordinary work.
 | Tool downloads | `mise.lock` | Exact artifacts and checksums |
 | mise bootstrap | `mise.toml` `vars.mise_version` | The SHA-pinned CI action |
 | Chrome for Testing | `mise.toml` `vars.browser_chrome` | CI install and identity check |
+| CodeQL bundle | `mise.toml` `vars.codeql` | `mise run codeql` |
 | Utility container images | `mise.toml` `vars.image_*` | Secret scan, build and publication |
 | Go dependencies | `go/go.mod`, `go/go.sum` | Module resolution and checksums |
 | Browser dependencies | `client/package.json`, `client/bun.lock` | Frozen Bun installs |

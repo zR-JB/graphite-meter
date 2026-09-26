@@ -19,6 +19,8 @@ mise_version = "2026.9.14"
 
 browser_chrome = "153.0.8010.52"
 
+codeql = "2.27.1"
+
 image_gitleaks = "ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f"
 image_skopeo = "quay.io/containers/skopeo:v1.22.3-immutable@sha256:f45eb1e14223a5ba0da4246274679a083653dab1402acc1fcb70a6339b50cf00"
 image_bun = "docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895"
@@ -310,6 +312,48 @@ description = "Run selected throughput benchmark cells (manual)"
 dir = "client"
 usage = 'arg "[filter]" default=""'
 run = 'GM_BENCH_FILTER="${usage_filter?}" bun run test:bench'
+
+[tasks.codeql]
+description = "Reproduce the CodeQL scan offline with the pinned CLI and count results per rule (manual)"
+env = { GM_CODEQL_VERSION = "{{vars.codeql}}" }
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+cli=${CODEQL:-$(command -v codeql || echo "$HOME/.local/share/codeql-bundle/codeql/codeql")}
+version=$("$cli" version --format=terse)
+[ "$version" = "$GM_CODEQL_VERSION" ] || { echo "$cli is CodeQL $version, not $GM_CODEQL_VERSION" >&2; exit 1; }
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+quiet() { "$@" >"$out/log" 2>&1 || { cat "$out/log" >&2; return 1; }; }
+# Like the hosted scan, analyze tracked files only, not local build output.
+mkdir "$out/src"
+git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$out/src"
+for language in go javascript-typescript python actions; do
+  echo "CodeQL $language" >&2
+  pack=${language%-typescript}
+  build=(--build-mode=none)
+  [ "$language" != go ] || build=(--command="go build ./..." --working-dir="$out/src/go")
+  quiet "$cli" database create "$out/db-$language" --language="$language" --source-root="$out/src" \
+    "${build[@]}" --overwrite --threads=0
+  quiet "$cli" database analyze "$out/db-$language" --threat-model=local --format=sarif-latest \
+    --output="$out/$language.sarif" --threads=0 \
+    "codeql/$pack-queries:codeql-suites/$pack-security-extended.qls" \
+    "codeql/$pack-queries:codeql-suites/$pack-security-and-quality.qls"
+done
+python3 - "$out"/*.sarif <<'PY'
+import collections, json, sys
+rules = collections.Counter()
+for name in sys.argv[1:]:
+    for result in json.load(open(name))["runs"][0].get("results", []):
+        where = result["locations"][0]["physicalLocation"]
+        print(f"{result['ruleId']}  {where['artifactLocation']['uri']}:{where['region']['startLine']}")
+        rules[result["ruleId"]] += 1
+for rule, count in sorted(rules.items()):
+    print(f"{count:4}  {rule}")
+print(f"{sum(rules.values())} results")
+sys.exit(1 if rules else 0)
+PY
+'''
 
 [tasks.tui-cross-build]
 description = "Build every supported native TUI target"
