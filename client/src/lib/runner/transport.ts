@@ -225,15 +225,18 @@ class LaneSet {
     return this.#live && this.#ready.size === this.count;
   }
 
+  /** An unstaggered lane opens at once, so its worker loads while the page's own server answers. */
   #schedule(index: number, delayMs: number): void {
     clearTimeout(this.#timers[index]);
-    this.#timers[index] = setTimeout(() => {
+    const open = () => {
       if (!this.#live) return;
       const lane = this.open(index, (msg) => this.#message(index, msg));
       this.#lanes[index] = lane;
       // A restarted download joins the current measurement epoch.
       if (this.measuring && this.dir === "down") lane.measure(this.#seq);
-    }, delayMs);
+    };
+    if (delayMs > 0) this.#timers[index] = setTimeout(open, delayMs);
+    else open();
   }
 
   measure(): void {

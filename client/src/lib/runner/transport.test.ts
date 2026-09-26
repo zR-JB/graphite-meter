@@ -271,8 +271,10 @@ test("a lane error stalls once and restarts after backoff, a refusal fails the s
   jest.useFakeTimers();
   try {
     const stage = h.stage(activity("download"));
-    await stage.prepare();
-    jest.advanceTimersByTime(1);
+    const preparing = stage.prepare();
+    // Without a warmup stagger the worker loads before anything else can run.
+    expect(workers("download")).toHaveLength(1);
+    await preparing;
     const [lane] = workers("download");
     lane.emit({ type: "progress", bytes: 100, elapsedMs: 50, seq: 0 });
     stage.measure();
