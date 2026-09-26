@@ -101,6 +101,37 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await expect(close).toBeFocused();
 });
 
+test("a History chunk that fails to load settles and recovers through Retry", async (page) => {
+  await open(page);
+  await page.blockRequests(["*HistoryWorkspace*"]);
+  await page.getByRole("button", { name: "Open History" }).click();
+  const stage = page.locator(".history-stage");
+  await expect(stage).toContainText("History could not be opened.");
+  const mutations = await page.evaluate(
+    () =>
+      new Promise((done) => {
+        let count = 0;
+        const observer = new MutationObserver(
+          (records) => (count += records.length),
+        );
+        observer.observe(document.querySelector(".history-stage")!, {
+          childList: true,
+          subtree: true,
+        });
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            observer.disconnect();
+            done(count);
+          }),
+        );
+      }),
+  );
+  expect(mutations).toBe(0);
+  await page.cdp("Network.setBlockedURLs", { urls: [] });
+  await stage.getByRole("button", { name: "Retry" }).click();
+  await expect(page.locator(".history-workspace")).toHaveCount(1);
+});
+
 test("the topbar menu opens, moves, acts and closes from the keyboard", async (page) => {
   await page.setViewportSize({ width: 300, height: 700 });
   await open(page);

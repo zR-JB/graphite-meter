@@ -55,7 +55,8 @@
     onNavigate: (id: string | null) => void;
     onClose: () => void;
   }> | null>(null);
-  let historyChunkState = $state<"idle" | "loading" | "error">("idle");
+  let historyChunkFailed = $state(false);
+  let historyChunk: Promise<unknown> | undefined;
   let historyInvoker: HTMLElement | null = null;
   let workspaceFocusIntent = $state<
     | {
@@ -84,18 +85,10 @@
       currentRoute.workspace.kind === "measurement",
   );
   function loadHistoryWorkspace() {
-    if (HistoryWorkspace || historyChunkState === "loading") return;
-    historyChunkState = "loading";
-    void import("./HistoryWorkspace.svelte")
-      .then((module) => {
-        HistoryWorkspace = module.default;
-        historyChunkState = "idle";
-      })
-      .catch(() => (historyChunkState = "error"));
+    historyChunk ??= import("./HistoryWorkspace.svelte")
+      .then((module) => (HistoryWorkspace = module.default))
+      .catch(() => (historyChunkFailed = true));
   }
-  $effect(() => {
-    if (historyOpen) loadHistoryWorkspace();
-  });
   $effect(() => {
     const intent = workspaceFocusIntent;
     void currentRoute;
@@ -368,6 +361,7 @@
     const nextHistory =
       next.kind === "app" && next.workspace.kind === "history";
     currentRoute = next;
+    if (nextHistory) loadHistoryWorkspace();
     const workspace = nextHistory ? "history" : "measurement";
     if (workspaceFocusIntent && workspaceFocusIntent.workspace !== workspace)
       workspaceFocusIntent = null;
@@ -687,17 +681,18 @@
           onNavigate={(id: string | null) =>
             id ? historyRoute(id) : closeHistoryDetail()}
           onClose={dismissHistory}
-        />{:else if historyChunkState === "error"}<div
+        />{:else if historyChunkFailed}<div
           class="empty-state"
           data-tone="err"
           role="alert"
         >
           <span class="empty-icon">!</span>
           <p>History could not be opened.</p>
+          <!-- Chromium keeps a failed module in its module map until the page reloads. -->
           <button
             class="btn btn-accent"
             type="button"
-            onclick={loadHistoryWorkspace}>Retry</button
+            onclick={() => location.reload()}>Retry</button
           >
         </div>{:else}<div class="empty-state" role="status">
           <span class="empty-icon">{@html ICON.history}</span>Opening History…
