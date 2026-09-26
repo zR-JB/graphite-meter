@@ -282,9 +282,10 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 		Stage        Stage
 		Participants []string
 		Boundaries   []struct {
-			AtMs int64
-			Down map[string]uint64
-			Up   map[string]*struct {
+			AtMs  int64
+			Final bool
+			Down  map[string]uint64
+			Up    map[string]*struct {
 				ID           string
 				Bytes, Nanos uint64
 			}
@@ -304,6 +305,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 		a.beginStage(c.Stage, c.Participants, time.Duration(c.Boundaries[0].AtMs)*time.Millisecond)
 		for _, b := range c.Boundaries {
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
+			boundary.final = b.Final
 			for id, r := range b.Up {
 				if r != nil {
 					boundary.up[id] = &ReceiverSnapshot{ID: r.ID, Bytes: r.Bytes, Nanos: r.Nanos}
@@ -388,26 +390,22 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {
 	t.Parallel()
 	for _, moved := range []uint64{0, 100} {
-		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
-		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
-		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
-		initial := nativeBoundary(0, map[string]uint64{"a": 0}, nil)
-		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-		co.aggregate.observe(initial)
-		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-		s := &stageRun{c: co, plan: stage, servers: own}
-		s.beginSampling(time.Now(), initial)
-		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 1000}, nil)})
-		final := sampledBoundary{boundary: nativeBoundary(1250, map[string]uint64{"a": 1000 + moved}, nil), final: true}
-		if done, err := s.observe(final); !done || err != nil {
-			t.Fatalf("final boundary did not end the stage: %v %v", done, err)
-		}
+		var a aggregateMeasurements
+		a.beginStage(StageBidirectional, []string{"a"}, 0)
+		up := map[string]*ReceiverSnapshot{"a": nativeReceiver("r", 0, 0)}
+		a.observe(nativeBoundary(0, map[string]uint64{"a": 0}, up))
+		a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000}, map[string]*ReceiverSnapshot{
+			"a": nativeReceiver("r", 1000, 1000)}))
+		final := nativeBoundary(1250, map[string]uint64{"a": 1250}, map[string]*ReceiverSnapshot{
+			"a": nativeReceiver("r", 1000+moved, 1250)})
+		final.final = true
+		a.observe(final)
 		want := 1250 * time.Millisecond
 		if moved == 0 {
 			want = time.Second
 		}
-		if end := co.aggregate.current().End; end != want || p.removed {
-			t.Errorf("moved %d: window ends at %v (removed %v), want %v", moved, end, p.removed, want)
+		if end := a.current().End; end != want || a.result(Up).TotalBytes != 1000+moved {
+			t.Errorf("moved %d: window ends at %v, want %v; %+v", moved, end, want, a.result(Up))
 		}
 	}
 }

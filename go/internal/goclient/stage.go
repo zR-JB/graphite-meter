@@ -30,7 +30,6 @@ type resourceOutcome struct {
 type sampledBoundary struct {
 	boundary measurementBoundary
 	misses   map[string]error
-	final    bool
 }
 
 // sampler collects one interval's boundaries on its own clock; a restart replaces it.
@@ -384,13 +383,14 @@ func (s *stageRun) startSampler() {
 				return
 			case <-own.finish:
 				boundary, misses := s.collect(ctx, participants, finalCheckpointBudget)
-				send(sampledBoundary{boundary: boundary, misses: misses, final: true})
+				boundary.final = true
+				send(sampledBoundary{boundary, misses})
 				return
 			case tick := <-ticker.C:
 				stalled := time.Since(tick) > clientStall
 				boundary, misses := s.collect(ctx, participants, checkpointBudget)
 				boundary.stalled = stalled
-				if !send(sampledBoundary{boundary: boundary, misses: misses}) {
+				if !send(sampledBoundary{boundary, misses}) {
 					return
 				}
 			}
@@ -420,13 +420,13 @@ func (s *stageRun) dropsServer(id string, err error, final bool) bool {
 
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	c := s.c
-	removed, stalled := false, false
+	removed, final := false, sample.boundary.final
 	for _, server := range s.servers {
 		if server.removed {
 			continue
 		}
 		id := server.id()
-		if err := sample.misses[id]; s.dropsServer(id, err, sample.final) {
+		if err := sample.misses[id]; s.dropsServer(id, err, final) {
 			s.fail(server, string(Up), err, time.Now())
 			removed = true
 			continue
@@ -441,8 +441,6 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			switch {
 			case bytes.of(dir) > s.lastBytes[id].of(dir):
 				s.lastMovement[id].set(dir, time.Now())
-			case sample.final:
-				stalled = true
 			case !s.ending && time.Since(s.lastMovement[id].of(dir)) >= redialWindow:
 				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
 				s.fail(server, string(dir), err, time.Now())
@@ -451,10 +449,7 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 		}
 		s.lastBytes[id] = bytes
 	}
-	// A final boundary where a direction stood still ends the result at the last good boundary.
-	if stalled {
-		c.aggregate.credit(sample.boundary)
-	} else if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
+	if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
 		s.emitRates(window)
 	}
 	if err := s.lost(); err != nil {
@@ -463,7 +458,7 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	switch {
 	case removed:
 		s.reset()
-	case sample.final:
+	case final:
 		return true, nil
 	}
 	return false, nil

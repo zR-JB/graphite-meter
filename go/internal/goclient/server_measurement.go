@@ -75,6 +75,7 @@ type ServerFailure struct {
 type measurementBoundary struct {
 	at         time.Duration
 	stalled    bool
+	final      bool
 	down       map[string]uint64
 	up         map[string]*ReceiverSnapshot
 	observedUp map[string]uploadLedger
@@ -205,6 +206,13 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 	if a.first == nil {
 		a.first, a.last, a.peakFrom = new(b), new(b), new(b)
 		interval.Start, interval.End = b.at, b.at
+		return nil, false
+	}
+	// A final boundary where a direction stood still ends the result at the last good boundary.
+	if b.final && slices.ContainsFunc(interval.Participants, func(id string) bool {
+		return a.stage != StageUpload && b.down[id] <= a.last.down[id] ||
+			a.stage != StageDownload && b.up[id].ID == a.last.up[id].ID && b.up[id].Bytes <= a.last.up[id].Bytes
+	}) {
 		return nil, false
 	}
 	sample, err := a.window(*a.last, b)
