@@ -268,13 +268,19 @@ func TestTransferStagesOpenTheirOwnDirectionsLanes(t *testing.T) {
 func TestRunTransferStageFanInErrorCancelsSiblingLane(t *testing.T) {
 	t.Parallel()
 	var downloadBytesServed atomic.Int64
+	served := make(chan struct{})
+	var once sync.Once
 	mux := http.NewServeMux()
 	mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
 		downloadBytesServed.Add(64 * 1024)
+		once.Do(func() { close(served) })
 		writeDownload(w, r)
 	})
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(150 * time.Millisecond)
+	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-served:
+		case <-r.Context().Done():
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 	srv := httptest.NewServer(mux)

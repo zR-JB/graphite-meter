@@ -18,10 +18,14 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	t.Parallel()
 	const size = 256 * 1024
 	var requests atomic.Int32
+	second := make(chan struct{})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests.Add(1) == 1 {
+		switch requests.Add(1) {
+		case 1:
 			_, _ = w.Write(make([]byte, size))
 			return
+		case 2:
+			close(second)
 		}
 		<-r.Context().Done()
 	}))
@@ -33,9 +37,7 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 		_ = testRunner(srv).downloadLane(ctx, srv.URL, 0, &total, func() {})
 		close(done)
 	}()
-	for requests.Load() < 2 {
-		time.Sleep(5 * time.Millisecond)
-	}
+	<-second
 	cancel()
 	<-done
 	if got := total.Load(); got != size {
