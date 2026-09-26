@@ -1,13 +1,9 @@
-# Upload measurement protocol (0.8)
+# Upload measurement protocol
 
-Every upload belongs to a server-minted, owner-bound measurement session. Clients
-must update alongside the server for 0.7: HTTP uploads without an ID are rejected,
-and counter records always contain explicit `bytes` and `nanos` fields.
-
-Read this when implementing receiver-authoritative upload accounting. The [discovery boundary](discovery.md)
-defines control-response validation; the [wire protocol](wire.md#webtransport-routes) defines
-WebTransport routing. [Measurement definitions](../docs/MEASUREMENTS.md#throughput) distinguish
-receiver windows from presentation.
+Every upload belongs to a server-minted, owner-bound measurement session: uploads without an ID are
+rejected, and counter records always carry explicit `bytes` and `nanos`. See also the
+[discovery boundary](discovery.md), [WebTransport routes](wire.md#webtransport-routes) and
+[throughput definitions](../docs/MEASUREMENTS.md#throughput).
 
 ## Session and data ownership
 
