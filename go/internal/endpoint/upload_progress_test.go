@@ -116,13 +116,18 @@ func TestUploadProgressNewFeedSupersedesOldHolder(t *testing.T) {
 		id := store.Mint()
 		h := http.HandlerFunc(store.ServeProgress)
 		_, first := startFeed(t.Context(), h, id)
+		_, second := startFeed(t.Context(), h, id)
+		if !ended(first) {
+			t.Fatal("the second feed did not supersede the first")
+		}
+		// The first feed's release has run; it must not have dropped the second's live claim.
 		ctx, cancel := context.WithCancel(t.Context())
-		takeover, second := startFeed(ctx, h, id)
-		if !ended(first) || !strings.Contains(takeover.text(), `{"type":"ready"}`) {
-			t.Fatalf("superseded feed ended = %v, takeover = %q", ended(first), takeover.text())
+		takeover, third := startFeed(ctx, h, id)
+		if !ended(second) || !strings.Contains(takeover.text(), `{"type":"ready"}`) {
+			t.Fatalf("superseded feed ended = %v, takeover = %q", ended(second), takeover.text())
 		}
 		cancel()
-		<-second
+		<-third
 	})
 }
 
@@ -180,8 +185,11 @@ func TestProgressReportsReceiverTimeForZeroDelivery(t *testing.T) {
 }
 
 func TestUploadProgressRefusalResponses(t *testing.T) {
+	// A feed that wrongly opens ends with the request instead of holding the test to its timeout.
 	serve := func(store *Upload, method, id, remote string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(method, "/upload/progress?id="+id, nil)
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		req := httptest.NewRequestWithContext(ctx, method, "/upload/progress?id="+id, nil)
 		if remote != "" {
 			req.RemoteAddr = remote + ":1234"
 		}
@@ -218,8 +226,13 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		if _, access := store.getOrCreateFor(id, "192.0.2.1"); access != uploadAccessOK {
 			t.Fatalf("create = %v", access)
 		}
-		if rec := serve(store, http.MethodGet, id, "192.0.2.2"); rec.Code != http.StatusForbidden {
-			t.Fatalf("status = %d body %q: another client's upload was readable", rec.Code, rec.Body.String())
+		for _, method := range []string{http.MethodGet, http.MethodDelete} {
+			if rec := serve(store, method, id, "192.0.2.2"); rec.Code != http.StatusForbidden {
+				t.Fatalf("%s = %d body %q: another client reached the upload", method, rec.Code, rec.Body.String())
+			}
+		}
+		if agg, _ := store.get(id); agg.isFinished() {
+			t.Fatal("another client finished the upload")
 		}
 	})
 

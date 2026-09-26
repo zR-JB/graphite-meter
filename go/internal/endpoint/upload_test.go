@@ -101,6 +101,21 @@ func TestUploadCountsEchoesAndAggregates(t *testing.T) {
 	}
 }
 
+// The echo is receiver evidence: it reports the bytes read, never the length the request declared.
+func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
+	store := NewUpload(nil, nil)
+	r := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), strings.NewReader("12345"))
+	r.ContentLength = 1 << 30
+	w := httptest.NewRecorder()
+	store.ServeHTTP(w, r)
+	var echo struct {
+		Bytes int64 `json:"bytes"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &echo); err != nil || w.Code != http.StatusOK || echo.Bytes != 5 {
+		t.Fatalf("echo = %d %s (%v), want the 5 received bytes", w.Code, w.Body.String(), err)
+	}
+}
+
 func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 	for _, tc := range []struct {
 		id   string
