@@ -25,58 +25,78 @@ import { TRANSPORT } from "./vocabulary";
 const NOT_ADVERTISED = "Not offered in /preflight.";
 const H3 = httpProtocolLabel("http3");
 
-/** Compact label, connection-row summary and settings detail for one target. */
+/** Compact label, connection-row summary, the carrier beneath the mechanism and settings detail. */
 export function describeTarget(
   discovery: TransportDiscovery,
   role: ConnectionRole,
   target: AnyTarget,
   observed?: ProtocolTarget,
-): { label: string; summary: string; advertisedDetail: string } {
+): {
+  label: string;
+  summary: string;
+  carrier: string;
+  advertisedDetail: string;
+} {
   const security = target.tls ? "TLS" : "clear";
   const at = target.origin;
+  const describe = (
+    mechanism: string,
+    carrier: string,
+    label: string,
+    advertisedDetail: string,
+  ) => ({
+    label,
+    summary: `${mechanism} · ${carrier}`,
+    carrier,
+    advertisedDetail,
+  });
   if (target.transport === "webtransport-datagram")
-    return {
-      label: `${TRANSPORT["webtransport-datagram"]} · ${security}`,
-      summary: `${TRANSPORT["webtransport-datagram"]} · ${H3} · ${security}`,
-      advertisedDetail: `Experimental unreliable-datagram flood over ${H3} · ${at}`,
-    };
+    return describe(
+      TRANSPORT["webtransport-datagram"],
+      `${H3} · ${security}`,
+      `${TRANSPORT["webtransport-datagram"]} · ${security}`,
+      `Experimental unreliable-datagram flood over ${H3} · ${at}`,
+    );
   if (target.transport === "webtransport")
     return role === "throughput"
-      ? {
-          label: `WebTransport · ${H3} · ${security}`,
-          summary: `${TRANSPORT.webtransport} · ${H3} · ${security}`,
-          advertisedDetail: `QUIC stream session over ${H3} · ${at}`,
-        }
-      : {
-          label: `WebTransport · ${H3} · ${security}`,
-          summary: `WebTransport · ${H3} datagrams · ${security}`,
-          advertisedDetail: `Datagram bus over ${H3} · ${at}`,
-        };
+      ? describe(
+          TRANSPORT.webtransport,
+          `${H3} · ${security}`,
+          `WebTransport · ${H3} · ${security}`,
+          `QUIC stream session over ${H3} · ${at}`,
+        )
+      : describe(
+          "WebTransport",
+          `${H3} datagrams · ${security}`,
+          `WebTransport · ${H3} · ${security}`,
+          `Datagram bus over ${H3} · ${at}`,
+        );
   if (target.transport === "websocket") {
     // A WebSocket claims HTTP/1.1 only when its origin's fetch target names that protocol.
     const h1 = discovery.throughput[at]?.targets.some(
       (t) => t.transport === "fetch-stream" && t.protocol === "http1",
     );
-    const mechanism = h1
-      ? `WebSocket · ${httpProtocolLabel("http1")}`
-      : "WebSocket";
-    return {
-      label: `${mechanism} · ${security}`,
-      summary: `${mechanism} · ${security}`,
-      advertisedDetail: `${h1 ? `Direct ${httpProtocolLabel("http1")} WebSocket` : "WebSocket"} endpoint · ${at}`,
-    };
+    const carrier = h1
+      ? `${httpProtocolLabel("http1")} · ${security}`
+      : security;
+    return describe(
+      "WebSocket",
+      carrier,
+      `WebSocket · ${carrier}`,
+      `${h1 ? `Direct ${httpProtocolLabel("http1")} WebSocket` : "WebSocket"} endpoint · ${at}`,
+    );
   }
   const protocol = httpProtocolLabel(
     target.protocol === "negotiated" && observed ? observed : target.protocol,
   );
-  return {
-    label: `${protocol} · ${security}`,
-    summary: `${TRANSPORT["fetch-stream"]} · ${protocol} · ${security}`,
-    advertisedDetail:
-      target.protocol === "negotiated"
-        ? `Browser negotiates the available HTTP version · ${at}`
-        : `Direct ${httpProtocolLabel(target.protocol)} endpoint · ${at}`,
-  };
+  return describe(
+    TRANSPORT["fetch-stream"],
+    `${protocol} · ${security}`,
+    `${protocol} · ${security}`,
+    target.protocol === "negotiated"
+      ? `Browser negotiates the available HTTP version · ${at}`
+      : `Direct ${httpProtocolLabel(target.protocol)} endpoint · ${at}`,
+  );
 }
 
 export interface PathOption {
@@ -259,6 +279,7 @@ export interface ConnectionPresentation {
   validation: ConnectionValidationState;
   label: string;
   summary: string;
+  carrier: string;
   message?: string;
   observedProtocol?: ProtocolTarget;
   browserProtocol?: string;
@@ -315,6 +336,7 @@ export function presentConnections(
         described?.label ??
         (role === "throughput" ? "Throughput path" : "Latency path"),
       summary: described?.summary ?? "Selection unresolved",
+      carrier: described?.carrier ?? "",
       message: active ? undefined : check.message,
       observedProtocol,
       browserProtocol:

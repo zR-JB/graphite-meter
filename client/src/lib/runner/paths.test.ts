@@ -19,6 +19,7 @@ import type {
   TransferStreamPolicy,
 } from "./contract";
 import { DEFAULT_CONFIG } from "../state/defaults";
+import { presentConnections } from "../presentation/paths";
 import { testPreparedPaths } from "./test-helpers.testutil";
 
 const auto = { mode: "auto", count: 6 } as const;
@@ -163,6 +164,14 @@ test("equivalent selections and display or stage edits reuse verified paths", ()
   expect(
     roleNeedsValidation(edited, validation, "throughput", paths.discovery),
   ).toBe(false);
+});
+
+test("a path card names the carrier beneath each mechanism", () => {
+  const paths = testPreparedPaths();
+  const cards = presentConnections(config(), paths.discovery, verified(paths));
+  expect(cards.throughput.carrier).toBe("HTTP/1.1 · clear");
+  expect(cards.throughput.summary).toEndWith(" · HTTP/1.1 · clear");
+  expect(cards.latency.carrier).toBe("HTTP/1.1 · clear");
 });
 
 test("prepared runs require fresh verified evidence for every needed role", () => {

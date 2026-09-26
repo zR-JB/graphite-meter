@@ -111,11 +111,7 @@
     if (!target) return "Pending";
     const carrier =
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
-    const over = connections.throughput.summary
-      .split(" · ")
-      .slice(1)
-      .join(" · ");
-    return `${carrier} over ${over}`;
+    return `${carrier} over ${connections.throughput.carrier}`;
   });
   const serverLoad = $derived(
     serverLoadSummary(
