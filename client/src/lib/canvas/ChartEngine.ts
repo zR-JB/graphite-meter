@@ -184,8 +184,6 @@ export class ChartEngine {
   #lastCameraAt = 0;
   #cameraInitialized = false;
   #reducedMotion = false;
-  #motionQuery: MediaQueryList | null = null;
-  #onMotionChange: ((event: MediaQueryListEvent) => void) | null = null;
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -234,6 +232,11 @@ export class ChartEngine {
   get viewport(): ChartViewport {
     return this.#vp;
   }
+  set reducedMotion(value: boolean) {
+    if (value === this.#reducedMotion) return;
+    this.#reducedMotion = value;
+    this.wake();
+  }
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
     this.#ctx = canvas.getContext("2d");
@@ -241,13 +244,6 @@ export class ChartEngine {
     this.#sceneCtx = this.#scene.getContext("2d");
     canvas.addEventListener("contextrestored", this.#restoreSurface);
     this.#scene.addEventListener("contextrestored", this.#restoreSurface);
-    this.#motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    this.#reducedMotion = this.#motionQuery.matches;
-    this.#onMotionChange = (event) => {
-      this.#reducedMotion = event.matches;
-      this.wake();
-    };
-    this.#motionQuery.addEventListener("change", this.#onMotionChange);
     this.#presentation = presentation.register(canvas, this.render);
     this.invalidateTheme();
   }
@@ -263,10 +259,6 @@ export class ChartEngine {
     this.#presentation?.invalidate();
   }
   destroy(): void {
-    if (this.#motionQuery && this.#onMotionChange)
-      this.#motionQuery.removeEventListener("change", this.#onMotionChange);
-    this.#motionQuery = null;
-    this.#onMotionChange = null;
     this.#presentation?.destroy();
     this.#presentation = null;
     this.#canvas?.removeEventListener("contextrestored", this.#restoreSurface);

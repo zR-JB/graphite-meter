@@ -13,6 +13,7 @@
 </script>
 
 <script lang="ts">
+  import { prefersReducedMotion } from "svelte/motion";
   import { tooltip } from "../actions/tooltip";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
@@ -21,7 +22,8 @@
   let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
     $props();
   const shadeId = $props.id();
-  let motion = $state(true);
+  let seen = $state(true);
+  const motion = $derived(seen && !prefersReducedMotion.current);
   const completed = $derived(
     input.phase === "complete" && input.resultArcs.length > 0,
   );
@@ -73,21 +75,18 @@
   // CSS owns interpolation; only suppress motion when this instrument is unseen.
   function attach(node: HTMLDivElement) {
     let intersecting = true;
-    const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => {
-      motion = intersecting && !document.hidden && !reducedMotion.matches;
+      seen = intersecting && !document.hidden;
     };
     const observer = new IntersectionObserver(([entry]) => {
       intersecting = entry.isIntersecting;
       update();
     });
     observer.observe(node);
-    reducedMotion.addEventListener("change", update);
     document.addEventListener("visibilitychange", update);
     update();
     return () => {
       observer.disconnect();
-      reducedMotion.removeEventListener("change", update);
       node
         .getAnimations({ subtree: true })
         .forEach((animation) => animation.cancel());
@@ -104,7 +103,7 @@
     const next = target * 270;
     const visible = input.showValue && !completed;
     const animate = motion && visible;
-    if (!node) return;
+    if (!node || (animate && flight && Math.abs(next - flight.to) < 1)) return;
     const current = flight
       ? flight.from +
         (flight.to - flight.from) *

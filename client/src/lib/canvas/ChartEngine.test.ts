@@ -91,7 +91,7 @@ test("camera keeps a run-wide origin and eases a large live time advance", () =>
   engine.destroy();
 });
 
-function canvasEnvironment(reducedMotion: boolean) {
+function canvasEnvironment() {
   const counts = { paths: 0, curves: [] as number[][] };
   const context = new Proxy({} as CanvasRenderingContext2D, {
     get: (_target, property) => {
@@ -119,11 +119,6 @@ function canvasEnvironment(reducedMotion: boolean) {
   const restore = stubGlobals({
     window: {
       devicePixelRatio: 1,
-      matchMedia: () => ({
-        matches: reducedMotion,
-        addEventListener() {},
-        removeEventListener() {},
-      }),
     },
     document: {
       documentElement: {},
@@ -137,7 +132,7 @@ function canvasEnvironment(reducedMotion: boolean) {
 }
 
 test("saved duplicate terminal points render and hover at the last value without a vertical segment", () => {
-  const { canvas, counts, restore } = canvasEnvironment(true);
+  const { canvas, counts, restore } = canvasEnvironment();
   const throughput: ThroughputSample[] = [
     [0, 1000],
     [500, 2000],
@@ -157,6 +152,7 @@ test("saved duplicate terminal points render and hover at the last value without
   );
   try {
     engine.attach(canvas);
+    engine.reducedMotion = true;
     engine.render(0);
     expect(engine.inspect(published.layout.x(500))?.bytesPerSec).toBeCloseTo(
       500,
@@ -176,7 +172,7 @@ test("saved duplicate terminal points render and hover at the last value without
 });
 
 test("interleaved equal-time replacement invalidates the lane cache even when another lane subsequently appends", () => {
-  const { canvas, restore } = canvasEnvironment(true);
+  const { canvas, restore } = canvasEnvironment();
   const sample = (
     t: number,
     dir: "down" | "up",
@@ -205,6 +201,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
   );
   try {
     engine.attach(canvas);
+    engine.reducedMotion = true;
     engine.render(0);
     expect(
       engine.inspect(published.layout.x(1000))?.downBytesPerSec,
@@ -231,7 +228,7 @@ test("interleaved equal-time replacement invalidates the lane cache even when an
 });
 
 test("reduced motion snaps the camera and renders new latency glyphs without animation", () => {
-  const { canvas, restore } = canvasEnvironment(true);
+  const { canvas, restore } = canvasEnvironment();
 
   try {
     let current = data();
@@ -241,6 +238,7 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
       (next) => (published = next),
     );
     engine.attach(canvas);
+    engine.reducedMotion = true;
     expect(engine.render(100)).toBe(false);
     current = { ...current, phase: "download", timelineT: 5_000 };
     engine.wake();
@@ -279,7 +277,7 @@ test("reduced motion snaps the camera and renders new latency glyphs without ani
 });
 
 test("long history is cached across camera, hover, and glyph frames", () => {
-  const { canvas, counts, restore } = canvasEnvironment(false);
+  const { canvas, counts, restore } = canvasEnvironment();
 
   const throughput: ThroughputSample[] = Array.from(
     { length: 2_000 },
@@ -393,7 +391,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
 });
 
 test("inspection retains a time position through gaps without inventing latency", () => {
-  const { canvas, counts, restore } = canvasEnvironment(true);
+  const { canvas, counts, restore } = canvasEnvironment();
   try {
     let current = data({ latencyEnabled: true });
     let published!: ChartPresentation;
@@ -402,6 +400,7 @@ test("inspection retains a time position through gaps without inventing latency"
       (next) => (published = next),
     );
     engine.attach(canvas);
+    engine.reducedMotion = true;
     engine.render(0);
     expect(engine.inspect(100)).toBeNull();
     current = {
@@ -448,7 +447,7 @@ test("inspection retains a time position through gaps without inventing latency"
 });
 
 test("canvas sizing ignores entry transforms and recovers after a layout resize", () => {
-  const { canvas, restore } = canvasEnvironment(true);
+  const { canvas, restore } = canvasEnvironment();
   let published!: ChartPresentation;
   const engine = new ChartEngine(
     () => data(),
@@ -458,6 +457,7 @@ test("canvas sizing ignores entry transforms and recovers after a layout resize"
     ({ width: 591, height: 236.4 }) as DOMRect;
   try {
     engine.attach(canvas);
+    engine.reducedMotion = true;
     engine.render(0);
     expect(canvas.width).toBe(600);
     expect(canvas.height).toBe(240);

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { prefersReducedMotion } from "svelte/motion";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
@@ -298,6 +299,9 @@
       resizeObserver.disconnect();
       stopWatchingPixelRatio();
     };
+  });
+  $effect(() => {
+    engine.reducedMotion = prefersReducedMotion.current;
   });
 </script>
 

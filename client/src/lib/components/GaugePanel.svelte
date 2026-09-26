@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { prefersReducedMotion } from "svelte/motion";
   import { store } from "../state/store.svelte";
   import GaugeDial, { type GaugeDialState } from "./GaugeDial.svelte";
   import { GAUGE_LABEL_FRACTIONS, gaugeLayout } from "./gaugeLayout";
@@ -60,15 +61,15 @@
   );
 
   let stageEl = $state<HTMLDivElement>();
-  let gaugeSize = $state({ width: 0, height: 0 });
+  let gaugeWidth = $state(0);
+  let gaugeHeight = $state(0);
   const liveRateAnimator = new LiveRateAnimator();
-  let liveRateValues = $state<LiveRateValues>({
+  let liveRateValues = $state.raw<LiveRateValues>({
     transfer: 0,
     down: 0,
     up: 0,
   });
   let liveRatePresentation: PresentationHandle | null = null;
-  let reducedRateMotion = false;
 
   const completedKind = $derived<"speed" | "latency">(
     terminalArcs.length ? "speed" : "latency",
@@ -106,7 +107,7 @@
       ),
     }));
   });
-  const layout = $derived(gaugeLayout(gaugeSize.width, gaugeSize.height));
+  const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
   const throughputEvidence = $derived(
     (store.phase === "download" ||
       store.phase === "upload" ||
@@ -142,13 +143,18 @@
   });
 
   function stepLiveRates(now: number): boolean {
-    const frame = liveRateAnimator.step(liveRateInput, now, reducedRateMotion);
+    const frame = liveRateAnimator.step(
+      liveRateInput,
+      now,
+      prefersReducedMotion.current,
+    );
     liveRateValues = frame.values;
     return frame.active;
   }
 
   $effect(() => {
     void liveRateInput;
+    void prefersReducedMotion.current;
     liveRatePresentation?.invalidate();
   });
 
@@ -250,28 +256,10 @@
 
   onMount(() => {
     liveRatePresentation = presentation.register(stageEl!, stepLiveRates);
-    const rateMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    reducedRateMotion = rateMotion.matches;
-    const onRateMotion = (event: MediaQueryListEvent) => {
-      reducedRateMotion = event.matches;
-      liveRatePresentation?.invalidate();
-    };
-    rateMotion.addEventListener("change", onRateMotion);
-    const resizeObserver = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      if (gaugeSize.width !== width || gaugeSize.height !== height)
-        gaugeSize = { width, height };
-    });
-    resizeObserver.observe(stageEl!);
-    const { clientWidth: width, clientHeight: height } = stageEl!;
-    gaugeSize = { width, height };
-
     return () => {
       if (announceTimer) clearTimeout(announceTimer);
-      rateMotion.removeEventListener("change", onRateMotion);
       liveRatePresentation?.destroy();
       liveRatePresentation = null;
-      resizeObserver.disconnect();
     };
   });
 </script>
@@ -300,6 +288,8 @@
       {/if}
       <div
         bind:this={stageEl}
+        bind:clientWidth={gaugeWidth}
+        bind:clientHeight={gaugeHeight}
         class="gauge-face"
         style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
       >
