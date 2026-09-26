@@ -45,16 +45,20 @@ def build(version: str, output: Path, supplement: Path) -> None:
     environment = dict(os.environ, GM_ENGINE_VERSION=f"{version}-rust")
     # Keep a predictable Cargo output location; legal generation and packaging must
     # refer to the same freshly rebuilt executable, never another user's cache.
-    environment["CARGO_TARGET_DIR"] = str(REPO / "rust/target")
-    with tempfile.TemporaryDirectory(prefix=".rust-package-", dir=output) as temporary:
+    target = REPO / "rust/target"
+    environment["CARGO_TARGET_DIR"] = str(target)
+    target.mkdir(parents=True, exist_ok=True)
+    # build.rs reads reviewed notices only from inside the checkout.
+    with tempfile.TemporaryDirectory(prefix=".rust-package-", dir=output) as temporary, \
+            tempfile.TemporaryDirectory(prefix=".rust-notices-", dir=target) as notices:
         stage = Path(temporary)
-        legal = stage / "legal"
+        legal = Path(notices) / "legal"
         subprocess.run([
             "python3", "-m", "scripts.legal.rust", "--package", "graphite-meter-client",
             "--target", TARGET, "--profile", "release", "--out", str(legal),
             "--reviews", "legal/rust-reviewed-components.json", "--supplement", str(supplement.resolve()),
         ], cwd=REPO, env=environment, check=True)
-        binary = REPO / "rust/target" / TARGET / "release/graphite-meter-client"
+        binary = target / TARGET / "release/graphite-meter-client"
         package = child(stage, base)
         package.mkdir()
         shutil.copy2(binary, package / binary.name)

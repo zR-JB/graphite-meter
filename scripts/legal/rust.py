@@ -271,7 +271,9 @@ def main() -> None:
     (output / 'inputs.txt').write_text('\n'.join(sorted(set(inputs))) + '\n')
     (output / 'package.txt').write_text(args.package)
     (output / 'target.txt').write_text(args.target)
-    (output / 'rustc.txt').write_text(toolchain)
+    # build.rs requires Cargo to compile with exactly this compiler.
+    (output / 'rustc-path.txt').write_text(subprocess.check_output(
+        ['rustup', 'which', '--toolchain', channel, 'rustc'], text=True).strip())
     root_directory = 'client' if args.package == 'graphite-meter-client' else 'server'
     root_id = next(item['id'] for item in metadata['packages']
                    if Path(item['manifest_path']).resolve() == repo / f'rust/{root_directory}/Cargo.toml')

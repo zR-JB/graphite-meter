@@ -7,7 +7,7 @@ use std::{
     env,
     error::Error,
     fs,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -22,10 +22,12 @@ fn main() {
     }
 }
 
-// Asset directories are trusted build inputs. Symlink checks prevent accidental
-// traversal; they do not defend against concurrent filesystem replacement.
+// Asset directories are trusted build inputs, confined to the checkout. Refusing
+// symlinked entries prevents accidental traversal; it does not defend against
+// concurrent filesystem replacement.
 fn generate() -> Result<()> {
-    let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
+    let repo = legal::checkout()?;
+    let output = legal::output_directory(&repo)?;
     let Some(configured) = env::var_os("GM_RUST_ASSET_DIR") else {
         fs::write(
             output.join("browser_assets.rs"),
@@ -36,23 +38,12 @@ fn generate() -> Result<()> {
     if configured.is_empty() {
         return Err("GM_RUST_ASSET_DIR must not be empty".into());
     }
-    let configured = PathBuf::from(configured);
-    if configured
-        .components()
-        .any(|part| matches!(part, Component::ParentDir))
-    {
-        return Err("GM_RUST_ASSET_DIR must not contain '..'".into());
-    }
-    // Relative asset directories always resolve against this package, not cwd.
-    let root = if configured.is_absolute() {
-        configured
-    } else {
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing package directory")?)
-            .join(configured)
-    };
+    // Relative asset directories resolve against this package, the build script's
+    // working directory.
+    let root = legal::inside(&repo, configured)?;
     let reviewed_legal = if let Some(directory) = env::var_os("GM_RUST_LEGAL_DIR") {
-        let expected = PathBuf::from(directory).join("browser-assets");
-        if root != expected {
+        let expected = fs::canonicalize(Path::new(&directory).join("browser-assets")).ok();
+        if expected.as_ref() != Some(&root) {
             return Err(
                 "reviewed Rust legal assets must come from GM_RUST_LEGAL_DIR/browser-assets".into(),
             );
@@ -65,12 +56,11 @@ fn generate() -> Result<()> {
     if root_text.chars().any(char::is_control) {
         return Err("asset directory must not contain control characters".into());
     }
-    reject_symlink_components(&root)?;
     if !fs::metadata(&root)?.is_dir() {
         return Err("GM_RUST_ASSET_DIR must name a directory".into());
     }
     let mut files = Vec::new();
-    collect(&root, "", &mut files)?;
+    collect(&root, &root, "", &mut files)?;
     files.sort_by(|a, b| a.0.cmp(&b.0));
     let mut manifest = String::from("static EMBEDDED: &[EmbeddedAsset] = &[\n");
     let mut index_found = false;
@@ -121,18 +111,12 @@ fn generate() -> Result<()> {
     Ok(())
 }
 
-fn reject_symlink_components(path: &Path) -> Result<()> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component);
-        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
-            return Err(format!("symlink asset path is forbidden: {}", current.display()).into());
-        }
-    }
-    Ok(())
-}
-
-fn collect(directory: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>) -> Result<()> {
+fn collect(
+    root: &Path,
+    directory: &Path,
+    prefix: &str,
+    files: &mut Vec<(String, PathBuf)>,
+) -> Result<()> {
     println!("cargo:rerun-if-changed={}", directory.display());
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -152,10 +136,11 @@ fn collect(directory: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>) -
         if kind.is_symlink() {
             return Err(format!("symlink asset is forbidden: {relative}").into());
         }
+        let path = legal::inside(root, entry.path())?;
         if kind.is_dir() {
-            collect(&entry.path(), &format!("{relative}/"), files)?;
+            collect(root, &path, &format!("{relative}/"), files)?;
         } else if kind.is_file() {
-            files.push((relative, entry.path()));
+            files.push((relative, path));
         } else {
             return Err(format!("asset is not a regular file: {relative}").into());
         }

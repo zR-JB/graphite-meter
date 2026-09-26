@@ -13,9 +13,9 @@ fn main() {
 }
 
 fn compress_notices() -> Result<(), Box<dyn std::error::Error>> {
-    use std::{env, fs, path::PathBuf};
+    use std::{env, fs};
 
-    let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
+    let output = legal::output_directory(&legal::checkout()?)?;
     if env::var_os("GM_RUST_LEGAL_DIR").is_none() {
         fs::write(
             output.join("legal.rs"),

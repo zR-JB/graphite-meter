@@ -1,6 +1,36 @@
-use std::{env, error::Error, fs, path::PathBuf, process::Command};
+use std::{
+    env,
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+};
 
-pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
+
+/// Cargo runs build scripts in their package directory, two levels below the checkout.
+pub fn checkout() -> Result<PathBuf> {
+    Ok(fs::canonicalize("../..")?)
+}
+
+/// Resolves `path` and requires it inside `root`. Build inputs, reviewed notices and
+/// Cargo's target directory all live in the checkout; build scripts touch nothing else.
+pub fn inside(root: &Path, path: impl AsRef<Path>) -> Result<PathBuf> {
+    let path = path.as_ref();
+    match fs::canonicalize(path) {
+        Ok(resolved) if resolved.starts_with(root) => Ok(resolved),
+        Ok(resolved) => Err(format!("{} is outside {}", resolved.display(), root.display()).into()),
+        Err(error) => Err(format!("{}: {error}", path.display()).into()),
+    }
+}
+
+pub fn output_directory(repo: &Path) -> Result<PathBuf> {
+    match env::var_os("OUT_DIR") {
+        Some(output) => inside(repo, output),
+        None => Err("missing OUT_DIR".into()),
+    }
+}
+
+pub fn embed(share_browser_notices: bool) -> Result<()> {
     println!("cargo:rerun-if-env-changed=GM_ENGINE_VERSION");
     if let Ok(version) = env::var("GM_ENGINE_VERSION") {
         if version.is_empty()
@@ -14,7 +44,8 @@ pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
     }
 
     println!("cargo:rerun-if-env-changed=GM_RUST_LEGAL_DIR");
-    let output = PathBuf::from(env::var_os("OUT_DIR").ok_or("missing OUT_DIR")?);
+    let repo = checkout()?;
+    let output = output_directory(&repo)?;
     let identity = build_identity();
     fs::write(output.join("legal-build-identity.txt"), &identity)?;
     let Some(configured) = env::var_os("GM_RUST_LEGAL_DIR") else {
@@ -28,10 +59,10 @@ pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
         )?;
         return Ok(());
     };
-    let directory = PathBuf::from(configured);
-    if !directory.is_absolute() {
+    if !Path::new(&configured).is_absolute() {
         return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
     }
+    let directory = inside(&repo, configured)?;
     let identity_path = directory.join("build-identity.txt");
     println!("cargo:rerun-if-changed={}", identity_path.display());
     if fs::read_to_string(identity_path)? != identity {
@@ -39,12 +70,6 @@ pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
             "notice features, compiler flags, or build profile do not match this build".into(),
         );
     }
-    let package =
-        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").ok_or("missing manifest directory")?);
-    let repo = package
-        .parent()
-        .and_then(|path| path.parent())
-        .ok_or("missing repository root")?;
     for (name, expected) in [
         ("package.txt", env::var("CARGO_PKG_NAME")?),
         ("target.txt", env::var("TARGET")?),
@@ -55,13 +80,11 @@ pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
             return Err(format!("notice {name} does not match this build").into());
         }
     }
-    let compiler = Command::new(env::var_os("RUSTC").ok_or("missing RUSTC")?)
-        .arg("-vV")
-        .output()?;
-    let compiler_path = directory.join("rustc.txt");
+    // The notices describe the pinned toolchain's sysroot; Cargo must build with that compiler.
+    let compiler_path = directory.join("rustc-path.txt");
     println!("cargo:rerun-if-changed={}", compiler_path.display());
-    if !compiler.status.success() || fs::read(compiler_path)? != compiler.stdout {
-        return Err("notice compiler identity does not match this build".into());
+    if env::var_os("RUSTC") != Some(fs::read_to_string(compiler_path)?.into()) {
+        return Err("notice compiler does not match this build".into());
     }
     let index = directory.join("inputs.txt");
     println!("cargo:rerun-if-changed={}", index.display());
@@ -69,16 +92,10 @@ pub fn embed(share_browser_notices: bool) -> Result<(), Box<dyn Error>> {
     if !inputs.lines().any(|line| line == "rust/Cargo.lock") {
         return Err("notice input manifest has no Cargo.lock".into());
     }
+    let snapshots = directory.join("inputs");
     for relative in inputs.lines() {
-        let path = std::path::Path::new(relative);
-        if !path
-            .components()
-            .all(|part| matches!(part, std::path::Component::Normal(_)))
-        {
-            return Err("notice input path must be relative and normalized".into());
-        }
-        let source = repo.join(path);
-        let snapshot = directory.join("inputs").join(path);
+        let source = inside(&repo, repo.join(relative))?;
+        let snapshot = inside(&snapshots, snapshots.join(relative))?;
         println!("cargo:rerun-if-changed={}", source.display());
         println!("cargo:rerun-if-changed={}", snapshot.display());
         if fs::read(source)? != fs::read(snapshot)? {
