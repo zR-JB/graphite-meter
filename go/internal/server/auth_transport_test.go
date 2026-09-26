@@ -387,3 +387,84 @@ func TestAuthenticatedAdmissionRetainsOriginBoundary(t *testing.T) {
 		}
 	}
 }
+
+// Under authentication Enforce binds a /ws/ping upgrade to the UI origin, since the upgrade itself checks no origin;
+// public mode holds no session state and deliberately binds none.
+func TestWebSocketPingOriginIsBoundOnlyUnderAuthentication(t *testing.T) {
+	t.Parallel()
+	const forged = "https://evil.example"
+	dial := func(t *testing.T, client *http.Client, url string, headers http.Header) int {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		conn, res, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPClient: client, HTTPHeader: headers})
+		if err == nil {
+			conn.Close(websocket.StatusNormalClosure, "")
+			return http.StatusSwitchingProtocols
+		}
+		if res == nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	t.Run("password", func(t *testing.T) {
+		t.Parallel()
+		s := newAuthenticatedStack(t)
+		wsURL := "wss" + strings.TrimPrefix(s.origin, "https") + route.Ping
+		ticket := func(t *testing.T) string {
+			t.Helper()
+			target := url.QueryEscape(s.origin + route.Ping)
+			req, _ := http.NewRequest(http.MethodPost, s.origin+route.WSSession+"?target="+target, nil)
+			req.AddCookie(s.session)
+			req.Header.Set("Origin", s.origin)
+			req.Header.Set("X-CSRF-Token", s.csrf.Value)
+			res, err := s.uiClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			var minted struct {
+				Token string `json:"token"`
+			}
+			if err := json.UnmarshalRead(res.Body, &minted); err != nil || minted.Token == "" {
+				t.Fatalf("ticket status=%d: %v", res.StatusCode, err)
+			}
+			return minted.Token
+		}
+		for _, tc := range []struct {
+			name, origin string
+			ticket       bool
+			want         int
+		}{
+			{"cookie from the UI origin", s.origin, false, http.StatusSwitchingProtocols},
+			{"cookie from a forged origin", forged, false, http.StatusForbidden},
+			{"cookie without an origin", "", false, http.StatusForbidden},
+			{"ticket from the UI origin", s.origin, true, http.StatusSwitchingProtocols},
+			{"UI origin's ticket from a forged origin", forged, true, http.StatusForbidden},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				target, headers := wsURL, http.Header{}
+				if tc.ticket {
+					target += "?token=" + url.QueryEscape(ticket(t))
+				} else {
+					headers.Set("Cookie", s.session.String())
+				}
+				if tc.origin != "" {
+					headers.Set("Origin", tc.origin)
+				}
+				if got := dial(t, s.uiClient, target, headers); got != tc.want {
+					t.Fatalf("upgrade = %d, want %d", got, tc.want)
+				}
+			})
+		}
+	})
+	t.Run("public", func(t *testing.T) {
+		t.Parallel()
+		_, httpBase, _ := wtServer(t, nil, nil)
+		wsURL := "ws" + strings.TrimPrefix(httpBase, "http") + route.Ping
+		if got := dial(t, http.DefaultClient, wsURL, http.Header{"Origin": {forged}}); got != 101 {
+			t.Fatalf("public upgrade from any origin = %d, want 101", got)
+		}
+	})
+}
