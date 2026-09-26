@@ -24,13 +24,17 @@ func errorText(err error) string {
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
 
-func fmtRate(bytesPerSec float64) string {
-	bits := bytesPerSec * 8
+func rateTier(bits, headroom float64) (float64, string) {
 	tier := 0
-	for tier < len(rateUnits)-1 && bits >= 1.2*math.Pow(1000, float64(tier+1)) {
+	for tier < len(rateUnits)-1 && bits >= headroom*math.Pow(1000, float64(tier+1)) {
 		tier++
 	}
-	return fmtSpeed(bits/math.Pow(1000, float64(tier))) + " " + rateUnits[tier]
+	return bits / math.Pow(1000, float64(tier)), rateUnits[tier]
+}
+
+func fmtRate(bytesPerSec float64) string {
+	v, unit := rateTier(bytesPerSec*8, 1.2)
+	return fmtSpeed(v) + " " + unit
 }
 
 func fmtSpeed(value float64) string {

@@ -360,13 +360,15 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	for _, want := range []string{
 		"Bi-dir ↓ incomplete: transfer failed",
 		"Loaded latency · Bidirectional",
-		"unfinished probes 2",
 		"Bi-dir ↓",
 		missing,
 	} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("view lost %q:\n%s", want, screen)
 		}
+	}
+	if m.popup = popupDetails; !strings.Contains(view(m), "unfinished probes 2") {
+		t.Error("details lost the unfinished probes")
 	}
 }
 
@@ -557,6 +559,7 @@ func TestMultiServerRunViews(t *testing.T) {
 	if m.notice != "B: connection lost" {
 		t.Fatalf("failure notice = %q, want the server's name", m.notice)
 	}
+	m.run.outcome = goclient.OutcomeComplete
 	if screen := view(m); !strings.Contains(screen, "latency to A") || !strings.Contains(screen, "10.0 ms") {
 		t.Fatalf("focus A: %q", screen)
 	}
@@ -788,7 +791,7 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 func TestScrollingRevealsTheWholeBody(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a", "b")
-	m.width, m.height = 80, 24
+	m.width, m.height = 80, 16
 	m.run.outcome = goclient.OutcomeComplete
 	for _, stage := range []goclient.Stage{goclient.StageDownload, goclient.StageUpload, goclient.StageBidirectional} {
 		m.run.results = append(m.run.results, goclient.Result{Stage: stage, Direction: goclient.Down, MeanBps: 1e9})

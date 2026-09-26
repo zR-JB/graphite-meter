@@ -224,7 +224,7 @@ func (m model) detailsViewport() viewport.Model {
 	return vp
 }
 
-func (m model) detailsView(w int, intervals bool) string {
+func (m model) detailsView(w int, full bool) string {
 	r := m.run
 	if r == nil || r.details == nil {
 		return m.st.muted.Render("Waiting for the first server report…")
@@ -275,8 +275,12 @@ func (m model) detailsView(w int, intervals bool) string {
 	for _, stage := range r.plan {
 		populations = append(populations, compactPopulation(stage.Name))
 	}
-	lines := []string{m.st.heading.Render(m.outcomeNotice()), m.st.grid(headers, rows, w), "",
-		m.st.heading.Render("Latency median by server"), m.st.grid(populations, latency, w)}
+	lines := []string{m.st.heading.Render(m.outcomeNotice())}
+	if _, facts := m.resultsView(w); full && facts != "" {
+		lines = append(lines, facts, "")
+	}
+	lines = append(lines, m.st.grid(headers, rows, w), "",
+		m.st.heading.Render("Latency median by server"), m.st.grid(populations, latency, w))
 	if len(details.Failures) > 0 {
 		lines = append(lines, "", m.st.heading.Render("Left the test"))
 		for _, f := range details.Failures {
@@ -284,7 +288,7 @@ func (m model) detailsView(w int, intervals bool) string {
 				compactStage(f.Stage), f.Scope, fmtClock(f.At), failureLabels[f.Reason], errorText(f.Err)))
 		}
 	}
-	if intervals && details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
+	if full && details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
 		lines = append(lines, "", m.st.heading.Render("Aggregation intervals"))
 		for _, interval := range details.Intervals {
 			state := "incomplete evidence"

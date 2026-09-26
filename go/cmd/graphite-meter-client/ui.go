@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,7 +85,52 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 	return strings.Join(lines, "\n")
 }
 
-type point struct{ t, v float64 }
+type point struct {
+	t, v float64
+	n    int
+}
+
+const historyPoints, traceStep = 480, 0.05
+
+// trace bins samples per time step and doubles the step when full, so any run fits a bounded history.
+type trace struct {
+	points []point
+	step   float64
+}
+
+func (tr trace) add(t, v float64) trace {
+	tr.step = max(tr.step, traceStep)
+	if n := len(tr.points); n > 0 && t-tr.points[n-1].t < tr.step && !math.IsNaN(v) && !math.IsNaN(tr.points[n-1].v) {
+		last := &tr.points[n-1]
+		last.n++
+		last.v += (v - last.v) / float64(last.n)
+		return tr
+	}
+	if len(tr.points) == historyPoints {
+		tr.points, tr.step = coarsen(tr.points), tr.step*2
+	}
+	tr.points = append(tr.points, point{t, v, 1})
+	return tr
+}
+
+func coarsen(points []point) []point {
+	out := points[:0]
+	for i := 0; i < len(points); i += 2 {
+		p := points[i]
+		if i+1 < len(points) {
+			q := points[i+1]
+			switch {
+			case math.IsNaN(q.v):
+				p.v = q.v
+			case !math.IsNaN(p.v):
+				p.v = (p.v*float64(p.n) + q.v*float64(q.n)) / float64(p.n+q.n)
+				p.n += q.n
+			}
+		}
+		out = append(out, p)
+	}
+	return out
+}
 
 type series struct {
 	style  lipgloss.Style
@@ -96,20 +142,51 @@ type mark struct {
 	label string
 }
 
+// axis converts stored values to display units and names a rounded display value.
+type axis struct {
+	scale float64
+	label func(float64) string
+}
+
+var (
+	rateAxis = axis{8, func(bits float64) string {
+		v, unit := rateTier(bits, 1)
+		return roundLabel(v) + " " + unit
+	}}
+	msAxis = axis{1e-6, func(ms float64) string { return roundLabel(ms) + " ms" }}
+)
+
+func roundLabel(v float64) string { return strconv.FormatFloat(math.Round(v*1000)/1000, 'f', -1, 64) }
+
+func niceCeil(v float64) float64 {
+	if v <= 0 {
+		return 1
+	}
+	decade := math.Pow(10, math.Floor(math.Log10(v)))
+	for _, f := range []float64{1, 2, 2.5, 5} {
+		if f*decade >= v {
+			return f * decade
+		}
+	}
+	return 10 * decade
+}
+
 var brailleDots = [4][2]rune{{0x01, 0x08}, {0x02, 0x10}, {0x04, 0x20}, {0x40, 0x80}}
 
-func (s styles) chart(lines []series, marks []mark, label func(float64) string, span float64, w, h int) string {
-	const axis = 13
-	cols, rows := max(w-axis, 4), max(h-2, 2)
-	t0, t1, top := 0.0, max(span, 1), 0.0
+// chartAxis is fixed so stacked charts and stage changes keep one plot origin.
+const chartAxis = 11
+
+func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h int) string {
+	cols, rows := max(w-chartAxis, 4), max(h-2, 2)
+	t0, t1, peak := 0.0, max(span, 1), 0.0
 	for _, l := range lines {
 		for _, p := range l.points {
 			if !math.IsNaN(p.v) {
-				top = max(top, p.v)
+				peak = max(peak, p.v)
 			}
 		}
 	}
-	top = max(top*1.1, 1e-9)
+	top := niceCeil(peak*ax.scale*1.05) / ax.scale
 	dots := make([]rune, cols*rows)
 	owner := make([]int, cols*rows)
 	set := func(x, y, i int) {
@@ -143,11 +220,11 @@ func (s styles) chart(lines []series, marks []mark, label func(float64) string, 
 		scale := ""
 		switch r {
 		case 0:
-			scale = label(top)
+			scale = ax.label(top * ax.scale)
 		case rows - 1:
-			scale = label(0)
+			scale = "0"
 		}
-		scale = lipgloss.PlaceHorizontal(axis-1, lipgloss.Right, ansi.Truncate(scale, axis-1, ""))
+		scale = lipgloss.PlaceHorizontal(chartAxis-1, lipgloss.Right, ansi.Truncate(scale, chartAxis-1, ""))
 		b.WriteString(s.muted.Render(scale) + s.border.Render("│"))
 		for c := 0; c < cols; {
 			first, end := r*cols+c, r*cols+c
@@ -169,17 +246,24 @@ func (s styles) chart(lines []series, marks []mark, label func(float64) string, 
 	}
 	ruler := []rune(strings.Repeat("─", cols))
 	labels := []rune(strings.Repeat(" ", cols))
-	for _, m := range marks {
-		x := int((m.t - t0) / (t1 - t0) * float64(cols-1))
-		if x >= 0 && x < cols {
-			ruler[x] = '┬'
-			copy(labels[x:], []rune(m.label))
-		}
-	}
 	end := []rune(fmtClock(time.Duration(t1 * float64(time.Second))))
-	copy(labels[max(cols-len(end), 0):], end)
-	b.WriteString(strings.Repeat(" ", axis-1) + s.border.Render("└"+string(ruler)) + "\n")
-	b.WriteString(strings.Repeat(" ", axis) + s.muted.Render(string(labels)))
+	endAt := max(cols-len(end), 0)
+	column := func(t float64) int { return int((t - t0) / (t1 - t0) * float64(cols-1)) }
+	for i, m := range marks {
+		x, limit := column(m.t), endAt-1
+		if x < 0 || x >= cols {
+			continue
+		}
+		if i+1 < len(marks) {
+			limit = min(limit, column(marks[i+1].t)-1)
+		}
+		ruler[x] = '┬'
+		label := []rune(m.label)
+		copy(labels[x:max(x, min(x+len(label), limit))], label)
+	}
+	copy(labels[endAt:], end)
+	b.WriteString(strings.Repeat(" ", chartAxis-1) + s.border.Render("└"+string(ruler)) + "\n")
+	b.WriteString(strings.Repeat(" ", chartAxis) + s.muted.Render(string(labels)))
 	return b.String()
 }
 

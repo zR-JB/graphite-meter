@@ -148,7 +148,11 @@ func (m model) progress() int {
 
 func (m model) header(w int) string {
 	left := m.st.title.Render("Graphite Meter")
-	right := m.st.pill.Render(m.statusLabel())
+	pill := m.st.pill
+	if m.run != nil && !m.running() {
+		pill = m.st.outcome[m.run.outcome]
+	}
+	right := pill.Render(m.statusLabel())
 	spacer := strings.Repeat(" ", max(1, w-lipgloss.Width(left)-lipgloss.Width(right)))
 	context := m.cfg.BaseURL
 	if m.run != nil && m.run.details != nil {
@@ -389,7 +393,10 @@ func (m model) editView() (string, string) {
 }
 
 func (m model) runView(w, h int) string {
-	results := m.resultsView(w - 4)
+	results := ""
+	if !m.run.live() {
+		results, _ = m.resultsView(w - 4)
+	}
 	resultsH := 0
 	if results != "" {
 		resultsH = lipgloss.Height(results) + 2
@@ -399,14 +406,21 @@ func (m model) runView(w, h int) string {
 		lw, rw = w*2/5, w-1-w*2/5
 	}
 	test := m.testView(lw-4, !side)
-	liveH := max(h-resultsH, 9)
-	testH := liveH
+	testH := lipgloss.Height(test) + 2
+	liveH := h - resultsH
 	if !side {
-		testH = lipgloss.Height(test) + 2
-		liveH = max(h-resultsH-testH, 7)
+		liveH -= testH
 	}
-	live := m.st.panel("Live · "+m.statusLabel(), m.liveView(rw-4, liveH-2), rw, liveH)
-	top := join(m.st.panel("Test", test, lw, testH), live, side)
+	var top string
+	switch {
+	case side && (m.run.live() || liveH >= 9):
+		liveH = max(liveH, testH, 9)
+		top = join(m.st.panel("Test", test, lw, liveH), m.timelinePanel(rw, liveH), true)
+	case m.run.live() || liveH >= 9:
+		top = m.st.panel("Test", test, lw, 0) + "\n" + m.timelinePanel(rw, max(liveH, 7))
+	default:
+		top = m.st.panel("Test", m.testView(w-4, !side), w, 0)
+	}
 	if results == "" {
 		return top
 	}
@@ -415,6 +429,14 @@ func (m model) runView(w, h int) string {
 		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
 	}
 	return top + "\n" + m.st.panel(title, results, w, resultsH)
+}
+
+func (m model) timelinePanel(w, h int) string {
+	title := "Timeline"
+	if m.run.live() {
+		title += " · " + m.statusLabel()
+	}
+	return m.st.panel(title, m.liveView(w-4, h-2), w, h)
 }
 
 func (m model) testView(w int, compact bool) string {
@@ -473,9 +495,14 @@ func (m model) stageTrack(w int) []string {
 			clock += m.st.muted.Render(" / " + fmtSetting(s.duration))
 			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
-			lines = append(lines, name+m.st.ok.Render("✓ ")+m.st.muted.Render(fmtSetting(s.duration)))
+			value := m.headline(s.name)
+			if value == "" {
+				value = m.st.muted.Render(fmtSetting(s.duration))
+			}
+			lines = append(lines, name+m.st.ok.Render("✓ ")+value)
 		case stagePartial:
-			lines = append(lines, name+m.st.warn.Render("! ")+m.st.muted.Render(stageStatusLabels[s.state]))
+			value := strings.TrimSpace(m.headline(s.name) + " " + m.st.muted.Render(stageStatusLabels[s.state]))
+			lines = append(lines, name+m.st.warn.Render("! ")+value)
 		case stageFailed, stageStopped:
 			lines = append(lines, name+m.st.err.Render("✗ ")+m.st.muted.Render(stageStatusLabels[s.state]))
 		case stagePending:
@@ -491,6 +518,20 @@ func (m model) stageTrack(w int) []string {
 	return lines
 }
 
+func (m model) headline(stage goclient.Stage) string {
+	var parts []string
+	for _, result := range m.run.results {
+		if result.Stage == stage && !result.Unavailable {
+			arrow := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[result.Direction]
+			parts = append(parts, m.st.value.Render(arrow+fmtRate(result.MeanBps)))
+		}
+	}
+	if p, ok := m.run.latencyPopulations()[stage]; ok && stage == goclient.StageLatency && p.HasMedian() {
+		parts = append(parts, m.st.value.Render(fmtMs(p.Latency.P50))+m.st.muted.Render(" median"))
+	}
+	return strings.Join(parts, "  ")
+}
+
 func (m model) liveView(w, h int) string {
 	r := m.run
 	i := slices.IndexFunc(r.plan, func(s goclient.StagePlan) bool { return s.Name == r.stage })
@@ -501,33 +542,66 @@ func (m model) liveView(w, h int) string {
 		return m.spin.View() + m.st.muted.Render(" Checking paths…")
 	}
 	stage := r.plan[i]
-	loaded := len(stage.Directions) > 0 && m.cfg.LoadedLatency
-	var readings []string
+	dirs := stage.Directions
+	if !r.live() {
+		dirs = slices.DeleteFunc([]goclient.Direction{goclient.Down, goclient.Up}, func(d goclient.Direction) bool {
+			return len(r.history[d].points) == 0
+		})
+	}
+	loaded := len(dirs) > 0 && m.cfg.LoadedLatency
 	var lines []series
+	for _, dir := range dirs {
+		style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
+		lines = append(lines, series{style, r.history[dir].points})
+	}
+	var out []string
+	if r.live() {
+		out = append(out, m.readings(stage))
+	}
+	if m.multipleRunServers() {
+		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
+	}
+	chartH := h - len(out)
+	span := m.now.Sub(r.started).Seconds()
+	rtt := []series{{m.st.rtt, r.rtt[r.focus].points}}
+	switch {
+	case chartH < 5:
+	case len(lines) == 0:
+		out = append(out, m.st.chart(rtt, r.marks, msAxis, span, w, chartH))
+	case loaded && chartH >= 12:
+		out = append(out, m.st.chart(lines, r.marks, rateAxis, span, w, chartH-5),
+			m.st.chart(rtt, nil, msAxis, span, w, 5))
+	default:
+		out = append(out, m.st.chart(lines, r.marks, rateAxis, span, w, chartH))
+	}
+	return strings.Join(out, "\n")
+}
+
+func (m model) readings(stage goclient.StagePlan) string {
+	r := m.run
+	var readings []string
 	for _, dir := range stage.Directions {
 		label := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[dir]
 		sample, sampled := r.rates[dir]
 		value := m.st.value.Render(fmtRate(r.shown[dir]))
 		switch {
-		case !sampled || !r.live() || r.phase != goclient.PhaseMeasuring:
+		case !sampled || r.phase != goclient.PhaseMeasuring:
 			value = m.st.muted.Render(missing)
 		case sample.Unavailable:
 			value = m.st.muted.Render(missing + " window restarting")
 		}
 		readings = append(readings, m.st.text.Render(label)+value)
-		style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
-		lines = append(lines, series{style, r.history[dir]})
 	}
-	if len(stage.Directions) == 0 || loaded {
+	if len(stage.Directions) == 0 || m.cfg.LoadedLatency {
 		label := "Loaded latency "
 		if len(stage.Directions) == 0 {
 			label = "Idle latency "
 		}
 		value := m.st.muted.Render(missing)
-		if sample, ok := r.latest[r.focus]; ok && r.live() {
+		if sample, ok := r.latest[r.focus]; ok {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 && r.live() {
+		if streak := r.timeouts[r.focus]; streak > 0 {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -536,28 +610,10 @@ func (m model) liveView(w, h int) string {
 		}
 		readings = append(readings, m.st.text.Render(label)+value)
 	}
-	out := []string{strings.Join(readings, "   ")}
-	if m.multipleRunServers() {
-		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
-	}
-	chartH := h - len(out)
-	span := m.now.Sub(r.started).Seconds()
-	rtt := []series{{m.st.rtt, r.rtt[r.focus]}}
-	msLabel := func(v float64) string { return fmtMs(time.Duration(v)) }
-	switch {
-	case chartH < 5:
-	case len(lines) == 0:
-		out = append(out, m.st.chart(rtt, r.marks, msLabel, span, w, chartH))
-	case loaded && chartH >= 12:
-		out = append(out, m.st.chart(lines, r.marks, fmtRate, span, w, chartH-5),
-			m.st.chart(rtt, nil, msLabel, span, w, 5))
-	default:
-		out = append(out, m.st.chart(lines, r.marks, fmtRate, span, w, chartH))
-	}
-	return strings.Join(out, "\n")
+	return strings.Join(readings, "   ")
 }
 
-func (m model) resultsView(w int) string {
+func (m model) resultsView(w int) (string, string) {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
@@ -565,7 +621,7 @@ func (m model) resultsView(w int) string {
 		idle = &population.Latency
 	}
 	var throughput, latencyRows [][]string
-	var notes []string
+	var notes, failures []string
 	note := func(label string, facts []string) {
 		for i, line := range wrapParts(facts, w-2) {
 			if i == 0 {
@@ -583,9 +639,9 @@ func (m model) resultsView(w int) string {
 	failed := func(label string, err error) {
 		switch {
 		case errors.Is(err, context.Canceled):
-			notes = append(notes, m.st.warn.Render(label+" stopped."))
+			failures = append(failures, m.st.warn.Render(label+" stopped."))
 		case err != nil:
-			notes = append(notes, m.st.err.Render(label+" incomplete: "+errorText(err)))
+			failures = append(failures, m.st.err.Render(label+" incomplete: "+errorText(err)))
 		}
 	}
 	unmeasured := func(i int) string {
@@ -641,7 +697,7 @@ func (m model) resultsView(w int) string {
 		}
 	}
 	if !measured {
-		return ""
+		return "", ""
 	}
 	if added {
 		notes = append(notes, m.st.muted.Render("Added: loaded median minus idle median."))
@@ -657,7 +713,7 @@ func (m model) resultsView(w int) string {
 		}
 		parts = append(parts, m.st.grid(headers, latencyRows, w))
 	}
-	return strings.Join(append(parts, strings.Join(notes, "\n")), "\n")
+	return strings.Join(append(parts, failures...), "\n"), strings.Join(notes, "\n")
 }
 
 func (m model) finalReport() string {
@@ -666,8 +722,8 @@ func (m model) finalReport() string {
 	}
 	w, _ := m.size()
 	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome]}
-	if results := m.resultsView(w); results != "" {
-		lines = append(lines, results)
+	if results, facts := m.resultsView(w); results != "" {
+		lines = append(lines, results, facts)
 	}
 	if m.multipleRunServers() {
 		lines = append(lines, "", m.detailsView(w, false))

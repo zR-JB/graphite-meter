@@ -149,8 +149,6 @@ func (m model) handleAuthToken(msg authTokenMsg) (tea.Model, tea.Cmd) {
 	return m.reprepare()
 }
 
-const historyPoints = 480
-
 type runState struct {
 	plan     []goclient.StagePlan
 	stages   []stageProgress
@@ -161,8 +159,8 @@ type runState struct {
 	results  []goclient.Result
 	rates    map[goclient.Direction]goclient.ThroughputSample
 	shown    map[goclient.Direction]float64
-	history  map[goclient.Direction][]point
-	rtt      map[string][]point
+	history  map[goclient.Direction]trace
+	rtt      map[string]trace
 	latest   map[string]goclient.LatencySample
 	timeouts map[string]int
 	marks    []mark
@@ -197,8 +195,8 @@ func newRunState(cfg goclient.Config, focus string, started time.Time) *runState
 		started:  started,
 		rates:    map[goclient.Direction]goclient.ThroughputSample{},
 		shown:    map[goclient.Direction]float64{},
-		history:  map[goclient.Direction][]point{},
-		rtt:      map[string][]point{},
+		history:  map[goclient.Direction]trace{},
+		rtt:      map[string]trace{},
 		latest:   map[string]goclient.LatencySample{},
 		timeouts: map[string]int{},
 		focus:    focus,
@@ -353,12 +351,11 @@ func (m *model) apply(e goclient.Event) {
 		}
 		if e.Phase == goclient.PhaseMeasuring {
 			r.marks = append(r.marks, mark{at, compactStage(e.Stage)})
-			gap := point{at, math.NaN()}
 			for dir := range r.history {
-				r.history[dir] = appendPoint(r.history[dir], gap)
+				r.history[dir] = r.history[dir].add(at, math.NaN())
 			}
 			for id := range r.rtt {
-				r.rtt[id] = appendPoint(r.rtt[id], gap)
+				r.rtt[id] = r.rtt[id].add(at, math.NaN())
 			}
 		}
 	case goclient.EventThroughput:
@@ -367,7 +364,7 @@ func (m *model) apply(e goclient.Event) {
 		if e.Throughput.Unavailable {
 			r.shown[e.Direction], v = 0, math.NaN()
 		}
-		r.history[e.Direction] = appendPoint(r.history[e.Direction], point{at, v})
+		r.history[e.Direction] = r.history[e.Direction].add(at, v)
 	case goclient.EventLatency:
 		v := math.NaN()
 		if e.Latency.TimedOut {
@@ -377,17 +374,10 @@ func (m *model) apply(e goclient.Event) {
 			r.latest[e.ServerID] = e.Latency
 			v = float64(e.Latency.RTT)
 		}
-		r.rtt[e.ServerID] = appendPoint(r.rtt[e.ServerID], point{at, v})
+		r.rtt[e.ServerID] = r.rtt[e.ServerID].add(at, v)
 	case goclient.EventResult:
 		r.results = append(r.results, *e.Result)
 	}
-}
-
-func appendPoint(points []point, p point) []point {
-	if len(points) >= historyPoints {
-		points = slices.Delete(points, 0, len(points)-historyPoints+1)
-	}
-	return append(points, p)
 }
 
 func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }

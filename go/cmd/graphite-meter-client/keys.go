@@ -28,7 +28,7 @@ var keys = keymap{
 	stop:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop test")),
 	confirmStop:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "confirm stop")),
 	setup:         key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "setup")),
-	runAgain:      key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "run again")),
+	runAgain:      key.NewBinding(key.WithKeys("enter", "r"), key.WithHelp("enter", "run again")),
 	latencyServer: key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "latency server")),
 	details:       key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "details")),
 	scroll:        key.NewBinding(key.WithKeys("up", "down", "k", "j"), key.WithHelp("↑/↓", "scroll")),
@@ -64,7 +64,7 @@ func (m model) ShortHelp() []key.Binding {
 	case m.running() || m.finished():
 		bindings := []key.Binding{keys.stop}
 		if m.finished() {
-			bindings = []key.Binding{keys.setup, keys.runAgain}
+			bindings = []key.Binding{keys.runAgain, keys.setup}
 		}
 		bindings = append(bindings, keys.details)
 		if m.multipleRunServers() {
