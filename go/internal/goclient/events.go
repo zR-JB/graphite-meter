@@ -137,8 +137,8 @@ type LatencyStats struct {
 }
 
 type ReflectorTimingStats struct {
-	Count                                     int
-	MeanRawRTT, MeanHandling, MeanAdjustedRTT time.Duration
+	Count                    int
+	MeanRawRTT, MeanHandling time.Duration
 }
 
 // TimeoutRatio excludes interrupted/unresolved probes and local send failures; an empty population is unavailable.

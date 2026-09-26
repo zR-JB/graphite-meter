@@ -56,10 +56,9 @@ func (s *latencyStats) snapshot() LatencyStats {
 	if s.timingCount > 0 {
 		count := time.Duration(s.timingCount)
 		out.ReflectorTiming = &ReflectorTimingStats{
-			Count:           s.timingCount,
-			MeanRawRTT:      s.timingRawSum / count,
-			MeanHandling:    s.handlingSum / count,
-			MeanAdjustedRTT: (s.timingRawSum - s.handlingSum) / count,
+			Count:        s.timingCount,
+			MeanRawRTT:   s.timingRawSum / count,
+			MeanHandling: s.handlingSum / count,
 		}
 	}
 	if s.pairs > 0 {

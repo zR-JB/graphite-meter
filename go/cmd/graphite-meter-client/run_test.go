@@ -386,7 +386,7 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		Count: 16, P50: 10 * time.Millisecond, P95: 12 * time.Millisecond, JitterPairs: 15,
 		Jitter: 400 * time.Microsecond, Elapsed: 4 * time.Second,
 		ReflectorTiming: &goclient.ReflectorTimingStats{
-			Count: 2, MeanRawRTT: 10 * time.Millisecond, MeanAdjustedRTT: 10 * time.Millisecond,
+			Count: 2, MeanRawRTT: 10 * time.Millisecond,
 		},
 	}
 	loaded := goclient.LatencyStats{Count: 40, P50: 17800 * time.Microsecond, P95: 30 * time.Millisecond, Timeouts: 2}
@@ -398,7 +398,7 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	for _, want := range []string{
 		"Graphite Meter · Complete", "Median", "Probe timeouts",
 		"Idle latency", "10.0 ms", "12.0 ms", "0.4 ms", "Idle latency: 16 replies · 4.0 s",
-		"Server timing (2 paired replies, means): raw 10.0 ms · handling 0.0 ms · adjusted 10.0 ms",
+		"Server timing (2 paired replies, means): raw 10.0 ms · handling 0.0 ms",
 		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
 		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
 		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Bi-dir",

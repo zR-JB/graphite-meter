@@ -154,8 +154,7 @@ func wrapParts(parts []string, w int) []string {
 
 func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
 	label := fmt.Sprintf("Server timing (%d paired replies, means)", s.Count)
-	return label, []string{"raw " + fmtMs(s.MeanRawRTT), "handling " + fmtMs(s.MeanHandling),
-		"adjusted " + fmtMs(s.MeanAdjustedRTT) + " (handling removed)"}
+	return label, []string{"raw " + fmtMs(s.MeanRawRTT), "handling " + fmtMs(s.MeanHandling)}
 }
 
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}

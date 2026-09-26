@@ -36,10 +36,9 @@ func TestReflectorTimingDoesNotChangeRawStatistics(t *testing.T) {
 	}
 	got := timed.snapshot()
 	wantTiming := ReflectorTimingStats{
-		Count:           2,
-		MeanRawRTT:      15 * time.Millisecond,
-		MeanHandling:    time.Millisecond,
-		MeanAdjustedRTT: 14 * time.Millisecond,
+		Count:        2,
+		MeanRawRTT:   15 * time.Millisecond,
+		MeanHandling: time.Millisecond,
 	}
 	if got.ReflectorTiming == nil || *got.ReflectorTiming != wantTiming {
 		t.Fatalf("timing = %+v, want %+v", got.ReflectorTiming, wantTiming)
@@ -160,8 +159,7 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 				if stats.ReflectorTiming == nil || stats.ReflectorTiming.Count != paired {
 					t.Fatalf("paired summary=%+v replies=%d", stats.ReflectorTiming, paired)
 				}
-				if stats.ReflectorTiming.MeanHandling != 0 ||
-					stats.ReflectorTiming.MeanAdjustedRTT != stats.ReflectorTiming.MeanRawRTT {
+				if stats.ReflectorTiming.MeanHandling != 0 {
 					t.Fatalf("zero handling altered RTT: %+v", stats.ReflectorTiming)
 				}
 				if scenario == "reconnect" && (connections.Load() != 2 || paired != stats.Count) {
