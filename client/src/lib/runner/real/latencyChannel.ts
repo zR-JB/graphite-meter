@@ -4,7 +4,6 @@ import type {
   ConnectivityState,
   LatencyBucket,
   PingCadence,
-  TransportKind,
 } from "../contract";
 import type { LatencyTarget } from "../../api/endpoints";
 import { authEnabled } from "../../auth";
@@ -41,26 +40,35 @@ const PROBE_PING_COUNT = 5;
 const PROBE_PING_TIMEOUT_MS = 1500;
 const IDLE_RESPAWN_MS = 2000;
 
-/* The bus URL for a target, or null when the target does not speak `kind`. */
-function pingUrl(
-  target: LatencyTarget | null,
-  kind: TransportKind,
-): string | null {
-  if (!target || target.transport !== kind) return null;
-  return target.transport === "webtransport"
-    ? target.origin + ROUTES.wtPing
-    : httpToWs(target.origin) + ROUTES.ping;
-}
-
-/* Token mint for a WebTransport ping dial, when authentication is on. */
-function pingMint(
-  target: LatencyTarget | null,
-  credentials?: ServerCredentials,
-) {
-  if (!target) return undefined;
-  return target.transport === "webtransport"
-    ? socketMint(credentials, target.origin, ROUTES.wtPing, "wt")
-    : socketMint(credentials, target.origin, ROUTES.ping, "ws");
+/** Starts a ping worker on the target's bus; `failed` hears a worker that cannot load. */
+function startPingWorker(
+  target: LatencyTarget,
+  credentials: ServerCredentials | undefined,
+  pacing: { intervalMs: number; replyDriven: boolean; maxInFlight: number },
+  on: (msg: PingWorkerEvent) => void,
+  failed: (detail: string) => void,
+): Worker {
+  const wt = target.transport === "webtransport";
+  const route = wt ? ROUTES.wtPing : ROUTES.ping;
+  const worker = new Worker(
+    new URL("../workers/ping-worker.ts", import.meta.url),
+    { type: "module" },
+  );
+  worker.onmessage = (e: MessageEvent<PingWorkerEvent>) => on(e.data);
+  worker.onerror = (e: ErrorEvent) => failed(e.message || "ping worker error");
+  worker.postMessage({
+    type: "start",
+    url: (wt ? target.origin : httpToWs(target.origin)) + route,
+    transport: target.transport,
+    mint: socketMint(credentials, target.origin, route, wt ? "wt" : "ws"),
+    ...pacing,
+    lossK: PING_LOSS_K,
+    lossFloorMs: PING_LOSS_FLOOR_MS,
+    checkAuthentication: credentials
+      ? credentials.kind === "session"
+      : authEnabled(),
+  });
+  return worker;
 }
 
 interface LatencyChannelDeps {
@@ -107,10 +115,6 @@ export class LatencyChannel {
   /* The ping worker owns the bus and the ping algorithm. */
   prime(cadence: PingCadence, isLatencyStage = false): void {
     this.teardown();
-    const channel = this.#deps.target;
-    const kind = channel.transport;
-    const url = pingUrl(channel, kind);
-    if (!url) throw new Error("latency target not resolved");
     const fixedIntervalMs = fixedPingIntervalMs(cadence);
     const replyDriven = fixedIntervalMs == null;
     // Reply-driven uses this only for its loss sweep; its sends are driven by PONGs and the worker's adaptive backup.
@@ -129,37 +133,21 @@ export class LatencyChannel {
       this.#establishTimer = null;
       this.#deps.host.stallLatency("ping connection could not be established");
     }, PING_ESTABLISH_TIMEOUT_MS);
-    const worker = new Worker(
-      new URL("../workers/ping-worker.ts", import.meta.url),
-      { type: "module" },
+    const worker: Worker = startPingWorker(
+      this.#deps.target,
+      this.#deps.credentials,
+      { intervalMs, replyDriven, maxInFlight },
+      (msg) => {
+        if (this.#worker === worker) this.#onMessage(msg);
+      },
+      (detail) => {
+        if (this.#worker !== worker) return;
+        this.#deps.host.latencyIncomplete();
+        this.#onMessage({ type: "stall", detail });
+        if (this.#worker === worker) this.teardown();
+      },
     );
-    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
-      if (this.#worker === worker) this.#onMessage(e.data);
-    };
-    worker.onerror = (e: ErrorEvent): void => {
-      if (this.#worker !== worker) return;
-      this.#deps.host.latencyIncomplete();
-      this.#onMessage({
-        type: "stall",
-        detail: e.message || "ping worker error",
-      });
-      if (this.#worker === worker) this.teardown();
-    };
     this.#worker = worker;
-    worker.postMessage({
-      type: "start",
-      url,
-      transport: kind,
-      mint: pingMint(channel, this.#deps.credentials),
-      intervalMs,
-      replyDriven,
-      maxInFlight,
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: this.#deps.credentials
-        ? this.#deps.credentials.kind === "session"
-        : authEnabled(),
-    });
   }
 
   /* The worker owns RTT, loss, and observation time; this channel translates only the cross-realm clock coordinate. */
@@ -337,40 +325,22 @@ export class IdleKeepalive {
   /* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     if (this.#active) return;
-    const channel = this.#target;
-    const url = pingUrl(channel, channel.transport)!;
     this.#active = true;
     this.#connectivity = null;
-    const worker = new Worker(
-      new URL("../workers/ping-worker.ts", import.meta.url),
-      { type: "module" },
+    const worker: Worker = startPingWorker(
+      this.#target,
+      this.#credentials,
+      { intervalMs, replyDriven: false, maxInFlight: 2 },
+      (msg) => {
+        if (this.#worker === worker) this.#onMessage(msg);
+      },
+      (detail) => {
+        if (this.#worker !== worker) return;
+        // A worker that dies at load time has no reconnect loop of its own.
+        this.#onMessage({ type: "stall", detail });
+        this.#scheduleRespawn(intervalMs);
+      },
     );
-    worker.onmessage = (e: MessageEvent<PingWorkerEvent>): void => {
-      if (this.#worker === worker) this.#onMessage(e.data);
-    };
-    worker.onerror = (e: ErrorEvent): void => {
-      if (this.#worker !== worker) return;
-      // A worker dying at load time has no in-worker reconnect loop, usually because the bundle-serving server is down.
-      this.#onMessage({
-        type: "stall",
-        detail: e.message || "idle ping worker error",
-      });
-      this.#scheduleRespawn(intervalMs);
-    };
-    worker.postMessage({
-      type: "start",
-      url,
-      transport: channel.transport,
-      mint: pingMint(channel, this.#credentials),
-      intervalMs,
-      replyDriven: false,
-      maxInFlight: 2,
-      lossK: PING_LOSS_K,
-      lossFloorMs: PING_LOSS_FLOOR_MS,
-      checkAuthentication: this.#credentials
-        ? this.#credentials.kind === "session"
-        : authEnabled(),
-    });
     // Report immediately (there is no keepalive warmup window).
     worker.postMessage({ type: "measure" });
     this.#worker = worker;
