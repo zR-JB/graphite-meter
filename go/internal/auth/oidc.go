@@ -15,11 +15,10 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 	"golang.org/x/oauth2"
 )
 
@@ -337,24 +336,10 @@ func (s *Service) oidcLoginFailure(w http.ResponseWriter, r *http.Request, why r
 }
 
 func validSubject(v string) bool {
-	return len(v) > 0 && len(v) <= 256 && !strings.ContainsFunc(v, unicode.IsControl)
+	return len(v) > 0 && len(v) <= 256 && wire.SafeText(v)
 }
 
+// safeDisplayName keeps at most 64 runes, so at most 256 bytes.
 func safeDisplayName(v string) string {
-	v = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, v)
-	if len(v) > 256 {
-		v = v[:256]
-		for !utf8.ValidString(v) {
-			v = v[:len(v)-1]
-		}
-	}
-	if v == "" {
-		return "OIDC user"
-	}
-	return v
+	return cmp.Or(strings.TrimSpace(wire.CleanText(v, 64)), "OIDC user")
 }

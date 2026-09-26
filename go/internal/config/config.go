@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/zR-JB/graphite-meter/go/internal/origin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -538,8 +537,8 @@ func (a AuthConfig) validateSecrets() error {
 	if wantsOIDC && strings.TrimSpace(a.OIDCProviderName) == "" {
 		return errors.New("GM_AUTH_OIDC_PROVIDER_NAME must not be empty")
 	}
-	if len(a.OIDCProviderName) > 64 || strings.ContainsFunc(a.OIDCProviderName, unicode.IsControl) {
-		return errors.New("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters")
+	if len(a.OIDCProviderName) > 64 || !wire.SafeText(a.OIDCProviderName) {
+		return errors.New("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes of UTF-8 without control characters")
 	}
 	return nil
 }

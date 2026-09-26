@@ -141,6 +141,14 @@ func TestValidate(t *testing.T) {
 		{"session shorter than an operation", "GM_MAX_SESSION_DURATION", func(c *Config) {
 			c.MaxSessionDuration = c.MaxOperationDuration - time.Second
 		}},
+		{"provider name control", "GM_AUTH_OIDC_PROVIDER_NAME", func(c *Config) {
+			passwordAuth(c)
+			c.Auth.OIDCProviderName = "Auth\u009belia"
+		}},
+		{"provider name invalid UTF-8", "GM_AUTH_OIDC_PROVIDER_NAME", func(c *Config) {
+			passwordAuth(c)
+			c.Auth.OIDCProviderName = "Auth\xffelia"
+		}},
 		{"auth setting while off", "GM_AUTH_MODE", func(c *Config) { c.Auth.PublicURL = "https://meter.example" }},
 		{"clear public URL", "GM_AUTH_PUBLIC_URL", func(c *Config) {
 			passwordAuth(c)
