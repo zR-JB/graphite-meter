@@ -97,8 +97,8 @@ func TestPreparationCancellationReachesQueuedApprovalPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.prepare = prepareSignIn
-	_, poll := modelAndCmd(m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending}))
-	m, _ = modelAndCmd(m.reprepare())
+	m, poll := modelAndCmd(m.Update(authChallengeMsg{seq: m.prepareSeq, pending: pending}))
+	m, _ = modelAndCmd(m.Update(press("esc")))
 	for _, msg := range drain(poll) {
 		if reply, ok := msg.(authTokenMsg); ok {
 			if !errors.Is(reply.err, context.Canceled) || reply.token != "" {
@@ -186,8 +186,34 @@ func TestRunKeys(t *testing.T) {
 		t.Fatal("r restarted a running test")
 	}
 	m.run.outcome = goclient.OutcomeComplete
-	if m, _ = modelAndCmd(m.Update(press("esc"))); m.run != nil {
-		t.Fatal("esc did not return to setup after the test")
+	if m, _ = modelAndCmd(m.Update(press("esc"))); m.run != nil || m.prepare != prepareChecking {
+		t.Fatal("esc did not return to a freshly checked setup after the test")
+	}
+}
+
+func TestQuitDuringARunStopsAndReports(t *testing.T) {
+	t.Parallel()
+	url, entered, left := hangingServer(t)
+	cfg := goclient.DefaultConfig()
+	cfg.BaseURL = url
+	m := newModel(cfg)
+	t.Cleanup(m.close)
+	m, _ = modelAndCmd(m.startRun())
+	within(t, entered, "run never reached preparation")
+	m, cmd := modelAndCmd(m.Update(press("q")))
+	if cmd != nil || !m.quitting {
+		t.Fatal("q quit before the running test stopped")
+	}
+	within(t, left, "q left the run's request alive")
+	for !quits(cmd) {
+		msg := waitEvents(m.runSeq, m.events)()
+		if msg == nil {
+			t.Fatal("the run ended without its terminal event")
+		}
+		m, cmd = modelAndCmd(m.Update(msg))
+	}
+	if m.run.outcome == goclient.OutcomeRunning || m.finalReport() == "" {
+		t.Fatal("quitting lost the run's report")
 	}
 }
 
@@ -277,7 +303,7 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	for state, want := range map[prepareState]string{
 		prepareChecking: "Checking paths",
 		prepareSignIn:   "Sign in",
-		prepareFailed:   "Path failed",
+		prepareFailed:   "Failed",
 		prepareReady:    "Recheck needed",
 	} {
 		setup.prepare = state
@@ -348,7 +374,7 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		},
 		{
 			Stage: goclient.StageUpload, Direction: goclient.Up, MeanBps: 5_000_000,
-			TotalBytes: 50_000_000, Elapsed: 10 * time.Second, Samples: 39,
+			TotalBytes: 50_000_000, Elapsed: 10 * time.Second, Samples: 39, Err: context.Canceled,
 		},
 	}
 	idle := goclient.LatencyStats{
@@ -370,11 +396,16 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		"Server timing (2 paired replies, means): raw 10.0 ms · handling 0.0 ms · adjusted 10.0 ms",
 		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
 		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
-		"40.00 Mbit/s", "receiver-timed",
+		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Skipped",
+		"Added: loaded median minus idle median.",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lost %q:\n%s", want, text)
 		}
+	}
+	m.run.stages[3].state = stageStopped
+	if text := m.finalReport(); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
+		t.Errorf("a stage stopped before measuring is not named: %s", text)
 	}
 	if strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "loss") {
 		t.Errorf("report styling or vocabulary: %q", text)
@@ -571,7 +602,12 @@ func TestServerChooserFlow(t *testing.T) {
 
 func TestViewFitsTheTerminal(t *testing.T) {
 	t.Parallel()
-	for _, size := range [][2]int{{40, 16}, {80, 24}, {160, 50}} {
+	small := testModel(t)
+	small.width, small.height = 30, 10
+	if !strings.Contains(view(small), "Enlarge the terminal") {
+		t.Error("a terminal below the minimum size is not told so")
+	}
+	for _, size := range [][2]int{{minWidth, minHeight}, {80, 24}, {160, 50}} {
 		width, height := size[0], size[1]
 		setup := testModel(t)
 		setup.width, setup.height = width, height
@@ -604,7 +640,7 @@ func TestViewFitsTheTerminal(t *testing.T) {
 				t.Errorf("%s at %dx%d: %d lines", name, width, height, len(lines))
 			}
 			for i, line := range lines {
-				if got := lipgloss.Width(line); got > max(width, 40) {
+				if got := lipgloss.Width(line); got > width {
 					t.Errorf("%s at %dx%d: line %d spans %d cells: %q", name, width, height, i, got, line)
 				}
 			}

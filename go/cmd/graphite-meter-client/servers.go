@@ -151,9 +151,6 @@ func (m model) openServerChooser() (tea.Model, tea.Cmd) {
 func (m model) handleServerChooserKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	servers := m.preparedRun.Catalog.Servers
 	switch {
-	case key.Matches(msg, keys.quit):
-		m.close()
-		return m, tea.Quit
 	case key.Matches(msg, keys.discard):
 		m.popup = popupNone
 		m.notice = "Server selection unchanged."
@@ -211,9 +208,6 @@ func (m model) serverChooserView(w, h int) (string, string) {
 
 func (m model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, keys.quit):
-		m.close()
-		return m, tea.Quit
 	case key.Matches(msg, keys.setup), key.Matches(msg, keys.details):
 		m.popup = popupNone
 		return m, nil

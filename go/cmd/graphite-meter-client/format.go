@@ -1,6 +1,7 @@
 package main
 
 import (
+	"charm.land/lipgloss/v2"
 	"fmt"
 	"math"
 	"strconv"
@@ -59,7 +60,7 @@ func fmtBytes(n uint64) string {
 
 func fmtMs(d time.Duration) string {
 	ms := float64(d) / float64(time.Millisecond)
-	if math.Abs(ms) < 100 {
+	if math.Abs(math.Round(ms*10)) < 1000 {
 		return fmt.Sprintf("%.1f ms", ms)
 	}
 	return fmt.Sprintf("%.0f ms", ms)
@@ -134,7 +135,11 @@ func latencyCells(s goclient.LatencyStats, idle *goclient.LatencyStats) []string
 		cells[3] = fmtMs(s.Jitter)
 	}
 	if ratio, ok := s.TimeoutRatio(); ok {
-		cells[4] = fmt.Sprintf("%d/%d (%.1f%%)", s.Timeouts, s.Count+s.Timeouts, ratio*100)
+		digits := 1
+		if ratio > 0 && ratio < 0.01 {
+			digits = 2
+		}
+		cells[4] = fmt.Sprintf("%d/%d (%.*f%%)", s.Timeouts, s.Count+s.Timeouts, digits, ratio*100)
 	}
 	return cells
 }
@@ -220,7 +225,7 @@ func (s styles) bar(value, scale float64, width int) string {
 }
 
 func pad(s string, w int) string {
-	return s + strings.Repeat(" ", max(0, w-len([]rune(s))))
+	return s + strings.Repeat(" ", max(0, w-lipgloss.Width(s)))
 }
 
 func (s styles) checkbox(on bool) string {

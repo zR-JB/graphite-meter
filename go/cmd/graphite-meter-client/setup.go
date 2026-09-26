@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"slices"
 	"strconv"
@@ -60,7 +61,7 @@ var (
 		},
 		parse: func(m *model, raw string) error {
 			if !strings.Contains(raw, "://") {
-				raw = "http://" + raw
+				raw = defaultScheme(raw) + raw
 			}
 			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
 			if err != nil {
@@ -313,9 +314,6 @@ func (m *model) beginEdit(s *setting, value string) {
 
 func (m model) handleEditKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, keys.abort):
-		m.close()
-		return m, tea.Quit
 	case key.Matches(msg, keys.discard):
 		m.edit = nil
 		m.notice = "Edit canceled."
@@ -528,4 +526,17 @@ func (m model) selectedThroughputPath() *wire.ThroughputTarget {
 		return nil
 	}
 	return &pf.Capabilities.ThroughputTargets[i]
+}
+
+// defaultScheme assumes HTTPS for a bare host, except a loopback server under local development.
+func defaultScheme(raw string) string {
+	u, err := url.Parse("//" + raw)
+	if err != nil {
+		return "https://"
+	}
+	ip := net.ParseIP(u.Hostname())
+	if strings.EqualFold(u.Hostname(), "localhost") || ip != nil && ip.IsLoopback() {
+		return "http://"
+	}
+	return "https://"
 }

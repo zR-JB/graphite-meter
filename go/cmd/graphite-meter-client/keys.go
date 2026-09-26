@@ -38,7 +38,7 @@ var keys = keymap{
 	discard:       key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	cursor:        key.NewBinding(key.WithKeys("left", "right", "home", "end"), key.WithHelp("←/→", "move")),
 	help:          key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "keys")),
-	quit:          key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	quit:          key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	abort:         key.NewBinding(key.WithKeys("ctrl+c"), key.WithHelp("ctrl+c", "quit")),
 }
 

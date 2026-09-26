@@ -121,6 +121,7 @@ func TestFormatting(t *testing.T) {
 		fmtBytes(2_340_000_000):             "2.3 GB",
 		fmtMs(12345 * time.Microsecond):     "12.3 ms",
 		fmtMs(123456 * time.Microsecond):    "123 ms",
+		fmtMs(99960 * time.Microsecond):     "100 ms",
 		fmtAdded(-1200 * time.Microsecond):  "−1.2 ms",
 		fmtAdded(7800 * time.Microsecond):   "+7.8 ms",
 		fmtSetting(800 * time.Millisecond):  "800 ms",
@@ -146,6 +147,7 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
 			&idle, "12.0 ms | +2.0 ms | 20.0 ms | 0.0 ms | 0/2 (0.0%) | 2 replies"},
 		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms"},
+		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1/1000 (0.10%)"},
 		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil,
 			"0 replies | 4.0 s | unfinished probes 2 | failed sends 1"},
 	} {
@@ -218,7 +220,14 @@ func TestCommitEdit(t *testing.T) {
 			catalogueRow,
 			false,
 			"meter.example:8443/",
-			func(c goclient.Config) bool { return c.BaseURL == "http://meter.example:8443" },
+			func(c goclient.Config) bool { return c.BaseURL == "https://meter.example:8443" },
+			"",
+		},
+		{
+			catalogueRow,
+			false,
+			"127.0.0.1:7247",
+			func(c goclient.Config) bool { return c.BaseURL == "http://127.0.0.1:7247" },
 			"",
 		},
 		{

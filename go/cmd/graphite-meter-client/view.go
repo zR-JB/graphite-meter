@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -26,7 +28,9 @@ func (m model) View() tea.View {
 	return v
 }
 
-func (m model) size() (int, int) { return max(m.width, 40), max(m.height, 16) }
+const minWidth, minHeight = 44, 16
+
+func (m model) size() (int, int) { return max(m.width, minWidth), max(m.height, minHeight) }
 
 func (m model) popupWidth() int {
 	w, _ := m.size()
@@ -34,6 +38,11 @@ func (m model) popupWidth() int {
 }
 
 func (m model) render() (string, *tea.Cursor) {
+	if m.width > 0 && (m.width < minWidth || m.height < minHeight) {
+		notice := fmt.Sprintf("Enlarge the terminal to at least %d×%d.", minWidth, minHeight)
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice)), nil
+	}
 	w, h := m.size()
 	inner := w - 2
 	header, footer := m.header(inner), m.footer(inner)
@@ -454,11 +463,15 @@ func (m model) resultsView(w int) string {
 		}
 	}
 	failed := func(label string, err error) {
-		if err != nil {
+		switch {
+		case errors.Is(err, context.Canceled):
+			notes = append(notes, m.st.warn.Render(label+" stopped."))
+		case err != nil:
 			notes = append(notes, m.st.err.Render(label+" incomplete: "+errorText(err)))
 		}
 	}
-	for _, stage := range r.plan {
+	added := false
+	for i, stage := range r.plan {
 		row := []string{compactStage(stage.Name), "", "", "", "", "", "", ""}
 		found := false
 		for _, result := range r.results {
@@ -481,6 +494,7 @@ func (m model) resultsView(w int) string {
 				base, row[0] = nil, "Idle latency"
 			}
 			copy(row[3:], latencyCells(population.Latency, base))
+			added = added || row[4] != ""
 			label := populationLabel(stage.Name)
 			note(label, latencyFacts(population.Latency))
 			if timing := reflectorTimingSummary(population.Latency.ReflectorTiming); timing != "" {
@@ -488,12 +502,22 @@ func (m model) resultsView(w int) string {
 			}
 			failed(label, population.Err)
 		}
+		if !found && !m.running() {
+			row[1] = "Skipped"
+			if r.stages[i].state == stageStopped {
+				row[1] = "Stopped"
+			}
+			found = true
+		}
 		if found {
 			rows = append(rows, row)
 		}
 	}
 	if len(rows) == 0 {
 		return ""
+	}
+	if added {
+		notes = append(notes, m.st.muted.Render("Added: loaded median minus idle median."))
 	}
 	headers := []string{"Stage", "Download", "Upload", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
 	return m.st.grid(headers, rows, w) + "\n" + strings.Join(notes, "\n")

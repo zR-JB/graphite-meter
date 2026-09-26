@@ -91,6 +91,7 @@ type model struct {
 	events     <-chan goclient.Event
 	run        *runState
 	stopPrompt bool
+	quitting   bool
 }
 
 func newModel(cfg goclient.Config) model {
@@ -158,15 +159,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
+	case key.Matches(msg, keys.abort):
+		m.close()
+		return m, tea.Quit
+	case m.edit != nil:
+		return m.handleEditKey(msg)
+	case key.Matches(msg, keys.quit):
+		return m.quit()
 	case m.popup == popupDetails:
 		return m.handleDetailsKey(msg)
 	case m.popup == popupServers:
 		return m.handleServerChooserKey(msg)
-	case m.edit != nil:
-		return m.handleEditKey(msg)
-	case key.Matches(msg, keys.quit):
-		m.close()
-		return m, tea.Quit
 	case m.stopPrompt:
 		m.stopPrompt = false
 		if key.Matches(msg, keys.confirmStop) {
@@ -200,6 +203,7 @@ func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case m.finished() && key.Matches(msg, keys.setup):
 		m.run = nil
 		m.notice = ""
+		return m.reprepare()
 	case m.finished() && key.Matches(msg, keys.runAgain):
 		return m.startRun()
 	}
@@ -271,6 +275,18 @@ func (m model) handleTick(msg spinner.TickMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.spin, cmd = m.spin.Update(msg)
 	return m, cmd
+}
+
+// quit lets a running test stop and report before the program exits.
+func (m model) quit() (tea.Model, tea.Cmd) {
+	if m.running() {
+		m.controller.CancelRun()
+		m.quitting, m.stopPrompt = true, false
+		m.notice = "Stopping the test before quitting…"
+		return m, nil
+	}
+	m.close()
+	return m, tea.Quit
 }
 
 func (m *model) close() {

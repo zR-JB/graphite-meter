@@ -27,14 +27,15 @@ func (m model) prepareAfter(delay time.Duration) tea.Cmd {
 	return tea.Tick(delay, func(time.Time) tea.Msg { return prepareDueMsg{seq: seq} })
 }
 
+// invalidatePreparation cancels in-flight preparation and sign-in polling.
 func (m *model) invalidatePreparation() {
 	m.prepareSeq++
 	m.auth = nil
+	m.preparation = m.controller.NewPreparation(m.cfg)
 }
 
 func (m model) reprepare() (tea.Model, tea.Cmd) {
 	m.invalidatePreparation()
-	m.preparation = m.controller.NewPreparation(m.cfg)
 	m.prepare, m.prepareErr = prepareChecking, ""
 	return m, tea.Batch(m.prepareAfter(prepareDebounce), m.spin.Tick)
 }
@@ -262,6 +263,10 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.notice = ""
+	if m.quitting {
+		m.close()
+		return m, tea.Quit
+	}
 	if isAuthRequired(done.Err) {
 		m.run = nil
 		m.notice = "Sign-in expired. Checking the selected servers…"
@@ -280,6 +285,10 @@ func (m *model) apply(e goclient.Event) {
 		m.notice = r.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
+		if e.Phase == goclient.PhasePreparing {
+			clear(r.latest)
+			clear(r.timeouts)
+		}
 		state := map[goclient.Phase]stageState{
 			goclient.PhasePreparing: stagePreparing,
 			goclient.PhaseWarmup:    stageWarmup,
@@ -391,7 +400,7 @@ func (m model) statusLabel() string {
 	case prepareSignIn:
 		return "Sign in"
 	case prepareFailed:
-		return "Path failed"
+		return "Failed"
 	}
 	if !m.preparedRun.FreshFor(m.cfg) {
 		return "Recheck needed"
