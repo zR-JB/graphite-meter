@@ -77,6 +77,22 @@ test("a stage summary keeps the raw distribution, consecutive variation and exac
   expect(stats.timeoutRatio).toBe(0.2);
 });
 
+test("summaries between replies match one summary of the whole stage", () => {
+  const live = new LatencyPopulation();
+  const once = new LatencyPopulation();
+  let seed = 7;
+  for (let i = 1; i <= 2_000; i++) {
+    seed = (seed * 48_271) % 2_147_483_647;
+    const rtt = (seed % 5_000) / 100;
+    live.observe(reply(rtt));
+    once.observe(reply(rtt));
+    if (i % 37 === 0 || i % 500 === 1) live.summary();
+  }
+  expect(live.summary()).toEqual(once.summary());
+  live.close();
+  expect(live.summary()).toEqual(once.summary());
+});
+
 test("timeouts skip jitter pairs, interruptions break them, and late replies resolve without RTT", () => {
   const stats = new LatencyPopulation();
   stats.observe(reply(10));
