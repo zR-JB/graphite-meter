@@ -97,14 +97,14 @@ func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 	a.beginStage("upload", []string{"a"}, 0)
 	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 100, 100)}))
 	a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 100, 1100)}))
-	if result := a.result(Up); result.Unavailable || result.MeanBps != 0 {
-		t.Fatalf("measured zero = %+v", result)
+	if result := a.result(Up); !result.Unavailable || !errors.Is(result.Err, errNoBytes) {
+		t.Fatalf("a window that moved nothing kept a headline: %+v", result)
 	}
 	missing := nativeBoundary(1200, nil, map[string]*ReceiverSnapshot{"a": nil})
 	missing.observedUp = map[string]uploadLedger{"a": {"id", 500}}
 	a.observe(missing)
 	a.observe(nativeBoundary(1300, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 500, 1100)}))
-	if result := a.result(Up); result.Unavailable || result.MeanBps != 0 || result.TotalBytes != 400 ||
+	if result := a.result(Up); !result.Unavailable || result.TotalBytes != 400 || a.intervals[0].End != time.Second ||
 		len(a.intervals) != 1 {
 		t.Fatalf("a missing or stale checkpoint must be skipped, keeping bytes and the window: %+v", result)
 	}
@@ -295,7 +295,8 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			Complete bool
 			Window   *window
 		}
-		Peak struct{ DownBytesPerSec, UpBytesPerSec any }
+		Peak     struct{ DownBytesPerSec, UpBytesPerSec any }
+		Headline *struct{ Down, Up any }
 	}
 	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
@@ -314,13 +315,26 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			a.observe(boundary)
 		}
 		peak := func(dir Direction) any {
-			if rate := a.peak.of(dir); rate != 0 {
-				return rate
+			if dir == Up && c.Stage == StageDownload || dir == Down && c.Stage == StageUpload {
+				return nil
 			}
-			return nil
+			return a.peak.of(dir)
 		}
 		if peak(Down) != c.Peak.DownBytesPerSec || peak(Up) != c.Peak.UpBytesPerSec {
 			t.Errorf("%s: peak down=%v up=%v, want %+v", c.Name, peak(Down), peak(Up), c.Peak)
+		}
+		headline := func(dir Direction) any {
+			if result := a.result(dir); !result.Unavailable {
+				return result.MeanBps
+			}
+			return nil
+		}
+		want := struct{ Down, Up any }{}
+		if c.Headline != nil {
+			want = *c.Headline
+		}
+		if headline(Down) != want.Down || headline(Up) != want.Up {
+			t.Errorf("%s: headline down=%v up=%v, want %+v", c.Name, headline(Down), headline(Up), c.Headline)
 		}
 		if len(a.intervals) != len(c.Intervals) {
 			t.Errorf("%s: %d intervals, want %d", c.Name, len(a.intervals), len(c.Intervals))

@@ -520,10 +520,11 @@ func TestCoordinatorExcludesPreparationBytesAndTime(t *testing.T) {
 		if got := r.coordinated.down.Load(); got != preparationBytes {
 			t.Fatalf("preparation fixture carried %d bytes", got)
 		}
+		window := details.Intervals[0]
 		if measuredAt.Sub(preparedAt) != r.cfg.Warmup ||
 			result.TotalBytes != 0 ||
-			result.Elapsed != measuredWindow.Truncate(sampleInterval) ||
-			result.Unavailable {
+			window.End-window.Start != measuredWindow.Truncate(sampleInterval) ||
+			!result.Unavailable {
 			t.Fatalf(
 				"preparation contaminated the measured window: preparation=%v result=%+v intervals=%+v",
 				measuredAt.Sub(preparedAt),

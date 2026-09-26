@@ -322,13 +322,16 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 	result := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	result.TotalBytes = a.total(dir)
 	interval := a.current()
-	if interval == nil || !interval.Complete || interval.Window == nil ||
-		interval.End-interval.Start < minimumSurvivorEvidence {
+	if interval == nil || interval.Window == nil || interval.End-interval.Start < minimumSurvivorEvidence {
 		return result
 	}
 	components, rate := interval.Window.direction(dir)
 	short := func(c ComponentWindow) bool { return c.Duration < minimumSurvivorEvidence }
 	if rate == nil || len(components) == 0 || slices.ContainsFunc(components, short) {
+		return result
+	}
+	if !slices.ContainsFunc(components, func(c ComponentWindow) bool { return c.Bytes > 0 }) {
+		result.Err = errNoBytes
 		return result
 	}
 	result.MeanBps, result.PeakBps, result.Samples = *rate, a.peak.of(dir), a.samples
@@ -349,7 +352,7 @@ func (a *aggregateMeasurements) serverResult(id string, dir Direction) Result {
 		return own
 	}
 	own.TotalBytes = server.bytes.of(dir)
-	if w := server.window.of(dir); w != nil && w.Duration >= minimumSurvivorEvidence {
+	if w := server.window.of(dir); w != nil && w.Duration >= minimumSurvivorEvidence && w.Bytes > 0 {
 		own.MeanBps, own.Elapsed = w.BytesPerSec, w.Duration
 		own.PeakBps, own.Samples = server.peak.of(dir), server.samples
 		own.Unavailable, own.Err = false, nil

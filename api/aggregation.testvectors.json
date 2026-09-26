@@ -8,6 +8,7 @@
       {"atMs": 500, "down": {"a": 500, "b": 1500}, "up": {}},
       {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}}
     ],
+    "headline": {"down": 4000, "up": null},
     "peak": {"downBytesPerSec": 4000, "upBytesPerSec": null},
     "intervals": [
       {"reason": "stage-start", "complete": true,
@@ -23,6 +24,7 @@
       {"atMs": 1000, "down": {}, "up": {"a": null}},
       {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 3000000000}}}
     ],
+    "headline": {"down": null, "up": 1000},
     "peak": {"downBytesPerSec": null, "upBytesPerSec": 1000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
@@ -39,6 +41,7 @@
       {"atMs": 2000, "down": {}, "up": {"a": {"id": "r2", "bytes": 500, "nanos": 500000000}}},
       {"atMs": 3000, "down": {}, "up": {"a": {"id": "r2", "bytes": 1500, "nanos": 1500000000}}}
     ],
+    "headline": {"down": null, "up": 1000},
     "peak": {"downBytesPerSec": null, "upBytesPerSec": 1000},
     "intervals": [
       {"reason": "stage-start", "complete": false,
@@ -57,6 +60,7 @@
       {"atMs": 1000, "down": {"a": 2500}, "up": {}},
       {"atMs": 2000, "down": {"a": 4000}, "up": {}}
     ],
+    "headline": {"down": 2000, "up": null},
     "peak": {"downBytesPerSec": 2000, "upBytesPerSec": null},
     "intervals": [
       {"reason": "stage-start", "complete": true,
@@ -72,6 +76,7 @@
       {"atMs": 1000, "down": {"a": 3000}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}},
       {"atMs": 1100, "down": {"a": 3300}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
     ],
+    "headline": {"down": 3000, "up": 2000},
     "peak": {"downBytesPerSec": 3000, "upBytesPerSec": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
@@ -88,6 +93,7 @@
       {"atMs": 1500, "down": {}, "up": {"a": {"id": "r1", "bytes": 3500, "nanos": 2000000000}}},
       {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 4000, "nanos": 3000000000}}}
     ],
+    "headline": {"down": null, "up": 1500},
     "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
@@ -103,10 +109,41 @@
       {"atMs": 500, "down": {}, "up": {"a": {"id": "r1", "bytes": 1200, "nanos": 1120000000}}},
       {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
     ],
+    "headline": {"down": null, "up": 2000},
     "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "a receiver clock under 800 ms gives no headline",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1500000000}}}
+    ],
+    "headline": null,
+    "peak": {"downBytesPerSec": null, "upBytesPerSec": 2000},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
+    ]
+  },
+  {
+    "name": "a window that moved no bytes gives no headline",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {}},
+      {"atMs": 1000, "down": {"a": 0}, "up": {}}
+    ],
+    "headline": null,
+    "peak": {"downBytesPerSec": 0, "upBytesPerSec": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 0, "upBytesPerSec": null}}
     ]
   }
 ]
