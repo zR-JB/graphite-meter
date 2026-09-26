@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
+  import { tooltip } from "../actions/tooltip";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
   import { ICON } from "../constants";
   import { HistoryRepository } from "../history/repository";
@@ -28,7 +29,7 @@
     STAGE,
   } from "../presentation/vocabulary";
   import ConfirmDialog from "./ConfirmDialog.svelte";
-  import HistoryManagementControl from "./history/HistoryManagementControl.svelte";
+  import MoreMenu from "./MoreMenu.svelte";
   import HistoryResultDetail from "./history/HistoryResultDetail.svelte";
   import HistoryViewControl from "./history/HistoryViewControl.svelte";
 
@@ -46,7 +47,7 @@
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
-  let visibleCount = $state(50);
+  let pages = $state(1);
   let renderedAt = $state(Date.now());
   let workspace = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
@@ -62,6 +63,12 @@
   const columns = $derived(store.historyColumns);
   const ordered = $derived(
     sortPreparedHistory(prepareHistorySort(records), sort, descending),
+  );
+  const selectedIndex = $derived(
+    selectedId ? ordered.findIndex((record) => record.id === selectedId) : -1,
+  );
+  const visibleCount = $derived(
+    Math.max(pages, Math.ceil((selectedIndex + 1) / 50)) * 50,
   );
   const visibleRows = $derived(ordered.slice(0, visibleCount).map(historyRow));
   const selectedRecord = $derived(
@@ -137,11 +144,11 @@
   function setSort(next: HistorySort, nextDescending: boolean) {
     sort = next;
     descending = nextDescending;
-    visibleCount = 50;
+    pages = 1;
   }
 
   function loadMore() {
-    visibleCount = Math.min(ordered.length, visibleCount + 50);
+    pages = visibleCount / 50 + 1;
   }
 
   function loadMoreWhenVisible(node: HTMLElement) {
@@ -186,7 +193,6 @@
         announcement = "Result deleted.";
         if (owner?.isConnected && selectedId === action.id) onNavigate(null);
         broadcastHistory({ type: "delete", id: action.id });
-        window.dispatchEvent(new Event("graphite-meter-history-changed"));
       }
     } catch {
       actionError = "History could not be changed. Try again.";
@@ -266,17 +272,11 @@
     });
   }
 
-  function ariaSort(column: HistorySort) {
-    return sort === column
-      ? descending
-        ? "descending"
-        : "ascending"
-      : ("none" as const);
-  }
-
   $effect(() => {
     const id = selectedId;
-    if (loadState === "ready") void resolveSelection(id, loadGeneration);
+    untrack(() => {
+      if (loadState === "ready") void resolveSelection(id, loadGeneration);
+    });
   });
 
   $effect(() => {
@@ -297,13 +297,6 @@
     }
   });
 
-  $effect(() => {
-    const index = selectedId
-      ? ordered.findIndex((record) => record.id === selectedId)
-      : -1;
-    if (index >= visibleCount) visibleCount = Math.ceil((index + 1) / 50) * 50;
-  });
-
   onMount(() => {
     void load();
     const relativeRefresh = window.setInterval(() => {
@@ -313,14 +306,23 @@
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
+    const refreshUnlessOwnClear = (event: Event) => {
+      if ((event as CustomEvent).detail?.type !== "clear") refresh();
+    };
     const stopChanges = historyChanges(refresh);
-    window.addEventListener("graphite-meter-history-changed", refresh);
+    window.addEventListener(
+      "graphite-meter-history-changed",
+      refreshUnlessOwnClear,
+    );
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       loadGeneration++;
       stopChanges();
-      window.removeEventListener("graphite-meter-history-changed", refresh);
+      window.removeEventListener(
+        "graphite-meter-history-changed",
+        refreshUnlessOwnClear,
+      );
       window.removeEventListener("focus", refresh);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.clearInterval(relativeRefresh);
@@ -354,9 +356,20 @@
         />
       {/if}
       {#if records.length || malformedCount}
-        <HistoryManagementControl
-          onClear={(invoker) => requestConfirm({ kind: "clear" }, invoker)}
-        />
+        <MoreMenu label="History actions" danger>
+          {#snippet children(select)}
+            <button
+              type="button"
+              role="menuitem"
+              tabindex="-1"
+              onclick={() =>
+                select((invoker) => requestConfirm({ kind: "clear" }, invoker))}
+            >
+              <span>{@html ICON.trash}</span>
+              <span><strong>Clear all saved results</strong></span>
+            </button>
+          {/snippet}
+        </MoreMenu>
       {/if}
       <button
         class="btn btn-icon close-history"
@@ -431,28 +444,33 @@
     <div class="workspace-body" class:has-detail={selectedId !== null}>
       <div class="history-list">
         <div class="history-table" style:--metric-columns={columns.length}>
-          <div class="column-head" role="row">
+          <div class="column-head" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
-              <span role="columnheader" aria-sort={ariaSort(column)}>
-                <button
-                  type="button"
-                  title={column === "date" ? undefined : COLUMN[column].help}
-                  onclick={() =>
-                    setSort(
-                      column,
-                      sort === column ? !descending : naturalDescending(column),
-                    )}
-                >
-                  {#if column !== "date"}<span
-                      class="head-icon"
-                      data-tone={column}>{@html COLUMN[column].icon}</span
-                    >{/if}
-                  <span
-                    >{column === "date" ? "Date" : COLUMN[column].short}</span
-                  >
-                  <i aria-hidden="true"></i>
-                </button>
-              </span>
+              <button
+                type="button"
+                aria-pressed={sort === column}
+                data-order={sort !== column
+                  ? undefined
+                  : descending
+                    ? "descending"
+                    : "ascending"}
+                use:tooltip={(column !== "date" && COLUMN[column].help) || ""}
+                onclick={() =>
+                  setSort(
+                    column,
+                    sort === column ? !descending : naturalDescending(column),
+                  )}
+              >
+                {#if column !== "date"}<span
+                    class="head-icon"
+                    data-tone={column}>{@html COLUMN[column].icon}</span
+                  >{/if}
+                <span>{column === "date" ? "Date" : COLUMN[column].short}</span>
+                {#if sort === column}<span class="sr-only"
+                    >, {descending ? "descending" : "ascending"}</span
+                  >{/if}
+                <i aria-hidden="true"></i>
+              </button>
             {/each}
           </div>
           <ol aria-label="Saved results">
@@ -701,7 +719,7 @@
     text-transform: uppercase;
     transition: var(--transition-control);
   }
-  .column-head > span:first-child button {
+  .column-head > button:first-child {
     justify-content: flex-start;
   }
   @media (hover: hover) {
@@ -710,7 +728,7 @@
       color: var(--text);
     }
   }
-  .column-head [aria-sort]:not([aria-sort="none"]) button {
+  .column-head [aria-pressed="true"] {
     color: var(--brand-strong);
   }
   .column-head i {
@@ -725,11 +743,10 @@
       opacity var(--dur-hover) var(--ease-out),
       rotate var(--dur-hover) var(--ease-out);
   }
-  .column-head [aria-sort="descending"] i,
-  .column-head [aria-sort="ascending"] i {
+  .column-head [data-order] i {
     opacity: 1;
   }
-  .column-head [aria-sort="ascending"] i {
+  .column-head [data-order="ascending"] i {
     rotate: 225deg;
   }
   .head-icon {
