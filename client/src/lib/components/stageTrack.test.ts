@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { lockReason, stageTrackModel } from "./stageTrack";
+import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
 import type { StagePresentation } from "../state/stagePresentation";
 
 const stage = (
@@ -89,4 +89,12 @@ test("future-stage toggles project as skipped while past and current stages stay
     state: "pending",
     locked: true,
   });
+});
+
+test("a retained bidirectional run stays on the track after Settings drops it", () => {
+  const ran = stage({ stage: "bidirectional", status: "complete" });
+  const off = stage({ stage: "bidirectional", status: "disabled" });
+  expect(stageShown("bidirectional", false, ran)).toBe(true);
+  expect(stageShown("bidirectional", false, off)).toBe(false);
+  expect(stageShown("upload", false, off)).toBe(true);
 });

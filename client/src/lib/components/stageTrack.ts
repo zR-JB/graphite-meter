@@ -56,6 +56,13 @@ export function stageTrackModel(input: {
   };
 }
 
+/** Bidirectional shows while Settings includes it or the retained run executed it. */
+export const stageShown = (
+  stage: StageKey,
+  selected: boolean,
+  execution: StagePresentation,
+) => stage !== "bidirectional" || selected || execution.status !== "disabled";
+
 // Why a locked segment cannot be toggled, or null when it can.
 export function lockReason(
   canToggle: boolean,

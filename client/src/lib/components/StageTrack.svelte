@@ -4,17 +4,16 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { tooltip } from "../actions/tooltip";
-  import { lockReason, stageTrackModel } from "./stageTrack";
+  import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
   import { failureDetail } from "./failurePresentation";
   import { STAGE, STATUS } from "../presentation/vocabulary";
   import { STAGE_ORDER } from "../state/stagePresentation";
 
   const controller = getApplicationController();
 
-  // Bidirectional appears only while Settings includes it.
   const segments = $derived(
-    STAGE_ORDER.filter(
-      (key) => key !== "bidirectional" || store.config.stages.bidirectional,
+    STAGE_ORDER.filter((key) =>
+      stageShown(key, store.config.stages[key], store.stagePresentation[key]),
     ).map((key) => {
       const execution = store.stagePresentation[key];
       const selected = store.config.stages[key];
