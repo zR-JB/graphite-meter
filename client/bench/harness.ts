@@ -1,4 +1,4 @@
-// Runs one benchmark cell against a real server, measuring production lanes after warmup.
+// Runs one benchmark cell against a real server, measuring production lanes once they carry bytes and warm up.
 // Byte lanes and upload accounting use the production transport implementations.
 import {
   laneWorker,
@@ -8,6 +8,10 @@ import {
   type WorkerMsg,
 } from "../src/lib/runner/transport";
 import { laneUrl, PER_STREAM_BYTES, ROUTES } from "../src/lib/runner/paths";
+import {
+  ESTABLISH_BUDGET_MS,
+  ESTABLISH_MARGIN_MS,
+} from "../src/lib/runner/real/budgets";
 
 /** Resolution of the within-cell rate series, which yields the stability figure. */
 const BUCKET_MS = 200;
@@ -42,10 +46,13 @@ const sleep = (ms: number): Promise<void> =>
 /** The server total is authoritative for upload, with the window's first record as baseline. */
 class ServerTotal {
   #baseline = -1;
+  #drained!: () => void;
+  readonly drained = new Promise<void>((resolve) => (this.#drained = resolve));
   bytes = 0;
   measuring = false;
 
   accept(n: number): void {
+    if (n > 0) this.#drained();
     if (!this.measuring) {
       this.#baseline = n;
       return;
@@ -122,6 +129,9 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
   const total = new ServerTotal();
   let clientBytes = 0;
   let measuring = false;
+  const carrying = new Set<number>();
+  let allCarrying!: () => void;
+  const downloading = new Promise<void>((resolve) => (allCarrying = resolve));
 
   const rides = spec.transport !== "fetch-stream";
   const datagrams = spec.transport === "webtransport-datagram";
@@ -134,6 +144,10 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
   const events =
     (i: number) =>
     (msg: WorkerMsg): void => {
+      if (msg.type === "progress" && msg.bytes > 0) {
+        carrying.add(i);
+        if (carrying.size === lanes.length) allCarrying();
+      }
       if (msg.type === "progress" && measuring) {
         clientBytes += msg.bytes;
         laneBytes[i] = (laneBytes[i] ?? 0) + msg.bytes;
@@ -210,6 +224,23 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
       );
   }
 
+  // As in a run, warmup starts once every lane carries bytes, so a slow start cannot empty the window.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const carried = await Promise.race([
+    (spec.dir === "up" ? total.drained : downloading).then(() => true),
+    new Promise<false>((resolve) => {
+      timer = setTimeout(
+        resolve,
+        ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
+        false,
+      );
+    }),
+  ]);
+  clearTimeout(timer);
+  if (!carried)
+    errors.push(
+      `${spec.dir} lanes carried no bytes within the establish budget`,
+    );
   await sleep(spec.warmupMs);
 
   // The measure epoch separates warmup; workers discard download reports carrying its old sequence.
