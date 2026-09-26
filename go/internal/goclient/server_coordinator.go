@@ -53,13 +53,6 @@ var (
 	errStageSkipped = errors.New("stage skipped")
 )
 
-const (
-	sampleInterval        = 250 * time.Millisecond
-	checkpointBudget      = 1500 * time.Millisecond
-	finalCheckpointBudget = 500 * time.Millisecond
-	clientStall           = 1500 * time.Millisecond
-)
-
 var errHandover = errors.New("stage handed over")
 
 func runSelection(ctx, teardown context.Context, cfg Config, prepared *PreparedRun, emit func(Event)) {

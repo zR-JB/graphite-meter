@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+const (
+	sampleInterval               = 250 * time.Millisecond
+	checkpointBudget             = 1500 * time.Millisecond
+	finalCheckpointBudget        = 500 * time.Millisecond
+	clientStall                  = 1500 * time.Millisecond
+	minimumSurvivorEvidence      = 800 * time.Millisecond
+	minimumPeakWindow            = 500 * time.Millisecond
+	minimumFailedLatencyOutcomes = 3
+)
+
 const roleLatency = "latency"
 
 type stageServer struct {
