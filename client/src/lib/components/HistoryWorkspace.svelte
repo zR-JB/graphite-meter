@@ -35,6 +35,7 @@
     OUTCOME,
     STAGE,
   } from "../presentation/vocabulary";
+  import { announce } from "../presentation/announcer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import MoreMenu from "./MoreMenu.svelte";
   import HistoryResultDetail from "./history/HistoryResultDetail.svelte";
@@ -65,7 +66,6 @@
   >(null);
   let confirmInvoker = $state<HTMLElement | null>(null);
   let actionError = $state("");
-  let announcement = $state("");
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
@@ -181,7 +181,7 @@
         await repository.clear();
         records = [];
         malformedCount = 0;
-        announcement = "History cleared.";
+        announce("History cleared.");
         if (owner?.isConnected && selectedId) onNavigate(null);
         announceHistoryChanged(changeSource);
         confirmInvoker = null;
@@ -192,7 +192,7 @@
       } else {
         await repository.delete(action.id);
         records = records.filter((record) => record.id !== action.id);
-        announcement = "Result deleted.";
+        announce("Result deleted.");
         if (owner?.isConnected && selectedId === action.id) onNavigate(null);
         announceHistoryChanged(changeSource);
       }
@@ -559,8 +559,6 @@
       {/if}
     </div>
   {/if}
-
-  <p class="sr-only" aria-live="polite">{announcement}</p>
 </section>
 
 <ConfirmDialog
