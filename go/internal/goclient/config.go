@@ -148,7 +148,7 @@ func (c Config) Validate() error {
 	}
 	for _, interval := range []time.Duration{c.PingInterval, c.LoadedPingInterval} {
 		if interval != PingReplyDriven && interval < PingFast {
-			return fmt.Errorf("ping cadence must be reply-driven or at least %v", PingFast)
+			return fmt.Errorf("latency cadence must be reply-driven or at least %v", PingFast)
 		}
 	}
 	if streams := c.TransferStreams; streams.Forced < 0 || streams.Forced > MaxStreams ||
@@ -168,7 +168,7 @@ func (c Config) checkPaths() error {
 	case !slices.Contains([]string{"auto", ws, wt}, c.LatencyTransport):
 		return fmt.Errorf("invalid latency transport %q: use auto, %s, or %s", c.LatencyTransport, ws, wt)
 	case max(c.PingInterval, c.LoadedPingInterval) > MaxPingInterval:
-		return fmt.Errorf("ping interval must be at most %v, half the server's %v lane idle bound",
+		return fmt.Errorf("latency interval must be at most %v, half the server's %v lane idle bound",
 			MaxPingInterval, wire.IdleBound)
 	}
 	return nil

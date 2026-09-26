@@ -158,7 +158,7 @@ func TestPreparedRunFreshness(t *testing.T) {
 	}{
 		{"unchanged", func(*Config) {}, true},
 		{"latency target", func(c *Config) { c.LatencyTarget = "ws-http1-tls" }, false},
-		{"ping interval", func(c *Config) { c.PingInterval = MaxPingInterval + time.Second }, false},
+		{"latency interval", func(c *Config) { c.PingInterval = MaxPingInterval + time.Second }, false},
 		{"settings preparation does not depend on", func(c *Config) {
 			c.Stages.Latency, c.DownloadDuration, c.ServerIDs = false, time.Minute, []string{"a", "b"}
 		}, true},
