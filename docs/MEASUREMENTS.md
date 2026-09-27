@@ -9,7 +9,7 @@ in both clients unless [client differences](#client-differences) says otherwise.
 | Result | Unit and population | Missing evidence |
 | --- | --- | --- |
 | Download / upload | Payload bytes per second over the headline interval, in the chosen rate unit. | No sufficient interval: no rate. |
-| Peak | Highest mean over consecutive windows of the headline interval, each at least 500 ms on every clock, and over the headline window itself, so never below the headline. | No headline: no peak. |
+| Peak | Highest mean over the headline window and consecutive ≥ 500 ms windows of its interval, on every clock. | No headline: no peak. |
 | Latency | Median (P50) RTT of in-window replies, per server and stage; P95 secondary. | No reply, or a failed stage with fewer than three replies and timeouts: "—". |
 | Added latency | Loaded median − idle median, per loaded stage and server, in ms; negative values are kept. | Either median missing: no value. |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
@@ -110,7 +110,7 @@ jitter, deadlines and added latency.
 | Upload boundaries | Pushed progress feed, a checkpoint every 250 ms while quiet | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end) |
 | Gap rule | Page-timer lateness; held during preparation and finalization; the interval before the gap still counts | Sampler-tick lateness; the interval before the gap no longer counts |
 | Silence limit | 1.5 s of active run time | 2 s, or three missed checkpoints in a row (not at the end) |
-| HTTP 429 / 503 | Retried until the silence limit or the readiness budget lapses, then server at capacity | Retried for 2 s, then server at capacity |
+| HTTP 429 / 503 | Retried until silence or the readiness budget lapses, then server at capacity | Retried for 2 s, then server at capacity |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
 | Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; `l` rotates the shown one |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |

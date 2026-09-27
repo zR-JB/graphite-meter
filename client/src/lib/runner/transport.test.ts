@@ -398,7 +398,7 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
   up.discard();
 });
 
-test("the HTTP receiver feed reconnects without regressing counters, retries a busy server and classifies refusals once", async () => {
+test("the HTTP receiver feed keeps its counters, retries a busy server and classifies refusals once", async () => {
   jest.useFakeTimers();
   const { uploadFeed } = await import("./transport");
   const events: Parameters<Parameters<typeof uploadFeed>[0]["onEvent"]>[0][] =

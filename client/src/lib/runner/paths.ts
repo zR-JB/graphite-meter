@@ -499,7 +499,8 @@ export function planServerStreams(
       continue;
     if (config.transferStreams.mode === "forced")
       throw new Error(
-        `Forced streams would occupy the progress and control capacity of ${names(lanes)}. Reduce streams or use Automatic`,
+        `Forced streams would occupy the progress and control capacity of ${names(lanes)}. ` +
+          "Reduce streams or use Automatic",
       );
     // Every lane keeps one stream; the rest is dealt round-robin up to each ceiling.
     const ceilings = lanes.map((lane) => plan[lane.id][lane.dir]);
