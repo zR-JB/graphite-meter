@@ -91,11 +91,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "b9855303b1c6662be2e790cc93013238f77e1db9",
+    "rev": "17cd99748fb80a65753ffffddde77b896e3f6f75",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "692bdd8d599025229ec0cdcfabff408b23ef09dcd7d363e4c293952340354ea6",
+    "diffSha256": "82444f2cccd6b1e56c7b7a2fb5af16db4dd26af47c0c8bd897c9f9c5c3565e60",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -244,6 +244,26 @@
       {
         "subject": "Charge connection buffers to a shared budget",
         "purpose": "Charges every per-connection pool and the runtime packet queue to a process-wide SharedBudget while bytes are buffered; a refusal closes only that connection.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Probe with an untracked PING under packet metadata pressure",
+        "purpose": "Sends a PTO probe as an untracked PING when metadata is exhausted so the ACK that frees metadata can still arrive.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Stop pressure tests only when the application cannot progress",
+        "purpose": "Test-only: ends pressure loops when a retried write makes no progress and makes the MTU padding test deterministic.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Precharge pending MAX_STREAM_DATA with receive stream state",
+        "purpose": "Reserves each receive stream's pending credit entry at stream creation so reading and granting credit never allocate under packet pressure.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Lint all features in the fork workflow",
+        "purpose": "Fixes the bench module import and lints all features in fork CI, matching upstream.",
         "origin": "graphite-meter"
       }
     ],
