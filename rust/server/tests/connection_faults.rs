@@ -696,6 +696,11 @@ async fn webtransport_only_connection_ends_with_its_session() -> Result<(), Test
             graphite_meter_core::wire::decode_upload_progress(record.trim_ascii_end())?,
             graphite_meter_core::wire::UploadProgress::Error { .. }
         ));
+        assert_eq!(
+            refused.quic.stats().frame_rx.max_data,
+            0,
+            "refused upload was granted credit"
+        );
         tokio::time::pause();
         tokio::time::sleep(Duration::from_secs(2)).await;
         tokio::time::resume();

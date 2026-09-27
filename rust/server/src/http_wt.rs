@@ -113,8 +113,6 @@ impl HttpServer {
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
         };
         let _admitted = credit.work().admit();
-        let upload = route == SessionRoute::Upload;
-        let mut awaiting_credit = upload && !credit.fund();
         let lifetime = if class == Class::Session {
             self.config.max_session_duration
         } else {
@@ -152,6 +150,7 @@ impl HttpServer {
         let upload_id = value("id").unwrap_or("").to_owned();
         let mut datagram_lane = None;
         let mut refused = false;
+        let mut awaiting_credit = false;
         if route == SessionRoute::Download && !verify {
             if datagrams {
                 let quic = quic.clone();
@@ -199,6 +198,7 @@ impl HttpServer {
         } else if route == SessionRoute::Upload {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
             refused = subscription.is_err();
+            awaiting_credit = !refused && !credit.fund();
             controls.push(Box::pin(progress(
                 quic.clone(),
                 resets.clone(),
