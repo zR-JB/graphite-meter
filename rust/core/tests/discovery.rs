@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 const PREFLIGHT: &[u8] = include_bytes!("../../../api/preflight.golden.json");
 const PROBE: &[u8] = include_bytes!("../../../api/probe.golden.json");
+const FORWARD: &[u8] = include_bytes!("../../../api/preflight.forward.golden.json");
 fn decode_preflight_value(value: &Value) -> Result<Preflight, DiscoveryError> {
     Preflight::decode(&serde_json::to_vec(value).unwrap())
 }
@@ -196,34 +197,44 @@ fn catalogue_checks_all_discovery_lanes() {
 }
 
 #[test]
-fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
-    let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
-    let known = value["capabilities"]["throughput"][0].clone();
-    let mut throughput = vec![known.clone(); 30];
-    throughput.push(json!({"transport":"future-stream","protocol":"http1","baseUrl":42}));
-    throughput.push(json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
-    value["capabilities"]["throughput"] = json!(throughput);
-    value["capabilities"]["latency"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({"transport":"future-ping","baseUrl":42}));
-    let decoded = decode_preflight_value(&value).unwrap();
-    assert_eq!(decoded.capabilities.throughput.len(), 30);
-    let mut oversized = value.clone();
-    oversized["capabilities"]["throughput"]
-        .as_array_mut()
-        .unwrap()
-        .push(known.clone());
-    assert!(decode_preflight_value(&oversized).is_err());
-    for target in [
-        json!({"transport":"future-stream","baseUrl":"."}),
-        json!({"transport":"","protocol":"http1","baseUrl":"."}),
-        json!({"transport":"fetch-stream","protocol":"","baseUrl":"."}),
-    ] {
-        let mut invalid = value.clone();
-        invalid["capabilities"]["throughput"][30] = target;
-        assert!(decode_preflight_value(&invalid).is_err());
+fn newer_servers_targets_are_skipped_but_counted_as_sent() {
+    let golden: Value = serde_json::from_slice(FORWARD).unwrap();
+    let document = &golden["document"];
+    let decoded = decode_preflight_value(document).unwrap().capabilities;
+    assert_eq!(
+        json!({"throughput": decoded.throughput, "latency": decoded.latency}),
+        golden["decoded"]
+    );
+    for list in ["throughput", "latency"] {
+        let mut value = document.clone();
+        let targets = value["capabilities"][list].as_array_mut().unwrap();
+        let skipped = targets[1].clone();
+        targets.resize(32, skipped.clone());
+        decode_preflight_value(&value).unwrap();
+        value["capabilities"][list]
+            .as_array_mut()
+            .unwrap()
+            .push(skipped);
+        assert!(decode_preflight_value(&value).is_err(), "{list}");
     }
-    value["capabilities"]["throughput"][0]["baseUrl"] = json!(42);
-    assert!(decode_preflight_value(&value).is_err());
+    for (list, field) in [
+        ("throughput", "transport"),
+        ("throughput", "protocol"),
+        ("latency", "transport"),
+    ] {
+        let mut empty = document.clone();
+        empty["capabilities"][list][1][field] = json!("");
+        let mut missing = document.clone();
+        missing["capabilities"][list][1]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        for value in [empty, missing] {
+            assert!(decode_preflight_value(&value).is_err(), "{list} {field}");
+        }
+    }
+    let mut known = document.clone();
+    known["capabilities"]["throughput"][0]["baseUrl"] =
+        document["capabilities"]["throughput"][1]["baseUrl"].clone();
+    assert!(decode_preflight_value(&known).is_err());
 }
