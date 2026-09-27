@@ -114,7 +114,7 @@ jitter, deadlines and added latency.
 | Early finish | Optional, also for the idle latency stage: after 52 % of the stage, a stability score of at least 0.86 held for 1.1 s with enough samples ends it; that window is then the headline | None: the full window |
 | Duration changes | Live: a shortened stage ends at once and keeps its evidence | Fixed at start |
 | Stage readiness | 3.5 s from preparation: download bytes, a receiver checkpoint, then a latency reply; loaded latency that is not ready fails only its population | 10 s: lanes open, upload feed advancing, latency can send |
-| Upload boundaries | Pushed progress feed; over HTTP a checkpoint every 250 ms while the feed is quiet (1.5 s timeout); over WebTransport the session's feed alone | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end) |
+| Upload boundaries | Pushed progress feed; over HTTP a checkpoint every 250 ms while the feed is quiet (1.5 s timeout); over WebTransport the session's feed alone; the final checkpoint retries a miss every 100 ms within 1.5 s | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end), retrying a miss every 100 ms |
 | Gap rule | Page-timer lateness; held during preparation and finalization; the interval before the gap still counts | Sampler-tick lateness; the interval before the gap no longer counts |
 | Silence limit | 1.5 s of active run time | 2 s, or three missed checkpoints in a row (not at the end) |
 | HTTP 429 / 503 | Lanes and the upload feed retry until silence or the readiness budget lapses, then server at capacity; Retry-After in whole seconds | Retried for 2 s, then server at capacity |

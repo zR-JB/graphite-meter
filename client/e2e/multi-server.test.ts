@@ -111,12 +111,12 @@ test("deselecting a verified peer starts a self-only run at once", async (page) 
   expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
-test("one missed upload checkpoint keeps the interval and the run", async (page) => {
+test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
   await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
   await page.evaluate((origin) => {
     const original = window.fetch.bind(window);
-    Object.assign(window, { missed: 0 });
+    Object.assign(window, { checkpoints: 0 });
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), location.href);
       const uploading =
@@ -124,17 +124,18 @@ test("one missed upload checkpoint keeps the interval and the run", async (page)
         "upload";
       if (
         !uploading ||
-        (window as any).missed ||
         url.origin !== origin ||
-        url.pathname !== "/upload/checkpoint"
+        url.pathname !== "/upload/checkpoint" ||
+        (window as any).checkpoints++
       )
         return original(input, init);
-      (window as any).missed++;
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, frankfurt.url);
   const saved = await run(page);
-  expect(await page.evaluate(() => (window as any).missed)).toBe(1);
+  expect(
+    await page.evaluate(() => (window as any).checkpoints),
+  ).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
   const upload = saved.result.multiServer.intervals.filter(
