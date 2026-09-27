@@ -1006,12 +1006,16 @@ impl Ui {
                     .add_modifier(Modifier::BOLD),
             ));
             for failure in &self.snapshot.failures {
-                lines.push(Line::from(format!(
-                    "{} · {} · {}",
-                    self.server_name(&failure.server_id),
-                    failure.stage.name(),
-                    failure.reason.label()
-                )));
+                lines.extend(wrap_columns(
+                    &safe_text(
+                        &crate::vocabulary::failure_facts(
+                            failure,
+                            self.server_name(&failure.server_id),
+                        ),
+                        MAX_TEXT,
+                    ),
+                    usize::from(area.width.saturating_sub(2)),
+                ));
             }
         }
         lines.push(Line::raw(""));

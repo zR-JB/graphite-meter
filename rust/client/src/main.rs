@@ -235,10 +235,10 @@ fn report(snapshot: &Snapshot) {
                 .find(|host| host.id == failure.server_id)
                 .map_or(failure.server_id.as_str(), |host| host.name.as_str());
             println!(
-                "  {} · {} · {}",
-                safe(name),
-                failure.stage.name(),
-                failure.reason.label()
+                "  {}",
+                safe(&graphite_meter_client::vocabulary::failure_facts(
+                    failure, name
+                ))
             );
         }
     }

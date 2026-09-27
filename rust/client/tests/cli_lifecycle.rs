@@ -145,6 +145,11 @@ async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> 
         report.starts_with("Graphite Meter · Incomplete"),
         "{report}"
     );
+    assert!(
+        report.contains("twin peer · Download throughput · at 1.")
+            && report.contains("Sign-in required: authentication required (HTTP 403)"),
+        "{report}"
+    );
     Ok(())
 }
 

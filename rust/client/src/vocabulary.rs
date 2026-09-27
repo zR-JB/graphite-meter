@@ -219,6 +219,24 @@ pub fn throughput_facts(
     facts.join(" · ")
 }
 
+pub fn failure_facts(failure: &crate::model::ServerFailure, name: &str) -> String {
+    let reason = failure.reason.label();
+    format!(
+        "{name} · {} {} · at {:.1} s · {reason}{}",
+        failure.stage.name(),
+        match failure.scope {
+            crate::model::FailureScope::Throughput => "throughput",
+            crate::model::FailureScope::Latency => "latency",
+        },
+        failure.at.as_secs_f64(),
+        if failure.message == reason {
+            String::new()
+        } else {
+            format!(": {}", failure.message)
+        }
+    )
+}
+
 pub fn latency_facts(
     summary: graphite_meter_core::latency::LatencySummary,
     elapsed: Option<std::time::Duration>,
