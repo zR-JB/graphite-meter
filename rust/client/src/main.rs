@@ -75,7 +75,11 @@ async fn run() -> Result<i32, Error> {
     let snapshot = if report_only || !std::io::stdout().is_terminal() {
         controller::run_once(config, shutdown).await?
     } else {
-        controller::run(config, shutdown).await?
+        let (snapshot, exit) = controller::run(config, shutdown).await?;
+        if exit == graphite_meter_client::ui::Exit::Interrupted {
+            caught.store(130, Ordering::Relaxed);
+        }
+        snapshot
     };
     report(&snapshot);
     let signal = caught.load(Ordering::Relaxed);

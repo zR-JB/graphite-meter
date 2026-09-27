@@ -29,7 +29,10 @@ impl Work {
     }
 }
 
-pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<Snapshot, Error> {
+pub async fn run(
+    config: Config,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(Snapshot, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
     let mut controller = Controller::with_snapshots(&config, snapshots)?;
@@ -40,10 +43,10 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<S
         loop {
             tokio::select! {
                 result = &mut terminal => break result,
-                _ = &mut shutdown => break Ok(()),
+                _ = &mut shutdown => break Ok(ui::Exit::Quit),
                 command = incoming.recv() => {
                     match command {
-                        Some(Command::Quit) | None => break Ok(()),
+                        Some(Command::Quit) | None => break Ok(ui::Exit::Quit),
                         Some(Command::Run(config)) => {
                             if let Err(error) = controller.replace(Work::Run(config)) {
                                 break Err(error);
@@ -74,9 +77,9 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<S
         }
     }; // Drop the UI and restore the terminal before shutdown/reporting.
     controller.stop().await;
-    result?;
+    let exit = result?;
     let final_snapshot = controller.snapshots.borrow().clone();
-    Ok(final_snapshot)
+    Ok((final_snapshot, exit))
 }
 
 pub async fn run_once(

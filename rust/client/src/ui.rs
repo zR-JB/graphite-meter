@@ -35,6 +35,12 @@ use std::{
 use tokio::sync::{mpsc, watch};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exit {
+    Quit,
+    Interrupted,
+}
+
 #[derive(Clone, Debug)]
 pub enum Command {
     Run(Config),
@@ -96,7 +102,7 @@ pub async fn run(
     config: Config,
     mut snapshots: watch::Receiver<Snapshot>,
     commands: mpsc::Sender<Command>,
-) -> Result<(), Error> {
+) -> Result<Exit, Error> {
     let mut session = TerminalSession::enter()?;
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
@@ -129,7 +135,9 @@ pub async fn run(
                 let Some(event) = event else { return Err("terminal input closed".into()); };
                 match event? {
                     Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        if ui.key(key, &commands) { return Ok(()); }
+                        if ui.key(key, &commands) {
+                            return Ok(if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) { Exit::Interrupted } else { Exit::Quit });
+                        }
                         dirty = true;
                     }
                     Event::Paste(text) => {
@@ -303,7 +311,6 @@ impl Ui {
     }
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            let _ = commands.try_send(Command::Quit);
             return true;
         }
         if self.snapshot.auth.is_some() {

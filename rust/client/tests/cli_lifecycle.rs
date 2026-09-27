@@ -149,7 +149,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn confirmed_tui_stop_exits_one_without_a_signal() -> Result<(), Error> {
+async fn tui_stop_and_raw_interrupt_preserve_exit_reason() -> Result<(), Error> {
     let (origin, peer) = latency_peer().await?;
     let script = r#"
 import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
@@ -163,6 +163,7 @@ p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-
 os.close(slave)
 output = b''
 step = 0
+mode = sys.argv[3]
 deadline = time.monotonic() + 8
 try:
     while time.monotonic() < deadline:
@@ -173,10 +174,10 @@ try:
                 break
             output += data
             if step == 0 and b'WebSocket' in output:
-                os.write(master, b'r')
+                os.write(master, b'\x03' if mode == 'setup-interrupt' else b'r')
                 step = 1
             elif step == 1 and b'Running' in output:
-                os.write(master, b'\x1b')
+                os.write(master, b'\x03' if mode == 'run-interrupt' else b'\x1b')
                 step = 2
             elif step == 2 and b'confirm stop' in output:
                 os.write(master, b'\x1b')
@@ -202,29 +203,41 @@ finally:
         p.wait()
     os.close(master)
 "#;
-    let output = Command::new("python3")
-        .args([
-            "-c",
-            script,
-            env!("CARGO_BIN_EXE_graphite-meter-client"),
-            &origin,
-        ])
-        .output()
-        .await?;
+    for (mode, step, code) in [
+        ("setup-interrupt", 1, 130),
+        ("run-interrupt", 2, 130),
+        ("confirmed-stop", 4, 1),
+    ] {
+        let output = Command::new("python3")
+            .args([
+                "-c",
+                script,
+                env!("CARGO_BIN_EXE_graphite-meter-client"),
+                &origin,
+                mode,
+            ])
+            .output()
+            .await?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(result["step"], step);
+        assert_eq!(result["code"], code);
+        let text = result["text"].as_str().unwrap();
+        assert!(text.contains("\x1b[?1049l"));
+        assert!(text.contains("\x1b[?25h"));
+        if mode != "setup-interrupt" {
+            assert!(
+                result["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Graphite Meter · Stopped")
+            );
+        }
+    }
     peer.abort();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    assert_eq!(result["step"], 4);
-    assert_eq!(result["code"], 1);
-    assert!(
-        result["text"]
-            .as_str()
-            .unwrap()
-            .contains("Graphite Meter · Stopped")
-    );
     Ok(())
 }
