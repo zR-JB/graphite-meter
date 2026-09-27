@@ -26,6 +26,7 @@ const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LINE: usize = 64 * 1024;
+const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug)]
 pub struct ReceiverProgress {
@@ -279,15 +280,10 @@ impl Upload {
             let count = match response {
                 Ok(Ok(count)) => count,
                 Ok(Err(error)) if crate::net::authentication_required(error.as_ref()).is_none() => {
-                    let remaining = deadline.saturating_duration_since(Instant::now());
-                    if remaining.is_zero() {
-                        return Err(std::io::Error::new(
-                            std::io::ErrorKind::TimedOut,
-                            "upload receiver checkpoint did not recover",
-                        )
-                        .into());
+                    if deadline.saturating_duration_since(Instant::now()) <= CHECKPOINT_RETRY {
+                        return Err(error);
                     }
-                    tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
+                    tokio::time::sleep(CHECKPOINT_RETRY).await;
                     continue;
                 }
                 Ok(Err(error)) => return Err(error),
@@ -691,35 +687,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_retries_a_failed_response_without_inventing_bytes() -> Result<(), Error> {
+    async fn checkpoint_retries_a_refusal_and_keeps_its_cause_past_the_budget() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
+        let refusing = Arc::new(AtomicBool::new(true));
+        let answers = refusing.clone();
         let server = tokio::spawn(async move {
-            let mut first_closed = None;
-            for attempt in 0..2 {
+            let mut refused = Vec::new();
+            loop {
                 let (mut stream, _) = listener.accept().await?;
-                if attempt == 1 {
-                    assert!(
-                        first_closed.is_some_and(|closed: Instant| { closed.elapsed() >= Duration::from_millis(100) })
-                    );
-                }
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).await?;
                 assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
-                if attempt == 0 {
+                if answers.load(Ordering::SeqCst) {
+                    refused.push(Instant::now());
                     stream
-                        .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
+                        .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                         .await?;
-                    first_closed = Some(Instant::now());
                     continue;
                 }
                 let body = br#"{"bytes":123,"nanos":456}"#;
                 let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                 stream.write_all(headers.as_bytes()).await?;
                 stream.write_all(body).await?;
+                return Ok::<_, Error>(refused);
             }
-            Ok::<_, Error>(())
         });
         let transport = Arc::new(
             Transport::connect(
@@ -744,12 +737,21 @@ mod tests {
             progress: JoinSet::new(),
             session: None,
         };
+        let refused = upload.checkpoint(Duration::from_millis(250)).await.unwrap_err();
+        assert_eq!(
+            crate::failure::reason(refused.as_ref(), false),
+            graphite_meter_core::failure::FailureReason::ServerBusy,
+            "{refused}"
+        );
+        refusing.store(false, Ordering::SeqCst);
         let snapshot = upload
             .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
             .await?;
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(state_sender.borrow().latest.is_none());
-        server.await??;
+        let refused = server.await??;
+        assert!(refused.len() >= 2);
+        assert!(refused.windows(2).all(|pair| pair[1] - pair[0] >= CHECKPOINT_RETRY));
         Ok(())
     }
 
