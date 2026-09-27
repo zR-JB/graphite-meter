@@ -119,14 +119,29 @@ export function rawRateFrom(
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-/** A result rate chooses its own unit tier by the live rule, never a run's chart tier. */
+export type RateUnits = { base: UnitBase; kind: UnitKind };
+
+/** A rate in its own unit tier by the live rule unless a chart gives its tier. */
 export function resultRate(
   bytesPerSec: number,
-  units: { base: UnitBase; kind: UnitKind },
+  units: RateUnits,
+  tier = throughputUnitIndex(bytesPerSec, units.base, units.kind),
 ) {
-  const tier = throughputUnitIndex(bytesPerSec, units.base, units.kind);
   return {
     num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
     unit: rateUnit(units.base, units.kind, tier),
   };
 }
+
+export function formatRate(
+  bytesPerSec: number | null | undefined,
+  units: RateUnits,
+  tier?: number,
+): string {
+  if (bytesPerSec == null) return MISSING;
+  const { num, unit } = resultRate(bytesPerSec, units, tier);
+  return `${num} ${unit}`;
+}
+
+export const formatLatency = (ms: number | null | undefined): string =>
+  ms == null ? MISSING : `${fmtMs(ms)} ms`;

@@ -9,7 +9,13 @@
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import { fmtDuration, fmtSpeed, fmtMs, fmtMsTick } from "../format";
+  import {
+    fmtDuration,
+    fmtSpeed,
+    fmtMsTick,
+    formatLatency,
+    formatRate,
+  } from "../format";
   import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
@@ -36,8 +42,9 @@
   );
   const rows = $derived.by(() => {
     if (!hover) return [];
+    const units = { base: store.unitBase, kind: store.unitKind };
     const rate = (bytesPerSec: number) =>
-      `${fmtSpeed(store.toUnit(bytesPerSec))} ${store.unitLabel}`;
+      formatRate(bytesPerSec, units, store.scales.unitIndex);
     const rows: { label: string; value: string }[] = [];
     if (hover.bytesPerSec != null)
       rows.push({ label: "Rate", value: rate(hover.bytesPerSec) });
@@ -54,7 +61,7 @@
     if (chartPresentation?.latencyEnabled)
       rows.push({
         label: "Median",
-        value: hover.rtt == null ? MISSING : `${fmtMs(hover.rtt)} ms`,
+        value: formatLatency(hover.rtt),
       });
     if (hover.timeoutCount > 0)
       rows.push({

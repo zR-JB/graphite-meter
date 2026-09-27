@@ -8,7 +8,7 @@
   } from "../runner/paths";
   import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
-  import { fmtMs } from "../format";
+  import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
   import { buildSegments } from "../runner/schedule";
   import {
@@ -255,7 +255,7 @@
             <dt>Pre-test latency</dt>
             <dd>
               {connection.preTestPingMs !== undefined
-                ? `${fmtMs(connection.preTestPingMs)} ms`
+                ? formatLatency(connection.preTestPingMs)
                 : latencyRequested
                   ? "Pending"
                   : MISSING}

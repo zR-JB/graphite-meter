@@ -31,7 +31,6 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
     LATENCY_POPULATION,
-    MISSING,
     OUTCOME,
     STAGE,
   } from "../presentation/vocabulary";
@@ -215,8 +214,7 @@
   function metric(record: HistoryRecord, column: HistoryColumn): string {
     const { stages, bidirectional } = record.result;
     const value = historyMetrics(record)[column];
-    if (column === "loaded")
-      return value == null ? MISSING : formatLatency(value);
+    if (column === "loaded") return formatLatency(value);
     if (column === "idle")
       return value == null
         ? stageStatusLabel(stages.latency)

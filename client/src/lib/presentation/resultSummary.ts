@@ -1,5 +1,13 @@
 import { compensationTooltip, type WireModel } from "../compensation";
-import { fmtAddedMs, fmtBytes, fmtMs } from "../format";
+import {
+  fmtAddedMs,
+  fmtBytes,
+  fmtMs,
+  formatLatency,
+  formatRate,
+  resultRate,
+  type RateUnits,
+} from "../format";
 import type {
   AddedLatency,
   RunResult,
@@ -37,7 +45,6 @@ export interface SummaryCard {
   details: SummaryRow[];
   accessible?: string;
 }
-type Rate = (bytesPerSec: number) => { num: string; unit: string };
 
 export const CARD_ORDER = [
   "download",
@@ -72,10 +79,6 @@ export function summaryEvidence(
   );
 }
 
-const withUnit = (rate: Rate, bytesPerSec: number) => {
-  const { num, unit } = rate(bytesPerSec);
-  return `${num} ${unit}`;
-};
 const stability = (pct: number | null): SummaryRow[] =>
   pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
 
@@ -83,7 +86,7 @@ const stability = (pct: number | null): SummaryRow[] =>
 function wire(
   model: WireModel | null | undefined,
   bytesPerSec: number,
-  rate: Rate,
+  units: RateUnits,
 ): [face: SummaryRow[], details: SummaryRow[]] {
   if (!model || model.totalMultiplier < 1.005) return [[], []];
   const overhead = `+${((model.totalMultiplier - 1) * 100).toFixed(1)}%`;
@@ -92,7 +95,7 @@ function wire(
     [
       {
         label: "Wire",
-        value: withUnit(rate, bytesPerSec * model.totalMultiplier),
+        value: formatRate(bytesPerSec * model.totalMultiplier, units),
       },
     ],
     [{ label: "Wire overhead", value: overhead, note }],
@@ -115,7 +118,7 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
           },
         ];
   });
-  const jitter = jitterMs == null ? MISSING : `${fmtMs(jitterMs)} ms`;
+  const jitter = formatLatency(jitterMs);
   const steady =
     card.status === "complete" && jitterMs != null
       ? Math.max(0, 100 * (1 - jitterMs / Math.max(reportedMs, 1)))
@@ -137,7 +140,7 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
 function bidirectionalCard(
   card: SummaryCard,
   evidence: SummaryEvidence,
-  rate: Rate,
+  units: RateUnits,
   showWire: boolean,
 ) {
   const lanes = evidence.bidirectional;
@@ -147,7 +150,8 @@ function bidirectionalCard(
   );
   const lane = (stage: "download" | "upload", bytesPerSec: number | null) => ({
     label: STAGE[stage].short,
-    value: bytesPerSec === null ? "unavailable" : withUnit(rate, bytesPerSec),
+    value:
+      bytesPerSec === null ? "unavailable" : formatRate(bytesPerSec, units),
     stage,
   });
   const value = model.combinedBytesPerSec;
@@ -158,10 +162,10 @@ function bidirectionalCard(
   if (value === null) return { ...card, rows };
   const complete = card.status === "complete";
   const [face, details] =
-    showWire && complete ? wire(lanes?.wire, value, rate) : [[], []];
+    showWire && complete ? wire(lanes?.wire, value, units) : [[], []];
   return {
     ...card,
-    ...rate(value),
+    ...resultRate(value, units),
     rows: [...rows, ...face],
     details: [
       ...stability(
@@ -176,8 +180,7 @@ function bidirectionalCard(
 
 export function summaryCards(
   evidence: SummaryEvidence,
-  rate: Rate,
-  base: "base10" | "base2",
+  units: RateUnits,
   showWire: boolean,
 ): SummaryCard[] {
   return CARD_ORDER.flatMap((key): SummaryCard[] => {
@@ -195,27 +198,30 @@ export function summaryCards(
     };
     if (key === "latency") return [latencyCard(card, evidence)];
     if (key === "bidirectional")
-      return [bidirectionalCard(card, evidence, rate, showWire)];
+      return [bidirectionalCard(card, evidence, units, showWire)];
     const result = evidence[key];
     if (!result) return [card];
     const value = result.reportedBytesPerSec;
     const complete = status === "complete";
     const [face, details] =
-      showWire && complete ? wire(result.wire, value, rate) : [[], []];
+      showWire && complete ? wire(result.wire, value, units) : [[], []];
     const peak = result.peakBytesPerSec;
     return [
       {
         ...card,
-        ...rate(value),
+        ...resultRate(value, units),
         rows: [
-          { label: "Transferred", value: fmtBytes(result.totalBytes, base) },
+          {
+            label: "Transferred",
+            value: fmtBytes(result.totalBytes, units.base),
+          },
           ...face,
         ],
         details: [
           ...stability(complete ? result.stabilityPct : null),
           ...(peak == null
             ? []
-            : [{ label: "Peak", value: withUnit(rate, peak) }]),
+            : [{ label: "Peak", value: formatRate(peak, units) }]),
           ...(key === "upload"
             ? [{ label: "Timing", value: RECEIVER_TIMED }]
             : []),

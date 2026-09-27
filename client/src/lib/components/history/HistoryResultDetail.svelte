@@ -3,8 +3,12 @@
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
   import { tooltip } from "../../actions/tooltip";
-  import { fmtBytes, fmtDuration, resultRate } from "../../format";
-  import { formatHistoryRate, formatLatency } from "../../history/format";
+  import {
+    fmtBytes,
+    fmtDuration,
+    formatLatency,
+    formatRate,
+  } from "../../format";
   import type { HistoryRecord } from "../../history/types";
   import { latencyLanes, transferredBytes } from "../../runner/measure";
   import { store } from "../../state/store.svelte";
@@ -63,12 +67,7 @@
       shown,
       details?.latencyFocus,
     );
-    return summaryCards(
-      evidence,
-      (value) => resultRate(value, units),
-      store.unitBase,
-      store.showWireEstimates,
-    );
+    return summaryCards(evidence, units, store.showWireEstimates);
   });
 
   // Latency follows the chosen server when it measured latency, else the headline server.
@@ -139,8 +138,7 @@
       .filter(Boolean)
       .join(" · ");
   }
-  const rate = (value: number | null | undefined) =>
-    formatHistoryRate(value, units);
+  const rate = (value: number | null | undefined) => formatRate(value, units);
   const serverRows = $derived(
     run.selection.map((server) => {
       const measured = run.servers.find(

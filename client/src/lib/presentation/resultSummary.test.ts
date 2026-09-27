@@ -30,7 +30,7 @@ const lane = (reportedBytesPerSec: number) => ({
   stabilityPct: 95,
   peakBytesPerSec: null,
 });
-const rate = (value: number) => ({ num: String(value), unit: "B/s" });
+const units = { base: "base10", kind: "bytes" } as const;
 
 test("a saved wire overhead shows from half a percent and only when chosen", () => {
   const wire = (totalMultiplier: number, show = true) =>
@@ -55,14 +55,13 @@ test("a saved wire overhead shows from half a percent and only when chosen", () 
         latency: null,
         added: null,
       },
-      rate,
-      "base10",
+      units,
       show,
     )[0];
   const face = (card: ReturnType<typeof wire>) =>
     card.rows.find((row) => row.label === "Wire")?.value;
   expect(face(wire(1.004))).toBeUndefined();
-  expect(face(wire(1.05))).toBe("105 B/s");
+  expect(face(wire(1.05))).toBe("105.0 B/s");
   expect(wire(1.05).details.at(-1)?.value).toBe("+5.0%");
   expect(face(wire(1.05, false))).toBeUndefined();
 });
@@ -77,13 +76,15 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
       latency: null,
       added: null,
     },
-    rate,
-    "base10",
+    units,
     true,
   );
   expect(card.num).toBe("—");
   expect(card.details).toEqual([]);
-  expect(card.rows.map((row) => row.value)).toEqual(["40 B/s", "unavailable"]);
+  expect(card.rows.map((row) => row.value)).toEqual([
+    "40.00 B/s",
+    "unavailable",
+  ]);
 });
 
 test("the latency card groups signed added latency; details show stability as a value", () => {
@@ -101,8 +102,7 @@ test("the latency card groups signed added latency; details show stability as a 
       latency: { reportedMs: 12, jitterMs: 1 },
       added: { download: 8.25, upload: -0.04, bidirectional: 0 },
     },
-    rate,
-    "base10",
+    units,
     true,
   );
   const added = cards.at(-1)!.rows.filter((row) => row.label === "Added");

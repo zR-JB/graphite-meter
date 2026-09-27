@@ -5,7 +5,7 @@
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
   import { MISSING, STAGE } from "../presentation/vocabulary";
-  import { fmtMs, fmtMsTick } from "../format";
+  import { fmtMs, fmtMsTick, formatLatency } from "../format";
   import {
     entries,
     PARTIAL_ACCOUNTING_HELP,
@@ -217,12 +217,12 @@
             ? lane.accountingComplete === false || lane.count > 0
               ? "unavailable"
               : "waiting"
-            : `median ${fmtMs(lane.center)} ms`}</strong
+            : `median ${formatLatency(lane.center)}`}</strong
         >
         <em class="jit"
           >{lane.jitter == null
             ? `jitter ${MISSING}`
-            : `${fmtMs(lane.jitter)} ms jitter`}</em
+            : `${formatLatency(lane.jitter)} jitter`}</em
         >
         <em class="range-label">
           {lane.min == null || lane.max == null

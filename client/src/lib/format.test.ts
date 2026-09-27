@@ -7,12 +7,12 @@ import {
   fmtMs,
   fmtMsTick,
   fmtSpeed,
+  formatRate,
   rateScaleIndex,
   rateUnit,
   rateValueAt,
   throughputUnitIndex,
 } from "./format";
-import { formatHistoryRate } from "./history/format";
 
 test("durations read in seconds below a minute, then minutes and hours", () => {
   const values = [999, 25_000, 59_900, 60_000, 65_000, 3_599_000, 3_690_000];
@@ -99,9 +99,7 @@ test("formatting matches the shared vectors", () => {
     expect(fmtBytes(bytes, "base10")).toBe(out);
   for (const { in: ms, out } of vectors.added) expect(fmtAddedMs(ms)).toBe(out);
   for (const { bytesPerSec, out } of vectors.rate)
-    expect(
-      formatHistoryRate(bytesPerSec, { base: "base10", kind: "bits" }),
-    ).toBe(out);
+    expect(formatRate(bytesPerSec, { base: "base10", kind: "bits" })).toBe(out);
 });
 
 test("no formatter renders a non-finite value as NaN or Infinity", () => {

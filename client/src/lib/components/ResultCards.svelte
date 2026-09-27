@@ -25,8 +25,7 @@
     if (details?.servers.some((s) => s.server.id === id && s.latencyTarget))
       controller.focusServer(id);
   }
-  const rate = (bytesPerSec: number) =>
-    resultRate(bytesPerSec, { base: store.unitBase, kind: store.unitKind });
+  const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const status = (key: Stage) => store.stagePresentation[key].status;
 
   const settled = $derived.by(() => {
@@ -46,12 +45,7 @@
       shown,
       details?.latencyFocus,
     );
-    return summaryCards(
-      evidence,
-      rate,
-      store.unitBase,
-      store.showWireEstimates,
-    );
+    return summaryCards(evidence, units, store.showWireEstimates);
   });
   // Every stage holds its card from the start; a settled stage fills in its values.
   const cards = $derived(
@@ -83,7 +77,7 @@
         ? { num: MISSING, unit: "" }
         : key === "latency"
           ? { num: fmtMs(n), unit: "ms" }
-          : rate(n);
+          : resultRate(n, units);
     const shown = readout(value);
     const spoken = readout(accessible);
     return {
