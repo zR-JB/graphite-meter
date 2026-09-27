@@ -30,6 +30,7 @@ struct Claims {
 
 #[derive(Default)]
 struct Twist {
+    unavailable: bool,
     rotated: bool,
     unknown_kid: bool,
     claims: Option<Value>,
@@ -145,15 +146,18 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
         .unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("https://{host}:{}", listener.local_addr().unwrap().port());
-    let mut oidc = Oidc::new(&AuthConfig {
-        mode: crate::config::AuthMode::Oidc,
-        public_url: "https://meter.example".into(),
-        oidc_issuer: issuer.clone(),
-        oidc_client_id: "meter".into(),
-        oidc_client_secret: "secret".into(),
-        oidc_allowed_groups: vec!["operators".into()],
-        ..AuthConfig::default()
-    })
+    let mut oidc = Oidc::new(
+        &AuthConfig {
+            mode: crate::config::AuthMode::Oidc,
+            public_url: "https://meter.example".into(),
+            oidc_issuer: issuer.clone(),
+            oidc_client_id: "meter".into(),
+            oidc_client_secret: "secret".into(),
+            oidc_allowed_groups: vec!["operators".into()],
+            ..AuthConfig::default()
+        },
+        Arc::new(crate::auth::logging::SecurityLog::default()),
+    )
     .unwrap();
     let mut roots = rustls::RootCertStore::empty();
     for cert in certificates {
@@ -228,6 +232,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                     let claims = *claims.lock().unwrap();
                     let twist = twist.lock().unwrap();
                     match path {
+                        "/.well-known/openid-configuration" if twist.unavailable => ("application/json", "{}".into()),
                         "/.well-known/openid-configuration" => ("application/json", json!({"issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"), "token_endpoint": format!("{issuer}/token"), "userinfo_endpoint": format!("{issuer}/userinfo"), "jwks_uri": format!("{issuer}/jwks"), "response_types_supported": ["code"], "subject_types_supported": ["public"], "id_token_signing_alg_values_supported": algorithms, "authorization_response_iss_parameter_supported": true}).to_string()),
                         "/jwks" => {
                             jwks.fetch_add(1, Ordering::SeqCst);
@@ -291,7 +296,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
 }
 
 impl ProviderDouble {
-    async fn login(&self, claims: Claims) -> Result<Identity, ConfigError> {
+    async fn login(&self, claims: Claims) -> Result<Identity, OidcFailure> {
         let started = self
             .oidc
             .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
@@ -335,6 +340,8 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
             assert_eq!(identity.subject, "oidc:operator");
             assert_eq!(identity.name, "Example Operator");
             assert_eq!(identity.challenge, "challenge");
+        } else if scenario == 3 {
+            assert!(matches!(result, Err(OidcFailure::GroupDenial)));
         } else {
             assert!(result.is_err(), "scenario {scenario} authenticated");
         }
@@ -518,4 +525,25 @@ async fn unadvertised_signing_algorithms_are_refused() {
         assert!(provider.login(Claims::default()).await.is_err());
         provider.stop().await;
     }
+}
+
+#[tokio::test]
+async fn unavailable_provider_respects_retry_deadline_and_recovers_once() {
+    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    provider.twist.lock().unwrap().unavailable = true;
+    assert!(provider.oidc.provider().await.is_err());
+    assert_eq!(provider.oidc.discovery.lock().await.failures, 1);
+    tokio::time::pause();
+    assert!(provider.oidc.provider().await.is_err());
+    assert_eq!(provider.oidc.discovery.lock().await.failures, 1);
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::resume();
+    provider.twist.lock().unwrap().unavailable = false;
+    let ready = provider.oidc.provider().await.unwrap();
+    assert!(Arc::ptr_eq(
+        &ready,
+        &provider.oidc.provider().await.unwrap()
+    ));
+    assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), 1);
+    provider.stop().await;
 }

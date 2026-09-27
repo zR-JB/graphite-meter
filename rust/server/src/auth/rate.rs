@@ -1,8 +1,9 @@
 //! Bounded rolling-window budgets for authentication attempts.
+use super::logging::{Ceiling, SecurityLog};
 use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -38,11 +39,19 @@ struct State {
 #[derive(Default)]
 pub struct AttemptLimiter {
     state: Mutex<State>,
+    log: Arc<SecurityLog>,
 }
 
 impl AttemptLimiter {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(super) fn with_log(log: Arc<SecurityLog>) -> Self {
+        Self {
+            state: Mutex::default(),
+            log,
+        }
     }
 
     pub fn allow(&self, budget: Budget, address: IpAddr) -> bool {
@@ -52,11 +61,19 @@ impl AttemptLimiter {
         let now = Instant::now();
         match budget {
             Budget::Password => {
-                if !address_has_room(&mut state.password, &keys, PASSWORD_ADDRESS_LIMIT, now) {
+                if !address_has_room(
+                    &mut state.password,
+                    &keys,
+                    PASSWORD_ADDRESS_LIMIT,
+                    now,
+                    &self.log,
+                    Ceiling::PasswordAddress,
+                ) {
                     return false;
                 }
                 expire(&mut state.global_password, now);
                 if state.global_password.len() >= PASSWORD_GLOBAL_LIMIT {
+                    self.log.ceiling(Ceiling::Password);
                     return false;
                 }
                 for key in &keys {
@@ -69,7 +86,14 @@ impl AttemptLimiter {
                 state.global_password.push_back(now);
             }
             Budget::OidcExchange => {
-                if !address_has_room(&mut state.exchanges, &keys, EXCHANGE_ADDRESS_LIMIT, now) {
+                if !address_has_room(
+                    &mut state.exchanges,
+                    &keys,
+                    EXCHANGE_ADDRESS_LIMIT,
+                    now,
+                    &self.log,
+                    Ceiling::ExchangeAddress,
+                ) {
                     return false;
                 }
                 for key in &keys {
@@ -81,7 +105,14 @@ impl AttemptLimiter {
                 }
             }
             Budget::BrowserApproval => {
-                if !address_has_room(&mut state.approvals, &keys, APPROVAL_ADDRESS_LIMIT, now) {
+                if !address_has_room(
+                    &mut state.approvals,
+                    &keys,
+                    APPROVAL_ADDRESS_LIMIT,
+                    now,
+                    &self.log,
+                    Ceiling::ApprovalAddress,
+                ) {
                     return false;
                 }
                 for key in &keys {
@@ -102,6 +133,8 @@ fn address_has_room(
     keys: &[String],
     limit: usize,
     now: Instant,
+    log: &SecurityLog,
+    ceiling: Ceiling,
 ) -> bool {
     addresses.retain(|_, attempts| {
         expire(attempts, now);
@@ -111,10 +144,13 @@ fn address_has_room(
         .iter()
         .filter(|key| !addresses.contains_key(*key))
         .count();
-    addresses.len() + missing <= MAX_KEYS
-        && !crate::client_address::share_full(keys, limit, |key| {
-            addresses.get(key).map_or(0, Attempts::len)
-        })
+    if addresses.len() + missing > MAX_KEYS {
+        log.ceiling(ceiling);
+        return false;
+    }
+    !crate::client_address::share_full(keys, limit, |key| {
+        addresses.get(key).map_or(0, Attempts::len)
+    })
 }
 
 fn expire(attempts: &mut Attempts, now: Instant) {

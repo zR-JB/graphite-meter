@@ -2,6 +2,8 @@
 use super::{
     ApprovalError, ApprovalKind, AuthLease, Exchange, ExchangeError, SESSION_LIFETIME,
     SessionStore, SocketKind, TicketError,
+    logging::{Counter, SecurityLog},
+    oidc::OidcFailure,
     pages::{self, ApprovalPage, ContinuePage, DonePage, LoginPage},
     password_login::{PasswordAttempt, PasswordLogin},
     policy::{Authorization, AuthorizedRequest, Policy, constant_equal, cookie},
@@ -30,6 +32,7 @@ pub struct Service {
     password: Option<PasswordLogin>,
     oidc: Option<super::oidc::Oidc>,
     mode: AuthMode,
+    log: Arc<SecurityLog>,
     attempts: Arc<AttemptLimiter>,
 }
 
@@ -40,7 +43,25 @@ impl Service {
         sessions: Option<SessionStore>,
     ) -> Result<Self, ConfigError> {
         let sessions = sessions.unwrap_or_default();
-        let attempts = Arc::new(AttemptLimiter::new());
+        let log = Arc::new(SecurityLog::default());
+        let attempts = Arc::new(AttemptLimiter::with_log(log.clone()));
+        let mode = match config.mode {
+            AuthMode::Off => "off",
+            AuthMode::Password => "password",
+            AuthMode::Oidc => "oidc",
+            AuthMode::Hybrid => "hybrid",
+        };
+        let lifetime = SESSION_LIFETIME.as_secs();
+        eprintln!(
+            "[gm:auth] mode={mode} origin={:?} provider={:?} issuer={:?} allowed-groups={} session-lifetime={}h{}m{}s",
+            config.public_url,
+            config.oidc_provider_name,
+            config.oidc_issuer,
+            config.oidc_allowed_groups.len(),
+            lifetime / 3600,
+            lifetime / 60 % 60,
+            lifetime % 60
+        );
         Ok(Self {
             policy: Policy::new(&config.public_url, config.mode, trusted, sessions.clone())?,
             password: config
@@ -51,12 +72,39 @@ impl Service {
             oidc: config
                 .mode
                 .oidc()
-                .then(|| super::oidc::Oidc::new(config))
+                .then(|| super::oidc::Oidc::new(config, log.clone()))
                 .transpose()?,
             mode: config.mode,
             sessions,
             attempts,
+            log,
         })
+    }
+    pub fn configure_logging(&self, verbose: bool) {
+        self.log.configure(verbose);
+        if self.password.is_some() {
+            self.log.debug("local password hash loaded and validated");
+        }
+    }
+    pub async fn security_log(&self) {
+        let aggregate = async {
+            let mut last = [0; Counter::COUNT];
+            let mut ticker = tokio::time::interval(Duration::from_secs(60));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                if let Some(line) = self.log.window(&mut last) {
+                    eprintln!("{line}");
+                }
+            }
+        };
+        let provider = async {
+            if let Some(oidc) = &self.oidc {
+                oidc.retry_discovery().await;
+            }
+        };
+        tokio::join!(aggregate, provider);
     }
     pub async fn initialize(&self) -> Result<(), ConfigError> {
         if let Some(oidc) = &self.oidc {
@@ -173,6 +221,7 @@ impl Service {
     async fn password_login(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
         let request = authorized.request();
         let Ok(form) = form(request) else {
+            self.log.debug("login rejected reason=form-malformed");
             return login_rejected("failed", "");
         };
         let challenge = value(&form, "challenge");
@@ -193,6 +242,7 @@ impl Service {
             .await;
         match result {
             Ok((token, session)) => {
+                self.log.count(Counter::Local);
                 let destination = if valid_challenge(challenge) {
                     query_url("/auth/cli", &[("challenge", challenge)])
                 } else {
@@ -216,7 +266,24 @@ impl Service {
                 clear_cookie(&mut result, "__Host-gm_login");
                 result
             }
-            Err(failure) => login_rejected(failure.notice(), challenge),
+            Err(failure) => {
+                use super::password_login::LoginFailure;
+                match failure {
+                    LoginFailure::Password => self.log.count(Counter::InvalidPassword),
+                    LoginFailure::Throttled => self.log.count(Counter::Throttled),
+                    LoginFailure::Capacity => self.log.count(Counter::Capacity),
+                    _ => {}
+                }
+                self.log.debug(match failure {
+                    LoginFailure::Failed => "login rejected reason=form-invalid",
+                    LoginFailure::Stale => "login rejected reason=form-stale",
+                    LoginFailure::Throttled => "login rejected reason=throttled",
+                    LoginFailure::Busy => "login rejected reason=verifier-busy",
+                    LoginFailure::Capacity => "login rejected reason=session-capacity",
+                    LoginFailure::Password => "login rejected reason=password-mismatch",
+                });
+                login_rejected(failure.notice(), challenge)
+            }
         }
     }
 
@@ -226,7 +293,7 @@ impl Service {
         };
         let request = authorized.request();
         let Ok(form) = form(request) else {
-            return login_rejected("failed", "");
+            return self.oidc_rejected(OidcFailure::Failed, "failed", "");
         };
         let challenge = value(&form, "challenge");
         let challenge = if valid_challenge(challenge) {
@@ -240,13 +307,13 @@ impl Service {
             || !cookie(request.headers(), "__Host-gm_login")
                 .is_some_and(|nonce| constant_equal(nonce, csrf))
         {
-            return login_rejected("stale", challenge);
+            return self.oidc_rejected(OidcFailure::Failed, "stale", challenge);
         }
         let Some(address) = self
             .policy
             .client_address(request.headers(), authorized.connection().peer)
         else {
-            return login_rejected("throttled", challenge);
+            return self.oidc_rejected(OidcFailure::Failed, "throttled", challenge);
         };
         let prior = cookie(request.headers(), "__Host-gm_session")
             .and_then(|token| self.sessions.lookup(token));
@@ -271,7 +338,7 @@ impl Service {
                 );
                 result
             }
-            Err(_) => login_rejected("provider", challenge),
+            Err(failure) => self.oidc_rejected(failure, "provider", challenge),
         }
     }
 
@@ -289,33 +356,33 @@ impl Service {
         let mut result = async {
             let state = unique("state")
                 .filter(|value| value.len() == 43)
-                .ok_or(())?;
+                .ok_or(OidcFailure::Failed)?;
             let code = unique("code")
                 .filter(|value| {
                     !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control)
                 })
-                .ok_or(())?;
+                .ok_or(OidcFailure::Failed)?;
             if fields.iter().any(|(key, _)| key == "error")
                 || fields.iter().filter(|(key, _)| key == "iss").count() > 1
             {
-                return Err(());
+                return Err(OidcFailure::Failed);
             }
-            let browser = cookie(request.headers(), "__Host-gm_oidc").ok_or(())?;
+            let browser = cookie(request.headers(), "__Host-gm_oidc").ok_or(OidcFailure::Failed)?;
             let address = self
                 .policy
                 .client_address(request.headers(), authorized.connection().peer)
-                .ok_or(())?;
+                .ok_or(OidcFailure::Failed)?;
             if !self.attempts.allow(Budget::OidcExchange, address) {
-                return Err(());
+                return Err(OidcFailure::Throttled);
             }
-            let identity = oidc
-                .finish(state, browser, code, unique("iss"))
-                .await
-                .map_err(|_| ())?;
+            let identity = oidc.finish(state, browser, code, unique("iss")).await?;
             let (token, session) = self
                 .sessions
                 .create(&identity.subject, &identity.name, oidc.name(), None)
-                .map_err(|_| ())?;
+                .map_err(|failure| match failure {
+                    super::SessionError::Capacity => OidcFailure::Capacity,
+                    super::SessionError::RandomUnavailable => OidcFailure::Failed,
+                })?;
             if let Some(prior) = identity.prior {
                 self.sessions.revoke(&prior);
             }
@@ -341,12 +408,37 @@ impl Service {
                 false,
             );
             clear_cookie(&mut result, "__Host-gm_login");
-            Ok::<_, ()>(result)
+            self.log.count(Counter::Oidc);
+            Ok::<_, OidcFailure>(result)
         }
         .await
-        .unwrap_or_else(|()| login_rejected("failed", ""));
+        .unwrap_or_else(|failure| self.oidc_rejected(failure, "failed", ""));
         clear_cookie(&mut result, "__Host-gm_oidc");
         result
+    }
+
+    fn oidc_rejected(
+        &self,
+        failure: OidcFailure,
+        notice: &str,
+        challenge: &str,
+    ) -> Response<Bytes> {
+        self.log.count(Counter::OidcFailure);
+        match failure {
+            OidcFailure::ReplayExpiry => self.log.count(Counter::ReplayExpiry),
+            OidcFailure::GroupDenial => self.log.count(Counter::GroupDenial),
+            OidcFailure::Capacity => self.log.count(Counter::Capacity),
+            OidcFailure::Throttled => self.log.count(Counter::Throttled),
+            OidcFailure::Failed => {}
+        }
+        self.log.debug(match failure {
+            OidcFailure::ReplayExpiry => "login rejected reason=transaction-replay",
+            OidcFailure::GroupDenial => "login rejected reason=group-denial",
+            OidcFailure::Capacity => "login rejected reason=capacity",
+            OidcFailure::Throttled => "login rejected reason=throttled",
+            OidcFailure::Failed => "login rejected reason=oidc-failure",
+        });
+        login_rejected(notice, challenge)
     }
 
     fn session_info(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
@@ -388,6 +480,7 @@ impl Service {
                 state.remove(&key);
             }
         }
+        self.log.count(Counter::Logout);
         let mut result = redirect("/login?reason=signed_out");
         for name in ["__Host-gm_session", "__Host-gm_login", "__Host-gm_csrf"] {
             clear_cookie(&mut result, name);
@@ -476,6 +569,12 @@ impl Service {
                 )
             }
             Err(ApprovalError::GrantCapacity) => capacity_page(origin),
+            Err(ApprovalError::Capacity) => {
+                if !browser {
+                    self.log.count(Counter::Capacity);
+                }
+                response(StatusCode::FORBIDDEN)
+            }
             Err(_) => response(StatusCode::FORBIDDEN),
         }
     }
@@ -497,7 +596,10 @@ impl Service {
                 ApprovalKind::Cli
             },
         ) {
-            Ok(()) => html(StatusCode::OK, &DonePage { browser }),
+            Ok(()) => {
+                self.log.count(Counter::CliApproval);
+                html(StatusCode::OK, &DonePage { browser })
+            }
             Err(ApprovalError::GrantCapacity) => {
                 let origin = self
                     .sessions
@@ -925,6 +1027,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_replay_is_counted_without_recording_request_credentials() {
+        let service = Service::new(
+            &AuthConfig {
+                mode: AuthMode::Oidc,
+                public_url: "https://meter.example".into(),
+                oidc_issuer: "https://identity.example".into(),
+                oidc_client_id: "client".into(),
+                oidc_client_secret: "provider-secret".into(),
+                oidc_allowed_groups: vec!["operators".into()],
+                ..AuthConfig::default()
+            },
+            vec![],
+            None,
+        )
+        .unwrap();
+        let callback = query_url(
+            "/auth/oidc/callback",
+            &[
+                ("state", &"a".repeat(43)),
+                ("code", "private-provider-code"),
+            ],
+        );
+        let response = call(
+            &service,
+            Method::GET,
+            &callback,
+            &[("cookie", "__Host-gm_oidc=private-cookie")],
+            String::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
+        assert!(
+            line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"),
+            "{line}"
+        );
+        assert!(!line.contains("private-"));
+        assert!(!line.contains("provider-secret"));
+    }
+
+    #[tokio::test]
     async fn password_browser_cli_ticket_and_logout_flow_through_policy_and_controller() {
         const PUBLIC: &str = "https://meter.example";
         const REMOTE: &str = "https://client.example";
@@ -933,6 +1076,19 @@ mod tests {
         assert_eq!(login.status(), StatusCode::OK);
         let nonce = set_cookie_value(&login, "__Host-gm_login");
         let nonce_cookie = format!("__Host-gm_login={nonce}");
+        let rejected = call(
+            &service,
+            Method::POST,
+            "/auth/password",
+            &[
+                ("cookie", &nonce_cookie),
+                ("origin", PUBLIC),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ],
+            encoded(&[("csrf", &nonce), ("password", "incorrect password")]),
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::SEE_OTHER);
         let signed_in = call(
             &service,
             Method::POST,
@@ -1126,5 +1282,18 @@ mod tests {
                 .lookup_bearer(token["token"].as_str().unwrap())
                 .is_none()
         );
+        let mut last = [0; Counter::COUNT];
+        let window = service.log.window(&mut last).unwrap();
+        assert!(
+            window.contains("local=1 oidc=0 invalid-password=1"),
+            "{window}"
+        );
+        assert!(
+            window.contains("logout=1 cli-approval=2 capacity=0"),
+            "{window}"
+        );
+        assert!(service.log.window(&mut last).is_none());
+        assert!(!window.contains(&raw_session));
+        assert!(!window.contains("correct horse"));
     }
 }

@@ -116,12 +116,35 @@ pub(super) struct Identity {
     pub challenge: String,
     pub prior: Option<SessionLease>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OidcFailure {
+    Failed,
+    ReplayExpiry,
+    GroupDenial,
+    Capacity,
+    Throttled,
+}
+impl std::fmt::Display for OidcFailure {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(match self {
+            Self::Failed => "OIDC login rejected",
+            Self::ReplayExpiry => "OIDC transaction rejected",
+            Self::GroupDenial => "OIDC group denied",
+            Self::Capacity => "OIDC transaction capacity reached",
+            Self::Throttled => "OIDC exchange throttled",
+        })
+    }
+}
+impl std::error::Error for OidcFailure {}
+
 struct Discovery {
     provider: Option<Arc<Provider>>,
     retry: Instant,
+    failures: u32,
 }
 pub(super) struct Oidc {
     config: AuthConfig,
+    log: Arc<super::logging::SecurityLog>,
     secret: Zeroizing<String>,
     http: ProviderHttp,
     discovery: AsyncMutex<Discovery>,
@@ -129,18 +152,23 @@ pub(super) struct Oidc {
     exchanges: Semaphore,
 }
 impl Oidc {
-    pub fn new(config: &AuthConfig) -> Result<Self, ConfigError> {
+    pub fn new(
+        config: &AuthConfig,
+        log: Arc<super::logging::SecurityLog>,
+    ) -> Result<Self, ConfigError> {
         let secret = read_secret(&config.oidc_client_secret, &config.oidc_secret_file, 4096)?;
         let mut config = config.clone();
         config.oidc_client_secret.zeroize();
         config.password_hash.zeroize();
         Ok(Self {
             config,
+            log,
             secret,
             http: ProviderHttp::new()?,
             discovery: AsyncMutex::new(Discovery {
                 provider: None,
                 retry: Instant::now(),
+                failures: 0,
             }),
             transactions: Mutex::new(HashMap::new()),
             exchanges: Semaphore::new(8),
@@ -154,20 +182,49 @@ impl Oidc {
             .discovery
             .try_lock()
             .map_err(|_| "OIDC discovery in progress")?;
-        if Instant::now() < discovery.retry {
-            return discovery
-                .provider
-                .clone()
-                .ok_or_else(|| "OIDC provider unavailable".into());
+        if let Some(provider) = &discovery.provider {
+            return Ok(provider.clone());
         }
-        discovery.retry = Instant::now() + Duration::from_secs(30);
-        let provider = tokio::time::timeout(Duration::from_secs(25), self.discover())
-            .await
-            .map_err(|_| "OIDC discovery timed out")?
-            .map_err(|_| "OIDC provider discovery failed")?;
-        let provider = Arc::new(provider);
-        discovery.provider = Some(provider.clone());
-        Ok(provider)
+        if Instant::now() < discovery.retry {
+            return Err("OIDC provider unavailable".into());
+        }
+        let result = tokio::time::timeout(Duration::from_secs(25), self.discover()).await;
+        match result {
+            Ok(Ok(provider)) => {
+                let provider = Arc::new(provider);
+                discovery.provider = Some(provider.clone());
+                eprintln!("[gm:auth] OIDC provider ready");
+                Ok(provider)
+            }
+            _ => {
+                if discovery.failures == 0 {
+                    if self.config.mode.password() {
+                        eprintln!(
+                            "[gm:auth] OIDC provider unavailable; local password remains available"
+                        );
+                    } else {
+                        eprintln!("[gm:auth] OIDC provider unavailable");
+                    }
+                } else {
+                    eprintln!("[gm:auth] OIDC provider retrying");
+                }
+                self.log.debug("OIDC discovery failed");
+                discovery.retry = Instant::now()
+                    + Duration::from_secs(1u64 << discovery.failures.min(6))
+                        .min(Duration::from_secs(60));
+                discovery.failures = discovery.failures.saturating_add(1);
+                Err("OIDC provider discovery failed".into())
+            }
+        }
+    }
+    pub async fn retry_discovery(&self) {
+        loop {
+            if self.provider().await.is_ok() {
+                return;
+            }
+            let retry = self.discovery.lock().await.retry;
+            tokio::time::sleep_until(retry).await;
+        }
     }
     async fn discover(&self) -> Result<Provider, ConfigError> {
         let issuer = &self.config.oidc_issuer;
@@ -190,13 +247,12 @@ impl Oidc {
         address: IpAddr,
         challenge: String,
         prior: Option<SessionLease>,
-    ) -> Result<Started, ConfigError> {
-        let provider = self.provider().await?;
-        let browser = random_token::<32>().map_err(|_| "random source unavailable")?;
-        let state = random_token::<32>().map_err(|_| "random source unavailable")?;
-        let nonce = Zeroizing::new(random_token::<32>().map_err(|_| "random source unavailable")?);
-        let verifier =
-            Zeroizing::new(random_token::<32>().map_err(|_| "random source unavailable")?);
+    ) -> Result<Started, OidcFailure> {
+        let provider = self.provider().await.map_err(|_| OidcFailure::Failed)?;
+        let browser = random_token::<32>().map_err(|_| OidcFailure::Failed)?;
+        let state = random_token::<32>().map_err(|_| OidcFailure::Failed)?;
+        let nonce = Zeroizing::new(random_token::<32>().map_err(|_| OidcFailure::Failed)?);
+        let verifier = Zeroizing::new(random_token::<32>().map_err(|_| OidcFailure::Failed)?);
         let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ring::digest::digest(
             &ring::digest::SHA256,
             verifier.as_bytes(),
@@ -232,7 +288,10 @@ impl Oidc {
                     .count()
             })
         {
-            return Err("OIDC transaction capacity reached".into());
+            if transactions.len() >= 256 {
+                self.log.ceiling(super::logging::Ceiling::OidcTransaction);
+            }
+            return Err(OidcFailure::Capacity);
         }
         transactions.insert(
             token_hash(&state),
@@ -258,35 +317,39 @@ impl Oidc {
         browser: &str,
         code: &str,
         issuer: Option<&str>,
-    ) -> Result<Identity, ConfigError> {
+    ) -> Result<Identity, OidcFailure> {
         let tx = self
             .transactions
             .lock()
             .expect("OIDC transactions poisoned")
             .remove(&token_hash(state))
-            .ok_or("OIDC transaction missing")?;
-        if tx.deadline <= Instant::now()
-            || tx.browser != token_hash(browser)
-            || issuer.is_some_and(|issuer| issuer != self.config.oidc_issuer)
+            .ok_or(OidcFailure::ReplayExpiry)?;
+        if tx.deadline <= Instant::now() || tx.browser != token_hash(browser) {
+            return Err(OidcFailure::ReplayExpiry);
+        }
+        if issuer.is_some_and(|issuer| issuer != self.config.oidc_issuer)
             || (tx.provider.issuer_parameter && issuer.is_none())
         {
-            return Err("OIDC transaction rejected".into());
+            return Err(OidcFailure::Failed);
         }
         let _permit = self
             .exchanges
             .try_acquire()
-            .map_err(|_| "OIDC exchange capacity reached")?;
+            .map_err(|_| OidcFailure::Failed)?;
         let provider = &tx.provider;
         let tokens = self
             .exchange(provider, code, &tx.verifier)
             .await
-            .map_err(|_| "OIDC token exchange failed")?;
-        let id_token = tokens.id_token.as_deref().ok_or("OIDC ID token missing")?;
+            .map_err(|_| OidcFailure::Failed)?;
+        let id_token = tokens.id_token.as_deref().ok_or(OidcFailure::Failed)?;
         let verified = provider
             .verify(&self.http, id_token)
             .await
-            .map_err(|_| "OIDC ID token rejected")?;
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            .map_err(|_| OidcFailure::Failed)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| OidcFailure::Failed)?
+            .as_secs();
         let claims = jwt::id_token(
             verified,
             &jwt::Expected {
@@ -297,24 +360,24 @@ impl Oidc {
                 now,
             },
         )
-        .map_err(|_| "OIDC ID token rejected")?;
+        .map_err(|_| OidcFailure::Failed)?;
         let info = self
             .user_info(provider, &tokens.access_token)
             .await
-            .map_err(|_| "OIDC user information rejected")?;
+            .map_err(|_| OidcFailure::Failed)?;
         if info.sub != claims.subject {
-            return Err("OIDC user information rejected".into());
+            return Err(OidcFailure::Failed);
         }
         if !info
             .groups
             .iter()
             .any(|group| self.config.oidc_allowed_groups.contains(group))
         {
-            return Err("OIDC group denied".into());
+            return Err(OidcFailure::GroupDenial);
         }
         let subject = claims.subject.as_str();
         if subject.is_empty() || subject.len() > 256 || subject.chars().any(char::is_control) {
-            return Err("OIDC subject rejected".into());
+            return Err(OidcFailure::Failed);
         }
         let name = [
             info.name.as_deref(),
@@ -546,15 +609,18 @@ mod tests {
     use crate::config::AuthMode;
 
     async fn ready() -> Oidc {
-        let oidc = Oidc::new(&AuthConfig {
-            mode: AuthMode::Oidc,
-            public_url: "https://meter.example".into(),
-            oidc_issuer: "https://identity.example".into(),
-            oidc_client_id: "meter".into(),
-            oidc_client_secret: "secret".into(),
-            oidc_allowed_groups: vec!["operators".into()],
-            ..AuthConfig::default()
-        })
+        let oidc = Oidc::new(
+            &AuthConfig {
+                mode: AuthMode::Oidc,
+                public_url: "https://meter.example".into(),
+                oidc_issuer: "https://identity.example".into(),
+                oidc_client_id: "meter".into(),
+                oidc_client_secret: "secret".into(),
+                oidc_allowed_groups: vec!["operators".into()],
+                ..AuthConfig::default()
+            },
+            Arc::new(crate::auth::logging::SecurityLog::default()),
+        )
         .unwrap();
         let metadata = serde_json::from_value(serde_json::json!({
             "issuer": "https://identity.example",
@@ -571,6 +637,7 @@ mod tests {
         *oidc.discovery.lock().await = Discovery {
             provider: Some(Arc::new(provider)),
             retry: Instant::now() + Duration::from_secs(30),
+            failures: 0,
         };
         oidc
     }

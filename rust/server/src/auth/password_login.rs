@@ -19,6 +19,7 @@ pub enum LoginFailure {
     Stale,
     Throttled,
     Busy,
+    Capacity,
     Password,
 }
 
@@ -28,7 +29,7 @@ impl LoginFailure {
             Self::Failed => "failed",
             Self::Stale => "stale",
             Self::Throttled => "throttled",
-            Self::Busy => "busy",
+            Self::Busy | Self::Capacity => "busy",
             Self::Password => "password",
         }
     }
@@ -118,7 +119,10 @@ impl PasswordLogin {
                 "local",
                 attempt.prior_session,
             )
-            .map_err(|_| LoginFailure::Busy)
+            .map_err(|failure| match failure {
+                super::SessionError::Capacity => LoginFailure::Capacity,
+                super::SessionError::RandomUnavailable => LoginFailure::Busy,
+            })
     }
 }
 
