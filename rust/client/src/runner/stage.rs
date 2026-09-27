@@ -21,8 +21,8 @@ use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     latency::LatencyAccumulator,
     measurement::{
-        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, Direction, FINAL_CHECKPOINT_BUDGET,
-        IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
+        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction,
+        FINAL_CHECKPOINT_BUDGET, IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
 use std::{
@@ -927,7 +927,7 @@ pub(super) async fn measure(
                     }
                 },
                 scheduled = sample.tick() => {
-                    let stalled_tick = scheduled.elapsed() > CHECKPOINT_BUDGET;
+                    let stalled_tick = scheduled.elapsed() > CLIENT_STALL;
                     let window = if transfer_stage.is_some() {
                         let boundary = {
                             let checkpoint = resources.boundary(epoch, BoundaryKind::Sample);

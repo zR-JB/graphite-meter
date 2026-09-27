@@ -5,8 +5,7 @@ use std::collections::{BTreeMap, VecDeque};
 pub const SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 pub const CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
 pub const FINAL_CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
-pub const MAX_CHECKPOINT_GAP: std::time::Duration =
-    SAMPLE_INTERVAL.saturating_add(CHECKPOINT_BUDGET);
+pub const CLIENT_STALL: std::time::Duration = std::time::Duration::from_millis(1500);
 
 pub const MIN_SURVIVOR_NANOS: u64 = 800_000_000;
 pub const MAX_INTERVALS: usize = 128;
