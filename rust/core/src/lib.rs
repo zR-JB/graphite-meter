@@ -5,6 +5,7 @@ pub mod capsule;
 pub mod catalog;
 pub mod discovery;
 pub mod duration;
+pub mod failure;
 pub mod latency;
 pub mod measurement;
 pub mod origin;
