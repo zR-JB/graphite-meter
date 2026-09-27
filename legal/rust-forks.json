@@ -72,11 +72,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "ae24107f60ae728db7d057301d968eca607a4967",
+    "rev": "eab1ae21387de8c3ac0ecce96102edb68066b6dc",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "a4f86508a6814f0625d79384780d92b1ffbce260adfea1f71fbc01a5836dffa6",
+    "diffSha256": "3a40adda5431e36155072053115ca588019be83b0e7f795bc23bb3dd4a2e82c8",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -132,6 +132,10 @@
       },
       {
         "subject": "Expose connection lifetime and buffered stream payload",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound receive reassembly metadata and copy backing",
         "origin": "graphite-meter"
       }
     ],
