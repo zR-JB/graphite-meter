@@ -85,9 +85,7 @@ impl Http3Client {
         transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
         config.transport_config(Arc::new(transport));
 
-        let addresses: Vec<_> = tokio::net::lookup_host((origin.host.as_str(), origin.port))
-            .await?
-            .collect();
+        let addresses = graphite_meter_net::resolve(&origin.host, origin.port).await?;
         let mut last_error: Option<Error> = None;
         for address in addresses {
             let bind: SocketAddr = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;

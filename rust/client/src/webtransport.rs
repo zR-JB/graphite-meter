@@ -111,7 +111,7 @@ impl Session {
             } else {
                 uri.port_u16().ok_or("invalid WebTransport port")?
             };
-            let addresses: Vec<_> = tokio::net::lookup_host((host, port)).await?.collect();
+            let addresses = graphite_meter_net::resolve(host, port).await?;
             let tls = crate::tls::config(insecure)?;
             let mut config =
                 quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));

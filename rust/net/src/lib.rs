@@ -93,8 +93,32 @@ fn server_name(host: &str) -> io::Result<ServerName<'static>> {
     ServerName::try_from(host.to_owned()).map_err(io::Error::other)
 }
 
+#[derive(Debug)]
+pub struct Unreachable(io::Error);
+impl std::fmt::Display for Unreachable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+impl std::error::Error for Unreachable {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
+fn unreachable(error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), Unreachable(error))
+}
+
+pub async fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
+    Ok(tokio::net::lookup_host((host, port))
+        .await
+        .map_err(unreachable)?
+        .collect())
+}
+
 async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
-    let addresses: Vec<SocketAddr> = tokio::net::lookup_host((host, port)).await?.collect();
+    let addresses = resolve(host, port).await?;
     let (v6, v4): (Vec<_>, Vec<_>) = addresses.into_iter().partition(SocketAddr::is_ipv6);
     let mut ordered = Vec::with_capacity(v6.len() + v4.len());
     let (mut v6, mut v4) = (v6.into_iter(), v4.into_iter());
@@ -111,7 +135,7 @@ async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
         if let Some(address) = pending.next() {
             attempts.spawn(TcpStream::connect(address));
         } else if attempts.is_empty() {
-            return Err(last);
+            return Err(unreachable(last));
         }
         let stagger = tokio::time::sleep(Duration::from_millis(250));
         tokio::select! {

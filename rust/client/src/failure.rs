@@ -40,8 +40,18 @@ impl std::fmt::Display for LaneFailure {
 }
 impl std::error::Error for LaneFailure {}
 
-pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) -> FailureReason {
-    loop {
+/// The error and its causes. io::Error::source() skips its own payload, which carries a wrapped cause.
+fn causes<'a>(
+    error: &'a (dyn std::error::Error + 'static),
+) -> impl Iterator<Item = &'a (dyn std::error::Error + 'static)> {
+    std::iter::successors(Some(error), |error| match error.downcast_ref::<std::io::Error>() {
+        Some(io) => io.get_ref().map(|inner| inner as &(dyn std::error::Error + 'static)),
+        None => error.source(),
+    })
+}
+
+pub fn reason(error: &(dyn std::error::Error + 'static), preparing: bool) -> FailureReason {
+    for error in causes(error) {
         if let Some(failure) = error.downcast_ref::<MeasurementFailure>() {
             return failure.0;
         }
@@ -61,8 +71,7 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
         if error.is::<tokio::time::error::Elapsed>() {
             return FailureReason::Timeout;
         }
-        let io = error.downcast_ref::<std::io::Error>();
-        if let Some(io) = io {
+        if let Some(io) = error.downcast_ref::<std::io::Error>() {
             match io.kind() {
                 std::io::ErrorKind::TimedOut => return FailureReason::Timeout,
                 std::io::ErrorKind::InvalidData => {}
@@ -72,20 +81,56 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
         if error.is::<serde_json::Error>() || error.is::<graphite_meter_core::wire::WireError>() {
             return FailureReason::ProtocolError;
         }
-        // io::Error::source() skips its own payload, which carries a wrapped wire cause.
-        let next = match io {
-            Some(io) => io.get_ref().map(|inner| inner as &(dyn std::error::Error + 'static)),
-            None => error.source(),
-        };
-        let Some(source) = next else {
-            return if preparing {
-                FailureReason::PreparationFailed
-            } else {
-                FailureReason::ConnectionLost
-            };
-        };
-        error = source;
     }
+    if preparing {
+        FailureReason::PreparationFailed
+    } else {
+        FailureReason::ConnectionLost
+    }
+}
+
+pub fn text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut network = false;
+    for cause in causes(error) {
+        if cause.is::<graphite_meter_net::Unreachable>() {
+            return "Server could not be reached".into();
+        }
+        if let Some(rustls::Error::InvalidCertificate(certificate)) = cause.downcast_ref() {
+            use rustls::CertificateError::{Expired, ExpiredContext, NotValidYet, NotValidYetContext, UnknownIssuer};
+            let detail = match certificate {
+                UnknownIssuer => "certificate signed by unknown authority".into(),
+                Expired | ExpiredContext { .. } | NotValidYet | NotValidYetContext { .. } => {
+                    "certificate has expired or is not yet valid".into()
+                }
+                other => clean(&other.to_string(), 200),
+            };
+            return format!(
+                "Certificate not trusted: {detail}. Turn on Skip TLS verify (-insecure) only for a server you trust."
+            );
+        }
+        network |=
+            cause.is::<std::io::Error>() || cause.is::<hyper::Error>() || cause.is::<tokio::time::error::Elapsed>();
+    }
+    if network {
+        reason(error, false).label().into()
+    } else {
+        clean(&error.to_string(), 320)
+    }
+}
+
+fn clean(text: &str, limit: usize) -> String {
+    let text = text.chars().map(|character| {
+        if graphite_meter_core::text::terminal_character(character) {
+            character
+        } else {
+            ' '
+        }
+    });
+    let text: String = text.collect();
+    if text.chars().count() <= limit {
+        return text;
+    }
+    text.chars().take(limit.saturating_sub(1)).chain(['…']).collect()
 }
 
 pub(crate) fn lane_error(error: Error) -> Error {
