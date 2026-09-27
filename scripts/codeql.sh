@@ -16,9 +16,9 @@ git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$out/src"
 cat >"$out/build-go.sh" <<'BUILD'
 #!/usr/bin/env bash
 set -euo pipefail
-go build ./...
-go build -o /dev/null ../rust/tests/server_client.go
-go build -o /dev/null ../rust/tests/h3_client.go
+go build -buildvcs=false ./...
+go build -buildvcs=false -o /dev/null ../rust/tests/server_client.go
+go build -buildvcs=false -o /dev/null ../rust/tests/h3_client.go
 BUILD
 for language in go javascript-typescript python actions rust; do
     echo "CodeQL $language" >&2
