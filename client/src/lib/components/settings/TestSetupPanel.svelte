@@ -99,11 +99,7 @@
   const latencyTargets = $derived(
     pathOptions(
       "latency",
-      store.latencySelection.mode === "primary"
-        ? selectedServers.filter(
-            (server) => server.id === store.primaryLatencyServer,
-          )
-        : selectedServers,
+      selectedServers,
       store.servers,
       store.config,
       undefined,

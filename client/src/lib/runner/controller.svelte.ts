@@ -168,17 +168,6 @@ export function createApplicationController(
   const check = (options?: CheckOptions) =>
     Promise.all(selected().map((connection) => connection.check(options)));
 
-  function serverConfig(id: string): RunnerConfig {
-    const config = $state.snapshot(store.config);
-    if (
-      store.latencySelection.mode === "primary" &&
-      id !== store.primaryLatencyServer
-    ) {
-      config.stages.latency = false;
-      config.skipLoadedLatencyWhenStageOff = true;
-    }
-    return config;
-  }
   function makeTransportPortable(role: ConnectionRole) {
     store.config.transports[TARGET_KEY[role]] = portableTransportSelection(
       role,
@@ -191,7 +180,7 @@ export function createApplicationController(
     for (const [id, connection] of connections)
       connection.select(
         store.serverCatalog && store.selectedServers.includes(id)
-          ? serverConfig(id)
+          ? $state.snapshot(store.config)
           : null,
       );
     host.limiter.drain();
@@ -234,16 +223,13 @@ export function createApplicationController(
       store.selectedServers = selection.ids;
       store.unresolvedServers = selection.unresolved;
       // A shared preference must resolve within each selected server.
+      const servers = catalog.servers.filter((server) =>
+        selection.ids.includes(server.id),
+      );
       for (const role of CONNECTION_ROLES) {
-        const value = store.config.transports[TARGET_KEY[role]];
-        const servers = catalog.servers.filter(
-          (server) =>
-            selection.ids.includes(server.id) &&
-            (role !== "latency" ||
-              store.latencySelection.mode === "all" ||
-              server.id === store.primaryLatencyServer),
+        const origin = selectionOrigin(
+          store.config.transports[TARGET_KEY[role]],
         );
-        const origin = selectionOrigin(value);
         if (
           servers.length > 1 ||
           (origin &&
@@ -293,14 +279,8 @@ export function createApplicationController(
     const next = selectedInCatalogOrder(store.serverCatalog, ids).map(
       (server) => server.id,
     );
-    if (JSON.stringify(next) !== JSON.stringify(store.selectedServers)) {
-      makeTransportPortable("throughput");
-      if (
-        store.latencySelection.mode === "all" ||
-        !next.includes(store.primaryLatencyServer)
-      )
-        makeTransportPortable("latency");
-    }
+    if (JSON.stringify(next) !== JSON.stringify(store.selectedServers))
+      for (const role of CONNECTION_ROLES) makeTransportPortable(role);
     if (approval && !ids.includes(approval.id)) cancelServerApproval();
     cancelPendingStart();
     store.selectedServers = next;
@@ -367,25 +347,6 @@ export function createApplicationController(
       popup.close();
       if (approval === task) approval = null;
     }
-  }
-  function configureLatency(
-    mode: "primary" | "all",
-    serverId = store.primaryLatencyServer,
-  ) {
-    if (
-      store.isRunning ||
-      store.preparing ||
-      !store.selectedServers.includes(serverId)
-    )
-      return false;
-    if (
-      mode !== store.latencySelection.mode ||
-      (mode === "primary" && serverId !== store.primaryLatencyServer)
-    )
-      makeTransportPortable("latency");
-    store.latencySelection = { mode, serverId };
-    selectIntent();
-    return true;
   }
   function focusServer(id: string) {
     if (
@@ -584,31 +545,15 @@ export function createApplicationController(
           message: view.message,
         });
     }
-    const primary = dropped.find(
-      ({ server }) =>
-        store.latencySelection.mode === "primary" &&
-        latencyPathNeeded(config) &&
-        server.id === store.primaryLatencyServer,
-    );
-    if (!prepared.length || primary)
+    if (!prepared.length)
       throw new Error(
-        (primary ? [primary] : dropped)
+        dropped
           .map(({ server, message }) =>
             servers.length > 1 ? `${server.name}: ${message}` : message,
           )
           .join("; "),
       );
-    const focus =
-      (store.latencySelection.mode === "primary" &&
-        prepared.find(
-          (server) => server.server.id === store.primaryLatencyServer,
-        )) ||
-      prepared.reduce((best, next) =>
-        (next.paths.latency?.rttMs ?? Infinity) <
-        (best.paths.latency?.rttMs ?? Infinity)
-          ? next
-          : best,
-      );
+    const [focus] = prepared;
     store.reset();
     store.preparationStatus = "launching";
     store.latencyFocus = focus.server.id;
@@ -744,7 +689,6 @@ export function createApplicationController(
     signInServer,
     cancelServerApproval,
     focusServer,
-    configureLatency,
     async retry({ id, role }: { id?: string; role?: ConnectionRole } = {}) {
       if (!booted || store.isRunning) return;
       cancelPendingStart();

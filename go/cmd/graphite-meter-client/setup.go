@@ -79,7 +79,7 @@ var (
 				return errors.New("use an http:// or https:// origin, for example https://meter.example")
 			}
 			if canonical != m.cfg.BaseURL {
-				m.cfg.ServerIDs, m.cfg.LatencyServer = nil, ""
+				m.cfg.ServerIDs = nil
 			}
 			m.cfg.BaseURL = canonical
 			m.notice = "Catalogue " + canonical + "."
@@ -110,17 +110,6 @@ var (
 			protocols := []string{"auto", "http1", "http2", "http3"}
 			m.cfg.ThroughputProtocol = nextChoice(m.cfg.ThroughputProtocol, protocols, step)
 			m.notice = "HTTP version: " + protocolLabel(m.cfg.ThroughputProtocol) + "."
-		},
-	}
-	latencyServerRow = &setting{
-		view: latencyServerView,
-		cycle: func(m *model, step int) {
-			if latencyServerView(*m).inert {
-				m.notice = "Select two ready servers to choose whose latency is the result."
-				return
-			}
-			m.cfg.LatencyServer = nextChoice(m.cfg.LatencyServer, append([]string{""}, m.readyServers()...), step)
-			m.notice = "Latency server: " + latencyServerView(*m).value + "."
 		},
 	}
 	warmupRow = &setting{label: "Warmup", span: func(c *goclient.Config) *time.Duration { return &c.Warmup },
@@ -197,8 +186,7 @@ var setupGroups = []struct {
 	rows  []*setting
 }{
 	{"", []*setting{startRow}},
-	{"Connection", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow,
-		latencyServerRow}},
+	{"Connection", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow}},
 	{"Stages", []*setting{
 		stageSetting("Latency", "Idle round trips",
 			func(c *goclient.Config) *bool { return &c.Stages.Latency },
@@ -243,15 +231,6 @@ func protocolView(m model) setupRow {
 	}
 	return setupRow{label: "HTTP version", value: protocolLabel(m.cfg.ThroughputProtocol),
 		help: "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."}
-}
-
-func latencyServerView(m model) setupRow {
-	value := "Automatic"
-	if m.cfg.LatencyServer != "" {
-		value = m.serverName(m.cfg.LatencyServer)
-	}
-	return setupRow{label: "Latency server", value: value, inert: len(m.readyServers()) < 2,
-		help: "Whose latency is the result; all are probed. ←/→ picks one."}
 }
 
 func (m model) activate(s *setting) (tea.Model, tea.Cmd) {

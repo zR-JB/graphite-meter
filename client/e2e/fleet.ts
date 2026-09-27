@@ -47,7 +47,6 @@ export const baseConfig = {
 export interface Seed {
   servers?: Pick<Server, "id" | "url">[];
   config?: Partial<Record<keyof RunnerConfig, unknown>>;
-  latency?: { mode: "all" | "primary"; serverId: string };
 }
 
 export async function open(page: Page, origin = home.url, seed: Seed = {}) {
@@ -58,7 +57,7 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
       storageTypes: "local_storage,indexeddb",
     });
   await page.addInitScript(
-    ({ servers, config, latency }) => {
+    ({ servers, config }) => {
       if (localStorage.getItem("graphite-meter:v1")) return;
       if (servers)
         localStorage.setItem(
@@ -67,17 +66,12 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
         );
       localStorage.setItem(
         "graphite-meter:v1",
-        JSON.stringify({
-          config,
-          latencySelection: latency,
-          resultHistoryPreference: "enabled",
-        }),
+        JSON.stringify({ config, resultHistoryPreference: "enabled" }),
       );
     },
     {
       servers: seed.servers?.map(({ id, url }) => ({ id, url })),
       config: { ...baseConfig, ...seed.config },
-      latency: seed.latency ?? { mode: "primary", serverId: "self" },
     },
   );
   await page.goto(origin);

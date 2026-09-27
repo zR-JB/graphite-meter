@@ -27,14 +27,15 @@
     () => ({ run: store.runSeq, lanes }),
     (profile) => profile.run,
   );
+  const saved = $derived(store.result && store.latencyServer);
 </script>
 
 <div class="live-profile" style:opacity={profile.opacity}>
   <LatencyProfileView
     lanes={profile.shown.lanes}
     variant="bare"
-    added={store.result?.addedLatency}
-    stability={store.result?.latency?.stabilityPct ?? null}
+    added={saved?.addedLatency}
+    stability={saved?.latency?.stabilityPct ?? null}
     source={servers.length > 1
       ? servers.find((server) => server.id === store.latencyFocus)?.name
       : undefined}

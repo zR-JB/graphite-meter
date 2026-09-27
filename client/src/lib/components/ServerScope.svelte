@@ -9,7 +9,6 @@
     onchange,
     label,
     aggregate,
-    hint,
     disabled = false,
     disabledIds = [],
     quiet = false,
@@ -19,13 +18,11 @@
     onchange: (id: string) => void;
     label: string;
     aggregate?: string;
-    hint?: string;
     disabled?: boolean;
     disabledIds?: readonly string[];
     /** A lens over results: a server mark and a borderless field. */
     quiet?: boolean;
   } = $props();
-  const hintId = $props.id();
 </script>
 
 {#if quiet}<span class="lens-mark"><Icon name="server" /></span>{/if}
@@ -33,7 +30,6 @@
   class="server-scope"
   class:quiet
   aria-label={label}
-  aria-describedby={hint && value === "" ? hintId : undefined}
   {value}
   {disabled}
   onchange={(event) => onchange(event.currentTarget.value)}
@@ -45,7 +41,6 @@
     >
   {/each}
 </select>
-{#if hint}<span id={hintId} hidden>{hint}</span>{/if}
 
 <style>
   .server-scope {

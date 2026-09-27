@@ -177,18 +177,16 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 }
 
 func (c *coordinator) focus() *participant {
-	var chosen, prepared, fallback *participant
+	var prepared, fallback *participant
 	for _, p := range c.active() {
 		switch {
-		case p.id() == c.cfg.LatencyServer:
-			chosen = p
 		case p.id() == c.prepared.LatencyFocus:
 			prepared = p
 		case fallback == nil && p.measured(StageLatency):
 			fallback = p
 		}
 	}
-	return cmp.Or(chosen, prepared, fallback)
+	return cmp.Or(prepared, fallback)
 }
 
 func (p *participant) measured(stage Stage) bool {

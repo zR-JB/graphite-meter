@@ -180,7 +180,6 @@ func (c Config) checkPaths() error {
 type Config struct {
 	BaseURL               string
 	ServerIDs             []string
-	LatencyServer         string
 	ThroughputTarget      string
 	ThroughputProtocol    string
 	ThroughputTransport   string
