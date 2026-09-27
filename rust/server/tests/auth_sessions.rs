@@ -78,11 +78,11 @@ fn current_and_subject_logout_have_distinct_scope() {
     assert_eq!(store.revoke_subject("subject"), 0);
 }
 
-#[test]
-fn oldest_subject_eviction_precedes_global_capacity_and_failed_rotation_preserves_prior() {
+#[tokio::test(start_paused = true)]
+async fn oldest_subject_eviction_precedes_global_capacity_and_failed_rotation_preserves_prior() {
     let store = SessionStore::new();
     let (_, oldest) = store.create("subject", "name", "local", None).unwrap();
-    std::thread::sleep(Duration::from_millis(1));
+    tokio::time::advance(Duration::from_millis(1)).await;
     let mut siblings = Vec::new();
     for _ in 1..8 {
         siblings.push(store.create("subject", "name", "local", None).unwrap().1);

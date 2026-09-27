@@ -2,7 +2,8 @@ use graphite_meter_core::wire::{UploadProgress, decode_upload_progress, encode_u
 use graphite_meter_server::upload::{
     MAX_LIVE_UPLOADS, MAX_UPLOADS_PER_CLIENT, Owner, UPLOAD_RETENTION, UploadError, UploadStore,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 #[test]
 fn tokens_are_stateless_authenticated_and_store_local() {
@@ -122,15 +123,18 @@ fn global_capacity_is_bounded() {
     );
 }
 
-#[test]
-fn concurrent_lanes_credit_each_received_chunk_once() {
+#[tokio::test(start_paused = true)]
+async fn concurrent_lanes_credit_each_received_chunk_once() {
     let store = UploadStore::new().unwrap();
     let id = store.mint().unwrap();
+    let runtime = tokio::runtime::Handle::current();
     std::thread::scope(|scope| {
         for _ in 0..8 {
             let store = &store;
             let id = &id;
+            let runtime = runtime.clone();
             scope.spawn(move || {
+                let _runtime = runtime.enter();
                 let mut lane = store.begin(id, &Owner::principal("a")).unwrap();
                 for _ in 0..500 {
                     lane.record(64);
@@ -141,7 +145,7 @@ fn concurrent_lanes_credit_each_received_chunk_once() {
     });
     let before = store.checkpoint(&id, &Owner::principal("a")).unwrap();
     assert_eq!(before.bytes, 256_000);
-    std::thread::sleep(Duration::from_millis(10));
+    tokio::time::advance(Duration::from_millis(10)).await;
     let after = store.checkpoint(&id, &Owner::principal("a")).unwrap();
     assert_eq!(after.bytes, before.bytes);
     assert!(
@@ -150,7 +154,7 @@ fn concurrent_lanes_credit_each_received_chunk_once() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
     let store = UploadStore::new().unwrap();
     let id = store.mint().unwrap();

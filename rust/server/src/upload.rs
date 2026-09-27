@@ -8,8 +8,9 @@ use std::{
     collections::HashMap,
     fmt,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Duration,
 };
+use tokio::time::Instant;
 
 pub const MAX_LIVE_UPLOADS: usize = 1000;
 pub const MAX_UPLOADS_PER_CLIENT: usize = 32;
@@ -157,7 +158,7 @@ impl UploadStore {
         Ok(Self {
             inner: Arc::new(Store {
                 key,
-                origin: Instant::now(),
+                origin: Instant::now() - Duration::from_nanos(1),
                 next_sweep: Mutex::new(Instant::now() + Duration::from_secs(5)),
                 entries: Mutex::new(UploadEntries::default()),
             }),
@@ -290,7 +291,7 @@ impl UploadStore {
             aggregate,
             claim,
             changed,
-            next_tick: tokio::time::Instant::now() + Duration::from_millis(100),
+            next_tick: Instant::now() + Duration::from_millis(100),
             ready: false,
             ended: false,
         })
@@ -398,7 +399,7 @@ pub struct UploadSubscription {
     aggregate: Arc<Mutex<Aggregate>>,
     claim: Arc<()>,
     changed: Arc<tokio::sync::Notify>,
-    next_tick: tokio::time::Instant,
+    next_tick: Instant,
     ready: bool,
     ended: bool,
 }
@@ -451,7 +452,7 @@ impl UploadSubscription {
             tokio::select! {
                 () = &mut notified => { ticked = false; }
                 () = tokio::time::sleep_until(self.next_tick) => {
-                    self.next_tick = tokio::time::Instant::now() + Duration::from_millis(100);
+                    self.next_tick = Instant::now() + Duration::from_millis(100);
                     ticked = true;
                 }
             }
