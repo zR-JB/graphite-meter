@@ -67,6 +67,8 @@ export interface HoverInfo {
   /** The real bucket glyph selected near the pointer, never an interpolated RTT. */
   latencyX: number | null;
   rtt: number | null;
+  /** The selected glyph was probed under load, so it is drawn in the loaded-latency ink. */
+  rttLoaded: boolean;
   pingCount: number;
   timeoutCount: number;
   latencyOverflow: boolean;
@@ -388,6 +390,7 @@ export class ChartEngine {
       upBytesPerSec,
       latencyX,
       rtt,
+      rttLoaded: !!latencyBucket?.underLoad,
       pingCount: latencyBucket?.pingCount ?? 0,
       timeoutCount: latencyBucket?.timeoutCount ?? 0,
       latencyOverflow:
