@@ -7,6 +7,7 @@ differing-rtt and shared-cap drive the browser UI against four coordinated Go se
 compares the Go and Rust servers and clients on one shaped path.
 """
 
+import contextlib
 import hashlib
 import itertools
 import json
@@ -144,9 +145,7 @@ def run_cell(environment, output, profile, count, repeat):
                 rows.write(json.dumps(result) + "\n")
             print(f"{cell}: {result['downloadMbps']:.1f} Mbit/s; browser CPU {result['browserCpuSec']:.2f}s; peak RSS {peak_rss / 2**20:.1f} MiB", flush=True)
         finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
+            stop([process])
 
 
 PROFILES = {  # name: (client link Mbit/s, delay ms and capacity Mbit/s per server)
@@ -410,6 +409,10 @@ def stop(processes):
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+    # The PID namespace's init inherits the processes a browser leaves behind and must collect them.
+    with contextlib.suppress(ChildProcessError):
+        while os.waitpid(-1, os.WNOHANG)[0]:
+            pass
 
 
 def matrix(env, output, router, node, repeats):
