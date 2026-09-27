@@ -194,6 +194,21 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   await expect(heading).toContainText("2000 results");
 });
 
+test("a closed Columns popover never takes a tap meant for a result", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await history(page);
+  const options = page.getByRole("dialog", { name: "History view options" });
+  await page
+    .getByRole("button", { name: "Choose columns and sort order" })
+    .click();
+  await expect(options).toBeVisible();
+  await page.raw.press("Escape");
+  await page.locator(".result-row").click();
+  await expect(page.locator(".result-detail")).toBeVisible();
+});
+
 test("unsupported and malformed rows are skipped, kept and clearable", async (page) => {
   await fixturePage(page);
   const current = record(1);
