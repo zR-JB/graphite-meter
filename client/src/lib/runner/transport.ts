@@ -133,7 +133,10 @@ export function openLane(
     else if (msg.type === "error") fail(msg);
     else on(msg);
   };
+  let discarded = false;
   const discard = () => {
+    if (discarded) return;
+    discarded = true;
     clearTimeout(establish);
     worker.onmessage = worker.onerror = null;
     worker.terminate();

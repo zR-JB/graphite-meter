@@ -599,7 +599,7 @@ test("a session lane times out its establishment and is released when it never a
   expect([released, silent.terminated]).toEqual([false, 0]);
   jest.advanceTimersByTime(1);
   await stopping;
-  expect(silent.terminated).toBeGreaterThan(0);
+  expect(silent.terminated).toBe(1);
 });
 
 test("an HTTP receiver feed without its final record releases the stage after the final grace", async () => {
