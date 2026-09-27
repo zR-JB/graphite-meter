@@ -397,38 +397,45 @@ func (m model) runView(w, h int) string {
 	if !m.run.live() {
 		results, _ = m.resultsView(w - 4)
 	}
-	resultsH := 0
-	if results != "" {
-		resultsH = lipgloss.Height(results) + 2
+	if results == "" {
+		return m.stageView(w, h)
 	}
+	title := "Results"
+	if m.multipleRunServers() {
+		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
+	}
+	bottom := m.st.panel(title, results, w, 0)
+	// Results carry every stage's headline, so the paths sit beside them only when there is room.
+	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
+		fields := strings.Join(m.testFields(w-1-rw-4), "\n")
+		bottomH := max(lipgloss.Height(results), lipgloss.Height(fields)) + 2
+		bottom = join(m.st.panel(title, results, rw, bottomH), m.st.panel("Test", fields, w-1-rw, bottomH), true)
+	}
+	if timelineH := h - lipgloss.Height(bottom); timelineH >= 9 {
+		return m.timelinePanel(w, timelineH) + "\n" + bottom
+	}
+	return bottom
+}
+
+func (m model) stageView(w, h int) string {
 	lw, rw, side := columns(w)
 	if side {
 		lw, rw = w*2/5, w-1-w*2/5
 	}
 	test := m.testView(lw-4, !side)
 	testH := lipgloss.Height(test) + 2
-	liveH := h - resultsH
+	liveH := h
 	if !side {
 		liveH -= testH
 	}
-	var top string
 	switch {
 	case side && (m.run.live() || liveH >= 9):
 		liveH = max(liveH, testH, 9)
-		top = join(m.st.panel("Test", test, lw, liveH), m.timelinePanel(rw, liveH), true)
+		return join(m.st.panel("Test", test, lw, liveH), m.timelinePanel(rw, liveH), true)
 	case m.run.live() || liveH >= 9:
-		top = m.st.panel("Test", test, lw, 0) + "\n" + m.timelinePanel(rw, max(liveH, 7))
-	default:
-		top = m.st.panel("Test", m.testView(w-4, !side), w, 0)
+		return m.st.panel("Test", test, lw, 0) + "\n" + m.timelinePanel(rw, max(liveH, 7))
 	}
-	if results == "" {
-		return top
-	}
-	title := "Results"
-	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
-	}
-	return top + "\n" + m.st.panel(title, results, w, resultsH)
+	return m.st.panel("Test", m.testView(w-4, !side), w, 0)
 }
 
 func (m model) timelinePanel(w, h int) string {
@@ -440,16 +447,29 @@ func (m model) timelinePanel(w, h int) string {
 }
 
 func (m model) testView(w int, compact bool) string {
-	r := m.run
-	var lines []string
-	field := func(label, value string) { lines = append(lines, m.st.text.Render(pad(label, 11))+value) }
-	switch {
-	case compact:
+	if compact {
 		return strings.Join(m.stageTrack(w), "\n")
+	}
+	return strings.Join(append(append(m.testFields(w), ""), m.stageTrack(w)...), "\n")
+}
+
+func (m model) testFields(w int) []string {
+	r := m.run
+	label := m.st.text.Render(pad("Servers", 11))
+	var lines []string
+	field := func(name, value string) {
+		for i, line := range wrapParts(strings.Split(value, " · "), max(w-11, 12)) {
+			if i > 0 {
+				name = ""
+			}
+			lines = append(lines, m.st.text.Render(pad(name, 11))+m.st.value.Render(line))
+		}
+	}
+	switch {
 	case r.details == nil && r.live():
-		field("Servers", m.spin.View()+m.st.muted.Render(" Checking paths…"))
+		lines = append(lines, label+m.spin.View()+m.st.muted.Render(" Checking paths…"))
 	case r.details == nil:
-		field("Servers", m.st.muted.Render(missing))
+		lines = append(lines, label+m.st.muted.Render(missing))
 	default:
 		var names, throughputs []string
 		streams, latency := "", missing
@@ -464,19 +484,17 @@ func (m model) testView(w int, compact bool) string {
 		}
 		servers := strings.Join(names, ", ")
 		if len(names) > 1 {
-			servers += m.st.muted.Render(" · Combined")
+			servers += " · Combined"
 			streams = "per server · " + streams
 		}
-		field("Servers", m.st.value.Render(servers))
-		field("Throughput", m.st.value.Render(strings.Join(throughputs, " / ")))
-		field("Latency", m.st.value.Render(latency))
-		field("Streams", m.st.value.Render(streams))
-		timing := "warmup " + fmtSetting(m.cfg.Warmup) + " · latency cadence " + cadenceLabel(m.cfg.PingInterval) +
-			", loaded " + cadenceLabel(m.cfg.LoadedPingInterval)
-		field("Timing", m.st.value.Render(timing))
+		field("Servers", servers)
+		field("Throughput", strings.Join(throughputs, " / "))
+		field("Latency", latency)
+		field("Streams", streams)
+		field("Timing", "warmup "+fmtSetting(m.cfg.Warmup)+" · latency cadence "+cadenceLabel(m.cfg.PingInterval)+
+			" · loaded cadence "+cadenceLabel(m.cfg.LoadedPingInterval))
 	}
-	lines = append(lines, "")
-	return strings.Join(append(lines, m.stageTrack(w)...), "\n")
+	return lines
 }
 
 func (m model) stageTrack(w int) []string {
@@ -658,8 +676,11 @@ func (m model) resultsView(w int) (string, string) {
 			}
 			rates := r.meanRates(stage.Name)
 			measured = measured || rates != ""
-			if rates == "" && !r.live() {
+			switch {
+			case rates == "" && !r.live():
 				rates = unmeasured(i)
+			case r.stages[i].state == stagePartial:
+				rates += "  " + m.st.warn.Render(stageStatusLabels[stagePartial])
 			}
 			if rates != "" {
 				throughput = append(throughput, []string{compactStage(stage.Name), rates})

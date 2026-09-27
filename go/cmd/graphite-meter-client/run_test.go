@@ -747,10 +747,11 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 func TestScrollingRevealsTheWholeBody(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a", "b")
-	m.width, m.height = 80, 16
+	m.width, m.height = 80, 12
 	m.run.outcome = goclient.OutcomeComplete
 	for _, stage := range []goclient.Stage{goclient.StageDownload, goclient.StageUpload, goclient.StageBidirectional} {
-		m.run.results = append(m.run.results, goclient.Result{Stage: stage, Direction: goclient.Down, MeanBps: 1e9})
+		m.run.results = append(m.run.results,
+			goclient.Result{Stage: stage, Direction: goclient.Down, MeanBps: 1e9, Err: errors.New("lost")})
 	}
 	if f := m.layout(); len(f.body) <= f.bodyH || !strings.Contains(ansi.Strip(f.footer), "pgdn more") {
 		t.Fatalf("a %d-line body in %d rows offers no scrolling: %q", len(f.body), f.bodyH, f.footer)
@@ -854,5 +855,22 @@ func TestLiveRatesWaitForEvidence(t *testing.T) {
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{sample}}))
 	if live := ansi.Strip(m.liveView(60, 16)); !strings.Contains(live, "↓ 8.00 Mbit/s") {
 		t.Fatalf("the first sample did not show as measured: %q", live)
+	}
+}
+
+func TestFinishedRunGivesTheRoomToTheTimeline(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	m.run.outcome = goclient.OutcomeComplete
+	m.run.results = []goclient.Result{{Stage: goclient.StageDownload, Direction: goclient.Down, MeanBps: 1e9}}
+	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency,
+		Latency: goclient.LatencyStats{Count: 3, P50: time.Millisecond}})
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		m.width, m.height = size[0], size[1]
+		screen := ansi.Strip(view(m))
+		if !strings.Contains(screen, "Timeline") || !strings.Contains(screen, "Results") ||
+			strings.Contains(screen, "✓") {
+			t.Errorf("%dx%d finished screen:\n%s", size[0], size[1], screen)
+		}
 	}
 }
