@@ -8,6 +8,7 @@
   } from "../runner/paths";
   import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
+  import { getApplicationController } from "../runner/controllerContext";
   import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
   import { buildSegments } from "../runner/schedule";
@@ -31,13 +32,14 @@
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
   let { onOpenLegal }: { onOpenLegal: () => void } = $props();
-  let inspectedServer = $state("");
+  const controller = getApplicationController();
   const availableServers = $derived(
     store.run?.servers.map((entry) => entry.server) ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
+  // Details follows the lens: its server, else the one whose latency is shown.
   const selectedServer = $derived(
-    availableServers.find((server) => server.id === inspectedServer) ??
+    availableServers.find((server) => server.id === store.resultScope) ??
       availableServers.find((server) => server.id === store.latencyFocus) ??
       availableServers[0],
   );
@@ -232,7 +234,7 @@
               servers={availableServers}
               value={selectedServer?.id ?? ""}
               label="Inspect server"
-              onchange={(id) => (inspectedServer = id)}
+              onchange={controller.showServer}
             />
           </dd>
         </div>

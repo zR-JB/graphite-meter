@@ -348,15 +348,15 @@ export function createApplicationController(
       if (approval === task) approval = null;
     }
   }
-  function focusServer(id: string) {
-    if (
-      store.serverDetails &&
-      !store.serverDetails.servers.some(
-        (server) => server.server.id === id && server.latencyTarget,
-      )
-    )
-      return;
-    store.focusLatencyServer(id);
+  /** The one lens: "" shows all servers, else one; latency follows when that server measured it. */
+  function showServer(id: string) {
+    store.resultScope = id;
+    const details = store.result?.multiServer ?? store.serverDetails;
+    const measured = details?.servers.some(
+      (server) => server.server.id === id && server.latencyTarget,
+    );
+    const focus = id && (measured || !details) ? id : details?.latencyFocus;
+    if (focus) store.focusLatencyServer(focus);
   }
 
   function ingest(event: RunnerEvent) {
@@ -688,7 +688,7 @@ export function createApplicationController(
     applyServers,
     signInServer,
     cancelServerApproval,
-    focusServer,
+    showServer,
     async retry({ id, role }: { id?: string; role?: ConnectionRole } = {}) {
       if (!booted || store.isRunning) return;
       cancelPendingStart();

@@ -21,16 +21,6 @@
           .map(({ id }) => id)
       : [],
   );
-
-  // One lens for the instrument: the cards follow it, and so does latency when that server measured it.
-  function choose(id: string) {
-    store.resultScope = id;
-    const measured = (server: string) =>
-      details?.servers.some((s) => s.server.id === server && s.latencyTarget);
-    controller.focusServer(
-      id && measured(id) ? id : (details?.latencyFocus ?? servers[0].id),
-    );
-  }
 </script>
 
 <span class="lens">
@@ -38,7 +28,7 @@
     quiet
     {servers}
     value={store.resultScope}
-    onchange={choose}
+    onchange={controller.showServer}
     label="Servers shown in the results"
     aggregate={participants.length < servers.length
       ? `${participants.length} of ${servers.length} servers`
