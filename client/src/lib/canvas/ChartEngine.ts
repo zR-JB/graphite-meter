@@ -306,7 +306,8 @@ export class ChartEngine {
   #retarget(): void {
     this.#dirty = true;
     this.#stopFrames ??= animate((now) => {
-      const more = this.#visible && this.render(now);
+      // Reduced motion draws each update once instead of following the clock.
+      const more = this.#visible && this.render(now) && !still();
       if (!more) this.#stopFrames = null;
       return more;
     });
