@@ -17,4 +17,25 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "settings"
+path = "fuzz_targets/settings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "qpack"
+path = "fuzz_targets/qpack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "huffman"
+path = "fuzz_targets/huffman.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

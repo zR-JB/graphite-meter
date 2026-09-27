@@ -1,0 +1,205 @@
+# Go<->Rust QPACK contract with the unchanged quic-go/qpack v0.6.0. Each block lists field lines as
+# "name value" with \xNN escapes, then "go:" and "rust:" with each side's encoding. From go/, the gate is:
+#   go run ../rust/tests/qpack_vectors.go ../rust/http3/src/qpack/vectors.txt
+
+:method CONNECT
+:protocol webtransport
+:scheme https
+:authority 127.0.0.1:17247
+:path /wt/ping
+origin https://127.0.0.2:17246
+sec-webtransport-http3-draft02 1
+user-agent Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36
+go: 0000cf2f00b95d8749c87a3f89f058d360ea4567b13fd7508b089d5c0b8170dc0ba269df518663c258acd54d5f4b919d29ad1718602275702e05c5702e89a73f2f0e4148b782c69b07522b3d895a74a6b65692c1ca900b810f5f50d3d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765c53facd8f7e8cff4a506ea5531149d4ffda98ca39282a117a7b0f49580b6cae05c0b814dc394761986d975765c
+rust: 0000cf2f00b95d8749c87a3f89f058d360ea4567b13fd7508b089d5c0b8170dc0ba269df518663c258acd54d5f4b919d29ad1718602275702e05c5702e89a73f2f0e4148b782c69b07522b3d895a74a6b65692c1ca900b01315f50d3d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bfb521aeba0bc8b1e632586d975765c53facd8f7e8cff4a506ea5531149d4ffda98ca39282a117a7b0f49580b6cae05c0b814dc394761986d975765c
+
+:method CONNECT
+:protocol webtransport
+:scheme https
+:authority 127.0.0.1:17247
+:path /wt/upload?id=0f3c9a
+user-agent Mozilla/5.0 (X11; Linux x86_64; rv:153.0) Gecko/20100101 Firefox/153.0
+accept */*
+accept-language en-US,en;q=0.9
+accept-encoding gzip, deflate, br, zstd
+sec-webtransport-http3-draft02 1
+origin https://127.0.0.1:17247
+sec-fetch-dest webtransport
+sec-fetch-mode no-cors
+sec-fetch-site same-site
+pragma no-cache
+cache-control no-cache
+priority u=4
+go: 0000cf2f00b95d8749c87a3f89f058d360ea4567b13fd7508b089d5c0b8170dc0ba269df518f63c258b6ba0e393fc3490025648f8f5f50b5d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bed4b3bdc0b6cae0fed4c452753b02004000802a61358594fe580b6cae0fdd5f398b2d4b70ddf45abefb4005df5f10929bd9abfa5242cb40d25fa523b3e94f684c9f2f0e4148b782c69b07522b3d895a74a6b65692c1ca900b810f5f4b919d29ad1718602275702e05c3702e89a77f2f034148b4a549275a42a13f89f058d360ea4567b13f2f034148b4a549275a93c85f85a8eb10f6232f034148b4a549275906497f8640e92ac8324b2daec1cd48ff86a8eb10649cbfe72eaec31ec327d783b606bf
+rust: 0000cf2f00b95d8749c87a3f89f058d360ea4567b13fd7508b089d5c0b8170dc0ba269df518f63c258b6ba0e393fc3490025648f8f5f50b5d07f66a281b0dae053fafc087ed4ce6aadf2a7979c89c6bed4b3bdc0b6cae0fed4c452753b02004000802a61358594fe580b6cae0fdd5f398b2d4b70ddf45abefb4005df5f10929bd9abfa5242cb40d25fa523b3e94f684c9f2f0e4148b782c69b07522b3d895a74a6b65692c1ca900b01315f4b919d29ad1718602275702e05c3702e89a77f2f034148b4a549275a42a13f89f058d360ea4567b13f2f034148b4a549275a93c85f85a8eb10f6232f034148b4a549275906497f8640e92ac8324b2daec1cd48ff86a8eb10649cbfe72eaec31ec327d703753d34
+
+:authority 127.0.0.1:7443
+:method GET
+:path /probe
+:scheme https
+accept-encoding gzip
+user-agent quic-go HTTP/3
+go: 0000508a089d5c0b8170dc75a699d1518562bb0f197fd75f10839bd9ab5f508bed6988b4c7531efdfad867
+rust: 0000508a089d5c0b8170dc75a699d1518562bb0f197fd75f10839bd9ab5f508bed6988b4c7531efdfad867
+
+:method CONNECT
+:protocol webtransport-h3
+:scheme https
+:authority meter.example
+:path /wt/download?bytes=65536&streams=4
+authorization Bearer gm1.eyJzdWIiOiJ0ZXN0In0.c2lnbmF0dXJl
+go: 0000cf2f00b95d8749c87a3f8bf058d360ea4567b12b4ecfd7508aa4a92d8b97c8e9ae82ff519a63c25890fe2aa0e393fc8fd24a881c6db65cf8426c28e9440d7f5f45a1ba51d85b149a90ae5f597dc9cb21b51b283f7f348325405c82a2a8e9c2093f32d1
+rust: 0000cf2f00b95d8749c87a3f8bf058d360ea4567b12b4ecfd7508aa4a92d8b97c8e9ae82ff519a63c25890fe2aa0e393fc8fd24a881c6db65cf8426c28e9440d7f5f45a1ba51d85b149a90ae5f597dc9cb21b51b283f7f348325405c82a2a8e9c2093f32d1
+
+:method POST
+:scheme https
+:authority meter.example
+:path /upload?id=6d2b0f
+content-type application/octet-stream
+content-length 1048576
+go: 0000d4d7508aa4a92d8b97c8e9ae82ff518d62dae838e4ff0d240e4828c12f5f1d901d75d0620d263d4c1c892a56426c28e95485081a79b75c
+rust: 0000d4d7508aa4a92d8b97c8e9ae82ff518d62dae838e4ff0d240e4828c12f5f1d901d75d0620d263d4c1c892a56426c28e95485081a79b75c
+
+:status 200
+content-type application/octet-stream
+cache-control no-store
+access-control-allow-origin *
+timing-allow-origin *
+access-control-expose-headers X-Graphite-Upload-Refusal, Retry-After
+content-length 1048576
+go: 0000d95f1d901d75d0620d263d4c1c892a56426c28e9e8e3ff1e5f409cfc5b1583ae7324ab70ae838e45b6965b503a3e94da54d9e96865496c5485081a79b75c
+rust: 0000d95f1d901d75d0620d263d4c1c892a56426c28e9e8e3ff1e5f409cfc5b1583ae7324ab70ae838e45b6965b503a3e94da54d9e96865496c5485081a79b75c
+
+:status 200
+sec-webtransport-http3-draft draft02
+go: 0000d92f0d4148b782c69b07522b3d895a74a6b65692c1ca9f8592c1ca900b
+rust: 0000d92f0d4148b782c69b07522b3d895a74a6b65692c1ca9f8592c1ca900b
+
+:status 405
+allow GET, HEAD
+content-length 0
+go: 00005f0983680dff2c1d141fc788c5837fd298f0437fc4
+rust: 00005f09033430352c1d141fc788c5837fd298f0437fc4
+
+:status 431
+go: 00005f09836990ff
+rust: 00005f0903343331
+
+:status 429
+retry-after 1
+x-graphite-upload-refusal capacity
+go: 00005f0983684fff2f01b0a9b3d2c39525b3810f2f0bf2b4d60eb9cc92ad6d741c722d6165b503a38620eb190c9f5f
+rust: 00005f09033432392f01b0a9b3d2c39525b301312f0bf2b4d60eb9cc92ad6d741c722d6165b503a38620eb190c9f5f
+
+x-empty
+x-long-name-that-needs-a-multi-byte-length vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+x-printable !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~ x
+go: 00002ef2b169ad3ebf802f17f2b507aa65aa1d2559338d2b5452c88586b536d0932d1fa4956a0b54c99fff8801efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7f2f01f2b5761aa48e3a0bdefe3f9ffaffcabf1febfafefe7fdfd2cbb00089969b71d79fb9f7fff20ffbff3ff50ddbd7f061c58f265cd9f469d5af66dddbf871e5f9cff7ff7fffc3ff9ffe45fff4719242cb34e6e9d68a6a3d7dac426defe3cfaf7fffbfe7ffbffd53cf
+rust: 00002ef2b169ad3ebf002f17f2b507aa65aa1d2559338d2b5452c88586b536d0932d1fa4956a0b54c99fff8801efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7efdfbf7f2f01f2b5761aa48e3a0bdefe3f9ffaffcabf1febfafefe7fdfd2cbb00089969b71d79fb9f7fff20ffbff3ff50ddbd7f061c58f265cd9f469d5af66dddbf871e5f9cff7ff7fffc3ff9ffe45fff4719242cb34e6e9d68a6a3d7dac426defe3cfaf7fffbfe7ffbffd53cf
+
+x-obs-text \x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff
+x-control \x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f
+go: 00002f01f2b1e342c92f94fffffa01fffe6ffff4bfff9ffffa3fffd3ffff53fffd5ffffb3fffeb7fffdaffffb7ffff73fffeeffffdeffffebffffbfffffd9ffffdbfffebffffe0ffffeeffffc3ffff8bffff1ffffe4fffee7fffb1ffff97fffd9ffffcdffff9fffffbffffdafffeeffff4ffffb7fffee7fffe8ffffd3fffdeffffd5fffeeffffbdffffe1fffdfffff7fffff5ffffecffff07fff87fffe0ffff17fffedffff87ffff77fffeffffeaffff8bfffe3ffff93ffff87fffcbffff37ffff1fffff83ffffe1fffebfffe3ffff3fffff2ffffa3ffffd9fffff17ffffc7fffff27ffffdefffffbffffff2fffff8fffffb7fff97fff8fffffe6fffffc1fffff87ffffe7fffffc5ffffe5fffe4ffff2fffffd1fffff4ffffffefffffe3fffffc9fffff97fffb3ffffcffffb7fffcdffff4ffff9ffffd1ffffcffffeaffffafffffddffffeffffff4fffff5fffffabffffa7ffffd7fffff9bffffecfffffb7fffff3fffffe8fffffd3fffffabfffff5fffffff7ffffecfffffdbfffffbbfffff7ffffff0fffffbbf2f00f2b10f526c3d1feeffc7fffd8fffffe2fffffe3fffffe4fffffe5fffffe6fffffe7fffffe8ffffeafffffff3fffffa7fffffabffffffdfffffebfffffecfffffedfffffeefffffefffffff0ffffff1ffffff2fffffffbfffffcffffffd3fffffd7fffffdbfffffdffffffe3fffffe7fffffebfffffef
+rust: 00002f01f2b1e342c92f94ff7f01808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff2f00f2b10f526c3d1f20000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+
+:authority
+:path /
+age 0
+content-disposition
+content-length 0
+cookie
+date
+etag
+if-modified-since
+if-none-match
+last-modified
+link
+location
+referer
+set-cookie
+:method CONNECT
+:method DELETE
+:method GET
+:method HEAD
+:method OPTIONS
+:method POST
+:method PUT
+:scheme http
+:scheme https
+:status 103
+:status 200
+:status 304
+:status 404
+:status 503
+accept */*
+accept application/dns-message
+accept-encoding gzip, deflate, br
+accept-ranges bytes
+access-control-allow-headers cache-control
+access-control-allow-headers content-type
+access-control-allow-origin *
+cache-control max-age=0
+cache-control max-age=2592000
+cache-control max-age=604800
+cache-control no-cache
+cache-control no-store
+cache-control public, max-age=31536000
+content-encoding br
+content-encoding gzip
+content-type application/dns-message
+content-type application/javascript
+content-type application/json
+content-type application/x-www-form-urlencoded
+content-type image/gif
+content-type image/jpeg
+content-type image/png
+content-type text/css
+content-type text/html; charset=utf-8
+content-type text/plain
+content-type text/plain;charset=utf-8
+range bytes=0-
+strict-transport-security max-age=31536000
+strict-transport-security max-age=31536000; includesubdomains
+strict-transport-security max-age=31536000; includesubdomains; preload
+vary accept-encoding
+vary origin
+x-content-type-options nosniff
+x-xss-protection 1; mode=block
+:status 100
+:status 204
+:status 206
+:status 302
+:status 400
+:status 403
+:status 421
+:status 425
+:status 500
+accept-language
+access-control-allow-credentials FALSE
+access-control-allow-credentials TRUE
+access-control-allow-headers *
+access-control-allow-methods get
+access-control-allow-methods get, post, options
+access-control-allow-methods options
+access-control-expose-headers content-length
+access-control-request-headers content-type
+access-control-request-method get
+access-control-request-method post
+alt-svc clear
+authorization
+content-security-policy script-src 'none'; object-src 'none'; base-uri 'none'
+early-data 1
+expect-ct
+forwarded
+if-range
+origin
+purpose prefetch
+server
+timing-allow-origin *
+upgrade-insecure-requests 1
+user-agent
+x-forwarded-for
+x-frame-options deny
+x-frame-options sameorigin
+go: 0000c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff00ff01ff02ff03ff04ff05ff06ff07ff08ff09ff0aff0bff0cff0dff0eff0fff10ff11ff12ff13ff14ff15ff16ff17ff18ff19ff1aff1bff1cff1dff1eff1fff20ff21ff22ff23
+rust: 0000c0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff00ff01ff02ff03ff04ff05ff06ff07ff08ff09ff0aff0bff0cff0dff0eff0fff10ff11ff12ff13ff14ff15ff16ff17ff18ff19ff1aff1bff1cff1dff1eff1fff20ff21ff22ff23

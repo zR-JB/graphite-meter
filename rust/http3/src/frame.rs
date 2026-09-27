@@ -1,4 +1,4 @@
-//! HTTP/3 frames (RFC 9114 §7.2): an incremental reader and header encoding.
+//! HTTP/3 frames (RFC 9114 §7.2), read incrementally from arbitrary chunks.
 use crate::varint;
 use bytes::{Buf, BufMut, Bytes};
 
@@ -15,35 +15,26 @@ pub(crate) fn is_http2(kind: u64) -> bool {
     matches!(kind, 0x02 | 0x06 | 0x08 | 0x09)
 }
 
-/// Appends a frame header.
 pub(crate) fn put_header(kind: u64, length: u64, output: &mut impl BufMut) {
     varint::put(kind, output);
     varint::put(length, output);
 }
 
-/// Two consecutive varints, such as a frame header or a setting, split anywhere across chunks.
+/// One varint, split anywhere across chunks.
 #[derive(Default)]
-pub(crate) struct Pair {
-    bytes: [u8; 16],
+pub(crate) struct Varint {
+    bytes: [u8; 8],
     used: u8,
 }
 
-impl Pair {
-    /// Consumes `input` up to the end of the pair and returns it once complete.
-    pub(crate) fn read(&mut self, input: &mut impl Buf) -> Option<(u64, u64)> {
+impl Varint {
+    pub(crate) fn read(&mut self, input: &mut impl Buf) -> Option<u64> {
         loop {
             let used = usize::from(self.used);
-            let need = match self.bytes[..used].first() {
-                None => 1,
-                Some(&first) => {
-                    let first = varint::size(first);
-                    self.bytes[..used]
-                        .get(first)
-                        .map_or(first + 1, |&second| first + varint::size(second))
-                }
-            };
+            let need = if used == 0 { 1 } else { varint::size(self.bytes[0]) };
             if used == need {
-                break;
+                self.used = 0;
+                return varint::decode(&self.bytes[..used]).map(|(value, _)| value);
             }
             let take = (need - used).min(input.remaining());
             if take == 0 {
@@ -52,14 +43,33 @@ impl Pair {
             input.copy_to_slice(&mut self.bytes[used..used + take]);
             self.used += take as u8;
         }
-        let (first, size) = varint::decode(&self.bytes).expect("complete varint");
-        let (second, _) = varint::decode(&self.bytes[size..]).expect("complete varint");
-        self.used = 0;
-        Some((first, second))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.used == 0
+    }
+}
+
+/// Two varints, such as a frame header or a setting.
+#[derive(Default)]
+pub(crate) struct Pair {
+    first: Option<u64>,
+    varint: Varint,
+}
+
+impl Pair {
+    pub(crate) fn read(&mut self, input: &mut impl Buf) -> Option<(u64, u64)> {
+        let first = match self.first {
+            Some(first) => first,
+            None => *self.first.insert(self.varint.read(input)?),
+        };
+        let second = self.varint.read(input)?;
+        self.first = None;
+        Some((first, second))
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.first.is_none() && self.varint.is_empty()
     }
 }
 
@@ -73,7 +83,7 @@ pub(crate) enum Piece {
     Payload(Bytes),
 }
 
-/// Splits a stream into frame headers and payload slices; frame boundaries may fall anywhere.
+/// Splits a stream into frame headers and payload slices.
 #[derive(Default)]
 pub(crate) struct Reader {
     header: Pair,
