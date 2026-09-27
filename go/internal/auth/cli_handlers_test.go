@@ -103,6 +103,33 @@ func TestCliPageRefusals(t *testing.T) {
 	}
 }
 
+// Approvals opened before sign-in can fill only half the table, so signed-in delegation still finds room.
+func TestAnonymousApprovalsLeaveRoomForSignedInCallers(t *testing.T) {
+	s := testService(t)
+	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+	browser := func(verifier, remote, cookie string) {
+		query := url.Values{"challenge": {challengeFor(verifier)}, "client_origin": {requestingUI}}
+		r := requestFrom(http.MethodGet, "/auth/browser?"+query.Encode(), remote)
+		if cookie != "" {
+			withSessionCookie(r, cookie)
+		}
+		s.browserPage(httptest.NewRecorder(), r)
+	}
+	for i := range maxApprovals {
+		browser(fmt.Sprint("anonymous-", i), addressFrom(i), "")
+	}
+	if len(s.approvals) != maxApprovals/2 {
+		t.Fatalf("anonymous callers opened %d approvals, want %d", len(s.approvals), maxApprovals/2)
+	}
+	browser("signed-in-browser", addressFrom(maxApprovals), raw)
+	rr := httptest.NewRecorder()
+	s.cliPage(rr, cliPageRequest(challengeFor("signed-in-cli"), raw))
+	if rr.Code != http.StatusOK || s.approvals[challengeFor("signed-in-browser")] == nil {
+		t.Fatalf("signed-in approvals refused: cli %d, browser %v", rr.Code,
+			s.approvals[challengeFor("signed-in-browser")] != nil)
+	}
+}
+
 func TestCliPageRendersApprovalReusesAndCapsIt(t *testing.T) {
 	s := testService(t)
 	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")

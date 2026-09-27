@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	maxOIDCTransactions       = 256
+	// Far past any client's share, so filling the table takes hundreds of allocations.
+	maxOIDCTransactions       = 16384
 	maxClientOIDCTransactions = 8
 	oidcTransactionLifetime   = 10 * time.Minute
 )
@@ -151,12 +152,11 @@ func (o *oidcState) retryDiscovery(ctx context.Context, public *url.URL) {
 }
 
 func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
-	s.loginSecurityHeaders(w.Header())
+	s.loginCSP(w.Header())
 	if s.oidc == nil || !s.oidc.ready() {
 		s.oidcLoginFailure(w, r, reasonProviderNotReady)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		s.oidcLoginFailure(w, r, reasonFormMalformed)
 		return
@@ -165,11 +165,11 @@ func (s *Service) oidcStart(w http.ResponseWriter, r *http.Request) {
 		s.oidcLoginFailure(w, r, why)
 		return
 	}
-	clients, ok := ClientKeys(r, s.trusted)
-	if !ok {
-		s.oidcLoginFailure(w, r, reasonClientAddress)
+	if !s.allowOIDCStart(r) {
+		s.oidcLoginFailure(w, r, reasonThrottled)
 		return
 	}
+	clients, _ := ClientKeys(r, s.trusted) // allowOIDCStart refused ambiguous evidence
 	browser := randomToken(32)
 	tx := oidcTransaction{
 		state: randomToken(32), nonce: randomToken(32), verifier: oauth2.GenerateVerifier(),
@@ -226,7 +226,6 @@ func validAuthCode(v string) bool {
 }
 
 func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	tx, code, why := s.resolveOIDCTransaction(w, r)
 	if why != "" {
 		s.oidcLoginFailure(w, r, why)

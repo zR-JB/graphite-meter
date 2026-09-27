@@ -56,6 +56,7 @@ type Service struct {
 	attempts         map[string][]time.Time
 	exchanges        map[string][]time.Time
 	approvalAttempts map[string][]time.Time
+	oidcStarts       map[string][]time.Time
 	globalAttempts   []time.Time
 	ceilingLogged    map[string]time.Time
 	approvals        map[string]*approval
@@ -88,6 +89,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		attempts:         map[string][]time.Time{},
 		exchanges:        map[string][]time.Time{},
 		approvalAttempts: map[string][]time.Time{},
+		oidcStarts:       map[string][]time.Time{},
 		ceilingLogged:    map[string]time.Time{},
 		approvals:        map[string]*approval{},
 		argon:            make(chan struct{}, 2),
@@ -189,25 +191,32 @@ func (s *Service) Mount(mux *http.ServeMux) {
 		mux.HandleFunc("/auth/", http.NotFound)
 		return
 	}
-	mux.HandleFunc("GET /login", s.loginPage)
+	page := func(pattern string, h http.HandlerFunc) {
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			securityHeaders(w.Header())
+			r.Body = http.MaxBytesReader(w, r.Body, 4096)
+			h(w, r)
+		})
+	}
+	page("GET /login", s.loginPage)
 	password, oidc := authModes(s.cfg.Mode)
 	if password {
-		mux.HandleFunc("POST /auth/password", s.passwordLogin)
+		page("POST /auth/password", s.passwordLogin)
 	}
 	if oidc {
-		mux.HandleFunc("POST /auth/oidc/start", s.oidcStart)
-		mux.HandleFunc("GET /auth/oidc/callback", s.oidcCallback)
+		page("POST /auth/oidc/start", s.oidcStart)
+		page("GET /auth/oidc/callback", s.oidcCallback)
 	}
-	mux.HandleFunc("GET /auth/session", s.sessionInfo)
-	mux.HandleFunc("POST /auth/logout", s.logout)
-	mux.HandleFunc("GET /auth/browser", s.browserPage)
-	mux.HandleFunc("POST /auth/browser/approve", s.approve)
-	mux.HandleFunc("POST /auth/browser/token", s.token)
-	mux.HandleFunc("GET /auth/cli", s.cliPage)
-	mux.HandleFunc("POST /auth/cli/approve", s.approve)
-	mux.HandleFunc("POST /auth/cli/token", s.token)
-	mux.HandleFunc("/login", http.NotFound)
-	mux.HandleFunc("/auth/", http.NotFound)
+	page("GET /auth/session", s.sessionInfo)
+	page("POST /auth/logout", s.logout)
+	page("GET /auth/browser", s.browserPage)
+	page("POST /auth/browser/approve", s.approve)
+	page("POST /auth/browser/token", s.token)
+	page("GET /auth/cli", s.cliPage)
+	page("POST /auth/cli/approve", s.approve)
+	page("POST /auth/cli/token", s.token)
+	page("/login", http.NotFound)
+	page("/auth/", http.NotFound)
 }
 
 func (s *Service) runSecurityLog(ctx context.Context) {

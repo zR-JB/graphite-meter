@@ -257,7 +257,7 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	policy := func(authURL string) string {
 		s.oidc.discovered.Store(&oidcDiscovery{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: authURL}}})
 		h := http.Header{}
-		s.loginSecurityHeaders(h)
+		s.loginCSP(h)
 		return h.Get("Content-Security-Policy")
 	}
 	if p := policy("https://login.example:8443/oauth2/authorize"); !strings.Contains(p,

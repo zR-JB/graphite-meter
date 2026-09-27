@@ -31,6 +31,7 @@ func TestAddressBudgets(t *testing.T) {
 	}{
 		{"password", maxAddressAttempts, (*Service).allowAttempt},
 		{"exchange", maxAddressExchanges, (*Service).allowExchange},
+		{"oidc start", maxAddressOIDCStarts, (*Service).allowOIDCStart},
 		{"approval", maxAddressApprovals, (*Service).allowBrowserApproval},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

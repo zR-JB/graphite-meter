@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	attemptWindow       = time.Minute
-	maxBudgetKeys       = 2048
-	maxAddressAttempts  = 5
-	maxGlobalAttempts   = 60
-	maxAddressExchanges = 10
-	maxAddressApprovals = 10
-	ceilingLogInterval  = time.Minute
+	attemptWindow        = time.Minute
+	maxBudgetKeys        = 2048
+	maxAddressAttempts   = 5
+	maxGlobalAttempts    = 60
+	maxAddressExchanges  = 10
+	maxAddressOIDCStarts = 10
+	maxAddressApprovals  = 10
+	ceilingLogInterval   = time.Minute
 )
 
 func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
@@ -61,6 +62,10 @@ func (s *Service) allowAttempt(r *http.Request) bool {
 
 func (s *Service) allowExchange(r *http.Request) bool {
 	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, nil)
+}
+
+func (s *Service) allowOIDCStart(r *http.Request) bool {
+	return s.allowAddress(r, s.oidcStarts, "oidc-start", maxAddressOIDCStarts, nil)
 }
 
 // Approval pages are public; their callers cannot spend validated OIDC callbacks' budget.

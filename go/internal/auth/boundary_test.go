@@ -114,6 +114,35 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	}
 }
 
+// Every auth route answers with the page headers, and a form past 4 KiB fails even with the right password.
+func TestAuthRoutesShareThePageBoundary(t *testing.T) {
+	s := testService(t)
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	for _, pattern := range []string{"GET /login", "POST /auth/password", "GET /auth/session", "POST /auth/logout",
+		"GET /auth/browser", "POST /auth/browser/approve", "POST /auth/browser/token", "GET /auth/cli",
+		"POST /auth/cli/approve", "POST /auth/cli/token", "GET /auth/other"} {
+		method, path, _ := strings.Cut(pattern, " ")
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, secureRequest(method, path, nil))
+		if h := rr.Header(); h.Get("X-Frame-Options") != "DENY" || h.Get("Cache-Control") != "no-store" ||
+			!strings.HasPrefix(h.Get("Content-Security-Policy"), "default-src 'none'") {
+			t.Errorf("%s answered %d without the page headers: %v", pattern, rr.Code, h)
+		}
+	}
+	const token = "abcdefghijklmnopqrstuvwxyz0123456789"
+	form := "csrf=" + token + "&password=secret&pad=" + strings.Repeat("a", 4096)
+	r := secureRequest(http.MethodPost, "/auth/password", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", s.origin)
+	r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, r)
+	if location := rr.Header().Get("Location"); location != "/login?error=failed" {
+		t.Fatalf("oversized sign-in form redirected to %q", location)
+	}
+}
+
 func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	password := `!@#$%^&*()_+-=[]{}|;:',.<>/?~` + " unicode üU0001f510"
 	s := testService(t)
