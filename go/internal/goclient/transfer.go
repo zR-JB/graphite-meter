@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
@@ -219,17 +220,13 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 	if err != nil {
 		return nil, err
 	}
-	var count struct {
-		Bytes *uint64 `json:"bytes"`
-		Nanos *uint64 `json:"nanos"`
-	}
+	var count wire.UploadCheckpoint
 	target := withUploadID(endpoint, id)
 	if _, err := controlJSON(ctx, r.http, http.MethodPost, target, "receiver checkpoint", &count); err != nil {
 		return nil, err
 	}
-	const exact = 1<<53 - 1
-	if count.Bytes == nil || count.Nanos == nil || *count.Nanos == 0 || max(*count.Bytes, *count.Nanos) > exact {
-		return nil, fmt.Errorf("%w: invalid receiver counters", errProtocol)
+	if count.Nanos == 0 {
+		return nil, fmt.Errorf("%w: the receiver clock has not started", errProtocol)
 	}
-	return &ReceiverSnapshot{ID: id, Bytes: *count.Bytes, Nanos: *count.Nanos}, nil
+	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos}, nil
 }

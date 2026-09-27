@@ -227,7 +227,7 @@ func (b pacedBody) Read(p []byte) (int, error) {
 // mountSilentReceiver accepts upload bytes but reports none, while receiver time advances.
 func mountSilentReceiver(mux *http.ServeMux) {
 	mux.HandleFunc(route.UploadSession, func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "silent"})
+		_ = json.MarshalWrite(w, wire.UploadSession{UploadID: "silent"})
 	})
 	mux.HandleFunc(route.Upload, func(_ http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) })
 	started := time.Now()

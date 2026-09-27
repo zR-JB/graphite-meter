@@ -7,34 +7,25 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadRefusalCodesActTheSameOnEveryTransport(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../../api/uploadrefusals.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	want := map[string]FailureReason{"invalid": FailureConnectionLost, "globalFull": FailureServerBusy,
 		"clientFull": FailureServerBusy, "ownerMismatch": FailureProtocol, "idle": FailureTimeout,
 		"revoked": FailureSignIn}
 	retried := map[string]bool{"globalFull": true, "clientFull": true, "idle": true}
-	for line := range strings.Lines(string(data)) {
-		fields := strings.Split(strings.TrimSpace(line), " | ")
-		if len(fields) != 3 || strings.HasPrefix(fields[0], "#") {
-			continue
-		}
+	for _, fields := range apipin.Rows(t, "uploadrefusals.txt", 3) {
 		code := fields[0]
 		status, _ := strconv.Atoi(fields[2])
 		header := http.Header{"X-Graphite-Upload-Refusal": {code}}
@@ -78,7 +69,7 @@ func TestSetupBusyRefusalsRetryOnEveryTransport(t *testing.T) {
 			origin := testOrigin(t, c.protocol, func(wt *webtransport.Server) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.URL.Path != c.refused || r.Method == http.MethodDelete {
-						_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "busy"})
+						_ = json.MarshalWrite(w, wire.UploadSession{UploadID: "busy"})
 						return
 					}
 					mu.Lock()

@@ -20,10 +20,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-type uploadSessionResponse struct {
-	UploadID string `json:"uploadId"`
-}
-
 func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	err := r.uploadReceiver(ctx, gate)
 	// An unknown upload id grants one replacement receiver per server and run, as in the browser.
@@ -87,12 +83,12 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var out uploadSessionResponse
+	var out wire.UploadSession
 	if _, err := controlJSON(ctx, r.http, http.MethodPost, u, "upload session", &out); err != nil {
 		return "", err
 	}
-	if out.UploadID == "" || len(out.UploadID) > 8192 {
-		return "", fmt.Errorf("%w: invalid uploadId", errProtocol)
+	if err := out.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %w", errProtocol, err)
 	}
 	return out.UploadID, nil
 }

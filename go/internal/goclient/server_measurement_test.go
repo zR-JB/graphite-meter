@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,6 +15,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -117,10 +117,7 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 
 func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../../api/aggregation.testvectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := apipin.Read(t, "aggregation.testvectors.json")
 	type window struct {
 		StartMs, EndMs                 int64
 		DownBytesPerSec, UpBytesPerSec *float64

@@ -75,7 +75,7 @@ var (
 			if !strings.Contains(raw, "://") {
 				raw = defaultScheme(raw) + raw
 			}
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return errors.New("use an http:// or https:// origin, for example https://meter.example")
 			}
