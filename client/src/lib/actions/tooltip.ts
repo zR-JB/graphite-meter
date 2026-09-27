@@ -87,12 +87,31 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   const inert = host === node && !node.matches(ACTIONABLE_SELECTOR);
   if (!node.matches(ACTIONABLE_SELECTOR))
     node.dataset.tip = marked ? "term" : "";
-  if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
-    node.tabIndex = node.closest("[data-tip-group]") ? -1 : 0;
-  // A multi-line tip is an explainer: its first line titles the rest.
+  const focusable =
+    inert && node.tabIndex < 0 && !node.hasAttribute("tabindex");
+  if (focusable) node.tabIndex = node.closest("[data-tip-group]") ? -1 : 0;
+  // A multi-line tip is an explainer: its first line titles the rest; a tab splits a line into an aligned pair.
   function write(target: HTMLElement) {
-    target.textContent = text;
     target.toggleAttribute("data-titled", text.includes("\n"));
+    if (!text.includes("\t")) return void (target.textContent = text);
+    target.replaceChildren(
+      ...text.split("\n").map((line) => {
+        const row = document.createElement("div");
+        const [label, value] = line.split("\t");
+        if (value === undefined) row.textContent = line;
+        else {
+          row.className = "inspect-row";
+          row.append(
+            ...[label, value].map((part) =>
+              Object.assign(document.createElement("span"), {
+                textContent: part,
+              }),
+            ),
+          );
+        }
+        return row;
+      }),
+    );
   }
   // The arrow points at the term wherever the bubble had to sit; measured about the centre, so the entry scale cancels.
   function aim(target: HTMLElement) {
@@ -255,6 +274,8 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     },
     destroy() {
       hide();
+      delete node.dataset.tip;
+      if (focusable) node.removeAttribute("tabindex");
       for (const [target, type, listener] of listeners)
         target.removeEventListener(type, listener as EventListener);
     },

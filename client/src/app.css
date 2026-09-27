@@ -154,6 +154,10 @@
   --w-normal: 450;
   --w-strong: 600;
   --w-heavy: 700;
+  --role-row: var(--w-normal) var(--type-body) / 1.4 var(--font-sans);
+  --role-control: var(--w-strong) var(--type-sm) / 1.2 var(--font-sans);
+  --role-title: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+  --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
   --track-tight: -0.02em;
   --track-caps: 0.08em;
   --track-wide: 0.1em;
@@ -163,6 +167,7 @@
   --z-panel: 51;
 
   --control-h: 32px;
+  --row-h: 36px;
   --kv-label: 6.75rem;
   --hit: 44px;
   --icon: 16px;
@@ -174,10 +179,11 @@
      - go/internal/auth/assets/auth.css: the token subset the server-rendered auth
        pages need. A Go test pins its colours, --focus-ring and
        --edge-highlight against this file. */
-  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.18 0.009 255));
-  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.222 0.011 255));
-  --surface-2: light-dark(oklch(0.972 0.004 255), oklch(0.255 0.012 255));
-  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.172 0.009 255));
+  /* Dark fills stay above the levels where OLED pixels switch off and smear. */
+  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.19 0.009 255));
+  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.232 0.011 255));
+  --surface-2: light-dark(oklch(0.972 0.004 255), oklch(0.265 0.012 255));
+  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.18 0.009 255));
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
   --border-subtle: light-dark(
@@ -193,7 +199,7 @@
   --text: light-dark(oklch(0.255 0.012 255), oklch(0.925 0.007 255));
   --text-muted: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
   --text-soft: light-dark(oklch(0.48 0.014 255), oklch(0.7 0.014 255));
-  --text-inverse: light-dark(oklch(1 0 0), oklch(0.18 0.009 255));
+  --text-inverse: light-dark(oklch(1 0 0), oklch(0.19 0.009 255));
 
   /* Hues sit inside sRGB here; the P3 block below only raises their chroma. */
   --brand: light-dark(oklch(0.52 0.088 205), oklch(0.78 0.115 205));
@@ -226,15 +232,19 @@
   --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
   --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
   --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);
-  /* The edge that identifies a field, track or switch: at least 3:1 on every surface. */
-  --field-edge: color-mix(in oklab, var(--text-soft) 70%, transparent);
-  /* Pointer over a selectable tile or row; translucent so it reads on any surface. */
+  /* The edge that identifies a field or check: 3:1 on every surface, no brighter. */
+  --field-edge: light-dark(
+    oklch(0.48 0.014 255 / 0.7),
+    oklch(0.7 0.014 255 / 0.62)
+  );
+  --track: color-mix(in oklab, var(--text) 8%, transparent);
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
+  --selected-wash: color-mix(in oklab, var(--brand) 20%, transparent);
 
   /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
      needs a denser shadow to read at all. The grain is a cached tile. */
   --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
-  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.06));
+  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
   --edge-highlight: rgb(255 255 255 / 0.22);
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
   --bg:
@@ -252,25 +262,26 @@
   --elev-recess: inset 0 1px 2px
     color-mix(in oklab, var(--shade) 6%, transparent);
   --elev-inset:
-    inset 0 1px 2px color-mix(in oklab, var(--shade) 11%, transparent),
-    inset 0 6px 14px color-mix(in oklab, var(--shade) 6%, transparent);
+    inset 0 1px 2px color-mix(in oklab, var(--shade) 10%, transparent),
+    inset 0 6px 14px color-mix(in oklab, var(--shade) 5%, transparent);
   --elev-raised:
     var(--elev-tile),
     0 1px 2px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.35)),
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.32)),
     0 8px 24px -12px
-      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.05 0.01 255 / 0.6));
+      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.08 0.01 255 / 0.45));
   --elev-tooltip:
+    var(--elev-tile),
     0 1px 3px
-      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.05 0.01 255 / 0.3)),
+      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.08 0.01 255 / 0.3)),
     0 10px 28px -8px
-      light-dark(oklch(0.25 0.02 255 / 0.22), oklch(0.05 0.01 255 / 0.6));
+      light-dark(oklch(0.25 0.02 255 / 0.22), oklch(0.08 0.01 255 / 0.5));
   --elev-float:
     var(--elev-tile),
     0 2px 6px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.3)),
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.3)),
     0 28px 64px -16px
-      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.03 0.01 255 / 0.7));
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.08 0.01 255 / 0.55));
 
   /* Solid brand clears the 3:1 non-text contrast floor on light surfaces, where
      a translucent ring does not. */
@@ -481,15 +492,21 @@
   input:where([type="number"], [type="text"], [type="search"]) {
     width: 100%;
     min-width: 0;
-    min-height: 36px;
-    padding: 7px 9px;
+    height: var(--control-h);
+    padding: 0 10px;
     border: 1px solid var(--field-edge);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     color: var(--text);
-    font: var(--type-sm) var(--font-sans);
+    font: var(--role-row);
     font-variant-numeric: tabular-nums;
     transition: var(--transition-control);
+  }
+  @media (pointer: coarse) {
+    select,
+    input:where([type="number"], [type="text"], [type="search"]) {
+      height: var(--hit);
+    }
   }
   select:focus-visible,
   input:where([type="number"], [type="text"], [type="search"]):focus-visible {
@@ -526,8 +543,7 @@
   }
 
   /* Mono, because caps labels name instrument quantities. */
-  .caps,
-  .field > span:first-child {
+  .caps {
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
     letter-spacing: var(--track-caps);
@@ -559,7 +575,7 @@
       inset 0 0 0 var(--hairline) var(--btn-line),
       var(--elev-tile);
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-xs) / 1.2 var(--font-sans);
+    font: var(--role-control);
     text-decoration: none;
     white-space: nowrap;
     transition: var(--transition-control);
@@ -618,15 +634,17 @@
   }
   @media (hover: hover) {
     .btn-quiet:hover:not(:disabled) {
-      background: var(--brand-soft) padding-box;
+      background: var(--hover-wash) padding-box;
     }
   }
   @media (pointer: coarse) {
     .btn {
       --hit-pad: 6px;
     }
-    .segmented > button,
     .menu > button {
+      min-height: var(--hit);
+    }
+    .segmented {
       min-height: var(--hit);
     }
   }
@@ -637,13 +655,12 @@
     flex: none;
     align-items: center;
     gap: var(--space-1);
-    padding: 2px 7px;
-    border-radius: var(--r-full);
+    height: 20px;
+    padding: 0 6px;
+    border-radius: var(--r-well);
     background: var(--tone-wash);
     color: var(--tone-ink);
-    font: var(--w-heavy) var(--type-2xs) / 1.3 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
+    font: var(--w-strong) var(--type-xs) / 1 var(--font-sans);
     white-space: nowrap;
   }
 
@@ -656,6 +673,13 @@
     background: var(--tone);
     box-shadow: 0 0 0 3px var(--tone-wash);
   }
+  .status-dot.inline {
+    display: inline-block;
+    width: 0.5em;
+    height: 0.5em;
+    vertical-align: middle;
+    box-shadow: none;
+  }
 
   .notice {
     --tone: var(--signal);
@@ -667,8 +691,7 @@
     border-radius: var(--r-chrome);
     background: var(--tone-wash);
     color: var(--text);
-    font-size: var(--type-xs);
-    line-height: 1.5;
+    font: var(--role-caption);
   }
   .notice :where(strong) {
     color: var(--tone);
@@ -680,12 +703,6 @@
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
   }
-  .surface-inset {
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-surface);
-    background: var(--sheen), var(--surface-inset);
-    box-shadow: var(--elev-recess);
-  }
   .well {
     border: var(--hairline) solid var(--border);
     border-radius: var(--r-surface);
@@ -693,7 +710,7 @@
     box-shadow: var(--elev-inset);
   }
   .surface-head {
-    border-bottom: var(--hairline) solid var(--border-strong);
+    border-bottom: var(--hairline) solid var(--border);
     background: var(--sheen), var(--surface-1);
     box-shadow: var(--elev-tile);
   }
@@ -714,7 +731,7 @@
     height: var(--icon-sm);
   }
 
-  /* A grouped list is an engraved well ruled by hairlines; tone and weight tell label from value. */
+  /* A recessed well whose only inner lines separate rows; a control sets its row's height. */
   .kv {
     display: grid;
     padding-inline: var(--space-3);
@@ -722,18 +739,23 @@
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
-    font-size: var(--type-body);
-    line-height: 1.4;
+    font: var(--role-row);
   }
-  .kv > div {
+  .kv > * {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 2px 12px;
+    align-content: center;
+    gap: 2px var(--space-3);
     min-width: 0;
-    padding-block: 6px;
+    min-height: var(--row-h);
+    padding-block: 7px;
   }
-  .kv > div + div {
+  .kv > :has(input, select, button, .segmented) {
+    align-items: center;
+    padding-block: 2px;
+  }
+  .kv > * + * {
     border-top: var(--hairline) solid var(--border-subtle);
   }
   .kv dt {
@@ -743,7 +765,6 @@
   .kv dd {
     flex: 1 1 10rem;
     min-width: 0;
-    font-weight: var(--w-normal);
     overflow-wrap: anywhere;
   }
 
@@ -752,52 +773,59 @@
     gap: 6px;
     min-width: 0;
   }
-  /* Section titles are names, not instrument quantities, so they skip .caps. */
-  .group > h3,
-  .group > .group-head > h3,
-  .float > h3 {
-    color: var(--text-muted);
-    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
-  }
-  .group:has(> .kv) > :is(h3, .group-head) {
+  .group > :is(h3, .group-head) {
     padding-inline: var(--space-3);
   }
-
-  .field {
-    display: grid;
-    gap: 6px;
-    min-width: 0;
+  .group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-height: 20px;
   }
+  .group-head > :is(.btn, .segmented) {
+    margin-block: calc((20px - var(--control-h)) / 2);
+  }
+  .group > h3,
+  .group-head > h3,
+  .float > h3 {
+    color: var(--text-muted);
+    font: var(--role-title);
+  }
+
   .segmented {
     display: flex;
-    gap: 3px;
-    padding: 3px;
-    border: 1px solid var(--field-edge);
+    gap: 2px;
+    min-height: var(--control-h);
+    padding: 2px;
     border-radius: var(--r-chrome);
-    background: var(--surface-inset);
+    background: var(--track);
   }
   .segmented > button {
     flex: 1;
     min-width: 0;
-    min-height: 30px;
+    padding-inline: var(--space-2);
     overflow: hidden;
-    border-radius: calc(var(--r-chrome) - 3px);
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-xs) / 1.2 var(--font-sans);
+    border-radius: calc(var(--r-chrome) - 2px);
+    color: var(--text-muted);
+    font: var(--role-control);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .segmented > button:disabled {
+    opacity: 0.5;
   }
   .tile,
   .segmented > button {
     transition: var(--transition-control);
   }
+  /* The hover wash is an image layer, so it adds to a selected fill instead of replacing it. */
   @media (hover: hover) {
     :is(.tile, .segmented > button):hover:not(
         :disabled,
         [aria-disabled="true"]
       ) {
-      background-color: var(--hover-wash);
-      color: var(--text);
+      background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
   :is(.tile, .segmented > button):is(
@@ -807,8 +835,8 @@
     [aria-current]:not([aria-current="false"]),
     :has(> input:checked)
   ) {
-    border-color: var(--brand-line);
-    background-color: var(--brand-soft);
+    background-color: var(--selected-wash);
+    box-shadow: var(--elev-tile);
     color: var(--brand-strong);
   }
 
@@ -890,21 +918,19 @@
     display: grid;
     gap: 2px;
   }
-  .inspect-title {
-    font-weight: var(--w-heavy);
-  }
   .inspect-row {
     display: flex;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-4);
+  }
+  :not(.inspect-row) + .inspect-row {
+    margin-top: var(--space-1);
   }
   .inspect-row > :first-child {
     color: var(--text-soft);
   }
   .inspect-row > :last-child {
-    font-family: var(--font-mono);
     font-weight: var(--w-strong);
-    font-variant-numeric: tabular-nums;
   }
 
   .popover {
@@ -943,11 +969,11 @@
     align-items: center;
     gap: var(--space-2);
     width: 100%;
-    min-height: 40px;
+    min-height: var(--control-h);
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--r-chrome);
+    border-radius: var(--r-well);
     color: var(--text-muted);
-    font-size: var(--type-sm);
+    font: var(--role-row);
     text-align: start;
     transition: var(--transition-control);
   }
@@ -960,6 +986,17 @@
     width: var(--icon);
     height: var(--icon);
   }
+  .menu > button :where(strong, small) {
+    display: block;
+  }
+  .menu > button :where(strong) {
+    font-weight: var(--w-strong);
+  }
+  .menu > button :where(small) {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font: var(--role-caption);
+  }
   /* Focus keeps the global ring, inset; the wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
@@ -970,7 +1007,7 @@
       [aria-current]:not([aria-current="false"]),
       [aria-pressed="true"]
     ) {
-    background: var(--brand-soft);
+    background: var(--selected-wash);
     color: var(--text);
   }
   /* A checklist marks its state with the check, not a wash. */
@@ -979,7 +1016,7 @@
   }
   @media (hover: hover) {
     .menu > button:hover:not(:disabled) {
-      background: var(--brand-soft);
+      background: var(--hover-wash);
       color: var(--text);
     }
   }
@@ -1006,7 +1043,7 @@
       scale var(--dur-slide) var(--ease-out);
   }
   .tooltip[data-titled]::first-line {
-    font-weight: var(--w-heavy);
+    font-weight: var(--w-strong);
   }
   .tooltip[data-side="below"] {
     transform-origin: var(--arrow-x, 50%) 0;
@@ -1022,7 +1059,7 @@
     width: 8px;
     height: 8px;
     border: inherit;
-    border-width: 0 1px 1px 0;
+    border-width: 0 var(--hairline) var(--hairline) 0;
     background: inherit;
     content: "";
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
@@ -1031,7 +1068,7 @@
   }
   .tooltip[data-side="below"]::before {
     top: 1px;
-    border-width: 1px 0 0 1px;
+    border-width: var(--hairline) 0 0 var(--hairline);
     clip-path: polygon(0 0, 100% 0, 0 100%);
   }
 
