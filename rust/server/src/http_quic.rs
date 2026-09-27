@@ -609,6 +609,10 @@ impl ReceiveCredit {
         Some(Admitted(self.clone()))
     }
 
+    pub(super) fn fund(&self, operations: &Operations) -> Option<Admitted> {
+        holds_permit(operations).then(|| self.admit()).flatten()
+    }
+
     fn leftover_since(&self) -> Option<tokio::time::Instant> {
         self.0.funding.lock().expect("receive credit poisoned").ended
     }
@@ -1364,7 +1368,7 @@ mod tests {
                 let (quic, mut sender) = h3_client(&client, config, address).await;
                 let id = upload_id(&mut sender).await;
                 let mut upload = sender.send_request(post(format!("/upload?id={id}"))).await.unwrap();
-                upload.send_data(Bytes::from(vec![7; 256 * 1024])).await.unwrap();
+                upload.send_data(Bytes::from_static(b"granted")).await.unwrap();
                 upload.finish().await.unwrap();
                 assert_eq!(upload.recv_response().await.unwrap().status(), StatusCode::OK);
                 while upload.recv_data().await.unwrap().is_some() {}
@@ -1400,6 +1404,52 @@ mod tests {
             }
         }
         drop(pressure);
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn authenticated_requests_without_admission_get_no_credit() {
+        use super::*;
+        let mut config = Config {
+            advertised_native: Some(Default::default()),
+            ..Config::default()
+        };
+        config.public.both.push("self".into());
+        config.auth.mode = crate::config::AuthMode::Password;
+        config.auth.public_url = "https://localhost".into();
+        config.auth.password_hash =
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
+        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let sessions = server.auth.as_ref().unwrap().sessions();
+        let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
+        let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
+        let (tls, mut client_config) = tls();
+        let mut transport = quinn::TransportConfig::default();
+        transport.stream_receive_window(16_u32.into());
+        client_config.transport_config(Arc::new(transport));
+        let (address, stop, serving) = serve(&server, tls);
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let (quic, mut sender) = h3_client(&client, client_config, address).await;
+            let idle = server.memory.available();
+            let request = http::Request::get("https://localhost/probe")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::ORIGIN, "")
+                .body(())
+                .unwrap();
+            let mut probe = sender.send_request(request).await.unwrap();
+            probe.finish().await.unwrap();
+            assert_eq!(probe.recv_response().await.unwrap().status(), StatusCode::OK);
+            while probe.recv_data().await.unwrap().is_some() {}
+            assert!(
+                server.memory.available() > idle - CREDIT_BYTES / 2,
+                "granted without a permit"
+            );
+            quic.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
     }

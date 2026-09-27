@@ -241,14 +241,8 @@ impl Body for H2Body {
 
     fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
         let this = &mut *self;
-        let admitted = || {
-            let operations = this.operations.lock().expect("operations poisoned");
-            operations
-                .iter()
-                .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
-        };
         // Under pressure an admitted upload keeps reading at the current window.
-        if !this.funded && this.window.memory.has_headroom() && admitted() {
+        if !this.funded && this.window.memory.has_headroom() && holds_permit(&this.operations) {
             let window = &this.window;
             this.funded = window.uploads.fetch_add(1, Ordering::Relaxed) > 0
                 || this

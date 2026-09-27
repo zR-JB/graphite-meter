@@ -1132,6 +1132,13 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     }
 }
 
+fn holds_permit(operations: &Operations) -> bool {
+    let operations = operations.lock().expect("operations poisoned");
+    operations
+        .iter()
+        .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
+}
+
 pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {
     let endpoint = if config.listener(crate::config::NativeKind::H3).address.is_empty() {
         0

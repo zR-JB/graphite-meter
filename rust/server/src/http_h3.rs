@@ -53,6 +53,9 @@ impl HttpServer {
             let body = RequestBody {
                 stream: receive,
                 finished: false,
+                credit,
+                operations: operations.clone(),
+                admitted: None,
             };
             let response = if connect {
                 // CONNECT belongs to the session dispatcher. A mistaken call
@@ -77,16 +80,13 @@ impl HttpServer {
             send.response(response, head, active_responses).await
         };
         let mut exchange = std::pin::pin!(exchange);
-        let mut admitted = None;
         let guarded = std::future::poll_fn(|cx| {
             check_operations(&operations, cx)?;
             let result = exchange.as_mut().poll(cx);
             if result.is_pending() {
                 // Dispatch may install a lease in this poll. Register its wake
                 // even when QUIC flow control blocks the first response write.
-                if check_operations(&operations, cx)? && admitted.is_none() {
-                    admitted = credit.admit();
-                }
+                check_operations(&operations, cx)?;
             }
             result
         });
@@ -96,17 +96,19 @@ impl HttpServer {
     }
 }
 
-fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<bool> {
-    let operations = operations.lock().expect("operations poisoned");
-    for operation in operations.iter() {
+fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
+    for operation in operations.lock().expect("operations poisoned").iter() {
         operation.lock().expect("operation poisoned").check(cx)?;
     }
-    Ok(!operations.is_empty())
+    Ok(())
 }
 
 struct RequestBody {
     stream: Receive,
     finished: bool,
+    credit: super::http_quic::ReceiveCredit,
+    operations: Operations,
+    admitted: Option<super::http_quic::Admitted>,
 }
 
 impl Body for RequestBody {
@@ -116,6 +118,9 @@ impl Body for RequestBody {
     fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         if self.finished {
             return Poll::Ready(None);
+        }
+        if self.admitted.is_none() {
+            self.admitted = self.credit.fund(&self.operations);
         }
         let result = match ready!(self.stream.poll_recv_data(cx)) {
             Ok(Some(mut data)) => Some(Ok(Frame::data(data.copy_to_bytes(data.remaining())))),
