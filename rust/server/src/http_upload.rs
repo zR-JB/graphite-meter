@@ -25,7 +25,7 @@ impl HttpServer {
         match request.uri().path() {
             "/upload/session" => {
                 if request.method() != Method::POST {
-                    return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+                    return method_not_allowed("POST");
                 }
                 match self.uploads.mint() {
                     Ok(id) => json_response(&serde_json::json!({"uploadId": id})),
@@ -34,7 +34,7 @@ impl HttpServer {
             }
             "/upload/checkpoint" => {
                 if request.method() != Method::POST {
-                    return empty_response(StatusCode::METHOD_NOT_ALLOWED);
+                    return method_not_allowed("POST");
                 }
                 match self.uploads.checkpoint(&id, owner) {
                     Ok(checkpoint) => json_response(&checkpoint),
@@ -42,6 +42,9 @@ impl HttpServer {
                 }
             }
             "/upload/progress" => {
+                if !matches!(*request.method(), Method::GET | Method::DELETE) {
+                    return method_not_allowed("GET, DELETE");
+                }
                 let operation = match self.upload_operation(owner) {
                     Ok(operation) => operation,
                     Err(error) => return admission_refusal(error),
@@ -51,7 +54,7 @@ impl HttpServer {
                         Ok(()) => empty_response(StatusCode::NO_CONTENT),
                         Err(error) => refusal(error),
                     }
-                } else if request.method() == Method::GET {
+                } else {
                     let mut response = match self.uploads.subscribe(&id, owner) {
                         Ok(subscription) => Response::builder()
                             .header(header::CONTENT_TYPE, "application/x-ndjson")
@@ -73,8 +76,6 @@ impl HttpServer {
                         .headers_mut()
                         .insert("x-accel-buffering", HeaderValue::from_static("no"));
                     response
-                } else {
-                    method_not_allowed("GET, DELETE")
                 };
                 attach_operation(&mut response, operation);
                 response
@@ -110,13 +111,13 @@ impl HttpServer {
         B: Body<Data = Bytes> + Unpin,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
+        if request.method() != Method::POST {
+            return Ok(method_not_allowed("POST"));
+        }
         let operation = match self.upload_operation(owner) {
             Ok(operation) => operation,
             Err(error) => return Ok(admission_refusal(error)),
         };
-        if request.method() != Method::POST {
-            return Ok(method_not_allowed("POST"));
-        }
         // Register before awaiting the body: socket IO must enforce this deadline
         // even while the response future has not produced its first byte.
         operations

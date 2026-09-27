@@ -108,6 +108,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
             let body = &response[boundary + 4..];
             if status == 405 {
+                assert!(headers.contains("allow: GET\r\n"), "{headers}");
                 assert!(body.is_empty());
                 assert!(!headers.contains("content-type:"));
             } else if status != 200 || method == "HEAD" {
@@ -297,9 +298,9 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let (headers, _) = upload_request(address, "POST", "/upload?id=invalid", "192.0.2.1", b"bad").await;
         assert!(headers.starts_with("HTTP/1.1 400"));
         assert!(headers.contains("x-graphite-upload-refusal: invalid"));
-        let (headers, body) = upload_request(address, "GET", "/upload/session", "192.0.2.1", b"").await;
+        let (headers, _) = upload_request(address, "GET", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 405"));
-        assert!(body.is_empty());
+        assert!(headers.contains("allow: POST\r\n"), "{headers}");
 
         let (headers, body) = upload_request(address, "DELETE", &format!("/upload/progress?id={id}"), "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 204"));

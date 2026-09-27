@@ -478,7 +478,7 @@ impl HttpServer {
                     )))
                     .expect("static public socket session")
             } else {
-                text_response(StatusCode::METHOD_NOT_ALLOWED)
+                method_not_allowed("POST")
             }
         } else if path == "/download" {
             self.download(&request, owner)
@@ -1210,7 +1210,10 @@ mod tests {
 
     #[tokio::test]
     async fn measurement_methods_reject_work_before_touching_the_body_or_upload_store() {
-        let server = HttpServer::new(Arc::new(Config::default())).unwrap();
+        let mut config = Config::default();
+        config.limits.sessions_per_client = 1;
+        config.limits.operations_per_client = 1;
+        let server = HttpServer::new(Arc::new(config)).unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
         let id = server.uploads.mint().unwrap();
 
@@ -1235,6 +1238,22 @@ mod tests {
         assert_eq!(head.status(), StatusCode::OK);
         assert_eq!(head.headers()[header::CONTENT_LENGTH], "1048576");
         assert!(head.body().is_end_stream());
+        drop(head);
+        let _admitted = server.respond(Request::get("/download?bytes=1").body(()).unwrap(), peer);
+        for (method, path, allow) in [
+            (Method::GET, "/upload/session", "POST"),
+            (Method::GET, "/upload/checkpoint", "POST"),
+            (Method::POST, "/upload/progress", "GET, DELETE"),
+        ] {
+            let request = Request::builder()
+                .method(method)
+                .uri(path)
+                .body(())
+                .unwrap();
+            let response = server.respond(request, peer);
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
+            assert_eq!(response.headers()[header::ALLOW], allow, "{path}");
+        }
 
         let uri = format!("/upload?id={id}");
         let request = Request::builder()

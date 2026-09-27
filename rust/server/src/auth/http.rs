@@ -664,7 +664,11 @@ impl Service {
     fn ticket(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
         let request = authorized.request();
         if request.method() != Method::POST {
-            return response(StatusCode::METHOD_NOT_ALLOWED);
+            let mut response = response(StatusCode::METHOD_NOT_ALLOWED);
+            response
+                .headers_mut()
+                .insert(header::ALLOW, HeaderValue::from_static("POST"));
+            return response;
         }
         let Some(lease) = principal(authorized) else {
             return response(StatusCode::FORBIDDEN);

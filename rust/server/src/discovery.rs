@@ -64,6 +64,7 @@ impl Discovery {
                     return Ok(Some(
                         Response::builder()
                             .status(StatusCode::METHOD_NOT_ALLOWED)
+                            .header(header::ALLOW, "GET")
                             .body(Bytes::new())?,
                     ));
                 }

@@ -61,7 +61,11 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
     match create_response_with_body(&normalized, || ()) {
         Ok(response) => response,
         Err(Error::Protocol(ProtocolError::WrongHttpMethod)) => {
-            refusal(StatusCode::METHOD_NOT_ALLOWED)
+            let mut response = refusal(StatusCode::METHOD_NOT_ALLOWED);
+            response
+                .headers_mut()
+                .insert(header::ALLOW, http::HeaderValue::from_static("GET"));
+            response
         }
         Err(Error::Protocol(
             ProtocolError::WrongHttpVersion
