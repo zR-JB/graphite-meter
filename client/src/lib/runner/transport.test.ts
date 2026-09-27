@@ -469,7 +469,7 @@ test("the HTTP receiver feed keeps its counters, retries a busy server and class
   }
 });
 
-test("a busy lane reconnects, and readiness that lapses while busy names the server busy", async () => {
+test("a busy lane reconnects with a doubling, capped delay, and lapsed readiness names the server busy", async () => {
   const h = await http();
   jest.useFakeTimers();
   try {
@@ -477,14 +477,22 @@ test("a busy lane reconnects, and readiness that lapses while busy names the ser
     await stage.prepare();
     const owner = new AbortController();
     const waiting = stage.ready(owner.signal).catch((cause) => cause);
-    workers("download")[0].emit({
-      type: "error",
-      reason: "server-busy",
-      retry: true,
-      detail: "HTTP 429",
-    });
-    jest.advanceTimersByTime(300);
-    expect(workers("download")).toHaveLength(2);
+    const busy = { type: "error", reason: "server-busy", retry: true };
+    for (const [retryAfterMs, delayMs] of [
+      [undefined, 300],
+      [undefined, 600],
+      [1_000, 1_200],
+      [5_000, 1_200],
+    ] as const) {
+      const count = workers("download").length;
+      workers("download")
+        .at(-1)!
+        .emit({ ...busy, retryAfterMs, detail: "HTTP 429" });
+      jest.advanceTimersByTime(delayMs - 1);
+      expect(workers("download")).toHaveLength(count);
+      jest.advanceTimersByTime(1);
+      expect(workers("download")).toHaveLength(count + 1);
+    }
     expect(h.failures).toEqual([]);
     owner.abort();
     expect((await waiting).constructor.name).toBe("ServerBusyError");

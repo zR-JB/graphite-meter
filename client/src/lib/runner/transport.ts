@@ -34,6 +34,7 @@ import {
   ROUTES,
 } from "./paths";
 import {
+  BUSY_RESTART_CAP_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
   LANE_RESTART_BACKOFF_MS,
@@ -184,6 +185,7 @@ class LaneSet {
   #lanes: (Lane | null)[] = [];
   #timers: ReturnType<typeof setTimeout>[] = [];
   #ready = new Set<number>();
+  #busyRestarts: number[] = [];
   #seq = 0;
   #live = true;
 
@@ -244,6 +246,8 @@ class LaneSet {
   #message(index: number, msg: WorkerMsg): void {
     if (!this.#live) return;
     const { host } = this.stage;
+    if ((msg.type === "progress" || msg.type === "alive") && msg.bytes)
+      this.#busyRestarts[index] = 0;
     if (msg.type === "progress") {
       if (msg.bytes > 0 && !this.#ready.has(index)) {
         this.#ready.add(index);
@@ -281,7 +285,13 @@ class LaneSet {
     if (this.measuring) this.setStalled(true, error.detail, error.reason);
     this.#lanes[index]?.discard();
     this.#lanes[index] = null;
-    this.#schedule(index, LANE_RESTART_BACKOFF_MS);
+    const busyRestarts = this.busy ? (this.#busyRestarts[index] ?? 0) : 0;
+    this.#busyRestarts[index] = this.busy ? busyRestarts + 1 : 0;
+    const backoff = LANE_RESTART_BACKOFF_MS * 2 ** busyRestarts;
+    this.#schedule(
+      index,
+      Math.min(BUSY_RESTART_CAP_MS, Math.max(backoff, error.retryAfterMs ?? 0)),
+    );
   }
 
   /** Graceful stop lets session lanes deliver terminal counters. */

@@ -3,6 +3,7 @@ import {
   fetchInit,
   nextUploadBytes,
   downloadFailure,
+  refusal,
   uploadPoolBytes,
 } from "./fetch-worker";
 
@@ -14,6 +15,10 @@ test("a refused download lane reconnects; an admission refusal names the server 
     [403, "connection-lost"],
   ] as const)
     expect(downloadFailure(status)).toEqual({ reason, retry: true });
+  const busy = (headers: HeadersInit) =>
+    refusal(new Response(null, { status: 429, headers }), downloadFailure(429))
+      .retryAfterMs;
+  expect([busy({ "Retry-After": "1" }), busy({})]).toEqual([1_000, undefined]);
 });
 
 test("download requests retain bearer credentials", () => {

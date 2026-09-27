@@ -12,6 +12,10 @@ export const LANE_RESTART_BACKOFF_MS = 300;
 /* Measured evidence silent this long stalls a direction; a server that stays silent leaves the stage. */
 export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
 
+/** A busy lane's doubling restart delay stops here, so its retry still lands inside the silence window. */
+export const BUSY_RESTART_CAP_MS =
+  DIRECTION_PROGRESS_WINDOW_MS - LANE_RESTART_BACKOFF_MS;
+
 /** Time a graceful stop is given to finalize and acknowledge. */
 export const STOP_GRACE_MS = 2500;
 

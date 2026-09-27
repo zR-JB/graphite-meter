@@ -247,6 +247,7 @@ export interface LaneFailure {
   reason: FailureReason;
   retry: boolean;
   rotate?: boolean;
+  retryAfterMs?: number;
 }
 
 /* A NON-terminal stall: the link is quiet mid-phase and the runner starts a bounded recovery lifecycle. */

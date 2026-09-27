@@ -63,6 +63,20 @@ export const downloadFailure = (status: number): LaneFailure =>
     ? { reason: "server-busy", retry: true }
     : LOST;
 
+/** An HTTP refusal, with the delta-seconds Retry-After a busy server sends. */
+export function refusal(
+  res: Response,
+  failure: LaneFailure,
+): Extract<OutMsg, { type: "error" }> {
+  const seconds = Number(res.headers.get("Retry-After") || NaN);
+  return {
+    type: "error",
+    detail: `HTTP ${res.status}`,
+    ...failure,
+    retryAfterMs: seconds > 0 ? seconds * 1000 : undefined,
+  };
+}
+
 export function fetchInit(
   credentials: RequestCredentials,
   headers?: HeadersInit,
@@ -181,11 +195,7 @@ async function download(url: string): Promise<void> {
       const res = await fetch(url, init);
       if (authenticationRequired(res)) return post({ type: "auth-required" });
       if (!res.ok || !res.body)
-        return post({
-          type: "error",
-          detail: `HTTP ${res.status}`,
-          ...downloadFailure(res.status),
-        });
+        return post(refusal(res, downloadFailure(res.status)));
       await readBytes(res.body, (n) =>
         postProgress(progress.add(n, performance.now())),
       );
@@ -235,14 +245,15 @@ async function upload(url: string, poolBytes: number): Promise<void> {
       // An unread echo pins the keep-alive connection the next POST needs.
       await res.arrayBuffer().catch(() => undefined);
       if (!res.ok)
-        return post({
-          type: "error",
-          detail: `HTTP ${res.status}`,
-          ...classifyUploadFailure(
-            res.status,
-            res.headers.get("X-Graphite-Upload-Refusal"),
+        return post(
+          refusal(
+            res,
+            classifyUploadFailure(
+              res.status,
+              res.headers.get("X-Graphite-Upload-Refusal"),
+            ),
           ),
-        });
+        );
       // This is not an observation: the server progress feed owns byte/time accounting.
       const elapsedMs = performance.now() - postStart;
       post({ type: "alive", bytes: sent, elapsedMs });
