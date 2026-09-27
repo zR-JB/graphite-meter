@@ -54,7 +54,7 @@
       />
     </div>
   {/if}
-  <div class="chips" class:reserve data-tip-group {@attach tipGroup}>
+  <div class="result-cards" class:reserve data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
@@ -174,13 +174,13 @@
     justify-content: center;
     gap: var(--space-2);
   }
-  .chips {
+  .result-cards {
     display: grid;
     grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
     gap: var(--space-2);
   }
   @container results (max-width: 480px) {
-    .chips {
+    .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
