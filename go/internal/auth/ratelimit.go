@@ -23,8 +23,9 @@ const (
 	deviceLifetime       = 30 * 24 * time.Hour
 )
 
+// A known device skips the bounds all clients share, the global ceiling and a full address table.
 func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
-	global *[]time.Time) bool {
+	global *[]time.Time, known bool) bool {
 	keys, ok := ClientKeys(r, s.trusted)
 	if !ok {
 		return false
@@ -40,6 +41,9 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 	}
 	for i, key := range keys {
 		if _, exists := store[key]; !exists && len(store) >= maxBudgetKeys {
+			if known {
+				continue
+			}
 			s.noteCeilingLocked(name+"-address", now)
 			return false
 		}
@@ -47,25 +51,22 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 			return false
 		}
 	}
-	if global != nil {
+	if global != nil && !known {
 		if *global = recentAttempts(*global, now); len(*global) >= maxGlobalAttempts {
 			s.noteCeilingLocked(name, now)
 			return false
 		}
 	}
 	for _, key := range keys {
-		store[key] = append(store[key], now)
+		if _, exists := store[key]; exists {
+			store[key] = append(store[key], now)
+		}
 	}
 	return true
 }
 
-// A browser that signed in before skips the global ceiling, so others' wrong passwords cannot lock the operator out.
 func (s *Service) allowAttempt(r *http.Request) bool {
-	global := &s.globalAttempts
-	if s.knownDevice(r) {
-		global = nil
-	}
-	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, global)
+	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, &s.globalAttempts, s.knownDevice(r))
 }
 
 func (s *Service) noteFailedPassword() {
@@ -102,16 +103,16 @@ func (s *Service) knownDevice(r *http.Request) bool {
 }
 
 func (s *Service) allowExchange(r *http.Request) bool {
-	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, nil)
+	return s.allowAddress(r, s.exchanges, "oidc-exchange", maxAddressExchanges, nil, false)
 }
 
 func (s *Service) allowOIDCStart(r *http.Request) bool {
-	return s.allowAddress(r, s.oidcStarts, "oidc-start", maxAddressOIDCStarts, nil)
+	return s.allowAddress(r, s.oidcStarts, "oidc-start", maxAddressOIDCStarts, nil, false)
 }
 
 // Approval pages are public; their callers cannot spend validated OIDC callbacks' budget.
 func (s *Service) allowBrowserApproval(r *http.Request) bool {
-	return s.allowAddress(r, s.approvalAttempts, "browser-approval", maxAddressApprovals, nil)
+	return s.allowAddress(r, s.approvalAttempts, "browser-approval", maxAddressApprovals, nil, false)
 }
 
 func (s *Service) noteCeilingLocked(what string, now time.Time) {
