@@ -10,6 +10,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -74,8 +75,7 @@ func TestPreflightTargetsAndConnectOrigins(t *testing.T) {
 			host := RequestHost(r)
 			for schema, serve := range map[string]http.HandlerFunc{"preflight": d.ServePreflight,
 				"servers": d.ServeServers} {
-				rec := httptest.NewRecorder()
-				serve(rec, r)
+				rec := testkit.Record(serve, r)
 				apipin.Validate(t, apipin.Schema(t, schema), rec.Body.Bytes())
 			}
 			capabilities := d.preflightFor(host).Capabilities
@@ -119,8 +119,7 @@ func TestDiscoveryReadsAnInvalidHostAsLocalhost(t *testing.T) {
 		for _, serve := range []func(http.ResponseWriter, *http.Request){d.ServePreflight, d.ServeServers} {
 			r := httptest.NewRequest(http.MethodGet, "/", nil)
 			r.Host = host
-			rec := httptest.NewRecorder()
-			serve(rec, r)
+			rec := testkit.Record(serve, r)
 			if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "evil") {
 				t.Fatalf("%s: %d %s", host, rec.Code, rec.Body.String())
 			}

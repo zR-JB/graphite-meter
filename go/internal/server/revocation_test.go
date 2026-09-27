@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -94,7 +95,7 @@ func (s *authenticatedStack) mintUpload(t *testing.T, bearer string) string {
 
 func (s *authenticatedStack) awaitAdmitted(t *testing.T, bearer string) {
 	t.Helper()
-	for start := time.Now(); time.Since(start) < 5*time.Second; time.Sleep(time.Millisecond) {
+	testkit.Eventually(t, 5*time.Second, "the upload lane is admitted", func() bool {
 		req, _ := http.NewRequest(http.MethodGet, s.origin+"/probe", nil)
 		req.Header.Set("Authorization", "Bearer "+bearer)
 		res, err := s.uiClient.Do(req)
@@ -104,11 +105,8 @@ func (s *authenticatedStack) awaitAdmitted(t *testing.T, bearer string) {
 		var probe wire.Probe
 		err = json.UnmarshalRead(res.Body, &probe)
 		res.Body.Close()
-		if err == nil && probe.Load != nil && probe.Load.Active > 0 {
-			return
-		}
-	}
-	t.Fatal("the upload lane was never admitted")
+		return err == nil && probe.Load != nil && probe.Load.Active > 0
+	})
 }
 
 // Signing out ends an upload lane blocked on its body at once, with the answer both clients read as sign-in.

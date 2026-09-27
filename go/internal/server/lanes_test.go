@@ -18,18 +18,10 @@ import (
 )
 
 func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client) {
-	ctx, cancel := context.WithCancel(t.Context())
 	cfg := config.Default()
 	cfg.MaxOperationDuration = operation
-	e := buildEndpoints(ctx, &cfg)
-	ln := newPipeListener()
-	srv := &http.Server{Handler: newMux(ctx, e, muxTopology{transfers: true}, nil, publicAuth(t))}
-	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() {
-		cancel()
-		_ = srv.Close()
-	})
-	return e, ln.client(t)
+	build, sockets := pipeServer(t, &cfg, nil)
+	return build.e, sockets[cfg.Native.H1].client(t)
 }
 
 // Shutdown drains measurements for its grace period, then cuts the ones still open.

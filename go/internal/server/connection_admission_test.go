@@ -17,6 +17,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -287,11 +288,8 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 			t.Fatal(err)
 		}
 		res.Body.Close()
-		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
-			if time.Since(start) > released {
-				t.Fatal("an idle HTTP/3 connection held its slot")
-			}
-		}
+		testkit.Eventually(t, released, "an idle HTTP/3 connection gives its slot back",
+			func() bool { return build.connections.stats().active == 0 })
 	})
 	// A request stream's first frame type stops HTTP/3's idle timer before any handler runs.
 	t.Run("h3 stalled headers", func(t *testing.T) {
@@ -319,10 +317,7 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 		case <-time.After(released):
 			t.Fatal("a request stream stalled before its headers held its connection")
 		}
-		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
-			if time.Since(start) > released {
-				t.Fatal("a closed HTTP/3 connection held its slot")
-			}
-		}
+		testkit.Eventually(t, released, "a closed HTTP/3 connection gives its slot back",
+			func() bool { return build.connections.stats().active == 0 })
 	})
 }

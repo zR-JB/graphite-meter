@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 func testFS() fstest.MapFS {
@@ -19,8 +21,7 @@ func testFS() fstest.MapFS {
 }
 
 func serve(h http.Handler, method, path string) *httptest.ResponseRecorder {
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(method, path, nil))
+	rr := testkit.Record(h.ServeHTTP, httptest.NewRequest(method, path, nil))
 	return rr
 }
 

@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/netip"
@@ -25,6 +26,7 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -51,9 +53,7 @@ func wtServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (
 			tune(cfg)
 		}
 	}, shape)
-	httpBase := "http://" + cfg.Native.H1
-	waitForOK(t, http.DefaultClient, httpBase+"/preflight")
-	return "https://" + cfg.Native.H3, httpBase, build.e
+	return "https://" + cfg.Native.H3, "http://" + cfg.Native.H1, build.e
 }
 
 func wtTestServer(t *testing.T, tune func(*config.Config), shape func(*endpoints)) (string, string, *testWTTransport) {
@@ -74,26 +74,21 @@ func insecureWTTransport() *webtransport.Transport {
 	}
 }
 
-// dialWebTransport dials until the listener answers, so a QUIC listener still coming up is not read as a refusal.
+// dialWebTransport returns the session, or nil and the status that refused it; the listener is bound already.
 func dialWebTransport(t *testing.T, d *webtransport.Transport, target string,
 	hdr http.Header) (*webtransport.Session, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	for {
-		res, sess, err := d.Dial(ctx, target, hdr)
-		if err == nil {
-			t.Cleanup(func() { _ = sess.CloseWithError(0, "") })
-			return sess, http.StatusOK
-		}
-		if res != nil {
-			return nil, res.StatusCode
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("dial %s: %v", target, err)
-		}
-		time.Sleep(20 * time.Millisecond)
+	res, sess, err := d.Dial(ctx, target, hdr)
+	switch {
+	case err == nil:
+		t.Cleanup(func() { _ = sess.CloseWithError(0, "") })
+		return sess, http.StatusOK
+	case res == nil:
+		t.Fatalf("dial %s: %v", target, err)
 	}
+	return nil, res.StatusCode
 }
 
 func dialWT(t *testing.T, wtTransport *testWTTransport, url string) *webtransport.Session {
@@ -541,15 +536,8 @@ func probeLoad(t *testing.T, httpBase string) int {
 
 func waitForLoad(t *testing.T, httpBase string, want int) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if got := probeLoad(t, httpBase); got == want {
-			return
-		} else if time.Now().After(deadline) {
-			t.Fatalf("occupancy stayed at %d, want %d", got, want)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	testkit.Eventually(t, 10*time.Second, fmt.Sprint("occupancy reaches ", want),
+		func() bool { return probeLoad(t, httpBase) == want })
 }
 
 // An upload session joins only its own client's receiver, whoever holds the id; a refused session frees its slot.
@@ -580,13 +568,10 @@ func TestWebTransportUploadRefusesAnotherClientsReceiver(t *testing.T) {
 	}
 	// The refused peers never close, and their sessions still give their slots back well inside the idle bound.
 	_ = owner.CloseWithError(0, "")
-	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
-		if requests, _ := e.admission.stats(); requests.active == 0 {
-			break
-		} else if time.Now().After(deadline) {
-			t.Fatalf("%d refused sessions kept their slots", requests.active)
-		}
-	}
+	testkit.Eventually(t, 10*time.Second, "refused sessions give their slots back", func() bool {
+		requests, _ := e.admission.stats()
+		return requests.active == 0
+	})
 }
 
 // runGoClientUnderLifetimeCaps runs the shipped client across several request and session bounds per stage.

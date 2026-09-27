@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -26,8 +27,7 @@ func TestProbeReturnsConnectionEvidence(t *testing.T) {
 			if tc.load != nil {
 				load = func() (int, int) { return tc.load.Active, tc.load.Max }
 			}
-			rec := httptest.NewRecorder()
-			NewProbe(nil, tc.bootstrap, load).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			rec := testkit.Record(NewProbe(nil, tc.bootstrap, load).ServeHTTP, httptest.NewRequest(http.MethodGet, tc.url, nil))
 			apipin.Validate(t, apipin.Schema(t, "probe"), rec.Body.Bytes())
 			var got wire.Probe
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -49,8 +49,7 @@ func TestProbeReturnsConnectionEvidence(t *testing.T) {
 func TestProbeRefusesAmbiguousProxyEvidence(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "http://meter/probe", nil)
 	r.RemoteAddr = "10.0.0.2:1234"
-	rec := httptest.NewRecorder()
-	NewProbe([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "", nil).ServeHTTP(rec, r)
+	rec := testkit.Record(NewProbe([]netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")}, "", nil).ServeHTTP, r)
 	if rec.Code != http.StatusBadRequest || strings.Contains(rec.Body.String(), "10.0.0.2") {
 		t.Fatalf("probe = %d %q, want 400 naming no address", rec.Code, rec.Body.String())
 	}

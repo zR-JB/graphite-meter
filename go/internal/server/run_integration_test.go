@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -129,24 +128,6 @@ func startListeners(t *testing.T, tune func(*config.Config, *testListenerSockets
 	return &cfg, serveBuild(t, &cfg, sockets, shape)
 }
 
-// waitForOK polls a URL until it answers 200 or the deadline passes.
-func waitForOK(t *testing.T, client *http.Client, url string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		res, err := client.Get(url)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-			if res.StatusCode == http.StatusOK {
-				return
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("server never served 200 at %s", url)
-}
-
 // runUntilCancel starts Run in the background and returns a stop function that cancels it and asserts a clean (nil).
 func runUntilCancel(t *testing.T, cfg *config.Config, sockets listenerSockets) func() {
 	t.Helper()
@@ -176,9 +157,7 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
-	base := "http://" + addr
-	waitForOK(t, http.DefaultClient, base+"/preflight")
-	res, err := http.Get(base + "/")
+	res, err := http.Get("http://" + addr + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}

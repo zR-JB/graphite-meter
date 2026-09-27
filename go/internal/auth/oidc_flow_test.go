@@ -19,6 +19,7 @@ import (
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 type fakeOIDC struct {
@@ -158,8 +159,7 @@ func oidcStartRequest(s *Service, challenge string) *http.Request {
 
 func startOIDC(t *testing.T, s *Service, f *fakeOIDC, r *http.Request) (string, *http.Cookie) {
 	t.Helper()
-	rr := httptest.NewRecorder()
-	s.oidcStart(rr, r)
+	rr := testkit.Record(s.oidcStart, r)
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("start status=%d, want 303", rr.Code)
 	}
@@ -188,8 +188,7 @@ func finishOIDC(s *Service, state string, cookie *http.Cookie, edit func(url.Val
 	}
 	r := secureRequest(http.MethodGet, "/auth/oidc/callback?"+query.Encode(), nil)
 	r.AddCookie(cookie)
-	rr := httptest.NewRecorder()
-	s.oidcCallback(rr, r)
+	rr := testkit.Record(s.oidcCallback, r)
 	return rr
 }
 
@@ -208,8 +207,7 @@ func TestOIDCTransactionsAreBoundedPerClient(t *testing.T) {
 	start := func(remote string) string {
 		r := oidcStartRequest(s, "")
 		r.RemoteAddr = remote
-		rr := httptest.NewRecorder()
-		s.oidcStart(rr, r)
+		rr := testkit.Record(s.oidcStart, r)
 		return rr.Header().Get("Location")
 	}
 	for i := range maxClientOIDCTransactions {

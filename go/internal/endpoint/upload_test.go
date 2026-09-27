@@ -12,14 +12,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
 	store := NewUpload(nil, nil)
 	mint := func() string {
-		rec := httptest.NewRecorder()
-		store.ServeSession(rec, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
+		rec := testkit.Record(store.ServeSession, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
 		var body struct {
 			UploadID string `json:"uploadId"`
 		}
@@ -43,8 +43,7 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 		checkpoint := func(owner string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(http.MethodPost, "/upload/checkpoint?id="+id, nil)
 			r.RemoteAddr = owner + ":1234"
-			w := httptest.NewRecorder()
-			store.ServeCheckpoint(w, r)
+			w := testkit.Record(store.ServeCheckpoint, r)
 			return w
 		}
 		if w := checkpoint("192.0.2.1"); w.Code != http.StatusBadRequest || store.live() != 0 {
@@ -86,8 +85,7 @@ func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
 	store := NewUpload(nil, nil)
 	r := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), strings.NewReader("12345"))
 	r.ContentLength = 1 << 30
-	w := httptest.NewRecorder()
-	store.Handler(wire.IdleBound).ServeHTTP(w, r)
+	w := testkit.Record(store.Handler(wire.IdleBound).ServeHTTP, r)
 	var echo struct {
 		Bytes int64 `json:"bytes"`
 	}
@@ -133,8 +131,7 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 			id := tc.setup(store)
 			live := store.live()
 			body := strings.NewReader("must not be drained")
-			rec := httptest.NewRecorder()
-			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
+			rec := testkit.Record(store.Handler(wire.IdleBound).ServeHTTP, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
 			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), uploadAccessInfos[tc.access].message) ||
 				body.Len() != len("must not be drained") || store.live() != live {
 				t.Fatalf("refusal = %d %q, unread = %d, live %d -> %d", rec.Code, rec.Body.String(), body.Len(), live,

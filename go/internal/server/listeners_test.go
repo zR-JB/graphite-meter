@@ -18,6 +18,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 // An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server advertises larger ones.
@@ -245,8 +246,7 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 		{http.MethodGet, "/ws/ping"}, {http.MethodConnect, "/wt/download"}, {http.MethodConnect, "/wt/upload"},
 		{http.MethodConnect, "/wt/ping"},
 	} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		w := testkit.Record(h.ServeHTTP, httptest.NewRequest(route.method, route.path, nil))
 		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" ||
 			w.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Errorf("saturated %s %s = %d, want a readable admission refusal", route.method, route.path, w.Code)
@@ -258,8 +258,7 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 		http.MethodOptions: {"/download", "/upload", "/upload/progress"},
 	} {
 		for _, path := range paths {
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			w := testkit.Record(h.ServeHTTP, httptest.NewRequest(method, path, nil))
 			want := http.StatusOK
 			if method == http.MethodOptions {
 				want = http.StatusNoContent

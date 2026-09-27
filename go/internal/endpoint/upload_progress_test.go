@@ -11,6 +11,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -84,8 +85,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 			t.Fatalf("feed = %s, want %s", rec.text(), want)
 		}
 
-		finish := httptest.NewRecorder()
-		h.ServeHTTP(finish, httptest.NewRequest(http.MethodDelete, "/upload/progress?id="+id, nil))
+		finish := testkit.Record(h.ServeHTTP, httptest.NewRequest(http.MethodDelete, "/upload/progress?id="+id, nil))
 		if finish.Code != http.StatusNoContent {
 			t.Fatalf("DELETE status = %d, want %d", finish.Code, http.StatusNoContent)
 		}
@@ -101,8 +101,7 @@ func TestUploadProgressNDJSONLifecycle(t *testing.T) {
 		}
 
 		// Completion is replayable until the aggregate TTL expires.
-		replay := httptest.NewRecorder()
-		h.ServeHTTP(replay, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
+		replay := testkit.Record(h.ServeHTTP, httptest.NewRequest(http.MethodGet, "/upload/progress?id="+id, nil))
 		if want := `"type":"complete","bytes":4096`; !strings.Contains(replay.Body.String(), want) {
 			t.Fatalf("replayed body = %s, want it to contain %q", replay.Body.String(), want)
 		}
@@ -193,8 +192,7 @@ func TestUploadProgressRefusalResponses(t *testing.T) {
 		if remote != "" {
 			req.RemoteAddr = remote + ":1234"
 		}
-		rec := httptest.NewRecorder()
-		store.ServeProgress(rec, req)
+		rec := testkit.Record(store.ServeProgress, req)
 		return rec
 	}
 	t.Run("client cap is a retryable 429", func(t *testing.T) {
