@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -67,12 +68,13 @@ func (s *testListenerSockets) reserveH3() string {
 	return ""
 }
 
+// An unreserved address fails like a taken port, so no test ever binds a configured default such as :7246.
 func (s *testListenerSockets) listenTCP(addr string) (net.Listener, error) {
 	if ln, ok := s.tcp[addr]; ok {
 		delete(s.tcp, addr)
 		return ln, nil
 	}
-	return net.Listen("tcp", addr)
+	return nil, fmt.Errorf("no reserved TCP listener for %s", addr)
 }
 
 func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
@@ -80,7 +82,7 @@ func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
 		delete(s.udp, addr)
 		return pc, nil
 	}
-	return net.ListenPacket("udp", addr)
+	return nil, fmt.Errorf("no reserved UDP socket for %s", addr)
 }
 
 func runTestTLS(t *testing.T) (string, string) {
@@ -190,22 +192,13 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 }
 
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
-	cert, key := runTestTLS(t)
-
-	// Hold a port so the TLS listener cannot bind it.
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer occupied.Close()
-
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = sockets.reserveTCP()        // opens first, then must be closed
-	cfg.Native.H1TLS = occupied.Addr().String() // bind fails here
-	cfg.TLSCert, cfg.TLSKey = cert, key
+	cfg.Native.H1 = sockets.reserveTCP() // opens first, then must be closed
+	cfg.Native.H1TLS = "127.0.0.1:1"     // unreserved, so its bind fails
+	cfg.TLSCert, cfg.TLSKey = runTestTLS(t)
 
-	if err = runWithSockets(t.Context(), &cfg, sockets); err == nil {
+	if err := runWithSockets(t.Context(), &cfg, sockets); err == nil {
 		t.Fatal("Run succeeded despite a listener that could not bind")
 	}
 	// The H1 listener bound before the failure, so its port must be free again.
@@ -219,7 +212,7 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxConnections = -1 // fails validateLimits
-	err := Run(t.Context(), &cfg)
+	err := runWithSockets(t.Context(), &cfg, newTestListenerSockets(t))
 	if err == nil {
 		t.Fatal("Run accepted an invalid configuration")
 	}
