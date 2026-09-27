@@ -317,8 +317,8 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 | `GM_PUBLIC_ORIGINS` | `--public-origins` | empty | Negotiated origins (or `self`) for throughput and latency. |
 | `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | empty | Negotiated throughput-only origins. |
 | `GM_PUBLIC_LATENCY_ORIGINS` | `--public-latency-origins` | empty | WebSocket latency-only origins. |
-| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients. |
-| `GM_SERVER_LOCATION` | `--location` | empty | Location label. |
+| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters. |
+| `GM_SERVER_LOCATION` | `--location` | empty | Location label, with the same limits. |
 | `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false` | Default for saving completed browser results on the device. |
 | `GM_VERBOSE` | `--verbose` | `false` | Log per-second throughput, admission counters and authentication debug lines. |
 | `GM_MAX_ACTIVE_MEASUREMENTS` | `--max-active-measurements` | `256` | Concurrent measurement handlers. |

@@ -155,12 +155,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 }
 
 func (d *Discovery) serversFor(connect []string) ([]byte, error) {
-	c := d.cfg.ServerCatalog
-	if len(c.Servers) == 0 {
-		c = wire.SingletonCatalog()
-	}
-	c.Servers = slices.Clone(c.Servers)
-	c.Servers[0].Name, c.Servers[0].Location = d.cfg.ServerName, d.cfg.ServerLocation
+	c := d.cfg.PublishedCatalog()
 	c.Servers[0].AdditionalOrigins = slices.Clone(c.Servers[0].AdditionalOrigins)
 	for _, origin := range connect {
 		if strings.HasPrefix(origin, "http://") || strings.HasPrefix(origin, "https://") {
