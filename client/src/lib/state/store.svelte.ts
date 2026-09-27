@@ -444,6 +444,10 @@ class AppStore {
   readonly runClock = new Smoothed();
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
+  /** A new start failed, so what the stage still shows is the previous run. */
+  previousRun = $derived(
+    this.preparation.status === "failed" && this.phase !== "idle",
+  );
 
   /** The running plan; otherwise the next run's, adapted to the verified RTT. */
   totalEtaMs = $derived(

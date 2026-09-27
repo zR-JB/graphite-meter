@@ -696,6 +696,7 @@
   {:else}
     <section
       class="stage measurement-stage"
+      class:previous={store.previousRun}
       aria-label="Measurement workspace"
       tabindex="-1"
       inert={flyout}
@@ -884,6 +885,16 @@
     flex: 1 0 var(--chart-min);
     min-height: var(--chart-min);
     max-height: 360px;
+  }
+  .measurement-stage
+    :global(:is(.gauge-face, .latency-panel, .results-slot, .chart)),
+  .status :global(:is(.elapsed, .transferred)) {
+    transition: filter var(--dur-slide) var(--ease-out);
+  }
+  /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
+  .previous :global(:is(.gauge-face, .latency-panel, .results-slot, .chart)),
+  .previous ~ .status :global(:is(.elapsed, .transferred)) {
+    filter: opacity(0.45);
   }
   @media (max-height: 800px) {
     .measurement-stage {
