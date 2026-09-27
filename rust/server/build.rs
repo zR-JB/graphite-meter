@@ -63,9 +63,9 @@ fn generate() -> Result<()> {
     let mut manifest = String::from("static EMBEDDED: &[EmbeddedAsset] = &[\n");
     let mut index_found = false;
     for (number, (name, source)) in files.into_iter().enumerate() {
-        // The ordinary browser build contains Go notices. Never embed them in
-        // an unreviewed Rust binary as if they described its dependency closure.
-        if name.starts_with("legal/") && !reviewed_legal {
+        // The ordinary browser build contains Go notices; never embed them in an unreviewed
+        // Rust binary. A reviewed notice is served from the compressed legal report.
+        if (name.starts_with("legal/") && !reviewed_legal) || name == "legal/THIRD_PARTY_NOTICES.txt" {
             continue;
         }
         let content_type = content_type(&name).ok_or_else(|| format!("unsupported browser asset extension: {name}"))?;

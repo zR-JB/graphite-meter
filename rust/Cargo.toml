@@ -10,6 +10,7 @@ license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
 h3-noq = { git = "https://github.com/zR-JB/h3", rev = "03874beb50d065f4ac8f946ddb7814d2432b7527" }
+miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

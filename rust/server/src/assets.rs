@@ -3,6 +3,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use http::{Method, Response, StatusCode};
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
 
 struct EmbeddedAsset {
     path: &'static str,
@@ -10,14 +11,21 @@ struct EmbeddedAsset {
     bytes: &'static [u8],
 }
 include!(concat!(env!("OUT_DIR"), "/browser_assets.rs"));
+include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 
-/// The reviewed release notice is also part of the browser's About assets.
-/// The CLI reuses these bytes so the executable contains only one copy.
-pub fn legal_notices() -> Option<&'static [u8]> {
-    EMBEDDED
-        .iter()
-        .find(|entry| entry.path == "legal/THIRD_PARTY_NOTICES.txt")
-        .map(|entry| entry.bytes)
+/// The reviewed legal report, inflated on first use; the browser's notice is its suffix.
+pub fn legal_report() -> Option<&'static [u8]> {
+    static REPORT: OnceLock<Option<Vec<u8>>> = OnceLock::new();
+    REPORT
+        .get_or_init(|| {
+            LEGAL.map(|(compressed, length)| {
+                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
+                    .ok()
+                    .filter(|report| report.len() == length)
+                    .expect("the build embeds a complete legal report")
+            })
+        })
+        .as_deref()
 }
 
 pub struct Assets {
@@ -97,13 +105,13 @@ impl Assets {
             }
         } else if let Some(name) = path.strip_prefix('/')
             && name != "index.html"
-            && let Some(entry) = self.entries.iter().find(|entry| entry.path == name)
+            && let Some((content_type, bytes)) = self.asset(name)
         {
             return response(
                 StatusCode::OK,
-                entry.content_type,
+                content_type,
                 "public, max-age=0, must-revalidate",
-                Bytes::from_static(entry.bytes),
+                Bytes::from_static(bytes),
                 head,
                 false,
             );
@@ -116,6 +124,14 @@ impl Assets {
             head,
             false,
         )
+    }
+
+    fn asset(&self, name: &str) -> Option<(&'static str, &'static [u8])> {
+        if name == "legal/THIRD_PARTY_NOTICES.txt" {
+            return Some(("text/plain; charset=utf-8", &legal_report()?[LEGAL_NOTICES?..]));
+        }
+        let entry = self.entries.iter().find(|entry| entry.path == name)?;
+        Some((entry.content_type, entry.bytes))
     }
 }
 

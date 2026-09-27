@@ -32,7 +32,7 @@ httpdate = "1.0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22.1"
-miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+miniz_oxide.workspace = true
 sha2 = "0.11.0"
 zeroize = "1.9.0"
 unicode-width = "0.2.2"
@@ -41,7 +41,7 @@ h3-noq.workspace = true
 quinn = { package = "noq", version = "1.3.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 
 [build-dependencies]
-miniz_oxide = { version = "0.9.1", default-features = false, features = ["with-alloc"] }
+miniz_oxide.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }

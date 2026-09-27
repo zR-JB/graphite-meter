@@ -616,6 +616,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ipnet",
+ "miniz_oxide",
  "noq",
  "ring",
  "rustix",

@@ -1,7 +1,5 @@
 #![forbid(unsafe_code)]
 
-include!(concat!(env!("OUT_DIR"), "/legal.rs"));
-
 mod password_command;
 
 use graphite_meter_server::{
@@ -39,13 +37,9 @@ async fn main() {
 
 fn legal() -> Result<(), ConfigError> {
     use std::io::Write;
-    let report = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
-    let mut output = std::io::stdout().lock();
-    output.write_all(report.as_bytes())?;
-    if LEGAL_USES_BROWSER_NOTICES {
-        let notices = graphite_meter_server::assets::legal_notices().ok_or("reviewed browser notices are missing")?;
-        output.write_all(notices)?;
-    }
+    let report = graphite_meter_server::assets::legal_report()
+        .ok_or("this development build has no reviewed Rust dependency notice bundle")?;
+    std::io::stdout().lock().write_all(report)?;
     Ok(())
 }
 

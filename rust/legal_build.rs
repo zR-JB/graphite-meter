@@ -50,15 +50,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     let identity = build_identity();
     fs::write(output.join("legal-build-identity.txt"), &identity)?;
     let Some(configured) = env::var_os("GM_RUST_LEGAL_DIR") else {
-        fs::write(
-            output.join("legal.rs"),
-            if share_browser_notices {
-                "const LEGAL: Option<&str> = None;\nconst LEGAL_USES_BROWSER_NOTICES: bool = false;\n"
-            } else {
-                "const LEGAL: Option<&str> = None;\n"
-            },
-        )?;
-        return Ok(());
+        return write_constants(&output, share_browser_notices, None, None);
     };
     if !Path::new(&configured).is_absolute() {
         return Err("GM_RUST_LEGAL_DIR must be an absolute directory".into());
@@ -107,27 +99,43 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     if text.is_empty() {
         return Err("empty Rust legal report".into());
     }
-    // The release server already embeds the exact reviewed browser notice as
-    // an asset. Reuse that one static byte slice for --legal instead of
-    // embedding a second multi-megabyte copy in the executable.
-    let shared = share_browser_notices && env::var_os("GM_RUST_ASSET_DIR").is_some();
-    let (name, legal) = if shared {
+    if text.len() > 16 * 1024 * 1024 {
+        return Err("reviewed legal report exceeds 16 MiB".into());
+    }
+    // The release server serves its reviewed browser notice, the report's suffix, from the report.
+    let notices = if share_browser_notices && env::var_os("GM_RUST_ASSET_DIR").is_some() {
         let notices_path = directory.join("browser-assets/legal/THIRD_PARTY_NOTICES.txt");
         println!("cargo:rerun-if-changed={}", notices_path.display());
         let notices = fs::read_to_string(notices_path)?;
         let prefix = text
             .strip_suffix(&notices)
             .ok_or("reviewed CLI notice does not end with the browser notice")?;
-        ("LEGAL_PREFIX.txt", prefix)
+        Some(prefix.len())
     } else {
-        ("LEGAL.txt", text.as_str())
+        None
     };
-    // Copy the checked build input so rustc does not reopen a mutable source file.
-    fs::write(output.join(name), legal)?;
-    let mut generated =
-        format!("const LEGAL: Option<&str> = Some(include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")));\n");
+    // Compress the checked build input so rustc does not reopen a mutable source file.
+    fs::write(
+        output.join("LEGAL.zlib"),
+        miniz_oxide::deflate::compress_to_vec_zlib(text.as_bytes(), 9),
+    )?;
+    write_constants(&output, share_browser_notices, Some(text.len()), notices)
+}
+
+fn write_constants(
+    output: &Path,
+    share_browser_notices: bool,
+    report: Option<usize>,
+    notices: Option<usize>,
+) -> Result<()> {
+    let mut generated = match report {
+        Some(length) => format!(
+            "const LEGAL: Option<(&[u8], usize)> = Some((include_bytes!(concat!(env!(\"OUT_DIR\"), \"/LEGAL.zlib\")), {length}));\n"
+        ),
+        None => "const LEGAL: Option<(&[u8], usize)> = None;\n".into(),
+    };
     if share_browser_notices {
-        generated.push_str(&format!("const LEGAL_USES_BROWSER_NOTICES: bool = {shared};\n"));
+        generated.push_str(&format!("const LEGAL_NOTICES: Option<usize> = {notices:?};\n"));
     }
     fs::write(output.join("legal.rs"), generated)?;
     Ok(())
