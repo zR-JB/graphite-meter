@@ -1,5 +1,8 @@
-// Its slot is shared: a forced retry aborts a probe and starts the next one without awaiting it, so two waits.
-import { test, expect, afterEach, beforeEach } from "bun:test";
+import { test, expect, afterEach, beforeEach, jest } from "bun:test";
+import {
+  PING_STOP_MARGIN_MS,
+  PING_TIMEOUT_CEIL_MS,
+} from "../workers/pingSample";
 import {
   IdleKeepalive,
   LatencyChannel,
@@ -7,7 +10,8 @@ import {
 } from "./latencyChannel";
 import type { ParticipantHost } from "../transport";
 import type { LatencyTarget } from "../../api/endpoints";
-import { TestWorker } from "./test-helpers.testutil";
+import { testWorkers } from "./test-helpers.testutil";
+import { stubGlobals } from "../../test-helpers.testutil";
 import { ServerAuthenticationRequired } from "../../servers/credentials";
 
 const target: LatencyTarget = {
@@ -33,16 +37,15 @@ const host = (overrides: Partial<ParticipantHost>): ChannelHost => ({
   ...overrides,
 });
 
-const realWorker = globalThis.Worker;
-const realSetTimeout = globalThis.setTimeout;
-const realClearTimeout = globalThis.clearTimeout;
-afterEach(() => {
-  globalThis.Worker = realWorker;
-  globalThis.setTimeout = realSetTimeout;
-  globalThis.clearTimeout = realClearTimeout;
-});
+let workers: ReturnType<typeof testWorkers>;
+let restore: () => void;
 beforeEach(() => {
-  globalThis.Worker = TestWorker as unknown as typeof Worker;
+  workers = testWorkers();
+  restore = stubGlobals({ Worker: workers.Worker });
+});
+afterEach(() => {
+  restore();
+  jest.useRealTimers();
 });
 
 test("a peer socket authorization refusal preserves the sign-in cause during readiness validation", async () => {
@@ -55,7 +58,7 @@ test("a peer socket authorization refusal preserves the sign-in cause during rea
     expiresAt: Date.now() + 60_000,
   });
   const pending = keepalive.verifyReady();
-  const worker = TestWorker.last!;
+  const worker = workers.last();
   worker.emit({ type: "auth-required" });
   await expect(pending).rejects.toBeInstanceOf(ServerAuthenticationRequired);
   expect(worker.terminated).toBe(1);
@@ -67,15 +70,12 @@ test("a superseded readiness wait does not silence the newer one", async () => {
   const keepalive = new IdleKeepalive(target, credentials);
   const abort = new AbortController();
   const superseded = keepalive.verifyReady(abort.signal);
-  let ready = false;
-  const current = keepalive.verifyReady().then(() => (ready = true));
+  const current = keepalive.verifyReady();
 
   abort.abort();
   await expect(superseded).rejects.toThrow(/aborted/);
 
-  TestWorker.last!.emit({ type: "ready" });
-  for (let turn = 0; turn < 10 && !ready; turn++) await Promise.resolve();
-  expect(ready).toBe(true);
+  workers.last().emit({ type: "ready" });
   await current;
   keepalive.stop();
 });
@@ -85,7 +85,7 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
   const keepalive = new IdleKeepalive(target, credentials);
   keepalive.onEvent = (event) => events.push(event);
   keepalive.start();
-  const old = TestWorker.last!;
+  const old = workers.last();
   keepalive.stop();
   keepalive.start();
   old.emit({ type: "stall", detail: "late close" });
@@ -94,7 +94,7 @@ test("an old idle worker cannot invalidate or feed a restarted monitor", () => {
     samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   expect(events).toEqual([]);
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
@@ -112,11 +112,11 @@ test("idle latency buckets use each worker observation time", () => {
   keepalive.onEvent = (event) => events.push(event);
 
   keepalive.start();
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 12, timedOut: false, observedAtEpochMs: 11_250 }],
   });
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 12_500 }],
   });
@@ -137,13 +137,13 @@ test("timeout-only keepalive batches do not recover offline connectivity", () =>
   };
 
   keepalive.start();
-  TestWorker.last!.emit({ type: "stall", detail: "server stopped answering" });
-  TestWorker.last!.emit({
+  workers.last().emit({ type: "stall", detail: "server stopped answering" });
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 0, timedOut: true, observedAtEpochMs: 1_000 }],
   });
   expect(states).toEqual(["offline"]);
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_100 }],
   });
@@ -154,12 +154,12 @@ test("timeout-only keepalive batches do not recover offline connectivity", () =>
 test("adoption replays a provisional stall but does not infer offline from readiness alone", () => {
   const idle = new IdleKeepalive(target, credentials);
   idle.start();
-  TestWorker.last!.emit({ type: "ready" });
+  workers.last().emit({ type: "ready" });
   const events: IdleEvent[] = [];
   idle.onEvent = (event) => events.push(event);
   expect(events).toEqual([]);
   idle.onEvent = () => {};
-  TestWorker.last!.emit({ type: "stall", detail: "closed" });
+  workers.last().emit({ type: "stall", detail: "closed" });
   idle.onEvent = (event) => events.push(event);
   expect(events).toEqual([{ type: "connectivity", state: "offline" }]);
   idle.stop();
@@ -168,14 +168,14 @@ test("adoption replays a provisional stall but does not infer offline from readi
 test("adopting a verified idle monitor replays its proven connectivity without replaying RTTs", () => {
   const keepalive = new IdleKeepalive(target, credentials);
   keepalive.start();
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
   const events: IdleEvent[] = [];
   keepalive.onEvent = (event) => events.push(event);
   expect(events).toEqual([{ type: "connectivity", state: "connected" }]);
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 9, timedOut: false, observedAtEpochMs: 2_000 }],
   });
@@ -197,7 +197,7 @@ test("stage latency preserves distinct times from one worker batch", () => {
 
   channel.prime("reply-driven", true);
   channel.measure();
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [
       { rtt: 8, timedOut: false, observedAtEpochMs: 10_100 },
@@ -219,10 +219,10 @@ test("a stage latency socket reopening does not itself resume recovery", () => {
 
   channel.prime("medium", true);
   channel.measure();
-  TestWorker.last!.emit({ type: "resume" });
+  workers.last().emit({ type: "resume" });
 
   expect(resumes).toBe(0);
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 8, timedOut: false, observedAtEpochMs: 1_000 }],
   });
@@ -243,7 +243,7 @@ test("a stage timeout reaches the population as a timeout and does not resume re
   });
   channel.prime("medium", true);
   channel.measure();
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [{ rtt: 250, timedOut: true, observedAtEpochMs: 1_000 }],
   });
@@ -260,7 +260,7 @@ test("path preparation collects only replies, never timeouts", async () => {
     timedOut,
     observedAtEpochMs: 1,
   });
-  TestWorker.last!.emit({
+  workers.last().emit({
     type: "samples",
     samples: [reply(9_999, true), ...[1, 2, 3, 4, 5].map((rtt) => reply(rtt))],
   });
@@ -269,16 +269,7 @@ test("path preparation collects only replies, never timeouts", async () => {
 });
 
 test("a matched-probe ready event cancels the warmup establishment deadline", () => {
-  let deadline: (() => void) | null = null;
-  let deadlineActive = false;
-  globalThis.setTimeout = ((handler: TimerHandler) => {
-    deadline = handler as () => void;
-    deadlineActive = true;
-    return 1 as unknown as ReturnType<typeof setTimeout>;
-  }) as unknown as typeof setTimeout;
-  globalThis.clearTimeout = (() => {
-    deadlineActive = false;
-  }) as typeof clearTimeout;
+  jest.useFakeTimers();
   const failures: string[] = [];
   const channel = new LatencyChannel({
     host: host({ stallLatency: (detail) => failures.push(detail) }),
@@ -288,11 +279,11 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
 
   channel.prime("medium", true);
   expect(channel.ready).toBe(false);
-  TestWorker.last!.emit({ type: "open" });
+  workers.last().emit({ type: "open" });
   expect(channel.ready).toBe(false);
-  TestWorker.last!.emit({ type: "ready" });
+  workers.last().emit({ type: "ready" });
   expect(channel.ready).toBe(true);
-  if (deadlineActive) (deadline as (() => void) | null)?.();
+  jest.advanceTimersByTime(60_000);
 
   expect(failures).toEqual([]);
   channel.teardown();
@@ -319,7 +310,7 @@ function finalizingChannel() {
   channel.measure();
   return {
     channel,
-    worker: TestWorker.last!,
+    worker: workers.last(),
     observations,
     interruptions,
     stalls,
@@ -380,7 +371,10 @@ test("stage finalization keeps terminal outcomes until ack and excludes post-loa
 test("terminal interruption counts use the same submission cutoff as reply outcomes", async () => {
   const { channel, worker, interruptions } = finalizingChannel();
   const ending = channel.finish();
-  const { cutoffEpochMs } = worker.sent.at(-1) as { cutoffEpochMs: number };
+  const { cutoffEpochMs } = worker.sent.at(-1) as {
+    type: string;
+    cutoffEpochMs: number;
+  };
   worker.emit({
     type: "interrupted",
     sentAtEpochMs: [cutoffEpochMs - 1, cutoffEpochMs + 1],
@@ -417,7 +411,7 @@ test("abort settles a drain and keeps its late messages from the next stage", as
   worker.emit({ type: "stopped" });
   expect(observations).toEqual([]);
   expect(interruptions).toEqual([]);
-  expect(TestWorker.last!.terminated).toBe(0);
+  expect(workers.last().terminated).toBe(0);
   channel.teardown();
 });
 
@@ -441,19 +435,13 @@ test("worker failure settles a drain without manufacturing probe outcomes", asyn
 });
 
 test("an unresponsive worker cannot hold stage finalization past the acknowledgement deadline", async () => {
-  let deadline!: () => void;
-  let delay = 0;
-  globalThis.setTimeout = ((handler: () => void, ms: number) => {
-    deadline = handler;
-    delay = ms;
-    return 1;
-  }) as unknown as typeof setTimeout;
-  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+  jest.useFakeTimers();
   const { channel, worker, observations, stalls, accountingComplete } =
     finalizingChannel();
   const ending = channel.finish();
-  expect(delay).toBe(10_250);
-  deadline();
+  jest.advanceTimersByTime(PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS - 1);
+  expect(worker.terminated).toBe(0);
+  jest.advanceTimersByTime(1);
   await ending;
   expect(worker.terminated).toBe(1);
   expect(observations).toEqual([]);
@@ -461,13 +449,8 @@ test("an unresponsive worker cannot hold stage finalization past the acknowledge
   expect(accountingComplete()).toBe(false);
 });
 
-test("discarding an active stage marks unknown accounting before terminating its worker", () => {
+test("discarding an active stage marks its accounting unknown and terminates its worker", () => {
   const { channel, worker, accountingComplete } = finalizingChannel();
-  const terminate = worker.terminate.bind(worker);
-  worker.terminate = () => {
-    expect(accountingComplete()).toBe(false);
-    terminate();
-  };
   channel.discard();
   expect(accountingComplete()).toBe(false);
   expect(worker.terminated).toBe(1);

@@ -1,8 +1,9 @@
-// Live rates on the frame clock: they hold through a stage change, snap to its first evidence and fade a stall.
+// Live values on the frame clock: one stage's evidence at a time, gliding from the last stage and fading a stall.
 import type { LiveSample } from "../runner/contract";
 import { Smoothed } from "./motion.svelte";
 
 export const STALL_FADE_MS = 800;
+export const STAGE_GLIDE_MS = 400;
 
 interface RatePair {
   down: number;
@@ -19,31 +20,35 @@ export class LiveReadout {
   readonly down = new Smoothed();
   readonly up = new Smoothed();
   readonly rtt = new Smoothed();
-  /** False until the run's first evidence. */
-  shown = $state(false);
+  /** The stage the rates measure; null until the run's first evidence. */
+  phase = $state<LiveSample["phase"] | null>(null);
   #run = -1;
-  #phase = "";
   #stalled = false;
 
   get rates(): RatePair | null {
-    return this.shown ? { down: this.down.current, up: this.up.current } : null;
+    return this.phase ? { down: this.down.current, up: this.up.current } : null;
   }
 
   /** Each sample corrects the readout; a sample without evidence holds it. */
   update(live: LiveSample | null, run: number, now?: number): void {
     if (run !== this.#run) {
       this.#run = run;
-      this.#phase = "";
-      this.shown = false;
+      this.phase = null;
     }
     const target = liveTargets(live);
     if (!target || !live || (live.stalled && this.#stalled)) return;
-    const snap = !this.shown || live.phase !== this.#phase;
-    const over = live.stalled ? STALL_FADE_MS : undefined;
+    const correction = {
+      snap: !this.phase,
+      over: live.stalled
+        ? STALL_FADE_MS
+        : this.phase && live.phase !== this.phase
+          ? STAGE_GLIDE_MS
+          : undefined,
+      now,
+    };
     this.#stalled = live.stalled;
-    this.#phase = live.phase;
-    this.shown = true;
-    this.down.set(target.down, { snap, over, now });
-    this.up.set(target.up, { snap, over, now });
+    this.phase = live.phase;
+    this.down.set(target.down, correction);
+    this.up.set(target.up, correction);
   }
 }

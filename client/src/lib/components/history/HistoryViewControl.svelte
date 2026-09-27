@@ -66,7 +66,6 @@
     aria-expanded={open}
     popovertarget={popoverId}
     style:anchor-name={`--${popoverId}`}
-    {@attach tooltip(() => "Columns and sort order")}
   >
     <span class="layout-icon"><Icon name="columns" /></span>
     <strong>Columns</strong>
@@ -85,10 +84,12 @@
         event.currentTarget.querySelector<HTMLElement>("button")?.focus();
     }}
   >
-    <div class="caps group-head">
-      <span>Visible columns</span><small>Date is always shown</small>
-    </div>
-    <div class="options menu">
+    <h3>
+      <span {@attach tooltip(() => "Columns\nDate is always shown")}
+        >Columns</span
+      >
+    </h3>
+    <div class="menu">
       {#each HISTORY_COLUMNS as column}
         <button
           type="button"
@@ -97,17 +98,20 @@
           disabled={columns.includes(column) && columns.length === 1}
           onclick={() => toggleColumn(column)}
         >
-          <span class="check"
+          <span
             >{#if columns.includes(column)}<Icon name="check" />{/if}</span
           >
           <span>{HISTORY_SORT_LABEL[column]}</span>
         </button>
       {/each}
     </div>
-    <div class="caps group-head sort-head">
-      <span>Sort</span><small>Missing values stay last</small>
-    </div>
-    <div class="options menu">
+    <h3>
+      <span
+        {@attach tooltip(() => "Sort by\nResults missing the value stay last")}
+        >Sort by</span
+      >
+    </h3>
+    <div class="menu" role="radiogroup" aria-label="Sort by">
       {#each HISTORY_SORTS as option}
         <button
           type="button"
@@ -115,7 +119,7 @@
           aria-checked={sort === option}
           onclick={() => chooseSort(option)}
         >
-          <span class="check"
+          <span
             >{#if sort === option}<Icon name="check" />{/if}</span
           >
           <span>{HISTORY_SORT_LABEL[option]}</span>
@@ -123,28 +127,24 @@
       {/each}
     </div>
     <div
-      class="direction-options menu"
+      class="segmented"
       role="group"
       aria-label={`Order for ${HISTORY_SORT_LABEL[sort]}`}
     >
       {#each directionOptions as option (option.label)}
         <button
           type="button"
-          aria-label={`${HISTORY_SORT_LABEL[sort]}: ${option.label}`}
           aria-pressed={descending === option.descending}
           onclick={() => onSortChange(sort, option.descending)}
+          >{option.label}</button
         >
-          <span aria-hidden="true">{option.symbol}</span>
-          {option.label}
-        </button>
       {/each}
     </div>
   </div>
 </div>
 
 <style>
-  .layout-icon,
-  .check {
+  .layout-icon {
     color: var(--brand-strong);
   }
   .layout-icon :global(svg) {
@@ -152,50 +152,26 @@
     height: 15px;
   }
   .view-popover {
-    width: 280px;
-    max-height: min(70dvh, 480px);
-    padding: var(--space-1);
+    display: grid;
+    gap: var(--space-1);
+    width: min(240px, calc(100vw - 2 * var(--space-4)));
+    max-height: min(80dvh, 520px);
+    padding: var(--space-2);
+    overflow-y: auto;
   }
-  .group-head {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 2px var(--space-2);
-    padding: 7px var(--space-2) 5px;
-    color: var(--text-muted);
+  h3 {
+    padding: var(--space-2) var(--space-2) 0;
   }
-  .group-head small {
-    font: inherit;
-    letter-spacing: 0;
-    text-transform: none;
-  }
-  .sort-head {
-    margin-top: 5px;
-    padding-top: 10px;
-    border-top: 1px solid var(--border);
-  }
-  .menu {
+  h3 + .menu {
     padding: 0;
   }
-  .options {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
   .menu > button {
-    grid-template-columns: 17px minmax(0, 1fr);
-    min-height: 33px;
+    min-height: 32px;
   }
-  .check :global(svg) {
-    width: 15px;
-    height: 15px;
+  .segmented {
+    margin-top: var(--space-1);
   }
-  .direction-options {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-top: 3px;
-    padding-top: 3px;
-    border-top: 1px solid var(--border-subtle);
-  }
-  .direction-options button > span {
-    font: var(--w-heavy) var(--type-md) var(--font-mono);
-    text-align: center;
+  .segmented > button {
+    flex: 1;
   }
 </style>

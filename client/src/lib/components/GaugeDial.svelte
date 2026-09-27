@@ -3,35 +3,42 @@
   import type { ResultArcPhase } from "./resultGauge";
   export interface GaugeDialState extends SweepTargetInput {
     showValue: boolean;
-    resultArcs: readonly {
-      phase: ResultArcPhase;
-      fraction: number;
-      dashed: boolean;
-    }[];
+  }
+  interface ResultArc {
+    phase: ResultArcPhase;
+    fraction: number;
+    dashed: boolean;
+    description: string;
   }
 </script>
 
 <script lang="ts">
   import { inView } from "../actions/inView";
+  import { tooltip } from "../actions/tooltip";
   import { untrack } from "svelte";
   import { Smoothed, still } from "../presentation/motion.svelte";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
   import type { GaugeLayout } from "./gaugeLayout";
   import { resultGaugeHeadPlacements } from "./resultGauge";
 
-  let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
-    $props();
+  let {
+    input,
+    layout,
+    result,
+  }: {
+    input: GaugeDialState;
+    layout: GaugeLayout;
+    result: { arcs: readonly ResultArc[]; opacity: number };
+  } = $props();
   const shadeId = $props.id();
   // An unseen dial snaps rather than animating.
   let seen = $state(true);
   const motion = $derived(seen && !still());
-  const completed = $derived(
-    input.phase === "complete" && input.resultArcs.length > 0,
-  );
   const target = $derived(sweepTarget(input));
+  const visible = $derived(input.showValue && target !== null);
   const headRadius = $derived.by(() => {
     const radius = Math.min(7.5, layout.arcWidth * 0.48);
-    const close = input.resultArcs.some((arc, index, arcs) =>
+    const close = result.arcs.some((arc, index, arcs) =>
       arcs
         .slice(index + 1)
         .some(
@@ -49,7 +56,7 @@
   );
   const placements = $derived(
     resultGaugeHeadPlacements(
-      input.resultArcs.map((arc) => arc.fraction),
+      result.arcs.map((arc) => arc.fraction),
       {
         baseRadius: layout.radius,
         arcSweep: layout.arcSweep,
@@ -59,35 +66,43 @@
     ),
   );
   const results = $derived(
-    input.resultArcs.map((arc, index) => ({
+    result.arcs.map((arc, index) => ({
       ...arc,
       ...placements[index],
       fraction: Math.min(1, Math.max(0, arc.fraction)),
     })),
   );
-  const accent = $derived(
-    input.phase === "idle"
-      ? "var(--text-soft)"
-      : input.phase === "error" || input.phase === "aborted"
-        ? "var(--err)"
-        : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
-  );
-
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  // The needle follows the readout's own smoothed value; only a change of phase, scale or evidence glides it.
+  // The needle follows the readout, glides across a rescale, holds its pose while hidden and is revealed at the value.
   const sweep = new Smoothed();
+  let accent = $state("var(--phase-latency)");
   let course = "";
+  let revealed = false;
   $effect(() => {
-    const next = target * 270;
-    const { phase, scaleBytesPerSec, latencyScaleMs, throughputEvidence } =
-      input;
-    const current = `${phase}:${scaleBytesPerSec}:${latencyScaleMs}:${throughputEvidence}`;
-    const snap = !motion || !input.showValue || completed;
-    const glide = current === course ? { finish: true } : { over: 480 };
-    course = current;
-    untrack(() => sweep.set(next, { snap, ...glide }));
+    const next = (target ?? 0) * 270;
+    const current = `${input.scaleBytesPerSec}:${input.latencyScaleMs}`;
+    const tone = `var(--phase-${input.phase})`;
+    if (!visible) revealed = false;
+    else
+      untrack(() => {
+        sweep.set(
+          next,
+          !motion || !revealed
+            ? { snap: true }
+            : current === course
+              ? { finish: true }
+              : { over: 480 },
+        );
+        accent = tone;
+        revealed = true;
+        course = current;
+      });
   });
+  const capUnderHead = $derived(
+    (sweep.current * Math.PI * layout.radius) / 180 <
+      headRadius + layout.arcWidth / 2,
+  );
   // Each half ring turns through its own 180°, so both clips meet at the crossing.
   const halfRing = (sweep: number) => {
     const r = layout.radius;
@@ -190,11 +205,7 @@
       </radialGradient>
     </defs>
     <g fill="none" stroke-linecap="round">
-      <path
-        d={track}
-        stroke="var(--surface-2)"
-        stroke-width={layout.arcWidth}
-      />
+      <path d={track} stroke="var(--border)" stroke-width={layout.arcWidth} />
       <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
@@ -204,8 +215,8 @@
       </g>
     </g>
   </svg>
-  {#if completed}
-    <div class="result-layer">
+  {#if results.length}
+    <div class="result-layer" style:opacity={result.opacity}>
       <svg
         class="dial-art"
         aria-hidden="true"
@@ -255,10 +266,26 @@
         {/each}
       </svg>
     </div>
+    {#each results as result (result.phase)}
+      {@const angle = angleForFraction(
+        result.fraction,
+        layout.arcStart,
+        layout.arcSweep,
+      )}
+      <!-- Pointer-only: the cards and the announcement carry these values. -->
+      <span
+        class="head-target"
+        aria-hidden="true"
+        tabindex="-1"
+        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
+        {@attach tooltip(() => result.description)}
+      ></span>
+    {/each}
   {/if}
   <div
     class="live"
-    class:visible={input.showValue && !completed}
+    class:visible
     style:--sweep={`${sweep.current}deg`}
     aria-hidden="true"
   >
@@ -270,7 +297,12 @@
       style:height={`${diameter}px`}
     >
       {#each [0, 1] as half (half)}
-        <div class="half-clip" class:second={half === 1}>
+        <!-- At rest against its clip edge, the second half would bleed a hairline at the seam. -->
+        <div
+          class="half-clip"
+          class:second={half === 1}
+          hidden={half === 1 && sweep.current <= 180}
+        >
           <div
             class="rotor"
             style:width={`${diameter}px`}
@@ -293,6 +325,7 @@
       {/each}
       <svg
         class="start-cap"
+        style:visibility={capUnderHead ? "hidden" : null}
         width={diameter}
         height={diameter}
         viewBox={`0 0 ${diameter} ${diameter}`}
@@ -346,8 +379,7 @@
   .live.visible {
     opacity: 1;
   }
-  .motion .live,
-  .motion .result-layer {
+  .motion .live {
     transition: opacity var(--dur-slide) var(--ease-out);
   }
   .motion .live svg path {
@@ -355,11 +387,6 @@
   }
   .motion .live svg circle {
     transition: fill var(--dur-slide) linear;
-  }
-  @starting-style {
-    .motion .result-layer {
-      opacity: 0;
-    }
   }
   .sweep-ring {
     position: absolute;
@@ -391,6 +418,14 @@
   .start-cap {
     position: absolute;
     inset: 0;
+  }
+  .head-target {
+    position: absolute;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    translate: -50% -50%;
   }
   .live-head {
     position: absolute;

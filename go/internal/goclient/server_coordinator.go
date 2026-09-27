@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -49,7 +50,7 @@ type coordinator struct {
 }
 
 var (
-	errNoSurvivors  = errors.New("all selected servers failed")
+	ErrNoSurvivors  = errors.New("all selected servers failed")
 	errStageSkipped = errors.New("stage skipped")
 )
 
@@ -129,8 +130,8 @@ func (c *coordinator) details(outcome Outcome) *RunDetails {
 		Failures:         slices.Clone(c.failures),
 		Outcome:          outcome,
 	}
-	if c.prepared != nil {
-		details.LatencyFocus = c.prepared.LatencyFocus
+	if focus := c.focus(); focus != nil {
+		details.LatencyFocus = focus.id()
 	}
 	for _, server := range c.servers {
 		summary := ServerRunSummary{Server: server.prepared.Server, Results: slices.Clone(server.results)}
@@ -153,8 +154,8 @@ func (c *coordinator) run(ctx context.Context) error {
 		if err := c.stage(ctx, stage, i < len(plan)-1); err != nil && !errors.Is(err, errStageSkipped) {
 			return err
 		}
-		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseFinished})
 		c.publish()
+		c.emit(Event{Kind: EventStage, At: time.Now(), Stage: stage.Name, Phase: PhaseFinished})
 	}
 	return nil
 }
@@ -175,16 +176,48 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 	return OutcomeFailed
 }
 
+func (c *coordinator) focus() *participant {
+	var chosen, prepared, fallback *participant
+	for _, p := range c.active() {
+		switch {
+		case p.id() == c.cfg.LatencyServer:
+			chosen = p
+		case p.id() == c.prepared.LatencyFocus:
+			prepared = p
+		case fallback == nil && p.measured(StageLatency):
+			fallback = p
+		}
+	}
+	return cmp.Or(chosen, prepared, fallback)
+}
+
+func (p *participant) measured(stage Stage) bool {
+	return slices.ContainsFunc(p.results, func(r Result) bool {
+		return r.Stage == stage && r.Direction == "" && r.HasMedian()
+	})
+}
+
 func (c *coordinator) missingResults() bool {
+	focus := c.focus()
 	for _, stage := range c.cfg.Plan() {
-		replied := func(r Result) bool { return r.Stage == stage.Name && r.Direction == "" && r.HasMedian() }
-		for _, p := range c.active() {
-			if len(stage.Directions) == 0 && !slices.ContainsFunc(p.results, replied) {
-				return true
-			}
+		if len(stage.Directions) == 0 && (focus == nil || !focus.measured(stage.Name)) {
+			return true
 		}
 	}
 	return c.unavailable
+}
+
+func (c *coordinator) failed(stage Stage, scope FailureScope, id string) bool {
+	return slices.ContainsFunc(c.failures, func(f ServerFailure) bool {
+		return f.Stage == stage && f.Scope == scope && (id == "" || f.ServerID == id)
+	})
+}
+
+func (c *coordinator) insufficient(stage Stage, scope FailureScope, id string) {
+	if !c.failed(stage, scope, id) {
+		c.failures = append(c.failures, ServerFailure{ServerID: id, Stage: stage, Scope: scope,
+			Reason: FailureInsufficientEvidence, Err: errInsufficientEvidence, At: time.Since(c.started)})
+	}
 }
 
 func (c *coordinator) departure(id string, stage Stage) error {
@@ -202,9 +235,9 @@ func (c *coordinator) departure(id string, stage Stage) error {
 
 func (c *coordinator) noSurvivors() error {
 	if len(c.failures) == 0 {
-		return errNoSurvivors
+		return ErrNoSurvivors
 	}
-	return fmt.Errorf("%w: %w", errNoSurvivors, c.failures[len(c.failures)-1].Err)
+	return fmt.Errorf("%w: %w", ErrNoSurvivors, c.failures[len(c.failures)-1].Err)
 }
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time,

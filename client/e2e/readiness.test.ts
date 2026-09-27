@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   closeSettings,
   home,
   open,
@@ -10,16 +11,7 @@ import {
   runButton,
   spawnPeer,
 } from "./fleet";
-import type { Server } from "./servers";
-import { expect, test, type Page } from "./webview";
-
-const catalog = (...servers: Server[]) => ({
-  GM_SERVER_CATALOG: JSON.stringify({
-    servers: servers.map(({ id, name, url }) => ({ id, name, url })),
-  }),
-});
-
-const footer = (page: Page) => page.locator("footer.status .label");
+import { expect, test } from "./webview";
 
 test("a verified peer that dies fails its idle recheck, and Start leaves it out", async (page) => {
   const oslo = await spawnPeer("Oslo");
@@ -46,21 +38,30 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
   }
 });
 
-test("a stream plan that cannot fit shows its reason before Start", async (page) => {
+test("a forced stream count beyond the browser's connections is kept exactly and still measures", async (page) => {
   await open(page, home.url, {
-    config: { transferStreams: { mode: "forced", count: 12 } },
+    config: {
+      transferStreams: { mode: "forced", count: 12 },
+      transports: {
+        throughputTarget: "protocol:http1",
+        latencyTarget: "transport:websocket",
+      },
+    },
   });
   const settings = await openSettings(page);
-  await expect(settings.locator('[data-readiness="blocked"]')).toBeVisible({
+  await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
     timeout: 15_000,
   });
-  const reason = `Forced streams would occupy the progress and control capacity of ${home.name}.`;
-  await expect(settings.locator(".notice")).toContainText(reason);
   await closeSettings(page);
-  await expect(page.locator(".gauge-hint")).toContainText(reason);
-  await runButton(page, "Start test").click();
-  await expect(footer(page)).toHaveText("Test cannot start");
-  await expect(phase(page, "idle")).toHaveCount(1);
+  await page.getByRole("button", { name: "Details" }).click();
+  await expect(page.locator(".infra")).toContainText(
+    "Forced · 12 per direction",
+  );
+  await page.raw.press("Escape");
+  // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
+  const saved = await run(page);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("without idle latency the page settles Connected and never shows a blocker while loading", async (page) => {
@@ -75,9 +76,9 @@ test("without idle latency the page settles Connected and never shows a blocker 
   await open(page, home.url, {
     config: { stages: { ...baseConfig.stages, latency: false } },
   });
-  await expect(page.locator('.pulse .dot[data-state="connected"]')).toBeVisible(
-    { timeout: 15_000 },
-  );
+  await expect(page.locator('.pulse .status-dot[data-tone="ok"]')).toBeVisible({
+    timeout: 15_000,
+  });
   expect(await page.evaluate(() => (window as any).__labels)).toEqual([
     "Not started",
   ]);

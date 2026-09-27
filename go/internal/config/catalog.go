@@ -9,12 +9,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const maxCatalogBytes = 64 << 10
+
+// PublishedCatalog is the catalogue as served, with this server's own name and location as self.
+func (c Config) PublishedCatalog() wire.ServerCatalog {
+	catalog := c.ServerCatalog
+	if len(catalog.Servers) == 0 {
+		catalog = wire.SingletonCatalog()
+	}
+	catalog.Servers = slices.Clone(catalog.Servers)
+	catalog.Servers[0].Name, catalog.Servers[0].Location = c.ServerName, c.ServerLocation
+	return catalog
+}
 
 func loadServerCatalog() (wire.ServerCatalog, error) {
 	raw, inline := os.LookupEnv("GM_SERVER_CATALOG")
@@ -50,7 +62,7 @@ func loadServerCatalog() (wire.ServerCatalog, error) {
 			return c, fmt.Errorf("server catalogue origins: %w", err)
 		}
 		for _, raw := range origins {
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return c, fmt.Errorf("server catalogue origin %q: %w", raw, err)
 			}
@@ -67,13 +79,13 @@ func loadServerCatalog() (wire.ServerCatalog, error) {
 		if c.Servers[i].ID == "self" {
 			return c, fmt.Errorf("self is added automatically; omit it from servers")
 		}
-		canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(c.Servers[i].URL, "/"))
+		canonical, err := wire.CatalogOrigin(c.Servers[i].URL)
 		if err != nil {
 			return c, fmt.Errorf("server %q: %w", c.Servers[i].ID, err)
 		}
 		c.Servers[i].URL = canonical
 		for j, raw := range c.Servers[i].AdditionalOrigins {
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return c, err
 			}

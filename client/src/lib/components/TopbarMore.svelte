@@ -65,7 +65,11 @@
       onclick={() => select(onEndpoint)}
     >
       <span><Icon name="info" /></span>
-      <span><strong>Details</strong><small>Server and connection</small></span>
+      <span
+        ><strong>{endpointActive ? "Close Details" : "Details"}</strong><small
+          >Server and connection</small
+        ></span
+      >
     </button>
     <button
       type="button"

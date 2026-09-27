@@ -1,4 +1,5 @@
 // The server-authoritative upload feed, read the same way whichever transport carries it.
+import { isCount, isRecord } from "../../api/decode";
 import type { LaneFailure } from "../contract";
 
 /** What one feed reports, normalised from the wire records. */
@@ -26,11 +27,11 @@ const lost: LaneFailure = { reason: "connection-lost", retry: true };
 const busy: LaneFailure = { reason: "server-busy", retry: true };
 const signIn: LaneFailure = { reason: "sign-in-required", retry: false };
 const REFUSALS: Record<string, LaneFailure> = {
-  invalid: { reason: "connection-lost", retry: false, rotate: true },
+  invalid: { reason: "protocol-error", retry: false, rotate: true },
   ownerMismatch: { reason: "protocol-error", retry: false },
   globalFull: busy,
   clientFull: busy,
-  idle: lost,
+  idle: { reason: "timeout", retry: true },
   revoked: signIn,
 };
 
@@ -46,10 +47,14 @@ export function classifyUploadFailure(
   return { reason: "protocol-error", retry: false };
 }
 
+/** The delta-seconds Retry-After a busy server sends; whole seconds only, as natively. */
+export function retryAfterMs(headers: Headers): number | undefined {
+  const seconds = headers.get("Retry-After") ?? "";
+  return /^\d+$/.test(seconds) && +seconds > 0 ? +seconds * 1000 : undefined;
+}
+
 const oversized = () =>
   new Error("upload progress record exceeds 64 Ki characters");
-const counter = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
 const optionalText = (value: unknown) =>
   value === undefined || typeof value === "string";
 
@@ -57,9 +62,8 @@ const optionalText = (value: unknown) =>
 export function decodeUploadProgress(
   value: unknown,
 ): UploadProgressRecord | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return null;
-  const raw = value as Record<string, unknown>;
+  if (!isRecord(value)) return null;
+  const raw = value;
   if (raw.type === "ready") return { type: "ready" };
   if (raw.type === "error")
     return optionalText(raw.message) && optionalText(raw.code)
@@ -70,7 +74,7 @@ export function decodeUploadProgress(
         }
       : null;
   if (raw.type !== "progress" && raw.type !== "complete") return null;
-  return counter(raw.bytes) && counter(raw.nanos)
+  return isCount(raw.bytes) && isCount(raw.nanos)
     ? { type: raw.type, bytes: raw.bytes, nanos: raw.nanos }
     : null;
 }

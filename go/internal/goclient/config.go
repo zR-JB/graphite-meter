@@ -151,9 +151,12 @@ func (c Config) Validate() error {
 			return fmt.Errorf("latency cadence must be reply-driven or at least %v", PingFast)
 		}
 	}
-	if streams := c.TransferStreams; streams.Forced < 0 || streams.Forced > MaxStreams ||
-		streams.AutomaticMax < 1 || streams.AutomaticMax > MaxStreams {
-		return fmt.Errorf("streams must be from 1 to %d per server and direction", MaxStreams)
+	switch streams := c.TransferStreams; {
+	case streams.Forced < 0 || streams.Forced > MaxStreams:
+		return fmt.Errorf("forced streams must be from 1 to %d per server and direction, or 0 for automatic",
+			MaxStreams)
+	case streams.AutomaticMax < 1 || streams.AutomaticMax > MaxStreams:
+		return fmt.Errorf("the automatic stream maximum must be from 1 to %d per direction", MaxStreams)
 	}
 	return c.normalized().checkPaths()
 }
@@ -177,6 +180,7 @@ func (c Config) checkPaths() error {
 type Config struct {
 	BaseURL               string
 	ServerIDs             []string
+	LatencyServer         string
 	ThroughputTarget      string
 	ThroughputProtocol    string
 	ThroughputTransport   string

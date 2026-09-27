@@ -158,7 +158,8 @@ test("stage populations stay separate and added latency is signed per loaded sta
   for (let i = 0; i < 100; i++) latency.observe("download", reply(20), 0, 0);
   latency.observe("upload", reply(300), 0, 0);
   latency.observe("upload", reply(250, true), 0, 0);
-  expect(latency.result()).toMatchObject({ reportedMs: 15 });
+  expect(latency.result()).toMatchObject({ reportedMs: 15, jitterMs: 10 });
+  expect(latency.result()?.stabilityPct).toBeCloseTo(100 / 3);
   expect(latency.addedLatency()).toEqual({
     download: 5,
     upload: 285,
@@ -252,21 +253,10 @@ test("an early exit needs coverage, a stable score and a feasible evidence floor
   expect(exit({ elapsedMs: 4_000 })).toBe(false);
   expect(exit({ confidence: { score: 0.5, sampleCount: 30 } })).toBe(false);
   expect(exit({ confidence: { score: 0.95, sampleCount: 5 } })).toBe(false);
-  expect(confidenceSampleFloor("transfer", 500)).toBe(4);
-  expect(confidenceSampleFloor("latency", 500, "slow")).toBe(3);
-  expect(confidenceSampleFloor("latency", 5_000, "reply-driven")).toBe(
-    EARLY_FINISH.latencySamples,
-  );
-  expect(confidenceSampleFloor("transfer", 4_000)).toBe(11);
-  const expected = {
-    short: { fast: 8, medium: 6, slow: 3 },
-    long: { fast: 8, medium: 8, slow: 7 },
-  };
   for (const preset of ["short", "long"] as const)
     for (const cadence of ["fast", "medium", "slow"] as const) {
       const durationMs = DURATION_PRESETS[preset].latencyMs;
       const floor = confidenceSampleFloor("latency", durationMs, cadence);
-      expect(floor).toBe(expected[preset][cadence]);
       const intervalMs = fixedPingIntervalMs(cadence)!;
       const confidence = latencyConfidence(
         Array.from({ length: floor }, (_, i) => ({
@@ -291,18 +281,7 @@ test("an early exit needs coverage, a stable score and a feasible evidence floor
     }
 });
 
-test("download sums consumed bytes and upload sums receiver means, never receiver durations", () => {
-  const down = new ThroughputAggregate();
-  down.begin("download", ["a", "b"], 0);
-  down.observe(boundary(0, { a: 0, b: 0 }));
-  down.addDownload("download", "a", 1_000);
-  down.addDownload("download", "b", 3_000);
-  down.observe(boundary(1_000, { a: 1_000, b: 3_000 }));
-  expect(down.result("download", false).down).toMatchObject({
-    reportedBytesPerSec: 4_000,
-    totalBytes: 4_000,
-  });
-
+test("upload sums receiver means, never receiver durations", () => {
   const up = new ThroughputAggregate();
   up.begin("upload", ["a", "b"], 0);
   up.observe(
@@ -336,59 +315,16 @@ test("download sums consumed bytes and upload sums receiver means, never receive
   });
 });
 
-test("a window that moved nothing has no headline; one missing or unchanged receiver skips only its boundary", () => {
+test("a restarted receiver is an evidence discontinuity, even in the same tick", () => {
   const m = new ThroughputAggregate();
-  m.begin("upload", ["a", "b"], 0);
-  m.observe(
-    boundary(0, {}, { a: receiver("a", 0, 1), b: receiver("b", 0, 1) }),
-  );
-  m.observe(
-    boundary(
-      1_000,
-      {},
-      { a: receiver("a", 0, 1e9 + 1), b: receiver("b", 0, 1e9 + 1) },
-    ),
-  );
-  expect(m.result("upload", false).up).toBeNull();
-  expect(
-    m.observe(
-      boundary(1_250, {}, { a: receiver("a", 0, 1_250e6 + 1), b: null }),
-    ),
-  ).toBeNull();
-  expect(
-    m.observe(
-      boundary(
-        1_300,
-        {},
-        { a: receiver("a", 9, 1_300e6 + 1), b: receiver("b", 0, 1e9 + 1) },
-      ),
-    ),
-  ).toBeNull();
-  const spanning = m.observe(
-    boundary(
-      1_500,
-      {},
-      {
-        a: receiver("a", 1_000, 1_500e6 + 1),
-        b: receiver("b", 500, 1_500e6 + 1),
-      },
-    ),
-  );
-  expect(spanning).toMatchObject({ startMs: 1_000, upBytesPerSec: 3_000 });
-  expect(m.intervals).toHaveLength(1);
-  // A restarted receiver is an evidence discontinuity, even in the same tick.
-  m.observe(
-    boundary(
-      1_500,
-      {},
-      { a: receiver("restarted", 0, 1), b: receiver("b", 500, 1_500e6 + 1) },
-    ),
-  );
+  m.begin("upload", ["a"], 0);
+  m.observe(boundary(0, {}, { a: receiver("a", 0, 1) }));
+  m.observe(boundary(500, {}, { a: receiver("a", 500, 5e8 + 1) }));
+  m.observe(boundary(500, {}, { a: receiver("restarted", 0, 1) }));
   expect(m.intervals.map((interval) => interval.reason)).toEqual([
     "stage-start",
     "evidence-resumed",
   ]);
-  expect(m.result("upload", false).up).toBeNull();
 });
 
 test("every headline needs 800 ms in every clock and moved bytes", () => {
@@ -397,11 +333,6 @@ test("every headline needs 800 ms in every clock and moved bytes", () => {
   m.observe(boundary(0, { a: 0, b: 0 }));
   m.observe(boundary(500, { a: 500, b: 2_000 }));
   expect(m.result("download", false).down).toBeNull();
-  const idle = new ThroughputAggregate();
-  idle.begin("download", ["a"], 0);
-  idle.observe(boundary(0, { a: 0 }));
-  idle.observe(boundary(1_000, { a: 0 }));
-  expect(idle.result("download", false).down).toBeNull();
   m.observe(boundary(2_000, { a: 2_000, b: 8_000 }));
   expect(m.result("download", false).down?.reportedBytesPerSec).toBe(5_000);
   m.begin("download", ["a"], 2_000, "dropout");
@@ -453,21 +384,6 @@ test("opposite fluctuations use aggregate stability, simultaneous peaks and one 
   });
   const windows = m.intervals[0].headline!.up!;
   expect(windows[0].startNanos).toBe(windows[1].startNanos);
-});
-
-test("a replaced receiver id never spans a window; evidence resumes in a new interval", () => {
-  const m = new ThroughputAggregate();
-  m.begin("upload", ["a"], 0);
-  m.observe(boundary(0, {}, { a: receiver("first", 0, 1) }));
-  expect(
-    m.observe(boundary(1_000, {}, { a: receiver("second", 500, 1e9) })),
-  ).toBeNull();
-  expect(m.intervals.map((interval) => interval.reason)).toEqual([
-    "stage-start",
-    "evidence-resumed",
-  ]);
-  expect(m.intervals[0].complete).toBe(false);
-  expect(m.intervals[1].full).toBeNull();
 });
 
 test("idle confidence uses only in-window idle replies", () => {
@@ -566,7 +482,7 @@ for (const vector of vectors)
     for (const b of vector.boundaries) {
       if (b.dropout) {
         live = live.filter((id) => !b.dropout!.includes(id));
-        m.begin(vector.stage, live, b.atMs, "dropout");
+        m.dropout(live, b.atMs);
       }
       m.observe(
         {

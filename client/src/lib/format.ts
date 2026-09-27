@@ -7,6 +7,7 @@ const finite =
   (value: number, ...rest: Rest): string =>
     Number.isFinite(value) ? format(value, ...rest) : MISSING;
 
+export const fmtCount = (count: number) => count.toLocaleString("en-US");
 export const fmtSpeed = finite((value) => {
   if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
   return Math.abs(Math.round(value * 10) / 10) < 1000
@@ -28,8 +29,6 @@ export const fmtAddedMs = finite(
 export const fmtMs = finite((ms) =>
   ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms),
 );
-
-export const fmtMsTick = finite((ms) => (ms <= 0 ? "0" : fmtMs(ms)));
 
 export const fmtDuration = finite((ms, fractionDigits: number = 1) => {
   const seconds = Math.max(0, ms) / 1000;

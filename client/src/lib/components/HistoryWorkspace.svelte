@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Dismissal lasts the page's lifetime and returns when the count changes.
+  let dismissedMalformed = $state(0);
+</script>
+
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import type { IconName } from "../presentation/icons";
@@ -12,7 +17,7 @@
     onHistoryChanged,
   } from "../history/repository";
   import { formatRecentCompletion } from "../history/format";
-  import { formatLatency, formatRate } from "../format";
+  import { formatLatency, formatRate, throughputUnitIndex } from "../format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
@@ -28,9 +33,11 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
     counted,
+    JARGON,
     LATENCY_POPULATION,
     OUTCOME,
     STAGE,
+    STATUS_TONE,
   } from "../presentation/vocabulary";
   import { announce } from "../presentation/announcer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -50,12 +57,16 @@
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
+  const malformedShown = $derived(
+    malformedCount > 0 && malformedCount !== dismissedMalformed,
+  );
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
   let pages = $state(1);
   let renderedAt = $state(wallNow());
   let workspace = $state<HTMLElement>();
+  let list = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
   let previousSelectedId: string | null = null;
   let confirm = $state<
@@ -66,9 +77,8 @@
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
-  const ordered = $derived(
-    sortPreparedHistory(prepareHistorySort(records), sort, descending),
-  );
+  const prepared = $derived(prepareHistorySort(records));
+  const ordered = $derived(sortPreparedHistory(prepared, sort, descending));
   const selectedIndex = $derived(
     selectedId ? ordered.findIndex((record) => record.id === selectedId) : -1,
   );
@@ -90,19 +100,20 @@
 
   const COLUMN: Record<
     HistoryColumn,
-    { short: string; icon: IconName; help?: string }
+    { short: string; icon: IconName; help: string }
   > = {
-    download: STAGE.download,
-    upload: STAGE.upload,
-    bidirectional: STAGE.bidirectional,
+    download: { ...STAGE.download, help: JARGON.download },
+    upload: { ...STAGE.upload, help: JARGON.upload },
+    bidirectional: { ...STAGE.bidirectional, help: JARGON.bidirectional },
     idle: {
       short: LATENCY_POPULATION.latency.short,
       icon: STAGE.latency.icon,
+      help: JARGON.latency,
     },
     loaded: {
       short: "Loaded",
       icon: STAGE.latency.icon,
-      help: "Highest loaded median (p50) across download, upload and bidirectional",
+      help: JARGON.loadedLatency,
     },
   };
 
@@ -150,6 +161,7 @@
     sort = next;
     descending = nextDescending;
     pages = 1;
+    list?.scrollTo({ top: 0 });
   }
 
   function loadMore() {
@@ -208,6 +220,26 @@
   }
 
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One prefix per rate column, from its median, so a column reads in one unit.
+  const tiers = $derived.by(() => {
+    const tier = (column: "download" | "upload" | "bidirectional") => {
+      const values = prepared
+        .flatMap((entry) => entry.keys[column] ?? [])
+        .sort((a, b) => a - b);
+      return values.length
+        ? throughputUnitIndex(
+            values[values.length >> 1],
+            units.base,
+            units.kind,
+          )
+        : undefined;
+    };
+    return {
+      download: tier("download"),
+      upload: tier("upload"),
+      bidirectional: tier("bidirectional"),
+    };
+  });
 
   function metric(record: HistoryRecord, column: HistoryColumn): string {
     const { stages, bidirectional } = record.result;
@@ -217,7 +249,7 @@
       return value == null
         ? stageStatusLabel(stages.latency)
         : formatLatency(value);
-    if (value != null) return formatRate(value, units);
+    if (value != null) return formatRate(value, units, tiers[column]);
     if (column !== "bidirectional") return stageStatusLabel(stages[column]);
     const { survivingDirection } = bidirectionalResultPresentation(
       bidirectional?.down?.reportedBytesPerSec,
@@ -240,10 +272,22 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+    const recentDay = ["Today", "Yesterday"].includes(
+      groupHeading(record.completedAt),
+    );
+    const day = new Date(record.completedAt).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
     return {
       record,
       exact,
-      primary: byDay ? time : `${dateLabel(record.completedAt)}, ${time}`,
+      primary: !byDay
+        ? `${dateLabel(record.completedAt)}, ${time}`
+        : recentDay
+          ? time
+          : `${day}, ${time}`,
       secondary: recent,
       outcome,
       metrics,
@@ -270,14 +314,13 @@
   }
 
   const byDay = $derived(sort === "date");
-  function dayHeading(value: number): string {
+  // Recent days, then months, so sparse history never gets a heading per result.
+  function groupHeading(value: number): string {
     const day = (time: number) => new Date(time).toDateString();
     if (day(value) === day(renderedAt)) return "Today";
     if (day(value) === day(renderedAt - 86_400_000)) return "Yesterday";
     return new Date(value).toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
+      month: "long",
       year: "numeric",
     });
   }
@@ -379,7 +422,7 @@
     </div>
   </header>
 
-  {#if store.historyWarning || actionError || malformedCount || (records.length && !store.savingResults)}
+  {#if store.historyWarning || actionError || malformedShown || (records.length && !store.savingResults)}
     <div class="notices">
       {#if records.length && !store.savingResults}
         <p class="notice" data-tone="warn">
@@ -395,11 +438,21 @@
       {#each [store.historyWarning, actionError].filter(Boolean) as message (message)}
         <p class="notice" data-tone="warn" role="status">{message}</p>
       {/each}
-      {#if malformedCount}
+      {#if malformedShown}
         <p class="notice" data-tone="warn" role="status">
-          {malformedCount} unsupported or malformed {malformedCount === 1
-            ? "record was"
-            : "records were"} ignored.
+          <span
+            >{malformedCount} unsupported or malformed {malformedCount === 1
+              ? "record was"
+              : "records were"} ignored.</span
+          >
+          <button
+            class="btn"
+            type="button"
+            onclick={() => {
+              dismissedMalformed = malformedCount;
+              workspace?.focus({ preventScroll: true });
+            }}>Dismiss</button
+          >
         </p>
       {/if}
     </div>
@@ -439,7 +492,7 @@
     </div>
   {:else}
     <div class="workspace-body" class:has-detail={selectedId !== null}>
-      <div class="history-list">
+      <div class="history-list" bind:this={list}>
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
@@ -452,9 +505,6 @@
                   : descending
                     ? "descending"
                     : "ascending"}
-                {@attach tooltip(
-                  () => (column !== "date" && COLUMN[column].help) || "",
-                )}
                 onclick={() =>
                   setSort(
                     column,
@@ -465,7 +515,12 @@
                     class="head-icon"
                     data-tone={column}><Icon name={COLUMN[column].icon} /></span
                   >{/if}
-                <span>{column === "date" ? "Date" : COLUMN[column].short}</span>
+                <span
+                  {@attach column === "date"
+                    ? null
+                    : tooltip(() => COLUMN[column].help)}
+                  >{column === "date" ? "Date" : COLUMN[column].short}</span
+                >
                 {#if sort === column}<span class="sr-only"
                     >, {descending ? "descending" : "ascending"}</span
                   >{/if}
@@ -475,9 +530,9 @@
           </div>
           <ol aria-label="Saved results">
             {#each visible as record, index (record.id)}
-              {@const day = byDay ? dayHeading(record.completedAt) : ""}
-              {#if day && (index === 0 || day !== dayHeading(visible[index - 1].completedAt))}
-                <li class="day caps" aria-hidden="true">{day}</li>
+              {@const day = byDay ? groupHeading(record.completedAt) : ""}
+              {#if day && (index === 0 || day !== groupHeading(visible[index - 1].completedAt))}
+                <li class="day" aria-hidden="true">{day}</li>
               {/if}
               <li>
                 <svelte:boundary>
@@ -500,7 +555,8 @@
                       </time>
                       {#if row.outcome !== "complete"}<span
                           class="badge"
-                          data-tone="warn">{OUTCOME[row.outcome]}</span
+                          data-tone={STATUS_TONE[row.outcome]}
+                          >{OUTCOME[row.outcome]}</span
                         >{/if}
                     </span>
                     {#each columns as column, index (column)}
@@ -616,7 +672,7 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
@@ -636,8 +692,7 @@
   .history-head p {
     min-width: 0;
     color: var(--text-muted);
-    font: var(--type-xs) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    font-size: var(--type-xs);
   }
   .head-actions {
     display: flex;
@@ -649,7 +704,6 @@
     display: grid;
     gap: var(--space-1);
     padding: var(--space-2) var(--space-4);
-    border-bottom: 1px solid var(--border);
   }
   .notice {
     align-items: center;
@@ -677,14 +731,14 @@
   }
   @container history (min-width: 821px) {
     .has-detail {
-      grid-template-columns: minmax(0, 1fr) minmax(380px, 0.8fr);
+      grid-template-columns: minmax(320px, 2fr) minmax(460px, 3fr);
     }
     .has-detail .history-list {
       visibility: visible;
     }
     .detail-pane {
       grid-area: 1 / 2;
-      border-left: 1px solid var(--border-strong);
+      border-left: 1px solid var(--border-subtle);
     }
   }
   .history-list {
@@ -693,8 +747,9 @@
   .history-table {
     display: grid;
     grid-template-columns:
-      minmax(150px, 1.25fr)
-      repeat(var(--metric-columns), minmax(72px, 1fr));
+      minmax(150px, 16rem)
+      repeat(var(--metric-columns), minmax(72px, 10rem))
+      minmax(0, 1fr);
     padding-inline: var(--space-2);
   }
   .column-head,
@@ -712,10 +767,11 @@
     z-index: 1;
     margin-inline: calc(-1 * var(--space-2));
     padding-inline: var(--space-2);
-    border-bottom: 1px solid var(--border-strong);
-    background: var(--sheen), var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-1);
   }
   .column-head button {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -729,6 +785,9 @@
   .column-head > button:first-child {
     justify-content: flex-start;
   }
+  .column-head > button:first-child i {
+    position: static;
+  }
   @media (hover: hover) {
     .column-head button:hover {
       background: var(--brand-soft);
@@ -738,8 +797,10 @@
   .column-head [aria-pressed="true"] {
     color: var(--brand-strong);
   }
+  /* The sort mark sits in the padding, so labels share their values' edge. */
   .column-head i {
-    flex: none;
+    position: absolute;
+    right: 2px;
     width: 6px;
     height: 6px;
     border: solid currentColor;
@@ -764,12 +825,11 @@
     width: var(--icon-sm);
     height: var(--icon-sm);
   }
-  li {
-    border-bottom: 1px solid var(--border-subtle);
-  }
   li.day {
     display: block;
     padding: var(--space-4) 10px var(--space-1);
+    color: var(--text-muted);
+    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
   }
   .result-row {
     min-height: 40px;
@@ -790,27 +850,29 @@
     min-width: 0;
     padding: 9px 10px;
   }
+  /* The badge wraps below a date that needs the whole cell. */
   .date-cell {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: 2px var(--space-2);
   }
   time {
     display: flex;
-    flex: 1;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 var(--space-2);
     min-width: 0;
-    white-space: nowrap;
   }
-  time strong {
-    font: var(--w-strong) var(--type-xs) var(--font-mono);
+  time strong,
+  .metric-cell strong {
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
   time small {
     color: var(--text-muted);
-    font: var(--type-2xs) var(--font-mono);
+    font-size: var(--type-xs);
   }
   .metric-cell {
     display: grid;
@@ -821,9 +883,7 @@
     display: none;
   }
   .metric-cell strong {
-    overflow-wrap: anywhere;
-    font: var(--w-strong) var(--type-xs) / 1.35 var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    overflow-wrap: break-word;
   }
   .load-more {
     display: flex;
@@ -832,7 +892,7 @@
     gap: var(--space-3);
     padding: var(--space-4);
     color: var(--text-muted);
-    font: var(--type-2xs) var(--font-mono);
+    font-size: var(--type-xs);
   }
   @container history-list (max-width: 560px) {
     .column-head {
@@ -853,21 +913,17 @@
       box-shadow: var(--elev-tile);
     }
     li.day {
-      border: 0;
       padding: var(--space-3) var(--space-1) 0;
     }
     .date-cell {
       grid-column: 1 / -1;
       padding-block: 6px 5px;
-      border-bottom: 1px solid var(--border-subtle);
     }
     .metric-cell {
+      align-content: start;
       gap: 3px;
       padding: 6px 7px 7px;
       text-align: start;
-    }
-    .metric-cell + .metric-cell {
-      border-left: 1px solid var(--border-subtle);
     }
     .metric-cell small {
       display: flex;
@@ -876,7 +932,7 @@
       color: var(--text-muted);
     }
     .metric-cell strong {
-      font-size: var(--type-2xs);
+      font-size: var(--type-xs);
     }
   }
   @container history (max-width: 560px) {

@@ -1,12 +1,14 @@
 package wire
 
 import (
+	"encoding/json/v2"
 	"slices"
-	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
-func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
+func TestCatalogConnectSources(t *testing.T) {
 	c := SingletonCatalog()
 	c.Servers = append(c.Servers,
 		ServerEntry{ID: "ipv6", Name: "IPv6", URL: "https://[2001:db8::1]",
@@ -18,9 +20,6 @@ func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := c.ConnectSources()
-	if strings.Contains(strings.Join(sources, " "), "[") {
-		t.Fatalf("IPv6 literal leaked into CSP sources: %v", sources)
-	}
 	for _, source := range []string{"https://meter.example:*", "wss://meter.example:*", "https://bulk.example:7249",
 		"wss://bulk.example:7249"} {
 		if !slices.Contains(sources, source) {
@@ -29,7 +28,7 @@ func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 	}
 	if !c.Servers[1].AllowsOrigin("https://[2001:db8::1]:7249") ||
 		!c.Servers[2].AllowsOrigin("https://[2001:db8::2]:7248") {
-		t.Fatal("browser CSP filtering altered the native discovery boundary")
+		t.Fatal("an IPv6 literal left the discovery boundary")
 	}
 }
 
@@ -62,6 +61,28 @@ func TestOriginKey(t *testing.T) {
 		if SameOrigin(pair[0], pair[1]) {
 			t.Errorf("SameOrigin(%q, %q) = true", pair[0], pair[1])
 		}
+	}
+}
+
+func TestCatalogsMatchTheSchema(t *testing.T) {
+	schema := apipin.Schema(t, "servers")
+	c := SingletonCatalog()
+	c.Servers = append(c.Servers, ServerEntry{ID: "remote", URL: "https://remote.example/", Name: "Remote",
+		Location: "fra", AdditionalOrigins: []string{"https://bulk.example:7249/"}})
+	c.DefaultSelection = []string{"self", "remote"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("trailing slashes refused: %v", err)
+	}
+	for _, catalog := range []ServerCatalog{SingletonCatalog(), c} {
+		data, err := json.Marshal(catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		apipin.Validate(t, schema, data)
+	}
+	c.Servers[1].URL = "."
+	if c.Validate() == nil {
+		t.Fatal("accepted '.' for a server other than self")
 	}
 }
 

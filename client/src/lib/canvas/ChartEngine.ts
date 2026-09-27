@@ -21,6 +21,7 @@ import {
   type ChartViewport,
 } from "./chartLayout";
 import { canvasPixelRatio } from "./canvasResolution";
+import type { UnitBase, UnitKind } from "../format";
 import { traceSmoothLine } from "./smoothPath";
 // A throughput break is explicit runner lifecycle state, never a delivery gap.
 const throughputSamplesContinuous = (
@@ -28,6 +29,8 @@ const throughputSamplesContinuous = (
   right: ThroughputSample,
 ) => left.continuityId === right.continuityId;
 const RESULT_GLIDE_MS = 400;
+const RUN_FADE_OUT_MS = 90;
+const RUN_FADE_IN_MS = 180;
 const TERMINAL: readonly Phase[] = ["idle", "complete", "aborted", "error"];
 const LATENCY_GLYPH_ENTER_MS = 90;
 const LATENCY_ANIMATION_WINDOW = 32;
@@ -51,6 +54,7 @@ export interface ChartData {
   scaleBytesPerSec: number;
   /** Shared robust latency ceiling, identical to the gauge. */
   latencyScaleMs: number;
+  units: { base: UnitBase; kind: UnitKind; index: number };
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
     Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
@@ -67,6 +71,8 @@ export interface HoverInfo {
   /** The real bucket glyph selected near the pointer, never an interpolated RTT. */
   latencyX: number | null;
   rtt: number | null;
+  /** The selected glyph was probed under load, so it is drawn in the loaded-latency ink. */
+  rttLoaded: boolean;
   pingCount: number;
   timeoutCount: number;
   latencyOverflow: boolean;
@@ -86,6 +92,8 @@ interface PhaseSpan {
   t1: number; // Infinity while open
 }
 type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
+/** A result-rate label's box: ten-pixel mono figures and unit, such as "1003.2 Mbit/s". */
+const STAT_LABEL = { width: 90, height: 14 };
 const THROUGHPUT_LANES = [
   { samples: "download", area: "download" },
   { samples: "upload", area: "upload" },
@@ -97,6 +105,8 @@ const THROUGHPUT_LANES = [
 }>;
 export interface ChartPresentation {
   layout: ChartLayout;
+  units: ChartData["units"];
+  ceiling: { bytesPerSec: number; rttMs: number };
   latencyEnabled: boolean;
   hasThroughputScale: boolean;
   phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
@@ -128,7 +138,7 @@ interface ThemeColors {
   uploadRgb: { r: number; g: number; b: number };
   bidirectional: string;
   signal: string;
-  warn: string;
+  latencyLoaded: string;
   err: string;
   grid: string;
   textSoft: string;
@@ -171,6 +181,9 @@ const sceneKey = (d: ChartData) => [
   d.runSeq,
   d.scaleBytesPerSec,
   d.latencyScaleMs,
+  d.units.base,
+  d.units.kind,
+  d.units.index,
   d.resultRates.download,
   d.resultRates.upload,
   d.resultRates.bidiDown,
@@ -181,6 +194,7 @@ export class ChartEngine {
   #sceneKey: unknown[];
   #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #onTimeScale: ((tMax: number) => void) | null;
+  #onFade: ((opacity: number) => void) | null;
   #presentationKey = "";
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
@@ -206,6 +220,10 @@ export class ChartEngine {
   /** The result-mode time axis; a live run follows its timeline instead. */
   #camera = new Smoothed();
   #cameraTarget = 4_000;
+  #runFade = new Smoothed();
+  #shownFade = 1;
+  #bytesCeiling = new Smoothed();
+  #rttCeiling = new Smoothed();
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -235,7 +253,7 @@ export class ChartEngine {
     uploadRgb: { r: 189, g: 163, b: 108 },
     bidirectional: "#a695c8",
     signal: "#8ba3ba",
-    warn: "#c4a568",
+    latencyLoaded: "#d9dce0",
     err: "#d89393",
     grid: "rgba(211,219,227,0.05)",
     textSoft: "#8b929a",
@@ -246,11 +264,14 @@ export class ChartEngine {
     data: ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
     onTimeScale?: (tMax: number) => void,
+    onFade?: (opacity: number) => void,
   ) {
     this.#data = data;
     this.#sceneKey = sceneKey(data);
     this.#onPresentation = onPresentation ?? null;
     this.#onTimeScale = onTimeScale ?? null;
+    this.#onFade = onFade ?? null;
+    this.#runFade.set(1, { snap: true });
   }
   update(data: ChartData): void {
     const key = sceneKey(data);
@@ -285,7 +306,8 @@ export class ChartEngine {
   #retarget(): void {
     this.#dirty = true;
     this.#stopFrames ??= animate((now) => {
-      const more = this.#visible && this.render(now);
+      // Reduced motion draws each update once instead of following the clock.
+      const more = this.#visible && this.render(now) && !still();
       if (!more) this.#stopFrames = null;
       return more;
     });
@@ -388,6 +410,7 @@ export class ChartEngine {
       upBytesPerSec,
       latencyX,
       rtt,
+      rttLoaded: !!latencyBucket?.underLoad,
       pingCount: latencyBucket?.pingCount ?? 0,
       timeoutCount: latencyBucket?.timeoutCount ?? 0,
       latencyOverflow:
@@ -413,7 +436,7 @@ export class ChartEngine {
       uploadRgb: toRgb(upload),
       bidirectional: g("--phase-bidirectional", "#a695c8"),
       signal: g("--signal", "#8ba3ba"),
-      warn: g("--warn", "#c4a568"),
+      latencyLoaded: g("--latency-loaded", "#d9dce0"),
       err: g("--err", "#d89393"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
       textSoft: g("--text-soft", "#8b929a"),
@@ -445,35 +468,54 @@ export class ChartEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
   render = (now: number): boolean => {
-    const dirty = this.#dirty;
-    if (dirty) {
-      this.#update(now);
-      this.#dirty = false;
-    }
+    const handing = this.#dirty && !this.#update(now);
+    this.#dirty = handing;
     const tMax = this.#result
       ? this.#camera.at(now)
       : Math.max(this.#data.timelineAt(now) + 2_000, 4_000);
     const cameraMoving = this.#result
       ? tMax !== this.#cameraTarget
       : !TERMINAL.includes(this.#data.phase);
-    if (tMax !== this.#vp.tMax) {
+    if (tMax !== this.#vp.tMax && !handing) {
       this.#vp = { ...this.#vp, tMin: 0, tMax };
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
       this.#onTimeScale?.(tMax);
       this.#publishPresentation(this.#data, !cameraMoving);
     }
-    if (this.#sceneDirty) {
+    const bytesPerSecMax = this.#bytesCeiling.at(now);
+    const rttMax = this.#rttCeiling.at(now);
+    const ceilingMoving =
+      bytesPerSecMax !== this.#bytesCeiling.target ||
+      rttMax !== this.#rttCeiling.target;
+    if (
+      !handing &&
+      (bytesPerSecMax !== this.#vp.bytesPerSecMax || rttMax !== this.#vp.rttMax)
+    ) {
+      this.#vp = { ...this.#vp, bytesPerSecMax, rttMax };
+      this.#layout = chartLayout(this.#w, this.#h, this.#vp);
+      this.#sceneDirty = true;
+      this.#publishPresentation(this.#data);
+    }
+    const fade = this.#runFade.at(now);
+    if (fade !== this.#shownFade) this.#onFade?.((this.#shownFade = fade));
+    if (this.#sceneDirty && !handing) {
       this.#rebuildScene(now);
       this.#sceneDirty = false;
     }
     const wasLatencyAnimating = this.#latencyGlyphActive;
-    this.#latencyGlyphActive = this.#compose(now);
+    this.#latencyGlyphActive = this.#compose(now, fade);
     // Fold entering glyphs into the cache once their animation completes.
-    if (wasLatencyAnimating && !this.#latencyGlyphActive) {
+    if (wasLatencyAnimating && !this.#latencyGlyphActive && !handing) {
       this.#rebuildScene(now);
       this.#sceneDirty = false;
     }
-    return cameraMoving || this.#latencyGlyphActive;
+    return (
+      cameraMoving ||
+      ceilingMoving ||
+      this.#latencyGlyphActive ||
+      handing ||
+      fade < 1
+    );
   };
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
@@ -496,11 +538,18 @@ export class ChartEngine {
     this.#sceneTMax = 0;
     this.#sceneDirty = true;
   }
-  #update(now: number): void {
+  /** A new run replaces the presented one only once it has faded out; false until then. */
+  #update(now: number): boolean {
     const d = this.#data;
     if (d.runSeq !== this.#runSeq) {
+      if (this.#runSeq >= 0) {
+        if (this.#runFade.target !== 0)
+          this.#runFade.set(0, { over: RUN_FADE_OUT_MS, now });
+        if (this.#runFade.at(now) > 0) return false;
+      }
       this.#runSeq = d.runSeq;
       this.#resetRunState();
+      this.#runFade.set(1, { over: RUN_FADE_IN_MS, now });
     }
     this.#indexData(d);
     // Sample timestamps cannot mark a sample-free warmup, so the runner's boundary is the phase clock.
@@ -528,32 +577,40 @@ export class ChartEngine {
       });
     }
     this.#result = complete;
-    const tMin = 0;
-    const bytesPerSecMax =
-      d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
       d.scaleBytesPerSec !== DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC ||
       d.throughput.length > 0;
-    const rttMin = 0;
-    const rttMax = d.latencyScaleMs;
+    const ceiling = (value: Smoothed, target: number, empty: boolean) => {
+      if (value.target !== target || empty)
+        value.set(target, { over: RESULT_GLIDE_MS, snap: empty, now });
+      return value.at(now);
+    };
     this.#vp = {
-      tMin,
+      tMin: 0,
       tMax: this.#vp.tMax,
-      bytesPerSecMax,
-      rttMin,
-      rttMax,
+      bytesPerSecMax: ceiling(
+        this.#bytesCeiling,
+        d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000,
+        !d.throughput.length,
+      ),
+      rttMin: 0,
+      rttMax: ceiling(this.#rttCeiling, d.latencyScaleMs, !d.latency.length),
     };
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#publishPresentation(d);
+    return true;
   }
   #publishPresentation(data: ChartData, force = false): void {
     if (!this.#onPresentation) return;
-    const { plot, width, height, viewport, timeMajorTicks } = this.#layout;
+    const { plot, width, height, timeMajorTicks } = this.#layout;
     const key = [
       width,
       height,
-      viewport.bytesPerSecMax,
-      viewport.rttMax,
+      data.units.base,
+      data.units.kind,
+      data.units.index,
+      this.#bytesCeiling.target,
+      this.#rttCeiling.target,
       data.latencyEnabled,
       this.#hasThroughputScale,
       this.#result,
@@ -572,28 +629,42 @@ export class ChartEngine {
           const repeatWarmup = span.phase === "warmup" && warmupLabelled;
           if (span.phase === "warmup") warmupLabelled = true;
           return width > 56 && !repeatWarmup && isChartLabelPhase(span.phase)
-            ? [{ phase: span.phase, x: x0 + 3, y: plot.top + 9 }]
+            ? [{ phase: span.phase, x: x0 + 3, y: plot.top - 4 }]
             : [];
         })
       : [];
-    const phaseStats = this.#result
-      ? this.#phaseStats(data.resultRates).flatMap((stat) => {
-          const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
-          if (x1 <= x0) return [];
-          const y = this.#layout.throughputY(stat.bytesPerSec);
-          return [
-            {
-              lane: stat.lane,
-              tone: stat.area,
-              bytesPerSec: stat.bytesPerSec,
-              x: Math.min(x0 + 3, plot.right - 130),
-              y: y - 4 - 14 < plot.top ? y + 4 : y - 4 - 14,
-            },
-          ];
+    const phaseStats: ChartPresentation["phaseStats"][number][] = [];
+    // Left to right, a label sits above its line, else below; it moves past any it would cover or stays out.
+    const last = plot.right - STAT_LABEL.width;
+    for (const stat of this.#result ? this.#phaseStats(data.resultRates) : []) {
+      const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
+      if (x1 <= x0) continue;
+      const lineY = this.#layout.throughputY(stat.bytesPerSec);
+      const above = lineY - 4 - STAT_LABEL.height;
+      const place = (above < plot.top ? [lineY + 4] : [above, lineY + 4])
+        .map((y) => {
+          let x = Math.min(x0 + 3, last);
+          for (const other of phaseStats)
+            if (Math.abs(other.y - y) < STAT_LABEL.height)
+              x = Math.max(x, other.x + STAT_LABEL.width);
+          return { x, y };
         })
-      : [];
+        .find(({ x }) => x <= last);
+      if (place)
+        phaseStats.push({
+          lane: stat.lane,
+          tone: stat.area,
+          bytesPerSec: stat.bytesPerSec,
+          ...place,
+        });
+    }
     this.#onPresentation({
       layout: this.#layout,
+      units: data.units,
+      ceiling: {
+        bytesPerSec: this.#bytesCeiling.target,
+        rttMs: this.#rttCeiling.target,
+      },
       latencyEnabled: data.latencyEnabled,
       hasThroughputScale: this.#hasThroughputScale,
       phaseLabels,
@@ -611,13 +682,12 @@ export class ChartEngine {
     else this.#latencyAnimating.clear();
     this.#sceneTMax = this.#vp.tMax;
   }
-  #compose(now: number): boolean {
+  #compose(now: number, fade: number): boolean {
     const ctx = this.#ctx;
     const scene = this.#scene;
     if (!ctx || !scene) return false;
     const d = this.#data;
     ctx.clearRect(0, 0, this.#w, this.#h);
-    this.#drawGrid(ctx);
     const { plot } = this.#layout;
     const plotWidth = plot.right - plot.left;
     const plotHeight = plot.bottom - plot.top;
@@ -644,6 +714,16 @@ export class ChartEngine {
     const latencyAnimating = d.latencyEnabled
       ? this.#drawActiveLatency(ctx, now)
       : false;
+    ctx.save();
+    if (fade < 1) {
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.globalAlpha = fade;
+      ctx.fillRect(0, 0, this.#w, this.#h);
+      ctx.globalAlpha = 1;
+    }
+    ctx.globalCompositeOperation = "destination-over";
+    this.#drawGrid(ctx);
+    ctx.restore();
     return latencyAnimating;
   }
   #clipSpan(t0: number, t1: number): { x0: number; x1: number } {
@@ -889,7 +969,9 @@ export class ChartEngine {
     s: LatencyBucket,
     p: number,
   ): void {
-    const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
+    const color = s.underLoad
+      ? this.#colors.latencyLoaded
+      : this.#colors.signal;
     const eased = 1 - (1 - p) * (1 - p);
     const alpha = 0.65 + 0.35 * eased;
     const radiusScale = 0.85 + 0.15 * eased;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reproduce the hosted CodeQL scan offline with the pinned CLI and list its results.
+# Reproduce the hosted CodeQL scan offline with the pinned CLI; fail on any result.
 set -euo pipefail
 cli=${CODEQL:-$(command -v codeql || echo "$HOME/.local/share/codeql-bundle/codeql/codeql")}
 version=$("$cli" version --format=terse)
@@ -25,4 +25,9 @@ for language in go javascript-typescript python actions; do
         "codeql/$pack-queries:codeql-suites/$pack-security-extended.qls" \
         "codeql/$pack-queries:codeql-suites/$pack-security-and-quality.qls"
 done
-python3 scripts/codeql_results.py "$out"
+jq -r '.runs[0].results[]? | .ruleId + "  " + (.locations[0].physicalLocation
+    | .artifactLocation.uri + ":" + (.region.startLine | tostring))' "$out"/*.sarif >"$out/results"
+cat "$out/results"
+cut -d' ' -f1 "$out/results" | sort | uniq -c
+echo "$(wc -l <"$out/results") results"
+test ! -s "$out/results"

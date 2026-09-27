@@ -18,7 +18,7 @@ function request(): void {
 function run(now: number): void {
   frame = 0;
   lastFrame = now;
-  for (const task of tasks) if (!task(now) || still()) tasks.delete(task);
+  for (const task of tasks) if (!task(now)) tasks.delete(task);
   request();
 }
 
@@ -54,9 +54,9 @@ interface Correction {
   /** Units per ms after this sample, so a clock keeps moving between samples. */
   rate?: number;
   max?: number;
-  /** A fixed glide instead of the interval between samples. */
+  /** A fixed glide instead of the interval between samples; later samples retarget within it at its pace. */
   over?: number;
-  /** Glide within the glide under way, else snap: a morph keeps its pace while samples retarget it. */
+  /** Once no fixed glide is under way, snap instead of gliding over the sample interval. */
   finish?: boolean;
   snap?: boolean;
   now?: number;
@@ -71,6 +71,7 @@ export class Smoothed {
   #max = Infinity;
   #at = -Infinity;
   #glide = 100;
+  #fixed = false;
   #stop: (() => void) | null = null;
 
   /** The last sample. */
@@ -95,14 +96,16 @@ export class Smoothed {
     if (!Number.isFinite(value) || !Number.isFinite(rate)) return;
     const gap = now - this.#at;
     const left = this.#at + this.#glide - now;
+    const within = this.#fixed && left > 0 && correction.over === undefined;
     const snap =
       correction.snap ||
       still() ||
       !Number.isFinite(gap) ||
-      (correction.finish && !(left > 0));
+      (correction.finish && !within);
     this.#from = snap ? value : this.at(now);
+    this.#fixed = correction.over !== undefined || (within && !snap);
     if (correction.over !== undefined) this.#glide = correction.over;
-    else if (correction.finish) this.#glide = left;
+    else if (within) this.#glide = left;
     else if (gap < SAMPLE_GAP_MS)
       this.#glide = Math.min(GLIDE_MAX_MS, Math.max(GLIDE_MIN_MS, gap));
     this.#to = value;

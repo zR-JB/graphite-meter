@@ -38,13 +38,6 @@ func (s styles) panel(title, body string, w, h int) string {
 	return top + "\n" + box.Render(fit(body, inner))
 }
 
-func overlay(base, box string, w, top, h int) (string, int, int) {
-	x := max((w-lipgloss.Width(box))/2, 0)
-	y := top + max((h-lipgloss.Height(box))/2, 0)
-	layers := lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(box).X(x).Y(y).Z(1))
-	return layers.Render(), x, y
-}
-
 func (s styles) grid(headers []string, rows [][]string, w int) string {
 	widths := make([]int, len(headers))
 	for _, row := range append([][]string{headers}, rows...) {
@@ -67,10 +60,11 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 			for i, cell := range row {
 				cells[i] = pad(cell, widths[i])
 			}
-			lines = append(lines, strings.TrimRight(style.Render(strings.Join(cells, "  ")), " "))
+			lines = append(lines, style.Render(strings.TrimRight(strings.Join(cells, "  "), " ")))
 		}
 		return strings.Join(lines, "\n")
 	}
+	lines = append(lines, s.muted.Render(headers[0]))
 	for _, row := range rows {
 		var facts []string
 		for i, cell := range row[1:] {
@@ -243,7 +237,9 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		scale := ""
 		switch r {
 		case 0:
-			scale = ax.label(top * ax.scale)
+			if peak > 0 {
+				scale = ax.label(top * ax.scale)
+			}
 		case rows - 1:
 			scale = "0"
 		}

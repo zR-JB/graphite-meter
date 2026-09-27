@@ -3,6 +3,7 @@
   import { tick, untrack, type Snippet } from "svelte";
   import type { Attachment } from "svelte/attachments";
   import { canFocus, hasFocus } from "../actions/focus";
+  import { announcements } from "../presentation/announcer.svelte";
 
   // Explicit props and a template class: a spread or bare class expression pulls in clsx.
   interface Props {
@@ -49,10 +50,7 @@
     reported = false;
     const opener = untrack(() => invoker) ?? document.activeElement;
     if (modal) dialog.showModal();
-    else {
-      dialog.show();
-      if (opener instanceof HTMLElement) opener.focus({ preventScroll: true });
-    }
+    else dialog.show();
     return () => {
       dialog.close();
       void tick().then(() => {
@@ -93,6 +91,10 @@
   onclick={backdropClick}
 >
   {@render children()}
+  <!-- A modal prunes the page's live region, so it carries its own copy. -->
+  {#if modal}<div class="sr-only" aria-live="polite">
+      {#each announcements as { id, text } (id)}<p>{text}</p>{/each}
+    </div>{/if}
 </dialog>
 
 <style>

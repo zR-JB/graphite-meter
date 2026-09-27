@@ -53,6 +53,35 @@ test("a signed-in protected home runs automatic, HTTP/3 and WebTransport paths",
 const feedback = (page: Page, name: string) =>
   page.locator('[aria-label="Settings"] .server-feedback', { hasText: name });
 
+test("signing out everywhere waits for confirmation", async (page) => {
+  await open(page, `${locked.url}/login`, {
+    servers: [{ id: "self", url: locked.url }],
+  });
+  await signIn(page);
+  const everywhere = page.getByRole("button", {
+    name: "Sign out Local operator everywhere",
+  });
+  await expect(everywhere).toBeVisible();
+  // Record the submission instead of ending the fleet's shared operator sessions.
+  await page.evaluate(() =>
+    document.addEventListener("submit", (event) => {
+      event.preventDefault();
+      (window as any).submitted = event.submitter?.getAttribute("value");
+    }),
+  );
+  const confirm = page.getByRole("alertdialog", {
+    name: "Sign out everywhere?",
+  });
+  await everywhere.click();
+  await confirm.getByRole("button", { name: "Stay signed in" }).click();
+  expect(await page.evaluate(() => (window as any).submitted)).toBeUndefined();
+  await everywhere.click();
+  await confirm.getByRole("button", { name: "Sign out everywhere" }).click();
+  await expect
+    .poll(() => page.evaluate(() => (window as any).submitted))
+    .toBe("all");
+});
+
 test("an HTTP interface explains a protected HTTPS refusal", async (page) => {
   const refusal = await fetch(`${locked.url}/preflight`, {
     headers: { Origin: home.http },

@@ -1,4 +1,4 @@
-"""Fake boundaries for control-plane tests: GitHub CLI, Git, a Skopeo engine and assets."""
+"""Fake boundaries for control-plane tests: GitHub API, Git, a Skopeo engine and assets."""
 
 from __future__ import annotations
 
@@ -6,32 +6,22 @@ import hashlib
 import io
 import json
 import os
-import sys
 import tarfile
+import unittest
 import zipfile
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
-from github_api import APICall, JsonObject, JsonValue
+from github_api import ControlPlaneError, JsonObject, JsonValue
 from verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
 SLSA = "https://slsa.dev/provenance/v1"
-# Serves `gh api` from exact argv; a list answers successive calls, repeating its last item.
-GH = """import json, os, sys
-path = os.environ["FAKE_GH"]
-state = json.load(open(path))
-call = " ".join(sys.argv[1:])
-if call not in state["responses"]:
-    sys.exit(f"gh: Not Found (HTTP 404): {call}")
-answers = state["responses"][call]
-state["calls"].append(call)
-json.dump(state, open(path, "w"))
-index = state["calls"].count(call) - 1
-print(json.dumps(answers[min(index, len(answers) - 1)]))
-"""
 ENGINE = """#!/bin/sh
 printf '%s\\n' "$*" >>"$FAKE_ENGINE_LOG"
 case "$*" in
@@ -56,45 +46,30 @@ def pages(*items: object) -> Paged:
     return Paged(items)
 
 
-def answers(body: object) -> tuple[bool, list[object]]:
-    """Return whether a response is paginated and its successive JSON answers."""
-    items = list(body) if isinstance(body, Answers) else [body]
-    paged = {isinstance(item, Paged) for item in items}
-    if len(paged) != 1:
-        raise AssertionError("successive answers must agree on pagination")
-    return paged.pop(), [list(item) if isinstance(item, Paged) else item for item in items]
-
-
-def fake(responses: dict[str, object]) -> APICall:
+def github(responses: Mapping[str, object]) -> AbstractContextManager[object]:
     """Answer exactly the given API paths, with pagination only where GitHub needs it."""
     served: dict[str, int] = {}
 
     def api(path: str, *, paginate: bool = False) -> JsonValue:
         if path not in responses:
             raise AssertionError(f"unexpected API call {path}")
-        paged, items = answers(responses[path])
-        if paginate != paged:
-            raise AssertionError(f"{path} must {'' if paged else 'not '}be paginated")
+        body = responses[path]
+        items = list(body) if isinstance(body, Answers) else [body]
+        if any(isinstance(item, Paged) != paginate for item in items):
+            raise AssertionError(f"{path} must {'not ' if paginate else ''}be paginated")
         served[path] = served.get(path, -1) + 1
         return cast(JsonValue, items[min(served[path], len(items) - 1)])
 
-    return api
+    return patch("github_api.api", api)
 
 
-def gh(directory: Path, responses: dict[str, object]) -> dict[str, str]:
-    """Put a fake `gh` on PATH that answers exactly the given API paths."""
-    calls = {}
-    for path, body in responses.items():
-        paged, items = answers(body)
-        calls[("api --paginate --slurp " if paged else "api ") + path] = items
-    state = directory / "gh.json"
-    state.write_text(json.dumps({"responses": calls, "calls": []}))
-    script = directory / "bin" / "gh"
-    script.parent.mkdir(exist_ok=True)
-    script.write_text(f"#!{sys.executable} -IS\n{GH}")
-    script.chmod(0o755)
-    return {"FAKE_GH": str(state), "GH_TOKEN": "test-token",
-            "PATH": f"{script.parent}{os.pathsep}{os.environ['PATH']}"}
+def outcome[T](test: unittest.TestCase, error: str | None, call: Callable[[], T]) -> T | None:
+    """Return `call()` when `error` is None; otherwise require it to refuse with `error`."""
+    if error is None:
+        return call()
+    with test.assertRaisesRegex(ControlPlaneError, error):
+        call()
+    return None
 
 
 def git_head(directory: Path, sha: str) -> dict[str, str]:

@@ -5,6 +5,8 @@ import type {
   Phase,
   FlowDirection,
   PhaseActivity,
+  RunResult,
+  StageStatus,
   TransportRole,
 } from "./contract";
 
@@ -21,6 +23,24 @@ const TRANSFER: Record<TransportRole, readonly FlowDirection[]> = {
   upload: ["up"],
   bidirectional: ["down", "up"],
 };
+
+export const stageLanes = (
+  evidence: Pick<RunResult, TransportRole>,
+  stage: TransportRole,
+) =>
+  stage === "bidirectional"
+    ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
+    : [evidence[stage]];
+
+export const failureScope = (stage: TransportRole) =>
+  stage === "latency" ? "latency" : "throughput";
+
+export const outcomeOf = (statuses: StageStatus[], failures: number) =>
+  statuses.includes("failed")
+    ? "incomplete"
+    : failures
+      ? "partial"
+      : "complete";
 
 /** A stage runs only when it is on and has time; 0 ms skips it. */
 export const planned = (
@@ -97,13 +117,14 @@ export function buildSegments(config: RunnerConfig): Timeline {
   return { segments: segs, totalMs: cursor };
 }
 
-/* Rebuild the unfinished timeline after a safe live config change. */
+/* Rebuild the unfinished timeline after a safe live config change; `between` stages, the next is not yet active. */
 export function reconfigureTimeline(
   segments: Segment[],
   elapsed: number,
   config: RunnerConfig,
+  between = false,
 ): Timeline {
-  const active = segmentAt(segments, elapsed);
+  const active = between ? undefined : segmentAt(segments, elapsed);
   const kept = active
     ? segments.filter((s) => s.start < active.start)
     : segments.filter((s) => s.end <= elapsed);

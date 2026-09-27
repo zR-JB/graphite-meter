@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { sweepTarget } from "./gaugeSweep";
 
-test("a transfer gauge stays neutral until authoritative evidence arrives", () => {
+test("a transfer gauge shows nothing until evidence arrives", () => {
   const download = {
     phase: "download",
     valueBytesPerSec: 0,
@@ -10,6 +10,6 @@ test("a transfer gauge stays neutral until authoritative evidence arrives", () =
     rtt: 0,
     completedKind: "speed",
   } as const;
-  expect(sweepTarget({ ...download, throughputEvidence: false })).toBe(0.5);
+  expect(sweepTarget({ ...download, throughputEvidence: false })).toBeNull();
   expect(sweepTarget({ ...download, throughputEvidence: true })).toBe(0);
 });

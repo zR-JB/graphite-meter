@@ -58,12 +58,12 @@ test("a saved wire overhead shows from half a percent and only when chosen", () 
       units,
       show,
     )[0];
-  const face = (card: ReturnType<typeof wire>) =>
-    card.rows.find((row) => row.label === "Wire")?.value;
-  expect(face(wire(1.004))).toBeUndefined();
-  expect(face(wire(1.05))).toBe("105.0 B/s");
-  expect(wire(1.05).details.at(-1)?.value).toBe("+5.0%");
-  expect(face(wire(1.05, false))).toBeUndefined();
+  expect(wire(1.004).wire).toBeUndefined();
+  expect(wire(1.05).wire).toMatchObject({
+    value: "105.0 B/s",
+    overhead: "+5.0%",
+  });
+  expect(wire(1.05, false).wire).toBeUndefined();
 });
 
 test("a one-lane bidirectional result has no combined value, only its surviving lane", () => {
@@ -80,14 +80,13 @@ test("a one-lane bidirectional result has no combined value, only its surviving 
     true,
   );
   expect(card.num).toBe("—");
-  expect(card.details).toEqual([]);
   expect(card.rows.map((row) => row.value)).toEqual([
     "40.00 B/s",
     "unavailable",
   ]);
 });
 
-test("the latency card groups signed added latency; details show stability as a value", () => {
+test("the latency card groups signed added latency, even of a failed stage; every card shows stability as a value", () => {
   const cards = summaryCards(
     {
       status: {
@@ -99,7 +98,7 @@ test("the latency card groups signed added latency; details show stability as a 
       download: lane(40),
       upload: { ...lane(20), stabilityPct: 80 },
       bidirectional: null,
-      latency: { reportedMs: 12, jitterMs: 1 },
+      latency: { reportedMs: 12, jitterMs: 1, stabilityPct: 91.7 },
       added: { download: 8.25, upload: -0.04, bidirectional: 0 },
     },
     units,
@@ -109,8 +108,9 @@ test("the latency card groups signed added latency; details show stability as a 
   expect(added.map((row) => [row.stage, row.value])).toEqual([
     ["download", "+8.3 ms"],
     ["upload", "+0.0 ms"],
+    ["bidirectional", "+0.0 ms"],
   ]);
   const stability = (card: (typeof cards)[number]) =>
-    card.details.find((row) => row.label === "Stability")?.value;
+    card.rows.find((row) => row.label === "Stability")?.value;
   expect(cards.map(stability)).toEqual(["95%", "80%", undefined, "92%"]);
 });

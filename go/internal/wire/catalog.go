@@ -39,10 +39,10 @@ func (c ServerCatalog) Validate() error {
 		if len(entry.ID) == 0 || len(entry.ID) > 64 || strings.ContainsFunc(entry.ID, func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' ||
 				r == '.' || r == '_' || r == '-')
-		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name+entry.Location) {
+		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name, entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}
-		key, err := CanonicalOrigin(entry.URL)
+		key, err := CatalogOrigin(entry.URL)
 		if entry.URL == "." && entry.ID != "self" || entry.URL != "." && err != nil {
 			return fmt.Errorf("invalid catalogue origin for %q", entry.ID)
 		}
@@ -54,7 +54,7 @@ func (c ServerCatalog) Validate() error {
 			return fmt.Errorf("too many additional origins for %q", entry.ID)
 		}
 		for _, raw := range entry.AdditionalOrigins {
-			if _, err := CanonicalOrigin(raw); err != nil {
+			if _, err := CatalogOrigin(raw); err != nil {
 				return fmt.Errorf("invalid additional origin for %q", entry.ID)
 			}
 		}
@@ -140,18 +140,14 @@ func (c ServerCatalog) ConnectSources() []string {
 			out = append(out, "http://"+host+":*", "https://"+host+":*", "ws://"+host+":*", "wss://"+host+":*")
 		}
 		for _, raw := range s.AdditionalOrigins {
-			if BrowserConnectSourceSupported(raw) {
-				out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
-			}
+			out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
 		}
 	}
 	return out
 }
 
-// BrowserConnectSourceSupported excludes IPv6 literals, which CSP host sources cannot express.
-func BrowserConnectSourceSupported(raw string) bool {
-	return !strings.Contains(raw, "://[")
-}
+// CatalogOrigin canonicalizes a catalogue origin, which servers.schema.json lets end in one slash.
+func CatalogOrigin(raw string) (string, error) { return CanonicalOrigin(strings.TrimSuffix(raw, "/")) }
 
 // CanonicalOrigin is shared by catalogue decoders and authentication audiences.
 func CanonicalOrigin(raw string) (string, error) {

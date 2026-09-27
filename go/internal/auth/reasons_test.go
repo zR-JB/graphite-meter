@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 // The sign-in handlers reach their notices through their real refusal paths.
@@ -60,18 +62,24 @@ func TestSignInRefusalPaths(t *testing.T) {
 			if tc.prepare != nil {
 				tc.prepare(s)
 			}
-			rr := httptest.NewRecorder()
-			tc.handler(s)(rr, tc.request(s))
+			rr := testkit.Record(tc.handler(s), tc.request(s))
 			location, _ := url.Parse(rr.Header().Get("Location"))
 			if rr.Code != http.StatusSeeOther || location.Query().Get("error") != string(tc.want) {
 				t.Fatalf("status %d redirecting to %q, want 303 with error=%s", rr.Code, location, tc.want)
 			}
 		})
 	}
+	t.Run("only a wrong password spends the global ceiling", func(t *testing.T) {
+		s := testService(t)
+		testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=secret", true))
+		testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=wrong", true))
+		if len(s.globalAttempts) != 1 {
+			t.Fatalf("global ceiling holds %d attempts, want only the wrong password", len(s.globalAttempts))
+		}
+	})
 	t.Run("password sign-in outside password mode", func(t *testing.T) {
 		s := newFakeOIDC(t).service(t)
-		rr := httptest.NewRecorder()
-		s.passwordLogin(rr, post(s, "/auth/password", "password=secret", true))
+		rr := testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=secret", true))
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("password login in oidc-only mode code=%d, want 404", rr.Code)
 		}
@@ -82,8 +90,7 @@ func TestSignInRefusalPaths(t *testing.T) {
 func TestLoginPageRendersOnlyKnownNotices(t *testing.T) {
 	s := testService(t)
 	alerts := func(code string) []string {
-		rr := httptest.NewRecorder()
-		s.loginPage(rr, secureRequest(http.MethodGet, "/login?error="+url.QueryEscape(code), nil))
+		rr := testkit.Record(s.loginPage, secureRequest(http.MethodGet, "/login?error="+url.QueryEscape(code), nil))
 		parts := strings.Split(rr.Body.String(), `role="alert">`)[1:]
 		for i, part := range parts {
 			parts[i], _, _ = strings.Cut(part, "</p>")

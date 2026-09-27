@@ -6,12 +6,12 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 const requestingUI = "https://console.example"
@@ -31,26 +31,22 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 	verifier = randomToken(32)
 	challenge := challengeFor(verifier)
 	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, secureRequest(http.MethodGet, path, nil))
+	w := testkit.Record(handler.ServeHTTP, secureRequest(http.MethodGet, path, nil))
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
 		t.Fatalf("login continuation: %d %s", w.Code, w.Header().Get("Location"))
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), cookie))
+	w = testkit.Record(handler.ServeHTTP, withSessionCookie(secureRequest(http.MethodGet, path, nil), cookie))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) {
 		t.Fatalf("approval did not identify the exact audience: %d %s", w.Code, w.Body.String())
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, browserExchangeRequest(verifier, requestingUI))
+	w = testkit.Record(handler.ServeHTTP, browserExchangeRequest(verifier, requestingUI))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("unapproved exchange: %d", w.Code)
 	}
 	if w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, cookie, sess)); w.Code != http.StatusOK {
 		t.Fatalf("approve: %d", w.Code)
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, browserExchangeRequest(verifier, requestingUI))
+	w = testkit.Record(handler.ServeHTTP, browserExchangeRequest(verifier, requestingUI))
 	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != requestingUI ||
 		w.Header().Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatalf("cookie-free exchange failed: %d %v", w.Code, w.Header())
@@ -63,8 +59,7 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 		result.Expires != sess.expires.UnixMilli() {
 		t.Fatalf("invalid grant: %v %s", err, w.Body.String())
 	}
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, browserExchangeRequest(verifier, requestingUI))
+	w = testkit.Record(handler.ServeHTTP, browserExchangeRequest(verifier, requestingUI))
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("approval replay: %d", w.Code)
 	}
@@ -91,8 +86,7 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	r.Header.Set("Sec-Fetch-Site", "cross-site")
 	r.Header.Set("Sec-Fetch-Mode", "navigate")
 	r.Header.Set("Sec-Fetch-Dest", "document")
-	w := httptest.NewRecorder()
-	s.browserPage(w, r)
+	w := testkit.Record(s.browserPage, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `http-equiv="refresh"`) ||
 		!strings.Contains(w.Body.String(), "/auth/cli?challenge="+challenge) ||
 		strings.Contains(w.Body.String(), "Signed in") {
@@ -103,15 +97,13 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	}
 	r = withSessionCookie(secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil), raw)
 	r.Header.Set("Sec-Fetch-Site", "same-origin")
-	w = httptest.NewRecorder()
-	s.cliPage(w, r)
+	w = testkit.Record(s.cliPage, r)
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
 		t.Fatal("first-party entry lost the exact browser approval")
 	}
 	r = withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)
 	r.Header.Set("Sec-Fetch-Site", "same-origin")
-	w = httptest.NewRecorder()
-	s.browserPage(w, r)
+	w = testkit.Record(s.browserPage, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) ||
 		!strings.Contains(w.Body.String(), verificationCode(challenge)) ||
 		!strings.Contains(w.Body.String(), "/auth/browser/approve") {
@@ -161,8 +153,7 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 				r.Header.Del("Authorization")
 				r = withSessionCookie(r, raw)
 			}
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
+			w := testkit.Record(handler.ServeHTTP, r)
 			if w.Code != tc.want {
 				t.Fatalf("status=%d, want %d", w.Code, tc.want)
 			}
@@ -238,8 +229,7 @@ func TestPublicBrowserApprovalPagesAreBoundedPerClient(t *testing.T) {
 		r.Header.Set("Sec-Fetch-Site", "cross-site")
 		r.Header.Set("Sec-Fetch-Mode", "no-cors")
 		r.Header.Set("Sec-Fetch-Dest", "image")
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		w := testkit.Record(handler.ServeHTTP, r)
 		return w.Code
 	}
 	for i := range maxAddressApprovals + 1 {
@@ -306,8 +296,7 @@ func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 		"null", "https://*.example"} {
 		query := url.Values{"client_origin": {origin}, "challenge": {challenge}}.Encode()
 		r := secureRequest(http.MethodGet, "/auth/browser?"+query, nil)
-		w := httptest.NewRecorder()
-		s.browserPage(w, r)
+		w := testkit.Record(s.browserPage, r)
 		if w.Code != 403 {
 			t.Errorf("audience %q status=%d", origin, w.Code)
 		}

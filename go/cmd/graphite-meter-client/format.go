@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,11 +17,18 @@ import (
 )
 
 func errorText(err error) string {
-	text := wire.CleanText(err.Error(), 320)
-	if _, untrusted := errors.AsType[*tls.CertificateVerificationError](err); untrusted {
-		text += " Turn on Skip TLS verify (-insecure) only for a server you trust."
+	_, transport := errors.AsType[*url.Error](err)
+	op, network := errors.AsType[*net.OpError](err)
+	switch cert, untrusted := errors.AsType[*tls.CertificateVerificationError](err); {
+	case untrusted:
+		return "Certificate not trusted: " + wire.CleanText(strings.TrimPrefix(cert.Err.Error(), "x509: "), 200) +
+			". Turn on Skip TLS verify (-insecure) only for a server you trust."
+	case network && op.Op == "dial":
+		return "Server could not be reached"
+	case transport || network:
+		return failureLabels[goclient.ReasonOf(err)]
 	}
-	return text
+	return wire.CleanText(err.Error(), 320)
 }
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
@@ -45,6 +54,14 @@ func fmtSpeed(value float64) string {
 		return strconv.FormatFloat(value, 'f', 1, 64)
 	}
 	return strconv.FormatFloat(value, 'f', 2, 64)
+}
+
+func fmtCount(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 func fmtBytes(n uint64) string {
@@ -97,49 +114,59 @@ func latencyCells(population goclient.Result, idle *goclient.LatencyStats) []str
 	s := population.Latency
 	cells := []string{missing, missing, missing, missing, missing}
 	if population.HasMedian() {
-		cells[0], cells[2] = fmtMs(s.P50), fmtMs(s.P95)
+		cells[0] = fmtMs(s.P50)
 		if idle != nil {
 			cells[1] = fmtAdded(s.P50 - idle.P50)
 		}
+	}
+	if s.Count > 0 {
+		cells[2] = fmtMs(s.P95)
 	}
 	if s.JitterPairs > 0 {
 		cells[3] = fmtMs(s.Jitter)
 	}
 	if ratio, ok := s.TimeoutRatio(); ok {
-		digits := 1
-		if ratio > 0 && ratio < 0.01 {
-			digits = 2
+		cells[4] = fmtCount(s.Timeouts) + " / " + fmtCount(s.Count+s.Timeouts)
+		switch {
+		case ratio >= 0.01:
+			cells[4] += fmt.Sprintf(" (%.1f%%)", ratio*100)
+		case ratio > 0:
+			cells[4] += fmt.Sprintf(" (%.2f%%)", ratio*100)
 		}
-		cells[4] = fmt.Sprintf("%d/%d (%.*f%%)", s.Timeouts, s.Count+s.Timeouts, digits, ratio*100)
 	}
 	return cells
 }
 
 func latencyFacts(s goclient.LatencyStats) []string {
-	facts := []string{fmt.Sprintf("%d replies", s.Count)}
+	facts := []string{fmtCount(s.Count) + " replies"}
 	if s.Elapsed > 0 {
 		facts = append(facts, fmtClock(s.Elapsed))
 	}
 	if s.Unresolved > 0 {
-		facts = append(facts, fmt.Sprintf("unfinished probes %d", s.Unresolved))
+		facts = append(facts, "unfinished probes "+fmtCount(s.Unresolved))
 	}
 	if s.SendFailures > 0 {
-		facts = append(facts, fmt.Sprintf("failed sends %d", s.SendFailures))
+		facts = append(facts, "failed sends "+fmtCount(s.SendFailures))
 	}
 	return facts
 }
 
-func throughputFacts(r goclient.Result) []string {
+func throughputFacts(r goclient.Result, brief bool) []string {
 	var facts []string
 	if r.PeakBps > 0 {
-		facts = append(facts, "peak "+fmtRate(r.PeakBps))
+		peak := fmtRate(r.PeakBps)
+		if brief {
+			_, unit := rateTier(r.MeanBps*8, 1.2)
+			peak = strings.TrimSuffix(peak, " "+unit)
+		}
+		facts = append(facts, "peak "+peak)
 	}
 	facts = append(facts, fmtBytes(r.TotalBytes))
 	if r.Elapsed > 0 {
 		facts = append(facts, fmtClock(r.Elapsed))
 	}
-	if r.Samples > 0 {
-		facts = append(facts, fmt.Sprintf("%d samples", r.Samples))
+	if r.Samples > 0 && !brief {
+		facts = append(facts, fmtCount(r.Samples)+" samples")
 	}
 	if r.ReceiverTimed() {
 		facts = append(facts, "receiver-timed")
@@ -165,7 +192,7 @@ func wrapParts(parts []string, w int) []string {
 }
 
 func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
-	label := fmt.Sprintf("Server timing (%d paired replies, means)", s.Count)
+	label := "Server timing (" + fmtCount(s.Count) + " paired replies, means)"
 	return label, []string{"raw " + fmtMs(s.MeanRawRTT), "handling " + fmtMs(s.MeanHandling)}
 }
 

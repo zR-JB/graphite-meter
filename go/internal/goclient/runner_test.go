@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,7 +92,6 @@ func (s StageSet) name() string {
 	return strings.Join(names, "+")
 }
 
-// An HTTP/2 proxy in front of an HTTP/1.1 backend: the client's own hop decides its protocol and lanes.
 func TestRunThroughAnHTTP2ProxyToAnHTTP1Backend(t *testing.T) {
 	t.Parallel()
 	for _, advertised := range []string{"http2", "negotiated"} {
@@ -102,7 +100,6 @@ func TestRunThroughAnHTTP2ProxyToAnHTTP1Backend(t *testing.T) {
 			var mu sync.Mutex
 			var proxyProbe, backendProbe string
 			lanes := map[string]map[string]bool{"/download": {}, "/upload": {}}
-			var received atomic.Uint64
 			mux := http.NewServeMux()
 			mux.HandleFunc("/preflight", func(w http.ResponseWriter, _ *http.Request) {
 				_ = json.MarshalWrite(w, wire.Preflight{Server: wire.ServerInfo{Name: "proxied"}, EngineVersion: "test",
@@ -121,7 +118,7 @@ func TestRunThroughAnHTTP2ProxyToAnHTTP1Backend(t *testing.T) {
 				writeProbe(w, r)
 			})
 			mux.HandleFunc("/download", writeDownload)
-			mountUploadReceiver(mux, &received, receiveUpload(&received, nil))
+			mountUploadReceiver(mux, nil)
 			mux.Handle("/ws/ping", pingHandler(answerAll, 0))
 			backend := httptest.NewServer(mux)
 			defer backend.Close()

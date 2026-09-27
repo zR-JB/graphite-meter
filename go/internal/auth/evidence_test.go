@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 func TestAmbiguousAuthEvidenceCannotReachAuthenticatedHandler(t *testing.T) {
@@ -25,8 +27,7 @@ func TestAmbiguousAuthEvidenceCannotReachAuthenticatedHandler(t *testing.T) {
 	}
 	check := func(r *http.Request, want int) *httptest.ResponseRecorder {
 		t.Helper()
-		w := httptest.NewRecorder()
-		handler.ServeHTTP(w, r)
+		w := testkit.Record(handler.ServeHTTP, r)
 		if w.Code != want {
 			t.Fatalf("status = %d, want %d", w.Code, want)
 		}

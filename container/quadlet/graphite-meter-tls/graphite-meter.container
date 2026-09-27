@@ -18,6 +18,10 @@ EnvironmentFile=graphite-meter.env
 
 # Mount the complete tree because live/ contains symlinks into archive/.
 Volume=./letsencrypt:/etc/letsencrypt:ro,z
+# Certbot's files belong to your user; map it to the image user to read the key.
+UserNS=keep-id:uid=65532,gid=65532
+ReadOnly=true
+DropCapability=ALL
 NoNewPrivileges=true
 
 [Service]

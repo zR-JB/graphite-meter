@@ -5,7 +5,8 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
-  import { READINESS } from "../../presentation/vocabulary";
+  import { JARGON, READINESS } from "../../presentation/vocabulary";
+  import { tooltip } from "../../actions/tooltip";
 
   interface Props {
     role: ConnectionRole;
@@ -26,20 +27,28 @@
       : store.selectedServers,
   );
   const simultaneous = $derived(serverIds.length > 1);
+  // The server list states a server's own failure once; the paths speak for the rest.
+  const unlisted = $derived(
+    serverIds.filter((id) => {
+      const readiness = store.servers.get(id)?.readiness;
+      return !(
+        readiness === "sign-in" ||
+        (readiness === "failed" && store.selectedServers.length > 1)
+      );
+    }),
+  );
   const roleSummary = $derived(
-    summarizeRoleValidation(role, serverIds, store.servers),
+    summarizeRoleValidation(role, unlisted, store.servers),
   );
   const validation = $derived(
-    simultaneous
-      ? store.unresolvedServers.length
-        ? "failed"
-        : roleSummary.state
-      : connection.validation,
+    simultaneous ? roleSummary.state : connection.validation,
   );
   const summary = $derived(
-    simultaneous
-      ? `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`
-      : (connection.message ?? connection.summary),
+    !simultaneous
+      ? (connection.message ?? connection.summary)
+      : roleSummary.verified === roleSummary.total
+        ? "Paths resolve independently on each server."
+        : `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`,
   );
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
@@ -56,7 +65,9 @@
 </script>
 
 <fieldset>
-  <legend class="caps">{title}</legend>
+  <legend {@attach tooltip(() => JARGON[`${role}Path`])}>
+    {title}
+  </legend>
   <div class="options">
     {#each options as option (option.value)}
       <label
@@ -85,23 +96,23 @@
       >Use Automatic</button
     >
   {/if}
-  <div class="validation">
-    <span class="dot" data-tone={READINESS[validation].tone}></span>
-    <span class="validation-copy">
-      <strong>{locked ? "In use" : READINESS[validation].label}</strong>
-      <small>{summary}</small>
-    </span>
-    {#if !locked && (validation === "failed" || validation === "stale")}
-      <!-- Both pickers mount at once and a <legend> does not name a descendant
+  {#if unlisted.length}<div class="validation">
+      <span class="dot" data-tone={READINESS[validation].tone}></span>
+      <span class="validation-copy">
+        <strong>{locked ? "In use" : READINESS[validation].label}</strong>
+        <small>{summary}</small>
+      </span>
+      {#if !locked && (validation === "failed" || validation === "stale")}
+        <!-- Both pickers mount at once and a <legend> does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
-      <button
-        class="btn"
-        type="button"
-        aria-label={`Retry ${title}`}
-        onclick={() => void controller.retry({ role })}>Retry</button
-      >
-    {/if}
-  </div>
+        <button
+          class="btn"
+          type="button"
+          aria-label={`Retry ${title}`}
+          onclick={() => void controller.retry({ role })}>Retry</button
+        >
+      {/if}
+    </div>{/if}
 </fieldset>
 
 <style>
@@ -112,14 +123,14 @@
   }
   legend {
     margin-bottom: 6px;
+    color: var(--text-soft);
+    font-size: var(--type-body);
   }
   .options {
     display: grid;
     gap: 6px;
   }
-  /* Settings cards are 180px minimum with a 12px grid gap: 180 + 12 + 180 =
-     372px, the exact outer-grid two-column breakpoint. */
-  @container settings-grid (min-width: 372px) {
+  @container settings (min-width: 372px) {
     .options {
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
     }
@@ -172,18 +183,14 @@
     min-width: 0;
   }
   .copy strong {
-    font-size: var(--type-xs);
-    font-weight: var(--w-heavy);
+    font-size: var(--type-sm);
+    font-weight: var(--w-strong);
     overflow-wrap: anywhere;
   }
   .copy small {
-    display: -webkit-box;
-    overflow: hidden;
-    color: var(--text-soft);
-    font: var(--type-2xs) / 1.35 var(--font-mono);
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+    line-height: 1.4;
   }
   .btn {
     justify-self: start;
@@ -195,12 +202,13 @@
     gap: var(--space-2);
     min-height: 28px;
     padding-inline: 3px;
-    font-size: var(--type-2xs);
+    font-size: var(--type-xs);
   }
   .validation-copy {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 6px;
+    gap: 0 6px;
     min-width: 0;
   }
   .validation-copy strong {
@@ -208,12 +216,9 @@
     font-weight: var(--w-heavy);
   }
   .validation-copy small {
-    overflow: hidden;
     min-width: 0;
     color: var(--text-soft);
     font-size: inherit;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .dot {
     width: 7px;

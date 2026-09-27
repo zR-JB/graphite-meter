@@ -1,11 +1,11 @@
 // StageTrack projects the shared stage presentation into rail styling. It does not infer result/failure status itself.
-import type { Phase, TransportRole } from "../runner/contract";
+import type { FailureReason, Phase, TransportRole } from "../runner/contract";
 import type {
   StagePresentation,
   StagePresentationStatus,
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
-import { STATUS } from "../presentation/vocabulary";
+import { STATUS, reasonLabel } from "../presentation/vocabulary";
 
 type SegState = StagePresentationStatus | "warmup";
 
@@ -77,4 +77,34 @@ export function lockReason(
   if (phaseStage === stage)
     return state === "recovering" ? STATUS.recovering : STATUS.running;
   return phase === "complete" ? STATUS.complete : STATUS.upcoming;
+}
+
+const RESULT_STATES: Partial<Record<SegState, string>> = {
+  complete: STATUS.complete,
+  partial: STATUS.partial,
+  failed: STATUS.failed,
+};
+
+/** One line the chip does not already show: its result, or why it is locked or skipped. */
+export function stageTip(input: {
+  selected: boolean;
+  locked: boolean;
+  state: SegState;
+  reason: string | null;
+  failure: FailureReason | null;
+  value: string | null;
+}): string {
+  const { selected, locked, state, reason, failure, value } = input;
+  const settled = RESULT_STATES[state];
+  if (settled)
+    return [settled, value, failure && reasonLabel(failure)]
+      .filter(Boolean)
+      .join(" · ");
+  if (locked)
+    return ["active", "recovering", "warmup"].includes(state)
+      ? "Locked while it runs"
+      : state === "pending"
+        ? "Locked while the test starts"
+        : "Locked until the run ends";
+  return selected ? "" : (reason ?? "");
 }

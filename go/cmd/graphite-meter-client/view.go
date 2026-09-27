@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -19,11 +19,9 @@ import (
 const twoColumnMin = 100
 
 func (m model) View() tea.View {
-	content, cursor := m.render()
-	v := tea.NewView(content)
+	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = "Graphite Meter · " + m.statusLabel()
-	v.Cursor = cursor
 	switch {
 	case m.next != nil:
 		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
@@ -37,11 +35,6 @@ const minWidth, minHeight = 40, 12
 
 func (m model) size() (int, int) { return max(m.width, minWidth), max(m.height, minHeight) }
 
-func (m model) popupWidth() int {
-	w, _ := m.size()
-	return min(w-4, 84)
-}
-
 type frame struct {
 	top, footer string
 	body        []string
@@ -51,18 +44,28 @@ type frame struct {
 func (m model) layout() frame {
 	w, h := m.size()
 	inner := w - 2
-	gap := h >= 20
 	top := m.header(inner)
-	if gap {
+	if h > 24 {
 		top += "\n"
 	}
 	f := frame{top: top}
 	f.bodyH = max(h-lipgloss.Height(top)-lipgloss.Height(m.footer(inner, false)), 1)
-	if m.run != nil {
-		f.body = strings.Split(m.runView(inner, f.bodyH), "\n")
-	} else {
-		f.body = strings.Split(m.setupView(inner), "\n")
+	var body string
+	switch {
+	case m.popup == popupDetails:
+		body = m.st.panel("Details", m.detailsView(inner-4, true), inner, 0)
+	case m.popup == popupServers:
+		title, content := m.serverChooserView(inner-4, f.bodyH-2)
+		body = m.st.panel(title, content, inner, 0)
+	case m.auth != nil && m.run == nil:
+		title, content := m.signInView(inner - 4)
+		body = m.st.panel(title, content, inner, 0) + "\n\n" + m.signInLink(inner)
+	case m.run != nil:
+		body = m.runView(inner, f.bodyH)
+	default:
+		body = m.setupView(inner)
 	}
+	f.body = strings.Split(body, "\n")
 	f.footer = m.footer(inner, len(f.body) > f.bodyH)
 	return f
 }
@@ -76,40 +79,14 @@ func (m model) bodyViewport(f frame) viewport.Model {
 	return vp
 }
 
-func (m model) render() (string, *tea.Cursor) {
+func (m model) render() string {
 	if m.width > 0 && (m.width < minWidth || m.height < minHeight) {
 		notice := fmt.Sprintf("Enlarge the terminal to at least %d×%d.", minWidth, minHeight)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice)), nil
+			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice))
 	}
-	w, _ := m.size()
 	f := m.layout()
-	body := m.bodyViewport(f).View()
-	screen := lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + body + "\n" + f.footer)
-	pw := m.popupWidth()
-	var title, content string
-	switch {
-	case m.popup == popupDetails:
-		title, content = "Details", m.detailsViewport().View()
-	case m.popup == popupServers:
-		title, content = m.serverChooserView(pw-4, f.bodyH-2)
-	case m.edit != nil:
-		title, content = m.editView()
-	case m.auth != nil && m.run == nil:
-		title, content = m.signInView(pw - 4)
-	default:
-		return screen, nil
-	}
-	box := m.st.panel(title, content, pw, min(lipgloss.Height(content)+2, f.bodyH))
-	screen, x, y := overlay(screen, box, w, lipgloss.Height(f.top), f.bodyH)
-	if m.edit == nil || m.popup != popupNone {
-		return screen, nil
-	}
-	cursor := m.edit.input.Cursor()
-	if cursor != nil {
-		cursor.X, cursor.Y = cursor.X+x+2, y+1
-	}
-	return screen, cursor
+	return lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + m.bodyViewport(f).View() + "\n" + f.footer)
 }
 
 func (m *model) scrollBody(msg tea.KeyPressMsg) {
@@ -168,8 +145,13 @@ func (m model) header(w int) string {
 
 func (m model) footer(w int, overflow bool) string {
 	notice := m.st.muted.Render(m.notice)
-	if m.run != nil && m.run.err != nil {
+	switch {
+	case m.edit != nil && m.edit.err != "":
+		notice = m.st.err.Render(m.edit.err)
+	case m.run != nil && m.run.err != nil:
 		notice = m.st.err.Render(errorText(m.run.err))
+	case m.notice == "" && m.run == nil && m.popup == popupNone && m.auth == nil:
+		notice = m.st.muted.Render(m.currentRow().row(m).help)
 	}
 	if m.help.ShowAll {
 		return fit(notice+"\n"+m.help.FullHelpView(m.FullHelp()), w)
@@ -179,18 +161,8 @@ func (m model) footer(w int, overflow bool) string {
 		bindings = slices.Insert(bindings, 1, keys.page)
 	}
 	line := m.help.ShortHelpView(bindings)
-	for lipgloss.Width(line) > w {
-		drop := len(bindings) - 3
-		for drop > 0 && bindings[drop].Help() == keys.page.Help() {
-			drop--
-		}
-		if drop <= 0 {
-			drop = slices.IndexFunc(bindings, func(b key.Binding) bool { return b.Help() == keys.help.Help() })
-		}
-		if drop < 0 {
-			break
-		}
-		bindings = slices.Delete(bindings, drop, drop+1)
+	for lipgloss.Width(line) > w && len(bindings) > 2 {
+		bindings = slices.Delete(bindings, len(bindings)-2, len(bindings)-1)
 		line = m.help.ShortHelpView(bindings)
 	}
 	return fit(notice+"\n"+line, w)
@@ -259,11 +231,13 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 	} else {
 		row := s.row(m)
 		value := m.st.value.Render(row.value)
-		if row.inert {
+		switch {
+		case m.edit != nil && m.edit.row == s:
+			value = m.edit.input.View()
+		case row.inert:
 			value = m.st.muted.Render(row.value)
 		}
-		label := pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)
-		line = m.st.text.Render(label) + "  " + value + "  " + m.st.muted.Render(row.note)
+		line = m.st.text.Render(pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)) + "  " + value
 		if focused {
 			line = m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
 		}
@@ -303,7 +277,8 @@ func (m model) planView(w int) string {
 	}
 	for _, r := range rows {
 		glyph := map[pathState]string{pathReady: m.st.ok.Render("●"), pathChecking: m.spin.View(),
-			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗")}[r.state]
+			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗"),
+			pathSignIn: m.st.warn.Render("○")}[r.state]
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
 		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(pathLabels[r.state]))
 		if r.detail != "" {
@@ -367,42 +342,42 @@ func (m model) signInView(w int) (string, string) {
 	if issuer == "" {
 		issuer = m.cfg.BaseURL
 	}
-	status := "Open sign-in page"
+	status := m.st.accent.Render("Open the sign-in page below")
 	if m.auth.opened {
-		status = "Waiting for approval…"
+		status = m.spin.View() + " " + m.st.accent.Render("Waiting for approval…")
 	}
 	waited := m.now.Sub(m.auth.since)
 	code := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(m.st.border.GetForeground()).
 		Padding(0, 1).Render(m.st.value.Render(m.auth.pending.Code))
 	lines := []string{
-		m.spin.View() + " " + m.st.accent.Render(status),
+		status,
 		lipgloss.JoinHorizontal(lipgloss.Center, m.st.text.Render("Match this code "), code),
-		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s",
-			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))), "",
-		m.st.muted.Width(w).Render(m.auth.pending.BrowserURL),
+		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s", fmtClock(waited),
+			fmtSetting((goclient.AuthorizationTimeout - waited).Round(time.Second)))),
 	}
 	return "Sign in to " + issuer, strings.Join(lines, "\n")
 }
 
-func (m model) editView() (string, string) {
-	note := m.st.muted.Render("enter applies · esc cancels")
-	if m.edit.err != "" {
-		note = m.st.err.Render(m.edit.err)
+func (m model) signInLink(w int) string {
+	link := m.auth.pending.BrowserURL
+	lines := strings.Split(ansi.Hardwrap(link, w, false), "\n")
+	for i, line := range lines {
+		lines[i] = m.st.accent.Hyperlink(link).Render(line)
 	}
-	return m.edit.row.row(m).label, m.edit.input.View() + "\n" + note
+	return strings.Join(lines, "\n")
 }
 
 func (m model) runView(w, h int) string {
 	results := ""
 	if !m.run.live() {
-		results, _ = m.resultsView(w - 4)
+		results = m.resultsView(w-4, "Latency").view()
 	}
 	if results == "" {
 		return m.stageView(w, h)
 	}
 	title := "Results"
 	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
+		title += " · latency to " + m.serverName(m.run.latencyServer())
 	}
 	bottom := m.st.panel(title, results, w, 0)
 	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
@@ -410,7 +385,7 @@ func (m model) runView(w, h int) string {
 		bottomH := max(lipgloss.Height(results), lipgloss.Height(fields)) + 2
 		bottom = join(m.st.panel(title, results, rw, bottomH), m.st.panel("Test", fields, w-1-rw, bottomH), true)
 	}
-	if timelineH := h - lipgloss.Height(bottom); timelineH >= 9 {
+	if timelineH := h - lipgloss.Height(bottom); timelineH >= 8 {
 		return m.timelinePanel(w, timelineH) + "\n" + bottom
 	}
 	return bottom
@@ -477,7 +452,7 @@ func (m model) testFields(w int) []string {
 			t := server.Throughput
 			throughputs = appendUnique(throughputs, connectionSummary(t.Transport, t.Protocol, t.TLS(), false))
 			streams = streamsLabel(m.cfg.TransferStreams, t.Protocol, t.Transport)
-			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
+			if l := server.LatencyTarget; server.Server.ID == r.latencyServer() && l != nil {
 				latency = connectionSummary(l.Transport, l.Protocol, l.TLS(), true)
 			}
 		}
@@ -573,11 +548,11 @@ func (m model) liveView(w, h int) string {
 		out = append(out, m.readings(stage))
 	}
 	if m.multipleRunServers() {
-		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
+		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.latencyServer())+" · l switches server"))
 	}
 	chartH := h - len(out)
 	span := m.now.Sub(r.started).Seconds()
-	rtt := []series{{m.st.rtt, r.rtt[r.focus].points}}
+	rtt := []series{{m.st.rtt, r.rtt[r.latencyServer()].points}}
 	switch {
 	case chartH < 5:
 	case len(lines) == 0:
@@ -595,7 +570,7 @@ func (m model) readings(stage goclient.StagePlan) string {
 	r := m.run
 	var readings []string
 	for _, dir := range stage.Directions {
-		label := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[dir]
+		label := arrows[dir] + " "
 		sample, sampled := r.rates[dir]
 		value := m.st.value.Render(fmtRate(r.shown[dir]))
 		switch {
@@ -612,10 +587,10 @@ func (m model) readings(stage goclient.StagePlan) string {
 			label = "Idle latency "
 		}
 		value := m.st.muted.Render(missing)
-		if sample, ok := r.latest[r.focus]; ok {
+		if sample, ok := r.latest[r.latencyServer()]; ok {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 {
+		if streak := r.timeouts[r.latencyServer()]; streak > 0 {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -627,57 +602,89 @@ func (m model) readings(stage goclient.StagePlan) string {
 	return strings.Join(readings, "   ")
 }
 
-func (m model) resultsView(w int) (string, string) {
+type results struct {
+	throughput, latency string
+	failures, notes     []string
+	added               bool
+}
+
+func (r results) view() string {
+	parts := append([]string{r.throughput, r.latency}, r.failures...)
+	return strings.Join(slices.DeleteFunc(parts, func(part string) bool { return part == "" }), "\n")
+}
+
+func (m model) note(label string, facts []string, w int) []string {
+	lines := []string{label + ":"}
+	if first := label + ": " + facts[0]; lipgloss.Width(first) <= w-2 {
+		lines, facts = nil, append([]string{first}, facts[1:]...)
+	}
+	for _, line := range wrapParts(facts, w-2) {
+		if len(lines) > 0 {
+			line = "  " + line
+		}
+		lines = append(lines, line)
+	}
+	for i, line := range lines {
+		lines[i] = m.st.muted.Render(line)
+	}
+	return lines
+}
+
+func (r *runState) unmeasured(i int) string {
+	return cmp.Or(stageStatusLabels[r.stages[i].state], missing)
+}
+
+func (r *runState) failureReason(stage goclient.Stage, err error) goclient.FailureReason {
+	if r.details != nil && errors.Is(err, context.Canceled) {
+		failures := r.details.Failures
+		i := slices.IndexFunc(failures, func(f goclient.ServerFailure) bool {
+			return f.Stage == stage && f.ServerID == r.latencyServer()
+		})
+		if i < 0 {
+			i = slices.IndexFunc(failures, func(f goclient.ServerFailure) bool { return f.Stage == stage })
+		}
+		if i >= 0 {
+			return failures[i].Reason
+		}
+	}
+	return goclient.ReasonOf(err)
+}
+
+func (m model) resultsView(w int, latencyHeading string) results {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
 	if population, ok := latency[goclient.StageLatency]; ok && population.HasMedian() {
 		idle = &population.Latency
 	}
+	var out results
 	var throughput, latencyRows [][]string
-	var notes, failures []string
-	note := func(label string, facts []string) {
-		for i, line := range wrapParts(facts, w-2) {
-			if i == 0 {
-				line = label + ": " + line
-				if lipgloss.Width(line) > w {
-					notes = append(notes, m.st.muted.Render(label+":"))
-					line = "  " + strings.TrimPrefix(line, label+": ")
-				}
-			} else {
-				line = "  " + line
-			}
-			notes = append(notes, m.st.muted.Render(line))
-		}
-	}
-	failed := func(label string, err error) {
+	failed := func(stage goclient.Stage, label string, err error) {
 		switch {
-		case errors.Is(err, context.Canceled):
-			failures = append(failures, m.st.warn.Render(label+" stopped."))
-		case err != nil:
-			failures = append(failures, m.st.err.Render(label+" incomplete: "+errorText(err)))
+		case err == nil:
+		case errors.Is(err, context.Canceled) && r.outcome == goclient.OutcomeStopped:
+			out.failures = append(out.failures, m.st.warn.Render(label+" stopped."))
+		default:
+			out.failures = append(out.failures, m.st.err.Render(label+": "+failureLabels[r.failureReason(stage, err)]))
 		}
 	}
-	unmeasured := func(i int) string {
-		if r.stages[i].state == stageStopped {
-			return "Stopped"
-		}
-		return missing
-	}
-	added, measured := false, false
+	measured := false
 	for i, stage := range r.plan {
 		if len(stage.Directions) > 0 {
 			for _, result := range r.results {
-				if result.Stage == stage.Name {
-					note(directionLabel(result), throughputFacts(result))
-					failed(directionLabel(result), result.Err)
+				if result.Stage != stage.Name {
+					continue
 				}
+				if !result.Unavailable || result.TotalBytes > 0 {
+					out.notes = append(out.notes, m.note(directionLabel(result), throughputFacts(result, false), w)...)
+				}
+				failed(stage.Name, directionLabel(result), result.Err)
 			}
 			rates := r.meanRates(stage.Name)
 			measured = measured || rates != ""
 			switch {
 			case rates == "" && !r.live():
-				rates = unmeasured(i)
+				rates = r.unmeasured(i)
 			case r.stages[i].state == stagePartial:
 				rates += "  " + m.st.warn.Render(stageStatusLabels[stagePartial])
 			}
@@ -693,56 +700,183 @@ func (m model) resultsView(w int) (string, string) {
 			if stage.Name == goclient.StageLatency {
 				cells[1] = ""
 			}
-			added = added || cells[1] != ""
+			out.added = out.added || cells[1] != ""
 			latencyRows = append(latencyRows, append([]string{compactPopulation(stage.Name)}, cells...))
 			label := populationLabel(stage.Name)
-			note(label, latencyFacts(population.Latency))
+			out.notes = append(out.notes, m.note(label, latencyFacts(population.Latency), w)...)
 			if timing := population.Latency.ReflectorTiming; timing != nil {
-				note(reflectorTimingFacts(timing))
+				label, facts := reflectorTimingFacts(timing)
+				out.notes = append(out.notes, m.note(label, facts, w)...)
 			}
-			failed(label, population.Err)
+			failed(stage.Name, label, population.Err)
 		case len(stage.Directions) == 0 && !r.live():
-			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), unmeasured(i)})
+			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), r.unmeasured(i)})
 		}
 	}
 	if !measured {
-		return "", ""
+		return results{}
 	}
-	if added {
-		notes = append(notes, m.st.muted.Render("Added: loaded median minus idle median."))
+	if out.added {
+		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
-	var parts []string
+	combined := ""
+	if m.multipleRunServers() {
+		combined = "Combined"
+	}
 	if len(throughput) > 0 {
-		parts = append(parts, m.st.grid([]string{"Throughput", ""}, throughput, w))
+		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
-		headers := []string{"Latency", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
+		headers := []string{latencyHeading, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
 		for i, row := range latencyRows {
 			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
+			if !out.added {
+				latencyRows[i] = slices.Delete(latencyRows[i], 2, 3)
+			}
 		}
-		parts = append(parts, m.st.grid(headers, latencyRows, w))
+		if !out.added {
+			headers = slices.Delete(headers, 2, 3)
+		}
+		out.latency = m.st.grid(headers, latencyRows, w)
 	}
-	return strings.Join(append(parts, failures...), "\n"), strings.Join(notes, "\n")
+	return out
 }
 
 func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
 	}
+	run := *m.run
+	run.pick = ""
+	m.run = &run
 	w, _ := m.size()
-	lines := []string{"Graphite Meter · " + outcomeLabels[m.run.outcome]}
-	if results, facts := m.resultsView(w); results != "" {
-		lines = append(lines, results, facts)
+	blocks := []string{m.reportHeader()}
+	heading := "Latency"
+	if m.multipleRunServers() {
+		heading += " to " + m.serverName(m.run.latencyServer())
+	}
+	if results := m.resultsView(w, heading); results.view() != "" {
+		blocks = append(blocks, m.throughputReport(w), results.latency, strings.Join(results.failures, "\n"),
+			m.reportNotes(w, results.added))
 	}
 	if m.multipleRunServers() {
-		lines = append(lines, "", m.detailsView(w, false))
+		blocks = append(blocks, m.detailsView(w, false))
 	}
 	if m.run.err != nil {
-		lines = append(lines, errorText(m.run.err))
+		blocks = append(blocks, m.st.err.Render(errorText(m.run.err)))
 	}
-	report := strings.Split(ansi.Strip(strings.Join(lines, "\n")), "\n")
+	blocks = slices.DeleteFunc(blocks, func(block string) bool { return block == "" })
+	report := strings.Split(strings.Join(blocks, "\n\n"), "\n")
 	for i, line := range report {
 		report[i] = strings.TrimRight(line, " ")
 	}
 	return strings.Join(report, "\n")
+}
+
+func (m model) reportHeader() string {
+	r := m.run
+	var facts []string
+	switch {
+	case r.details == nil:
+	case len(r.details.Servers) == 1:
+		facts = append(facts, r.details.Servers[0].Server.Name)
+	default:
+		facts = append(facts, fmt.Sprintf("%d servers", len(r.details.Servers)))
+	}
+	if !r.finished.IsZero() {
+		facts = append(facts, fmtClock(r.finished.Sub(r.started)))
+	}
+	var total uint64
+	for _, result := range r.results {
+		total += result.TotalBytes
+	}
+	if total > 0 {
+		facts = append(facts, fmtBytes(total))
+	}
+	tone := lipgloss.NewStyle().Bold(true).Foreground(m.st.outcome[r.outcome].GetBackground())
+	header := m.st.heading.Render("Graphite Meter") + "  " + tone.Render(outcomeLabels[r.outcome])
+	if len(facts) > 0 {
+		header += "  " + m.st.muted.Render(strings.Join(facts, " · "))
+	}
+	return header
+}
+
+func (m model) throughputReport(w int) string {
+	r := m.run
+	type row struct {
+		label, value, status string
+		facts                []string
+	}
+	var rows []row
+	labelW, valueW := 0, 0
+	for i, stage := range r.plan {
+		for _, dir := range stage.Directions {
+			style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
+			row := row{label: style.Render(arrows[dir]) + " " + m.st.text.Render(stageLabels[stage.Name])}
+			at := slices.IndexFunc(r.results, func(result goclient.Result) bool {
+				return result.Stage == stage.Name && result.Direction == dir
+			})
+			switch {
+			case at < 0:
+				row.value = m.st.muted.Render(r.unmeasured(i))
+			case r.results[at].Unavailable:
+				row.value = m.st.muted.Render(missing)
+			default:
+				row.value = style.Bold(true).Render(fmtRate(r.results[at].MeanBps))
+				row.facts = throughputFacts(r.results[at], true)
+			}
+			if r.stages[i].state == stagePartial {
+				row.status = stageStatusLabels[stagePartial]
+				row.facts = append([]string{row.status}, row.facts...)
+			}
+			labelW, valueW = max(labelW, lipgloss.Width(row.label)), max(valueW, lipgloss.Width(row.value))
+			rows = append(rows, row)
+		}
+	}
+	indent := labelW + valueW + 2
+	var lines []string
+	for _, row := range rows {
+		line := pad(row.label, labelW) + "  " + pad(row.value, valueW)
+		for i, facts := range wrapParts(row.facts, max(w-indent-3, 20)) {
+			switch {
+			case i > 0:
+				line = strings.Repeat(" ", indent) + "   " + m.st.muted.Render(facts)
+			case row.status != "":
+				line += "   " + m.st.warn.Render(row.status) + m.st.muted.Render(strings.TrimPrefix(facts, row.status))
+			case facts != "":
+				line += "   " + m.st.muted.Render(facts)
+			}
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) reportNotes(w int, added bool) string {
+	var notes, timing []string
+	populations := m.run.latencyPopulations()
+	for _, stage := range m.run.plan {
+		population, ok := populations[stage.Name]
+		if !ok {
+			continue
+		}
+		s := population.Latency
+		if population.Err != nil || s.Timeouts > 0 || s.Unresolved > 0 || s.SendFailures > 0 {
+			notes = append(notes, m.note(populationLabel(stage.Name), latencyFacts(s), w)...)
+		}
+		if t := s.ReflectorTiming; t != nil {
+			part := compactPopulation(stage.Name) + " " + fmtMs(t.MeanHandling) + " of " + fmtMs(t.MeanRawRTT)
+			if t.Count != s.Count {
+				part += " (" + fmtCount(t.Count) + " pairs)"
+			}
+			timing = append(timing, part)
+		}
+	}
+	if len(timing) > 0 {
+		notes = append(notes, m.note("Server handling of the mean round trip", timing, w)...)
+	}
+	if added {
+		notes = append(notes, m.st.muted.Render(addedNote))
+	}
+	return strings.Join(notes, "\n")
 }

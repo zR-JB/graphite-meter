@@ -2,16 +2,22 @@
 # root:
 #   docker compose -f container/docker-compose.yml -f container/docker-compose.auth.yml up -d
 #
-# It assumes a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL and forwards to the
-# clear HTTP/1.1 listener. The proxy must set X-Real-IP from its connection
+# It assumes a reverse proxy on this host owns TLS on GM_AUTH_PUBLIC_URL and
+# forwards to 127.0.0.1:7246. The proxy must set X-Real-IP from its connection
 # peer, drop Forwarded and X-Forwarded-For, and overwrite X-Forwarded-Proto and
 # X-Forwarded-Host - see docs/DEPLOYMENT.md. Variable semantics and the
 # terminal-client grant flow are documented there as well.
 #
-# Edit GM_AUTH_PUBLIC_URL, GM_TRUSTED_PROXIES, and the secret paths at the
-# bottom before starting.
+# Edit GM_AUTH_PUBLIC_URL and the secret paths at the bottom before starting.
 services:
   graphite-meter:
+    # Publish the clear listener on loopback only. Loopback and IPv6 clients of
+    # any published port arrive from the network gateway, which is trusted
+    # below, so stack no public ports (docker-compose.tls.yml) on this overlay.
+    # A proxy container on this network needs no port at all (ports: !reset []);
+    # give it a fixed address and trust that instead.
+    ports: !override
+      - "127.0.0.1:7246:7246"
     environment:
       # Scheme, host, and non-default port only - no path, and never :443. The
       # OIDC redirect URI is derived from it and the origin the proxy
@@ -22,9 +28,10 @@ services:
       # advertises the proxy origin the browser already reached.
       GM_ADVERTISED_NATIVE_ENDPOINTS: none
       GM_PUBLIC_ORIGINS: self
-      # The proxy's CIDR as Graphite Meter sees it; without it the forwarding
-      # headers are ignored and every client is accounted as the proxy.
-      GM_TRUSTED_PROXIES: "172.30.0.0/24"
+      # The proxy's address as Graphite Meter sees it: the network gateway
+      # below for a proxy on the host. Without it the forwarding headers are
+      # ignored, so no request counts as HTTPS and sign-in cannot succeed.
+      GM_TRUSTED_PROXIES: "172.30.0.1/32"
 
       # --- Operator password ---
       # Produce the Argon2id PHC hash on a terminal and write the single line it
@@ -57,8 +64,17 @@ services:
       - gm_auth_password_hash
       # - gm_auth_oidc_client_secret
 
+# A fixed subnet makes the gateway address above predictable.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
+
 # Each secret is mounted read-only at /run/secrets/<name>. Keep the host files
-# outside the repository checkout and readable only by the Docker daemon's user.
+# outside the repository checkout and readable only by the image user:
+#   sudo chown 65532:65532 FILE && sudo chmod 0400 FILE
 secrets:
   gm_auth_password_hash:
     file: /etc/graphite-meter/auth-password-hash

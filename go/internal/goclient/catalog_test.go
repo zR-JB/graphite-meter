@@ -106,7 +106,6 @@ func TestNativeDiscoveryCancellationAndRedirect(t *testing.T) {
 	}
 }
 
-// Each selected server is prepared with its own grant, never the catalogue's or a peer's.
 func TestPreparedServersCarryOnlyTheirOwnGrant(t *testing.T) {
 	t.Parallel()
 	a := coordinatedFixture(t, "a")

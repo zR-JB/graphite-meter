@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
@@ -31,8 +33,7 @@ func TestSocketTicketIsSpentBeforeDownstreamRefusal(t *testing.T) {
 				if kind == "wt" {
 					r.Method = http.MethodConnect
 				}
-				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, r)
+				w := testkit.Record(handler.ServeHTTP, r)
 				return w
 			}
 			token := mintTicket(t, s, login, path)

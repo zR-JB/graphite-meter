@@ -22,38 +22,20 @@ function cfg(overrides: ConfigOverrides = {}): RunnerConfig {
     duration: { ...BASE_CONFIG.duration, ...overrides.duration },
   };
 }
-test("bidirectional stage activity carries both directions in fixed order", () => {
-  const c = cfg({ stages: { bidirectional: true } });
-  const { segments } = buildSegments(c);
-  const bidi = segments.find((s) => s.phase === "bidirectional");
-  expect(bidi).toBeDefined();
-  expect(bidi!.activity.transfer).toEqual(["down", "up"]);
-  expect(bidi!.activity.stage).toBe("bidirectional");
-});
-test("bidirectional stage is omitted from the timeline when disabled", () => {
-  const c = cfg({ stages: { bidirectional: false } });
-  const { segments } = buildSegments(c);
-  expect(segments.some((s) => s.phase === "bidirectional")).toBe(false);
-});
-test("bidirectional runs last, after latency/download/upload", () => {
-  const c = cfg({ stages: { bidirectional: true } });
-  const { segments } = buildSegments(c);
-  const bidiStart = segments.find((s) => s.phase === "bidirectional")!.start;
-  for (const s of segments) {
-    if (s.phase !== "bidirectional") expect(s.start).toBeLessThan(bidiStart);
-  }
-});
-test("bidirectional gets its own warmup segment when warmupMs > 0", () => {
-  const c = cfg({
-    stages: {
-      latency: false,
-      download: false,
-      upload: false,
-      bidirectional: true,
-    },
+test("bidirectional runs last with its own warmup and carries both directions in fixed order", () => {
+  expect(
+    buildSegments(cfg({ stages: { bidirectional: false } })).segments.some(
+      (s) => s.phase === "bidirectional",
+    ),
+  ).toBe(false);
+  const { segments } = buildSegments(cfg({ stages: { bidirectional: true } }));
+  const bidi = segments.at(-1)!;
+  expect(bidi.phase).toBe("bidirectional");
+  expect(bidi.activity).toMatchObject({
+    stage: "bidirectional",
+    transfer: ["down", "up"],
   });
-  const { segments } = buildSegments(c);
-  expect(segments.map((s) => s.phase)).toEqual(["warmup", "bidirectional"]);
+  expect(segments.at(-2)!.phase).toBe("warmup");
 });
 test.each([
   [

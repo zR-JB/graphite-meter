@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { ROUTES } from "../paths";
 import { requestHeaders, requestUrl, tokenMint } from "./inbound";
-import { stubFetch } from "./test-helpers.testutil";
+import { settle, stubGlobals } from "../../test-helpers.testutil";
 import { parseInMsg as fetchMessage } from "./fetch-worker";
 import { parseInMsg as pingMessage } from "./ping-worker";
 import { parseInMsg as sessionMessage } from "./wt-transfer-worker";
@@ -102,10 +102,13 @@ test("each worker accepts its owner's messages and refuses every other shape", (
 
 test("a message that did not arrive through the owner's port is ignored", async () => {
   let fetched = 0;
-  const restore = stubFetch((async () => {
-    fetched++;
-    return new Response(null, { status: 400 });
-  }) as unknown as typeof fetch);
+  const restore = stubGlobals({
+    onmessage: null,
+    fetch: async () => {
+      fetched++;
+      return new Response(null, { status: 400 });
+    },
+  });
   const realm = "foreign-origin";
   try {
     await import(`./fetch-worker.ts?realm=${realm}`);
@@ -116,10 +119,9 @@ test("a message that did not arrive through the owner's port is ignored", async 
       url: "https://meter.test/download",
     };
     handler({ origin: "https://evil.test", data } as MessageEvent);
-    await Bun.sleep(0);
+    await settle();
     expect(fetched).toBe(0);
   } finally {
     restore();
-    globalThis.onmessage = null;
   }
 });

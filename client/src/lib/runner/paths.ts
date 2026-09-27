@@ -53,7 +53,8 @@ export const ROUTES = {
 export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
-const BROWSER_CONNECTION_BUDGET = 6;
+/** Concurrent HTTP/1.1 requests a browser runs per origin by default; more wait for a free connection. */
+export const BROWSER_CONNECTION_BUDGET = 6;
 export const MAX_STREAMS = 128;
 
 export function normalizeHttpProtocol(
@@ -213,6 +214,11 @@ function matchesGroup(target: AnyTarget, selection: string): boolean {
 
 const isGroup = (selection: string) =>
   selection.startsWith("protocol:") || selection.startsWith("transport:");
+
+export const selectionOrigin = (selection: string): string | null =>
+  selection === "auto" || isGroup(selection)
+    ? null
+    : selection.replace(/::(?:wt|wtdg)$/, "");
 
 /** A known browser policy restriction, only when it excludes every matching target. */
 export function blockedSelectionReason(
@@ -410,11 +416,11 @@ function streamCount(
   pings: boolean,
   webTransport = false,
 ): number {
+  // Forced means exactly this many; only a WebTransport session cannot carry more than its lanes.
   if (policy.mode === "forced")
-    return Math.min(
-      webTransport ? WT_MAX_LANES : MAX_STREAMS,
-      normalizeStreamCount(policy.count),
-    );
+    return webTransport
+      ? Math.min(WT_MAX_LANES, normalizeStreamCount(policy.count))
+      : normalizeStreamCount(policy.count);
   if (webTransport) return 1;
   if (MULTIPLEXED[protocol]) return MULTIPLEXED[protocol][dir];
   const available = Math.max(
@@ -479,6 +485,7 @@ export function planServerStreams(
     if (needsPings(activity) && paths.latency?.target.transport === "websocket")
       occupy(paths.latency.target.origin);
   }
+  if (config.transferStreams.mode === "forced") return plan;
   for (const [origin, lanes] of h1) {
     const available =
       BROWSER_CONNECTION_BUDGET -
@@ -493,11 +500,6 @@ export function planServerStreams(
       available
     )
       continue;
-    if (config.transferStreams.mode === "forced")
-      throw new Error(
-        `Forced streams would occupy the progress and control capacity of ${names(lanes)}. ` +
-          "Reduce streams or use Automatic",
-      );
     // Every lane keeps one stream; the rest is dealt round-robin up to each ceiling.
     const ceilings = lanes.map((lane) => plan[lane.id][lane.dir]);
     for (const lane of lanes) plan[lane.id][lane.dir] = 1;
@@ -513,14 +515,6 @@ export function planServerStreams(
         }
       });
   }
-  for (const dir of activity.transfer)
-    if (
-      Object.values(plan).reduce((total, count) => total + count[dir], 0) >
-      MAX_STREAMS
-    )
-      throw new Error(
-        "The run exceeds 128 streams per direction. Reduce forced streams",
-      );
   return plan;
 }
 
@@ -544,10 +538,12 @@ export function describeTransferStreams(
 ): string {
   if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
   const forced = normalizeStreamCount(policy.count);
-  if (policy.mode === "forced")
-    return transport === "webtransport" && forced > WT_MAX_LANES
+  if (policy.mode === "forced") {
+    const session = transport === "webtransport";
+    return session && forced > WT_MAX_LANES
       ? `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
       : `Forced · ${forced} per direction`;
+  }
   if (transport === "webtransport")
     return "Automatic · 1 continuous stream per direction";
   const lanes = protocol && MULTIPLEXED[protocol];

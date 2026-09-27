@@ -9,7 +9,7 @@
   } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { JARGON, READINESS } from "../presentation/vocabulary";
+  import { JARGON, preflightNote, READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
   let retrying = $state<string[]>([]);
@@ -41,7 +41,7 @@
     (store.serverCatalog?.servers ?? []).filter(
       (server) =>
         store.selectedServers.includes(server.id) &&
-        ((store.serverCatalog?.servers.length ?? 0) > 1 ||
+        (store.selectedServers.length > 1 ||
           store.servers.get(server.id)?.readiness === "sign-in") &&
         (retrying.includes(server.id) ||
           ["failed", "sign-in"].includes(
@@ -54,8 +54,8 @@
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="server-setting">
     <div class="server-heading">
-      <strong>Test servers</strong>
-      <small>{selected.length} selected</small>
+      <strong {@attach tooltip(() => JARGON.testServers)}>Test servers</strong>
+      <small>{selected.length} selected · up to 4</small>
     </div>
     <div
       class="server-choices"
@@ -84,12 +84,6 @@
               choices.delete(server.id);
             };
           }}
-          {@attach tooltip(() =>
-            [server.name, server.location, new URL(server.url).host]
-              .concat(preflightMs == null ? [] : [JARGON.preflight])
-              .filter(Boolean)
-              .join("\n"),
-          )}
           class:checked
           style:--server-accent={serverAccent(
             server,
@@ -112,7 +106,20 @@
               )}
           />
           <span class="server-identity">
-            <span class="server-name">{serverLabel(server)}</span>
+            <span
+              class="server-name"
+              {@attach tooltip(() =>
+                [
+                  server.name,
+                  [new URL(server.url).host, server.location]
+                    .filter(Boolean)
+                    .join(" · "),
+                  preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              )}>{serverLabel(server)}</span
+            >
             {#if status}<small class="server-status" data-state={readiness}
                 >{status}</small
               >{/if}
@@ -126,14 +133,15 @@
         </label>
       {/each}
     </div>
-    <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
     <span class="sr-only" id={descriptionId}
       >Preflight request times include connection setup and the response. They
       are not latency measurements.</span
     >
     {#if selected.length > 1 && store.latencyEnabled}
-      <div class="latency-policy">
-        <strong>Latency server</strong>
+      <label class="latency-policy">
+        <strong {@attach tooltip(() => JARGON.latencyServer)}
+          >Latency server</strong
+        >
         <ServerScope
           servers={selected}
           value={store.latencySelection.mode === "all"
@@ -149,7 +157,7 @@
               id || store.primaryLatencyServer,
             )}
         />
-      </div>
+      </label>
     {/if}
   </div>
 {/if}
@@ -388,9 +396,6 @@
     color: var(--text-soft);
     font-size: var(--type-2xs);
   }
-  .selection-help {
-    font-size: var(--type-xs);
-  }
   .feedback-message {
     min-height: 1.5em;
   }
@@ -402,8 +407,7 @@
     display: grid;
     justify-items: start;
     gap: var(--space-1);
-    padding-block: 10px;
-    border-top: 1px solid var(--border);
+    padding-block: var(--space-1);
     font: var(--type-xs) / 1.5 var(--font-sans);
   }
   .server-feedback > div {

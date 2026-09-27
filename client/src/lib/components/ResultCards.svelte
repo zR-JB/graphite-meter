@@ -1,15 +1,27 @@
+<script module lang="ts">
+  // Module scope: returning from History must not announce the same run again.
+  let spoken: unknown = null;
+</script>
+
 <script lang="ts">
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
-  import { fmtMs, resultRate } from "../format";
-  import { MISSING, STAGE } from "../presentation/vocabulary";
+  import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
+  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
+  import { announce } from "../presentation/announcer.svelte";
+  import { handoff } from "../presentation/motion.svelte";
+  import { untrack } from "svelte";
   import {
     CARD_ORDER,
+    pendingRows,
+    resultSentence,
     summaryCards,
+    serverIssues,
     summaryEvidence,
     type SummaryCard,
+    type SummaryRow,
   } from "../presentation/resultSummary";
 
   type Stage = (typeof CARD_ORDER)[number];
@@ -47,28 +59,102 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Every stage holds its card from the start; a settled stage fills in its values.
-  const cards = $derived(
-    store.isRunning
-      ? CARD_ORDER.flatMap((key) =>
-          status(key) === "disabled"
-            ? []
-            : [settled.find((card) => card.key === key) ?? liveCard(key)],
-        )
-      : settled,
+  // Until a run completes, every planned stage holds a card with all its rows; values fill in, nothing moves.
+  const planned = $derived(
+    CARD_ORDER.filter((key) => status(key) !== "disabled"),
   );
+  const multiple = $derived(
+    ((details ?? store.serverDetails)?.selection.length ??
+      store.selectedServers.length) > 1,
+  );
+  const skeleton = (key: Stage) =>
+    pendingRows(
+      key,
+      planned.filter((stage) => stage !== "latency"),
+      multiple,
+    );
+  const same = (a: SummaryRow, b: SummaryRow) =>
+    a.label === b.label && a.stage === b.stage;
+  function held(card: SummaryCard): SummaryCard {
+    const rows = skeleton(card.key);
+    return {
+      ...card,
+      rows: [
+        ...rows.map((row) => card.rows.find((got) => same(row, got)) ?? row),
+        ...card.rows.filter((got) => !rows.some((row) => same(row, got))),
+      ],
+    };
+  }
+  const cards = $derived(
+    (store.phase !== "complete" && store.phase !== "error"
+      ? planned.map((key) => {
+          const card = settled.find((card) => card.key === key);
+          return card ? held(card) : liveCard(key);
+        })
+      : settled
+    ).map((card) =>
+      card.key === "latency" || !store.showWireEstimates
+        ? card
+        : { ...card, wire: card.wire ?? null },
+    ),
+  );
+
+  const view = handoff(
+    () => ({
+      run: store.runSeq,
+      cards,
+      issues: store.serverDetails
+        ? serverIssues(store.serverDetails, shown)
+        : [],
+    }),
+    (view) => view.run,
+  );
+
+  // Once per completed run, never again for a unit or scope change.
+  $effect(() => {
+    if (store.phase !== "complete" || store.result === spoken) return;
+    spoken = store.result;
+    announce(untrack(() => resultSentence(settled)));
+  });
+
+  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
+  function liveRows(key: Stage): SummaryRow[] {
+    const lanes = { download: live.rates?.down, upload: live.rates?.up };
+    return skeleton(key).map((row) =>
+      row.label === "Transferred"
+        ? { ...row, value: fmtBytes(store.liveStageBytes, units.base) }
+        : key === "bidirectional" && row.stage && row.stage !== "latency"
+          ? {
+              ...row,
+              value:
+                lanes[row.stage as "download" | "upload"] == null
+                  ? MISSING
+                  : formatRate(
+                      lanes[row.stage as "download" | "upload"],
+                      units,
+                    ),
+            }
+          : row,
+    );
+  }
 
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {
     const active = status(key) === "active" || status(key) === "recovering";
-    const timeout = key === "latency" && active && store.liveLatencyLost;
-    const { down = null, up = null } = store.live ?? {};
-    const [value, accessible] = !active
+    // Warmup replies are not counted, so the card shows none, like the gauge.
+    const own =
+      active &&
+      (key === "latency" ? store.phase === "latency" : live.phase === key);
+    const timeout = key === "latency" && own && store.liveLatencyLost;
+    const { down = null, up = null } =
+      store.live?.phase === key ? store.live : {};
+    const stopped = store.phase === "aborted" && store.phaseStage === key;
+    const [value, accessible] = !own
       ? [null, null]
       : key === "latency"
-        ? [(live.rtt.current ?? store.liveRtt) || null, store.liveRtt || null]
+        ? [live.rtt.current, store.liveRtt]
         : [
-            live.rates ? live.rates.down + live.rates.up : null,
+            live.rates!.down + live.rates!.up,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
           ];
     // A value's unit arrives with it, so a pending card never shifts its unit.
@@ -84,11 +170,17 @@
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
-      status: active ? "active" : "pending",
+      status: active
+        ? "active"
+        : stopped
+          ? "stopped"
+          : store.phase === "aborted"
+            ? "not-run"
+            : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
-      rows: [],
-      details: [],
+      tip: JARGON[key],
+      rows: own || stopped ? liveRows(key) : skeleton(key),
       accessible: active
         ? timeout
           ? "probe timeout"
@@ -99,8 +191,11 @@
 </script>
 
 <ResultSummary
-  {cards}
+  cards={view.shown.cards}
+  fade={view.opacity}
+  reserve
   details={details ?? store.serverDetails}
+  issues={view.shown.issues}
   locked={!details}
   scope={details ? shown : ""}
   onscope={selectScope}

@@ -1,5 +1,10 @@
 import { test, expect } from "bun:test";
-import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
+import {
+  lockReason,
+  stageShown,
+  stageTip,
+  stageTrackModel,
+} from "./stageTrack";
 import type { StagePresentation } from "../state/stagePresentation";
 
 const stage = (
@@ -97,4 +102,28 @@ test("a retained bidirectional run stays on the track after Settings drops it", 
   expect(stageShown("bidirectional", false, ran)).toBe(true);
   expect(stageShown("bidirectional", false, off)).toBe(false);
   expect(stageShown("upload", false, off)).toBe(true);
+});
+
+test("a stage tip names its result, or why it is locked or skipped", () => {
+  const tip = (overrides: Partial<Parameters<typeof stageTip>[0]>) =>
+    stageTip({
+      selected: true,
+      locked: false,
+      state: "complete",
+      reason: null,
+      failure: null,
+      value: "940 Mbit/s",
+      ...overrides,
+    });
+  expect(tip({ locked: true })).toBe("Complete · 940 Mbit/s");
+  expect(
+    tip({ state: "partial", reason: "Partial", failure: "connection-lost" }),
+  ).toBe("Partial · 940 Mbit/s · Connection lost");
+  expect(
+    tip({ state: "active", locked: true, reason: "Running", value: null }),
+  ).toBe("Locked while it runs");
+  expect(
+    tip({ state: "disabled", selected: false, reason: "Skipped", value: null }),
+  ).toBe("Skipped");
+  expect(tip({ state: "pending", value: null })).toBe("");
 });

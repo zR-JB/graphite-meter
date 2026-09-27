@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { inView } from "../actions/inView";
+  import { restDetector, warmUp } from "../actions/intent";
   import { handoff, nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
@@ -12,24 +13,45 @@
   import {
     fmtDuration,
     fmtSpeed,
-    fmtMsTick,
     formatLatency,
     formatRate,
+    rateUnit,
+    rateValueAt,
   } from "../format";
   import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
+  import { fmtGaugeTick } from "./gaugeScale";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   let canvasEl = $state<HTMLCanvasElement>();
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  const marks = handoff(
-    () => ({
-      labels: chartPresentation?.phaseLabels ?? [],
-      stats: chartPresentation?.phaseStats ?? [],
-    }),
-    ({ labels, stats }) => `${labels.length}:${stats.length}`,
+  const axis = handoff(
+    () => {
+      if (!chartPresentation) return { unit: "", left: [], right: [] };
+      const { layout, units, ceiling } = chartPresentation;
+      const { base, kind, index } = units;
+      const label = (value: number) => (row: (typeof layout.axisRows)[0]) => ({
+        y: row.y,
+        text: fmtGaugeTick(value * (1 - row.fraction)),
+      });
+      return {
+        unit: chartPresentation.hasThroughputScale
+          ? rateUnit(base, kind, index)
+          : "",
+        left: chartPresentation.hasThroughputScale
+          ? layout.axisRows.map(
+              label(rateValueAt(ceiling.bytesPerSec, base, kind, index)),
+            )
+          : [],
+        right: chartPresentation.latencyEnabled
+          ? layout.axisRows.map(label(ceiling.rttMs))
+          : [],
+      };
+    },
+    ({ unit, left, right }) =>
+      [unit, ...[...left, ...right].map((row) => row.text)].join(),
   );
   let selectedT = $state<number | null>(null);
   let retainSelection = false;
@@ -47,7 +69,7 @@
       formatRate(bytesPerSec, units, store.scales.unitIndex);
     const rows: { label: string; value: string }[] = [];
     if (hover.bytesPerSec != null)
-      rows.push({ label: "Rate", value: rate(hover.bytesPerSec) });
+      rows.push({ label: "Throughput", value: rate(hover.bytesPerSec) });
     if (hover.downBytesPerSec != null)
       rows.push({
         label: STAGE.download.label,
@@ -60,7 +82,7 @@
       });
     if (chartPresentation?.latencyEnabled)
       rows.push({
-        label: "Median",
+        label: "Latency median",
         value: formatLatency(hover.rtt),
       });
     if (hover.timeoutCount > 0)
@@ -102,7 +124,9 @@
           hover.latencyOverflow && hover.rtt >= layout.viewport.rttMax
             ? latencyOverflowGlyph(layout.plot.top).dot.y
             : layout.latencyY(hover.rtt),
-        color: "var(--warn)",
+        color: hover.rttLoaded
+          ? "var(--latency-loaded)"
+          : "var(--phase-latency)",
       });
     return dots;
   });
@@ -150,6 +174,11 @@
     runSeq: store.runSeq,
     scaleBytesPerSec: store.scales.chartBytesPerSec,
     latencyScaleMs: store.latencyScaleMs,
+    units: {
+      base: store.unitBase,
+      kind: store.unitKind,
+      index: store.scales.unitIndex,
+    },
     resultRates: {
       download: store.stageResults.download?.reportedBytesPerSec,
       upload: store.stageResults.upload?.reportedBytesPerSec,
@@ -168,13 +197,30 @@
       setTimeScale(tMax);
       if (selectedT != null) updateHover();
     },
+    (opacity) => plotEl?.style.setProperty("--run-fade", String(opacity)),
   );
   $effect(() => engine.update(chartData()));
 
+  // The readout opens once the pointer rests or presses, then follows it until it leaves.
+  let tracking = false;
+  const rest = restDetector(() => {
+    tracking = true;
+    track();
+  }, 8);
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
     pointerClientX = e.clientX;
     pointerClientY = e.clientY;
+    if (tracking) track();
+    else rest.move(e, 150);
+  }
+  function onPointerDown(e: PointerEvent) {
+    if (e.pointerType !== "mouse") return;
+    rest.cancel();
+    tracking = true;
+    onMove(e);
+  }
+  function track() {
     // Coalesce pointer events into one small DOM update. The cached chart stays parked.
     stopPointerFrame ??= nextFrame(() => {
       stopPointerFrame = null;
@@ -253,6 +299,9 @@
     plotEl?.style.setProperty("--t-max", String(tMax));
   }
   function onLeave() {
+    rest.cancel();
+    if (tracking) warmUp();
+    tracking = false;
     if (!retainSelection) clearSelection();
   }
   function onBlur() {
@@ -276,6 +325,7 @@
 
     return () => {
       engine.destroy();
+      rest.cancel();
       stopPointerFrame?.();
       themeObserver.disconnect();
       resizeObserver.disconnect();
@@ -301,6 +351,7 @@
     )}
     aria-valuetext={selectionText}
     onpointermove={onMove}
+    onpointerdown={onPointerDown}
     onpointerleave={onLeave}
     onpointerup={onPointerUp}
     onkeydown={onKeyDown}
@@ -316,37 +367,37 @@
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}
+      {@const { plot, width } = presentation.layout}
+      {@const { base, kind, index } = presentation.units}
+      {@const rate = (bytesPerSec: number) =>
+        rateValueAt(bytesPerSec, base, kind, index)}
       <div class="chart-labels" aria-hidden="true">
-        {#if presentation.hasThroughputScale}
-          {#each presentation.layout.axisRows as row (row.fraction)}
-            <span
-              class="axis-label axis-label-left"
-              style:left="4px"
-              style:top={`${row.y}px`}
-              >{fmtSpeed(
-                store.toUnit(
-                  presentation.layout.viewport.bytesPerSecMax *
-                    (1 - row.fraction),
-                ),
-              )}</span
+        <div style:opacity={axis.opacity}>
+          {#if axis.shown.unit}
+            <span class="axis-unit" style:left="4px" style:top={`${plot.top}px`}
+              >{axis.shown.unit}</span
+            >
+          {/if}
+          {#each axis.shown.left as row (row.y)}
+            <span class="axis-label" style:left="4px" style:top={`${row.y}px`}
+              >{row.text}</span
             >
           {/each}
-        {/if}
-        {#if presentation.latencyEnabled}
-          {#each presentation.layout.axisRows as row (row.fraction)}
+          {#if axis.shown.right.length}
             <span
-              class="axis-label axis-label-right"
-              style:left={`${presentation.layout.width - 4}px`}
-              style:top={`${row.y}px`}
-              >{fmtMsTick(
-                presentation.layout.viewport.rttMin +
-                  (presentation.layout.viewport.rttMax -
-                    presentation.layout.viewport.rttMin) *
-                    (1 - row.fraction),
-              )}</span
+              class="axis-unit axis-right"
+              style:left={`${width - 4}px`}
+              style:top={`${plot.top}px`}>ms</span
+            >
+          {/if}
+          {#each axis.shown.right as row (row.y)}
+            <span
+              class="axis-label axis-right"
+              style:left={`${width - 4}px`}
+              style:top={`${row.y}px`}>{row.text}</span
             >
           {/each}
-        {/if}
+        </div>
         {#each presentation.layout.timeMajorTicks as tick (tick.t)}
           {@const { left, right } = presentation.layout.plot}
           <span
@@ -356,8 +407,8 @@
             >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
         {/each}
-        <div class="marks" style:opacity={marks.opacity}>
-          {#each marks.shown.labels as label (label.phase + label.x)}
+        <div class="marks">
+          {#each presentation.phaseLabels as label (label.phase)}
             <span
               class="phase-label caps"
               style:left={`${label.x}px`}
@@ -367,14 +418,14 @@
                 : phaseLabel(label.phase)}</span
             >
           {/each}
-          {#each marks.shown.stats as stat (stat.lane)}
+          {#each presentation.phaseStats as stat (stat.lane)}
             <span
               class="stat-label"
               data-tone={stat.tone}
               style:left={`${stat.x}px`}
               style:top={`${stat.y}px`}
-              >{fmtSpeed(store.toUnit(stat.bytesPerSec))}
-              {store.unitLabel}</span
+              >{fmtSpeed(rate(stat.bytesPerSec))}
+              {rateUnit(base, kind, index)}</span
             >
           {/each}
         </div>
@@ -425,13 +476,11 @@
   .chart {
     display: flex;
     flex-direction: column;
-    min-height: 142px;
   }
   /* Secondary to the gauge hero: a shallow recess filling the granted height. */
   .plot {
     position: relative;
     flex: 1 1 auto;
-    min-height: 140px;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -473,6 +522,7 @@
     font: var(--type-2xs) var(--font-mono);
   }
   .axis-label,
+  .axis-unit,
   .time-label,
   .phase-label,
   .stat-label {
@@ -480,18 +530,38 @@
     white-space: nowrap;
   }
   .axis-label {
-    translate: 0 -50%;
+    --x: 0;
+    translate: var(--x) -50%;
   }
-  .axis-label-right {
-    translate: -100% -50%;
+  .axis-unit {
+    --x: 0;
+    translate: var(--x) calc(-100% - 7px);
+    color: var(--text-muted);
+  }
+  .axis-right {
+    --x: -100%;
   }
   /* Moving labels translate rather than lay out again as the time scale eases. */
   .time-label {
     left: 0;
   }
+  .time-label,
+  .marks {
+    opacity: var(--run-fade, 1);
+  }
   .phase-label {
     translate: 0 -100%;
     opacity: 0.62;
+  }
+  .phase-label,
+  .stat-label {
+    transition: opacity var(--dur-slide) var(--ease-out);
+  }
+  @starting-style {
+    .phase-label,
+    .stat-label {
+      opacity: 0;
+    }
   }
   .stat-label {
     max-width: 126px;

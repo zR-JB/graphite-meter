@@ -132,6 +132,7 @@ type DisplayPreference =
   | "unitKind"
   | "theme"
   | "showWireEstimates"
+  | "keyShortcuts"
   | "resultHistoryPreference"
   | "historyColumns"
   | "dockWidth";
@@ -355,6 +356,7 @@ class AppStore {
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
   showWireEstimates = $state(true);
+  keyShortcuts = $state(true);
   resultHistoryPreference = $state<ResultHistoryPreference>("default");
   historyColumns = $state<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
@@ -403,7 +405,9 @@ class AppStore {
       this.pulseLatency.at(-1)?.medianRttMs == null,
   );
 
-  effectiveConnectivity = $derived.by<ConnectivityState | "checking">(() => {
+  effectiveConnectivity = $derived.by<
+    ConnectivityState | "checking" | "recovering"
+  >(() => {
     if (!this.isRunning) {
       if (
         this.preparing ||
@@ -418,11 +422,7 @@ class AppStore {
         )
           ? "degraded"
           : "offline";
-    } else if (!this.measuring) {
-      return this.phase === "connecting" || this.phase === "warmup"
-        ? "checking"
-        : "degraded";
-    }
+    } else if (!this.measuring) return "recovering";
     // Run evidence ages on the run's timeline; at idle, verified paths stand until idle latency says more.
     if (this.isRunning)
       return this.phaseStage &&
@@ -444,6 +444,10 @@ class AppStore {
   readonly runClock = new Smoothed();
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
+  /** A new start failed, so what the stage still shows is the previous run. */
+  previousRun = $derived(
+    this.preparation.status === "failed" && this.phase !== "idle",
+  );
 
   /** The running plan; otherwise the next run's, adapted to the verified RTT. */
   totalEtaMs = $derived(
@@ -517,9 +521,22 @@ class AppStore {
     return rawRateFrom(displayValue, unitBase, unitKind, scales.unitIndex);
   }
 
+  /** Bytes the running stage has moved so far, so its card counts up live. */
+  liveStageBytes = $state(0);
+  #stageBase = { phase: "", bytes: 0, last: 0 };
+
   #ingestLive(live: LiveSample): void {
     this.live = live;
     const { t, phase, continuityId, bytes: bytesCumulative } = live;
+    const base = this.#stageBase;
+    if (phase !== base.phase || bytesCumulative < base.last)
+      this.#stageBase = {
+        phase,
+        bytes: bytesCumulative < base.last ? 0 : base.last,
+        last: bytesCumulative,
+      };
+    this.#stageBase.last = bytesCumulative;
+    this.liveStageBytes = bytesCumulative - this.#stageBase.bytes;
     for (const dir of ["down", "up"] as const) {
       const bytesPerSec = live[dir];
       if (bytesPerSec == null) continue;
@@ -552,6 +569,8 @@ class AppStore {
       this.run?.servers.find(
         ({ server }) => server.id === result.multiServer.latencyFocus,
       ) ?? this.run?.servers[0];
+    // A finished run has no current stage, whichever one ran or failed last.
+    this.phaseStage = null;
     this.historyCandidate = this.savingResults
       ? buildHistoryRecord(
           result,
@@ -605,10 +624,16 @@ class AppStore {
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
+        const stopped = to === "aborted" && this.phase === this.phaseStage;
+        if (!stopped) {
+          this.phaseStage = stage;
+          this.phaseFraction = 0;
+        }
         this.phase = to;
-        this.phaseStage = stage;
         this.phaseStartedAtMs = t;
-        this.phaseFraction = this.phaseElapsedMs = 0;
+        this.phaseElapsedMs = 0;
+        // A stopped stage keeps the bytes it moved; they are measured, not a result.
+        if (!stopped) this.liveStageBytes = 0;
         this.phaseClock.set(0, { snap: true });
         this.live = null;
         if (to === "connecting") {
@@ -695,7 +720,9 @@ class AppStore {
       error: null,
       run: null,
       historyCandidate: null,
+      liveStageBytes: 0,
     });
+    this.#stageBase = { phase: "", bytes: 0, last: 0 };
     this.runSeq++;
   }
 
@@ -706,6 +733,7 @@ class AppStore {
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
+    this.keyShortcuts = defaults.keyShortcuts;
     this.resultHistoryPreference = defaults.resultHistoryPreference;
   }
 
@@ -766,6 +794,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         unitKind: store.unitKind,
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
+        keyShortcuts: store.keyShortcuts,
         resultHistoryPreference: store.resultHistoryPreference,
         historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),

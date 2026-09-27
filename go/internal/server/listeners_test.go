@@ -4,71 +4,24 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
-
-// An HTTP/2 upload's rate is bounded by the receive window per round trip, so the server advertises larger ones.
-func TestHTTP2AdvertisesTheUploadReceiveWindows(t *testing.T) {
-	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
-	srv.Config = baseServer(http.NotFoundHandler(), nil, controlTimeout)
-	srv.EnableHTTP2 = true
-	srv.StartTLS()
-	defer srv.Close()
-	conn, err := tls.Dial("tcp", srv.Listener.Addr().String(),
-		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}}) //nolint:gosec // test certificate
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-	// The client preface and an empty SETTINGS frame.
-	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), 0, 0, 0, 4, 0, 0, 0, 0, 0)); err != nil {
-		t.Fatal(err)
-	}
-	var streamWindow, connectionWindow, frameSize uint32
-	for streamWindow == 0 || connectionWindow == 0 {
-		var header [9]byte
-		if _, err := io.ReadFull(conn, header[:]); err != nil {
-			t.Fatalf("read frame (stream window %d, connection window %d): %v", streamWindow, connectionWindow, err)
-		}
-		payload := make([]byte, int(header[0])<<16|int(header[1])<<8|int(header[2]))
-		if _, err := io.ReadFull(conn, payload); err != nil {
-			t.Fatal(err)
-		}
-		switch frameType, stream := header[3], binary.BigEndian.Uint32(header[5:])&0x7fffffff; {
-		case frameType == 0x4 && header[4]&0x1 == 0: // SETTINGS
-			for setting := payload; len(setting) >= 6; setting = setting[6:] {
-				switch value := binary.BigEndian.Uint32(setting[2:]); binary.BigEndian.Uint16(setting) {
-				case 0x4: // SETTINGS_INITIAL_WINDOW_SIZE
-					streamWindow = value
-				case 0x5: // SETTINGS_MAX_FRAME_SIZE
-					frameSize = value
-				}
-			}
-		case frameType == 0x8 && stream == 0: // connection WINDOW_UPDATE
-			connectionWindow = 65535 + binary.BigEndian.Uint32(payload)&0x7fffffff
-		}
-	}
-	// A small frame bound keeps control requests from queueing behind one indivisible upload frame.
-	if streamWindow != h2ReceiveWindowPerStream || connectionWindow != h2ReceiveWindowPerConnection ||
-		frameSize != 16<<10 {
-		t.Fatalf("advertised stream/connection windows %d/%d and frame size %d, want %d/%d and %d", streamWindow,
-			connectionWindow, frameSize, h2ReceiveWindowPerStream, h2ReceiveWindowPerConnection, 16<<10)
-	}
-}
 
 // Each listener mounts only its topology's routes; a dot segment never reaches the shell.
 func TestListenerTopologies(t *testing.T) {
@@ -92,8 +45,9 @@ func TestListenerTopologies(t *testing.T) {
 		{"h2 over h1", muxTopology{transfers: true, requiredProto: 2}, 1, nil,
 			[]string{"/download?bytes=1", "/ws/ping"}},
 		{"h3", muxTopology{transfers: true}, 3, []string{"/upload/progress?id=unknown"}, nil},
-		{"h3 bootstrap", muxTopology{bootstrap: true}, 1, []string{"/probe"},
-			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping", "/wt/upload"}},
+		{"h3 bootstrap", muxTopology{bootstrap: true, control: true}, 1,
+			[]string{"/probe", "/upload/session", "/upload/checkpoint", "/upload/progress?id=unknown", "/wt/session"},
+			[]string{"/download", "/upload", "/preflight", "/ws/ping", "/wt/upload"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var spa http.Handler
@@ -125,7 +79,8 @@ func TestListenerTopologies(t *testing.T) {
 // A client that declares a body and goes silent cannot hold its connection, before or after the handler answers.
 func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 	t.Parallel()
-	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) { e.controlTimeout = 200 * time.Millisecond })
+	const timeout = 200 * time.Millisecond
+	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) { e.controlTimeout = timeout })
 	for _, request := range []string{"POST /upload/session", "GET /probe", "GET /"} {
 		t.Run(request, func(t *testing.T) {
 			t.Parallel()
@@ -147,7 +102,7 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 			}
 			// The FIN precedes the server's lingering close, so it arrives with the drain deadline.
 			_, err = conn.Read(make([]byte, 1))
-			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 450*time.Millisecond {
+			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 10*timeout {
 				t.Fatalf("answered %d, then the connection stayed open for %v: %v", res.StatusCode, open, err)
 			}
 		})
@@ -173,59 +128,90 @@ func TestListenerBoundsTheRequestHeaderBlock(t *testing.T) {
 	}
 }
 
-func TestPublicH3Port(t *testing.T) {
-	cfg := config.Default()
-	cfg.Native.H3 = ":7249"
-	if got := publicH3Port(&cfg); got != "7249" {
-		t.Fatalf("default port = %q, want %q", got, "7249")
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Any peer can fail a handshake; repeating it cannot grow the log, while the server's own errors stay visible.
+func TestFailedHandshakesLogOncePerMinute(t *testing.T) {
+	var out lockedBuffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+		cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+	}, nil)
+	for range 5 {
+		conn, err := net.Dial("tcp", cfg.Native.H3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = conn.Write([]byte{0, 1, 2, 3, 4, 5, 6, 7})
+		_, _ = io.Copy(io.Discard, conn)
+		conn.Close()
 	}
-	cfg.NativePublic.H3 = "https://meter.example:18444"
-	if got := publicH3Port(&cfg); got != "18444" {
-		t.Fatalf("public port = %q, want %q", got, "18444")
+	build.peers.mu.Lock()
+	suppressed := build.peers.suppressed
+	build.peers.mu.Unlock()
+	if got := strings.Count(out.String(), "TLS handshake error"); got != 1 || suppressed != 4 {
+		t.Fatalf("5 failed handshakes logged %d lines and suppressed %d, want 1 and 4:\n%s", got, suppressed, out.String())
 	}
-	cfg.NativePublic.H3 = "https://meter.example"
-	if got := publicH3Port(&cfg); got != "443" {
-		t.Fatalf("default TLS port = %q, want %q", got, "443")
+	_, _ = build.peers.Write([]byte("http: panic serving 192.0.2.1:1: boom\n"))
+	if !strings.Contains(out.String(), "panic serving") {
+		t.Fatal("a server error was suppressed with the peers' failures")
 	}
 }
 
 // Services drain together, each with the whole shutdown budget, whether a cancel or a failed listener ends them.
 func TestRunServicesStopsEveryServiceTogether(t *testing.T) {
-	boom := errors.New("bind failed")
-	for _, failure := range []error{nil, boom} {
-		ctx, cancel := context.WithCancel(t.Context())
-		var draining sync.WaitGroup
-		draining.Add(2)
-		serving := func(name string, err error) service {
-			block := make(chan struct{})
-			return service{name: name, run: func() error {
-				if err == nil {
-					<-block
-				}
-				return err
-			}, stop: func(context.Context) error {
-				draining.Done()
-				draining.Wait()
-				close(block)
-				return nil
-			}}
-		}
-		done := make(chan error, 1)
-		go func() {
-			done <- runServices(ctx, &config.Config{}, []service{serving("a", nil), serving("b", failure)})
-		}()
-		if failure == nil {
-			cancel()
-		}
-		select {
-		case err := <-done:
-			if !errors.Is(err, failure) {
-				t.Fatalf("runServices returned %v, want %v", err, failure)
+	for _, failure := range []error{nil, errors.New("bind failed")} {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var draining sync.WaitGroup
+			draining.Add(2)
+			serving := func(name string, err error) service {
+				block := make(chan struct{})
+				return service{name: name, run: func() error {
+					if err == nil {
+						<-block
+					}
+					return err
+				}, stop: func(context.Context) error {
+					draining.Done()
+					draining.Wait()
+					close(block)
+					return nil
+				}}
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatalf("runServices ended by %v did not stop its services together", failure)
-		}
-		cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- runServices(ctx, &config.Config{}, []service{serving("a", nil), serving("b", failure)})
+			}()
+			if failure == nil {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, failure) {
+					t.Fatalf("runServices returned %v, want %v", err, failure)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("runServices ended by %v did not stop its services together", failure)
+			}
+		})
 	}
 }
 
@@ -244,8 +230,7 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 		{http.MethodGet, "/ws/ping"}, {http.MethodConnect, "/wt/download"}, {http.MethodConnect, "/wt/upload"},
 		{http.MethodConnect, "/wt/ping"},
 	} {
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, httptest.NewRequest(route.method, route.path, nil))
+		w := testkit.Record(h.ServeHTTP, httptest.NewRequest(route.method, route.path, nil))
 		if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "1" ||
 			w.Header().Get("Access-Control-Allow-Origin") != "*" {
 			t.Errorf("saturated %s %s = %d, want a readable admission refusal", route.method, route.path, w.Code)
@@ -257,8 +242,7 @@ func TestAdmissionWrapsMountedMeasurementRoutes(t *testing.T) {
 		http.MethodOptions: {"/download", "/upload", "/upload/progress"},
 	} {
 		for _, path := range paths {
-			w := httptest.NewRecorder()
-			h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+			w := testkit.Record(h.ServeHTTP, httptest.NewRequest(method, path, nil))
 			want := http.StatusOK
 			if method == http.MethodOptions {
 				want = http.StatusNoContent

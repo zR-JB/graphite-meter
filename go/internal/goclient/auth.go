@@ -24,6 +24,11 @@ type AuthRequiredError struct{ URL string }
 
 func (e *AuthRequiredError) Error() string { return "authentication required at " + e.URL }
 
+func IsAuthRequired(err error) bool {
+	_, ok := errors.AsType[*AuthRequiredError](err)
+	return ok
+}
+
 func authResponseError(res *http.Response) error {
 	if res == nil {
 		return nil

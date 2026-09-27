@@ -1,18 +1,12 @@
-import { test, expect, afterEach } from "bun:test";
+import { test, expect } from "bun:test";
 import {
   decodeUploadProgress,
   readProgressFeed,
   type ProgressEvent,
   type ProgressFeedState,
 } from "./progressFeed";
-import type { LaneFailure } from "../contract";
-
-const realParse = JSON.parse;
-const realDecode = TextDecoder.prototype.decode;
-afterEach(() => {
-  JSON.parse = realParse;
-  TextDecoder.prototype.decode = realDecode;
-});
+import type { FailureReason, LaneFailure } from "../contract";
+import { readPin } from "../../test-helpers.testutil";
 
 function feedOf(...lines: string[]): ReadableStream<Uint8Array> {
   const body = new TextEncoder().encode(lines.join("\n"));
@@ -33,48 +27,18 @@ async function read(
   return { events, end, state };
 }
 
-// The SAME fixture the Go refusal test asserts against (go/internal/endpoint/upload_owner_test.go).
-const refusalPinPath = `${import.meta.dir}/../../../../../api/uploadrefusals.txt`;
-
-function parseRefusalPin(text: string): Record<string, string> {
-  const pinned: Record<string, string> = {};
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (line === "" || line.startsWith("#")) continue;
-    const parts = line.split("|");
-    if (parts.length !== 3)
-      throw new Error(`line ${i + 1}: want 3 fields: ${line}`);
-    pinned[parts[0].trim()] = parts[1].trim();
-  }
-  if (Object.keys(pinned).length === 0) throw new Error("pin is empty");
-  return pinned;
-}
-
-const refusals = parseRefusalPin(await Bun.file(refusalPinPath).text());
+// The same pin the Go refusal test asserts (go/internal/endpoint/upload_owner_test.go).
+const refusals = Object.fromEntries(
+  (await readPin("uploadrefusals.txt")).map(([name, message]) => [
+    name,
+    message,
+  ]),
+);
 
 // A refused WebTransport lane gets only this error record: no status line, so the message is the whole signal.
 function refusalRecord(name: string, message: string): string {
   return `{"type":"error","code":${JSON.stringify(name)},"message":${JSON.stringify(message)}}`;
 }
-
-// Superseded feeds can replay stale receiver observations.
-test("stale receiver observations are discarded", async () => {
-  const { events } = await read(
-    feedOf(
-      `{"type":"ready"}`,
-      `{"type":"progress","bytes":500,"nanos":1}`,
-      `{"type":"progress","bytes":200,"nanos":2}`,
-      `{"type":"progress","bytes":900,"nanos":3}`,
-      "",
-    ),
-  );
-  expect(events.map((e) => ("n" in e ? e.n : e.type))).toEqual([
-    "open",
-    500,
-    900,
-  ]);
-});
 
 // A session restart reattaches to the same server-side aggregate.
 test("the receiver pair carries across a replacement feed", async () => {
@@ -118,32 +82,16 @@ test("blank heartbeats and truncated lines are not measurements", async () => {
   expect(end).toBe("eof");
 });
 
-// Heartbeats and truncated records emit alike; only the truncated line is one the parser has to reject.
-test("a blank heartbeat never reaches the parser", async () => {
-  const parsed: string[] = [];
-  JSON.parse = ((text: string) => {
-    parsed.push(text);
-    return realParse(text);
-  }) as typeof JSON.parse;
-  await read(feedOf(`{"type":"ready"}`, "", "   ", `{"type":"progr`, ""));
-  expect(parsed).toEqual([`{"type":"ready"}`, `{"type":"progr`]);
-});
-
-test("a complete record ends the feed with receiver totals", async () => {
-  const complete = await read(
-    feedOf(`{"type":"ready"}`, `{"type":"complete","bytes":42,"nanos":9}`, ""),
-  );
-  expect(complete.end).toBe("complete");
-  expect(complete.events.at(-1)).toEqual({ type: "complete", n: 42, t: 9 });
-});
-
-const DISPOSITION: Record<string, LaneFailure> = {
-  invalid: { reason: "connection-lost", retry: false, rotate: true },
-  globalFull: { reason: "server-busy", retry: true },
-  clientFull: { reason: "server-busy", retry: true },
-  ownerMismatch: { reason: "protocol-error", retry: false },
-  idle: { reason: "connection-lost", retry: true },
-  revoked: { reason: "sign-in-required", retry: false },
+const reasons = Object.fromEntries(
+  (await readPin("uploadrefusalreasons.txt")) as [string, FailureReason][],
+);
+const DISPOSITION: Record<string, Omit<LaneFailure, "reason">> = {
+  invalid: { retry: false, rotate: true },
+  globalFull: { retry: true },
+  clientFull: { retry: true },
+  ownerMismatch: { retry: false },
+  idle: { retry: true },
+  revoked: { retry: false },
 };
 
 // Every refusal the server can send must reach the caller as a fatal carrying that exact text, not just the owner.
@@ -153,10 +101,17 @@ test("every pinned upload refusal surfaces as a fatal", async () => {
       feedOf(refusalRecord(name, message), ""),
     );
     expect(end, name).toBe("fatal");
+    expect(reasons[name], name).toBeDefined();
     expect(events, name).toEqual([
-      { type: "fatal", detail: message, ...DISPOSITION[name] },
+      {
+        type: "fatal",
+        detail: message,
+        reason: reasons[name],
+        ...DISPOSITION[name],
+      },
     ]);
   }
+  expect(Object.keys(reasons).sort()).toEqual(Object.keys(refusals).sort());
 });
 
 // A record split across two reads must not be parsed twice or dropped.
@@ -173,18 +128,20 @@ test("a record spanning a chunk boundary is read once", async () => {
   expect(events).toEqual([{ type: "open" }, { type: "bytes", n: 77, t: 5 }]);
 });
 
-// The decoder holds an incomplete multi-byte sequence back between chunks, and only a non-streaming decode releases.
-test("the read that ends the feed flushes the decoder", async () => {
-  const streaming: (boolean | undefined)[] = [];
-  TextDecoder.prototype.decode = function (
-    input?: AllowSharedBufferSource,
-    options?: TextDecodeOptions,
-  ) {
-    streaming.push(options?.stream);
-    return realDecode.call(this, input, options);
-  };
-  await read(feedOf(`{"type":"ready"}`, ""));
-  expect(streaming).toEqual([true, false]);
+test("a multi-byte character split across chunks is decoded once", async () => {
+  const bytes = new TextEncoder().encode(
+    `{"type":"error","code":"invalid","message":"café"}\n`,
+  );
+  const split = bytes.indexOf(0xc3) + 1;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes.subarray(0, split));
+      controller.enqueue(bytes.subarray(split));
+      controller.close();
+    },
+  });
+  const { events } = await read(stream);
+  expect(events).toMatchObject([{ type: "fatal", detail: "café" }]);
 });
 
 test("oversized progress records stop reading, including fragmented records", async () => {
@@ -244,9 +201,11 @@ test("terminal records cancel the remaining stream and release its reader", asyn
   }
 });
 
+// Superseded feeds can replay stale receiver observations.
 test("receiver pairs reject stale bytes or timestamps without mixing observations", async () => {
   const { events } = await read(
     feedOf(
+      '{"type":"ready"}',
       '{"type":"progress","bytes":100,"nanos":10}',
       '{"type":"progress","bytes":90,"nanos":20}',
       '{"type":"progress","bytes":110,"nanos":9}',
@@ -255,6 +214,7 @@ test("receiver pairs reject stale bytes or timestamps without mixing observation
     ),
   );
   expect(events).toEqual([
+    { type: "open" },
     { type: "bytes", n: 100, t: 10 },
     { type: "bytes", n: 120, t: 30 },
   ]);

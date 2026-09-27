@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import preflightGolden from "../../../../api/preflight.golden.json";
 import probeGolden from "../../../../api/probe.golden.json";
+import forwardGolden from "../../../../api/preflight.forward.golden.json";
 import {
   MAX_CONTROL_BYTES,
   parsePreflight,
@@ -57,7 +58,7 @@ test("discovery rejects malformed origins before target construction", () => {
   }
 });
 
-test("discovery bounds lists and metadata and rejects unknown protocols", () => {
+test("discovery bounds lists and metadata", () => {
   for (const value of [
     null,
     [],
@@ -78,17 +79,17 @@ test("discovery bounds lists and metadata and rejects unknown protocols", () => 
         latency: [],
       },
     },
-    {
-      ...discovery(),
-      capabilities: {
-        throughput: [
-          { baseUrl: ".", transport: "fetch-stream", protocol: "http4" },
-        ],
-        latency: [],
-      },
-    },
   ])
     expect(() => parsePreflight(value)).toThrow();
+});
+
+test("discovery from a newer server skips unknown mechanisms and refuses missing ones", () => {
+  const { document, decoded } = forwardGolden;
+  expect(parsePreflight(document).capabilities).toMatchObject(decoded);
+  expect(parsePreflight(document).capabilities.throughput).toHaveLength(2);
+  const missing = structuredClone(document);
+  delete (missing.capabilities.latency[0] as { transport?: string }).transport;
+  expect(() => parsePreflight(missing)).toThrow();
 });
 
 test("probe validates evidence and occupancy", () => {
@@ -207,19 +208,4 @@ test("only an explicit true advertises upload checkpoints", () => {
     false,
     undefined,
   ]);
-});
-
-test("discovery requires an explicit supported transport on every target", () => {
-  const throughput = discovery();
-  Object.assign(throughput.capabilities.throughput[0], {
-    transport: "websocket",
-  });
-  expect(() => parsePreflight(throughput)).toThrow();
-  for (const role of ["throughput", "latency"] as const) {
-    for (const transport of [undefined, null, "", "udp"]) {
-      const value = discovery();
-      Object.assign(value.capabilities[role][0]!, { transport });
-      expect(() => parsePreflight(value)).toThrow();
-    }
-  }
 });

@@ -3,11 +3,9 @@ import type { ThroughputSample } from "../runner/contract";
 import { singleLatencyBucket } from "../runner/series";
 import {
   gaugeLatency,
-  gaugeScaleForPeak,
   latencyAxisMs,
   latencyBucketExceedsScale,
   latencyScale,
-  niceDomain,
   throughputScales,
 } from "./scales";
 
@@ -28,14 +26,22 @@ const ticks = (from: number, rates: number[]): ThroughputSample[] =>
 const scales = (series: ThroughputSample[], result = NO_RESULT) =>
   throughputScales(series, result, "auto", "base10", "bits");
 
-test("a brief spike never sets the throughput axes; a first sample does", () => {
-  const spike = ticks(0, [1e6, 1e6, 2e8, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6, 1e6]);
-  expect(scales(spike).chartBytesPerSec).toBe(1.25e6);
-  const held = ticks(0, Array(9).fill(5e6));
-  // Before 700 ms exist the lowest rate so far sets them, so a first sample never sits off the scale.
-  expect(scales(held.slice(0, 1)).gaugeBytesPerSec).toBe(125e6);
-  expect(scales(held.slice(0, 1)).chartBytesPerSec).toBe(6.25e6);
-  expect(scales(held).chartBytesPerSec).toBe(6.25e6);
+test("each throughput axis contains what it draws, with headroom and no decade jump", () => {
+  const gigabit = ticks(0, [117e6, 125.4e6, 118e6]);
+  // One sample just over 1 Gbit/s: the chart stays filled at 1.2, the dial steps to a round 2 Gbit/s.
+  expect(scales(gigabit)).toEqual({
+    chartBytesPerSec: 150e6,
+    gaugeBytesPerSec: 250e6,
+    unitIndex: 2,
+  });
+  expect(scales(ticks(0, [117e6])).chartBytesPerSec).toBe(125e6);
+  // The chart draws each bidirectional lane; the gauge their sum.
+  const bidirectional = ticks(0, Array(3).fill(50e6)).flatMap((sample) => [
+    sample,
+    { ...sample, dir: "up" as const },
+  ]);
+  expect(scales(bidirectional).chartBytesPerSec).toBe(62.5e6);
+  expect(scales(bidirectional).gaugeBytesPerSec).toBe(125e6);
   const download = {
     peakBytesPerSec: null,
     stabilityPct: 100,
@@ -43,23 +49,17 @@ test("a brief spike never sets the throughput axes; a first sample does", () => 
     reportedBytesPerSec: 6e6,
   };
   expect(scales([], { ...NO_RESULT, download }).chartBytesPerSec).toBe(6.25e6);
-  const bidirectional = ticks(0, Array(9).fill(3e6)).flatMap((sample) => [
-    sample,
-    { ...sample, dir: "up" as const },
-  ]);
-  expect(scales(bidirectional).chartBytesPerSec).toBe(6.25e6);
-  // From the mega tier up, the gauge keeps a 1 Gbit/s floor, and no rate ever sits off its scale.
-  expect(scales(held).gaugeBytesPerSec).toBe(125e6);
-  expect(scales(spike).gaugeBytesPerSec).toBe(1.25e9);
-  expect(throughputScales(spike, NO_RESULT, 2e6, "base10", "bits")).toEqual({
+  expect(throughputScales([], NO_RESULT, 2e6, "base10", "bits")).toEqual({
     chartBytesPerSec: 2e6,
-    gaugeBytesPerSec: 12.5e6,
+    gaugeBytesPerSec: 2e6,
     unitIndex: 2,
   });
 });
 
 test("latency axes follow the p95 on the tier ladder, live over 8 s", () => {
   expect(latencyScale([])).toBe(20);
+  expect(latencyScale([0.1])).toBe(1);
+  expect(latencyScale([3])).toBe(4);
   expect(latencyScale([null, 30])).toBe(40);
   expect(latencyScale([5_000])).toBe(10_000);
   const history = [...Array(10).fill(100), ...Array(90).fill(10)].map(
@@ -93,21 +93,4 @@ test("the gauge uses the shared axis only once a bucket measured the RTT it show
         completedRttMs,
       }),
     ).toEqual(expected);
-});
-
-test("the gauge takes the next decade above its floor; the chart keeps its 1-2-5 step", () => {
-  expect(gaugeScaleForPeak(1, 1e9)).toBe(125_000_000);
-  expect(gaugeScaleForPeak(125_000_001, 1e9)).toBe(1_250_000_000);
-  expect(gaugeScaleForPeak(12_501)).toBe(125_000);
-  expect(gaugeScaleForPeak(12_500_000)).toBe(12_500_000);
-});
-
-test("chart domains snap to a 1-2-5 ladder without collapsing a flat range", () => {
-  const ranges = [[], [10, 12], [100, 900], [50, 50]];
-  expect(ranges.map((values) => niceDomain(values))).toEqual([
-    { min: 0, max: 12, span: 12 },
-    { min: 0, max: 20, span: 20 },
-    { min: 0, max: 2000, span: 2000 },
-    { min: 40, max: 60, span: 20 },
-  ]);
 });

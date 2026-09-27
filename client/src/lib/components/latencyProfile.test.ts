@@ -5,8 +5,6 @@ import {
   hasProbeAccountingNotice,
   entries,
   nearestMetric,
-  hoverContext,
-  metricLabel,
   profileDomain,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
@@ -33,12 +31,9 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   };
 }
 
-test("profileDomain is shared by live and finalized lane profiles", () => {
-  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
-    min: 0,
-    max: 200,
-    span: 200,
-  });
+test("lanes share the gauge's latency ladder from zero", () => {
+  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toBe(100);
+  expect(profileDomain([lane({ min: 0.05, max: 0.4 })])).toBe(1);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {
@@ -63,18 +58,6 @@ test("nearestMetric: no measured metrics yields null", () => {
     current: null,
   });
   expect(nearestMetric(empty, 42)).toBeNull();
-});
-
-test("center labels and hover context follow the lane's semantics", () => {
-  const l = lane();
-  expect(hoverContext(l, "p10")).toContain("P10–P90");
-  expect(metricLabel("center")).toBe("Median");
-  expect(hoverContext(l, "center")).toContain("Range");
-  const result = lane({ center: 70 });
-  expect(hoverContext(result, "current")).toBe("Median 70.0");
-  expect(hoverContext(result, "center")).toContain("Range");
-  expect(hoverContext(lane({ p10: null }), "p90")).toBe("");
-  expect(hoverContext(lane({ center: null }), "current")).toBe("");
 });
 
 test("incomplete accounting stays visible without turning unknown outcomes into zero", () => {

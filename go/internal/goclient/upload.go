@@ -20,12 +20,22 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-type uploadSessionResponse struct {
-	UploadID string `json:"uploadId"`
+func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
+	err := r.uploadReceiver(ctx, gate)
+	// An unknown upload id grants one replacement receiver per server and run, as in the browser.
+	if errors.Is(err, errUploadInvalid) && !r.replacedUpload {
+		r.replacedUpload = true
+		err = r.uploadReceiver(ctx, gate)
+	}
+	return err
 }
 
-func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
-	id, err := r.mintUploadID(ctx)
+func (r *runner) uploadReceiver(ctx context.Context, gate *stageGate) error {
+	var id string
+	err := restore(ctx, time.Now().Add(redialWindow), "upload session", func(ctx context.Context) (err error) {
+		id, err = r.mintUploadID(ctx)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -46,9 +56,9 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 		host, err := newWTStageSession(ctx, func(ctx context.Context) (*wtSession, error) {
 			return wtDial(ctx, r.cred, r.target.Origin, route.WTUpload, url.Values{"id": {id}})
 		}, func(ctx context.Context, sess *wtSession) error {
-			str, err := acceptUploadProgressWT(ctx, sess)
+			feed, err := wtProgressFeed(ctx, progress.ctx, sess)
 			if err == nil {
-				progress.attach(wtProgressFeed(progress.ctx, str), nil)
+				progress.attach(feed, nil)
 			}
 			return err
 		})
@@ -64,9 +74,6 @@ func (r *runner) measureUpload(ctx context.Context, gate *stageGate) error {
 	} else if err := r.followUploadFeed(ctx, progress, progressURL); err != nil {
 		return err
 	}
-	if err := progress.awaitReady(ctx); err != nil {
-		return err
-	}
 	r.coordinated.upload.Store(progress)
 	return r.runLanes(ctx, gate, Up, progress, lane)
 }
@@ -76,12 +83,12 @@ func (r *runner) mintUploadID(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var out uploadSessionResponse
+	var out wire.UploadSession
 	if _, err := controlJSON(ctx, r.http, http.MethodPost, u, "upload session", &out); err != nil {
 		return "", err
 	}
-	if out.UploadID == "" || len(out.UploadID) > 8192 {
-		return "", fmt.Errorf("%w: invalid uploadId", errProtocol)
+	if err := out.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %w", errProtocol, err)
 	}
 	return out.UploadID, nil
 }
@@ -161,7 +168,6 @@ type uploadProgress struct {
 	ctx    context.Context
 	cancel context.CancelCauseFunc
 	work   sync.WaitGroup
-	ready  chan error
 	mu     sync.Mutex
 	bytes  uint64
 	nanos  uint64
@@ -170,7 +176,7 @@ type uploadProgress struct {
 
 func newUploadProgress(ctx context.Context, id string) *uploadProgress {
 	ctx, cancel := context.WithCancelCause(ctx)
-	return &uploadProgress{id: id, ctx: ctx, cancel: cancel, ready: make(chan error, 1), next: make(chan struct{})}
+	return &uploadProgress{id: id, ctx: ctx, cancel: cancel, next: make(chan struct{})}
 }
 
 func (p *uploadProgress) counters() (bytes, nanos uint64) {
@@ -197,34 +203,43 @@ func (p *uploadProgress) advance(bytes, nanos uint64) bool {
 	return true
 }
 
-func (p *uploadProgress) awaitReady(ctx context.Context) error {
-	select {
-	case err := <-p.ready:
-		return err
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	}
+type progressFeed struct {
+	records *bufio.Scanner
+	from    string
+	stop    func()
 }
 
-func (p *uploadProgress) signalReady(err error) {
-	select {
-	case p.ready <- err:
-	default:
+func openFeed(body io.Reader, from string, stop func()) (progressFeed, error) {
+	feed := progressFeed{bufio.NewScanner(body), from, stop}
+	for feed.records.Scan() {
+		switch event, err := wire.DecodeUploadProgress(feed.records.Bytes()); {
+		case err != nil:
+		case event.Type == "ready":
+			return feed, nil
+		case event.Type == "error":
+			stop()
+			return progressFeed{}, uploadRefusal(event.Code, statusError{from: from})
+		}
 	}
+	stop()
+	return progressFeed{}, fmt.Errorf("%s closed before ready: %w", from, cmp.Or(feed.records.Err(), io.EOF))
 }
 
-func (p *uploadProgress) attach(feed io.ReadCloser, reopen func(context.Context) (io.ReadCloser, error)) {
+func (p *uploadProgress) attach(feed progressFeed, reopen func(context.Context) (progressFeed, error)) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ctx.Err() != nil {
-		_ = feed.Close()
+		feed.stop()
 		return
 	}
 	p.work.Go(func() {
 		for {
 			opened := time.Now()
-			p.read(feed)
-			if reopen == nil {
+			switch err := p.read(feed); {
+			case permanent(err):
+				p.cancel(err)
+				return
+			case err == nil || reopen == nil:
 				return
 			}
 			deadline := time.Now().Add(redialWindow)
@@ -243,29 +258,20 @@ func (p *uploadProgress) attach(feed io.ReadCloser, reopen func(context.Context)
 	})
 }
 
-func (p *uploadProgress) read(feed io.ReadCloser) {
-	defer feed.Close() //nolint:errcheck // receiver counters and scanner errors own the outcome
-	scanner := bufio.NewScanner(feed)
-	for scanner.Scan() {
-		event, err := wire.DecodeUploadProgress(scanner.Bytes())
-		switch {
+func (p *uploadProgress) read(feed progressFeed) error {
+	defer feed.stop()
+	for feed.records.Scan() {
+		switch event, err := wire.DecodeUploadProgress(feed.records.Bytes()); {
 		case err != nil:
-		case event.Type == "ready":
-			p.signalReady(nil)
 		case event.Type == "error":
-			p.signalReady(fmt.Errorf("upload progress: %s", event.Message))
-			return
+			return uploadRefusal(event.Code, statusError{from: feed.from})
 		case event.Type == "progress" || event.Type == "complete":
 			if p.advance(event.Bytes, event.Nanos) && event.Type == "complete" {
-				return
+				return nil
 			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		p.signalReady(fmt.Errorf("upload progress read: %w", err))
-	} else {
-		p.signalReady(errors.New("upload progress closed before ready"))
-	}
+	return fmt.Errorf("%s ended: %w", feed.from, cmp.Or(feed.records.Err(), io.EOF))
 }
 
 func (p *uploadProgress) close() {
@@ -275,47 +281,41 @@ func (p *uploadProgress) close() {
 	p.work.Wait()
 }
 
-type progressFeed struct {
-	io.Reader
-	stop func()
-}
-
-func (f progressFeed) Close() error {
-	f.stop()
-	return nil
-}
-
 func (r *runner) followUploadFeed(ctx context.Context, p *uploadProgress, target string) error {
-	reopen := func(recovery context.Context) (io.ReadCloser, error) {
+	reopen := func(recovery context.Context) (progressFeed, error) {
 		return r.openUploadFeed(p.ctx, recovery, target)
 	}
-	feed, err := reopen(ctx)
+	var feed progressFeed
+	err := restore(ctx, time.Now().Add(redialWindow), "upload progress", func(ctx context.Context) (err error) {
+		feed, err = reopen(ctx)
+		return err
+	})
 	if err == nil {
 		p.attach(feed, reopen)
 	}
 	return err
 }
 
-func (r *runner) openUploadFeed(lifetime, recovery context.Context, target string) (io.ReadCloser, error) {
+func (r *runner) openUploadFeed(lifetime, recovery context.Context, target string) (progressFeed, error) {
 	ctx, cancel := context.WithCancel(lifetime)
 	defer context.AfterFunc(recovery, cancel)()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		cancel()
-		return nil, err
+		return progressFeed{}, err
 	}
 	req.Header.Set("Accept", "application/x-ndjson")
 	res, err := r.http.Do(req)
 	if err != nil {
 		cancel()
-		return nil, err
+		return progressFeed{}, err
 	}
+	stop := func() { _ = res.Body.Close(); cancel() }
 	if res.StatusCode != http.StatusOK {
-		_ = res.Body.Close()
-		cancel()
-		return nil, unexpectedStatus(res)
+		stop()
+		return progressFeed{}, unexpectedStatus(res)
 	}
-	return progressFeed{res.Body, func() { _ = res.Body.Close(); cancel() }}, nil
+	return openFeed(res.Body, "upload progress", stop)
 }
 
 const (

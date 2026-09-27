@@ -10,7 +10,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-const missing = "—"
+const (
+	missing   = "—"
+	addedNote = "Added: loaded median minus idle median, same server."
+)
 
 var stageLabels = map[goclient.Stage]string{
 	goclient.StageLatency:       "Latency",
@@ -38,19 +41,20 @@ func compactPopulation(stage goclient.Stage) string {
 		goclient.StageUpload: "Loaded up", goclient.StageBidirectional: "Loaded bi-dir"}[stage]
 }
 
+var arrows = map[goclient.Direction]string{goclient.Down: "↓", goclient.Up: "↑"}
+
 func directionLabel(r goclient.Result) string {
 	if r.Stage != goclient.StageBidirectional {
 		return stageLabels[r.Stage]
 	}
-	if r.Direction == goclient.Up {
-		return "Bi-dir ↑"
-	}
-	return "Bi-dir ↓"
+	return "Bi-dir " + arrows[r.Direction]
 }
 
 const (
-	notStarted = "Not started"
-	blocked    = "Test cannot start"
+	notStarted     = "Not started"
+	blocked        = "Test cannot start"
+	startFailed    = "Test could not start"
+	checkingSignIn = "Checking sign-in"
 )
 
 type pathState int
@@ -60,6 +64,7 @@ const (
 	pathChecking
 	pathStale
 	pathFailed
+	pathSignIn
 )
 
 var pathLabels = map[pathState]string{
@@ -67,6 +72,7 @@ var pathLabels = map[pathState]string{
 	pathChecking: "Checking",
 	pathStale:    "Recheck needed",
 	pathFailed:   "Failed",
+	pathSignIn:   "Sign in",
 }
 
 var outcomeLabels = map[goclient.Outcome]string{
