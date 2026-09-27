@@ -134,6 +134,7 @@ impl ServerContribution {
 
 #[derive(Clone, Debug)]
 pub struct ServerLatencyResult {
+    pub elapsed: Option<Duration>,
     pub id: String,
     pub summary: graphite_meter_core::latency::LatencySummary,
     pub error: Option<String>,
@@ -222,6 +223,7 @@ fn security(origin: &str) -> &'static str {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthPrompt {
+    pub deadline: tokio::time::Instant,
     pub origin: String,
     pub browser_url: String,
     pub code: String,

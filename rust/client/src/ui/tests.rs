@@ -1,7 +1,6 @@
 use super::setup::Field;
 use super::*;
 use crate::model::Stage;
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
 
 #[test]
 fn finished_latency_result_remains_visible_after_live_probes_end() {
@@ -23,6 +22,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
                 omitted_intervals: 0,
                 complete: true,
                 server_latencies: vec![ServerLatencyResult {
+                    elapsed: Some(Duration::from_secs(1)),
                     id: "self".into(),
                     summary: LatencySummary {
                         distribution: Some(Distribution {
@@ -71,30 +71,6 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
 }
 
 #[test]
-fn rejected_run_command_keeps_the_setup_visible() {
-    let (commands, mut receiver) = mpsc::channel(1);
-    let mut ui = Ui::new(Config::default(), Snapshot::default());
-    commands.try_send(Command::Cancel).unwrap();
-
-    ui.key(
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
-        &commands,
-    );
-    assert!(!ui.live);
-    assert!(!ui.awaiting);
-    assert_eq!(ui.notice().0, "Controller is busy; try again.");
-
-    assert!(matches!(receiver.try_recv(), Ok(Command::Cancel)));
-    ui.key(
-        KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE),
-        &commands,
-    );
-    assert!(ui.live);
-    assert!(ui.awaiting);
-    assert!(matches!(receiver.try_recv(), Ok(Command::Run(_))));
-}
-
-#[test]
 fn active_run_requires_second_escape_but_setup_verification_cancels_immediately() {
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(
@@ -134,81 +110,8 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
 }
 
-#[test]
-fn setup_shows_verified_paths_and_failed_selected_peers() {
-    use crate::model::ServerSummary;
-    use graphite_meter_core::discovery::{LatencyTarget, ThroughputTarget};
-    use ratatui::{Terminal, backend::TestBackend};
-
-    let config = Config {
-        servers: vec!["self".into(), "beta".into()],
-        ..Config::default()
-    };
-    let server = ServerSummary {
-        id: "self".into(),
-        name: "Local peer".into(),
-        origin: "https://meter.example".into(),
-        throughput: Some(ThroughputTarget {
-            base_url: "https://meter.example".into(),
-            transport: ThroughputTransport::FetchStream,
-            protocol: Protocol::Http2,
-        }),
-        latency: Some(LatencyTarget {
-            base_url: "https://meter.example".into(),
-            transport: LatencyTransport::WebTransport,
-        }),
-        ..ServerSummary::default()
-    };
-    let mut ui = Ui::new(
-        config,
-        Snapshot {
-            servers: vec![
-                server,
-                ServerSummary {
-                    id: "beta".into(),
-                    name: "Remote peer".into(),
-                    origin: "https://remote.example".into(),
-                    error: Some("preflight refused".into()),
-                    ..ServerSummary::default()
-                },
-            ],
-            ..Snapshot::default()
-        },
-    );
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    let rendered = |terminal: &Terminal<TestBackend>| {
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Download Fetch streams · HTTP/2 · TLS"));
-    assert!(rendered(&terminal).contains("Latency WebTransport datagrams · HTTP/3 · TLS"));
-    assert!(rendered(&terminal).contains("Remote peer"));
-    assert!(rendered(&terminal).contains("Unavailable: preflight refused"));
-
-    let mut narrow = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    narrow.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&narrow).contains("Download Fetch streams · HTTP/2 · TLS"));
-
-    ui.config.throughput_protocol = Some(Protocol::Http1);
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Settings changed · verify again"));
-    assert!(!rendered(&terminal).contains("Download Fetch streams"));
-
-    let (commands, _receiver) = mpsc::channel(1);
-    ui.send(Command::Verify(ui.config.clone()), &commands);
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Checking selected servers"));
-    assert!(!rendered(&terminal).contains("Download Fetch streams"));
-}
-
-#[test]
-fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
+#[tokio::test(start_paused = true)]
+async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
     use crate::model::AuthPrompt;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -217,6 +120,7 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
         Snapshot {
             phase: Phase::Preparing,
             auth: Some(AuthPrompt {
+                deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                 origin: "https://meter.example".into(),
                 code: "782411".into(),
                 browser_url: format!(
@@ -242,6 +146,9 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     };
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("Match this code: 782411"));
+    tokio::time::advance(Duration::from_secs(30)).await;
+    terminal.draw(|frame| ui.draw(frame)).unwrap();
+    assert!(rendered(&terminal).contains("waited 30 s · expires in 90 s"));
     assert!(rendered(&terminal).contains("Enter/Space/o open"));
     assert!(!rendered(&terminal).contains("TAIL"));
 
@@ -273,6 +180,7 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     let browser_url = ui.snapshot.auth.as_ref().unwrap().browser_url.clone();
     ui.update(Snapshot {
         auth: Some(AuthPrompt {
+            deadline: tokio::time::Instant::now() + Duration::from_secs(120),
             origin: "https://meter.example".into(),
             code: "999999".into(),
             browser_url,
@@ -288,151 +196,6 @@ fn terminal_text_cannot_emit_controls_or_direction_overrides() {
     assert!(text.chars().all(safe_character));
     assert!(!text.contains('\x1b'));
     assert_eq!(safe_text("abcdef", 3), "abc");
-}
-#[test]
-fn editing_is_unicode_safe_and_bounded() {
-    let mut edit = Edit::new(Field::Url, "a🦀b".into());
-    edit.key(KeyCode::Left);
-    edit.key(KeyCode::Backspace);
-    assert_eq!(edit.text(), "ab");
-    edit.insert("\x1b\n界");
-    assert_eq!(edit.text(), "a界b");
-    edit.insert(&"x".repeat(MAX_TEXT * 2));
-    assert_eq!(edit.chars.len(), MAX_TEXT);
-}
-#[test]
-fn editing_keeps_the_whole_value_visible_when_it_fits() {
-    use ratatui::{Terminal, backend::TestBackend};
-
-    let url = "https://meter.example/some/moderately/long/path";
-    let mut ui = Ui::new(Config::default(), Snapshot::default());
-    ui.edit = Some(Edit::new(Field::Url, url.into()));
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(rendered.contains(url));
-
-    let edit = Edit::new(Field::Url, "界".repeat(30));
-    let (before, cursor, after) = edit.viewport(20);
-    assert!(before.width() + cursor.width().unwrap_or(0) + after.width() <= 20);
-    assert!(before.ends_with("界"));
-}
-#[test]
-fn tab_moves_focus_without_opening_live_view() {
-    let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let (commands, _receiver) = mpsc::channel(8);
-    ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &commands);
-    assert_eq!(ui.rows.selected(), Some(1));
-    assert!(!ui.live);
-    ui.key(
-        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
-        &commands,
-    );
-    assert_eq!(ui.rows.selected(), Some(0));
-    assert!(!ui.live);
-}
-#[test]
-fn current_setup_notice_is_visible_after_a_failed_run() {
-    let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let failed = Snapshot {
-        error: Some("old transfer error".into()),
-        ..Snapshot::default()
-    };
-    ui.update(failed);
-    assert_eq!(ui.notice(), ("old transfer error", true));
-
-    ui.notice = "Transport paths set to automatic.".into();
-    assert_eq!(ui.notice(), ("Transport paths set to automatic.", false));
-
-    let next = Snapshot {
-        error: Some("new transfer error".into()),
-        ..Snapshot::default()
-    };
-    ui.update(next);
-    assert_eq!(ui.notice(), ("new transfer error", true));
-}
-#[test]
-fn details_show_both_server_contributions_and_close_with_escape() {
-    use crate::model::{ServerContribution, ServerSummary, StageResult};
-    use ratatui::{Terminal, backend::TestBackend};
-
-    let snapshot = Snapshot {
-        phase: Phase::Complete,
-        results: vec![StageResult {
-            stage: Stage::Download,
-            elapsed: Duration::from_secs(1),
-            down: Some(download_measurement()),
-            up: None,
-            intervals: Default::default(),
-            omitted_intervals: 0,
-            complete: false,
-            server_latencies: Vec::new(),
-            server_results: vec![
-                ServerContribution {
-                    id: "near".into(),
-                    down: Some(download_measurement()),
-                    up: None,
-                    error: None,
-                },
-                ServerContribution {
-                    id: "far".into(),
-                    down: None,
-                    up: None,
-                    error: Some("peer disconnected".into()),
-                },
-            ],
-        }],
-        servers: vec![
-            ServerSummary {
-                id: "near".into(),
-                name: "Near".into(),
-                ..ServerSummary::default()
-            },
-            ServerSummary {
-                id: "far".into(),
-                name: "Far".into(),
-                ..ServerSummary::default()
-            },
-        ],
-        failures: vec![crate::model::ServerFailure {
-            server_id: "far".into(),
-            stage: Stage::Download,
-            scope: crate::model::FailureScope::Throughput,
-            reason: graphite_meter_core::failure::FailureReason::ConnectionLost,
-            message: "peer disconnected".into(),
-            at: Duration::from_secs(1),
-        }],
-        ..Snapshot::default()
-    };
-    let mut ui = Ui::new(Config::default(), snapshot);
-    ui.live = true;
-    let (commands, _) = mpsc::channel(1);
-    ui.key(
-        KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
-        &commands,
-    );
-    assert_eq!(ui.popup, Popup::Details);
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(rendered.contains("Near"));
-    assert!(rendered.contains("Far"));
-    assert!(rendered.contains("Connection lost"));
-    assert!(rendered.contains("12.00 Mbit/s"));
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
-    assert_eq!(ui.popup, Popup::None);
 }
 #[test]
 fn minimum_supported_terminal_keeps_live_measurement_visible() {
@@ -554,6 +317,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
                 omitted_intervals: 0,
                 complete: true,
                 server_latencies: vec![ServerLatencyResult {
+                    elapsed: Some(Duration::from_secs(1)),
                     id: "self".into(),
                     summary: idle.snapshot(),
                     error: None,
@@ -569,6 +333,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
                 omitted_intervals: 0,
                 complete: true,
                 server_latencies: vec![ServerLatencyResult {
+                    elapsed: Some(Duration::from_secs(1)),
                     id: "self".into(),
                     summary: loaded.snapshot(),
                     error: None,

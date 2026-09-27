@@ -52,12 +52,19 @@ struct Transfer {
 
 struct StageResources {
     transfers: Vec<Transfer>,
-    latency: JoinSet<Result<(), Error>>,
+    latency: JoinSet<LatencyCompletion>,
+    latency_completed: BTreeMap<String, Instant>,
     stop: watch::Sender<bool>,
     stop_latency: BTreeMap<String, watch::Sender<bool>>,
     retired: JoinSet<Result<(), Error>>,
     failed: Vec<String>,
     latency_failed: bool,
+}
+
+struct LatencyCompletion {
+    id: String,
+    at: Instant,
+    result: Result<(), Error>,
 }
 
 #[derive(Debug)]
@@ -110,7 +117,7 @@ impl std::error::Error for LatencyFailure {
 }
 
 fn latency_task_result(
-    id: String,
+    id: &str,
     result: Result<(), Error>,
     stop_requested: bool,
 ) -> Result<(), Error> {
@@ -119,7 +126,11 @@ fn latency_task_result(
         Ok(()) => "latency session ended before stage boundary".into(),
         Err(error) => error,
     };
-    Err(LatencyFailure { id, source }.into())
+    Err(LatencyFailure {
+        id: id.to_owned(),
+        source,
+    }
+    .into())
 }
 
 impl Transfer {
@@ -183,7 +194,7 @@ impl StageResources {
             }
         }
         while let Some(result) = self.latency.join_next().await {
-            if let Err(error) = result.map_err(Error::from).and_then(|result| result) {
+            if let Err(error) = self.latency_result(result) {
                 failure.get_or_insert(error);
             }
         }
@@ -209,9 +220,18 @@ impl StageResources {
             }
         }
         while let Some(result) = self.latency.try_join_next() {
-            result??;
+            self.latency_result(result)?;
         }
         Ok(())
+    }
+
+    fn latency_result(
+        &mut self,
+        completed: Result<LatencyCompletion, tokio::task::JoinError>,
+    ) -> Result<(), Error> {
+        let completed = completed?;
+        self.latency_completed.insert(completed.id, completed.at);
+        completed.result
     }
 
     fn record_latency_failure(
@@ -241,11 +261,11 @@ impl StageResources {
 
     fn latency_completion(
         &mut self,
-        completed: Result<Result<(), Error>, tokio::task::JoinError>,
+        completed: Result<LatencyCompletion, tokio::task::JoinError>,
         snapshots: &watch::Sender<Snapshot>,
         latency_only: bool,
     ) -> Result<(), Error> {
-        match completed? {
+        match self.latency_result(completed) {
             Err(error) if error.is::<LatencyFailure>() => {
                 let failure = error.downcast::<LatencyFailure>()?;
                 self.record_latency_failure(&failure, snapshots);
@@ -566,6 +586,7 @@ pub(super) async fn measure(
     let epoch = Instant::now();
     let (stop, stopped) = watch::channel(false);
     let mut resources = StageResources {
+        latency_completed: BTreeMap::new(),
         transfers: Vec::new(),
         latency: JoinSet::new(),
         stop,
@@ -752,7 +773,11 @@ pub(super) async fn measure(
                         kind,
                     )
                     .await;
-                    latency_task_result(id, result, *stopped.borrow())
+                    LatencyCompletion {
+                        at: Instant::now(),
+                        result: latency_task_result(&id, result, *stopped.borrow()),
+                        id,
+                    }
                 });
             }
             let mut ready = HashSet::new();
@@ -777,7 +802,7 @@ pub(super) async fn measure(
                             if completed_stage {
                                 resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
                             } else {
-                                task??;
+                                resources.latency_result(task)?;
                                 return Err("latency session ended before readiness".into());
                             }
                         }
@@ -1100,6 +1125,10 @@ pub(super) async fn measure(
                     .server_latencies
                     .iter()
                     .map(|host| ServerLatencyResult {
+                        elapsed: resources
+                            .latency_completed
+                            .get(&host.id)
+                            .map(|at| (*at).min(ended).saturating_duration_since(started)),
                         id: host.id.clone(),
                         summary: latency
                             .hosts
@@ -1143,6 +1172,7 @@ pub(super) async fn measure(
                     .server_latencies
                     .iter()
                     .map(|host| ServerLatencyResult {
+                        elapsed: None,
                         id: host.id.clone(),
                         summary: LatencyAccumulator::default().snapshot(),
                         error: host.error.clone(),

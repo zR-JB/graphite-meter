@@ -533,6 +533,7 @@ async fn latency_failure_preserves_payload_and_throughput_failure_stops_only_its
         stop_latency: BTreeMap::from([("near".into(), near_stop), ("far".into(), far_stop)]),
         retired: JoinSet::new(),
         failed: Vec::new(),
+        latency_completed: BTreeMap::new(),
         latency_failed: false,
     };
     let (snapshots, observed) = watch::channel(Snapshot {
@@ -602,6 +603,7 @@ async fn loaded_latency_failure_during_warmup_keeps_throughput_participant() {
         stop_latency: BTreeMap::from([("near".into(), latency_stop)]),
         retired: JoinSet::new(),
         failed: Vec::new(),
+        latency_completed: BTreeMap::new(),
         latency_failed: false,
     };
     let (snapshots, observed) = watch::channel(Snapshot {
@@ -637,13 +639,13 @@ async fn loaded_latency_failure_during_warmup_keeps_throughput_participant() {
 
 #[test]
 fn requested_stop_does_not_hide_a_latency_error() {
-    assert!(latency_task_result("near".into(), Ok(()), true).is_ok());
+    assert!(latency_task_result("near", Ok(()), true).is_ok());
     let error =
-        latency_task_result("near".into(), Err("observation queue full".into()), true).unwrap_err();
+        latency_task_result("near", Err("observation queue full".into()), true).unwrap_err();
     let failure = error.downcast::<LatencyFailure>().unwrap();
     assert_eq!(failure.id, "near");
     assert_eq!(failure.source.to_string(), "observation queue full");
-    assert!(latency_task_result("far".into(), Ok(()), false).is_err());
+    assert!(latency_task_result("far", Ok(()), false).is_err());
 }
 
 #[tokio::test]
@@ -787,6 +789,7 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
         stop_latency: BTreeMap::new(),
         retired: JoinSet::new(),
         failed: Vec::new(),
+        latency_completed: BTreeMap::new(),
         latency_failed: false,
     };
     assert_eq!(

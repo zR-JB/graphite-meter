@@ -106,7 +106,9 @@ async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Erro
     let report = String::from_utf8(output.stdout)?;
     assert!(report.contains("Complete"));
     assert!(report.contains("local peer: Median"));
-    assert!(report.contains("Probe timeouts 0%"));
+    assert!(report.contains("Probe timeouts 0/") && report.contains("(0.0%)"));
+    assert!(report.contains("replies · 1.0 s"));
+    assert!(report.contains("Server timing (") && report.contains("paired replies, means): raw"));
     Ok(())
 }
 

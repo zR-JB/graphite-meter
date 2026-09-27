@@ -164,10 +164,7 @@ fn report(snapshot: &Snapshot) {
                     )
                 },
             );
-            let timeouts = host
-                .summary
-                .timeout_ratio()
-                .map_or_else(|| "—".into(), |value| format!("{:.0}%", value * 100.0));
+            let timeouts = graphite_meter_client::vocabulary::probe_timeouts(host.summary);
             let milliseconds = |value: Option<u64>| {
                 value.map_or_else(
                     || "—".into(),
@@ -207,21 +204,27 @@ fn report(snapshot: &Snapshot) {
             };
             use graphite_meter_client::vocabulary as words;
             println!(
-                "  {}: {} {}, {} {}, {} {}, {} {}, {} {}, replies {}, unfinished probes {}",
+                "  {}: {} {}, {} {}, {} {}, {} {}, {} {}",
                 safe(name),
                 words::MEDIAN.label,
                 median,
                 words::ADDED.label,
                 added,
                 words::P95.label,
-                milliseconds(host.summary.distribution.map(|value| value.p95)),
+                milliseconds(
+                    host.median()
+                        .and(host.summary.distribution)
+                        .map(|value| value.p95)
+                ),
                 words::JITTER.label,
                 milliseconds(host.summary.jitter),
                 words::PROBE_TIMEOUTS.label,
-                timeouts,
-                host.summary.count,
-                host.summary.unresolved
+                timeouts
             );
+            println!("    {}", words::latency_facts(host.summary, host.elapsed));
+            if let Some(timing) = words::reflector_facts(host.summary) {
+                println!("    {timing}");
+            }
             if let Some(error) = &host.error {
                 println!("    Latency unavailable: {}", safe(error));
             }

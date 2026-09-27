@@ -222,3 +222,47 @@ pub fn throughput_facts(
     }
     facts.join(" · ")
 }
+
+pub fn latency_facts(
+    summary: graphite_meter_core::latency::LatencySummary,
+    elapsed: Option<std::time::Duration>,
+) -> String {
+    let mut facts = vec![format!("{} replies", summary.count)];
+    if let Some(elapsed) = elapsed.filter(|elapsed| !elapsed.is_zero()) {
+        facts.push(format!("{:.1} s", elapsed.as_secs_f64()));
+    }
+    if summary.unresolved > 0 {
+        facts.push(format!("unfinished probes {}", summary.unresolved));
+    }
+    if summary.send_failures > 0 {
+        facts.push(format!("failed sends {}", summary.send_failures));
+    }
+    facts.join(" · ")
+}
+
+pub fn reflector_facts(summary: graphite_meter_core::latency::LatencySummary) -> Option<String> {
+    summary.reflector_timing.map(|timing| {
+        format!(
+            "Server timing ({} paired replies, means): raw {} ms · handling {} ms",
+            timing.count,
+            graphite_meter_core::format::latency_ms(timing.mean_raw_rtt as f64 / 1e6),
+            graphite_meter_core::format::latency_ms(timing.mean_handling as f64 / 1e6)
+        )
+    })
+}
+
+pub fn probe_timeouts(summary: graphite_meter_core::latency::LatencySummary) -> String {
+    summary.timeout_ratio().map_or_else(
+        || MISSING.into(),
+        |ratio| {
+            let digits = if ratio > 0.0 && ratio < 0.01 { 2 } else { 1 };
+            format!(
+                "{}/{} ({:.*}%)",
+                summary.timeouts,
+                summary.count + summary.timeouts,
+                digits,
+                ratio * 100.0
+            )
+        },
+    )
+}

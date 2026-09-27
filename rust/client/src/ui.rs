@@ -122,7 +122,7 @@ pub async fn run(
                     snapshot_changed = false;
                     dirty = true;
                 }
-                if ui.live && ui.active() {
+                if ui.active() {
                     ui.frame();
                     dirty = true;
                 }

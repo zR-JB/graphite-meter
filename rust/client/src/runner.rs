@@ -499,6 +499,7 @@ pub async fn run_prepared(
                                 error: Some(error.to_string()),
                             }],
                             server_latencies: vec![crate::model::ServerLatencyResult {
+                                elapsed: None,
                                 id: entry.id.clone(),
                                 summary: Default::default(),
                                 error: Some(error.to_string()),

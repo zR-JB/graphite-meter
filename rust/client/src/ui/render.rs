@@ -257,6 +257,7 @@ impl Ui {
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
@@ -285,7 +286,21 @@ impl Ui {
         );
         let url = safe_text(&auth.browser_url, MAX_TEXT);
         let lines = wrap_columns(&url, width.max(1));
-        let visible = usize::from(regions[3].height);
+        let remaining = auth
+            .deadline
+            .saturating_duration_since(tokio::time::Instant::now());
+        frame.render_widget(
+            Paragraph::new(format!(
+                "waited {:.0} s · expires in {:.0} s",
+                crate::net::AUTHORIZATION_TIMEOUT
+                    .saturating_sub(remaining)
+                    .as_secs_f64(),
+                remaining.as_secs_f64()
+            ))
+            .style(Style::new().fg(self.theme.muted)),
+            regions[3],
+        );
+        let visible = usize::from(regions[4].height);
         self.auth_scroll = self
             .auth_scroll
             .min(lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
@@ -293,12 +308,12 @@ impl Ui {
             Paragraph::new(lines)
                 .scroll((self.auth_scroll, 0))
                 .style(Style::new().fg(self.theme.text)),
-            regions[3],
+            regions[4],
         );
         frame.render_widget(
             Paragraph::new("Enter/Space/o open · Esc cancel · q quit")
                 .style(Style::new().fg(self.theme.brand_strong)),
-            regions[4],
+            regions[5],
         );
     }
 
@@ -758,17 +773,7 @@ impl Ui {
                         .map(|distribution| distribution.p95 as f64 / 1e6),
                 ),
                 milliseconds(host.summary.jitter.map(|jitter| jitter as f64 / 1e6)),
-                host.summary.timeout_ratio().map_or_else(
-                    || "—".into(),
-                    |ratio| {
-                        format!(
-                            "{}/{} ({:.1}%)",
-                            host.summary.timeouts,
-                            host.summary.count + host.summary.timeouts,
-                            ratio * 100.0
-                        )
-                    },
-                ),
+                crate::vocabulary::probe_timeouts(host.summary),
             ];
             let name = match result.stage {
                 Stage::Latency => "Idle",
@@ -1015,23 +1020,12 @@ impl Ui {
                     milliseconds(host.median().map(|value| value as f64 / 1e6)),
                     host.summary.count
                 )));
-                let mut facts = Vec::new();
-                if host.summary.unresolved > 0 {
-                    facts.push(format!("unfinished probes {}", host.summary.unresolved));
-                }
-                if host.summary.send_failures > 0 {
-                    facts.push(format!("failed sends {}", host.summary.send_failures));
-                }
-                if !facts.is_empty() {
-                    lines.push(Line::from(facts.join(" · ")));
-                }
-                if let Some(timing) = host.summary.reflector_timing {
-                    lines.push(Line::from(format!(
-                        "Server timing ({} paired replies, means): raw {} · handling {}",
-                        timing.count,
-                        milliseconds(Some(timing.mean_raw_rtt as f64 / 1e6)),
-                        milliseconds(Some(timing.mean_handling as f64 / 1e6))
-                    )));
+                lines.push(Line::from(crate::vocabulary::latency_facts(
+                    host.summary,
+                    host.elapsed,
+                )));
+                if let Some(timing) = crate::vocabulary::reflector_facts(host.summary) {
+                    lines.push(Line::from(timing));
                 }
             }
         }

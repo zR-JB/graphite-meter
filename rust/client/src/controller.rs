@@ -447,6 +447,7 @@ async fn execute(
             snapshot.error = None;
             snapshot.status = "Approve this client in your browser".into();
             snapshot.auth = Some(AuthPrompt {
+                deadline: pending.deadline,
                 origin: origin.clone(),
                 browser_url: pending.browser_url.clone(),
                 code: pending.code.clone(),

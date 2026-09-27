@@ -283,10 +283,13 @@ pub(crate) fn authentication_required<'a>(
     }
 }
 
+pub const AUTHORIZATION_TIMEOUT: Duration = Duration::from_secs(120);
+
 /// The verifier is deliberately private and has no Debug implementation.
 pub struct PendingAuthorization {
     pub browser_url: String,
     pub code: String,
+    pub deadline: tokio::time::Instant,
     source: String,
     verifier: zeroize::Zeroizing<String>,
     token_url: String,
@@ -544,6 +547,7 @@ impl Http {
         Ok(PendingAuthorization {
             browser_url: format!("{origin}/auth/cli?challenge={challenge}"),
             code: approval_code(&hash[..5]),
+            deadline: tokio::time::Instant::now() + AUTHORIZATION_TIMEOUT,
             source,
             verifier,
             token_url: format!("{origin}/auth/cli/token"),
@@ -551,7 +555,7 @@ impl Http {
     }
     /// The caller displays browser_url/code and owns cancellation of this future.
     pub async fn poll_authorization(&self, pending: PendingAuthorization) -> Result<()> {
-        tokio::time::timeout(Duration::from_secs(120), async {
+        tokio::time::timeout_at(pending.deadline, async {
             loop {
                 let body = serde_json::to_vec(
                     &serde_json::json!({"verifier": pending.verifier.as_str()}),
