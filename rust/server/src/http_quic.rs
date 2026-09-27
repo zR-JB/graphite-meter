@@ -108,16 +108,8 @@ impl HttpServer {
             .max_incoming(self.config.max_connections)
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES);
-        let mut transport = quinn::TransportConfig::default();
-        transport.max_concurrent_bidi_streams(u32::try_from(max_requests(&self.config.limits))?.into());
-        transport.max_concurrent_uni_streams(UNI_STREAMS.into());
-        transport.stream_receive_window(STREAM_RECEIVE_WINDOW.into());
-        transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
-        transport.send_window(MIN_SEND_WINDOW);
+        let mut transport = transport(&self.config.limits)?;
         transport.shared_budget(Some(self.memory.clone()));
-        transport.datagram_receive_buffer_size(Some(64 * 1024));
-        transport.datagram_send_buffer_size(64 * 1024);
-        transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
         config.transport_config(Arc::new(transport));
         Ok(config)
     }
@@ -409,10 +401,28 @@ pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
     limits.operations_per_client + limits.sessions_per_client + 4
 }
 
+fn transport(limits: &crate::admission::Limits) -> Result<quinn::TransportConfig, ConfigError> {
+    let mut transport = quinn::TransportConfig::default();
+    transport.max_concurrent_bidi_streams(u32::try_from(max_requests(limits))?.into());
+    transport.max_concurrent_uni_streams(UNI_STREAMS.into());
+    transport.stream_receive_window(STREAM_RECEIVE_WINDOW.into());
+    transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
+    transport.send_window(MIN_SEND_WINDOW);
+    transport.datagram_receive_buffer_size(Some(64 * 1024));
+    transport.datagram_send_buffer_size(64 * 1024);
+    transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
+    Ok(transport)
+}
+
 pub(super) fn connection_floor(limits: &crate::admission::Limits, handshake_bytes: usize) -> usize {
     (max_requests(limits) + UNI_STREAMS as usize)
         .saturating_mul(STREAM_FLOOR_BYTES)
         .saturating_add(handshake_bytes)
+}
+
+/// Noq precharges its own floor when it creates a connection, so only validation counts it.
+pub(super) fn noq_floor(limits: &crate::admission::Limits) -> Result<usize, ConfigError> {
+    Ok(transport(limits)?.connection_floor_bytes())
 }
 
 pub(super) fn endpoint_bytes(
@@ -1059,7 +1069,7 @@ mod tests {
             ..Config::default()
         });
         let floor = connection_floor(&config.limits, 0);
-        let floors = 4 * (floor + quinn::CONNECTION_FLOOR_BYTES);
+        let floors = 4 * (floor + noq_floor(&config.limits).unwrap());
         let (tls, client_config) = tls();
         let address = "127.0.0.1:0".parse().unwrap();
         let measured = HttpServer::with_memory(config.clone(), 1 << 30).unwrap();
@@ -1570,7 +1580,7 @@ mod tests {
             assert!(silent.iter().all(Result::is_ok));
             let charged = idle - server.memory.available();
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
-            let floor = connection_floor(&server.config.limits, 0) + quinn::CONNECTION_FLOOR_BYTES;
+            let floor = connection_floor(&server.config.limits, 0) + noq_floor(&server.config.limits).unwrap();
             assert!(charged <= silent.len() * floor);
             let fresh = clients[9].connect(address, "localhost").unwrap().await.unwrap();
             assert_eq!(download(fresh, 13).await.unwrap(), 13);
