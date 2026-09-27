@@ -146,7 +146,7 @@ func (d *Discovery) build(host string) *hostDiscovery {
 	sources := d.cfg.ServerCatalog.ConnectSources()
 	for _, raw := range h.connect {
 		parsed := strings.Replace(strings.Replace(raw, "wss://", "https://", 1), "ws://", "http://", 1)
-		if _, err := wire.CanonicalOrigin(parsed); err == nil && wire.BrowserConnectSourceSupported(raw) {
+		if _, err := wire.CanonicalOrigin(parsed); err == nil {
 			sources = append(sources, raw)
 		}
 	}

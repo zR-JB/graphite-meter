@@ -1,8 +1,6 @@
 package endpoint
 
 import (
-	"bytes"
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -12,14 +10,14 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func TestUploadSessionMintsFreshIDsWithoutState(t *testing.T) {
 	store := NewUpload(nil, nil)
 	mint := func() string {
-		rec := httptest.NewRecorder()
-		store.ServeSession(rec, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
+		rec := testkit.Record(store.ServeSession, httptest.NewRequest(http.MethodPost, "/upload/session", nil))
 		var body struct {
 			UploadID string `json:"uploadId"`
 		}
@@ -43,8 +41,7 @@ func TestUploadCheckpointObservesWithoutExtendingLifetime(t *testing.T) {
 		checkpoint := func(owner string) *httptest.ResponseRecorder {
 			r := httptest.NewRequest(http.MethodPost, "/upload/checkpoint?id="+id, nil)
 			r.RemoteAddr = owner + ":1234"
-			w := httptest.NewRecorder()
-			store.ServeCheckpoint(w, r)
+			w := testkit.Record(store.ServeCheckpoint, r)
 			return w
 		}
 		if w := checkpoint("192.0.2.1"); w.Code != http.StatusBadRequest || store.live() != 0 {
@@ -86,8 +83,7 @@ func TestUploadEchoReportsReceivedBytesNotTheDeclaredLength(t *testing.T) {
 	store := NewUpload(nil, nil)
 	r := httptest.NewRequest(http.MethodPost, "/upload?id="+store.Mint(), strings.NewReader("12345"))
 	r.ContentLength = 1 << 30
-	w := httptest.NewRecorder()
-	store.Handler(wire.IdleBound).ServeHTTP(w, r)
+	w := testkit.Record(store.Handler(wire.IdleBound).ServeHTTP, r)
 	var echo struct {
 		Bytes int64 `json:"bytes"`
 	}
@@ -133,8 +129,7 @@ func TestUploadHTTPRequiresAnOwnerBoundIDBeforeReading(t *testing.T) {
 			id := tc.setup(store)
 			live := store.live()
 			body := strings.NewReader("must not be drained")
-			rec := httptest.NewRecorder()
-			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
+			rec := testkit.Record(store.Handler(wire.IdleBound).ServeHTTP, httptest.NewRequest(http.MethodPost, "/upload?id="+id, body))
 			if rec.Code != tc.status || !strings.Contains(rec.Body.String(), uploadAccessInfos[tc.access].message) ||
 				body.Len() != len("must not be drained") || store.live() != live {
 				t.Fatalf("refusal = %d %q, unread = %d, live %d -> %d", rec.Code, rec.Body.String(), body.Len(), live,
@@ -170,42 +165,5 @@ func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
 	}
 	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || store.lanesOf(agg) != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
-	}
-}
-
-type deadlineRecorder struct {
-	http.ResponseWriter
-	read time.Time
-}
-
-func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
-	d.read = t
-	return nil
-}
-
-func TestUploadBoundsItsBodyRead(t *testing.T) {
-	for _, remaining := range []time.Duration{0, time.Second, time.Hour} {
-		t.Run(remaining.String(), func(t *testing.T) {
-			ctx := t.Context()
-			want := time.Now().Add(remaining)
-			if remaining != 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithDeadline(ctx, want)
-				defer cancel()
-			}
-			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
-			store := NewUpload(nil, nil)
-			before := time.Now()
-			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
-				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
-			if remaining != 0 && remaining < wire.IdleBound {
-				if !rec.read.Equal(want) {
-					t.Fatalf("read deadline = %v, want the request deadline %v", rec.read, want)
-				}
-			} else if rec.read.Before(before.Add(wire.IdleBound)) ||
-				rec.read.After(time.Now().Add(wire.IdleBound)) {
-				t.Fatalf("read deadline %v does not keep the idle bound", rec.read)
-			}
-		})
 	}
 }

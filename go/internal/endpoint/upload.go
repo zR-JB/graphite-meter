@@ -108,9 +108,7 @@ func (u *Upload) Receive(id string, c uploadClient, src io.Reader, idle *idleDea
 
 func (u *Upload) ServeSession(w http.ResponseWriter, _ *http.Request) {
 	noStoreJSON(w)
-	_ = json.MarshalWrite(w, struct {
-		UploadID string `json:"uploadId"`
-	}{u.Mint()})
+	_ = json.MarshalWrite(w, wire.UploadSession{UploadID: u.Mint()})
 }
 
 // ServeCheckpoint reports an existing receiver's counter without keeping it alive.
@@ -125,10 +123,10 @@ func (u *Upload) ServeCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	noStoreJSON(w)
-	_ = json.MarshalWrite(w, struct {
-		Bytes int64 `json:"bytes"`
-		Nanos int64 `json:"nanos"`
-	}{agg.bytes.Load(), agg.elapsedNanos(u.now())})
+	_ = json.MarshalWrite(w, wire.UploadCheckpoint{
+		Bytes: uint64(agg.bytes.Load()),          //nosec G115 -- byte count is non-negative
+		Nanos: uint64(agg.elapsedNanos(u.now())), //nosec G115 -- elapsed nanos is non-negative
+	})
 }
 
 // ServeProgress streams the receiver's counter as NDJSON on GET and finishes it on DELETE.

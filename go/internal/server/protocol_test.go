@@ -9,10 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/quic-go/quic-go/http3"
-	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -29,21 +26,6 @@ func protocolTestTLS(t *testing.T) (*config.Config, *certificateManager) {
 	return &cfg, cm
 }
 
-func testPasswordAuth(t *testing.T, origin string) *auth.Service {
-	t.Helper()
-	hash, err := auth.HashPassword("secret")
-	if err != nil {
-		t.Fatal(err)
-	}
-	service, err := auth.New(t.Context(),
-		config.AuthConfig{Mode: "password", PublicURL: origin, PasswordHash: hash, OIDCProviderName: "Authelia"}, nil,
-		false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return service
-}
-
 // Each native TLS listener, as Run assembles it, speaks only TLS 1.3 and its own protocol, and mounts its own routes.
 func TestNativeListeners(t *testing.T) {
 	t.Parallel()
@@ -51,27 +33,16 @@ func TestNativeListeners(t *testing.T) {
 		cfg.Native.H1, cfg.Native.H1TLS = sockets.reserveTCP(), sockets.reserveTCP()
 		cfg.Native.H2, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
 	}, nil)
-	insecure := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // test certificate
-	tcpClient := func(http2 bool) *http.Client {
-		protocols := &http.Protocols{}
-		protocols.SetHTTP1(!http2)
-		protocols.SetHTTP2(http2)
-		tr := &http.Transport{TLSClientConfig: insecure, Protocols: protocols}
-		t.Cleanup(tr.CloseIdleConnections)
-		return &http.Client{Transport: tr}
-	}
-	h3 := &http3.Transport{TLSClientConfig: insecure, QUICConfig: transport.NewQUICConfig()}
-	t.Cleanup(func() { _ = h3.Close() })
-	h2, h2Base := tcpClient(true), "https://"+cfg.Native.H2
+	h2, h2Base := insecureClient(t, "http2"), "https://"+cfg.Native.H2
 	for _, tc := range []struct {
 		protocol string
 		client   *http.Client
 		base     string
 		absent   []string
 	}{
-		{"http/1.1", tcpClient(false), "https://" + cfg.Native.H1TLS, nil},
+		{"http/1.1", insecureClient(t, "http1"), "https://" + cfg.Native.H1TLS, nil},
 		{"h2", h2, h2Base, []string{"/", "/assets/app.js", "/preflight", "/ws/ping"}},
-		{"h3", &http.Client{Transport: h3}, "https://" + cfg.Native.H3, nil},
+		{"h3", insecureClient(t, "http3"), "https://" + cfg.Native.H3, nil},
 	} {
 		t.Run(tc.protocol, func(t *testing.T) {
 			for _, path := range tc.absent {

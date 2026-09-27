@@ -275,7 +275,7 @@ export const JARGON = {
     "HTTP/2 and HTTP/3 choose their own count",
   forcedStreamCount:
     "Streams per server and direction\nOpens exactly this many requests\n" +
-    "At most 128 per direction, within connection limits",
+    "Fetch at most 14 per server, WebTransport 16 per session, within connection limits",
 } as const;
 
 export const PHASE_HINT: Partial<

@@ -50,7 +50,7 @@ func loadServerCatalog() (wire.ServerCatalog, error) {
 			return c, fmt.Errorf("server catalogue origins: %w", err)
 		}
 		for _, raw := range origins {
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return c, fmt.Errorf("server catalogue origin %q: %w", raw, err)
 			}
@@ -67,13 +67,13 @@ func loadServerCatalog() (wire.ServerCatalog, error) {
 		if c.Servers[i].ID == "self" {
 			return c, fmt.Errorf("self is added automatically; omit it from servers")
 		}
-		canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(c.Servers[i].URL, "/"))
+		canonical, err := wire.CatalogOrigin(c.Servers[i].URL)
 		if err != nil {
 			return c, fmt.Errorf("server %q: %w", c.Servers[i].ID, err)
 		}
 		c.Servers[i].URL = canonical
 		for j, raw := range c.Servers[i].AdditionalOrigins {
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return c, err
 			}

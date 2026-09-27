@@ -1,5 +1,5 @@
 import { DEFAULT_CONFIG } from "../state/defaults";
-import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
+import type { FetchThroughputTarget } from "../api/endpoints";
 import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
 import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery } from "./paths";
@@ -37,17 +37,6 @@ export const testTransfer = (
   transport: "fetch-stream",
   protocol,
   tls,
-});
-export const testLatency = (
-  id: string,
-  origin: string,
-  tls: boolean,
-): LatencyTarget => ({
-  id,
-  origin,
-  protocol: "http1",
-  tls,
-  transport: "websocket",
 });
 /** A participant host that ignores every report unless overridden. */
 export function testParticipantHost(
@@ -210,16 +199,14 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
   };
 }
 
-export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => (resolve = done));
-  return { promise, resolve };
-}
+const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
 export async function until(done: () => boolean, turns = 100) {
-  for (let turn = 0; turn < turns && !done(); turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < turns && !done(); i++) await turn();
+  if (!done()) throw new Error(`condition not met within ${turns} turns`);
 }
-export const settle = () => until(() => false, 10);
+export async function settle() {
+  for (let i = 0; i < 10; i++) await turn();
+}
 /** Discovery and both verified paths of one server generation. */
 export function testEvidence(generation = "gen-a"): PreparedPaths {
   const paths = testPreparedPaths();

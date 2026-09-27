@@ -44,6 +44,7 @@ import {
   CONNECTION_ROLES,
   latencyPathNeeded,
   portableTransportSelection,
+  selectionOrigin,
   uploadCapabilityFailure,
 } from "./paths";
 import {
@@ -116,7 +117,7 @@ export function createApplicationController(
     !pendingStart &&
     !hidden();
   const selected = () =>
-    store.serverCatalog
+    store.serverCatalog && store.selectedServers.length
       ? selectedInCatalogOrder(
           store.serverCatalog,
           store.selectedServers,
@@ -242,20 +243,11 @@ export function createApplicationController(
               store.latencySelection.mode === "all" ||
               server.id === store.primaryLatencyServer),
         );
-        const origin =
-          value !== "auto" &&
-          !value.startsWith("protocol:") &&
-          !value.startsWith("transport:");
+        const origin = selectionOrigin(value);
         if (
           servers.length > 1 ||
           (origin &&
-            servers.some(
-              (server) =>
-                !allowsServerOrigin(
-                  server,
-                  value.replace(/::(?:wt|wtdg)$/, ""),
-                ),
-            ))
+            servers.some((server) => !allowsServerOrigin(server, origin)))
         )
           makeTransportPortable(role);
       }
@@ -457,12 +449,8 @@ export function createApplicationController(
         ? "renew"
         : "expired";
     runner?.end("sign-in-required", "Signed out during the test");
-    for (
-      let waitedMs = 0;
-      (store.isRunning || store.historyCandidate) &&
-      waitedMs < SIGN_OUT_SAVE_MS;
-      waitedMs += 50
-    )
+    const deadline = pageMs() + SIGN_OUT_SAVE_MS;
+    while ((store.isRunning || store.historyCandidate) && pageMs() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 50));
     dispose();
     location.replace(`/login?reason=${reason}`);
@@ -596,9 +584,15 @@ export function createApplicationController(
           message: view.message,
         });
     }
-    if (!prepared.length)
+    const primary = dropped.find(
+      ({ server }) =>
+        store.latencySelection.mode === "primary" &&
+        latencyPathNeeded(config) &&
+        server.id === store.primaryLatencyServer,
+    );
+    if (!prepared.length || primary)
       throw new Error(
-        dropped
+        (primary ? [primary] : dropped)
           .map(({ server, message }) =>
             servers.length > 1 ? `${server.name}: ${message}` : message,
           )

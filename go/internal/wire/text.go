@@ -8,9 +8,14 @@ import (
 
 func unsafe(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) }
 
-// SafeText reports whether s can reach a terminal as-is: valid UTF-8 without controls or bidi overrides.
-func SafeText(s string) bool {
-	return utf8.ValidString(s) && !strings.ContainsFunc(s, unsafe)
+// SafeText reports whether each field can reach a terminal as-is: valid UTF-8 without controls or bidi overrides.
+func SafeText(fields ...string) bool {
+	for _, s := range fields {
+		if !utf8.ValidString(s) || strings.ContainsFunc(s, unsafe) {
+			return false
+		}
+	}
+	return true
 }
 
 // CleanText blanks controls and bidi overrides, replaces invalid UTF-8 and keeps at most limit runes.

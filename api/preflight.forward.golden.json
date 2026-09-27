@@ -1,0 +1,33 @@
+{
+  "description": "A newer server's preflight. Clients ignore unknown members and skip every target whose transport or protocol they do not know, before checking its origin; decoded lists the targets that remain. A missing transport or protocol, or an invalid origin on a known target, still refuses the document.",
+  "document": {
+    "server": { "name": "graphite-meter", "location": "fra", "region": "eu-central" },
+    "engineVersion": "9.0.0",
+    "generation": "future-generation",
+    "capabilities": {
+      "uploadCheckpoint": true,
+      "futureCapability": { "enabled": true },
+      "throughput": [
+        { "baseUrl": "https://speed.example:7249", "transport": "fetch-stream", "protocol": "http3", "weight": 2 },
+        { "baseUrl": "masque://speed.example:7250", "transport": "masque-stream", "protocol": "http3" },
+        { "baseUrl": "https://speed.example:7251", "transport": "fetch-stream", "protocol": "http4" },
+        { "baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated" }
+      ],
+      "latency": [
+        { "baseUrl": "https://speed.example:7249", "transport": "webtransport" },
+        { "baseUrl": "https://speed.example:7252", "transport": "quic-datagram" },
+        { "baseUrl": ".", "transport": "websocket", "pingInterval": 250 }
+      ]
+    }
+  },
+  "decoded": {
+    "throughput": [
+      { "baseUrl": "https://speed.example:7249", "transport": "fetch-stream", "protocol": "http3" },
+      { "baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated" }
+    ],
+    "latency": [
+      { "baseUrl": "https://speed.example:7249", "transport": "webtransport" },
+      { "baseUrl": ".", "transport": "websocket" }
+    ]
+  }
+}

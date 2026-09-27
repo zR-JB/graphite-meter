@@ -1,5 +1,9 @@
 // Its slot is shared: a forced retry aborts a probe and starts the next one without awaiting it, so two waits.
-import { test, expect, afterEach, beforeEach } from "bun:test";
+import { test, expect, afterEach, beforeEach, jest } from "bun:test";
+import {
+  PING_STOP_MARGIN_MS,
+  PING_TIMEOUT_CEIL_MS,
+} from "../workers/pingSample";
 import {
   IdleKeepalive,
   LatencyChannel,
@@ -34,12 +38,9 @@ const host = (overrides: Partial<ParticipantHost>): ChannelHost => ({
 });
 
 const realWorker = globalThis.Worker;
-const realSetTimeout = globalThis.setTimeout;
-const realClearTimeout = globalThis.clearTimeout;
 afterEach(() => {
   globalThis.Worker = realWorker;
-  globalThis.setTimeout = realSetTimeout;
-  globalThis.clearTimeout = realClearTimeout;
+  jest.useRealTimers();
 });
 beforeEach(() => {
   globalThis.Worker = TestWorker as unknown as typeof Worker;
@@ -269,16 +270,7 @@ test("path preparation collects only replies, never timeouts", async () => {
 });
 
 test("a matched-probe ready event cancels the warmup establishment deadline", () => {
-  let deadline: (() => void) | null = null;
-  let deadlineActive = false;
-  globalThis.setTimeout = ((handler: TimerHandler) => {
-    deadline = handler as () => void;
-    deadlineActive = true;
-    return 1 as unknown as ReturnType<typeof setTimeout>;
-  }) as unknown as typeof setTimeout;
-  globalThis.clearTimeout = (() => {
-    deadlineActive = false;
-  }) as typeof clearTimeout;
+  jest.useFakeTimers();
   const failures: string[] = [];
   const channel = new LatencyChannel({
     host: host({ stallLatency: (detail) => failures.push(detail) }),
@@ -292,7 +284,7 @@ test("a matched-probe ready event cancels the warmup establishment deadline", ()
   expect(channel.ready).toBe(false);
   TestWorker.last!.emit({ type: "ready" });
   expect(channel.ready).toBe(true);
-  if (deadlineActive) (deadline as (() => void) | null)?.();
+  jest.advanceTimersByTime(60_000);
 
   expect(failures).toEqual([]);
   channel.teardown();
@@ -441,19 +433,13 @@ test("worker failure settles a drain without manufacturing probe outcomes", asyn
 });
 
 test("an unresponsive worker cannot hold stage finalization past the acknowledgement deadline", async () => {
-  let deadline!: () => void;
-  let delay = 0;
-  globalThis.setTimeout = ((handler: () => void, ms: number) => {
-    deadline = handler;
-    delay = ms;
-    return 1;
-  }) as unknown as typeof setTimeout;
-  globalThis.clearTimeout = (() => {}) as typeof clearTimeout;
+  jest.useFakeTimers();
   const { channel, worker, observations, stalls, accountingComplete } =
     finalizingChannel();
   const ending = channel.finish();
-  expect(delay).toBe(10_250);
-  deadline();
+  jest.advanceTimersByTime(PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS - 1);
+  expect(worker.terminated).toBe(0);
+  jest.advanceTimersByTime(1);
   await ending;
   expect(worker.terminated).toBe(1);
   expect(observations).toEqual([]);

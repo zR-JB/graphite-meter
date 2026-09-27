@@ -274,12 +274,10 @@ async function prepareThroughput(
   const fetchTarget: FetchThroughputTarget = {
     ...(wt ? fetchViewOfOrigin(discovery, requested) : requested),
   };
-  const deadline = new AbortController();
-  const timeout =
+  const probeSignal =
     fetchTarget.protocol === "http3"
-      ? setTimeout(() => deadline.abort(), H3_PROBE_DEADLINE_MS)
-      : undefined;
-  const probeSignal = AbortSignal.any([signal, deadline.signal]);
+      ? AbortSignal.any([signal, AbortSignal.timeout(H3_PROBE_DEADLINE_MS)])
+      : signal;
   let probe: VerifiedThroughputPath["probe"] | undefined;
   let browserProtocol: string | undefined;
   try {
@@ -313,8 +311,6 @@ async function prepareThroughput(
   } catch (cause) {
     signal.throwIfAborted();
     throw new Error(`${fetchTarget.protocol} transport unavailable`, { cause });
-  } finally {
-    clearTimeout(timeout);
   }
   if (wt) await verifyWtThroughput(requested, signal, credentials);
   signal.throwIfAborted();

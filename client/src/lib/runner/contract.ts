@@ -224,6 +224,7 @@ export interface StageLatencySummary {
 export interface LatencyResult {
   reportedMs: number;
   jitterMs: number | null;
+  stabilityPct?: number | null;
 }
 
 /** Loaded median − full idle median per transfer stage, signed ms; null without that stage's median. */

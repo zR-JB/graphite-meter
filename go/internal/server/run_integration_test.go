@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 	"errors"
-	"io"
+	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -67,12 +67,13 @@ func (s *testListenerSockets) reserveH3() string {
 	return ""
 }
 
+// An unreserved address fails like a taken port, so no test ever binds a configured default such as :7246.
 func (s *testListenerSockets) listenTCP(addr string) (net.Listener, error) {
 	if ln, ok := s.tcp[addr]; ok {
 		delete(s.tcp, addr)
 		return ln, nil
 	}
-	return net.Listen("tcp", addr)
+	return nil, fmt.Errorf("no reserved TCP listener for %s", addr)
 }
 
 func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
@@ -80,7 +81,7 @@ func (s *testListenerSockets) listenUDP(addr string) (net.PacketConn, error) {
 		delete(s.udp, addr)
 		return pc, nil
 	}
-	return net.ListenPacket("udp", addr)
+	return nil, fmt.Errorf("no reserved UDP socket for %s", addr)
 }
 
 func runTestTLS(t *testing.T) (string, string) {
@@ -110,10 +111,11 @@ func serveBuild(t *testing.T, cfg *config.Config, sockets listenerSockets, shape
 }
 
 func startServices(t *testing.T, services []service) {
+	cut, cancel := context.WithCancel(context.Background())
+	cancel()
 	for _, svc := range services {
 		go func() { _ = svc.run() }()
-		// Service cleanup must still run after t.Context is canceled.
-		t.Cleanup(func() { _ = svc.stop(context.Background()) })
+		t.Cleanup(func() { _ = svc.stop(cut) })
 	}
 }
 
@@ -125,24 +127,6 @@ func startListeners(t *testing.T, tune func(*config.Config, *testListenerSockets
 	cfg := config.Default()
 	tune(&cfg, sockets)
 	return &cfg, serveBuild(t, &cfg, sockets, shape)
-}
-
-// waitForOK polls a URL until it answers 200 or the deadline passes.
-func waitForOK(t *testing.T, client *http.Client, url string) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		res, err := client.Get(url)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, res.Body)
-			res.Body.Close()
-			if res.StatusCode == http.StatusOK {
-				return
-			}
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("server never served 200 at %s", url)
 }
 
 // runUntilCancel starts Run in the background and returns a stop function that cancels it and asserts a clean (nil).
@@ -174,9 +158,7 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 	stop := runUntilCancel(t, &cfg, sockets)
 	defer stop()
 
-	base := "http://" + addr
-	waitForOK(t, http.DefaultClient, base+"/preflight")
-	res, err := http.Get(base + "/")
+	res, err := http.Get("http://" + addr + "/")
 	if err != nil {
 		t.Fatalf("GET /: %v", err)
 	}
@@ -190,22 +172,13 @@ func TestRunServesClearH1AndShutsDownCleanly(t *testing.T) {
 }
 
 func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
-	cert, key := runTestTLS(t)
-
-	// Hold a port so the TLS listener cannot bind it.
-	occupied, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer occupied.Close()
-
 	sockets := newTestListenerSockets(t)
 	cfg := config.Default()
-	cfg.Native.H1 = sockets.reserveTCP()        // opens first, then must be closed
-	cfg.Native.H1TLS = occupied.Addr().String() // bind fails here
-	cfg.TLSCert, cfg.TLSKey = cert, key
+	cfg.Native.H1 = sockets.reserveTCP() // opens first, then must be closed
+	cfg.Native.H1TLS = "127.0.0.1:1"     // unreserved, so its bind fails
+	cfg.TLSCert, cfg.TLSKey = runTestTLS(t)
 
-	if err = runWithSockets(t.Context(), &cfg, sockets); err == nil {
+	if err := runWithSockets(t.Context(), &cfg, sockets); err == nil {
 		t.Fatal("Run succeeded despite a listener that could not bind")
 	}
 	// The H1 listener bound before the failure, so its port must be free again.
@@ -219,7 +192,7 @@ func TestRunClosesOpenedListenersOnBindFailure(t *testing.T) {
 func TestRunRejectsInvalidConfig(t *testing.T) {
 	cfg := config.Default()
 	cfg.MaxConnections = -1 // fails validateLimits
-	err := Run(t.Context(), &cfg)
+	err := runWithSockets(t.Context(), &cfg, newTestListenerSockets(t))
 	if err == nil {
 		t.Fatal("Run accepted an invalid configuration")
 	}

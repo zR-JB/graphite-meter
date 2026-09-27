@@ -77,8 +77,7 @@ export async function mintWtToken(
   if (!mint || signal?.aborted) return { token: "", authRequired: false };
   const reused = reusableToken(mint.url);
   if (reused !== "") return { token: reused, authRequired: false };
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MINT_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(MINT_TIMEOUT_MS);
   try {
     const res = await fetch(mint.url, {
       method: "POST",
@@ -87,9 +86,7 @@ export async function mintWtToken(
       credentials: mint.credentials,
       // A hop that 302s a credentialed mint to a login page answers 200 with no token: refusing the redirect.
       redirect: redirectForCredentials(mint.credentials),
-      signal: signal
-        ? AbortSignal.any([signal, controller.signal])
-        : controller.signal,
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
     if (!res.ok)
       return { token: "", authRequired: authenticationRequired(res) };
@@ -98,13 +95,12 @@ export async function mintWtToken(
     return { token, authRequired: false };
   } catch {
     return { token: "", authRequired: false };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
 /** The server closes a session with this code when sign-out or a revoked grant ends it (api/laneendings.txt). */
 export const SESSION_REVOKED = 3;
+export const SESSION_TIMEOUTS: readonly number[] = [1, 2];
 /** The WebSocket close for the same ending. */
 export const SOCKET_REVOKED = { code: 1008, reason: "authentication required" };
 

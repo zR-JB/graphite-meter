@@ -142,7 +142,7 @@ const DISPOSITION: Record<string, LaneFailure> = {
   globalFull: { reason: "server-busy", retry: true },
   clientFull: { reason: "server-busy", retry: true },
   ownerMismatch: { reason: "protocol-error", retry: false },
-  idle: { reason: "connection-lost", retry: true },
+  idle: { reason: "timeout", retry: true },
   revoked: { reason: "sign-in-required", retry: false },
 };
 

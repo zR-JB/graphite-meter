@@ -3,6 +3,7 @@ import {
   CONNECTION_FRESH_MS,
   connectionDraftRoleKey,
   describeTransferStreams,
+  FETCH_FORCED_MAX,
   normalizeStreamCount,
   planServerStreams,
   preparedPaths,
@@ -68,11 +69,15 @@ test("automatic streams follow the protocol table, and HTTP/1 reserves control c
   ).toBe(1);
 });
 
-test("forced streams are exact per direction, capped only by a session", () => {
-  for (const protocol of ["http2", "http3"] as const)
+test("forced streams are exact per direction, capped by a session or the per-client admission", () => {
+  for (const protocol of ["http2", "http3"] as const) {
     expect(
       plan(protocol, { mode: "forced", count: 12 }, "bidirectional"),
     ).toEqual({ down: 12, up: 12 });
+    expect(
+      plan(protocol, { mode: "forced", count: 128 }, "bidirectional"),
+    ).toEqual({ down: FETCH_FORCED_MAX, up: FETCH_FORCED_MAX });
+  }
   expect(
     plan("http3", { mode: "forced", count: 128 }, "download", { wt: true })
       .down,
@@ -122,7 +127,13 @@ test("stream diagnostics describe the policy each stage resolves", () => {
       "webtransport",
       `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
     ],
-    [forced, download, "http3", "fetch-stream", "Forced · 128 per direction"],
+    [
+      forced,
+      download,
+      "http3",
+      "fetch-stream",
+      `Forced · ${FETCH_FORCED_MAX} per direction (capped from 128 by the server's per-client limit)`,
+    ],
     [
       forced,
       download,

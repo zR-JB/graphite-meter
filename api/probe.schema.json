@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "required": ["clientIp", "clientIpVersion", "clientIpSource", "protocolNegotiated"],
   "properties": {
-    "clientIp": { "type": "string" },
+    "clientIp": { "type": "string", "minLength": 1, "maxLength": 64 },
     "clientIpVersion": { "type": "integer", "enum": [4, 6] },
     "clientIpSource": { "type": "string", "enum": ["socket", "forwarded"] },
     "protocolNegotiated": { "type": "string", "enum": ["http/1.1", "h2", "h3"] },

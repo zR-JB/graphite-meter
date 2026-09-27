@@ -106,11 +106,12 @@ func (s *Service) approvalRoomLocked(sess *session, clients []string, now time.T
 		}
 		return n
 	})
-	return bySession < maxSessionApprovals, !clientFull && len(s.approvals) < maxApprovals
+	// Approvals opened before sign-in leave half the table to signed-in callers.
+	global := len(s.approvals) < maxApprovals && (sess != nil || bySession < maxApprovals/2)
+	return bySession < maxSessionApprovals, !clientFull && global
 }
 
 func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	challenge := r.URL.Query().Get("challenge")
 	if !validChallenge(challenge) {
 		forbidden(w)
@@ -154,7 +155,6 @@ func (s *Service) cliPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	challenge := r.URL.Query().Get("challenge")
 	clientOrigin, valid := secureBrowserOrigin(r.URL.Query().Get("client_origin"))
 	clients, ok := ClientKeys(r, s.trusted)
@@ -170,8 +170,14 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
+	p, authenticated := s.authenticate(r)
+	signedIn := authenticated && !p.Bearer && p.session != nil
+	var caller *session
+	if signedIn {
+		caller = p.session
+	}
 	s.mu.Lock()
-	_, clientRoom := s.approvalRoomLocked(nil, clients, now)
+	_, clientRoom := s.approvalRoomLocked(caller, clients, now)
 	a = s.approvals[challenge]
 	if a == nil && clientRoom {
 		a = &approval{code: verificationCode(challenge), expires: now.Add(approvalLifetime),
@@ -184,8 +190,7 @@ func (s *Service) browserPage(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	p, authenticated := s.authenticate(r)
-	if !authenticated || p.Bearer || p.session == nil {
+	if !signedIn {
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" && r.Header.Get("Sec-Fetch-Mode") == "navigate" &&
 			r.Header.Get("Sec-Fetch-Dest") == "document" {
 			// A document navigation, unlike a redirect, reenters with the Strict session cookie.
@@ -223,8 +228,6 @@ func writeBrowserGrantCapacity(w http.ResponseWriter, clientOrigin string) {
 }
 
 func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		forbidden(w)
 		return
@@ -255,7 +258,6 @@ func (s *Service) approve(w http.ResponseWriter, r *http.Request) {
 
 // token exchanges a verifier for a grant; at capacity a native grant evicts only the oldest native one.
 func (s *Service) token(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	origin, browser := "", r.URL.Path == "/auth/browser/token"
 	if browser {
 		var valid bool
@@ -265,7 +267,6 @@ func (s *Service) token(w http.ResponseWriter, r *http.Request) {
 		}
 		bearerCORS(w.Header(), origin)
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req struct {
 		Verifier string `json:"verifier"`
 	}

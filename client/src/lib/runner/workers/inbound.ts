@@ -1,5 +1,6 @@
 /* Owner → worker message validation: a worker acts only on the exact shapes and requests its owner builds. */
 
+import { isRecord } from "../../api/decode";
 import { ROUTES } from "../paths";
 import type { WtMint } from "./wtToken";
 
@@ -17,8 +18,7 @@ const refused = (name: string): TypeError =>
   new TypeError(`worker message has an invalid ${name}`);
 
 export function fields(value: unknown): Fields {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw refused("body");
+  if (!isRecord(value)) throw refused("body");
   return value as Fields;
 }
 

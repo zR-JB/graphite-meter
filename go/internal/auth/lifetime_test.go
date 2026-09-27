@@ -7,6 +7,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 func TestExpiredCookieIsRefusedByTheRequestItself(t *testing.T) {
@@ -19,8 +21,7 @@ func TestExpiredCookieIsRefusedByTheRequestItself(t *testing.T) {
 		read := func() int {
 			r := withSessionCookie(secureRequest(http.MethodGet, "/download", nil), raw)
 			r.Header.Set("Sec-Fetch-Site", "same-origin")
-			w := httptest.NewRecorder()
-			s.Enforce(statusHandler(http.StatusNoContent), Listener{}).ServeHTTP(w, r)
+			w := testkit.Record(s.Enforce(statusHandler(http.StatusNoContent), Listener{}).ServeHTTP, r)
 			return w.Code
 		}
 		time.Sleep(time.Until(sess.expires) - time.Second)
@@ -66,8 +67,7 @@ func TestGrantEndsWithItsLoginDeadline(t *testing.T) {
 		default:
 			t.Fatal("work admitted by the grant outlived its login")
 		}
-		w := httptest.NewRecorder()
-		s.Enforce(statusHandler(http.StatusNoContent), Listener{}).ServeHTTP(w, download())
+		w := testkit.Record(s.Enforce(statusHandler(http.StatusNoContent), Listener{}).ServeHTTP, download())
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("grant after its login's deadline = %d, want 403", w.Code)
 		}

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 // proxiedService trusts 192.0.2.0/24, the documented reverse-proxy topology.
@@ -114,6 +116,32 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	}
 }
 
+func TestAuthRoutesShareThePageBoundary(t *testing.T) {
+	s := testService(t)
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	for _, pattern := range []string{"GET /login", "POST /auth/password", "GET /auth/session", "POST /auth/logout",
+		"GET /auth/browser", "POST /auth/browser/approve", "POST /auth/browser/token", "GET /auth/cli",
+		"POST /auth/cli/approve", "POST /auth/cli/token", "GET /auth/other"} {
+		method, path, _ := strings.Cut(pattern, " ")
+		rr := testkit.Record(mux.ServeHTTP, secureRequest(method, path, nil))
+		if h := rr.Header(); h.Get("X-Frame-Options") != "DENY" || h.Get("Cache-Control") != "no-store" ||
+			!strings.HasPrefix(h.Get("Content-Security-Policy"), "default-src 'none'") {
+			t.Errorf("%s answered %d without the page headers: %v", pattern, rr.Code, h)
+		}
+	}
+	const token = "abcdefghijklmnopqrstuvwxyz0123456789"
+	form := "csrf=" + token + "&password=secret&pad=" + strings.Repeat("a", 4096)
+	r := secureRequest(http.MethodPost, "/auth/password", strings.NewReader(form))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Origin", s.origin)
+	r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+	rr := testkit.Record(mux.ServeHTTP, r)
+	if location := rr.Header().Get("Location"); location != "/login?error=failed" {
+		t.Fatalf("oversized sign-in form redirected to %q", location)
+	}
+}
+
 func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	password := `!@#$%^&*()_+-=[]{}|;:',.<>/?~` + " unicode üU0001f510"
 	s := testService(t)
@@ -125,8 +153,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	s.Mount(mux)
 	handler := s.Enforce(mux, Listener{UI: true})
 
-	page := httptest.NewRecorder()
-	handler.ServeHTTP(page, secureRequest(http.MethodGet, "/login", nil))
+	page := testkit.Record(handler.ServeHTTP, secureRequest(http.MethodGet, "/login", nil))
 	if page.Code != http.StatusOK {
 		t.Fatalf("login page status=%d", page.Code)
 	}
@@ -144,8 +171,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	post.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	post.Header.Set("Origin", s.origin)
 	post.AddCookie(&http.Cookie{Name: loginCookie, Value: formToken})
-	login := httptest.NewRecorder()
-	handler.ServeHTTP(login, post)
+	login := testkit.Record(handler.ServeHTTP, post)
 	if login.Code != http.StatusSeeOther || login.Header().Get("Location") != "/" {
 		t.Fatalf("login code=%d location=%q", login.Code, login.Header().Get("Location"))
 	}
@@ -167,8 +193,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	info := secureRequest(http.MethodGet, "/auth/session", nil)
 	info.AddCookie(session)
 	info.Header.Set("Origin", s.origin)
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, info)
+	rr := testkit.Record(handler.ServeHTTP, info)
 	var got struct {
 		Provider, CSRF                 string
 		RemainingMs, MaximumLifetimeMs int64
@@ -183,8 +208,7 @@ func TestPasswordLoginReachesAnAuthenticatedRoute(t *testing.T) {
 	measurement.AddCookie(session)
 	measurement.Header.Set("Origin", s.origin)
 	measurement.Header.Set("X-CSRF-Token", csrf.Value)
-	upload := httptest.NewRecorder()
-	s.Enforce(statusHandler(http.StatusNoContent), Listener{UI: true}).ServeHTTP(upload, measurement)
+	upload := testkit.Record(s.Enforce(statusHandler(http.StatusNoContent), Listener{UI: true}).ServeHTTP, measurement)
 	if upload.Code != http.StatusNoContent {
 		t.Fatalf("measurement with the mirrored CSRF token = %d, want 204", upload.Code)
 	}

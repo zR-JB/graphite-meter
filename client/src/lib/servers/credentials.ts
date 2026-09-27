@@ -7,6 +7,7 @@ import {
 } from "../auth";
 import { authenticationRequired } from "../request-auth";
 import { readJSONResponse } from "../api/decode";
+import { abortableDelay } from "../runner/abortable";
 import { allowsServerOrigin, type ServerEntry } from "./catalog";
 import type { WtMint } from "../runner/workers/wtToken";
 
@@ -246,18 +247,7 @@ export async function browserApproval(server: ServerEntry): Promise<{
         if (response.status === 429) throw new BrowserApprovalLimitError();
         if (response.status !== 202)
           throw new Error(`Approval exchange returned HTTP ${response.status}`);
-        signal.throwIfAborted();
-        await new Promise<void>((resolve, reject) => {
-          const aborted = () => {
-            clearTimeout(timer);
-            reject(signal.reason);
-          };
-          const timer = setTimeout(() => {
-            signal.removeEventListener("abort", aborted);
-            resolve();
-          }, 1000);
-          signal.addEventListener("abort", aborted, { once: true });
-        });
+        await abortableDelay(1000, signal);
       }
       throw new Error("Approval expired. Sign in again.");
     },

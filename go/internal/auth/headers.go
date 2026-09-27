@@ -18,6 +18,7 @@ const (
 
 func securityHeaders(h http.Header) {
 	h.Set("Cache-Control", "no-store")
+	h.Set("X-Frame-Options", "DENY")
 	HardeningHeaders(h)
 	h.Set("Content-Security-Policy", authPageCSP(""))
 }
@@ -47,8 +48,7 @@ func authPageCSP(authorizationOrigin string) string {
 	}, "; ")
 }
 
-func (s *Service) loginSecurityHeaders(h http.Header) {
-	securityHeaders(h)
+func (s *Service) loginCSP(h http.Header) {
 	if s.oidc != nil {
 		h.Set("Content-Security-Policy", authPageCSP(s.oidc.authorizationOrigin()))
 	}
