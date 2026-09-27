@@ -85,7 +85,7 @@ async fn run() -> Result<i32, Error> {
         match snapshot.phase {
             graphite_meter_client::model::Phase::Complete
             | graphite_meter_client::model::Phase::Setup => 0,
-            graphite_meter_client::model::Phase::Cancelled => 130,
+            graphite_meter_client::model::Phase::Cancelled => 1,
             _ => 1,
         }
     })
