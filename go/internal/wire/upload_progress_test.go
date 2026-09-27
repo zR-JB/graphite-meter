@@ -3,21 +3,18 @@ package wire
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"os"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestUploadProgressConformance(t *testing.T) {
-	data, err := os.ReadFile("../../../api/upload-progress.testvectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var cases []struct {
 		Name   string         `json:"name"`
 		Record jsontext.Value `json:"record"`
 		Valid  bool           `json:"valid"`
 	}
-	if err := json.Unmarshal(data, &cases); err != nil {
+	if err := json.Unmarshal(apipin.Read(t, "upload-progress.testvectors.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {

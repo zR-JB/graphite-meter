@@ -3,6 +3,7 @@ package wire
 
 import (
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -61,46 +62,60 @@ func (t ThroughputTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https
 
 func (t LatencyTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
 
+// UnmarshalJSON leaves a target a newer server names by an unknown transport or protocol zero, which Capabilities
+// then drops; a missing transport or protocol, or an invalid origin, still refuses the document.
 func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		BaseURL   string `json:"baseUrl"`
-		Transport string `json:"transport"`
-		Protocol  string `json:"protocol"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	type plain ThroughputTarget
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
 		return err
 	}
-	_, err := targetOrigin(raw.BaseURL)
-	switch {
-	case err != nil:
-		return err
-	case !slices.Contains([]string{TransportFetchStream, TransportWebTransport, TransportWebTransportDatagram},
-		raw.Transport):
-		return fmt.Errorf("unsupported throughput transport %q", raw.Transport)
-	case !slices.Contains([]string{"http1", "http2", "http3", "negotiated"}, raw.Protocol):
-		return fmt.Errorf("unsupported throughput protocol %q", raw.Protocol)
+	if p.Transport == "" || p.Protocol == "" {
+		return errors.New("throughput target lacks its transport or protocol")
 	}
-	t.ID, t.Origin, t.Transport, t.Protocol = raw.BaseURL, raw.BaseURL, raw.Transport, raw.Protocol
+	*t = ThroughputTarget{}
+	if !slices.Contains([]string{TransportFetchStream, TransportWebTransport, TransportWebTransportDatagram},
+		p.Transport) || !slices.Contains([]string{"http1", "http2", "http3", "negotiated"}, p.Protocol) {
+		return nil
+	}
+	if _, err := targetOrigin(p.Origin); err != nil {
+		return err
+	}
+	p.ID = p.Origin
+	*t = ThroughputTarget(p)
 	return nil
 }
 
 func (t *LatencyTarget) UnmarshalJSON(data []byte) error {
-	var raw struct {
-		BaseURL   string `json:"baseUrl"`
-		Transport string `json:"transport"`
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
+	type plain LatencyTarget
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
 		return err
 	}
-	_, err := targetOrigin(raw.BaseURL)
-	protocol := map[string]string{TransportWebSocket: "http1", TransportWebTransport: "http3"}[raw.Transport]
-	switch {
-	case err != nil:
-		return err
-	case protocol == "":
-		return fmt.Errorf("unsupported latency transport %q", raw.Transport)
+	if p.Transport == "" {
+		return errors.New("latency target lacks its transport")
 	}
-	t.ID, t.Origin, t.Transport, t.Protocol = raw.BaseURL, raw.BaseURL, raw.Transport, protocol
+	*t = LatencyTarget{}
+	protocol := map[string]string{TransportWebSocket: "http1", TransportWebTransport: "http3"}[p.Transport]
+	if protocol == "" {
+		return nil
+	}
+	if _, err := targetOrigin(p.Origin); err != nil {
+		return err
+	}
+	p.ID, p.Protocol = p.Origin, protocol
+	*t = LatencyTarget(p)
+	return nil
+}
+
+func (c *Capabilities) UnmarshalJSON(data []byte) error {
+	type plain Capabilities
+	if err := json.Unmarshal(data, (*plain)(c)); err != nil {
+		return err
+	}
+	c.ThroughputTargets = slices.DeleteFunc(c.ThroughputTargets,
+		func(t ThroughputTarget) bool { return t.Transport == "" })
+	c.LatencyTargets = slices.DeleteFunc(c.LatencyTargets, func(t LatencyTarget) bool { return t.Transport == "" })
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -69,7 +70,14 @@ func TestPreflightTargetsAndConnectOrigins(t *testing.T) {
 			cfg := config.Default()
 			tc.configure(&cfg)
 			d := NewDiscovery(&cfg)
-			host := RequestHost(httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/preflight", nil))
+			r := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/preflight", nil)
+			host := RequestHost(r)
+			for schema, serve := range map[string]http.HandlerFunc{"preflight": d.ServePreflight,
+				"servers": d.ServeServers} {
+				rec := httptest.NewRecorder()
+				serve(rec, r)
+				apipin.Validate(t, apipin.Schema(t, schema), rec.Body.Bytes())
+			}
 			capabilities := d.preflightFor(host).Capabilities
 			var throughput, latency []string
 			for _, target := range capabilities.ThroughputTargets {

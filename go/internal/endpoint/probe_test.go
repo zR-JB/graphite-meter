@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -27,6 +28,7 @@ func TestProbeReturnsConnectionEvidence(t *testing.T) {
 			}
 			rec := httptest.NewRecorder()
 			NewProbe(nil, tc.bootstrap, load).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			apipin.Validate(t, apipin.Schema(t, "probe"), rec.Body.Bytes())
 			var got wire.Probe
 			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 				t.Fatal(err)

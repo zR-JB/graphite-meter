@@ -9,12 +9,11 @@
 #          an HTTP/3 extended-CONNECT session; under authentication it carries a
 #          bearer grant or a single-use token minted at /wt/session.
 #
-# Routes are never transmitted: preflight advertises origins and transports only
-# (the Routes fields are json:"-"), so each site carries its own table and this
-# file is what keeps the tables byte-identical. Every route test loads THIS file
-# as its fixture:
+# Routes are never transmitted: preflight advertises origins and transports only,
+# so each site carries its own table and this file keeps the tables identical.
+# Every route test loads THIS file as its fixture:
 #   Go — go/internal/route/catalog_test.go (the catalog the server mounts from)
-#   Go — go/internal/auth/routes_test.go (credential and CORS boundaries)
+#   Go — go/internal/auth/routes_test.go (the CORS preflight of every route)
 #   TS — client/src/lib/runner/real/routes.test.ts (runner/paths.ts ROUTES)
 #
 preflight | /preflight | http

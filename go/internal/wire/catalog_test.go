@@ -1,9 +1,12 @@
 package wire
 
 import (
+	"encoding/json/v2"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
@@ -62,6 +65,29 @@ func TestOriginKey(t *testing.T) {
 		if SameOrigin(pair[0], pair[1]) {
 			t.Errorf("SameOrigin(%q, %q) = true", pair[0], pair[1])
 		}
+	}
+}
+
+// Served catalogues match servers.schema.json, and a decoder accepts the one trailing slash the schema allows.
+func TestCatalogsMatchTheSchema(t *testing.T) {
+	schema := apipin.Schema(t, "servers")
+	c := SingletonCatalog()
+	c.Servers = append(c.Servers, ServerEntry{ID: "remote", URL: "https://remote.example/", Name: "Remote",
+		Location: "fra", AdditionalOrigins: []string{"https://bulk.example:7249/"}})
+	c.DefaultSelection = []string{"self", "remote"}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("trailing slashes refused: %v", err)
+	}
+	for _, catalog := range []ServerCatalog{SingletonCatalog(), c} {
+		data, err := json.Marshal(catalog)
+		if err != nil {
+			t.Fatal(err)
+		}
+		apipin.Validate(t, schema, data)
+	}
+	c.Servers[1].URL = "."
+	if c.Validate() == nil {
+		t.Fatal("accepted '.' for a server other than self")
 	}
 }
 

@@ -42,7 +42,7 @@ func (c ServerCatalog) Validate() error {
 		}) || len(entry.Name) > 256 || len(entry.Location) > 256 || !SafeText(entry.Name, entry.Location) {
 			return fmt.Errorf("invalid catalogue server identity")
 		}
-		key, err := CanonicalOrigin(entry.URL)
+		key, err := CatalogOrigin(entry.URL)
 		if entry.URL == "." && entry.ID != "self" || entry.URL != "." && err != nil {
 			return fmt.Errorf("invalid catalogue origin for %q", entry.ID)
 		}
@@ -54,7 +54,7 @@ func (c ServerCatalog) Validate() error {
 			return fmt.Errorf("too many additional origins for %q", entry.ID)
 		}
 		for _, raw := range entry.AdditionalOrigins {
-			if _, err := CanonicalOrigin(raw); err != nil {
+			if _, err := CatalogOrigin(raw); err != nil {
 				return fmt.Errorf("invalid additional origin for %q", entry.ID)
 			}
 		}
@@ -152,6 +152,9 @@ func (c ServerCatalog) ConnectSources() []string {
 func BrowserConnectSourceSupported(raw string) bool {
 	return !strings.Contains(raw, "://[")
 }
+
+// CatalogOrigin canonicalizes a catalogue origin, which servers.schema.json lets end in one slash.
+func CatalogOrigin(raw string) (string, error) { return CanonicalOrigin(strings.TrimSuffix(raw, "/")) }
 
 // CanonicalOrigin is shared by catalogue decoders and authentication audiences.
 func CanonicalOrigin(raw string) (string, error) {

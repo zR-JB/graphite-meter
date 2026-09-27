@@ -155,12 +155,11 @@ func TestSignOutEndsAStalledHTTPUploadLane(t *testing.T) {
 			revoked := time.Now()
 			select {
 			case res := <-answered:
-				if took := time.Since(revoked); res == nil || res.StatusCode != http.StatusForbidden ||
-					res.Header.Get("Graphite-Meter-Auth") != "required" ||
-					res.Header.Get("X-Graphite-Upload-Refusal") != "revoked" || took > 250*time.Millisecond {
+				if took := time.Since(revoked); res == nil || res.Header.Get("Graphite-Meter-Auth") != "required" ||
+					took > 250*time.Millisecond {
 					t.Fatalf("revoked lane answered %v after %v", res, took)
 				}
-				res.Body.Close()
+				pinnedRefusal(t, res, "revoked")
 			case <-time.After(5 * time.Second):
 				t.Fatal("a signed-out upload lane kept reading")
 			}
