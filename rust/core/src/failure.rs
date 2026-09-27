@@ -10,27 +10,20 @@ pub enum FailureReason {
 }
 
 impl FailureReason {
+    fn row(self) -> (&'static str, &'static str) {
+        include_str!("../../../api/failurereasons.txt")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .nth(self as usize)
+            .and_then(|line| line.split_once('|'))
+            .map(|(name, label)| (name.trim(), label.trim()))
+            .expect("failure vocabulary is pinned")
+    }
     pub fn name(self) -> &'static str {
-        match self {
-            Self::PreparationFailed => "preparation-failed",
-            Self::ConnectionLost => "connection-lost",
-            Self::Timeout => "timeout",
-            Self::SignInRequired => "sign-in-required",
-            Self::ServerBusy => "server-busy",
-            Self::ProtocolError => "protocol-error",
-            Self::InsufficientEvidence => "insufficient-evidence",
-        }
+        self.row().0
     }
     pub fn label(self) -> &'static str {
-        match self {
-            Self::PreparationFailed => "Couldn't prepare the connection",
-            Self::ConnectionLost => "Connection lost",
-            Self::Timeout => "Stopped delivering data",
-            Self::SignInRequired => "Sign-in required",
-            Self::ServerBusy => "Server at capacity",
-            Self::ProtocolError => "Unexpected server response",
-            Self::InsufficientEvidence => "Too little measured time",
-        }
+        self.row().1
     }
 }
 
