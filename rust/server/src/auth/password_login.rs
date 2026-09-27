@@ -9,9 +9,20 @@ use crate::{
     config::{AuthConfig, ConfigError},
     password::Hash,
 };
-use std::{fs::File, io::Read, net::IpAddr, sync::Arc};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
+use std::{
+    fs::File,
+    io::Read,
+    net::IpAddr,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::sync::Semaphore;
 use zeroize::Zeroizing;
+
+const DEVICE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoginFailure {
@@ -41,6 +52,7 @@ pub struct PasswordAttempt<'a> {
     pub client: Option<IpAddr>,
     pub origin: &'a str,
     pub nonce_cookie: Option<&'a str>,
+    pub device_cookie: Option<&'a str>,
     pub csrf: &'a str,
     pub password: &'a str,
     pub prior_session: Option<&'a str>,
@@ -49,6 +61,8 @@ pub struct PasswordAttempt<'a> {
 pub struct PasswordLogin {
     public_origin: String,
     hash: Hash,
+    /// Keyed by the password hash, as in Go: a device survives restarts and is forgotten with the password.
+    device: Hmac<Sha256>,
     slots: Arc<Semaphore>,
     attempts: Arc<AttemptLimiter>,
     sessions: SessionStore,
@@ -67,6 +81,7 @@ impl PasswordLogin {
         Ok(Self {
             public_origin: config.public_url.clone(),
             hash: Hash::parse(&encoded)?,
+            device: Hmac::new_from_slice(encoded.as_bytes()).expect("HMAC accepts any key length"),
             slots: Arc::new(Semaphore::new(2)),
             attempts,
             sessions,
@@ -85,11 +100,19 @@ impl PasswordLogin {
             return Err(LoginFailure::Failed);
         }
         let client = attempt.client.ok_or(LoginFailure::Throttled)?;
-        if !self.attempts.allow(Budget::Password, client) {
+        let budget = if attempt.device_cookie.is_some_and(|cookie| self.known_device(cookie)) {
+            Budget::KnownDevice
+        } else {
+            Budget::Password
+        };
+        if !self.attempts.allow(budget, client) {
             return Err(LoginFailure::Throttled);
         }
         let permit = self.slots.clone().try_acquire_owned().map_err(|_| LoginFailure::Busy)?;
-        crate::password::validate_password(attempt.password).map_err(|_| LoginFailure::Password)?;
+        if crate::password::validate_password(attempt.password).is_err() {
+            self.attempts.note_failed_password();
+            return Err(LoginFailure::Password);
+        }
         let hash = self.hash.clone();
         let password = Zeroizing::new(attempt.password.to_owned());
         // The worker owns its permit. Cancelling the HTTP request cannot free a
@@ -101,6 +124,7 @@ impl PasswordLogin {
         .await
         .map_err(|_| LoginFailure::Busy)?;
         if !verified {
+            self.attempts.note_failed_password();
             return Err(LoginFailure::Password);
         }
         // No login is issued by an abandoned worker: only this awaiting request
@@ -111,6 +135,34 @@ impl PasswordLogin {
                 super::SessionError::Capacity => LoginFailure::Capacity,
                 super::SessionError::RandomUnavailable => LoginFailure::Busy,
             })
+    }
+
+    pub fn device_cookie(&self, now: SystemTime) -> (String, SystemTime) {
+        let expires = now + DEVICE_LIFETIME;
+        let seconds = expires
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .to_be_bytes();
+        let mut tag = self.device.clone();
+        tag.update(&seconds);
+        let value = [seconds.as_slice(), &tag.finalize().into_bytes()].concat();
+        (URL_SAFE_NO_PAD.encode(value), expires)
+    }
+
+    fn known_device(&self, cookie: &str) -> bool {
+        let mut raw = [0; 40];
+        if !matches!(URL_SAFE_NO_PAD.decode_slice(cookie, &mut raw), Ok(40)) {
+            return false;
+        }
+        let (expires, tag) = raw.split_at(8);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let mut expected = self.device.clone();
+        expected.update(expires);
+        now < u64::from_be_bytes(expires.try_into().expect("eight bytes")) && expected.verify_slice(tag).is_ok()
     }
 }
 
@@ -167,6 +219,7 @@ mod tests {
             client: Some("192.0.2.1".parse().unwrap()),
             origin: "https://meter.example",
             nonce_cookie: Some(NONCE),
+            device_cookie: None,
             csrf: NONCE,
             password,
             prior_session: None,

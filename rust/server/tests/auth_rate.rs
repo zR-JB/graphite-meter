@@ -38,6 +38,7 @@ async fn global_refusals_do_not_spend_address_budget() {
     for id in 1..=12 {
         for _ in 0..5 {
             assert!(limiter.allow(Budget::Password, address(id)));
+            limiter.note_failed_password();
         }
     }
     tokio::time::advance(Duration::from_secs(30)).await;
@@ -109,24 +110,24 @@ async fn each_address_map_is_bounded_and_reclaims_only_expired_keys() {
     }
 }
 
-#[test]
-fn simultaneous_password_attempts_cannot_overspend_global_budget() {
+#[tokio::test(start_paused = true)]
+async fn only_wrong_passwords_spend_the_ceiling_and_a_known_device_skips_shared_bounds() {
     let limiter = AttemptLimiter::new();
-    let barrier = std::sync::Barrier::new(80);
-    let accepted = std::thread::scope(|scope| {
-        let mut workers = Vec::new();
-        for id in 1..=80 {
-            let limiter = &limiter;
-            let barrier = &barrier;
-            workers.push(scope.spawn(move || {
-                barrier.wait();
-                limiter.allow(Budget::Password, address(id))
-            }));
-        }
-        workers
-            .into_iter()
-            .map(|worker| usize::from(worker.join().unwrap()))
-            .sum::<usize>()
-    });
-    assert_eq!(accepted, 60);
+    for id in 1..=80 {
+        assert!(limiter.allow(Budget::Password, address(id)));
+    }
+    for _ in 0..60 {
+        limiter.note_failed_password();
+    }
+    assert!(!limiter.allow(Budget::Password, address(81)));
+    assert!(limiter.allow(Budget::KnownDevice, address(81)));
+    for id in 82..=2048 {
+        assert!(limiter.allow(Budget::KnownDevice, address(id)));
+    }
+    assert!(!limiter.allow(Budget::Password, address(3000)));
+    assert!(limiter.allow(Budget::KnownDevice, address(3000)));
+    for _ in 0..4 {
+        assert!(limiter.allow(Budget::KnownDevice, address(1)));
+    }
+    assert!(!limiter.allow(Budget::KnownDevice, address(1)));
 }

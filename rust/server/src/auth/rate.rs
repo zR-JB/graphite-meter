@@ -22,6 +22,7 @@ type AddressAttempts = HashMap<String, Attempts>;
 #[derive(Clone, Copy)]
 pub enum Budget {
     Password,
+    KnownDevice,
     OidcExchange,
     BrowserApproval,
 }
@@ -29,13 +30,12 @@ pub enum Budget {
 #[derive(Default)]
 struct State {
     password: AddressAttempts,
-    global_password: Attempts,
+    failed_passwords: Attempts,
     exchanges: AddressAttempts,
     approvals: AddressAttempts,
 }
 
-/// Separate address budgets share one short lock so password address/global
-/// checks commit atomically. Callers supply an address resolved by proxy policy.
+/// Address budgets share one short lock; callers supply an address resolved by proxy policy.
 #[derive(Default)]
 pub struct AttemptLimiter {
     state: Mutex<State>,
@@ -59,81 +59,53 @@ impl AttemptLimiter {
         let mut state = self.state.lock().expect("auth attempt mutex poisoned");
         // Sample after acquiring the lock to keep stored timestamps ordered.
         let now = Instant::now();
-        match budget {
-            Budget::Password => {
-                if !address_has_room(
-                    &mut state.password,
-                    &keys,
-                    PASSWORD_ADDRESS_LIMIT,
-                    now,
-                    &self.log,
-                    Ceiling::PasswordAddress,
-                ) {
-                    return false;
-                }
-                expire(&mut state.global_password, now);
-                if state.global_password.len() >= PASSWORD_GLOBAL_LIMIT {
-                    self.log.ceiling(Ceiling::Password);
-                    return false;
-                }
-                for key in &keys {
-                    state.password.entry(key.clone()).or_default().push_back(now);
-                }
-                state.global_password.push_back(now);
+        let State {
+            password,
+            failed_passwords,
+            exchanges,
+            approvals,
+        } = &mut *state;
+        let (addresses, limit, ceiling) = match budget {
+            Budget::Password | Budget::KnownDevice => (password, PASSWORD_ADDRESS_LIMIT, Ceiling::PasswordAddress),
+            Budget::OidcExchange => (exchanges, EXCHANGE_ADDRESS_LIMIT, Ceiling::ExchangeAddress),
+            Budget::BrowserApproval => (approvals, APPROVAL_ADDRESS_LIMIT, Ceiling::ApprovalAddress),
+        };
+        let known = matches!(budget, Budget::KnownDevice);
+        addresses.retain(|_, attempts| {
+            expire(attempts, now);
+            !attempts.is_empty()
+        });
+        let missing = keys.iter().filter(|key| !addresses.contains_key(*key)).count();
+        let full = addresses.len() + missing > MAX_KEYS;
+        if full && !known {
+            self.log.ceiling(ceiling);
+            return false;
+        }
+        if crate::client_address::share_full(&keys, limit, |key| addresses.get(key).map_or(0, Attempts::len)) {
+            return false;
+        }
+        if matches!(budget, Budget::Password) {
+            expire(failed_passwords, now);
+            if failed_passwords.len() >= PASSWORD_GLOBAL_LIMIT {
+                self.log.ceiling(Ceiling::Password);
+                return false;
             }
-            Budget::OidcExchange => {
-                if !address_has_room(
-                    &mut state.exchanges,
-                    &keys,
-                    EXCHANGE_ADDRESS_LIMIT,
-                    now,
-                    &self.log,
-                    Ceiling::ExchangeAddress,
-                ) {
-                    return false;
-                }
-                for key in &keys {
-                    state.exchanges.entry(key.clone()).or_default().push_back(now);
-                }
-            }
-            Budget::BrowserApproval => {
-                if !address_has_room(
-                    &mut state.approvals,
-                    &keys,
-                    APPROVAL_ADDRESS_LIMIT,
-                    now,
-                    &self.log,
-                    Ceiling::ApprovalAddress,
-                ) {
-                    return false;
-                }
-                for key in &keys {
-                    state.approvals.entry(key.clone()).or_default().push_back(now);
-                }
+        }
+        for key in keys {
+            if !full || addresses.contains_key(&key) {
+                addresses.entry(key).or_default().push_back(now);
             }
         }
         true
     }
-}
 
-fn address_has_room(
-    addresses: &mut AddressAttempts,
-    keys: &[String],
-    limit: usize,
-    now: Instant,
-    log: &SecurityLog,
-    ceiling: Ceiling,
-) -> bool {
-    addresses.retain(|_, attempts| {
-        expire(attempts, now);
-        !attempts.is_empty()
-    });
-    let missing = keys.iter().filter(|key| !addresses.contains_key(*key)).count();
-    if addresses.len() + missing > MAX_KEYS {
-        log.ceiling(ceiling);
-        return false;
+    /// Only a wrong password spends the global ceiling, so a spray cannot lock out the operator.
+    pub fn note_failed_password(&self) {
+        let mut state = self.state.lock().expect("auth attempt mutex poisoned");
+        let now = Instant::now();
+        expire(&mut state.failed_passwords, now);
+        state.failed_passwords.push_back(now);
     }
-    !crate::client_address::share_full(keys, limit, |key| addresses.get(key).map_or(0, Attempts::len))
 }
 
 fn expire(attempts: &mut Attempts, now: Instant) {

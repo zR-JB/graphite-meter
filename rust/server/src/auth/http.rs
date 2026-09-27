@@ -219,6 +219,7 @@ impl Service {
                     .client_address(request.headers(), authorized.connection().peer),
                 origin: text(request, "origin"),
                 nonce_cookie: cookie(request.headers(), "__Host-gm_login"),
+                device_cookie: cookie(request.headers(), "__Host-gm_device"),
                 csrf: value(&form, "csrf"),
                 password: value(&form, "password"),
                 prior_session: cookie(request.headers(), "__Host-gm_session"),
@@ -248,6 +249,8 @@ impl Service {
                     false,
                 );
                 clear_cookie(&mut result, "__Host-gm_login");
+                let (device, expires) = password.device_cookie(SystemTime::now());
+                set_cookie(&mut result, "__Host-gm_device", &device, expires, true);
                 result
             }
             Err(failure) => {
@@ -827,6 +830,8 @@ fn remaining_ms(expires: SystemTime) -> u64 {
 mod tests {
     use super::super::policy::{Connection, Listener};
     use super::*;
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use std::net::Ipv4Addr;
 
     #[test]
     fn auth_forms_require_unambiguous_body_fields() {
@@ -1066,6 +1071,100 @@ mod tests {
         assert!(line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"), "{line}");
         assert!(!line.contains("private-"));
         assert!(!line.contains("provider-secret"));
+    }
+
+    #[tokio::test]
+    async fn a_device_cookie_signs_in_past_the_global_ceiling_and_a_full_address_table() {
+        use hmac::{Hmac, KeyInit, Mac};
+        const PUBLIC: &str = "https://meter.example";
+        const HASH: &str =
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0";
+        for full_table in [false, true] {
+            let config = AuthConfig {
+                mode: AuthMode::Password,
+                public_url: PUBLIC.into(),
+                password_hash: HASH.into(),
+                ..AuthConfig::default()
+            };
+            let service = Service::new(&config, vec!["192.0.2.1/32".parse().unwrap()], None).unwrap();
+            let sign_in = async |address: &str, device: Option<&str>| {
+                let login = call(&service, Method::GET, "/login", &[], String::new()).await;
+                let nonce = set_cookie_value(&login, "__Host-gm_login");
+                let cookies = format!(
+                    "__Host-gm_login={nonce}; __Host-gm_device={}",
+                    device.unwrap_or_default()
+                );
+                let response = call(
+                    &service,
+                    Method::POST,
+                    "/auth/password",
+                    &[
+                        ("cookie", &cookies),
+                        ("origin", PUBLIC),
+                        ("content-type", "application/x-www-form-urlencoded"),
+                        ("x-real-ip", address),
+                    ],
+                    encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
+                )
+                .await;
+                (response.headers()[header::LOCATION] == "/").then_some(response)
+            };
+            let first = sign_in("198.51.100.7", None).await.expect("first sign-in");
+            let issued = first
+                .headers()
+                .get_all(header::SET_COOKIE)
+                .iter()
+                .next_back()
+                .unwrap()
+                .to_str()
+                .unwrap();
+            assert!(
+                issued.starts_with("__Host-gm_device=") && issued.contains("; Max-Age=259199"),
+                "{issued}"
+            );
+            assert!(
+                issued.contains("; Secure") && issued.contains("; SameSite=Strict") && issued.contains("; HttpOnly")
+            );
+            let device = set_cookie_value(&first, "__Host-gm_device");
+            if full_table {
+                for address in 0..2047 {
+                    assert!(
+                        service
+                            .attempts
+                            .allow(Budget::Password, Ipv4Addr::from(0x0a00_0000 + address).into())
+                    );
+                }
+            } else {
+                for _ in 0..60 {
+                    service.attempts.note_failed_password();
+                }
+            }
+            assert!(
+                sign_in("203.0.113.9", None).await.is_none(),
+                "an unknown client passed the shared bounds"
+            );
+            assert!(
+                sign_in("192.0.2.77", Some(&device)).await.is_some(),
+                "the known device was locked out"
+            );
+            let mut forged = URL_SAFE_NO_PAD.decode(&device).unwrap();
+            forged[39] ^= 1;
+            let past = (SystemTime::now() - Duration::from_secs(60))
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                .to_be_bytes();
+            let mut tag = Hmac::<sha2::Sha256>::new_from_slice(HASH.as_bytes()).unwrap();
+            tag.update(&past);
+            let expired = [past.as_slice(), &tag.finalize().into_bytes()].concat();
+            for value in [forged, expired] {
+                assert!(
+                    sign_in("192.0.2.78", Some(&URL_SAFE_NO_PAD.encode(value)))
+                        .await
+                        .is_none()
+                );
+            }
+        }
     }
 
     #[tokio::test]

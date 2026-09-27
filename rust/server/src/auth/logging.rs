@@ -122,6 +122,7 @@ mod tests {
         let address = |last: u8| std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, last));
         for last in 1..=60 {
             assert!(limiter.allow(Budget::Password, address(last)));
+            limiter.note_failed_password();
         }
         assert!(!limiter.allow(Budget::Password, address(61)));
         let first = log.ceilings.lock().unwrap()[Ceiling::Password as usize].unwrap();
@@ -131,6 +132,7 @@ mod tests {
         tokio::time::advance(Duration::from_secs(1)).await;
         for last in 1..=60 {
             assert!(limiter.allow(Budget::Password, address(last)));
+            limiter.note_failed_password();
         }
         assert!(!limiter.allow(Budget::Password, address(63)));
         assert!(log.ceilings.lock().unwrap()[Ceiling::Password as usize].unwrap() > first);
