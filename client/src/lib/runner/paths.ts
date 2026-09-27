@@ -85,10 +85,6 @@ export function protocolFromNextHop(
 
 const hasWebTransport = (): boolean => typeof WebTransport !== "undefined";
 
-/** Whether this client can drive a kind the server advertised. */
-export const transportRunnable = (kind: TransportKind): boolean =>
-  !kind.startsWith("webtransport") || hasWebTransport();
-
 /** Why this browser cannot drive WebTransport, or null when it can. */
 export function webTransportGap(): "insecure-page" | "no-api" | null {
   if (hasWebTransport()) return null;
