@@ -97,13 +97,14 @@ export function buildSegments(config: RunnerConfig): Timeline {
   return { segments: segs, totalMs: cursor };
 }
 
-/* Rebuild the unfinished timeline after a safe live config change. */
+/* Rebuild the unfinished timeline after a safe live config change; `between` stages, the next is not yet active. */
 export function reconfigureTimeline(
   segments: Segment[],
   elapsed: number,
   config: RunnerConfig,
+  between = false,
 ): Timeline {
-  const active = segmentAt(segments, elapsed);
+  const active = between ? undefined : segmentAt(segments, elapsed);
   const kept = active
     ? segments.filter((s) => s.start < active.start)
     : segments.filter((s) => s.end <= elapsed);

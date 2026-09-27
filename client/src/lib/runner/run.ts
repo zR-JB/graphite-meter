@@ -273,14 +273,13 @@ export class Run {
     this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
+    // A server dropped before the run fails the first stage it would have carried bytes in.
+    const first = (
+      this.#segments.find(({ activity }) => activity.transfer.length) ??
+      this.#segments[0]
+    )?.activity.stage;
     for (const { server, reason, message } of this.#dropped)
-      this.#record(
-        server.id,
-        "throughput",
-        reason,
-        message,
-        this.#segments[0]?.activity.stage,
-      );
+      this.#record(server.id, "throughput", reason, message, first);
     this.#running = true;
     this.#tick();
     this.#arm();
@@ -301,11 +300,15 @@ export class Run {
   }
 
   /** Ends now with every retained result; each stage left unfinished fails for `reason`. */
-  end(reason: FailureReason, message: string): void {
+  end(
+    reason: FailureReason,
+    message: string,
+    servers: readonly PreparedServer[] = this.#participants(),
+  ): void {
     if (!this.#running) return;
     for (const stage of STAGES)
       if (planned(this.#cfg!, stage) && !this.#settled[stage])
-        for (const { server } of this.#participants())
+        for (const { server } of servers)
           this.#record(
             server.id,
             stage === "latency" ? "latency" : "throughput",
@@ -339,6 +342,7 @@ export class Run {
       this.#segments,
       this.#elapsed,
       next,
+      this.#ending,
     ).segments;
     const after = segmentAt(this.#segments, this.#elapsed);
     if (
@@ -449,52 +453,58 @@ export class Run {
   /** Adjacent segments always differ in phase; a warmup and its measurement share one stage. */
   #enter(segment: Segment): void {
     const previous = this.#active;
-    const sameStage = previous?.activity.stage === segment.activity.stage;
-    const enter = () => {
-      this.#active = segment;
-      const show = () =>
-        this.#transition(segment.phase, segment.activity.stage, segment.start);
-      this.#cancelEarly();
-      this.#stabilityAt = -Infinity;
-      this.#continuity++;
-      if (sameStage) {
-        show();
-        return this.#measureStage();
-      }
-      const generation = ++this.#generation;
-      this.#clock.hold();
-      // The first stage keeps showing connection checks; later ones show no countdown until ready.
-      if (previous) {
-        show();
-        this.#emit({
-          type: "progress",
-          phase: segment.phase,
-          fraction: 0,
-          phaseElapsedMs: 0,
-          phaseBudgetMs: 0,
-          measuring: true,
-        });
-      }
-      this.#beginStage(segment.activity).then(
-        () => {
-          if (generation !== this.#generation || !this.#running) return;
-          this.#tickAt = this.#clock.resume();
-          if (!previous) show();
-          if (segment.phase !== "warmup") this.#measureStage();
-          this.#tick();
-          this.#arm();
-        },
-        (cause) => {
-          if (generation !== this.#generation) return;
-          this.#fail(
-            classify(cause, "protocol-error"),
-            cause instanceof Error ? cause.message : "Stage preparation failed",
-          );
-        },
-      );
-    };
-    if (previous && !sameStage) void this.#endStage(previous.activity, enter);
-    else enter();
+    if (previous && previous.activity.stage !== segment.activity.stage)
+      // A live change during the stage end may have replaced or removed the next segment.
+      return void this.#endStage(previous.activity, () => {
+        const next = segmentAt(this.#segments, this.#elapsed);
+        if (next) this.#open(next, previous);
+        else this.#complete();
+      });
+    this.#open(segment, previous);
+  }
+
+  #open(segment: Segment, previous: Segment | null): void {
+    this.#active = segment;
+    const show = () =>
+      this.#transition(segment.phase, segment.activity.stage, segment.start);
+    this.#cancelEarly();
+    this.#stabilityAt = -Infinity;
+    this.#continuity++;
+    if (previous?.activity.stage === segment.activity.stage) {
+      show();
+      return this.#measureStage();
+    }
+    const generation = ++this.#generation;
+    this.#clock.hold();
+    // The first stage keeps showing connection checks; later ones show no countdown until ready.
+    if (previous) {
+      show();
+      this.#emit({
+        type: "progress",
+        phase: segment.phase,
+        fraction: 0,
+        phaseElapsedMs: 0,
+        phaseBudgetMs: 0,
+        measuring: true,
+      });
+    }
+    this.#beginStage(segment.activity).then(
+      () => {
+        if (generation !== this.#generation || !this.#running) return;
+        this.#tickAt = this.#clock.resume();
+        if (!previous) show();
+        if (segment.phase !== "warmup") this.#measureStage();
+        this.#tick();
+        this.#arm();
+      },
+      (cause) => {
+        if (generation !== this.#generation) return;
+        this.#fail(
+          classify(cause, "protocol-error"),
+          cause instanceof Error ? cause.message : "Stage preparation failed",
+        );
+      },
+    );
   }
 
   async #beginStage(activity: PhaseActivity): Promise<void> {
@@ -1062,7 +1072,13 @@ export class Run {
     this.#updateStalled();
     // A sole server skips to its next stage; several that all fail end the run as incomplete.
     if (!survivors.length && this.#hasMeasured)
-      return this.#servers.length === 1 ? this.#skipStage() : this.finish();
+      return this.#servers.length === 1
+        ? this.#skipStage()
+        : this.end(
+            reason,
+            "No server was left to run this stage",
+            this.#servers,
+          );
     if (!survivors.length)
       return this.#fail(
         reason,

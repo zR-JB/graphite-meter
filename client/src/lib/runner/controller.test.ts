@@ -293,6 +293,32 @@ test("a server that fails its start check is left out while another survives", a
   );
 });
 
+test("a primary latency server that fails its start check refuses the start", async () => {
+  let dead = false;
+  const runner = new TestRunner();
+  await withController(
+    {
+      servers: ["self", remote("peer")],
+      selected: ["self", "peer"],
+      discover: async (_signal, credentials) => {
+        if (dead && credentials.server.id === "peer")
+          throw new Error("offline");
+        return testServerDiscovery();
+      },
+      createRunner: () => runner,
+    },
+    async ({ controller, store, view }) => {
+      controller.configureLatency("primary", "peer");
+      await until(() => view("peer").readiness === "verified");
+      dead = true;
+      controller.toggleRun();
+      await until(() => store.startError !== "");
+      expect(store.startError).toBe("node-a: Connection check failed");
+      expect(runner.starts).toBe(0);
+    },
+  );
+});
+
 test("signing out mid-run saves the run before leaving for sign-in", async () => {
   await withController({}, async ({ controller, store, runner, ...page }) => {
     store.resultHistoryPreference = "enabled";

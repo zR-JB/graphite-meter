@@ -354,9 +354,9 @@ test("a late dropout keeps the headline of the interval every server finished", 
 test("a server whose check failed before the run is shown with its reason while the rest measure", async () => {
   const peer = { id: "peer", url: "https://peer.example", name: "Peer" };
   const h = await harness(
-    [{ id: "self", rate: 2 }],
-    { download: true },
-    { downloadMs: 1_000 },
+    [{ id: "self", rate: 2, measure: probe(10, 20) }],
+    { latency: true, download: true },
+    { latencyMs: 400, downloadMs: 1_000 },
     {
       dropped: [
         { server: peer, reason: "preparation-failed", message: "unreachable" },
@@ -365,6 +365,7 @@ test("a server whose check failed before the run is shown with its reason while 
   );
   h.start();
   const { multiServer, stages, outcome } = await h.result();
+  expect(stages.latency).toBe("complete");
   expect(multiServer.selection.map(({ id }) => id)).toEqual(["self", "peer"]);
   expect(multiServer.participants).toEqual(["self"]);
   expect(multiServer.failures).toMatchObject([
@@ -440,6 +441,18 @@ test("several servers that all fail end the run; a sole server skips to its next
   expect(h.phases()).not.toContain("aborted");
   expect(h.phases()).not.toContain("upload");
   expect(result.stages).toMatchObject({ download: "failed", upload: "failed" });
+  expect(
+    result.multiServer.failures.map(({ serverId, stage, reason }) => [
+      serverId,
+      stage,
+      reason,
+    ]),
+  ).toEqual([
+    ["a", "download", "connection-lost"],
+    ["b", "download", "connection-lost"],
+    ["a", "upload", "connection-lost"],
+    ["b", "upload", "connection-lost"],
+  ]);
   expect(result.outcome).toBe("incomplete");
   expect(result.multiServer.participants).toEqual([]);
   expect(h.events.filter((event) => event.type === "complete")).toHaveLength(1);
@@ -871,6 +884,45 @@ test("removing one server keeps the outcomes the others report in the same prepa
     ["b", "protocol-error"],
     ["a", "sign-in-required"],
   ]);
+});
+
+test("a live change while a stage ends measures no warmup and never runs a stage turned off", async () => {
+  const slow = { finish: () => new Promise<void>((r) => setTimeout(r, 300)) };
+  for (const upload of [true, false]) {
+    const h = await harness(
+      two(slow, slow),
+      { download: true, upload: true, bidirectional: true },
+      {
+        warmupMs: 400,
+        downloadMs: 1_000,
+        uploadMs: 1_000,
+        bidirectionalMs: 1_000,
+      },
+    );
+    h.start();
+    const ending = () =>
+      h.calls.filter((call) => call.startsWith("end:")).length === 2;
+    for (let t = 0; t < 6_000 && !ending(); t += 5) await advance(5);
+    h.run.reconfigure({
+      stages: { ...h.config.stages, upload },
+      duration: h.config.duration,
+      adaptive: false,
+    });
+    const result = await h.result();
+    expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(
+      upload ? 3 : 2,
+    );
+    expect(result.stages.upload).toBe(upload ? "complete" : "not-run");
+    expect(
+      result.multiServer.intervals.map(
+        ({ stage, reason }) => `${stage}:${reason}`,
+      ),
+    ).toEqual([
+      "download:stage-start",
+      ...(upload ? ["upload:stage-start"] : []),
+      "bidirectional:stage-start",
+    ]);
+  }
 });
 
 test("an unknown upload id replaces the receiver once, even while the server is already recovering", async () => {

@@ -115,8 +115,9 @@ export function createApplicationController(
     !store.isRunning &&
     !pendingStart &&
     !hidden();
+  // Every saved server can be unresolved, which leaves nothing selected.
   const selected = () =>
-    store.serverCatalog
+    store.serverCatalog && store.selectedServers.length
       ? selectedInCatalogOrder(
           store.serverCatalog,
           store.selectedServers,
@@ -457,12 +458,9 @@ export function createApplicationController(
         ? "renew"
         : "expired";
     runner?.end("sign-in-required", "Signed out during the test");
-    for (
-      let waitedMs = 0;
-      (store.isRunning || store.historyCandidate) &&
-      waitedMs < SIGN_OUT_SAVE_MS;
-      waitedMs += 50
-    )
+    // Page time, since a hidden tab stretches each timer to a second or more.
+    const deadline = pageMs() + SIGN_OUT_SAVE_MS;
+    while ((store.isRunning || store.historyCandidate) && pageMs() < deadline)
       await new Promise((resolve) => setTimeout(resolve, 50));
     dispose();
     location.replace(`/login?reason=${reason}`);
@@ -596,9 +594,16 @@ export function createApplicationController(
           message: view.message,
         });
     }
-    if (!prepared.length)
+    // Only the primary measures latency, so the run cannot go on without it.
+    const primary = dropped.find(
+      ({ server }) =>
+        store.latencySelection.mode === "primary" &&
+        latencyPathNeeded(config) &&
+        server.id === store.primaryLatencyServer,
+    );
+    if (!prepared.length || primary)
       throw new Error(
-        dropped
+        (primary ? [primary] : dropped)
           .map(({ server, message }) =>
             servers.length > 1 ? `${server.name}: ${message}` : message,
           )
