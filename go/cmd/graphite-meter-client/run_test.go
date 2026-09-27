@@ -341,7 +341,7 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	}
 	screen := view(m)
 	for _, want := range []string{
-		"Bi-dir ↓ incomplete: transfer failed",
+		"Bi-dir ↓: Connection lost",
 		"Loaded latency · Bidirectional",
 		"Bi-dir ↓",
 		missing,
@@ -479,11 +479,13 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	stage := func(stage goclient.Stage, phase goclient.Phase) goclient.Event {
 		return goclient.Event{Kind: goclient.EventStage, Stage: stage, Phase: phase, At: start}
 	}
+	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency, Latency: goclient.LatencyStats{
+		Count: 3, P50: 4 * time.Millisecond}})
 	m.apply(stage(goclient.StageLatency, goclient.PhaseFinished))
 	m.apply(stage(goclient.StageDownload, goclient.PhaseMeasuring))
 	m.apply(stage(goclient.StageUpload, goclient.Phase(99)))
 	track := ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "2.5 s / 10 s", "○ 10 s"} {
+	for _, want := range []string{"✓ 4.0 ms median", "2.5 s / 10 s", "○ 10 s"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
@@ -497,7 +499,7 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
 	m.apply(stage(goclient.StageUpload, goclient.PhaseFinished))
 	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "Download      ✗ Failed", "Upload        ! Partial"} {
+	for _, want := range []string{"✓ 4.0 ms median", "Download      ✗ Failed", "Upload        ! Partial"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
@@ -571,8 +573,8 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 			t.Errorf("plan lost %q: %q", want, plan)
 		}
 	}
-	if !m.canUseAvailable() || !strings.Contains(serversRow.row(m).note, "1 of 3 ready") {
-		t.Fatalf("available servers not offered: %q", serversRow.row(m).note)
+	if !m.canUseAvailable() || !strings.Contains(serversRow.row(m).value, "1 of 3 ready") {
+		t.Fatalf("available servers not offered: %q", serversRow.row(m).value)
 	}
 	m, _ = modelAndCmd(m.Update(press("u")))
 	if m.notice == "" {

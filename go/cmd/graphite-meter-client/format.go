@@ -97,10 +97,13 @@ func latencyCells(population goclient.Result, idle *goclient.LatencyStats) []str
 	s := population.Latency
 	cells := []string{missing, missing, missing, missing, missing}
 	if population.HasMedian() {
-		cells[0], cells[2] = fmtMs(s.P50), fmtMs(s.P95)
+		cells[0] = fmtMs(s.P50)
 		if idle != nil {
 			cells[1] = fmtAdded(s.P50 - idle.P50)
 		}
+	}
+	if s.Count > 0 {
+		cells[2] = fmtMs(s.P95)
 	}
 	if s.JitterPairs > 0 {
 		cells[3] = fmtMs(s.Jitter)

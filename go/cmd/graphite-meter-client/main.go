@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/x/term"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func main() {
@@ -26,17 +27,16 @@ func main() {
 	}
 
 	cfg := goclient.DefaultConfig()
-	var ping, loadedPing string
 	var showVersion, report bool
 	flag.StringVar(&cfg.BaseURL, "url", cfg.BaseURL, "origin of the operator server catalogue")
-	flag.Func("server", "selected catalogue ID (repeat up to four times; omission uses operator defaults)",
-		func(id string) error {
-			if id == "" || len(cfg.ServerIDs) >= 4 || slices.Contains(cfg.ServerIDs, id) {
-				return errors.New("select one to four different server IDs")
-			}
-			cfg.ServerIDs = append(cfg.ServerIDs, id)
-			return nil
-		})
+	flag.Func("server", fmt.Sprintf("selected catalogue ID (repeat up to %d times; omission uses operator defaults)",
+		wire.MaxSelectedServers), func(id string) error {
+		if id == "" || len(cfg.ServerIDs) >= wire.MaxSelectedServers || slices.Contains(cfg.ServerIDs, id) {
+			return fmt.Errorf("select one to %d different server IDs", wire.MaxSelectedServers)
+		}
+		cfg.ServerIDs = append(cfg.ServerIDs, id)
+		return nil
+	})
 	flag.StringVar(&cfg.ThroughputTarget, "throughput-origin", cfg.ThroughputTarget,
 		"throughput origin from discovery, or auto")
 	flag.StringVar(&cfg.ThroughputProtocol, "throughput-protocol", cfg.ThroughputProtocol,
@@ -46,8 +46,8 @@ func main() {
 	flag.StringVar(&cfg.LatencyTarget, "latency-origin", cfg.LatencyTarget, "latency origin from discovery, or auto")
 	flag.StringVar(&cfg.LatencyTransport, "latency-transport", cfg.LatencyTransport,
 		"latency transport: auto, websocket, or webtransport")
-	flag.Func("stages", "comma-separated stages: latency, download, upload, bidirectional "+
-		"(default latency,download,upload)", func(raw string) (err error) {
+	flag.Func("stages", "comma-separated stages: latency (ping), download (down), upload (up), bidirectional "+
+		"(bidi) (default latency,download,upload)", func(raw string) (err error) {
 		cfg.Stages, err = parseStages(raw)
 		return err
 	})
@@ -61,15 +61,17 @@ func main() {
 		"maximum H1 streams per direction")
 	flag.IntVar(&cfg.TransferStreams.Forced, "streams", cfg.TransferStreams.Forced,
 		fmt.Sprintf("force exact streams per server and direction (0 = automatic; at most %d)", goclient.MaxStreams))
-	cadence := "reply-driven, fast, medium, slow, or a duration up to " + goclient.MaxPingInterval.String()
-	flag.StringVar(&ping, "ping", "", "Idle latency cadence (default reply-driven): "+cadence)
-	flag.StringVar(&loadedPing, "loaded-ping", "", "Loaded latency cadence (default medium): "+cadence)
+	cadence := fmt.Sprintf("reply-driven, fast, medium, slow, or a duration from %v to %v", goclient.PingFast,
+		goclient.MaxPingInterval)
+	flag.Func("ping", "idle latency cadence (default reply-driven): "+cadence, parsePing(&cfg.PingInterval))
+	flag.Func("loaded-ping", "loaded latency cadence (default medium): "+cadence, parsePing(&cfg.LoadedPingInterval))
 	flag.BoolVar(&cfg.LoadedLatency, "loaded-latency", cfg.LoadedLatency,
 		"measure latency while transfer stages are loaded")
 	flag.BoolVar(&cfg.InsecureSkipTLSVerify, "insecure", false, "skip TLS certificate verification")
 	flag.BoolVar(&showVersion, "version", false, "print version and exit")
 	flag.BoolVar(&report, "report", false, "run once without the interface and print the final report "+
 		"(automatic when stdout is not a terminal)")
+	flag.Bool("legal", false, "print the licences of the bundled software and exit")
 	flag.Parse()
 
 	if showVersion {
@@ -78,18 +80,6 @@ func main() {
 	}
 	if flag.NArg() > 0 {
 		fail(2, fmt.Errorf("unexpected argument %q", flag.Arg(0)))
-	}
-	for name, raw := range map[string]string{"-ping": ping, "-loaded-ping": loadedPing} {
-		interval, err := parsePing(raw)
-		switch {
-		case raw == "":
-		case err != nil:
-			fail(2, fmt.Errorf("%s: %w", name, err))
-		case name == "-ping":
-			cfg.PingInterval = interval
-		default:
-			cfg.LoadedPingInterval = interval
-		}
 	}
 	if err := cfg.Validate(); err != nil {
 		fail(2, err)
@@ -100,17 +90,13 @@ func main() {
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	m := newModel(cfg)
 	if report || !term.IsTerminal(os.Stdout.Fd()) {
-		go func() {
-			caught.Store(<-signals)
-			m.controller.CancelRun()
-		}()
-		m = runHeadless(m)
+		onSignal(signals, &caught, m.controller.CancelRun)
+		if m = runHeadless(m); m.run == nil {
+			fmt.Fprintln(os.Stderr, "graphite-meter-client: "+m.notice)
+		}
 	} else {
 		program := tea.NewProgram(m, tea.WithFPS(fps), tea.WithoutSignalHandler())
-		go func() {
-			caught.Store(<-signals)
-			program.Quit()
-		}()
+		onSignal(signals, &caught, program.Quit)
 		final, err := program.Run()
 		m.controller.Close()
 		if err != nil {
@@ -124,11 +110,22 @@ func main() {
 	os.Exit(exitStatus(m, caught.Load()))
 }
 
+// onSignal reacts to the first signal only, so a second one ends the process at once.
+func onSignal(signals chan os.Signal, caught *atomic.Value, react func()) {
+	go func() {
+		caught.Store(<-signals)
+		signal.Stop(signals)
+		react()
+	}()
+}
+
+// exitStatus reports the run's outcome, or the signal convention when a key or signal interrupted a run.
 func exitStatus(m model, caught any) int {
+	interrupted := m.interrupted || caught != nil && (m.running() || m.last == goclient.OutcomeStopped)
 	switch {
-	case caught == syscall.SIGTERM:
+	case interrupted && caught == syscall.SIGTERM:
 		return 143
-	case caught != nil || m.interrupted:
+	case interrupted:
 		return 130
 	case m.last == "" || m.last == goclient.OutcomeComplete:
 		return 0
@@ -156,9 +153,6 @@ func runHeadless(m model) model {
 		}
 		next, _ = m.Update(msg)
 		m = next.(model)
-	}
-	if m.run == nil {
-		fail(1, errors.New(m.notice))
 	}
 	return m
 }
@@ -188,14 +182,18 @@ func parseStages(raw string) (goclient.StageSet, error) {
 	return s, nil
 }
 
-func parsePing(raw string) (time.Duration, error) {
-	name := strings.TrimSpace(raw)
-	if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.EqualFold(c.key, name) }); i >= 0 {
-		return cadences[i].interval, nil
+func parsePing(interval *time.Duration) func(string) error {
+	return func(raw string) error {
+		name := strings.TrimSpace(raw)
+		if i := slices.IndexFunc(cadences, func(c cadence) bool { return strings.EqualFold(c.key, name) }); i >= 0 {
+			*interval = cadences[i].interval
+			return nil
+		}
+		d, err := time.ParseDuration(name)
+		if err != nil {
+			return errors.New("use reply-driven, fast, medium, slow, or a duration such as 400ms")
+		}
+		*interval = d
+		return nil
 	}
-	d, err := time.ParseDuration(name)
-	if err != nil {
-		return 0, errors.New("use reply-driven, fast, medium, slow, or a duration such as 400ms")
-	}
-	return d, nil
 }

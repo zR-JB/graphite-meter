@@ -81,16 +81,11 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	return m, expiry
 }
 
-func isAuthRequired(err error) bool {
-	_, ok := errors.AsType[*goclient.AuthRequiredError](err)
-	return ok
-}
-
 func (m model) challengedServer() string {
 	if m.preparedRun == nil {
 		return ""
 	}
-	i := slices.IndexFunc(m.preparedRun.Servers, func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) })
+	i := slices.IndexFunc(m.preparedRun.Servers, func(s goclient.PreparedServer) bool { return goclient.IsAuthRequired(s.Err) })
 	if i < 0 {
 		return ""
 	}
@@ -241,14 +236,14 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 	}
 	m.invalidatePreparation()
 	focus := ""
-	if slices.Contains(m.cfg.ServerIDs, m.latencyChoice) {
-		focus = m.latencyChoice
+	if slices.Contains(m.cfg.ServerIDs, m.cfg.LatencyServer) {
+		focus = m.cfg.LatencyServer
 	}
 	m.runSeq++
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
 	m.next = newRunState(m.cfg, focus, m.now)
-	m.stopPrompt, m.popup, m.waiting = false, popupNone, true
+	m.stopPrompt, m.popup, m.waiting, m.edit = false, popupNone, true, nil
 	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
@@ -280,7 +275,7 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 	switch {
 	case m.quitting:
 		return m, tea.Quit
-	case isAuthRequired(done.Err):
+	case goclient.IsAuthRequired(done.Err):
 		m.run = nil
 		m.notice = "Sign-in required; run graphite-meter-client in a terminal to sign in."
 		return m.reprepare()
@@ -310,7 +305,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	if m.quitting {
 		return m, tea.Quit
 	}
-	if isAuthRequired(done.Err) {
+	if goclient.IsAuthRequired(done.Err) {
 		m.run = nil
 		m.notice = "Sign-in expired. Checking the selected servers…"
 		return m.reprepare()
@@ -344,7 +339,7 @@ func (m *model) apply(e goclient.Event) {
 		left := func(f goclient.ServerFailure) bool { return f.Stage == e.Stage }
 		switch {
 		case state != stageDone:
-		case slices.ContainsFunc(r.results, unavailable):
+		case slices.ContainsFunc(r.results, unavailable), e.Stage == goclient.StageLatency && !r.measuredLatency():
 			state = stageFailed
 		case r.details != nil && slices.ContainsFunc(r.details.Failures, left):
 			state = stagePartial
@@ -390,6 +385,18 @@ func (m *model) apply(e goclient.Event) {
 
 func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
 
+// measuredLatency reports whether the server that owns the latency result has an idle median.
+func (r *runState) measuredLatency() bool {
+	for _, server := range r.details.Servers {
+		if server.Server.ID == r.details.LatencyFocus {
+			return slices.ContainsFunc(server.Results, func(result goclient.Result) bool {
+				return result.Stage == goclient.StageLatency && result.Direction == "" && result.HasMedian()
+			})
+		}
+	}
+	return false
+}
+
 func (r *runState) adopt(details *goclient.RunDetails) {
 	if details == nil {
 		return
@@ -413,8 +420,7 @@ func (r *runState) meanRates(stage goclient.Stage) string {
 			if !result.Unavailable {
 				rate = fmtRate(result.MeanBps)
 			}
-			arrow := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[result.Direction]
-			parts = append(parts, arrow+rate)
+			parts = append(parts, arrows[result.Direction]+" "+rate)
 		}
 	}
 	return strings.Join(parts, "  ")

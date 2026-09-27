@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -19,11 +18,9 @@ import (
 const twoColumnMin = 100
 
 func (m model) View() tea.View {
-	content, cursor := m.render()
-	v := tea.NewView(content)
+	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = "Graphite Meter · " + m.statusLabel()
-	v.Cursor = cursor
 	switch {
 	case m.next != nil:
 		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
@@ -37,11 +34,6 @@ const minWidth, minHeight = 40, 12
 
 func (m model) size() (int, int) { return max(m.width, minWidth), max(m.height, minHeight) }
 
-func (m model) popupWidth() int {
-	w, _ := m.size()
-	return min(w-4, 84)
-}
-
 type frame struct {
 	top, footer string
 	body        []string
@@ -51,18 +43,28 @@ type frame struct {
 func (m model) layout() frame {
 	w, h := m.size()
 	inner := w - 2
-	gap := h >= 20
 	top := m.header(inner)
-	if gap {
+	if h > 24 {
 		top += "\n"
 	}
 	f := frame{top: top}
 	f.bodyH = max(h-lipgloss.Height(top)-lipgloss.Height(m.footer(inner, false)), 1)
-	if m.run != nil {
-		f.body = strings.Split(m.runView(inner, f.bodyH), "\n")
-	} else {
-		f.body = strings.Split(m.setupView(inner), "\n")
+	var body string
+	switch {
+	case m.popup == popupDetails:
+		body = m.st.panel("Details", m.detailsView(inner-4, true), inner, 0)
+	case m.popup == popupServers:
+		title, content := m.serverChooserView(inner-4, f.bodyH-2)
+		body = m.st.panel(title, content, inner, 0)
+	case m.auth != nil && m.run == nil:
+		title, content := m.signInView(inner - 4)
+		body = m.st.panel(title, content, inner, 0)
+	case m.run != nil:
+		body = m.runView(inner, f.bodyH)
+	default:
+		body = m.setupView(inner)
 	}
+	f.body = strings.Split(body, "\n")
 	f.footer = m.footer(inner, len(f.body) > f.bodyH)
 	return f
 }
@@ -76,40 +78,14 @@ func (m model) bodyViewport(f frame) viewport.Model {
 	return vp
 }
 
-func (m model) render() (string, *tea.Cursor) {
+func (m model) render() string {
 	if m.width > 0 && (m.width < minWidth || m.height < minHeight) {
 		notice := fmt.Sprintf("Enlarge the terminal to at least %d×%d.", minWidth, minHeight)
 		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
-			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice)), nil
+			lipgloss.NewStyle().Width(m.width).Align(lipgloss.Center).Render(notice))
 	}
-	w, _ := m.size()
 	f := m.layout()
-	body := m.bodyViewport(f).View()
-	screen := lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + body + "\n" + f.footer)
-	pw := m.popupWidth()
-	var title, content string
-	switch {
-	case m.popup == popupDetails:
-		title, content = "Details", m.detailsViewport().View()
-	case m.popup == popupServers:
-		title, content = m.serverChooserView(pw-4, f.bodyH-2)
-	case m.edit != nil:
-		title, content = m.editView()
-	case m.auth != nil && m.run == nil:
-		title, content = m.signInView(pw - 4)
-	default:
-		return screen, nil
-	}
-	box := m.st.panel(title, content, pw, min(lipgloss.Height(content)+2, f.bodyH))
-	screen, x, y := overlay(screen, box, w, lipgloss.Height(f.top), f.bodyH)
-	if m.edit == nil || m.popup != popupNone {
-		return screen, nil
-	}
-	cursor := m.edit.input.Cursor()
-	if cursor != nil {
-		cursor.X, cursor.Y = cursor.X+x+2, y+1
-	}
-	return screen, cursor
+	return lipgloss.NewStyle().Padding(0, 1).Render(f.top + "\n" + m.bodyViewport(f).View() + "\n" + f.footer)
 }
 
 func (m *model) scrollBody(msg tea.KeyPressMsg) {
@@ -168,8 +144,13 @@ func (m model) header(w int) string {
 
 func (m model) footer(w int, overflow bool) string {
 	notice := m.st.muted.Render(m.notice)
-	if m.run != nil && m.run.err != nil {
+	switch {
+	case m.edit != nil && m.edit.err != "":
+		notice = m.st.err.Render(m.edit.err)
+	case m.run != nil && m.run.err != nil:
 		notice = m.st.err.Render(errorText(m.run.err))
+	case m.notice == "" && m.run == nil && m.popup == popupNone && m.auth == nil:
+		notice = m.st.muted.Render(m.currentRow().row(m).help)
 	}
 	if m.help.ShowAll {
 		return fit(notice+"\n"+m.help.FullHelpView(m.FullHelp()), w)
@@ -179,18 +160,9 @@ func (m model) footer(w int, overflow bool) string {
 		bindings = slices.Insert(bindings, 1, keys.page)
 	}
 	line := m.help.ShortHelpView(bindings)
-	for lipgloss.Width(line) > w {
-		drop := len(bindings) - 3
-		for drop > 0 && bindings[drop].Help() == keys.page.Help() {
-			drop--
-		}
-		if drop <= 0 {
-			drop = slices.IndexFunc(bindings, func(b key.Binding) bool { return b.Help() == keys.help.Help() })
-		}
-		if drop < 0 {
-			break
-		}
-		bindings = slices.Delete(bindings, drop, drop+1)
+	// Hints are in priority order: keep the first and quit, drop from the right of the rest.
+	for lipgloss.Width(line) > w && len(bindings) > 2 {
+		bindings = slices.Delete(bindings, len(bindings)-2, len(bindings)-1)
 		line = m.help.ShortHelpView(bindings)
 	}
 	return fit(notice+"\n"+line, w)
@@ -259,11 +231,13 @@ func (m model) settingLine(s *setting, focused bool, labelWidth, w int) string {
 	} else {
 		row := s.row(m)
 		value := m.st.value.Render(row.value)
-		if row.inert {
+		switch {
+		case m.edit != nil && m.edit.row == s:
+			value = m.edit.input.View()
+		case row.inert:
 			value = m.st.muted.Render(row.value)
 		}
-		label := pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)
-		line = m.st.text.Render(label) + "  " + value + "  " + m.st.muted.Render(row.note)
+		line = m.st.text.Render(pad(ansi.Truncate(row.label, labelWidth, "…"), labelWidth)) + "  " + value
 		if focused {
 			line = m.st.selected.Render(ansi.Truncate(line, w-2, "…"))
 		}
@@ -384,14 +358,6 @@ func (m model) signInView(w int) (string, string) {
 	return "Sign in to " + issuer, strings.Join(lines, "\n")
 }
 
-func (m model) editView() (string, string) {
-	note := m.st.muted.Render("enter applies · esc cancels")
-	if m.edit.err != "" {
-		note = m.st.err.Render(m.edit.err)
-	}
-	return m.edit.row.row(m).label, m.edit.input.View() + "\n" + note
-}
-
 func (m model) runView(w, h int) string {
 	results := ""
 	if !m.run.live() {
@@ -410,7 +376,7 @@ func (m model) runView(w, h int) string {
 		bottomH := max(lipgloss.Height(results), lipgloss.Height(fields)) + 2
 		bottom = join(m.st.panel(title, results, rw, bottomH), m.st.panel("Test", fields, w-1-rw, bottomH), true)
 	}
-	if timelineH := h - lipgloss.Height(bottom); timelineH >= 9 {
+	if timelineH := h - lipgloss.Height(bottom); timelineH >= 8 {
 		return m.timelinePanel(w, timelineH) + "\n" + bottom
 	}
 	return bottom
@@ -595,7 +561,7 @@ func (m model) readings(stage goclient.StagePlan) string {
 	r := m.run
 	var readings []string
 	for _, dir := range stage.Directions {
-		label := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[dir]
+		label := arrows[dir] + " "
 		sample, sampled := r.rates[dir]
 		value := m.st.value.Render(fmtRate(r.shown[dir]))
 		switch {
@@ -655,7 +621,7 @@ func (m model) resultsView(w int) (string, string) {
 		case errors.Is(err, context.Canceled):
 			failures = append(failures, m.st.warn.Render(label+" stopped."))
 		case err != nil:
-			failures = append(failures, m.st.err.Render(label+" incomplete: "+errorText(err)))
+			failures = append(failures, m.st.err.Render(label+": "+failureLabels[goclient.ReasonOf(err)]))
 		}
 	}
 	unmeasured := func(i int) string {
@@ -716,7 +682,7 @@ func (m model) resultsView(w int) (string, string) {
 		parts = append(parts, m.st.grid([]string{"Throughput", ""}, throughput, w))
 	}
 	if len(latencyRows) > 0 {
-		headers := []string{"Latency", "Median", "Added", "p95", "Jitter", "Probe timeouts"}
+		headers := []string{"Latency", "Median", "Added", "P95", "Jitter", "Probe timeouts"}
 		for i, row := range latencyRows {
 			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
 		}

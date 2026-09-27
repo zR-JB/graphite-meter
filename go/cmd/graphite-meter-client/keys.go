@@ -1,6 +1,8 @@
 package main
 
 import (
+	"slices"
+
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
@@ -24,7 +26,7 @@ var keys = keymap{
 	servers:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "test servers")),
 	automatic:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "automatic paths")),
 	available:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "use available servers")),
-	openSignIn:    key.NewBinding(key.WithKeys("enter", "space", "o"), key.WithHelp("enter", "open page")),
+	openSignIn:    key.NewBinding(key.WithKeys("enter", "space", "o"), key.WithHelp("enter/space", "open page")),
 	cancelSignIn:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 	stop:          key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "stop test")),
 	confirmStop:   key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "confirm stop")),
@@ -107,9 +109,5 @@ func (m model) FullHelp() [][]key.Binding {
 		}
 		all = append(all, keys.automatic, keys.page, keys.help, keys.quit)
 	}
-	cols := make([][]key.Binding, 0, (len(all)+2)/3)
-	for i := 0; i < len(all); i += 3 {
-		cols = append(cols, all[i:min(i+3, len(all))])
-	}
-	return cols
+	return slices.Collect(slices.Chunk(all, 3))
 }

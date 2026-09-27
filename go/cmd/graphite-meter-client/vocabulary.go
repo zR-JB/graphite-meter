@@ -38,14 +38,13 @@ func compactPopulation(stage goclient.Stage) string {
 		goclient.StageUpload: "Loaded up", goclient.StageBidirectional: "Loaded bi-dir"}[stage]
 }
 
+var arrows = map[goclient.Direction]string{goclient.Down: "↓", goclient.Up: "↑"}
+
 func directionLabel(r goclient.Result) string {
 	if r.Stage != goclient.StageBidirectional {
 		return stageLabels[r.Stage]
 	}
-	if r.Direction == goclient.Up {
-		return "Bi-dir ↑"
-	}
-	return "Bi-dir ↓"
+	return "Bi-dir " + arrows[r.Direction]
 }
 
 const (

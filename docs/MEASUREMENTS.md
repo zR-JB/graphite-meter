@@ -112,7 +112,9 @@ jitter, deadlines and added latency.
 | Silence limit | 1.5 s of active run time | 2 s, or three missed checkpoints in a row (not at the end) |
 | HTTP 429 / 503 | Retried until silence or the readiness budget lapses, then server at capacity | Retried for 2 s, then server at capacity |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
-| Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; `l` rotates the shown one |
+| Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |
+| Latency cadence | Reply-driven, Fast, Medium or Slow | Also a custom spacing from 80 ms to 15 s |
+| Latency reconnect | Backoff 100 ms–2 s; fails after 7.3 s without recovery | Redials for 2 s, never past the stage end; a channel lost before its first reply fails at once |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter | Counts in RTT and jitter if before its deadline |
 | Browser only | P10–P90 span, stability, wire-rate estimate, saved history | |
@@ -127,6 +129,10 @@ jitter, deadlines and added latency.
 | Stopped | Cancelled by the user. |
 | Failed | Nothing was measured. |
 
+The latency result is the latency-focus server's population; if that server leaves, a surviving server that measured
+idle latency takes over. The run is Incomplete only when no focus population has a median; another server's failed
+latency population makes it Partial. A population or stage that ends without a result records `insufficient-evidence`.
+
 ### Failure reasons
 
 Both clients name a failure with one of seven reasons (labels in `vocabulary.ts` and `vocabulary.go`):
@@ -135,7 +141,7 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 | --- | --- | --- |
 | `preparation-failed` | Couldn't prepare the connection | A path check or stage preparation failed without a better reason. |
 | `connection-lost` | Connection lost | Network error, offline device or server shutdown. |
-| `timeout` | Stopped delivering data | A timed-out path, the silence limit, or an idle or lifetime lane ending. |
+| `timeout` | Stopped delivering data | A timed-out path, the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending. |
 | `sign-in-required` | Sign-in required | Sign-out or a revoked grant. |
 | `server-busy` | Server at capacity | Admission refused with 429 or 503; retries wait 300 ms doubling, or Retry-After, up to 1.2 s. |
 | `protocol-error` | Unexpected server response | An unexpected status or a refused upload owner. |

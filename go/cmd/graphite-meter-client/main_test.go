@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -105,16 +108,46 @@ func TestParseStages(t *testing.T) {
 func TestParsePing(t *testing.T) {
 	t.Parallel()
 	for raw, want := range map[string]time.Duration{
-		"fast":         80 * time.Millisecond,
-		"Slow":         600 * time.Millisecond,
+		"fast":         goclient.PingFast,
+		"Slow":         goclient.PingSlow,
 		"medium":       goclient.PingMedium,
 		"1500ms":       1500 * time.Millisecond,
 		"Reply-driven": goclient.PingReplyDriven,
 		"instant":      0,
 	} {
-		got, err := parsePing(raw)
+		var got time.Duration
+		err := parsePing(&got)(raw)
 		if got != want || (err != nil) != (want == 0) {
 			t.Errorf("parsePing(%q) = %v, %v; want %v", raw, got, err, want)
+		}
+	}
+}
+
+func TestHeadlessRunsReportRefusalsAndSignals(t *testing.T) {
+	t.Parallel()
+	refused := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(refused.Close)
+	hanging, entered, _ := hangingServer(t)
+	for _, c := range []struct {
+		url    string
+		signal os.Signal
+		want   int
+	}{{refused.URL, nil, 1}, {hanging, syscall.SIGTERM, 143}, {hanging, os.Interrupt, 130}} {
+		cfg := goclient.DefaultConfig()
+		cfg.BaseURL = c.url
+		m := newModel(cfg)
+		signals := make(chan os.Signal, 1)
+		var caught atomic.Value
+		onSignal(signals, &caught, m.controller.CancelRun)
+		if c.signal != nil {
+			go func() {
+				<-entered
+				signals <- c.signal
+			}()
+		}
+		m = runHeadless(m)
+		if got := exitStatus(m, caught.Load()); m.run != nil || m.notice == "" || got != c.want {
+			t.Errorf("%v: exit %d with notice %q, want %d and the reason", c.signal, got, m.notice, c.want)
 		}
 	}
 }
@@ -135,8 +168,9 @@ func TestExitStatus(t *testing.T) {
 		{goclient.OutcomeStopped, false, nil, 1},
 		{goclient.OutcomeFailed, false, nil, 1},
 		{goclient.OutcomeComplete, true, nil, 130},
-		{goclient.OutcomeComplete, false, os.Interrupt, 130},
-		{goclient.OutcomeComplete, false, syscall.SIGTERM, 143},
+		{goclient.OutcomeComplete, false, os.Interrupt, 0},
+		{goclient.OutcomeStopped, false, os.Interrupt, 130},
+		{goclient.OutcomeStopped, false, syscall.SIGTERM, 143},
 	} {
 		m.last, m.interrupted = c.last, c.interrupted
 		if got := exitStatus(m, c.caught); got != c.want {
@@ -218,7 +252,8 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
 			&idle, "12.0 ms | +2.0 ms | 20.0 ms | < 0.1 ms | 0/2 (0.0%) | 2 replies", nil},
 		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", nil},
-		{goclient.LatencyStats{Count: 1, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "— | — | — |", lost},
+		{goclient.LatencyStats{Count: 1, Timeouts: 1, P50: 8 * time.Millisecond, P95: 9 * time.Millisecond}, &idle,
+			"— | — | 9.0 ms |", lost},
 		{goclient.LatencyStats{Count: 2, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", lost},
 		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1/1000 (0.10%)", nil},
 		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil,
