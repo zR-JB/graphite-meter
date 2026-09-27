@@ -285,14 +285,32 @@ export function pendingRows(
   ];
 }
 
-/** Each failed server stage, live or saved: who, which stage, why; `scope` narrows to one server. */
-export const serverIssues = (details: MultiServerResult, scope = "") =>
-  details.failures
-    .filter((failure) => !scope || failure.serverId === scope)
-    .map((failure) => ({
-      server: serverName(details.selection, failure.serverId),
-      text: `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${reasonLabel(failure.reason)}`,
-    }));
+/** Failed server stages, live or saved, one line per server and reason: who, which stages, why; `scope` narrows to one server. */
+export function serverIssues(details: MultiServerResult, scope = "") {
+  const lines = new Map<
+    string,
+    { server: string; stages: string[]; reason: string }
+  >();
+  for (const failure of details.failures) {
+    if (scope && failure.serverId !== scope) continue;
+    const key = `${failure.serverId} ${failure.reason}`;
+    if (!lines.has(key))
+      lines.set(key, {
+        server: serverName(details.selection, failure.serverId),
+        stages: [],
+        reason: reasonLabel(failure.reason),
+      });
+    lines
+      .get(key)!
+      .stages.push(
+        `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""}`,
+      );
+  }
+  return [...lines.values()].map(({ server, stages, reason }) => ({
+    server,
+    text: `${stages.join(", ")} · ${reason}`,
+  }));
+}
 
 /** One server's share of a run, with the statuses the run settled for that server; none if it measured nothing. */
 function serverEvidence(
