@@ -359,10 +359,15 @@ func (m *model) apply(e goclient.Event) {
 			}
 		}
 	case goclient.EventThroughput:
+		last, sampled := r.rates[e.Direction]
 		r.rates[e.Direction] = e.Throughput
 		v := e.Throughput.BytesPerSec
-		if e.Throughput.Unavailable {
+		switch {
+		case e.Throughput.Unavailable:
 			r.shown[e.Direction], v = 0, math.NaN()
+		case !sampled || last.Unavailable:
+			// First evidence snaps like the browser; easing from zero would show a rate nobody measured.
+			r.shown[e.Direction] = v
 		}
 		r.history[e.Direction] = r.history[e.Direction].add(at, v)
 	case goclient.EventLatency:

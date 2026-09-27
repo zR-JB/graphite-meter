@@ -669,11 +669,10 @@ func (m model) resultsView(w int) (string, string) {
 		switch {
 		case ok:
 			measured = true
-			base := idle
+			cells := latencyCells(population, idle)
 			if stage.Name == goclient.StageLatency {
-				base = nil
+				cells[1] = ""
 			}
-			cells := latencyCells(population, base)
 			added = added || cells[1] != ""
 			latencyRows = append(latencyRows, append([]string{compactPopulation(stage.Name)}, cells...))
 			label := populationLabel(stage.Name)

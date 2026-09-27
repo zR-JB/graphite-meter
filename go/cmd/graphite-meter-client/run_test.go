@@ -840,3 +840,19 @@ func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveRatesWaitForEvidence(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	stage := goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring}
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{stage}}))
+	if live := ansi.Strip(m.liveView(60, 16)); !strings.Contains(live, "↓ —") {
+		t.Fatalf("a rate before the first sample: %q", live)
+	}
+	sample := goclient.Event{Kind: goclient.EventThroughput, Direction: goclient.Down,
+		Throughput: goclient.ThroughputSample{BytesPerSec: 1e6, TotalBytes: 1e6}}
+	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{sample}}))
+	if live := ansi.Strip(m.liveView(60, 16)); !strings.Contains(live, "↓ 8.00 Mbit/s") {
+		t.Fatalf("the first sample did not show as measured: %q", live)
+	}
+}
