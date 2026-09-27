@@ -8,6 +8,7 @@
   import {
     CARD_ORDER,
     summaryCards,
+    serverIssues,
     summaryEvidence,
     type SummaryCard,
   } from "../presentation/resultSummary";
@@ -101,6 +102,7 @@
 <ResultSummary
   {cards}
   details={details ?? store.serverDetails}
+  issues={store.serverDetails ? serverIssues(store.serverDetails, shown) : []}
   locked={!details}
   scope={details ? shown : ""}
   onscope={selectScope}

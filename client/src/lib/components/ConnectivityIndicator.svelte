@@ -2,7 +2,14 @@
   import { store } from "../state/store.svelte";
   import { tooltip } from "../actions/tooltip";
   import { announceChanges } from "../presentation/announcer.svelte";
-  import { CONNECTIVITY } from "../presentation/vocabulary";
+  import {
+    CONNECTIVITY,
+    counted,
+    reasonLabel,
+  } from "../presentation/vocabulary";
+  import { recentProbes } from "../state/connectionHealth";
+  import { median } from "../runner/measure";
+  import { fmtMs } from "../format";
 
   const spark = $derived(
     store.pulseLatency
@@ -23,15 +30,33 @@
       )
       .join(" ");
   });
-  const label = $derived(
-    `Connection: ${CONNECTIVITY[store.effectiveConnectivity]}`,
-  );
+  const state = $derived(CONNECTIVITY[store.effectiveConnectivity]);
+  const label = $derived(`Connection: ${state.label}`);
+  // The values behind the state, so the dot is never a verdict alone.
+  const facts = $derived.by(() => {
+    const { replies, probes, timeouts } = recentProbes(store.pulseLatency);
+    const selected = store.selectedServers;
+    return [
+      store.effectiveConnectivity === "recovering" && store.stallInfo
+        ? reasonLabel(store.stallInfo.reason)
+        : "",
+      !store.isRunning && store.selectionValidation === "failed"
+        ? `${selected.filter((id) => store.servers.get(id)?.readiness === "verified").length} of ${counted(selected.length, "server")} ready`
+        : "",
+      replies.length
+        ? `Median ${fmtMs(median(replies))} ms, last 4 s of probes`
+        : "",
+      probes
+        ? `${timeouts} of ${counted(probes, "probe")} timed out`
+        : "No probes yet",
+    ].filter(Boolean);
+  });
   announceChanges(() => label);
 </script>
 
-<div class="pulse" {@attach tooltip(() => label)}>
+<div class="pulse" {@attach tooltip(() => [label, ...facts].join("\n"))}>
   <span class="sr-only">{label}</span>
-  <span class="dot" data-state={store.effectiveConnectivity}></span>
+  <span class="status-dot" data-tone={state.tone}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
     <polyline {points} />
   </svg>
@@ -43,12 +68,6 @@
     align-items: center;
     gap: var(--space-2);
     padding: 0 6px;
-  }
-  .dot {
-    width: 9px;
-    height: 9px;
-    border-radius: var(--r-full);
-    flex: 0 0 auto;
   }
   .spark {
     width: 36px;
@@ -63,27 +82,5 @@
     stroke-width: 1;
     stroke-linecap: round;
     stroke-linejoin: round;
-  }
-
-  /* State tones. */
-  .dot[data-state="connected"] {
-    background: var(--ok);
-    box-shadow: 0 0 0 4px var(--ok-soft);
-  }
-  .dot[data-state="degraded"] {
-    background: var(--warn);
-    box-shadow: 0 0 0 4px var(--warn-soft);
-  }
-  .dot[data-state="unstable"] {
-    background: var(--err);
-    box-shadow: 0 0 0 4px var(--err-soft);
-  }
-  .dot[data-state="checking"] {
-    background: var(--text-soft);
-    opacity: 0.6;
-  }
-  .dot[data-state="offline"] {
-    background: transparent;
-    border: 1.5px solid var(--text-soft);
   }
 </style>

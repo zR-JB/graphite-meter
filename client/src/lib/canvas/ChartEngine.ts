@@ -128,7 +128,7 @@ interface ThemeColors {
   uploadRgb: { r: number; g: number; b: number };
   bidirectional: string;
   signal: string;
-  warn: string;
+  latencyLoaded: string;
   err: string;
   grid: string;
   textSoft: string;
@@ -235,7 +235,7 @@ export class ChartEngine {
     uploadRgb: { r: 189, g: 163, b: 108 },
     bidirectional: "#a695c8",
     signal: "#8ba3ba",
-    warn: "#c4a568",
+    latencyLoaded: "#d9dce0",
     err: "#d89393",
     grid: "rgba(211,219,227,0.05)",
     textSoft: "#8b929a",
@@ -413,7 +413,7 @@ export class ChartEngine {
       uploadRgb: toRgb(upload),
       bidirectional: g("--phase-bidirectional", "#a695c8"),
       signal: g("--signal", "#8ba3ba"),
-      warn: g("--warn", "#c4a568"),
+      latencyLoaded: g("--latency-loaded", "#d9dce0"),
       err: g("--err", "#d89393"),
       grid: g("--grid-line", "rgba(211,219,227,0.05)"),
       textSoft: g("--text-soft", "#8b929a"),
@@ -889,7 +889,9 @@ export class ChartEngine {
     s: LatencyBucket,
     p: number,
   ): void {
-    const color = s.underLoad ? this.#colors.warn : this.#colors.signal;
+    const color = s.underLoad
+      ? this.#colors.latencyLoaded
+      : this.#colors.signal;
     const eased = 1 - (1 - p) * (1 - p);
     const alpha = 0.65 + 0.35 * eased;
     const radiusScale = 0.85 + 0.15 * eased;

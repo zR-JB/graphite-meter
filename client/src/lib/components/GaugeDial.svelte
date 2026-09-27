@@ -68,9 +68,9 @@
     })),
   );
   const accent = $derived(
-    input.phase === "idle"
+    input.phase === "idle" || input.phase === "aborted"
       ? "var(--text-soft)"
-      : input.phase === "error" || input.phase === "aborted"
+      : input.phase === "error"
         ? "var(--err)"
         : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
   );

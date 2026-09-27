@@ -403,7 +403,9 @@ class AppStore {
       this.pulseLatency.at(-1)?.medianRttMs == null,
   );
 
-  effectiveConnectivity = $derived.by<ConnectivityState | "checking">(() => {
+  effectiveConnectivity = $derived.by<
+    ConnectivityState | "checking" | "recovering"
+  >(() => {
     if (!this.isRunning) {
       if (
         this.preparing ||
@@ -418,11 +420,7 @@ class AppStore {
         )
           ? "degraded"
           : "offline";
-    } else if (!this.measuring) {
-      return this.phase === "connecting" || this.phase === "warmup"
-        ? "checking"
-        : "degraded";
-    }
+    } else if (!this.measuring) return "recovering";
     // Run evidence ages on the run's timeline; at idle, verified paths stand until idle latency says more.
     if (this.isRunning)
       return this.phaseStage &&

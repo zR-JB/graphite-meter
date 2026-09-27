@@ -16,7 +16,8 @@ import type {
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
-import { JARGON, MISSING, STAGE } from "./vocabulary";
+import { serverName } from "./serverAppearance";
+import { JARGON, MISSING, STAGE, reasonLabel } from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
 type LiveStatus = "active" | "pending";
@@ -238,6 +239,15 @@ export function summaryCards(
     ];
   });
 }
+
+/** Each failed server stage, live or saved: who, which stage, why; `scope` narrows to one server. */
+export const serverIssues = (details: MultiServerResult, scope = "") =>
+  details.failures
+    .filter((failure) => !scope || failure.serverId === scope)
+    .map((failure) => ({
+      server: serverName(details.selection, failure.serverId),
+      text: `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${reasonLabel(failure.reason)}`,
+    }));
 
 /** One server's share of a run, with the statuses the run settled for that server. */
 function serverEvidence(

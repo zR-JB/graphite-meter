@@ -5,6 +5,7 @@
   import { BUILD } from "../buildenv";
   import type { Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
+  import { CONNECTIVITY, STATUS_LABEL_CH } from "../presentation/vocabulary";
 
   let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
     $props();
@@ -17,20 +18,19 @@
   );
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
+  const recovering = $derived(store.effectiveConnectivity === "recovering");
   const { status } = $derived(store.preparation);
   const refused = $derived(status === "blocked" || status === "failed");
 </script>
 
-{#if refused}
-  <span
-    class="label"
-    style:opacity={label.opacity}
-    {@attach tooltip(() => store.startError || store.startBlocker)}
-    >{label.shown.label}</span
-  >
-{:else}
-  <span class="label" style:opacity={label.opacity}>{label.shown.label}</span>
-{/if}
+<span
+  class="label"
+  style:opacity={label.opacity}
+  style:min-width="{STATUS_LABEL_CH}ch"
+  {@attach refused
+    ? tooltip(() => store.startError || store.startBlocker)
+    : null}>{label.shown.label}</span
+>
 <span
   class="elapsed"
   class:secondary={showRemaining}
@@ -45,12 +45,13 @@
   ><span class="caption">&nbsp;transferred</span></span
 >
 {#if showRemaining}
-  <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}<span class="readout">{fmtDuration(remainingMs)}</span> left{:else}Paused<span
-        class="caption"
-      >
+  <span
+    class="remaining"
+    data-tone={recovering ? CONNECTIVITY.recovering.tone : undefined}
+  >
+    {#if recovering}{CONNECTIVITY.recovering.label}<span class="caption">
         · {fmtDuration(remainingMs)} left</span
-      >{/if}
+      >{:else}<span class="readout">{fmtDuration(remainingMs)}</span> left{/if}
   </span>
 {/if}
 <span class="build">{BUILD.identity}</span>
@@ -61,7 +62,6 @@
   }
   /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
   .label {
-    min-width: 16ch;
     color: var(--text);
     font-weight: var(--w-strong);
   }
@@ -75,8 +75,8 @@
     margin-left: auto;
     color: var(--text-soft);
   }
-  .paused {
-    color: var(--err);
+  .remaining[data-tone] {
+    color: var(--tone);
     font-weight: var(--w-strong);
   }
   @container status (max-width: 800px) {

@@ -19,7 +19,12 @@
   import { LiveReadout, liveTargets } from "../presentation/liveReadout.svelte";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
-  import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
+  import {
+    MISSING,
+    OUTCOME,
+    STAGE,
+    STATUS_TONE,
+  } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
   import { Smoothed, type Handoff } from "../presentation/motion.svelte";
@@ -239,7 +244,9 @@
               <span class="terminal-number">{readout.terminal.value}</span>
               <span class="terminal-unit">{gaugeUnit}</span>
               {#if readout.terminal.dashed}
-                <span class="terminal-partial">{OUTCOME.partial}</span>
+                <span class="terminal-partial" data-tone={STATUS_TONE.partial}
+                  >{OUTCOME.partial}</span
+                >
               {/if}
             </div>
           {:else}
@@ -526,7 +533,7 @@
     font-weight: var(--w-strong);
   }
   .terminal-partial {
-    color: var(--text-muted);
+    color: var(--tone);
     font-size: var(--type-xs);
   }
   /* A separate footer keeps transient notes from overlapping the dial. */

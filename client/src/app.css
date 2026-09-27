@@ -123,9 +123,10 @@
   --z-toast: 40;
   --z-scrim: 50;
   --z-panel: 51;
-  --z-panel-top: 52;
 
   --control-h: 32px;
+  /* Label column of every key/value list. */
+  --kv-label: 7.5rem;
   --hit: 44px;
   --icon: 16px;
   --icon-sm: 13px;
@@ -166,6 +167,8 @@
   --phase-upload: light-dark(#7a5f34, #bda36c);
   --phase-bidirectional: light-dark(#6d5e94, #a695c8);
   --phase-complete: light-dark(#445f79, #7590a5);
+  /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
+  --latency-loaded: var(--text);
 
   --ok: light-dark(#285443, #79ad91);
   --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
@@ -179,6 +182,8 @@
   --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
   --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
   --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
+  /* Pointer over a selectable tile or row; translucent so it reads on any surface. */
+  --hover-wash: color-mix(in srgb, var(--text) 6%, transparent);
 
   /* Elevation. The ink is the shadow hue; depths differ per theme because a
      dark canvas needs a much denser shadow to read at all. */
@@ -210,7 +215,8 @@
    belongs to, and the derived line and wash follow it. */
 [data-tone],
 .notice,
-.badge {
+.badge,
+.status-dot {
   --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
   --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
 }
@@ -527,6 +533,17 @@
     white-space: nowrap;
   }
 
+  /* Status dot: a state's tone beside its name. */
+  .status-dot {
+    --tone: var(--text-soft);
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+    box-shadow: 0 0 0 3px var(--tone-wash);
+  }
+
   /* Tone-tinted inline message. */
   .notice {
     --tone: var(--signal);
@@ -601,7 +618,7 @@
     min-width: 0;
   }
   .kv dt {
-    flex: 0 0 var(--kv-label, 7.5rem);
+    flex: 0 0 var(--kv-label);
     color: var(--text-soft);
     font-size: var(--type-xs);
     font-weight: var(--w-strong);
@@ -670,96 +687,32 @@
     font: var(--w-heavy) var(--type-xs) / 1.2 var(--font-sans);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Selectable tile or row: one wash over the whole hit area on hover, one
+     selected state however the choice is expressed. */
+  .tile,
+  .segmented > button {
     transition: var(--transition-control);
   }
   @media (hover: hover) {
-    .segmented > button:hover:not(:disabled) {
+    :is(.tile, .segmented > button):hover:not(
+        :disabled,
+        [aria-disabled="true"]
+      ) {
+      background-color: var(--hover-wash);
       color: var(--text);
     }
   }
-  .segmented > button[aria-pressed="true"] {
-    background: var(--brand-soft);
+  :is(.tile, .segmented > button):is(
+    [aria-pressed="true"],
+    [aria-checked="true"],
+    [aria-selected="true"],
+    [aria-current]:not([aria-current="false"]),
+    :has(> input:checked)
+  ) {
+    border-color: var(--brand-line);
+    background-color: var(--brand-soft);
     color: var(--brand-strong);
-  }
-
-  /* Disclosure.svelte: the summary is the hit area; its surface carries the ring and opens. */
-  .disclosure {
-    --disclosure-pad: var(--space-3);
-    interpolate-size: allow-keywords;
-    min-width: 0;
-    overflow: clip;
-  }
-  .disclosure > summary {
-    position: relative;
-    display: block;
-    padding: var(--disclosure-pad);
-    list-style: none;
-    transition: var(--transition-control);
-  }
-  .disclosure > summary::-webkit-details-marker {
-    display: none;
-  }
-  .disclosure > summary::after {
-    content: "";
-    position: absolute;
-    top: calc(var(--disclosure-pad) + 4px);
-    right: calc(var(--disclosure-pad) + 3px);
-    width: 6px;
-    height: 6px;
-    border: solid var(--text-soft);
-    border-width: 0 1.5px 1.5px 0;
-    rotate: 45deg;
-    transition: rotate var(--dur-hover) var(--ease-out);
-  }
-  .disclosure[open] > summary::after {
-    rotate: 225deg;
-    translate: 0 3px;
-  }
-  .disclosure > summary:focus-visible {
-    outline: none;
-  }
-  .disclosure:has(> summary:focus-visible) {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  @media (hover: hover) {
-    .disclosure > summary:hover {
-      background: var(--surface-2);
-    }
-  }
-  .disclosure::details-content {
-    block-size: 0;
-    transition:
-      block-size var(--dur-slide) var(--ease-out),
-      content-visibility var(--dur-slide) allow-discrete;
-  }
-  .disclosure[open]::details-content {
-    block-size: auto;
-  }
-  .disclosure-summary {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .disclosure-summary > :first-child {
-    padding-right: var(--space-5);
-  }
-  .disclosure-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .disclosure-facts {
-    color: var(--text);
-    font-size: var(--type-sm);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
-  .disclosure-body {
-    display: grid;
-    gap: var(--space-3);
-    padding: 0 var(--disclosure-pad) var(--disclosure-pad);
   }
 
   /* Centred placeholder for loading, empty and error states. */
