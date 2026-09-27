@@ -17,7 +17,18 @@ for language in go javascript-typescript python actions rust; do
     echo "CodeQL $language" >&2
     pack=${language%-typescript}
     build=(--build-mode=none)
-    [ "$language" != go ] || build=(--command="go build ./..." --working-dir="$out/src/go")
+    [ "$language" != go ] || build=(--command="go build ./..." --command="go build -o /dev/null ../rust/tests/server_client.go"
+        --command="go build -o /dev/null ../rust/tests/h3_client.go" --working-dir="$out/src/go")
+    if [ "$language" = rust ]; then
+        # Resolve OUT_DIR includes and macro expansions from a real build; also extract #[path] modules.
+        toolchain=+$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust/rust-toolchain.toml)
+        export CODEQL_EXTRACTOR_RUST_PROC_MACRO_SERVER CODEQL_EXTRACTOR_RUST_BUILD_SCRIPT_COMMAND CODEQL_EXTRACTOR_RUST_EXTRA_INCLUDES
+        CODEQL_EXTRACTOR_RUST_PROC_MACRO_SERVER=$(rustc "$toolchain" --print sysroot)/libexec/rust-analyzer-proc-macro-srv
+        CODEQL_EXTRACTOR_RUST_BUILD_SCRIPT_COMMAND=$(jq -cn --arg toolchain "$toolchain" --arg target "$out/src/target" \
+            '["cargo", $toolchain, "check", "--workspace", "--all-targets", "--locked", "--offline", "--message-format=json", "--target-dir", $target]')
+        CODEQL_EXTRACTOR_RUST_EXTRA_INCLUDES=$(jq -cn --arg rust "$out/src/rust" '[$rust]')
+        build+=(--extractor-option="rust.cargo_target_dir=$out/src/target")
+    fi
     quiet "$cli" database create "$out/db-$language" --language="$language" \
         --source-root="$out/src" "${build[@]}" --overwrite --threads=0
     quiet "$cli" database analyze "$out/db-$language" --threat-model=local --format=sarif-latest \
