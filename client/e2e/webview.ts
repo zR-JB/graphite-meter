@@ -166,6 +166,44 @@ function watchDisplay() {
   setInterval(sample, 100);
 }
 
+function recordStorage() {
+  const opens: StorageState["opens"] = [];
+  const lifecycle: string[] = [];
+  const at = () => `${Math.round(performance.now())} ms`;
+  const open = IDBFactory.prototype.open;
+  IDBFactory.prototype.open = function (...args: [string, number?]) {
+    const request = open.apply(this, args);
+    const [name, version] = args;
+    const entry = { name, version, events: [`opened at ${at()}`] };
+    opens.push(entry);
+    for (const type of ["blocked", "upgradeneeded", "success", "error"])
+      request.addEventListener(type, (event) => {
+        const from = "oldVersion" in event ? ` from v${event.oldVersion}` : "";
+        const error = type === "error" ? ` ${request.error?.name}` : "";
+        entry.events.push(`${type}${from}${error} at ${at()}`);
+      });
+    return request;
+  };
+  for (const type of [
+    "visibilitychange",
+    "freeze",
+    "resume",
+    "pagehide",
+    "pageshow",
+  ])
+    document.addEventListener(type, () =>
+      lifecycle.push(`${type} ${document.visibilityState} at ${at()}`),
+    );
+  Object.assign(window, { __gmStorage: { opens, lifecycle } });
+}
+
+export interface StorageState {
+  visibility: DocumentVisibilityState;
+  databases: IDBDatabaseInfo[];
+  opens: { name: string; version?: number; events: string[] }[];
+  lifecycle: string[];
+}
+
 function firstElement(elements: Element[]) {
   if (!elements[0]) throw new Error("no element");
   return elements[0];
@@ -302,15 +340,29 @@ try {
   afterAll(removeProfiles);
 } catch {}
 
-/** Browser work that never answers fails with its name, before the test timeout hides where it hung. */
-export function within<T>(label: string, work: Promise<T>, ms = 30_000) {
+/** Browser work that never answers fails with its name and the page state, before the test timeout hides both. */
+export function within<T>(
+  label: string,
+  work: Promise<T>,
+  ms = 30_000,
+  explain?: () => Promise<unknown>,
+) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} did not answer within ${ms / 1000} s`)),
-      ms,
-    );
+    timer = setTimeout(async () => {
+      const state = explain
+        ? await Promise.try(explain).then(
+            (state) => `; page ${JSON.stringify(state)}`,
+            (error) => `; page state unknown: ${error.message}`,
+          )
+        : "";
+      reject(
+        new Error(`${label} did not answer within ${ms / 1000} s${state}`),
+      );
+    }, ms);
   });
+  // Work that fails after the bound, say when the page closes, is already reported.
+  work.catch(() => {});
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
 
@@ -349,7 +401,11 @@ export class Page {
       (async () => {
         await this.raw.navigate("about:blank");
         await this.raw.cdp("Runtime.enable");
-        for (const guard of [reportPolicyViolations, watchDisplay])
+        for (const guard of [
+          reportPolicyViolations,
+          watchDisplay,
+          recordStorage,
+        ])
           await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
             source: `(${guard})()`,
           });
@@ -392,7 +448,31 @@ export class Page {
     return within(
       `evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`,
       this.raw.evaluate<T>(source),
+      undefined,
+      () => this.storage(),
     );
+  }
+  // Through CDP: the view runs one evaluate at a time, and these report why another hangs.
+  private inspect<T>(expression: string): Promise<T> {
+    return within(
+      "inspecting the page",
+      Promise.try(() =>
+        this.raw.cdp<{ result: { value: T } }>("Runtime.evaluate", {
+          expression,
+          awaitPromise: true,
+          returnByValue: true,
+        }),
+      ),
+      5_000,
+    ).then(({ result }) => result.value);
+  }
+  storage() {
+    const read = async () => ({
+      visibility: document.visibilityState,
+      databases: await indexedDB.databases(),
+      ...(window as any).__gmStorage,
+    });
+    return this.inspect<StorageState>(`(${read})()`);
   }
   async setViewportSize(size: { width: number; height: number }) {
     await this.init();
@@ -405,13 +485,23 @@ export class Page {
   async artifact(name: string) {
     await mkdir(artifacts, { recursive: true });
     const stem = resolve(artifacts, name.replace(/[^a-z0-9_-]+/gi, "-"));
-    const shot = await this.raw.screenshot().catch(() => undefined);
-    if (shot) await Bun.write(`${stem}.png`, shot);
-    const dom = await this.raw
-      .evaluate<string>("document.documentElement.outerHTML")
-      .catch((error) => String(error));
+    const shot = await within(
+      "capturing the page",
+      Promise.try(() =>
+        this.raw.cdp<{ data: string }>("Page.captureScreenshot"),
+      ),
+      5_000,
+    ).catch(() => undefined);
+    if (shot) await Bun.write(`${stem}.png`, Buffer.from(shot.data, "base64"));
+    const storage = await this.storage().then(JSON.stringify, String);
+    const dom = await this.inspect("document.documentElement.outerHTML").catch(
+      String,
+    );
     const log = [...this.errors, ...this.console].join("\n");
-    await Bun.write(`${stem}.txt`, `${this.raw.url}\n\n${log}\n\n${dom}`);
+    await Bun.write(
+      `${stem}.txt`,
+      `${this.raw.url}\n\n${storage}\n\n${log}\n\n${dom}`,
+    );
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
