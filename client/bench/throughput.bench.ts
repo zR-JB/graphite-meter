@@ -1,8 +1,9 @@
 // Browser throughput benchmark (`mise run bench-throughput`); keep run reports outside the repository.
 // It writes raw rows from fresh cell permutations, so session drift inflates spread rather than biasing one cell.
 import { afterAll, describe } from "bun:test";
-import { test, expect, origins, harnessOrigin } from "./fixtures";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { harness, home } from "../e2e/fleet";
+import { expect, test, type Page } from "../e2e/webview";
 import type { CellSpec, CellResult } from "./harness";
 import {
   buildCells,
@@ -15,6 +16,12 @@ import {
   MEASURE_MS,
 } from "./matrix";
 
+const origins = {
+  "h1-clear": home.http,
+  "h1-tls": home.url,
+  h2: home.h2,
+  h3: home.h3,
+};
 /** Reachable origins are measured; others are recorded invalid instead of left blank. */
 const enabled = (process.env.GM_BENCH_ORIGINS ?? "h1-clear").split(",");
 const active = Object.fromEntries(
@@ -60,11 +67,8 @@ function record(
   );
 }
 
-async function runCell(
-  page: import("../e2e/webview").Page,
-  spec: CellSpec,
-): Promise<CellResult> {
-  await page.goto(`${harnessOrigin}/bench/harness.html`);
+async function runCell(page: Page, spec: CellSpec): Promise<CellResult> {
+  await page.goto(`${harness}/bench/harness.html`);
   return page.evaluate((s) => window.__gmBench.run(s), spec);
 }
 
@@ -105,7 +109,6 @@ afterAll(() => {
         bytes: row.bytes as number,
         elapsedMs: row.elapsedMs as number,
         laneBytes: row.laneBytes as number[],
-        buckets: [],
         maxTickMs: row.maxTickMs as number,
         errors: row.errors as string[],
       },

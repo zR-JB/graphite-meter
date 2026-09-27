@@ -572,7 +572,7 @@ export class ChartEngine {
           const repeatWarmup = span.phase === "warmup" && warmupLabelled;
           if (span.phase === "warmup") warmupLabelled = true;
           return width > 56 && !repeatWarmup && isChartLabelPhase(span.phase)
-            ? [{ phase: span.phase, x: x0 + 3, y: plot.top + 9 }]
+            ? [{ phase: span.phase, x: x0 + 3, y: plot.top - 4 }]
             : [];
         })
       : [];

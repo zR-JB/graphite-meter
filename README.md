@@ -97,7 +97,7 @@ Prebuilt clients are available for **Linux and macOS on amd64/arm64**, and **Win
 (`graphite-meter-client.exe`). On authenticated servers, approve the terminal's short code in your
 browser. The client keeps its measurement grant in memory and never asks for the operator password.
 Without a terminal, or with `--report`, it runs once and prints the report; the exit status
-reflects the outcome.
+reflects the outcome. Such a headless run cannot sign in, so it fails on a protected server.
 
 [Flags, keys and exit codes](docs/DEPLOYMENT.md#native-terminal-client) ·
 [Build from source](docs/DEVELOPMENT.md#commands) ·

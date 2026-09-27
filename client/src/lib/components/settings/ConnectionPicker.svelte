@@ -5,7 +5,8 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
-  import { READINESS } from "../../presentation/vocabulary";
+  import { JARGON, READINESS } from "../../presentation/vocabulary";
+  import { tooltip } from "../../actions/tooltip";
 
   interface Props {
     role: ConnectionRole;
@@ -56,13 +57,16 @@
 </script>
 
 <fieldset>
-  <legend class="caps">{title}</legend>
+  <legend {@attach tooltip(() => JARGON[`${role}Path`])}>
+    {title}
+  </legend>
   <div class="options">
     {#each options as option (option.value)}
       <label
         class="choice"
         class:selected={selected === option.value}
         class:unavailable={option.disabled || locked}
+        {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
         <input
           type="radio"
@@ -112,14 +116,14 @@
   }
   legend {
     margin-bottom: 6px;
+    font-size: var(--type-sm);
+    font-weight: var(--w-strong);
   }
   .options {
     display: grid;
     gap: 6px;
   }
-  /* Settings cards are 180px minimum with a 12px grid gap: 180 + 12 + 180 =
-     372px, the exact outer-grid two-column breakpoint. */
-  @container settings-grid (min-width: 372px) {
+  @container settings (min-width: 372px) {
     .options {
       grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
     }
@@ -199,8 +203,9 @@
   }
   .validation-copy {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: 6px;
+    gap: 0 6px;
     min-width: 0;
   }
   .validation-copy strong {
@@ -208,12 +213,9 @@
     font-weight: var(--w-heavy);
   }
   .validation-copy small {
-    overflow: hidden;
     min-width: 0;
     color: var(--text-soft);
     font-size: inherit;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .dot {
     width: 7px;

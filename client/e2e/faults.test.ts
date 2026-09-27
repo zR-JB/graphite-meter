@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   frankfurt,
   open,
   phase,
@@ -9,7 +10,6 @@ import {
   spawnPeer,
 } from "./fleet";
 import { incoherence } from "../src/lib/history/types";
-import type { Server } from "./servers";
 import { expect, test, type Page } from "./webview";
 
 type Peer = Awaited<ReturnType<typeof spawnPeer>>;
@@ -69,14 +69,12 @@ const faults: Fault[] = [
   },
 ];
 
-const entry = ({ id, name, url }: Server) => ({ id, name, url });
-
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
     const input = [
-      ...document.querySelectorAll<HTMLInputElement>(".duration-fields input"),
+      ...document.querySelectorAll<HTMLInputElement>("input[type=number]"),
     ].find((field) =>
-      field.closest("label")?.textContent?.startsWith("Download"),
+      field.closest("label")?.textContent?.trim().startsWith("Download"),
     )!;
     input.value = String(value);
     input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -87,9 +85,7 @@ for (const fault of faults)
   test(fault.name, async (page) => {
     const victim = await spawnPeer("Oslo");
     const peers = [frankfurt, victim.server];
-    const self = await spawnPeer("Bergen", {
-      GM_SERVER_CATALOG: JSON.stringify({ servers: peers.map(entry) }),
-    });
+    const self = await spawnPeer("Bergen", catalog(...peers));
     const config = {
       ...baseConfig,
       duration: {

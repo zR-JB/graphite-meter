@@ -2,14 +2,16 @@ import "./app.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 
-// Chromium turns a clicked control's focus visible on any later key, even Shift; only navigation keys earn a ring.
+// Chromium lights a clicked control on any later key, even Shift or a screenshot chord; only a real key press does here.
 const root = document.documentElement;
-const NAVIGATION = /^(Tab|Arrow\w+|Home|End|Page\w+)$/;
+const MODIFIER =
+  /^(Shift|Control|Alt|AltGraph|Meta|OS|CapsLock|Fn|PrintScreen)$/;
 addEventListener("pointerdown", () => (root.dataset.pointer = ""), true);
 addEventListener(
   "keydown",
   (event: KeyboardEvent) => {
-    if (NAVIGATION.test(event.key)) delete root.dataset.pointer;
+    const chord = event.ctrlKey || event.metaKey || event.altKey;
+    if (!chord && !MODIFIER.test(event.key)) delete root.dataset.pointer;
   },
   true,
 );

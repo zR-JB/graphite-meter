@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   frankfurt,
   open,
   openSettings,
@@ -183,14 +184,11 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
 });
 
 test("the first result saves after the application server becomes unreachable", async (page) => {
-  const { id, name, url } = frankfurt;
-  const oslo = await spawnPeer("Oslo", {
-    GM_SERVER_CATALOG: JSON.stringify({ servers: [{ id, name, url }] }),
-  });
+  const oslo = await spawnPeer("Oslo", catalog(frankfurt));
   try {
     await open(page, oslo.server.url, {
       servers: [frankfurt],
-      latency: { mode: "primary", serverId: id },
+      latency: { mode: "primary", serverId: frankfurt.id },
       config: {
         stages: { ...baseConfig.stages, latency: false, upload: false },
         skipLoadedLatencyWhenStageOff: true,

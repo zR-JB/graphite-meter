@@ -78,7 +78,7 @@ curl -v "https://${GM_PUBLIC_HOST}:7247/"
 Test HTTP/3 from a capable client:
 
 ```sh
-curl --http3-only -v "https://${GM_PUBLIC_HOST}:7249/"
+curl --http3-only -v "https://${GM_PUBLIC_HOST}:7249/probe"
 ```
 
 ## Renewal behavior
@@ -103,9 +103,9 @@ podman run --rm -v "$PWD/letsencrypt:/etc/letsencrypt:z" -v "$PWD/log:/var/log/l
 
 `graphite-meter.env` enables all four native listeners on the standard ports
 listed in [DEPLOYMENT.md](../../../docs/DEPLOYMENT.md#native-listeners),
-and `Network=host` binds them directly on the host. Keep 7246/tcp blocked in
-the firewall if you want TLS-only external access, and do not add
-`PublishPort=` while `Network=host` is set.
+and `Network=host` binds them directly on the host. It advertises only the TLS
+listeners, so 7246/tcp can stay blocked in the firewall for TLS-only external
+access. Do not add `PublishPort=` while `Network=host` is set.
 
 ## Changing hostname or certificate name
 

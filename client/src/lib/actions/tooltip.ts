@@ -1,5 +1,5 @@
 // Anchored tooltips for jargon, controls and chart points; the words live in vocabulary.ts.
-import { fromAction } from "svelte/attachments";
+import { fromAction, type Attachment } from "svelte/attachments";
 import { nextFrame } from "../presentation/motion.svelte";
 const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
@@ -8,6 +8,49 @@ const HOVER_DELAY_MS = 350;
 const TOUCH_DISMISS_MS = 4000;
 /** An attachment; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
+
+const STEP: Record<string, number> = {
+  ArrowDown: 1,
+  ArrowRight: 1,
+  ArrowUp: -1,
+  ArrowLeft: -1,
+};
+
+/** One tab stop for a set of explained facts (marked data-tip-group); arrows walk them and show each tip. */
+export const tipGroup: Attachment<HTMLElement> = (node) => {
+  const facts = () => [...node.querySelectorAll<HTMLElement>("[data-tip]")];
+  const settle = () => {
+    const list = facts();
+    if (list.length && !list.some((fact) => fact.tabIndex === 0))
+      list[0].tabIndex = 0;
+  };
+  function onKeydown(event: KeyboardEvent) {
+    const list = facts();
+    const at = list.indexOf(event.target as HTMLElement);
+    if (at < 0) return;
+    const to =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? list.length - 1
+          : event.key in STEP
+            ? (at + STEP[event.key] + list.length) % list.length
+            : -1;
+    if (to < 0) return;
+    event.preventDefault();
+    list[at].tabIndex = -1;
+    list[to].tabIndex = 0;
+    list[to].focus();
+  }
+  const observer = new MutationObserver(settle);
+  observer.observe(node, { childList: true, subtree: true });
+  queueMicrotask(settle);
+  node.addEventListener("keydown", onKeydown);
+  return () => {
+    observer.disconnect();
+    node.removeEventListener("keydown", onKeydown);
+  };
+};
 
 function tooltipAction(node: HTMLElement, initial: string) {
   let text = initial;
@@ -22,10 +65,12 @@ function tooltipAction(node: HTMLElement, initial: string) {
     "anchor-name",
     anchorNames ? `${anchorNames}, --${id}` : `--${id}`,
   );
-  // A hint inside a control rides its focus and taps; any other anchor takes a tab stop.
+  // A hint inside a control rides its focus and taps; any other anchor takes a tab stop, shared within a tip group.
   const inert = !node.closest(ACTIONABLE_SELECTOR);
-  if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
-    node.tabIndex = 0;
+  if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex")) {
+    node.dataset.tip = "";
+    node.tabIndex = node.closest("[data-tip-group]") ? -1 : 0;
+  }
   // A multi-line tip is an explainer: its first line titles the rest.
   function write(target: HTMLElement) {
     target.textContent = text;
@@ -92,8 +137,12 @@ function tooltipAction(node: HTMLElement, initial: string) {
     for (const [target, type, listener, capture] of dismissListeners)
       target.removeEventListener(type, listener as EventListener, capture);
   }
-  function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && bubble) hide();
+  // An open tip takes Escape, so it never reaches page shortcuts such as stopping a run.
+  function onEscape(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    hide();
+    event.preventDefault();
+    event.stopPropagation();
   }
   function onPointerEnter(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
@@ -140,6 +189,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
     [document, "visibilitychange", onVisibilityDismiss, false],
     [document, "toggle", onPopoverToggle, true],
     [document, "pointerdown", onDocumentPointerDown, true],
+    [document, "keydown", onEscape, true],
   ] as const;
   const nodeListeners = [
     ["pointerdown", onPointerDown],
@@ -148,7 +198,6 @@ function tooltipAction(node: HTMLElement, initial: string) {
     ["focusin", onFocus],
     ["focusout", hide],
     ["pointerup", onPointerUp],
-    ["keydown", onKeydown],
     ["click", onClick],
   ] as const;
   for (const [type, listener] of nodeListeners)

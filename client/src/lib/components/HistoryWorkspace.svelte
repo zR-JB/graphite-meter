@@ -28,6 +28,7 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
     counted,
+    JARGON,
     LATENCY_POPULATION,
     OUTCOME,
     STAGE,
@@ -91,19 +92,20 @@
 
   const COLUMN: Record<
     HistoryColumn,
-    { short: string; icon: IconName; help?: string }
+    { short: string; icon: IconName; help: string }
   > = {
-    download: STAGE.download,
-    upload: STAGE.upload,
-    bidirectional: STAGE.bidirectional,
+    download: { ...STAGE.download, help: JARGON.download },
+    upload: { ...STAGE.upload, help: JARGON.upload },
+    bidirectional: { ...STAGE.bidirectional, help: JARGON.bidirectional },
     idle: {
       short: LATENCY_POPULATION.latency.short,
       icon: STAGE.latency.icon,
+      help: JARGON.latency,
     },
     loaded: {
       short: "Loaded",
       icon: STAGE.latency.icon,
-      help: "Highest loaded median (p50) across download, upload and bidirectional",
+      help: JARGON.loadedLatency,
     },
   };
 
@@ -453,8 +455,8 @@
                   : descending
                     ? "descending"
                     : "ascending"}
-                {@attach tooltip(
-                  () => (column !== "date" && COLUMN[column].help) || "",
+                {@attach tooltip(() =>
+                  column === "date" ? "" : COLUMN[column].help,
                 )}
                 onclick={() =>
                   setSort(

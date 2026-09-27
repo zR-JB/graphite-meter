@@ -18,6 +18,8 @@ EnvironmentFile=graphite-meter.env
 
 # Mount the complete tree because live/ contains symlinks into archive/.
 Volume=./letsencrypt:/etc/letsencrypt:ro,z
+ReadOnly=true
+DropCapability=ALL
 NoNewPrivileges=true
 
 [Service]
