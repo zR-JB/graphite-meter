@@ -925,14 +925,10 @@ impl Ui {
                 )));
             }
             for interval in &result.intervals {
-                let reason = match interval.reason {
-                    graphite_meter_core::measurement::IntervalReason::StageStart => "stage-start",
-                    graphite_meter_core::measurement::IntervalReason::Dropout => "dropout",
-                    graphite_meter_core::measurement::IntervalReason::EvidenceResumed => "evidence-resumed",
-                };
                 lines.push(Line::from(format!(
-                    "{} · {reason} · {:.1}–{:.1} s{}",
+                    "{} · {} · {:.1}–{:.1} s{}",
                     result.stage.name(),
+                    interval.reason.name(),
                     interval.start_nanos as f64 / 1e9,
                     interval.end_nanos as f64 / 1e9,
                     if interval.complete { "" } else { " · incomplete" }

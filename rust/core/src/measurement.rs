@@ -39,6 +39,16 @@ pub enum IntervalReason {
     EvidenceResumed,
 }
 
+impl IntervalReason {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::StageStart => "stage-start",
+            Self::Dropout => "dropout",
+            Self::EvidenceResumed => "evidence-resumed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverSnapshot {
     pub id: String,
@@ -91,6 +101,15 @@ pub struct AggregateWindow {
     pub up: Vec<ComponentWindow>,
     pub down_bytes_per_sec: Option<f64>,
     pub up_bytes_per_sec: Option<f64>,
+}
+
+impl AggregateWindow {
+    fn shortest(&self) -> u64 {
+        self.up
+            .iter()
+            .map(|component| component.duration_nanos)
+            .fold(self.end_nanos - self.start_nanos, u64::min)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -199,22 +218,18 @@ impl AggregateMeasurements {
         self.intervals.back()?;
         self.ledger(&boundary);
         let interval = self.intervals.back()?;
-        let valid = !interval.participants.is_empty()
-            && interval.participants.iter().all(|id| {
-                (!interval.stage.needs_down() || boundary.down.contains_key(id))
-                    && (!interval.stage.needs_up() || boundary.up.contains_key(id))
-            });
         if self.first.is_some() && boundary.stalled {
-            self.intervals.back_mut().unwrap().complete = false;
             return self.resume_at(boundary);
         }
-        if !valid {
+        if interval.participants.is_empty()
+            || interval.participants.iter().any(|id| {
+                interval.stage.needs_down() && !boundary.down.contains_key(id)
+                    || interval.stage.needs_up() && !boundary.up.contains_key(id)
+            })
+        {
             return None;
         }
-        if !self.intervals.back().unwrap().complete {
-            return self.resume_at(boundary);
-        }
-        if self.first.is_none() {
+        let (Some(first), Some(last)) = (&self.first, &self.last) else {
             let interval = self.intervals.back_mut().unwrap();
             interval.start_nanos = boundary.at_nanos;
             interval.end_nanos = boundary.at_nanos;
@@ -222,40 +237,27 @@ impl AggregateMeasurements {
             self.first = Some(boundary.clone());
             self.last = Some(boundary);
             return None;
-        }
-        let interval = self.intervals.back().unwrap();
-        let last = self.last.as_ref().unwrap();
-        if boundary.at_nanos <= last.at_nanos
-            || interval.participants.iter().any(|id| {
-                interval.stage.needs_up()
-                    && last.up.get(id).is_some_and(|start| {
-                        let end = &boundary.up[id];
-                        start.id == end.id && end.bytes >= start.bytes && end.nanos == start.nanos
-                    })
-                    || boundary.final_boundary
-                        && (interval.stage.needs_down() && boundary.down[id] <= last.down[id]
-                            || interval.stage.needs_up()
-                                && boundary.up[id].id == last.up[id].id
-                                && boundary.up[id].bytes <= last.up[id].bytes)
+        };
+        if boundary.final_boundary
+            && interval.participants.iter().any(|id| {
+                interval.stage.needs_down() && boundary.down[id] <= last.down[id]
+                    || interval.stage.needs_up()
+                        && boundary.up[id].id == last.up[id].id
+                        && boundary.up[id].bytes <= last.up[id].bytes
             })
         {
             return None;
         }
-        let sample = aggregate_window(self.last.as_ref().unwrap(), &boundary, interval);
-        let full = aggregate_window(self.first.as_ref().unwrap(), &boundary, interval);
-        let (Some(sample), Some(full)) = (sample, full) else {
-            let interval = self.intervals.back_mut().unwrap();
-            interval.complete = false;
-            interval.end_nanos = boundary.at_nanos;
+        let sample = window(last, &boundary, interval);
+        if matches!(sample, Err(Gap::Stale)) {
+            return None;
+        }
+        let (Ok(sample), Ok(full)) = (sample, window(first, &boundary, interval)) else {
             return self.resume_at(boundary);
         };
-        let peak = aggregate_window(self.peak_from.as_ref().unwrap(), &boundary, interval).filter(|window| {
-            window.end_nanos - window.start_nanos >= 500_000_000
-                && window
-                    .up
-                    .iter()
-                    .all(|component| component.duration_nanos >= 500_000_000)
-        });
+        let peak = window(self.peak_from.as_ref().unwrap(), &boundary, interval)
+            .ok()
+            .filter(|window| window.shortest() >= 500_000_000);
         if peak.is_some() {
             self.peak_from = Some(boundary.clone());
         }
@@ -414,7 +416,8 @@ impl AggregateMeasurements {
     }
 
     fn resume_at(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
-        let interval = self.intervals.back().unwrap();
+        let interval = self.intervals.back_mut().unwrap();
+        interval.complete = false;
         let (stage, participants) = (interval.stage, interval.participants.clone());
         self.begin(stage, participants, boundary.at_nanos, IntervalReason::EvidenceResumed);
         // The ledger was already updated before the gap was discovered.
@@ -487,10 +490,15 @@ impl AggregateMeasurements {
     }
 }
 
-fn aggregate_window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> Option<AggregateWindow> {
-    let elapsed = last.at_nanos.checked_sub(first.at_nanos)?;
-    if elapsed == 0 || elapsed > i64::MAX as u64 {
-        return None;
+enum Gap {
+    Stale,
+    Invalid,
+}
+
+fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> Result<AggregateWindow, Gap> {
+    let elapsed = last.at_nanos.saturating_sub(first.at_nanos);
+    if elapsed == 0 {
+        return Err(Gap::Stale);
     }
     let mut window = AggregateWindow {
         start_nanos: first.at_nanos,
@@ -500,11 +508,13 @@ fn aggregate_window(first: &Boundary, last: &Boundary, interval: &AggregationInt
         down_bytes_per_sec: None,
         up_bytes_per_sec: None,
     };
+    let mut stale = false;
     for id in &interval.participants {
         if interval.stage.needs_down() {
-            let start = *first.down.get(id)?;
-            let end = *last.down.get(id)?;
-            let bytes = end.checked_sub(start)?;
+            let (Some(&start), Some(&end)) = (first.down.get(id), last.down.get(id)) else {
+                return Err(Gap::Invalid);
+            };
+            let bytes = end.checked_sub(start).ok_or(Gap::Invalid)?;
             let rate = bytes as f64 / (elapsed as f64 / 1e9);
             window.down.push(ComponentWindow {
                 server_id: id.clone(),
@@ -520,16 +530,17 @@ fn aggregate_window(first: &Boundary, last: &Boundary, interval: &AggregationInt
             *window.down_bytes_per_sec.get_or_insert(0.0) += rate;
         }
         if interval.stage.needs_up() {
-            let start = first.up.get(id)?;
-            let end = last.up.get(id)?;
-            if start.id != end.id {
-                return None;
+            let (Some(start), Some(end)) = (first.up.get(id), last.up.get(id)) else {
+                return Err(Gap::Invalid);
+            };
+            if start.id != end.id || end.bytes < start.bytes || end.nanos < start.nanos {
+                return Err(Gap::Invalid);
             }
-            let bytes = end.bytes.checked_sub(start.bytes)?;
-            let duration = end.nanos.checked_sub(start.nanos)?;
-            if duration == 0 || duration > i64::MAX as u64 {
-                return None;
+            if end.nanos == start.nanos {
+                stale = true;
+                continue;
             }
+            let (bytes, duration) = (end.bytes - start.bytes, end.nanos - start.nanos);
             let rate = bytes as f64 / (duration as f64 / 1e9);
             window.up.push(ComponentWindow {
                 server_id: id.clone(),
@@ -545,5 +556,8 @@ fn aggregate_window(first: &Boundary, last: &Boundary, interval: &AggregationInt
             *window.up_bytes_per_sec.get_or_insert(0.0) += rate;
         }
     }
-    Some(window)
+    if stale {
+        return Err(Gap::Stale);
+    }
+    Ok(window)
 }

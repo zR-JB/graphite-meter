@@ -64,18 +64,27 @@ fn shared_aggregation_contract() {
         let expected = case["intervals"].as_array().unwrap();
         assert_eq!(engine.intervals().len(), expected.len(), "{}", case["name"]);
         for (interval, expected) in engine.intervals().iter().zip(expected) {
-            assert_eq!(interval.complete, expected["complete"].as_bool().unwrap());
-            let window = interval.window.as_ref().unwrap();
+            assert_eq!(interval.reason.name(), expected["reason"], "{}", case["name"]);
             assert_eq!(
-                window.start_nanos,
-                expected["window"]["startMs"].as_u64().unwrap() * 1_000_000
+                interval.complete,
+                expected["complete"].as_bool().unwrap(),
+                "{}",
+                case["name"]
             );
+            let window = &expected["window"];
+            let Some(actual) = &interval.window else {
+                assert!(window.is_null(), "{}: missing window", case["name"]);
+                continue;
+            };
+            let ms = |value: &Value| value.as_u64().unwrap() * 1_000_000;
             assert_eq!(
-                window.end_nanos,
-                expected["window"]["endMs"].as_u64().unwrap() * 1_000_000
+                (actual.start_nanos, actual.end_nanos),
+                (ms(&window["startMs"]), ms(&window["endMs"])),
+                "{}",
+                case["name"]
             );
-            close(window.down_bytes_per_sec, &expected["window"]["downBytesPerSec"]);
-            close(window.up_bytes_per_sec, &expected["window"]["upBytesPerSec"]);
+            close(actual.down_bytes_per_sec, &window["downBytesPerSec"]);
+            close(actual.up_bytes_per_sec, &window["upBytesPerSec"]);
         }
     }
 }
