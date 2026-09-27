@@ -66,7 +66,6 @@
     aria-expanded={open}
     popovertarget={popoverId}
     style:anchor-name={`--${popoverId}`}
-    {@attach tooltip(() => "Columns and sort order")}
   >
     <span class="layout-icon"><Icon name="columns" /></span>
     <strong>Columns</strong>

@@ -53,8 +53,8 @@
 
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="server-setting">
-    <div class="server-heading" {@attach tooltip(() => JARGON.testServers)}>
-      <strong>Test servers</strong>
+    <div class="server-heading">
+      <strong {@attach tooltip(() => JARGON.testServers)}>Test servers</strong>
       <small>{selected.length} selected · up to 4</small>
     </div>
     <div
@@ -138,11 +138,10 @@
       are not latency measurements.</span
     >
     {#if selected.length > 1 && store.latencyEnabled}
-      <label
-        class="latency-policy"
-        {@attach tooltip(() => JARGON.latencyServer)}
-      >
-        <strong>Latency server</strong>
+      <label class="latency-policy">
+        <strong {@attach tooltip(() => JARGON.latencyServer)}
+          >Latency server</strong
+        >
         <ServerScope
           servers={selected}
           value={store.latencySelection.mode === "all"

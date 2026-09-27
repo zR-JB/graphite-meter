@@ -629,9 +629,6 @@
     flex: 0 0 var(--kv-label);
     color: var(--text-soft);
   }
-  .kv dt[tabindex]:is(:hover, :focus-visible) {
-    color: var(--text);
-  }
   .kv dd {
     flex: 1 1 10rem;
     min-width: 0;
@@ -939,6 +936,16 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* An explained term brightens while pointed at; unlayered so it outranks component tones. */
+@media (hover: hover) {
+  :root [data-tip] {
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  :root [data-tip]:is(:hover, :focus-visible) {
+    color: var(--text);
   }
 }
 

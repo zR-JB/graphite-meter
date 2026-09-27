@@ -355,35 +355,31 @@
     <h3>Display</h3>
     <div class="kv">
       <div class="row">
-        <span>Rate unit</span>
+        <span {@attach tooltip(() => JARGON.rateUnit)}>Rate unit</span>
         <div class="segmented" role="group" aria-label="Rate unit">
           <button
             type="button"
             aria-pressed={store.unitKind === "bits"}
-            {@attach tooltip(() => JARGON.unitBits)}
             onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
           >
           <button
             type="button"
             aria-pressed={store.unitKind === "bytes"}
-            {@attach tooltip(() => JARGON.unitBytes)}
             onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
           >
         </div>
       </div>
       <div class="row">
-        <span>Prefix</span>
+        <span {@attach tooltip(() => JARGON.unitPrefix)}>Prefix</span>
         <div class="segmented" role="group" aria-label="Prefix scale">
           <button
             type="button"
             aria-pressed={store.unitBase === "base10"}
-            {@attach tooltip(() => JARGON.unitDecimal)}
             onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
           >
           <button
             type="button"
             aria-pressed={store.unitBase === "base2"}
-            {@attach tooltip(() => JARGON.unitBinary)}
             onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
           >
         </div>

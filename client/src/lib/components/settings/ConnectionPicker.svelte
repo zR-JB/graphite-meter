@@ -78,9 +78,7 @@
         <span class="radio-dot" aria-hidden="true"></span>
         <span class="copy">
           <strong>{option.label}</strong>
-          <small {@attach tooltip(() => `${option.label}\n${option.detail}`)}
-            >{option.detail}</small
-          >
+          <small>{option.detail}</small>
         </span>
       </label>
     {/each}
@@ -182,14 +180,9 @@
     overflow-wrap: anywhere;
   }
   .copy small {
-    display: -webkit-box;
-    overflow: hidden;
     color: var(--text-muted);
     font-size: var(--type-xs);
     line-height: 1.4;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
   }
   .btn {
     justify-self: start;
