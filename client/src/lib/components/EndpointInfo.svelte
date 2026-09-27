@@ -220,7 +220,7 @@
           data-role={role}
           {@attach tooltip(() => JARGON[`${role}Path`])}
         >
-          <dt>{role === "throughput" ? "Throughput" : "Latency"}</dt>
+          <dt>{role === "throughput" ? "Throughput path" : "Latency path"}</dt>
           <dd>
             {inTest ? connection.summary : "Not selected"}
             <span class="badge" data-tone={inTest ? status.tone : "neutral"}
@@ -250,7 +250,7 @@
           connections.latency.preTestPingMs !== undefined
             ? formatLatency(connections.latency.preTestPingMs)
             : "Pending",
-          JARGON.preflight,
+          JARGON.pretestLatency,
         )}
       {/if}
       {@render row(

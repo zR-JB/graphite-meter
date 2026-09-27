@@ -168,8 +168,8 @@
   const environment = $derived(
     [
       ["IP family", ipVersion ? `IPv${ipVersion}` : null],
-      ["Client build", record.build],
-      ["Server engine", record.engine],
+      ["Client", record.build],
+      ["Server", record.engine],
     ].filter((row): row is [string, string] => !!row[1]),
   );
 </script>
@@ -346,7 +346,7 @@
       {/if}
 
       <section class="group">
-        <h3 class="caps">Environment</h3>
+        <h3 class="caps">Build</h3>
         <dl class="kv">
           {#each environment as [label, value] (label)}
             <div>
