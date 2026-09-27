@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { inView } from "../actions/inView";
-  import { nextFrame } from "../presentation/motion.svelte";
+  import { handoff, nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
@@ -26,6 +26,33 @@
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
+  // Axis labels name the ceiling the plot settles on and change only while faded.
+  const axis = handoff(
+    () => {
+      if (!chartPresentation) return { unit: "", left: [], right: [] };
+      const { layout, units, ceiling } = chartPresentation;
+      const { base, kind, index } = units;
+      const label = (value: number) => (row: (typeof layout.axisRows)[0]) => ({
+        y: row.y,
+        text: fmtGaugeTick(value * (1 - row.fraction)),
+      });
+      return {
+        unit: chartPresentation.hasThroughputScale
+          ? rateUnit(base, kind, index)
+          : "",
+        left: chartPresentation.hasThroughputScale
+          ? layout.axisRows.map(
+              label(rateValueAt(ceiling.bytesPerSec, base, kind, index)),
+            )
+          : [],
+        right: chartPresentation.latencyEnabled
+          ? layout.axisRows.map(label(ceiling.rttMs))
+          : [],
+      };
+    },
+    ({ unit, left, right }) =>
+      [unit, ...[...left, ...right].map((row) => row.text)].join(),
+  );
   let selectedT = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
@@ -319,41 +346,37 @@
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}
-      {@const { viewport, plot, width } = presentation.layout}
+      {@const { plot, width } = presentation.layout}
       {@const { base, kind, index } = presentation.units}
       {@const rate = (bytesPerSec: number) =>
         rateValueAt(bytesPerSec, base, kind, index)}
       <div class="chart-labels" aria-hidden="true">
-        {#if presentation.hasThroughputScale}
-          <span class="axis-unit" style:left="4px" style:top={`${plot.top}px`}
-            >{rateUnit(base, kind, index)}</span
-          >
-          {#each presentation.layout.axisRows as row (row.fraction)}
+        <div style:opacity={axis.opacity}>
+          {#if axis.shown.unit}
+            <span class="axis-unit" style:left="4px" style:top={`${plot.top}px`}
+              >{axis.shown.unit}</span
+            >
+          {/if}
+          {#each axis.shown.left as row (row.y)}
             <span class="axis-label" style:left="4px" style:top={`${row.y}px`}
-              >{fmtGaugeTick(
-                rate(viewport.bytesPerSecMax * (1 - row.fraction)),
-              )}</span
+              >{row.text}</span
             >
           {/each}
-        {/if}
-        {#if presentation.latencyEnabled}
-          <span
-            class="axis-unit axis-right"
-            style:left={`${width - 4}px`}
-            style:top={`${plot.top}px`}>ms</span
-          >
-          {#each presentation.layout.axisRows as row (row.fraction)}
+          {#if axis.shown.right.length}
+            <span
+              class="axis-unit axis-right"
+              style:left={`${width - 4}px`}
+              style:top={`${plot.top}px`}>ms</span
+            >
+          {/if}
+          {#each axis.shown.right as row (row.y)}
             <span
               class="axis-label axis-right"
               style:left={`${width - 4}px`}
-              style:top={`${row.y}px`}
-              >{fmtGaugeTick(
-                viewport.rttMin +
-                  (viewport.rttMax - viewport.rttMin) * (1 - row.fraction),
-              )}</span
+              style:top={`${row.y}px`}>{row.text}</span
             >
           {/each}
-        {/if}
+        </div>
         {#each presentation.layout.timeMajorTicks as tick (tick.t)}
           {@const { left, right } = presentation.layout.plot}
           <span
@@ -476,7 +499,6 @@
     border-radius: var(--r-full);
   }
   .chart-labels {
-    opacity: var(--run-fade, 1);
     color: var(--text-soft);
     font: var(--type-2xs) var(--font-mono);
   }
@@ -503,6 +525,11 @@
   /* Moving labels translate rather than lay out again as the time scale eases. */
   .time-label {
     left: 0;
+  }
+  /* The run's own labels leave with its plot; the axes hand off by themselves. */
+  .time-label,
+  .marks {
+    opacity: var(--run-fade, 1);
   }
   .phase-label {
     translate: 0 -100%;

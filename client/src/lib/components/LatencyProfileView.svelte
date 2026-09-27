@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { inView } from "../actions/inView";
-  import { Smoothed } from "../presentation/motion.svelte";
+  import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -40,11 +40,14 @@
 
   const scale = $derived(profileDomain(lanes));
   const live = $derived(variant === "bare");
-  const ticks = $derived([
-    scale.min,
-    scale.min + scale.span / 2,
-    scale.min + scale.span,
-  ]);
+  // A rescaled axis relabels only while faded; the markers glide to it.
+  const ticks = handoff(
+    () =>
+      [scale.min, scale.min + scale.span / 2, scale.min + scale.span].map(
+        (tick) => ({ left: pos(tick, scale), text: fmtGaugeTick(tick) }),
+      ),
+    (ticks) => ticks.map((tick) => tick.text).join(),
+  );
 
   let hover = $state<{
     key: LatencyProfileViewLane["key"];
@@ -340,10 +343,10 @@
       </div>
     </div>
   {/each}
-  <div class="ticks" aria-hidden="true">
-    {#each ticks as tick, index (index)}
-      <span style={`left:${pos(tick, scale)}%`}
-        >{fmtGaugeTick(tick)}{index === 2 ? " ms" : ""}</span
+  <div class="ticks" aria-hidden="true" style:opacity={ticks.opacity}>
+    {#each ticks.shown as tick, index (index)}
+      <span style={`left:${tick.left}%`}
+        >{tick.text}{index === 2 ? " ms" : ""}</span
       >
     {/each}
   </div>

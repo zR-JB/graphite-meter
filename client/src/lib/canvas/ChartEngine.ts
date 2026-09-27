@@ -105,6 +105,8 @@ const THROUGHPUT_LANES = [
 export interface ChartPresentation {
   layout: ChartLayout;
   units: ChartData["units"];
+  /** The ceilings the axes settle on while the plotted ones glide to them. */
+  ceiling: { bytesPerSec: number; rttMs: number };
   latencyEnabled: boolean;
   hasThroughputScale: boolean;
   phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
@@ -221,6 +223,8 @@ export class ChartEngine {
   /** A new run replaces the presented one only once it has faded out. */
   #runFade = new Smoothed();
   #shownFade = 1;
+  #bytesCeiling = new Smoothed();
+  #rttCeiling = new Smoothed();
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -479,6 +483,20 @@ export class ChartEngine {
       this.#onTimeScale?.(tMax);
       this.#publishPresentation(this.#data, !cameraMoving);
     }
+    const bytesPerSecMax = this.#bytesCeiling.at(now);
+    const rttMax = this.#rttCeiling.at(now);
+    const ceilingMoving =
+      bytesPerSecMax !== this.#bytesCeiling.target ||
+      rttMax !== this.#rttCeiling.target;
+    if (
+      !handing &&
+      (bytesPerSecMax !== this.#vp.bytesPerSecMax || rttMax !== this.#vp.rttMax)
+    ) {
+      this.#vp = { ...this.#vp, bytesPerSecMax, rttMax };
+      this.#layout = chartLayout(this.#w, this.#h, this.#vp);
+      this.#sceneDirty = true;
+      this.#publishPresentation(this.#data);
+    }
     const fade = this.#runFade.at(now);
     if (fade !== this.#shownFade) this.#onFade?.((this.#shownFade = fade));
     if (this.#sceneDirty && !handing) {
@@ -492,7 +510,13 @@ export class ChartEngine {
       this.#rebuildScene(now);
       this.#sceneDirty = false;
     }
-    return cameraMoving || this.#latencyGlyphActive || handing || fade < 1;
+    return (
+      cameraMoving ||
+      ceilingMoving ||
+      this.#latencyGlyphActive ||
+      handing ||
+      fade < 1
+    );
   };
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
@@ -554,20 +578,25 @@ export class ChartEngine {
       });
     }
     this.#result = complete;
-    const tMin = 0;
-    const bytesPerSecMax =
-      d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000;
     this.#hasThroughputScale =
       d.scaleBytesPerSec !== DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC ||
       d.throughput.length > 0;
-    const rttMin = 0;
-    const rttMax = d.latencyScaleMs;
+    // A rescale glides the plotted marks; before any are plotted it snaps.
+    const ceiling = (value: Smoothed, target: number, empty: boolean) => {
+      if (value.target !== target || empty)
+        value.set(target, { over: RESULT_GLIDE_MS, snap: empty, now });
+      return value.at(now);
+    };
     this.#vp = {
-      tMin,
+      tMin: 0,
       tMax: this.#vp.tMax,
-      bytesPerSecMax,
-      rttMin,
-      rttMax,
+      bytesPerSecMax: ceiling(
+        this.#bytesCeiling,
+        d.scaleBytesPerSec > 0 ? d.scaleBytesPerSec : 125_000,
+        !d.throughput.length,
+      ),
+      rttMin: 0,
+      rttMax: ceiling(this.#rttCeiling, d.latencyScaleMs, !d.latency.length),
     };
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#publishPresentation(d);
@@ -575,15 +604,15 @@ export class ChartEngine {
   }
   #publishPresentation(data: ChartData, force = false): void {
     if (!this.#onPresentation) return;
-    const { plot, width, height, viewport, timeMajorTicks } = this.#layout;
+    const { plot, width, height, timeMajorTicks } = this.#layout;
     const key = [
       width,
       height,
       data.units.base,
       data.units.kind,
       data.units.index,
-      viewport.bytesPerSecMax,
-      viewport.rttMax,
+      this.#bytesCeiling.target,
+      this.#rttCeiling.target,
       data.latencyEnabled,
       this.#hasThroughputScale,
       this.#result,
@@ -625,6 +654,10 @@ export class ChartEngine {
     this.#onPresentation({
       layout: this.#layout,
       units: data.units,
+      ceiling: {
+        bytesPerSec: this.#bytesCeiling.target,
+        rttMs: this.#rttCeiling.target,
+      },
       latencyEnabled: data.latencyEnabled,
       hasThroughputScale: this.#hasThroughputScale,
       phaseLabels,
