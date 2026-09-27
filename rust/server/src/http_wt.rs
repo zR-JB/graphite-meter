@@ -360,9 +360,6 @@ async fn download_lane(
         let mut remaining = count;
         while remaining > 0 {
             let size = remaining.min(16 * 1024).min(block.len() as u64) as usize;
-            // Noq retains queued stream data for retransmission. Reuse the
-            // shared immutable block instead of copying every write into its
-            // send buffer; `write_chunk` handles partial flow-control writes.
             match stream.write_chunk(block.slice(..size)).await {
                 Ok(()) => {}
                 Err(error) if remaining == count => return Err(error.into()),

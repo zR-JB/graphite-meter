@@ -76,11 +76,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "d28b2e312bbbe259f8c76d30fa16472febddb41c",
+    "rev": "563241e95a5ba69315398cea063f100c7b476d2d",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "89dbc840605cb386b9e6f82444462d8ab5a35917ed1a7deb7dbc64ac87786d1a",
+    "diffSha256": "cca6fefcca59cfcfd3afa4d8f81ee79e8f941e1832ba9a43b97a38100f5914c9",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -148,6 +148,46 @@
       },
       {
         "subject": "Expose receive allocation lifetime on weak connection handles",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound retained stream send storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Retransmit without allocating range metadata",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Precharge sparse stream acknowledgement storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Refund only newly acknowledged stream bytes",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound packet index ownership without sequence gaps",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound retained datagram storage through its last owner",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Block untracked packet padding and abandoned path retries",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Retain exact CRYPTO backing allocation credit",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound retained packet control storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Retain normalized close reason backing",
         "origin": "graphite-meter"
       }
     ],

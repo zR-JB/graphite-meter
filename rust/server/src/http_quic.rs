@@ -434,7 +434,7 @@ impl SendWindow {
 
     fn refund(&mut self, connection: &quinn::Connection) {
         if let Some(extra) = &mut self.extra {
-            let retained = self.limit.max(connection.send_buffered_bytes());
+            let retained = self.limit.max(connection.send_allocated_bytes());
             let reserved = MIN_SEND_WINDOW + extra.num_permits() as u64;
             drop(extra.split(reserved.saturating_sub(retained) as usize));
             if extra.num_permits() == 0 {
@@ -958,7 +958,7 @@ mod tests {
             server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
             let mut payload = server.open_uni().await.unwrap();
             payload.write_all(&vec![1; 4 * 1024 * 1024]).await.unwrap();
-            let outstanding = server.send_buffered_bytes();
+            let outstanding = server.send_allocated_bytes();
             assert!(outstanding > MIN_SEND_WINDOW);
             window.release(&server);
             assert_eq!(window.reserved(), outstanding);
