@@ -30,6 +30,7 @@
   import { store } from "../state/store.svelte";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
+    counted,
     LATENCY_POPULATION,
     OUTCOME,
     STAGE,
@@ -342,10 +343,7 @@
   <header class="surface-head history-head">
     <h1 id="history-title">History</h1>
     {#if records.length}
-      <p>
-        {records.length}
-        {records.length === 1 ? "result" : "results"} · {span}
-      </p>
+      <p>{counted(records.length, "result")} · {span}</p>
     {/if}
     <div class="head-actions">
       {#if records.length}
