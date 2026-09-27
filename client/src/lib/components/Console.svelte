@@ -170,6 +170,8 @@
     currentRoute.kind === "app" ? currentRoute.panels : [],
   );
   const lastPanel = $derived(currentPanels.at(-1));
+  // A flyout covers the stage and status bar; the topbar and its shortcuts stay live.
+  const flyout = $derived(!dockQuery.current && lastPanel !== undefined);
   const settingsOpen = $derived(
     allowMultiplePanels
       ? currentPanels.includes("settings")
@@ -436,7 +438,13 @@
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
       return;
     if (document.querySelector(":popover-open:not(.tooltip)")) return;
-    if (isEditable(e.target) || activeModal()) return;
+    if (activeModal()) return;
+    if (e.key === "Escape" && flyout && lastPanel) {
+      dismissPanel(lastPanel);
+      e.preventDefault();
+      return;
+    }
+    if (isEditable(e.target)) return;
 
     if (e.key === "Escape") {
       if (
@@ -646,7 +654,7 @@
   </header>
 
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage">
+    <section class="stage history-stage" inert={flyout}>
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -654,7 +662,7 @@
       </div>
     </section>
   {:else if historyOpen}
-    <section class="stage history-stage">
+    <section class="stage history-stage" inert={flyout}>
       {#if HistoryWorkspace}<HistoryWorkspace
           selectedId={currentRoute.kind === "app" &&
           currentRoute.workspace.kind === "history"
@@ -677,8 +685,8 @@
             onclick={() => location.reload()}>Retry</button
           >
         </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon"><Icon name="history" /></span>Opening
-          History…
+          <span class="empty-icon"><Icon name="history" /></span>
+          <h2>Opening History</h2>
         </div>{/if}
     </section>
   {:else}
@@ -686,12 +694,13 @@
       class="stage measurement-stage"
       aria-label="Measurement workspace"
       tabindex="-1"
+      inert={flyout}
     >
       <GaugePanel {status} /><ThroughputChart />
     </section>
   {/if}
 
-  <footer class="status">
+  <footer class="status" inert={flyout}>
     <StatusBar {status} />
     <ShortcutHints />
   </footer>

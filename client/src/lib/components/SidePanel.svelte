@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Docked column on wide layouts, modal flyout or sheet elsewhere.
+  // Docked column on wide layouts; elsewhere a flyout or sheet over a scrim that leaves the topbar usable.
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
@@ -104,11 +104,19 @@
 </script>
 
 <div class="panel-layer" class:docked>
+  {#if !docked}<button
+      class="scrim"
+      class:open
+      type="button"
+      tabindex="-1"
+      aria-hidden="true"
+      onclick={onClose}
+    ></button>{/if}
   <Dialog
     {open}
-    modal={!docked}
+    modal={false}
+    keepFocus={docked}
     onCancel={onClose}
-    lightDismiss
     class="panel {side}"
     label={title}
     attach={(node) => {
@@ -151,9 +159,7 @@
       </button>
     </header>
 
-    {#if open}
-      <div class="panel-body">{@render children()}</div>
-    {/if}
+    <div class="panel-body">{@render children()}</div>
   </Dialog>
 </div>
 
@@ -191,6 +197,7 @@
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(100%);
     position: fixed;
+    z-index: var(--z-panel);
     inset: var(--topbar-h) 0 var(--statusbar-h) auto;
     width: min(440px, 92vw);
     height: auto;
@@ -214,21 +221,20 @@
       transform: var(--closed);
     }
   }
-  .panel-layer > :global(dialog.panel::backdrop) {
+  .scrim {
+    position: fixed;
+    z-index: var(--z-scrim);
+    inset: var(--topbar-h) 0 0;
     background: var(--scrim);
-    opacity: calc(1 - var(--sheet-drag, 0));
+    opacity: 0;
+    visibility: hidden;
     transition:
       opacity var(--dur-slide) var(--ease-out),
-      overlay var(--dur-slide) allow-discrete,
-      display var(--dur-slide) allow-discrete;
+      visibility var(--dur-slide) allow-discrete;
   }
-  .panel-layer > :global(dialog.panel:not([open])::backdrop) {
-    opacity: 0;
-  }
-  @starting-style {
-    .panel-layer > :global(dialog.panel[open]::backdrop) {
-      opacity: 0;
-    }
+  .scrim.open {
+    opacity: calc(1 - var(--sheet-drag, 0));
+    visibility: visible;
   }
 
   .resize-handle {
@@ -320,8 +326,9 @@
     overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    /* Reserve room so overlay scrollbars cannot cover cards or controls. */
-    padding-right: var(--space-2);
+    /* The scrollbar rides the panel edge, outside the content's even inset. */
+    margin-inline: calc(-1 * var(--space-4));
+    padding-inline: var(--space-4);
     scrollbar-gutter: stable;
   }
 </style>

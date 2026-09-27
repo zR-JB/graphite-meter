@@ -8,6 +8,8 @@
   interface Props {
     open: boolean;
     modal?: boolean;
+    /** In flow only: focus stays with the opener instead of entering the dialog. */
+    keepFocus?: boolean;
     onCancel: () => void;
     /** Close when the backdrop is clicked. */
     lightDismiss?: boolean;
@@ -24,6 +26,7 @@
   let {
     open,
     modal = true,
+    keepFocus = false,
     onCancel,
     lightDismiss = false,
     invoker,
@@ -51,7 +54,8 @@
     if (modal) dialog.showModal();
     else {
       dialog.show();
-      if (opener instanceof HTMLElement) opener.focus({ preventScroll: true });
+      if (keepFocus && opener instanceof HTMLElement)
+        opener.focus({ preventScroll: true });
     }
     return () => {
       dialog.close();
