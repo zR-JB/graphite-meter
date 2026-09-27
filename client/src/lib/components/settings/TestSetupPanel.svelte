@@ -155,8 +155,11 @@
     rejected = accepted ? null : field;
     if (!accepted) announce(rejection);
   }
+  // Idle, the only refusal is a schedule with no stage to run.
   const rejection = $derived(
-    store.startError || "This change cannot apply to the current run.",
+    running
+      ? store.startError || "This change cannot apply to the current run."
+      : "Give at least one stage a duration.",
   );
   function setDuration(key: DurationKey, event: Event) {
     commitNumber(
