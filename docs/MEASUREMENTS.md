@@ -53,10 +53,12 @@ contributions share the client's connection and are not independent capacity tes
   boundary where any server's direction moved no bytes is skipped, so the result ends at the last good one.
 - **Dropouts:** a server leaves the stage where its measured bytes stop growing for the silence limit, a lane fails
   for good, or its grant is refused (which asks for sign-in); only the refused grant removes it at the final
-  boundary. The interval ends and the survivors start a `dropout` interval. A server that cannot prepare a stage
-  leaves the same way, and the run fails only when none survives. A removed server stays out for the rest of the
-  run, except that a sole server retries at the next stage. A latency-only failure keeps throughput, except in the
-  latency stage: a server lost there (connection lost or timed out) leaves the run while another remains.
+  boundary. The interval ends at the boundary where the departing server's bytes last moved (in a bidirectional
+  stage, where its first direction stopped; at its first boundary, without a window, if they never moved), so its
+  silence is never measured, and the survivors' `dropout` interval starts there. A server that cannot prepare a
+  stage leaves the same way, and the run fails only when none survives. A removed server stays out for the rest of
+  the run, except that a sole server retries at the next stage. A latency-only failure keeps throughput, except in
+  the latency stage: a server lost there (connection lost or timed out) leaves the run while another remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes. After a late dropout the interval before it can hold the headline
   and the stage is Partial. With no such interval the stage fails with a [reason](#failure-reasons) and the run is

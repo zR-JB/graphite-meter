@@ -482,7 +482,7 @@ for (const vector of vectors)
     for (const b of vector.boundaries) {
       if (b.dropout) {
         live = live.filter((id) => !b.dropout!.includes(id));
-        m.begin(vector.stage, live, b.atMs, "dropout");
+        m.dropout(live, b.atMs);
       }
       m.observe(
         {

@@ -1069,7 +1069,7 @@ export class Run {
         `All selected servers failed. ${server.server.name}: ${message}`,
       );
     if (activity && this.#measuring && isTransfer(activity.stage))
-      this.#aggregate.begin(activity.stage, survivors, this.#now(), "dropout");
+      this.#aggregate.dropout(survivors, this.#now());
     this.#cancelEarly();
     this.#resetStability();
     if (this.#boundary()) this.#tick();

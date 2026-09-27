@@ -202,7 +202,7 @@ func (s *stageRun) lost() error {
 		return nil
 	}
 	if s.measuring && s.transfer() {
-		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
+		c.aggregate.dropout(nil, time.Since(c.started))
 	}
 	if last := c.failures[len(c.failures)-1]; c.hasMeasured && len(c.servers) == 1 && last.Reason != FailureSignIn {
 		return fmt.Errorf("%w: %w", errStageSkipped, last.Err)
@@ -408,7 +408,7 @@ func (s *stageRun) startSampler() {
 
 func (s *stageRun) reset() {
 	s.sampler.cancel()
-	s.c.aggregate.restart(s.c.ids(), time.Since(s.c.started), ReasonDropout)
+	s.c.aggregate.dropout(s.c.ids(), time.Since(s.c.started))
 	s.emitRates(nil)
 	s.startSampler()
 	if s.ending {

@@ -155,7 +155,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			if len(b.Dropout) > 0 {
 				dropped := func(id string) bool { return slices.Contains(b.Dropout, id) }
 				live = slices.DeleteFunc(slices.Clone(live), dropped)
-				a.restart(live, time.Duration(b.AtMs)*time.Millisecond, ReasonDropout)
+				a.dropout(live, time.Duration(b.AtMs)*time.Millisecond)
 			}
 			boundary := nativeBoundary(int(b.AtMs), b.Down, map[string]*ReceiverSnapshot{})
 			boundary.final = b.Final
