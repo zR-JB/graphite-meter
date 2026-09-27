@@ -65,9 +65,7 @@
   const latencyRequested = $derived(
     activePaths
       ? activePaths.latency !== null
-      : latencyPathNeeded(store.config) &&
-          (store.latencySelection.mode === "all" ||
-            selectedServer?.id === store.primaryLatencyServer),
+      : latencyPathNeeded(store.config),
   );
   const failures = $derived(
     store.serverDetails?.failures.filter(

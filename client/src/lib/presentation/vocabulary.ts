@@ -220,12 +220,11 @@ export const JARGON = {
     "Not a latency measurement",
   pretestLatency:
     "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
-    "Picks the shown latency server and sizes the warmup",
+    "The first selected server's sizes the warmup",
   testServers:
     "Test servers\nUp to 4 at once; their speeds are added together\n" +
-    "They share this browser's connection",
-  latencyServer:
-    "Latency server\nWhere the latency probes go\nCombined: probe every selected server",
+    "They share this browser's connection\n" +
+    "Each is probed for latency; the first one's is the result",
   warmup:
     "Warmup\nRuns before each stage to open its connections and ramp up\n" +
     "At least 10 round trips, at most 4 s; never counted",

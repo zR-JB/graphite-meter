@@ -38,13 +38,7 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
 
 export const DEFAULT_DOCK_WIDTH = { left: 420, right: 420 };
 
-export interface LatencySelection {
-  mode: "primary" | "all";
-  serverId: string;
-}
-
 interface PersistedState {
-  latencySelection: LatencySelection;
   config: RunnerConfig;
   unitBase: "base10" | "base2";
   unitKind: "bits" | "bytes";
@@ -65,7 +59,6 @@ export function systemThemeDefault(): "dark" | "light" {
 
 export function defaultPersisted(): PersistedState {
   return {
-    latencySelection: { mode: "primary", serverId: "" },
     config: structuredClone(DEFAULT_CONFIG),
     unitBase: "base10",
     unitKind: "bits",
@@ -108,8 +101,8 @@ const choice = <T extends string>(
     : fallback;
 const flag = (value: unknown, fallback: boolean) =>
   typeof value === "boolean" ? value : fallback;
-const text = (value: unknown, fallback: string, max = 256) =>
-  typeof value === "string" && value.length <= max ? value : fallback;
+const text = (value: unknown, fallback: string) =>
+  typeof value === "string" && value.length <= 256 ? value : fallback;
 const positive = <T>(value: unknown, fallback: T): number | T =>
   typeof value === "number" && Number.isFinite(value) && value >= 1
     ? value
@@ -130,7 +123,6 @@ export function loadPersisted(): PersistedState {
     duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
-  const latency = record(saved.latencySelection);
   const dock = record(saved.dockWidth);
   const gaugeMax = record(config.visualization).throughputMaxBytesPerSec;
   const columns = Array.isArray(saved.historyColumns)
@@ -143,10 +135,6 @@ export function loadPersisted(): PersistedState {
       ]
     : [];
   return {
-    latencySelection: {
-      mode: choice(latency.mode, ["primary", "all"], "primary"),
-      serverId: text(latency.serverId, "", 128),
-    },
     config: {
       stages: {
         latency:

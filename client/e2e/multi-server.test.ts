@@ -24,7 +24,6 @@ test("four servers share one run and keep separate receiver windows", async (pag
   const four = [home, frankfurt, amsterdam, helsinki];
   await open(page, home.url, {
     servers: four,
-    latency: { mode: "all", serverId: "self" },
     config: {
       ...combined,
       stages: { ...baseConfig.stages, bidirectional: true },
@@ -86,7 +85,7 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   expect(self.throughput?.origin).toBe(home.http);
   expect(peer.throughput?.origin).toBe(frankfurt.url);
   expect(self.latencyTarget?.transport).toBe("websocket");
-  expect(peer.latencyTarget).toBeNull();
+  expect(peer.latencyTarget?.transport).toBe("websocket");
 
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
@@ -94,8 +93,6 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(path("throughput")).toContainText("Used");
-  await expect(path("latency")).toHaveText("Not measured");
-  await info.getByRole("combobox", { name: "Inspect server" }).fill("self");
   await expect(path("latency")).toContainText("Used");
 });
 
@@ -150,24 +147,26 @@ test("a missed final upload checkpoint is retried and keeps the interval and the
   expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
-test("switching the latency server after completion keeps the saved record", async (page) => {
-  await open(page, home.url, {
-    servers: [home, frankfurt],
-    latency: { mode: "all", serverId: "self" },
-    config: combined,
-  });
+test("every server's latency is saved; the lens starts on the first selected and keeps the record", async (page) => {
+  await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
   const saves = await countSaves(page);
   const saved = await run(page);
   expect(await saves()).toBe(1);
-  const source = saved.result.multiServer.latencyFocus;
-  const other = source === "self" ? "server-1" : "self";
-  const focus = page.getByRole("combobox", {
+  expect(saved.result.multiServer.latencyFocus).toBe("self");
+  for (const server of saved.result.multiServer.servers)
+    expect(server.latencyByStage.latency?.probeCount).toBeGreaterThan(0);
+  const lens = page.getByRole("combobox", {
     name: "Servers shown in the results",
   });
-  await expect(focus).toHaveValue("");
-  await focus.fill(other);
-  await expect(focus).toHaveValue(other);
+  const latency = page.getByRole("region", {
+    name: "Latency, jitter and probe timeouts by phase",
+  });
+  await expect(lens).toHaveValue("");
+  await expect(latency).toContainText(home.name);
+  await lens.fill("server-1");
+  await expect(lens).toHaveValue("server-1");
+  await expect(latency).toContainText(frankfurt.name);
   expect(await savedResult(page)).toEqual(saved);
   expect(await saves()).toBe(1);
 

@@ -218,7 +218,6 @@ test("the first result saves after the application server becomes unreachable", 
   try {
     await open(page, oslo.server.url, {
       servers: [frankfurt],
-      latency: { mode: "primary", serverId: frankfurt.id },
       config: {
         stages: { ...baseConfig.stages, latency: false, upload: false },
         skipLoadedLatencyWhenStageOff: true,

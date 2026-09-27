@@ -217,7 +217,6 @@ test("a protected WebSocket peer approved through the sign-in link joins a run",
   await page.addInitScript(() => (window.open = () => null));
   await open(page, home.url, {
     servers: [home, locked],
-    latency: { mode: "all", serverId: "self" },
   });
   await page.cdp("Network.setCookieControls", {
     enableThirdPartyCookieRestriction: true,
@@ -264,7 +263,6 @@ test("a peer grant revoked mid-run ends in the sign-in state", async (page) => {
   await page.addInitScript(() => (window.open = () => null));
   await open(page, home.url, {
     servers: [home, locked],
-    latency: { mode: "all", serverId: "self" },
     config: {
       duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
     },

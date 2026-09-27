@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tooltip } from "../actions/tooltip";
   import { fmtMs } from "../format";
-  import ServerScope from "./ServerScope.svelte";
   import {
     serverLabel,
     catalogSelection,
@@ -133,28 +132,6 @@
           </label>
         {/each}
       </div>
-      {#if selected.length > 1 && store.latencyEnabled}
-        <label>
-          <span {@attach tooltip(() => JARGON.latencyServer)}
-            >Latency server</span
-          >
-          <ServerScope
-            servers={selected}
-            value={store.latencySelection.mode === "all"
-              ? ""
-              : store.primaryLatencyServer}
-            label="Latency measurement servers"
-            aggregate="Combined"
-            hint="Measure latency to every server"
-            disabled={locked}
-            onchange={(id) =>
-              controller.configureLatency(
-                id ? "primary" : "all",
-                id || store.primaryLatencyServer,
-              )}
-          />
-        </label>
-      {/if}
     </div>
     <span class="sr-only" id={descriptionId}
       >Preflight request times include connection setup and the response. They

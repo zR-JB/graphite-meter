@@ -8,7 +8,6 @@
     onchange,
     label,
     aggregate,
-    hint,
     disabled = false,
     disabledIds = [],
   }: {
@@ -17,17 +16,14 @@
     onchange: (id: string) => void;
     label: string;
     aggregate?: string;
-    hint?: string;
     disabled?: boolean;
     disabledIds?: readonly string[];
   } = $props();
-  const hintId = $props.id();
 </script>
 
 <select
   class="server-scope"
   aria-label={label}
-  aria-describedby={hint && value === "" ? hintId : undefined}
   {value}
   {disabled}
   onchange={(event) => onchange(event.currentTarget.value)}
@@ -39,7 +35,6 @@
     >
   {/each}
 </select>
-{#if hint}<span id={hintId} hidden>{hint}</span>{/if}
 
 <style>
   .server-scope {

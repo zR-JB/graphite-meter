@@ -29,9 +29,7 @@
     const measured = (server: string) =>
       details?.servers.some((s) => s.server.id === server && s.latencyTarget);
     controller.focusServer(
-      id && measured(id)
-        ? id
-        : (details?.latencyFocus ?? store.primaryLatencyServer),
+      id && measured(id) ? id : (details?.latencyFocus ?? servers[0].id),
     );
   }
 </script>

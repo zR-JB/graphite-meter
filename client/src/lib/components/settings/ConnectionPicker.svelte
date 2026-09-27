@@ -22,15 +22,10 @@
       : store.config.transports.latencyTarget,
   );
   const connection = $derived(store.connections[role]);
-  const serverIds = $derived(
-    role === "latency" && store.latencySelection.mode === "primary"
-      ? [store.primaryLatencyServer]
-      : store.selectedServers,
-  );
-  const simultaneous = $derived(serverIds.length > 1);
+  const simultaneous = $derived(store.selectedServers.length > 1);
   // The server list states a server's own failure once; the paths speak for the rest.
   const unlisted = $derived(
-    serverIds.filter((id) => {
+    store.selectedServers.filter((id) => {
       const readiness = store.servers.get(id)?.readiness;
       return !(
         readiness === "sign-in" ||

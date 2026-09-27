@@ -167,15 +167,6 @@ class AppStore {
     message?: string;
     renewUrl?: string;
   } | null>(null);
-  latencySelection = $state<import("./persistence").LatencySelection>({
-    mode: "primary",
-    serverId: "",
-  });
-  primaryLatencyServer = $derived(
-    this.selectedServers.includes(this.latencySelection.serverId)
-      ? this.latencySelection.serverId
-      : (this.selectedServers[0] ?? "self"),
-  );
   /** Display focus only; the saved latency headline is fixed by the runner. */
   latencyFocus = $state("self");
   /** The lens over a multi-server result: "" shows all servers combined, else one server. */
@@ -308,20 +299,12 @@ class AppStore {
 
   /** The idle monitor's verdict; it stands only while its evidence does. */
   connectivity = $state<ConnectivityState>("connected");
-  /** The selected server single-path views describe: the latency primary, else this server. */
-  representativeServerId = $derived.by(() => {
-    if (!this.serverCatalog || !this.selectedServers.length) return null;
-    const selected = selectedInCatalogOrder(
-      this.serverCatalog,
-      this.selectedServers,
-    );
-    const preferred =
-      this.latencySelection.mode === "primary"
-        ? this.primaryLatencyServer
-        : "self";
-    return (selected.find((server) => server.id === preferred) ?? selected[0])
-      .id;
-  });
+  /** The first selected server, where a run's latency starts; single-path views describe it. */
+  representativeServerId = $derived(
+    this.serverCatalog && this.selectedServers.length
+      ? selectedInCatalogOrder(this.serverCatalog, this.selectedServers)[0].id
+      : null,
+  );
   #representative = $derived(
     this.representativeServerId
       ? this.servers.get(this.representativeServerId)
@@ -731,7 +714,6 @@ class AppStore {
 
   restoreTestDisplayDefaults() {
     const defaults = defaultPersisted();
-    this.latencySelection = { ...defaults.latencySelection };
     this.config = structuredClone(defaults.config);
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
@@ -791,7 +773,6 @@ export function mountStoreEffects(store: AppStore): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined;
     $effect(() => {
       const snapshot = {
-        latencySelection: $state.snapshot(store.latencySelection),
         config: $state.snapshot(store.config),
         unitBase: store.unitBase,
         unitKind: store.unitKind,
