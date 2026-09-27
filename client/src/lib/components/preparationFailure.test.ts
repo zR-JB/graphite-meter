@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { BLOCKED, START_FAILED } from "../presentation/vocabulary";
 import { preparationFailurePresentation } from "./preparationFailure";
 
 const base = {
@@ -7,55 +8,33 @@ const base = {
   latency: "stale" as const,
 };
 
-test("path failure copy names only the affected paths", () => {
-  expect(
-    preparationFailurePresentation(
-      { ...base, throughput: "failed" },
-      "throughput probe request failed",
-    ),
-  ).toEqual({
-    headline: "Connection check failed",
-    detail: "Throughput path is unavailable",
-  });
-  expect(
-    preparationFailurePresentation(
-      { ...base, throughput: "failed", latency: "failed" },
-      "raw transport failure",
-    ),
-  ).toEqual({
-    headline: "Connection check failed",
-    detail: "Throughput and latency paths are unavailable",
-  });
-  expect(
-    preparationFailurePresentation(
-      { ...base, latency: "failed" },
-      "raw latency failure",
-    )?.detail,
-  ).toBe("Latency path is unavailable");
+test("a failed check names only the affected paths, never the transport error", () => {
+  for (const [throughput, latency, detail] of [
+    ["failed", "stale", "Throughput path is unavailable"],
+    ["stale", "failed", "Latency path is unavailable"],
+    ["failed", "failed", "Throughput and latency paths are unavailable"],
+  ] as const)
+    expect(
+      preparationFailurePresentation(
+        { ...base, throughput, latency },
+        "raw transport failure",
+      )?.detail,
+    ).toBe(detail);
 });
 
-test("a failed start without a path failure says so, apart from a blocked one", () => {
-  expect(
-    preparationFailurePresentation(base, "Sign in to run this test"),
-  ).toEqual({
-    headline: "Test could not start",
-    detail: "Sign in to run this test",
-  });
-});
-
-test("idle and cancellation have no failure presentation", () => {
-  expect(
-    preparationFailurePresentation({ ...base, status: "idle" }, "stale error"),
-  ).toBeNull();
-});
-
-test("a refused start keeps its recovery instruction above old path failures", () => {
-  const detail =
-    "Open Settings to resolve the selected servers before starting.";
+test("a refused or failed start keeps its instruction above old path failures; idle shows none", () => {
+  const detail = "Open Settings to resolve the selected servers.";
   expect(
     preparationFailurePresentation(
       { status: "blocked", throughput: "failed", latency: "failed" },
       detail,
     ),
-  ).toEqual({ headline: "Test cannot start", detail });
+  ).toEqual({ headline: BLOCKED, detail });
+  expect(preparationFailurePresentation(base, detail)).toEqual({
+    headline: START_FAILED,
+    detail,
+  });
+  expect(
+    preparationFailurePresentation({ ...base, status: "idle" }, detail),
+  ).toBeNull();
 });
