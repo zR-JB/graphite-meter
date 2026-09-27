@@ -59,6 +59,7 @@ impl HttpServer {
                                 block: Bytes::new(),
                                 remaining: 0,
                                 operation: None,
+                                transfer: None,
                                 progress: Some(ProgressBody::new(subscription)),
                             })
                             .expect("static progress response"),

@@ -117,6 +117,7 @@ struct Store {
     origin: Instant,
     next_sweep: Mutex<Instant>,
     entries: Mutex<UploadEntries>,
+    meter: crate::meter::Meter,
 }
 #[derive(Default)]
 struct UploadEntries {
@@ -153,6 +154,10 @@ impl Aggregate {
 }
 impl UploadStore {
     pub fn new() -> Result<Self, UploadError> {
+        Self::with_meter(crate::meter::Meter::default())
+    }
+
+    pub(crate) fn with_meter(meter: crate::meter::Meter) -> Result<Self, UploadError> {
         let mut key = [0; 32];
         random(&mut key)?;
         Ok(Self {
@@ -161,8 +166,12 @@ impl UploadStore {
                 origin: Instant::now() - Duration::from_nanos(1),
                 next_sweep: Mutex::new(Instant::now() + Duration::from_secs(5)),
                 entries: Mutex::new(UploadEntries::default()),
+                meter,
             }),
         })
+    }
+    pub(crate) fn log_transfer(&self, window: Duration) {
+        self.inner.meter.log("upload", window);
     }
     /// Tokens authenticate themselves; minting consumes no retained aggregate capacity.
     pub fn mint(&self) -> Result<String, UploadError> {
@@ -293,6 +302,7 @@ impl UploadStore {
         Ok(UploadLane {
             aggregate: self.access(id, owner, true, true)?,
             bytes: 0,
+            transfer: self.inner.meter.open(),
         })
     }
     /// Read-only observation never extends retention and never creates an aggregate.
@@ -379,6 +389,7 @@ impl UploadStore {
 pub struct UploadLane {
     aggregate: Arc<Mutex<Aggregate>>,
     bytes: u64,
+    transfer: Option<crate::meter::Transfer>,
 }
 impl UploadLane {
     /// Datagram lanes have no stream FIN. Observe the explicit finish request
@@ -415,6 +426,9 @@ impl UploadLane {
         state.first_chunk.get_or_insert(now);
         state.bytes = state.bytes.saturating_add(bytes as u64);
         self.bytes = self.bytes.saturating_add(bytes as u64);
+        if let Some(transfer) = &self.transfer {
+            transfer.record(bytes);
+        }
     }
     pub fn bytes(&self) -> u64 {
         self.bytes

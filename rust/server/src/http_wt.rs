@@ -156,7 +156,9 @@ impl HttpServer {
             if datagrams {
                 let quic = quic.clone();
                 let block = self.download_block.clone();
+                let meter = self.download_meter.clone();
                 lanes.push(Box::pin(async move {
+                    let transfer = meter.open();
                     let mut since_yield = 0;
                     loop {
                         let mut remaining = count;
@@ -164,6 +166,9 @@ impl HttpServer {
                             let size = remaining.min(1000).min(block.len() as u64) as usize;
                             quic.send_datagram_wait(frame_datagram(session_id, &block[..size])?)
                                 .await?;
+                            if let Some(transfer) = &transfer {
+                                transfer.record(size);
+                            }
                             remaining -= size as u64;
                             since_yield += 1;
                             if since_yield == DATAGRAM_YIELD_BATCH {
@@ -187,6 +192,7 @@ impl HttpServer {
                         count,
                         self.download_block.clone(),
                         activity.clone(),
+                        self.download_meter.clone(),
                     )));
                 }
             }
@@ -344,11 +350,13 @@ async fn download_lane(
     count: u64,
     block: Bytes,
     activity: Activity,
+    meter: crate::meter::Meter,
 ) -> Result<(), TransportError> {
     loop {
         let mut stream = resets
             .open(&quic, id, quinn::VarInt::from_u64(RESET)?)
             .await?;
+        let transfer = meter.open();
         let mut remaining = count;
         while remaining > 0 {
             let size = remaining.min(16 * 1024).min(block.len() as u64) as usize;
@@ -359,6 +367,9 @@ async fn download_lane(
                 Ok(()) => {}
                 Err(error) if remaining == count => return Err(error.into()),
                 Err(_) => break,
+            }
+            if let Some(transfer) = &transfer {
+                transfer.record(size);
             }
             remaining -= size as u64;
             touch(&activity);

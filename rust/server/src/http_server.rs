@@ -72,6 +72,7 @@ pub struct HttpServer {
     stopping: tokio::sync::watch::Sender<bool>,
     memory: http_quic::MemoryBudget,
     download_block: Bytes,
+    download_meter: crate::meter::Meter,
     _download_memory: tokio::sync::OwnedSemaphorePermit,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
@@ -90,6 +91,11 @@ impl HttpServer {
             connections.rejected_client,
             connections.rejected_global
         );
+    }
+
+    pub(crate) fn log_transfers(&self, window: Duration) {
+        self.download_meter.log("download", window);
+        self.uploads.log_transfer(window);
     }
 
     pub async fn initialize_auth(&self) -> Result<(), ConfigError> {
@@ -134,6 +140,8 @@ impl HttpServer {
             .ok_or("server memory budget cannot cover the download block")?;
         let mut block = vec![0; DOWNLOAD_BLOCK_BYTES];
         getrandom::fill(&mut block).map_err(|_| "download payload randomness unavailable")?;
+        let download_meter = crate::meter::Meter::new(config.verbose);
+        let uploads = UploadStore::with_meter(crate::meter::Meter::new(config.verbose))?;
         Ok(Self {
             config,
             discovery,
@@ -142,8 +150,9 @@ impl HttpServer {
             stopping: tokio::sync::watch::channel(false).0,
             memory,
             download_block: block.into(),
+            download_meter,
             _download_memory: download_memory,
-            uploads: UploadStore::new()?,
+            uploads,
             auth,
             assets,
             app_security,
@@ -811,6 +820,9 @@ impl HttpServer {
             block: self.download_block.clone(),
             remaining: count,
             progress: None,
+            transfer: (count != 0 && request.method() == Method::GET)
+                .then(|| self.download_meter.open())
+                .flatten(),
             operation: Some(Arc::new(Mutex::new(Operation {
                 permit: Some(permit),
                 deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
@@ -912,6 +924,7 @@ pub struct ResponseBody {
     block: Bytes,
     remaining: u64,
     progress: Option<ProgressBody>,
+    transfer: Option<crate::meter::Transfer>,
     operation: Option<Arc<Mutex<Operation>>>,
 }
 
@@ -924,6 +937,7 @@ impl ResponseBody {
             remaining: block.len() as u64,
             block,
             progress: None,
+            transfer: None,
             operation: None,
         }
     }
@@ -961,6 +975,9 @@ impl Body for ResponseBody {
         }
         let length = self.remaining.min(self.block.len() as u64) as usize;
         self.remaining -= length as u64;
+        if let Some(transfer) = &self.transfer {
+            transfer.record(length);
+        }
         if self.remaining == 0
             && let Some(operation) = &self.operation
         {

@@ -132,12 +132,22 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         let server = server.clone();
         let stopped = stopped.clone();
         services.push(Box::pin(async move {
-            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
-            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            ticker.tick().await;
-            tokio::select! {
-                _ = cancelled(stopped) => {},
-                _ = async { loop { ticker.tick().await; server.log_admission(); } } => {},
+            let mut transfer_tick = tokio::time::interval(std::time::Duration::from_secs(1));
+            let mut admission_tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            transfer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            admission_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            transfer_tick.tick().await;
+            admission_tick.tick().await;
+            let mut last = tokio::time::Instant::now();
+            loop {
+                tokio::select! {
+                    _ = cancelled(stopped.clone()) => break,
+                    now = transfer_tick.tick() => {
+                        server.log_transfers(now.duration_since(last));
+                        last = now;
+                    }
+                    _ = admission_tick.tick() => server.log_admission(),
+                }
             }
             Ok(())
         }));
