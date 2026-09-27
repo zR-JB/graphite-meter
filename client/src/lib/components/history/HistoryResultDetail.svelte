@@ -1,7 +1,6 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { serverLabel } from "../../presentation/serverAppearance";
   import { term, tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
@@ -15,6 +14,7 @@
   import {
     JARGON,
     OUTCOME,
+    reasonLabel,
     STAGE,
     STATUS_TONE,
     TRANSPORT,
@@ -111,33 +111,40 @@
     kind: string | null | undefined,
     protocol?: string | null,
     browserProtocol?: string,
-  ): string {
+  ) {
     const mechanism =
       kind && kind in TRANSPORT
         ? transportLabel(kind as TransportKind, role)
         : "Not recorded";
     const observed = browserProtocol && httpProtocolLabel(browserProtocol);
     const endpoint = protocol && httpProtocolLabel(protocol);
-    return [
-      mechanism,
-      observed || endpoint,
-      observed && endpoint && observed !== endpoint && protocol !== "negotiated"
-        ? `endpoint ${endpoint}`
-        : null,
-    ]
-      .filter(Boolean)
-      .join(" · ");
+    return {
+      value: mechanism,
+      aside:
+        observed &&
+        endpoint &&
+        observed !== endpoint &&
+        protocol !== "negotiated"
+          ? `${observed}, endpoint ${endpoint}`
+          : observed || endpoint || "",
+    };
   }
+  const unmeasured = { value: "Not measured", aside: "" };
   const rate = (value: number | null | undefined) => formatRate(value, units);
   const serverRows = $derived(
     run.selection.map((server) => {
       const measured = run.servers.find(
         (entry) => entry.server.id === server.id,
       );
+      const failure = run.failures.find(
+        (entry) => entry.serverId === server.id,
+      );
       return {
         id: server.id,
-        name: serverLabel(server),
+        name: server.name,
+        location: server.location,
         url: server.url,
+        failure: failure && reasonLabel(failure.reason),
         down: rate(measured?.download?.reportedBytesPerSec),
         up: rate(measured?.upload?.reportedBytesPerSec),
         latency: formatLatency(measured?.latency?.reportedMs),
@@ -148,10 +155,10 @@
               measured.throughput.protocol,
               measured.throughput.browserProtocol,
             )
-          : "Not measured",
+          : unmeasured,
         latencyPath: measured?.latencyTarget
           ? path("latency", measured.latencyTarget.transport)
-          : "Not measured",
+          : unmeasured,
       };
     }),
   );
@@ -166,6 +173,19 @@
     ].filter((row): row is [string, string] => !!row[1]),
   );
 </script>
+
+{#snippet pathRow(
+  label: string,
+  tip: string,
+  path: { value: string; aside: string },
+)}
+  <div>
+    <dt {@attach tooltip(() => tip)}>{label}</dt>
+    <dd>
+      {path.value}{#if path.aside}<span class="aside">{path.aside}</span>{/if}
+    </dd>
+  </div>
+{/snippet}
 
 <article
   bind:this={region}
@@ -194,64 +214,135 @@
             minute: "2-digit",
           })}</time
         >
-        {#if result.outcome !== "complete"}
-          <span class="badge" data-tone={STATUS_TONE[result.outcome]}
-            >{OUTCOME[result.outcome]}</span
-          >
-        {/if}
       </h2>
-      <p>
-        {fmtDuration(result.durationMs)} · {fmtBytes(
-          transferredBytes(run),
-          store.unitBase,
-        )} transferred
-      </p>
+      {#if result.outcome !== "complete"}
+        <span class="outcome"
+          ><span
+            class="status-dot inline"
+            data-tone={STATUS_TONE[result.outcome]}
+          ></span>{OUTCOME[result.outcome]}</span
+        >
+      {/if}
     </div>
-    <button
-      class="btn btn-icon btn-inset"
-      type="button"
-      aria-label="Delete this result"
-      {@attach tooltip(() => "Delete this result")}
-      onclick={(event) => onDelete(event.currentTarget)}
-    >
-      <Icon name="trash" />
-    </button>
-    <button
-      class="btn btn-icon btn-inset close-detail"
-      type="button"
-      aria-label="Close result"
-      {@attach tooltip(() => "Close (Esc)")}
-      onclick={onClose}
-    >
-      <Icon name="close" />
-    </button>
+    <dl class="head-facts">
+      <div>
+        <dt>Duration</dt>
+        <dd>{fmtDuration(result.durationMs)}</dd>
+      </div>
+      <div>
+        <dt>Transferred</dt>
+        <dd>{fmtBytes(transferredBytes(run), store.unitBase)}</dd>
+      </div>
+    </dl>
+    <div class="head-actions">
+      <button
+        class="btn btn-icon btn-inset"
+        type="button"
+        aria-label="Delete this result"
+        {@attach tooltip(() => "Delete this result")}
+        onclick={(event) => onDelete(event.currentTarget)}
+      >
+        <Icon name="trash" />
+      </button>
+      <button
+        class="btn btn-icon btn-inset close-detail"
+        type="button"
+        aria-label="Close result"
+        {@attach tooltip(() => "Close (Esc)")}
+        onclick={onClose}
+      >
+        <Icon name="close" />
+      </button>
+    </div>
   </header>
 
   <div class="detail-body">
     <ResultSummary
       {cards}
+      reserve
       {details}
       scope={shown}
       onscope={(id) => (shown = id)}
       issues={serverIssues(run, shown)}
     />
 
-    {#if profile.length}
-      <section class="group" aria-labelledby={`result-${record.id}-latency`}>
-        <h3 id={`result-${record.id}-latency`}>
-          Latency{#if multiple && latencyServer}<span class="name">
-              · {serverLabel(latencyServer.server)}</span
-            >{/if}
-        </h3>
-        <LatencyProfileView
-          lanes={profile}
-          variant="compact"
-          label="Saved latency distributions"
-        />
-      </section>
-    {/if}
-
     <div class="facts">
+      {#if profile.length}
+        <section
+          class="group latency"
+          aria-labelledby={`result-${record.id}-latency`}
+        >
+          <div class="group-head">
+            <h3 id={`result-${record.id}-latency`}>Latency</h3>
+            {#if multiple && latencyServer}<span class="source"
+                >{latencyServer.server.name}</span
+              >{/if}
+          </div>
+          <LatencyProfileView
+            lanes={profile}
+            variant="compact"
+            label="Saved latency distributions"
+          />
+        </section>
+      {/if}
+
+      {#each serverRows as row (row.id)}
+        <section class="group">
+          <div class="group-head">
+            <h3>{multiple ? row.name : "Server"}</h3>
+          </div>
+          <dl class="kv" data-tip-group {@attach tipGroup}>
+            {#if !multiple}<div>
+                <dt>Name</dt>
+                <dd>{row.name}</dd>
+              </div>{/if}
+            {#if row.location}<div>
+                <dt>Location</dt>
+                <dd>{row.location}</dd>
+              </div>{/if}
+            {#if row.url}<div>
+                <dt>Address</dt>
+                <dd>{row.url}</dd>
+              </div>{/if}
+            {#if row.failure}<div>
+                <dt>Status</dt>
+                <dd class="status">
+                  <span class="status-dot inline" data-tone="err"
+                  ></span>{row.failure}
+                </dd>
+              </div>{/if}
+            {#if ipVersion && row.id === run.latencyFocus}<div>
+                <dt>IP family</dt>
+                <dd>IPv{ipVersion}</dd>
+              </div>{/if}
+            {#if multiple}
+              <div>
+                <dt>{STAGE.download.short}</dt>
+                <dd>{row.down}</dd>
+              </div>
+              <div>
+                <dt>{STAGE.upload.short}</dt>
+                <dd>{row.up}</dd>
+              </div>
+              <div>
+                <dt>Latency</dt>
+                <dd>{row.latency}</dd>
+              </div>
+            {/if}
+            {@render pathRow(
+              "Throughput path",
+              JARGON.throughputPath,
+              row.throughputPath,
+            )}
+            {@render pathRow(
+              "Latency path",
+              JARGON.latencyPath,
+              row.latencyPath,
+            )}
+          </dl>
+        </section>
+      {/each}
+
       {#if accounting.length}
         <section class="group">
           <h3>
@@ -272,65 +363,17 @@
               >
                 <dt>{lane.label}</dt>
                 <dd>
-                  {[
-                    counts.replies,
-                    ...counts.exceptions,
-                    ...(lane.accountingComplete === false
-                      ? ["partial accounting"]
-                      : []),
-                  ].join(" · ")}
+                  {[counts.replies, ...counts.exceptions].join(
+                    ", ",
+                  )}{#if lane.accountingComplete === false}<span class="aside"
+                      >Partial</span
+                    >{/if}
                 </dd>
               </div>
             {/each}
           </dl>
         </section>
       {/if}
-
-      {#each serverRows as row (row.id)}
-        <section class="group">
-          <h3>
-            Server{#if multiple}<span class="name"> · {row.name}</span>{/if}
-          </h3>
-          <dl class="kv" data-tip-group {@attach tipGroup}>
-            {#if !multiple}<div>
-                <dt>Name</dt>
-                <dd>{row.name}</dd>
-              </div>{/if}
-            {#if row.url}<div>
-                <dt>Address</dt>
-                <dd>{row.url}</dd>
-              </div>{/if}
-            {#if ipVersion && row.id === run.latencyFocus}<div>
-                <dt>IP family</dt>
-                <dd>IPv{ipVersion}</dd>
-              </div>{/if}
-            {#if multiple}
-              <div>
-                <dt>{STAGE.download.short}</dt>
-                <dd>{row.down}</dd>
-              </div>
-              <div>
-                <dt>{STAGE.upload.short}</dt>
-                <dd>{row.up}</dd>
-              </div>
-              <div>
-                <dt>Latency</dt>
-                <dd>{row.latency}</dd>
-              </div>
-            {/if}
-            <div>
-              <dt {@attach tooltip(() => JARGON.throughputPath)}>
-                Throughput path
-              </dt>
-              <dd>{row.throughputPath}</dd>
-            </div>
-            <div>
-              <dt {@attach tooltip(() => JARGON.latencyPath)}>Latency path</dt>
-              <dd>{row.latencyPath}</dd>
-            </div>
-          </dl>
-        </section>
-      {/each}
 
       <section class="group">
         <h3>Build</h3>
@@ -359,34 +402,31 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-3) var(--space-4);
   }
   .title {
-    flex: 1;
-    min-width: 0;
-  }
-  h2 {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-1) var(--space-2);
+    gap: var(--space-1) var(--space-3);
+    min-width: 0;
+  }
+  h2 {
+    min-width: 0;
     font: var(--w-strong) var(--type-md) / 1.3 var(--font-display);
     letter-spacing: var(--track-tight);
   }
-  .title p {
-    margin-top: 2px;
-    color: var(--text-muted);
-    font-size: var(--type-xs);
+  .head-actions {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
   }
   .back {
     display: none;
+    margin-left: calc(-1 * var(--space-2));
   }
   .detail-body {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-5);
     padding: var(--space-4);
   }
   .detail-body > :global(.result-summary) {
@@ -396,8 +436,26 @@
   .facts {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
-    gap: var(--space-4);
+    gap: var(--space-5) var(--space-4);
     align-items: start;
+  }
+  .latency {
+    grid-column: 1 / -1;
+  }
+  .source,
+  .aside {
+    color: var(--text-soft);
+  }
+  .source {
+    font-size: var(--type-sm);
+  }
+  .aside {
+    margin-left: var(--space-2);
+  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
   }
   @container history (max-width: 820px) {
     .back {
@@ -407,8 +465,17 @@
       display: none;
     }
   }
+  @container detail (max-width: 560px) {
+    .title,
+    .head-facts {
+      order: 3;
+      flex-basis: 100%;
+    }
+    .head-facts {
+      order: 4;
+    }
+  }
   @container detail (max-width: 460px) {
-    .detail-head,
     .detail-body {
       padding-inline: var(--space-3);
     }

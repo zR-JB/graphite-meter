@@ -52,10 +52,10 @@
     class="account"
     method="post"
     action="/auth/logout"
-    aria-label={`${label} · ${provider}`}
+    aria-label={`${label}, ${provider}`}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
-    <div class="identity" {@attach tooltip(() => `${label} · ${provider}`)}>
+    <div class="identity" {@attach tooltip(() => `${label}\n${provider}`)}>
       <span class="avatar" aria-hidden="true">
         <svg viewBox="0 0 20 20">
           <circle cx="10" cy="7" r="3" />

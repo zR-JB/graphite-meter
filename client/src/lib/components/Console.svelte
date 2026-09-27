@@ -593,7 +593,6 @@
         <span class="run-icon"><Icon name={awayRunIndicator.icon} /></span>
         <span class="live-copy">
           <strong>Live</strong>
-          <span aria-hidden="true">·</span>
           <span>{awayRunIndicator.label}</span>
         </span>
       </button>{/if}
@@ -824,7 +823,7 @@
   .live-copy {
     display: inline-flex;
     align-items: baseline;
-    gap: var(--space-1);
+    gap: 6px;
   }
   .live-copy strong {
     color: var(--tone);

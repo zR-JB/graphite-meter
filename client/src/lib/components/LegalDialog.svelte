@@ -29,6 +29,16 @@
   $effect(() => {
     if (open) load();
   });
+
+  const ECOSYSTEM: Record<string, string> = {
+    go: "Go modules",
+    "go-toolchain": "Go toolchain",
+    npm: "npm packages",
+    font: "Fonts",
+  };
+  const ecosystems = $derived([
+    ...Map.groupBy(data?.components ?? [], (component) => component.ecosystem),
+  ]);
 </script>
 
 <Dialog
@@ -106,26 +116,34 @@
         </p>
       </section>
 
-      <section class="group" aria-labelledby="third-party-title">
+      <section class="third-party" aria-labelledby="third-party-title">
         <h3 id="third-party-title">Third-party software</h3>
-        <dl class="kv components">
-          {#each data.components as component (component.ecosystem + component.name + component.version)}
-            <div class="component">
-              <dt>{component.name}</dt>
-              <dd>
-                {component.ecosystem} · {component.version} · {component.selectedLicenseExpression}
-                · {component.modified
-                  ? "Modified by Graphite Meter"
-                  : "Unmodified"}
-                <a
-                  href={component.source}
-                  target="_blank"
-                  rel="noopener noreferrer">{component.source}</a
-                >
-              </dd>
-            </div>
-          {/each}
-        </dl>
+        {#each ecosystems as [ecosystem, components] (ecosystem)}
+          <section class="group" aria-label={ECOSYSTEM[ecosystem] ?? ecosystem}>
+            <h3>{ECOSYSTEM[ecosystem] ?? ecosystem}</h3>
+            <dl class="kv components">
+              {#each components as component (component.name + component.version)}
+                <div class="component">
+                  <dt>{component.name}</dt>
+                  <dd>
+                    <span
+                      >{component.version}{#if component.modified}<span
+                          class="aside">Modified</span
+                        >{/if}</span
+                    >
+                    <span>{component.selectedLicenseExpression}</span>
+                    <a
+                      href={component.source}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      >{component.source.replace(/^https?:\/\//, "")}</a
+                    >
+                  </dd>
+                </div>
+              {/each}
+            </dl>
+          </section>
+        {/each}
       </section>
     {/if}
   </div>
@@ -141,7 +159,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    padding: var(--space-3) var(--space-4);
+    min-height: 56px;
+    padding: var(--space-2) var(--space-4);
   }
   h2 {
     font: var(--w-strong) var(--type-lg) var(--font-display);
@@ -149,7 +168,8 @@
   }
   .legal-body {
     display: grid;
-    gap: var(--space-4);
+    align-content: start;
+    gap: var(--space-5);
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -160,9 +180,26 @@
     flex-wrap: wrap;
     gap: var(--space-2);
   }
+  .third-party {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .third-party > h3 {
+    padding-inline: var(--space-3);
+    font: var(--w-strong) var(--type-md) / 1.3 var(--font-sans);
+  }
+  .components dd {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1.8fr);
+    gap: 2px var(--space-3);
+  }
   .components a {
-    display: block;
     width: fit-content;
+    overflow-wrap: anywhere;
+  }
+  .aside {
+    margin-left: var(--space-2);
+    color: var(--text-soft);
   }
   .legal-status {
     display: grid;
@@ -176,9 +213,15 @@
     .legal-body {
       padding: var(--space-3);
     }
+    .components dd {
+      grid-template-columns: auto minmax(0, 1fr);
+    }
+    .components a {
+      grid-column: 1 / -1;
+    }
   }
   /* Component names, not field labels: the column fits a module path. */
   .components {
-    --kv-label: 17rem;
+    --kv-label: 16rem;
   }
 </style>

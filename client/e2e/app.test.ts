@@ -72,8 +72,8 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
     live.length,
   );
   expect(await readouts(".detail-pane")).toEqual(live);
-  await expect(page.locator(".detail-pane")).toContainText(
-    `${transferred} transferred`,
+  await expect(page.locator(".detail-pane .head-facts")).toContainText(
+    new RegExp(`Transferred\\s*${transferred}`),
   );
   await page.goto(`${home.http}/#/`);
 

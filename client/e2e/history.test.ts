@@ -174,8 +174,8 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   await history(page);
   const rows = page.locator(".result-row");
   await expect(rows).toHaveCount(50, { timeout: 15_000 });
-  const heading = page.locator(".history-head p");
-  await expect(heading).toContainText("2000 results");
+  const heading = page.locator(".history-head .head-facts dd").nth(0);
+  await expect(heading).toHaveText("2000");
   await page.locator('.column-head button:has([data-tone="download"])').click();
   await expect
     .poll(() =>
@@ -191,7 +191,7 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   expect(await page.locator(".result-detail").textContent()).not.toContain(
     "Grade",
   );
-  await expect(heading).toContainText("2000 results");
+  await expect(heading).toHaveText("2000");
 });
 
 test("a closed Columns popover never takes a tap meant for a result", async (page) => {
