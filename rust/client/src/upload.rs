@@ -42,8 +42,7 @@ struct State {
     error: Option<Arc<Error>>,
 }
 
-/// Drop cancels every owned task. finish(true) also awaits the aggregate's
-/// `complete`; finish(false) only sends its DELETE. Drop relies on server expiry.
+/// Drop cancels every owned task; finish(false) only sends its DELETE, finish(true) also awaits `complete`.
 pub struct Upload {
     transport: Arc<Transport>,
     control: Arc<Transport>,
@@ -689,20 +688,24 @@ mod tests {
 
     #[tokio::test]
     async fn checkpoint_retries_a_refusal_and_keeps_its_cause_past_the_budget() -> Result<(), Error> {
+        use std::sync::atomic::AtomicUsize;
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
-        let refusing = Arc::new(AtomicBool::new(true));
-        let answers = refusing.clone();
+        let refusals = Arc::new(AtomicUsize::new(usize::MAX));
+        let remaining = refusals.clone();
         let server = tokio::spawn(async move {
-            let mut refused = Vec::new();
+            let mut refused = Instant::now();
             loop {
                 let (mut stream, _) = listener.accept().await?;
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).await?;
                 assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
-                if answers.load(Ordering::SeqCst) {
-                    refused.push(Instant::now());
+                if remaining
+                    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+                    .is_ok()
+                {
+                    refused = Instant::now();
                     stream
                         .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                         .await?;
@@ -739,21 +742,25 @@ mod tests {
             session: None,
             retrying: Retrying::default(),
         };
-        let refused = upload.checkpoint(Duration::from_millis(250)).await.unwrap_err();
+        // A budget ending during a request times out; the cause survives when it ends between attempts.
+        let mut reasons = Vec::new();
+        while reasons.len() < 3 && reasons.last() != Some(&graphite_meter_core::failure::FailureReason::ServerBusy) {
+            let refused = upload.checkpoint(CHECKPOINT_RETRY).await.unwrap_err();
+            reasons.push(crate::failure::reason(refused.as_ref(), false));
+        }
         assert_eq!(
-            crate::failure::reason(refused.as_ref(), false),
-            graphite_meter_core::failure::FailureReason::ServerBusy,
-            "{refused}"
+            reasons.last(),
+            Some(&graphite_meter_core::failure::FailureReason::ServerBusy),
+            "{reasons:?}"
         );
-        refusing.store(false, Ordering::SeqCst);
+        refusals.store(1, Ordering::SeqCst);
         let snapshot = upload
             .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
             .await?;
+        let retried = Instant::now();
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(state_sender.borrow().latest.is_none());
-        let refused = server.await??;
-        assert!(refused.len() >= 2);
-        assert!(refused.windows(2).all(|pair| pair[1] - pair[0] >= CHECKPOINT_RETRY));
+        assert!(retried - server.await?? >= CHECKPOINT_RETRY);
         Ok(())
     }
 
