@@ -192,10 +192,10 @@ def main() -> None:
     parser.add_argument('--review-template', action='store_true')
     args = parser.parse_args()
     repo = args.repo.resolve()
-    args.reviews = local_path(args.reviews, repo) if args.reviews else None
-    args.supplement = local_path(args.supplement, repo) if args.supplement else None
-    args.browser_scan = local_path(args.browser_scan, repo) if args.browser_scan else None
-    reviews = ([Review.parse(item) for item in array(read_json(args.reviews))] if args.reviews else [])
+    reviews_path = local_path(args.reviews, repo) if args.reviews else None
+    supplement = local_path(args.supplement, repo) if args.supplement else None
+    browser_scan = local_path(args.browser_scan, repo) if args.browser_scan else None
+    reviews = ([Review.parse(item) for item in array(read_json(reviews_path))] if reviews_path else [])
     output = local_path(args.out, repo)
     output.mkdir(parents=True, exist_ok=True)
     # Invalidate before the build too: a failed compilation must not retain an old report.
@@ -218,9 +218,9 @@ def main() -> None:
         return
     if failures:
         raise LegalError('Rust dependency notices need review:\n' + '\n'.join(failures))
-    if args.supplement is None:
+    if supplement is None:
         raise LegalError('reviewed Rust sysroot and platform-library notice supplement is required')
-    extra = platform_notice(args.supplement, target=args.target, compiler=toolchain, channel=channel)
+    extra = platform_notice(supplement, target=args.target, compiler=toolchain, channel=channel)
     executable = Path(next(message['executable'] for message in messages
                            if message.get('reason') == 'compiler-artifact' and message.get('executable')
                            and message['target']['name'] == args.package))
@@ -230,12 +230,12 @@ def main() -> None:
     staged_assets = None
     shared_notices = None
     if args.package == 'graphite-meter-server' and os.environ.get('GM_RUST_ASSET_DIR'):
-        if args.browser_scan is None:
+        if browser_scan is None:
             raise LegalError('server with browser assets requires the matching production --browser-scan')
         browser_reviews = [Review.parse(item) for item in array(read_json(repo / 'legal/reviewed-components.json'))]
         browser_provenance = [entry for item in array(read_json(repo / 'legal/provenance.json'))
                               if 'server/browser' in (entry := Provenance.parse(item)).artifactScopes]
-        browser_components = add_provenance(repo, discover_browser(args.browser_scan, browser_reviews),
+        browser_components = add_provenance(repo, discover_browser(browser_scan, browser_reviews),
                                             browser_provenance, 'server/browser')
         for component in browser_components:
             validate_review(component, browser_reviews)
