@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -182,6 +183,23 @@ func TestFormatMatchesTheSharedVectors(t *testing.T) {
 	}
 	for _, v := range vectors.Added {
 		check("added", fmtAdded(time.Duration(v.In*float64(time.Millisecond))), v.Out+" ms")
+	}
+}
+
+func TestFailureLabelsMatchThePin(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile("../../../api/failurereasons.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinned := map[goclient.FailureReason]string{}
+	for line := range strings.SplitSeq(string(raw), "\n") {
+		if reason, label, ok := strings.Cut(line, "|"); ok && !strings.HasPrefix(line, "#") {
+			pinned[goclient.FailureReason(strings.TrimSpace(reason))] = strings.TrimSpace(label)
+		}
+	}
+	if !maps.Equal(failureLabels, pinned) {
+		t.Errorf("failure labels %v, pinned as %v", failureLabels, pinned)
 	}
 }
 

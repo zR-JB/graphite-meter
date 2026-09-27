@@ -1,0 +1,17 @@
+# Graphite Meter — failure reason pin (shared across Go / TS).
+#
+# Format (one reason per non-comment, non-blank line):
+#   <reason> | <label>
+#
+#   reason = the key every implementation uses for the failure
+#   label  = the text every view shows for it
+#
+# Read by client/src/lib/presentation/vocabulary.test.ts and go/cmd/graphite-meter-client/main_test.go.
+
+preparation-failed | Couldn't prepare the connection
+connection-lost | Connection lost
+timeout | Stopped delivering data
+sign-in-required | Sign-in required
+server-busy | Server at capacity
+protocol-error | Unexpected server response
+insufficient-evidence | Too little measured time

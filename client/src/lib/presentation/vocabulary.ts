@@ -1,4 +1,4 @@
-// User-facing names shared by every view; the TUI uses the same table.
+// User-facing names shared by every browser view.
 import type { IconName } from "./icons";
 import type {
   ConnectivityState,
