@@ -123,6 +123,7 @@ async fn download_peer_with_gate(
                         }
                         if flag.load(Ordering::SeqCst) == 3 {
                             let _ = stream.write_all(format!("HTTP/1.1 403 Forbidden\r\nGraphite-Meter-Auth: required\r\nGraphite-Meter-Auth-Url: {login_url}\r\nContent-Length: 0\r\n\r\n").as_bytes()).await;
+                            let _ = stream.shutdown().await;
                             return;
                         }
                         if flag.load(Ordering::SeqCst) == 1 {
@@ -348,7 +349,9 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     assert_eq!(first, vec!["near"]);
     assert_eq!(
         observed.borrow().failures[0].reason,
-        graphite_meter_core::failure::FailureReason::SignInRequired
+        graphite_meter_core::failure::FailureReason::SignInRequired,
+        "{:?}",
+        observed.borrow().failures
     );
     let first_bytes = observed.borrow().results[0].down_bytes();
     assert!(first_bytes > 0);

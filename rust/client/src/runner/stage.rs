@@ -784,7 +784,8 @@ pub(super) async fn measure(
                                 ready.insert(id);
                             },
                             Some(_) => {},
-                            None => return Err("latency observations ended before readiness".into()),
+                            // Streams end before their task joins; the join branch reports why.
+                            None => {}
                         },
                         task = resources.latency.join_next() => {
                             let task = task.ok_or("missing latency task")?;

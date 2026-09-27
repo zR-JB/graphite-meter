@@ -80,7 +80,11 @@ impl Download {
         let readiness = async {
             for _ in 0..lanes {
                 tokio::select! {
-                    value = received.recv() => value.ok_or("download ended before readiness")?,
+                    // Lanes drop their sender before their task completes; report the lane's cause.
+                    value = received.recv() => if value.is_none() {
+                        owner.tasks.join_next().await.ok_or("no download lanes")???;
+                        return Err("download ended before readiness".into());
+                    },
                     task = owner.tasks.join_next() => {
                         task.ok_or("no download lanes")???;
                         return Err::<(), Error>("download cancelled before readiness".into());
@@ -148,7 +152,10 @@ impl Download {
             drop(ready);
             for _ in 0..lanes {
                 tokio::select! {
-                    value = received.recv() => value.ok_or("WebTransport download ended before readiness")?,
+                    value = received.recv() => if value.is_none() {
+                        owner.tasks.join_next().await.ok_or("no WebTransport download lanes")???;
+                        return Err("WebTransport download ended before readiness".into());
+                    },
                     task = owner.tasks.join_next() => {
                         task.ok_or("no WebTransport download lanes")???;
                         return Err::<(), Error>("WebTransport download cancelled before readiness".into());
