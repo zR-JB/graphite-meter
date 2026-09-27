@@ -249,7 +249,7 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Failed when a planned result is missing (the latency focus's median included), partial after a failure.
+    /// Failed when a planned result is missing (a present focus's median included), partial after a failure.
     pub fn stage_status(&self, result: &StageResult) -> StageStatus {
         let unavailable = |measurement: &Option<graphite_meter_core::measurement::MeasurementResult>| {
             measurement
@@ -261,7 +261,10 @@ impl Snapshot {
             StageStatus::Stopped
         } else if stage.downloads() && unavailable(&result.down)
             || stage.uploads() && unavailable(&result.up)
-            || stage == Stage::Latency && self.focus_latency(result).is_none_or(|host| host.median().is_none())
+            || stage == Stage::Latency
+                && self
+                    .focus_latency(result)
+                    .is_none_or(|host| host.median().is_none() || !self.participants.contains(&host.id))
         {
             StageStatus::Failed
         } else if self.failures.iter().any(|failure| failure.stage == stage) {
@@ -281,19 +284,28 @@ impl Snapshot {
 
     pub(crate) fn leave(&mut self, id: &str) {
         self.participants.retain(|participant| participant != id);
-        if self.latency_focus.as_deref() != Some(id) {
+        self.refocus();
+    }
+
+    pub(crate) fn refocus(&mut self) {
+        if self
+            .latency_focus
+            .as_ref()
+            .is_some_and(|focus| self.participants.contains(focus))
+        {
             return;
         }
         let idle = self.results.iter().find(|result| result.stage == Stage::Latency);
-        let measured = |participant: &&String| {
+        let survivor = self.participants.iter().find(|participant| {
             idle.is_some_and(|idle| {
                 idle.server_latencies
                     .iter()
                     .any(|host| host.id == **participant && host.median().is_some())
             })
-        };
-        let focus = self.participants.iter().find(measured).or(self.participants.first());
-        self.latency_focus = focus.cloned();
+        });
+        if let Some(survivor) = survivor {
+            self.latency_focus = Some(survivor.clone());
+        }
     }
 
     pub fn added_ms(&self, loaded: &StageResult, id: &str) -> Option<f64> {

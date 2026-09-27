@@ -871,6 +871,7 @@ impl<'a> StageRun<'a> {
                 server_latencies,
                 server_results,
             });
+            snapshot.refocus();
         });
     }
 }

@@ -953,7 +953,11 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         "a server lost before its latency channel dialled stayed in the run"
     );
     assert_eq!(download.server_results[0].id, "far");
-    assert_eq!(snapshot.latency_focus.as_deref(), Some("far"));
+    assert_eq!(
+        snapshot.latency_focus.as_deref(),
+        Some("near"),
+        "the focus moves only to a survivor that measured latency"
+    );
     Ok(())
 }
 
