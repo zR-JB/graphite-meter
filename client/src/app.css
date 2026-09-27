@@ -202,27 +202,27 @@
   --text-inverse: light-dark(oklch(1 0 0), oklch(0.19 0.009 255));
 
   /* Hues sit inside sRGB here; the P3 block below only raises their chroma. */
-  --brand: light-dark(oklch(0.52 0.088 205), oklch(0.78 0.115 205));
-  --brand-strong: light-dark(oklch(0.42 0.07 205), oklch(0.87 0.085 205));
+  --brand: light-dark(oklch(0.52 0.078 205), oklch(0.8 0.092 205));
+  --brand-strong: light-dark(oklch(0.42 0.064 205), oklch(0.88 0.07 205));
   --brand-soft: color-mix(in oklab, var(--brand) 14%, transparent);
 
-  --signal: light-dark(oklch(0.5 0.12 262), oklch(0.75 0.105 262));
+  --signal: light-dark(oklch(0.5 0.1 262), oklch(0.78 0.085 262));
   --signal-soft: color-mix(in oklab, var(--signal) 14%, transparent);
 
   --phase-warmup: light-dark(oklch(0.52 0.012 255), oklch(0.66 0.012 255));
   --phase-latency: var(--signal);
   --phase-download: var(--brand);
-  --phase-upload: light-dark(oklch(0.54 0.125 55), oklch(0.8 0.125 62));
-  --phase-bidirectional: light-dark(oklch(0.5 0.15 302), oklch(0.74 0.13 302));
+  --phase-upload: light-dark(oklch(0.54 0.108 55), oklch(0.82 0.1 64));
+  --phase-bidirectional: light-dark(oklch(0.5 0.125 302), oklch(0.77 0.1 302));
   --phase-complete: var(--brand);
   /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
   --latency-loaded: var(--text);
 
-  --ok: light-dark(oklch(0.5 0.11 155), oklch(0.78 0.12 155));
+  --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
   --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
-  --warn: light-dark(oklch(0.53 0.105 85), oklch(0.85 0.12 92));
+  --warn: light-dark(oklch(0.53 0.095 85), oklch(0.86 0.1 92));
   --warn-soft: color-mix(in oklab, var(--warn) 14%, transparent);
-  --err: light-dark(oklch(0.52 0.16 25), oklch(0.72 0.14 22));
+  --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
   --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
   --grid-line: light-dark(
@@ -290,17 +290,17 @@
 }
 @media (color-gamut: p3) {
   :root {
-    --brand: light-dark(oklch(0.52 0.11 205), oklch(0.78 0.144 205));
-    --brand-strong: light-dark(oklch(0.42 0.088 205), oklch(0.87 0.106 205));
-    --signal: light-dark(oklch(0.5 0.15 262), oklch(0.75 0.131 262));
-    --phase-upload: light-dark(oklch(0.54 0.143 55), oklch(0.8 0.156 62));
+    --brand: light-dark(oklch(0.52 0.084 205), oklch(0.8 0.1 205));
+    --brand-strong: light-dark(oklch(0.42 0.069 205), oklch(0.88 0.076 205));
+    --signal: light-dark(oklch(0.5 0.108 262), oklch(0.78 0.092 262));
+    --phase-upload: light-dark(oklch(0.54 0.117 55), oklch(0.82 0.108 64));
     --phase-bidirectional: light-dark(
-      oklch(0.5 0.188 302),
-      oklch(0.74 0.163 302)
+      oklch(0.5 0.135 302),
+      oklch(0.77 0.108 302)
     );
-    --ok: light-dark(oklch(0.5 0.138 155), oklch(0.78 0.15 155));
-    --warn: light-dark(oklch(0.53 0.118 85), oklch(0.85 0.15 92));
-    --err: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.175 22));
+    --ok: light-dark(oklch(0.5 0.103 155), oklch(0.8 0.108 155));
+    --warn: light-dark(oklch(0.53 0.103 85), oklch(0.86 0.108 92));
+    --err: light-dark(oklch(0.52 0.151 25), oklch(0.74 0.13 22));
   }
 }
 @media (min-resolution: 2dppx) {
