@@ -11,9 +11,11 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from github_api import ControlPlaneError, JsonObject, confined_path, file_sha256, runner_path
+from github_api import (
+    ControlPlaneError, JsonObject, confined_path, file_sha256, local_path, runner_path,
+)
 from fixtures import (
-    AMD, Answers, engine, fake, gh, git_head, pages, write_oci, write_release_assets,
+    AMD, Answers, engine, git_head, github, outcome, pages, write_oci, write_release_assets,
 )
 from release import (
     OCI,
@@ -116,8 +118,9 @@ def trusted(stable: bool, mode: str = "publish") -> dict[str, object]:
         MAIN_COMMIT: {"sha": MAIN}, REQUEST_WORKFLOW: {"id": 31337},
         REQUEST_RUN: dispatch_run(31337, 4242, request_title(mode, release_of(stable), MAIN)),
         ARTIFACTS: artifacts(*names), JOBS: pages({"jobs": [GATE]}),
-        ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY,
     }
+    if mode == "publish":
+        responses |= {ENVIRONMENT: REVIEWED, POLICIES: MAIN_ONLY}
     if stable:
         run = ci_run(5151, "success") | {"head_sha": MAIN, "head_branch": "main",
                                           "event": "push", "pull_requests": []}
@@ -143,27 +146,21 @@ MOVED = {compare(OLD): {"behind_by": 0, "merge_base_commit": {"sha": OLD}},
 
 class MainBindingTests(unittest.TestCase):
     def test_pr_must_contain_exact_current_main(self) -> None:
-        for behind, base, ok in ((0, MAIN, True), (3, OLD, False), (0, OLD, False)):
-            api = fake({MAIN_COMMIT: {"sha": MAIN},
-                        compare(MAIN): {"behind_by": behind, "merge_base_commit": {"sha": base}}})
-            with self.subTest(behind=behind, base=base):
-                if ok:
-                    self.assertEqual(require_current_main(REPO, 101, HEAD, api=api), MAIN)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, "behind current main"):
-                        require_current_main(REPO, 101, HEAD, api=api)
+        for behind, base, error in ((0, MAIN, None), (3, OLD, "behind current main"),
+                                    (0, OLD, "behind current main")):
+            with self.subTest(behind=behind, base=base), github({
+                    MAIN_COMMIT: {"sha": MAIN},
+                    compare(MAIN): {"behind_by": behind, "merge_base_commit": {"sha": base}}}):
+                self.assertEqual(outcome(self, error, lambda: require_current_main(REPO, 101, HEAD)),
+                                 None if error else MAIN)
 
     def test_current_main_is_an_exact_commit(self) -> None:
         for main, sha, error in ((MAIN, MAIN, None), (MAIN, OLD, "no longer current main"),
                                  ("main", "main", "could not resolve"),
                                  ("A" * 40, "A" * 40, "could not resolve")):
-            api = fake({MAIN_COMMIT: {"sha": main}})
-            with self.subTest(main=main, sha=sha):
-                if error is None:
-                    self.assertEqual(require_exact_current_main(REPO, sha, api=api), main)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        require_exact_current_main(REPO, sha, api=api)
+            with self.subTest(main=main, sha=sha), github({MAIN_COMMIT: {"sha": main}}):
+                self.assertEqual(outcome(self, error, lambda: require_exact_current_main(REPO, sha)),
+                                 None if error else main)
 
     def test_prerelease_pr_is_open_same_repository_against_main_at_head(self) -> None:
         head = cast(dict[str, object], PR["head"])
@@ -173,13 +170,9 @@ class MainBindingTests(unittest.TestCase):
             ({"head": head | {"repo": {"full_name": "fork/graphite-meter"}}}, "fork PRs"),
             ({"head": head | {"sha": OLD}}, "head SHA changed"),
         ):
-            api = fake({PULL: PR | change})
-            with self.subTest(change=change):
-                if error is None:
-                    self.assertEqual(require_pr(REPO, 101, HEAD, api=api), "fix/test")
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        require_pr(REPO, 101, HEAD, api=api)
+            with self.subTest(change=change), github({PULL: PR | change}):
+                self.assertEqual(outcome(self, error, lambda: require_pr(REPO, 101, HEAD)),
+                                 None if error else "fix/test")
 
     def test_prerelease_control_plane_must_match_main(self) -> None:
         control = (".github", ".githooks", "scripts", "mise.toml", "mise.lock")
@@ -189,25 +182,21 @@ class MainBindingTests(unittest.TestCase):
             for changed in ({"path": path, "sha": "b" * 40}, None):
                 entries = [item for item in main if item["path"] != path] + (
                     [changed] if changed else [])
-                api = fake({tree(HEAD): {"tree": entries}, tree(MAIN): {"tree": main}})
-                with self.subTest(path=path, removed=changed is None):
-                    if path not in control:
-                        require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, f"PR changes {re.escape(path)};"):
-                            require_control_plane_matches_main(REPO, HEAD, MAIN, api=api)
+                error = f"PR changes {re.escape(path)};" if path in control else None
+                with (self.subTest(path=path, removed=changed is None),
+                      github({tree(HEAD): {"tree": entries}, tree(MAIN): {"tree": main}})):
+                    outcome(self, error, lambda: require_control_plane_matches_main(REPO, HEAD, MAIN))
 
     def test_release_tag_preflight_accepts_only_the_expected_commit(self) -> None:
-        require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=fake({TAG_REFS: []}))
-        annotated = fake({
+        annotated = {
             TAG_REFS: [{"ref": "refs/tags/v1.2.3", "object": {"type": "tag", "sha": OLD}}],
             P + f"git/tags/{OLD}": {"object": {"type": "commit", "sha": MAIN}},
-        })
-        require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=annotated)
-        moved = fake({TAG_REFS: [{"ref": "refs/tags/v1.2.3",
-                                  "object": {"type": "commit", "sha": HEAD}}]})
-        with self.assertRaisesRegex(ControlPlaneError, "already exists"):
-            require_compatible_release_tag(REPO, "v1.2.3", MAIN, api=moved)
+        }
+        moved = {TAG_REFS: [{"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": HEAD}}]}
+        for responses, error in (({TAG_REFS: []}, None), (annotated, None),
+                                 (moved, "already exists")):
+            with self.subTest(error=error), github(responses):
+                outcome(self, error, lambda: require_compatible_release_tag(REPO, "v1.2.3", MAIN))
 
     def test_stable_tags_have_no_pr_and_prerelease_tags_need_one(self) -> None:
         for tag, pr, ok in (
@@ -217,11 +206,9 @@ class MainBindingTests(unittest.TestCase):
             ("v01.5.2", 0, False), ("v0.05.2-rc.1", 7, False), ("v0.5.2-alpha.00", 7, False),
         ):
             with self.subTest(tag=tag, pr=pr):
-                if ok:
-                    self.assertEqual(parse_release(tag, MAIN, pr), Release(tag, MAIN, pr))
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, "stable tags"):
-                        parse_release(tag, MAIN, pr)
+                self.assertEqual(outcome(self, None if ok else "stable tags",
+                                         lambda: parse_release(tag, MAIN, pr)),
+                                 Release(tag, MAIN, pr) if ok else None)
         for sha in ("main", "A" * 40, MAIN[:39], MAIN + "1"):
             with self.subTest(sha=sha), self.assertRaisesRegex(ControlPlaneError, "40-character"):
                 parse_release("v0.5.2", sha, 0)
@@ -236,13 +223,8 @@ class EnvironmentTests(unittest.TestCase):
             (REVIEWED, {"branch_policies": [{"name": "*", "type": "branch"}]}, "main"),
             (REVIEWED, {"branch_policies": MAIN_ONLY["branch_policies"] * 2}, "main"),
         ):
-            api = fake({POLICIES: policies, ENVIRONMENT: environment})
-            with self.subTest(error=error):
-                if error is None:
-                    require_protected_environment(REPO, api=api)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        require_protected_environment(REPO, api=api)
+            with self.subTest(error=error), github({POLICIES: policies, ENVIRONMENT: environment}):
+                outcome(self, error, lambda: require_protected_environment(REPO))
 
 
 class GateTests(unittest.TestCase):
@@ -253,13 +235,8 @@ class GateTests(unittest.TestCase):
             ([analysis(30, 0, commit=OLD)], "missing"),
             ([], "missing"),
         ):
-            api = fake({CODEQL: pages(analyses)})
-            with self.subTest(error=error, analyses=len(analyses)):
-                if error is None:
-                    require_main_codeql(REPO, MAIN, api=api)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        require_main_codeql(REPO, MAIN, api=api)
+            with self.subTest(error=error, analyses=len(analyses)), github({CODEQL: pages(analyses)}):
+                outcome(self, error, lambda: require_main_codeql(REPO, MAIN))
 
     def test_ci_gate_uses_newest_run_of_this_commit_pr_and_event_and_its_gate(self) -> None:
         failed = GATE | {"conclusion": "failure"}
@@ -276,18 +253,14 @@ class GateTests(unittest.TestCase):
             ([ci_run(11, "success") | {"event": "push"}], [GATE], "missing"),
             ([ci_run(11, "success") | {"head_branch": "main"}], [GATE], "missing"),
         ):
-            api = fake({ci_runs("pull_request", HEAD): pages({"workflow_runs": runs}),
-                        P + "actions/runs/11/jobs?filter=latest&per_page=100":
-                            pages({"jobs": jobs})})
-            with self.subTest(runs=runs, jobs=jobs):
-                def gate() -> int:
-                    return require_ci_gate(REPO, HEAD, event="pull_request", branch="fix/test",
-                                           pr_number=101, api=api)
-                if isinstance(result, int):
-                    self.assertEqual(gate(), result)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, result):
-                        gate()
+            responses = {ci_runs("pull_request", HEAD): pages({"workflow_runs": runs}),
+                         P + "actions/runs/11/jobs?filter=latest&per_page=100":
+                             pages({"jobs": jobs})}
+            error = result if isinstance(result, str) else None
+            with self.subTest(runs=runs, jobs=jobs), github(responses):
+                self.assertEqual(outcome(self, error, lambda: require_ci_gate(
+                    REPO, HEAD, event="pull_request", branch="fix/test", pr_number=101)),
+                    None if error else result)
 
     def test_newest_pr_codeql_check_from_the_security_app_decides(self) -> None:
         older = {"id": 41, "status": "completed", "conclusion": "success",
@@ -303,15 +276,10 @@ class GateTests(unittest.TestCase):
             newer = {"id": 42, "status": status, "conclusion": conclusion, "started_at": started,
                      "pull_requests": [{"number": pr}], "app": app}
             checks = [{"name": "CodeQL", "app": APP} | item for item in (older, newer)]
-            api = fake({CHECKS: pages({"check_runs": checks})})
-            with self.subTest(status=status, conclusion=conclusion, pr=pr, app=app):
-                def check() -> int:
-                    return require_check_run(REPO, HEAD, name="CodeQL", app_slug=APP["slug"],
-                                             pr_number=101, api=api)
-                if allowed is None:
-                    self.assertRaises(ControlPlaneError, check)
-                else:
-                    self.assertEqual(check(), allowed)
+            with (self.subTest(status=status, conclusion=conclusion, pr=pr, app=app),
+                  github({CHECKS: pages({"check_runs": checks})})):
+                self.assertEqual(outcome(self, None if allowed else "CodeQL", lambda: require_check_run(
+                    REPO, HEAD, name="CodeQL", app_slug=APP["slug"], pr_number=101)), allowed)
 
 
 class RequestTests(unittest.TestCase):
@@ -340,16 +308,10 @@ class RequestTests(unittest.TestCase):
                 files = value
             elif field is not None:
                 run[field] = value
-            api = fake({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})
-            with self.subTest(field=field, error=error):
-                def bind() -> None:
-                    require_dispatch_run(REPO, "zR-JB", MAIN, 4242, "release-request.yml",
-                                         "title", {name: 4096}, api=api)
-                if error is None:
-                    bind()
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        bind()
+            with (self.subTest(field=field, error=error),
+                  github({REQUEST_WORKFLOW: {"id": 7001}, ARTIFACTS: files, REQUEST_RUN: run})):
+                outcome(self, error, lambda: require_dispatch_run(
+                    REPO, "zR-JB", MAIN, 4242, "release-request.yml", "title", {name: 4096}))
 
     def test_handoff_directories_hold_exact_regular_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -365,20 +327,26 @@ class RequestTests(unittest.TestCase):
             with self.assertRaisesRegex(ControlPlaneError, "not a regular file"):
                 exact_files(root, {"request.json"})
 
-    def test_runner_paths_stay_inside_the_runner_temporary_directory(self) -> None:
+    def test_paths_stay_inside_their_roots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "runner"
             (root / "request").mkdir(parents=True)
-            (root / "escape").symlink_to(directory)
-            self.assertEqual(confined_path(str(root / "request" / "new"), str(root)),
+            (root / "escape").symlink_to("/")
+            self.assertEqual(confined_path(root / "request" / "new", root),
                              root.resolve() / "request" / "new")
             for path in (root, root / "request/../..", root / "escape", Path(directory)):
                 with self.subTest(path=path), self.assertRaisesRegex(ControlPlaneError, "outside"):
-                    confined_path(str(path), str(root))
+                    confined_path(path, root)
             for env in ({"OUT_DIR": str(root / "out")}, {"RUNNER_TEMP": str(root)}):
                 with (self.subTest(env=env), patch.dict(os.environ, env, clear=True),
                       self.assertRaisesRegex(ControlPlaneError, "RUNNER_TEMP are required")):
                     runner_path("OUT_DIR")
+            with patch.dict(os.environ, {"RUNNER_TEMP": ""}):
+                self.assertEqual(local_path("go/dist", os.getcwd()), Path("go/dist").resolve())
+                self.assertEqual(local_path(root / "request", "/usr"), root.resolve() / "request")
+                for path in ("/etc/passwd", root / "escape/etc"):
+                    with self.subTest(path=path), self.assertRaisesRegex(ControlPlaneError, "outside"):
+                        local_path(path, "/usr")
 
     def test_prepare_accepts_only_owner_dispatches_of_well_formed_requests(self) -> None:
         base = {
@@ -406,11 +374,9 @@ class RequestTests(unittest.TestCase):
                 env = base | change | {"OUT_DIR": directory, "GITHUB_OUTPUT": str(output),
                                        "RUNNER_TEMP": tempfile.gettempdir()}
                 with patch.dict(os.environ, env):
-                    if error is not None:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            command_prepare()
-                        continue
-                    command_prepare()
+                    outcome(self, error, command_prepare)
+                if error is not None:
+                    continue
                 request = json.loads((Path(directory) / "request.json").read_text())
                 self.assertEqual((request["sourceSha"], request["pr"]),
                                  (HEAD, 101) if change else (MAIN, 0))
@@ -418,10 +384,10 @@ class RequestTests(unittest.TestCase):
 
     def test_publication_requires_main_or_pr_trust_for_the_release_kind(self) -> None:
         stable, prerelease = release_of(True), release_of(False)
-        self.assertEqual(require_publishable(REPO, stable, api=fake(trusted(True))),
-                         (MAIN, 5151, ""))
-        self.assertEqual(require_publishable(REPO, prerelease, api=fake(trusted(False))),
-                         (MAIN, 5151, "77"))
+        with github(trusted(True)):
+            self.assertEqual(require_publishable(REPO, stable), (MAIN, 5151, ""))
+        with github(trusted(False)):
+            self.assertEqual(require_publishable(REPO, prerelease), (MAIN, 5151, "77"))
         skipped = {JOBS: pages({"jobs": [
             GATE, {"name": "Core checks", "status": "completed", "conclusion": "skipped"}]})}
         tag = {TAG_REFS: [{"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": OLD}}]}
@@ -432,9 +398,9 @@ class RequestTests(unittest.TestCase):
             (Release("v1.2.3", HEAD, 0), {}, "no longer current main"),
             (prerelease, {tree(HEAD): {"tree": []}}, "PR changes scripts"),
         ):
-            api = fake(trusted(release.stable) | change)
-            with self.subTest(error=error), self.assertRaisesRegex(ControlPlaneError, error):
-                require_publishable(REPO, release, api=api)
+            with (self.subTest(error=error), github(trusted(release.stable) | change),
+                  self.assertRaisesRegex(ControlPlaneError, error)):
+                require_publishable(REPO, release)
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
         request: dict[str, object] = {
@@ -475,16 +441,13 @@ class RequestTests(unittest.TestCase):
                 inputs = record | cast(dict[str, object], change.get("title", {}))
                 title = request_title(str(inputs["mode"]), Release(
                     str(inputs["tag"]), str(inputs["sourceSha"]), cast(int, inputs["pr"])), MAIN)
-                api = fake(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})
                 checkout = git_head(Path(directory), env.get("HEAD", MAIN))
-                with patch.dict(os.environ, base_env | env | checkout):
-                    if error is None:
-                        release, publish = verify_request(root, api=api)
-                        expected = (request | change)["sourceSha"]
-                        self.assertEqual((release.sha, publish), (expected, True))
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            verify_request(root, api=api)
+                with (patch.dict(os.environ, base_env | env | checkout),
+                      github(trusted(True) | {REQUEST_RUN: dispatch_run(31337, 4242, title)})):
+                    verified = outcome(self, error, lambda: verify_request(root))
+                if verified is not None:
+                    release, publish = verified
+                    self.assertEqual((release.sha, publish), ((request | change)["sourceSha"], True))
 
 
 def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject]:
@@ -551,16 +514,14 @@ class CommandTests(unittest.TestCase):
                     "HANDOFF_DIR": str(root / "handoff"),
                     "GITHUB_OUTPUT": str(root / "output"),
                     "GITHUB_STEP_SUMMARY": str(root / "summary"), "RUNNER_TEMP": str(self.root),
-                } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | gh(
-                    root, trusted(stable, mode) | responses) | env
+                } | engine(root, REPO, release.version, release.sha, oci) | git_head(root, MAIN) | env
                 limit = int(env.get("LIMIT", 1 << 30))
-                with patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit):
-                    if error is not None:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            command_verify()
-                        self.assertFalse((root / "handoff").exists())
-                        continue
-                    command_verify()
+                with (patch.dict(os.environ, variables), patch("release.OCI_LIMIT", limit),
+                      github(trusted(stable, mode) | responses)):
+                    outcome(self, error, command_verify)
+                if error is not None:
+                    self.assertFalse((root / "handoff").exists())
+                    continue
                 result = outputs(root / "output")
                 self.assertEqual((result["digest"], result["publish"], result["sha"]),
                                  (AMD, str(mode == "publish").lower(), release.sha))
@@ -568,8 +529,6 @@ class CommandTests(unittest.TestCase):
                 if stable:
                     self.assertEqual(result["assets_sha256"],
                                      assets_sha256(request_dir / "release-assets-4242"))
-                calls = json.loads((root / "gh.json").read_text())["calls"]
-                self.assertEqual(f"api {ENVIRONMENT}" in calls, mode == "publish")
 
     def test_recheck_reauthorizes_the_exact_handoff_after_approval(self) -> None:
         handoff = self.root / "handoff"
@@ -595,16 +554,12 @@ class CommandTests(unittest.TestCase):
                     "ASSETS_SHA256": assets_sha256(handoff / "assets"),
                     "GITHUB_STEP_SUMMARY": str(Path(directory) / "summary"),
                     "RUNNER_TEMP": tempfile.gettempdir(),
-                } | git_head(Path(directory), env.get("HEAD", MAIN)) | gh(
-                    Path(directory), trusted(stable) | responses) | env
-                with patch.dict(os.environ, variables):
-                    if error is None:
-                        command_recheck()
-                        self.assertIn(f"authorized on main `{MAIN}`",
-                                      (Path(directory) / "summary").read_text())
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            command_recheck()
+                } | git_head(Path(directory), env.get("HEAD", MAIN)) | env
+                with patch.dict(os.environ, variables), github(trusted(stable) | responses):
+                    outcome(self, error, command_recheck)
+                if error is None:
+                    self.assertIn(f"authorized on main `{MAIN}`",
+                                  (Path(directory) / "summary").read_text())
 
 
 if __name__ == "__main__":

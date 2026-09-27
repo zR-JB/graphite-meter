@@ -17,13 +17,12 @@ from pathlib import Path
 from typing import TypeVar
 from urllib.parse import quote
 
+import github_api as gh
 import verify_oci
 import verify_release_assets
 from github_api import (
-    APICall,
     ControlPlaneError,
     JsonObject,
-    api as default_api,
     append_output,
     append_summary,
     expect_array,
@@ -111,9 +110,9 @@ def main_workflow(repository: str, name: str) -> str:
     return f"{repository}/.github/workflows/{name}@refs/heads/main"
 
 
-def release_tag_target(repository: str, tag: str, *, api: APICall = default_api) -> str | None:
+def release_tag_target(repository: str, tag: str) -> str | None:
     """Return the commit the exact tag names, through an annotated tag, or None without the tag."""
-    refs = expect_array(api(f"repos/{repository}/git/matching-refs/tags/{tag}"), tag)
+    refs = expect_array(gh.api(f"repos/{repository}/git/matching-refs/tags/{tag}"), tag)
     exact = [expect_object(ref, tag) for ref in refs
              if isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"]
     if not exact:
@@ -122,18 +121,16 @@ def release_tag_target(repository: str, tag: str, *, api: APICall = default_api)
         fail(f"multiple exact refs unexpectedly match {tag}")
     target = object_field(exact[0], "object", tag)
     if target.get("type") == "tag":
-        annotated = api(f"repos/{repository}/git/tags/{str_field(target, 'sha', tag)}")
+        annotated = gh.api(f"repos/{repository}/git/tags/{str_field(target, 'sha', tag)}")
         target = object_field(expect_object(annotated, tag), "object", tag)
     if target.get("type") != "commit":
         fail(f"{tag} does not reference a commit")
     return str_field(target, "sha", tag)
 
 
-def require_compatible_release_tag(
-    repository: str, tag: str, expected_sha: str, *, api: APICall = default_api,
-) -> None:
+def require_compatible_release_tag(repository: str, tag: str, expected_sha: str) -> None:
     """Refuse before publication if the exact tag already names another commit."""
-    if (sha := release_tag_target(repository, tag, api=api)) not in (None, expected_sha):
+    if (sha := release_tag_target(repository, tag)) not in (None, expected_sha):
         fail(f"{tag} already exists at {sha}, expected {expected_sha}")
 
 
@@ -148,26 +145,22 @@ def converge(what: str, probe: Callable[[], T | None]) -> T:
     fail(f"{what} did not become visible in time")
 
 
-def require_publishable(
-    repository: str, release: Release, *, api: APICall = default_api,
-) -> tuple[str, int, str]:
+def require_publishable(repository: str, release: Release) -> tuple[str, int, str]:
     """Return current main, the CI run and the PR CodeQL check that authorize `release`."""
     sha = release.sha
     if release.stable:
-        main = require_exact_current_main(repository, sha, api=api)
-        require_compatible_release_tag(repository, release.tag, sha, api=api)
-        ci_run_id = require_ci_gate(repository, sha, event="push", branch="main", api=api)
-        require_main_codeql(repository, sha, api=api)
+        main = require_exact_current_main(repository, sha)
+        require_compatible_release_tag(repository, release.tag, sha)
+        ci_run_id = require_ci_gate(repository, sha, event="push", branch="main")
+        require_main_codeql(repository, sha)
         return main, ci_run_id, ""
     pr = release.pr
-    branch = require_pr(repository, pr, sha, api=api)
-    main = require_current_main(repository, pr, sha, api=api)
-    require_control_plane_matches_main(repository, sha, main, api=api)
-    ci_run_id = require_ci_gate(
-        repository, sha, event="pull_request", branch=branch, pr_number=pr, api=api,
-    )
+    branch = require_pr(repository, pr, sha)
+    main = require_current_main(repository, pr, sha)
+    require_control_plane_matches_main(repository, sha, main)
+    ci_run_id = require_ci_gate(repository, sha, event="pull_request", branch=branch, pr_number=pr)
     codeql_id = require_check_run(
-        repository, sha, name="CodeQL", app_slug="github-advanced-security", pr_number=pr, api=api,
+        repository, sha, name="CodeQL", app_slug="github-advanced-security", pr_number=pr,
     )
     return main, ci_run_id, str(codeql_id)
 
@@ -204,14 +197,14 @@ def command_prepare() -> None:
     )
 
 
-def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Release, bool]:
+def verify_request(request_dir: Path) -> tuple[Release, bool]:
     """Bind the untrusted request artifact to its run, current main and the release rules."""
     repository = env("REPOSITORY")
     publisher = env_sha("PUBLISHER_SHA")
     run_id = env_int("REQUEST_RUN_ID")
     if env("WORKFLOW_REF") != main_workflow(repository, "release.yml"):
         fail("release consumer is not the trusted main workflow")
-    require_exact_current_main(repository, publisher, api=api)
+    require_exact_current_main(repository, publisher)
     require_checkout(publisher)
     candidate = request_dir / f"release-request-{run_id}"
     exact_files(candidate, {"request.json", OCI, f"{OCI}.sha256"})
@@ -231,7 +224,7 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
         artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
-                                                              publisher), artifacts, api=api)
+                                                              publisher), artifacts)
     if (downloaded := {path.name for path in request_dir.iterdir()}) != set(artifacts):
         fail(f"downloaded artifacts are {sorted(downloaded)}; expected {sorted(artifacts)}")
     return release, request["mode"] == "publish"
@@ -297,7 +290,7 @@ def command_recheck() -> None:
 
 
 def release_assets(repository: str, release_id: int) -> list[JsonObject]:
-    pages = default_api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
+    pages = gh.api(f"repos/{repository}/releases/{release_id}/assets?per_page=100", paginate=True)
     return [expect_object(item, "asset") for page in expect_array(pages, "assets")
             for item in expect_array(page, "assets")]
 
@@ -321,7 +314,7 @@ def source_notice(release: Release, source: str) -> str:
 
 def command_publish() -> None:
     """Publish the verified assets as the stable GitHub Release at its exact tag, idempotently."""
-    gh, repository = default_api, env("REPOSITORY")
+    repository = env("REPOSITORY")
     release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
     tag, base = release.tag, f"repos/{repository}"
     assets = runner_path("ASSETS_DIR")
@@ -337,7 +330,7 @@ def command_publish() -> None:
             fail(f"{tag} resolves to {sha}, expected {release.sha}")
 
     require_compatible_release_tag(repository, tag, release.sha)
-    pages = expect_array(gh(f"{base}/releases?per_page=100", paginate=True), "releases")
+    pages = expect_array(gh.api(f"{base}/releases?per_page=100", paginate=True), "releases")
     matches = [expect_object(item, "release") for page in pages
                for item in expect_array(page, "releases") if isinstance(item, dict)
                and item.get("tag_name") == tag]
@@ -356,10 +349,10 @@ def command_publish() -> None:
     if not matches:
         draft: JsonObject = {"tag_name": tag, "target_commitish": release.sha, "draft": True,
                              "prerelease": False, "generate_release_notes": True, "body": notice}
-        matches = [expect_object(gh(f"{base}/releases", method="POST", body=draft), "release")]
+        matches = [expect_object(gh.api(f"{base}/releases", method="POST", body=draft), "release")]
     release_id = int_field(matches[0], "id", "release")
 
-    current = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+    current = expect_object(gh.api(f"{base}/releases/{release_id}"), "release")
     if current.get("tag_name") != tag or current.get("draft") is not True:
         fail(f"release {release_id} must remain the {tag} draft during asset upload")
     body = str(current.get("body") or "")
@@ -367,36 +360,36 @@ def command_publish() -> None:
         if "## Source availability" in body:
             fail(f"{tag} draft contains a stale source-availability notice")
         edit: JsonObject = {"body": f"{notice}\n\n{body}" if body else notice}
-        current = expect_object(gh(f"{base}/releases/{release_id}", method="PATCH", body=edit),
+        current = expect_object(gh.api(f"{base}/releases/{release_id}", method="PATCH", body=edit),
                                 "release")
     upload = str_field(current, "upload_url", "release").split("{", 1)[0]
     if not upload.startswith("https://uploads.github.com/"):
         fail(f"unexpected release upload URL {upload}")
     # A retry starts from an empty draft so it cannot keep stale files.
     for asset in release_assets(repository, release_id):
-        gh(f"{base}/releases/assets/{int_field(asset, 'id', 'asset')}", method="DELETE")
+        gh.api(f"{base}/releases/assets/{int_field(asset, 'id', 'asset')}", method="DELETE")
     for name in sorted(local):
-        gh(f"{upload}?name={quote(name)}", method="POST", upload=assets / name)
+        gh.api(f"{upload}?name={quote(name)}", method="POST", upload=assets / name)
     if asset_digests(repository, release_id) != local:
         fail("draft release asset names/digests do not match verified local files")
 
     if release_tag_target(repository, tag) is None:
         try:
-            gh(f"{base}/git/refs", method="POST", body={"ref": f"refs/tags/{tag}", "sha": release.sha})
+            gh.api(f"{base}/git/refs", method="POST", body={"ref": f"refs/tags/{tag}", "sha": release.sha})
         except ControlPlaneError as exc:
             if "already exists" not in str(exc):
                 fail(f"GitHub rejected creation of {tag} at {release.sha}: {exc}")
             print(f"::warning::{tag} creation raced with another writer; verifying the winner")
     require_tag()
     try:
-        gh(f"{base}/releases/{release_id}", method="PATCH",
-           body={"draft": False, "prerelease": False, "make_latest": "legacy"})
+        gh.api(f"{base}/releases/{release_id}", method="PATCH",
+               body={"draft": False, "prerelease": False, "make_latest": "legacy"})
     except ControlPlaneError as exc:
         print(f"::warning::publishing {tag} failed ({exc}); reconciling release state")
 
     def published() -> JsonObject | None:
         try:
-            item = expect_object(gh(f"{base}/releases/{release_id}"), "release")
+            item = expect_object(gh.api(f"{base}/releases/{release_id}"), "release")
         except ControlPlaneError as exc:
             if "(HTTP 404)" in str(exc):
                 return None

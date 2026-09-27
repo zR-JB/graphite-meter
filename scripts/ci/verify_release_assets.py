@@ -14,7 +14,7 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import TLS_NAME, ControlPlaneError, confined_path, decode_json, fail, file_sha256
+from github_api import TLS_NAME, ControlPlaneError, decode_json, fail, file_sha256, local_path
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -197,18 +197,12 @@ def verify(version: str, dist: Path) -> None:
     print(f"release asset verification passed: {version}")
 
 
-def release_dist() -> Path:
-    """RELEASE_DIST, which must lie in the checkout or a temporary directory."""
-    roots = (os.getcwd(), tempfile.gettempdir(), os.environ.get("RUNNER_TEMP") or os.getcwd())
-    return confined_path(os.environ.get("RELEASE_DIST", "go/dist"), *roots)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("version")
     version = parser.parse_args().version
     try:
-        verify(version, release_dist())
+        verify(version, local_path(os.environ.get("RELEASE_DIST", "go/dist"), os.getcwd()))
     except (ControlPlaneError, OSError) as exc:
         raise SystemExit(f"release verification failed: {exc}") from exc
 
