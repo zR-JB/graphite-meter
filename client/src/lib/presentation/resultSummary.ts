@@ -20,7 +20,7 @@ import { serverName } from "./serverAppearance";
 import { JARGON, MISSING, STAGE, reasonLabel } from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
-type LiveStatus = "active" | "pending" | "stopped";
+type LiveStatus = "active" | "pending" | "stopped" | "not-run";
 interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"

@@ -627,7 +627,9 @@ class AppStore {
         }
         this.phase = to;
         this.phaseStartedAtMs = t;
-        this.phaseElapsedMs = this.liveStageBytes = 0;
+        this.phaseElapsedMs = 0;
+        // A stopped stage keeps the bytes it moved; they are measured, not a result.
+        if (!stopped) this.liveStageBytes = 0;
         this.phaseClock.set(0, { snap: true });
         this.live = null;
         if (to === "connecting") {

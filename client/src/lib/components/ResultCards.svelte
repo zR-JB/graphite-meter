@@ -141,10 +141,14 @@
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {
     const active = status(key) === "active" || status(key) === "recovering";
-    const timeout = key === "latency" && active && store.liveLatencyLost;
-    const own = active && (key === "latency" || live.phase === key);
+    // Warmup replies are not counted, so the card shows none, like the gauge.
+    const own =
+      active &&
+      (key === "latency" ? store.phase === "latency" : live.phase === key);
+    const timeout = key === "latency" && own && store.liveLatencyLost;
     const { down = null, up = null } =
       store.live?.phase === key ? store.live : {};
+    const stopped = store.phase === "aborted" && store.phaseStage === key;
     const [value, accessible] = !own
       ? [null, null]
       : key === "latency"
@@ -168,13 +172,15 @@
       icon: STAGE[key].icon,
       status: active
         ? "active"
-        : store.phase === "aborted"
+        : stopped
           ? "stopped"
-          : "pending",
+          : store.phase === "aborted"
+            ? "not-run"
+            : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
-      rows: own ? liveRows(key) : skeleton(key),
+      rows: own || stopped ? liveRows(key) : skeleton(key),
       accessible: active
         ? timeout
           ? "probe timeout"

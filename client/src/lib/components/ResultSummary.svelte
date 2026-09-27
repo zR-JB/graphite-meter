@@ -88,7 +88,7 @@
           <span class="label" {@attach tooltip(() => card.tip)}
             >{card.label}</span
           >
-          {#if card.status === "partial" || card.status === "failed" || card.status === "stopped"}
+          {#if card.status !== "complete" && card.status !== "active" && card.status !== "pending"}
             <span class="badge" data-tone={STATUS_TONE[card.status]}
               >{STATUS[card.status]}</span
             >
