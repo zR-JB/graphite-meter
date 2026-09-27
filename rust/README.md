@@ -2,9 +2,10 @@
 
 The server executable is under development; it is not yet a drop-in replacement.
 Go remains the default. The native Rust TUI is runnable, including latency,
-download, upload, and bidirectional stages. A failed transfer server is removed
-from subsequent stages while surviving servers continue; affected results stay
-marked partial. Latency observations and results remain separate for each server;
+download, upload, and bidirectional stages. With multiple servers, a failed
+transfer server leaves later stages while surviving servers continue. A sole
+server is prepared again for the next stage; prior results retain their failure
+and partial evidence. Latency observations and results remain separate for each server;
 press `l` to change the displayed server. Full parity validation is unfinished.
 An adaptive HTTP/3 send window reduced Rust peak memory versus a fixed-window
 Rust build. A separate Go/Rust HTTP/3 batch still showed higher Rust CPU and
@@ -23,9 +24,13 @@ expands it only for `--legal`; the archive also carries the readable `LEGAL.txt`
 Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
 `--url https://your-server`. `mise run tui` selects Go by default.
 `mise run rust-client-run -- --url https://your-server` remains available.
-Press `r` to run, `?` for help, and `q` to quit.
-Use left/right arrows for the four setup pages and Tab/Shift-Tab to cycle through
-setup and the live view. The carbon palette follows `COLORFGBG` when available
+Start test is focused initially. Tab/Shift-Tab changes focus, arrows adjust
+settings, and Space toggles stages. Advanced exposes stream and timing settings.
+Press `d` for Details, `l` to change the displayed latency server, `?` for help,
+and `q` to quit. Esc asks to stop an active test; Enter runs again after it ends.
+Pass `--report` for a single run without the TUI; redirected output also uses
+report mode. Completion exits 0, a failed or incomplete run exits 1, and signals
+exit 130 (interrupt) or 143 (terminate). The carbon palette follows `COLORFGBG` when available
 and adapts to truecolor, 256-color, or ANSI terminals. Set `GM_TUI_THEME=light`
 or `dark` to override the background choice. `NO_COLOR` disables color.
 The TUI can connect to either implementation's server.
