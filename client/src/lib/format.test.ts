@@ -1,6 +1,5 @@
 import { test, expect } from "bun:test";
 import {
-  chartThroughputScale,
   fixedMs,
   fmtAddedMs,
   fmtBytes,
@@ -8,8 +7,6 @@ import {
   fmtMs,
   fmtMsTick,
   fmtSpeed,
-  niceDomain,
-  niceStep,
   rateScaleIndex,
   rateUnit,
   rateValueAt,
@@ -73,7 +70,7 @@ test("throughput units promote at 1.2 and start from the automatic reference", (
     [gigabit(1.2), "base10", "bits", "Gbit/s"],
     [gigabit(10), "base10", "bits", "Gbit/s"],
     [12_500, "base10", "bits", "kbit/s"],
-    [chartThroughputScale(0), "base10", "bits", "Mbit/s"],
+    [12_500_000, "base10", "bits", "Mbit/s"],
     [1_200_000, "base10", "bytes", "MB/s"],
     [1_258_292, "base2", "bytes", "MiB/s"],
   ] as const;
@@ -83,17 +80,6 @@ test("throughput units promote at 1.2 and start from the automatic reference", (
     ),
   ).toEqual(cases.map(([, , , unit]) => unit));
   expect([fmtSpeed(8.886), fmtSpeed(937)]).toEqual(["8.89", "937.0"]);
-});
-
-test("chart axes snap to a 1-2-5 ladder without collapsing a flat range", () => {
-  expect([7, 7300, 0].map(niceStep)).toEqual([5, 5000, 1]);
-  const ranges = [[], [10, 12], [100, 900], [50, 50]];
-  expect(ranges.map((values) => niceDomain(values))).toEqual([
-    { min: 0, max: 12, span: 12 },
-    { min: 0, max: 20, span: 20 },
-    { min: 0, max: 2000, span: 2000 },
-    { min: 40, max: 60, span: 20 },
-  ]);
 });
 
 const vectors: Record<

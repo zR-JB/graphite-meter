@@ -1,5 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs, niceDomain } from "../format";
+import { fmtMs } from "../format";
+import { niceDomain, type NiceDomain } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION } from "../presentation/vocabulary";
 import { STAGES } from "../runner/schedule";
@@ -31,13 +32,6 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
   current: "Latest",
 };
 
-// The chart's value range; min is the left edge, span its width in the metric's own units (niceDomain's {min, span}).
-export interface LatencyProfileDomain {
-  min: number;
-  max: number;
-  span: number;
-}
-
 type LatencyProfileLaneLike = {
   min: number | null;
   max: number | null;
@@ -65,18 +59,15 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
 /** Shared value-domain policy for live and finalized latency profiles. */
 export function profileDomain(
   lanes: readonly LatencyProfileLaneLike[],
-): LatencyProfileDomain {
+): NiceDomain {
   const values = lanes.flatMap((lane) =>
     [lane.min, lane.max].filter((value): value is number => value != null),
   );
-  return niceDomain(values, { floor: 1 });
+  return niceDomain(values, 1);
 }
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(
-  value: number | null,
-  domain: LatencyProfileDomain,
-): number {
+export function pos(value: number | null, domain: NiceDomain): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
 }

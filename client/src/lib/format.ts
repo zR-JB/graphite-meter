@@ -1,4 +1,4 @@
-// Formatting and scale helpers for speeds, bytes, latency, and chart domains.
+// Formatting and unit helpers for speeds, bytes, and latency.
 import { MISSING } from "./presentation/vocabulary";
 
 /** Every readout shows "—" for a value that is not a finite number, never "NaN" or "Infinity". */
@@ -129,65 +129,4 @@ export function resultRate(
     num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
     unit: rateUnit(units.base, units.kind, tier),
   };
-}
-
-/** The 100 Mbit/s reference used before automatic measurement has data. */
-export const DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC = 12_500_000;
-
-/** Select the linear chart's 1/2/5 ceiling. */
-export function chartThroughputScale(peakBytesPerSec: number): number {
-  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and bytes displays share one visual ceiling.
-  if (peakBytesPerSec <= 0) return DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
-  return ceil125(peakBytesPerSec * 8) / 8;
-}
-
-export function niceStep(span: number): number {
-  if (span <= 0) return 1;
-  const base = 10 ** Math.floor(Math.log10(span));
-  const mantissa = span / base; // [1, 10)
-  return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
-}
-
-interface NiceDomain {
-  min: number;
-  max: number;
-  span: number;
-}
-
-export function niceDomain(
-  values: number[],
-  opts: {
-    widen?: number;
-    minSpanRatio?: number;
-    floor?: number;
-    clampMinZero?: boolean;
-  } = {},
-): NiceDomain {
-  // Widens around the observed range. The minimum span keeps a flat series off the chart edge.
-  const {
-    widen = 1.35,
-    minSpanRatio = 0.16,
-    floor = 12,
-    clampMinZero = true,
-  } = opts;
-  if (!values.length) return { min: 0, max: floor, span: floor };
-  const rawMin = Math.min(...values);
-  const rawMax = Math.max(...values);
-  const rawSpan = Math.max(0, rawMax - rawMin);
-  const weighted = Math.max(rawSpan * widen, rawMax * minSpanRatio, floor);
-  const center = (rawMin + rawMax) / 2;
-  const step = niceStep(weighted);
-  let min = Math.floor((center - weighted / 2) / step) * step;
-  if (clampMinZero) min = Math.max(0, min);
-  const max = Math.ceil((center + weighted / 2) / step) * step;
-  const span = Math.max(step, max - min);
-  return { min, max: min + span, span };
-}
-
-function ceil125(value: number): number {
-  const base = 10 ** Math.floor(Math.log10(value));
-  const mantissa = value / base;
-  return (
-    (mantissa <= 1 ? 1 : mantissa <= 2 ? 2 : mantissa <= 5 ? 5 : 10) * base
-  );
 }

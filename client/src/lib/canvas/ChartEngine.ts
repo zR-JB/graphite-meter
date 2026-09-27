@@ -3,7 +3,7 @@ import type {
   ThroughputSample,
   LatencyBucket,
 } from "../runner/contract";
-import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../format";
+import { DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC } from "../presentation/scales";
 import { upsertThroughputSample } from "../runner/series";
 import { latencyBucketExceedsScale } from "../presentation/scales";
 import { interpolateConnectedAt, lowerBoundAt } from "./hoverInterp";

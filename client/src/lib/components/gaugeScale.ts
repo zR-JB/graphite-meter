@@ -58,29 +58,6 @@ export function throughputValueAtFraction(
   return safeScale(scale);
 }
 
-function decimalCeiling(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 1;
-  return 10 ** Math.ceil(Math.log10(value));
-}
-
-export interface GaugeScaleOptions {
-  /** Optional raw floor, used by automatic scales at mega-unit tiers. */
-  minimumBitsPerSec?: number;
-}
-
-/** Select the gauge ceiling independently from the chart ceiling. */
-export function gaugeScaleForPeak(
-  peakBytesPerSec: number,
-  options: GaugeScaleOptions = {},
-): number {
-  const peakBitsPerSec = Math.max(0, peakBytesPerSec) * 8;
-  const bitsPerSec = Math.max(
-    options.minimumBitsPerSec ?? 0,
-    decimalCeiling(peakBitsPerSec),
-  );
-  return bitsPerSec / 8;
-}
-
 /** Compact, ungrouped labels with bounded meaningful precision. */
 export function fmtGaugeTick(value: number): string {
   if (!Number.isFinite(value) || value === 0) return "0";

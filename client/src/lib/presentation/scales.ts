@@ -7,14 +7,7 @@ import type {
   ThroughputSample,
 } from "../runner/contract";
 import { nearestRank } from "../runner/measure";
-import {
-  chartThroughputScale,
-  DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
-  throughputUnitIndex,
-  type UnitBase,
-  type UnitKind,
-} from "../format";
-import { gaugeScaleForPeak } from "../components/gaugeScale";
+import { throughputUnitIndex, type UnitBase, type UnitKind } from "../format";
 
 /** A rate sets the throughput axis only once it has held this long. */
 const SUSTAIN_MS = 700;
@@ -22,6 +15,64 @@ const SUSTAIN_MS = 700;
 const LATENCY_WINDOW_MS = 8_000;
 const LATENCY_HEADROOM = 1.25;
 const LATENCY_LADDER_MS = [20, 40, 100, 200, 400, 1_000, 2_000, 4_000];
+
+/** The 100 Mbit/s reference used before automatic measurement has data. */
+export const DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC = 12_500_000;
+
+/** Select the linear chart's 1/2/5 ceiling. */
+function chartThroughputScale(peakBytesPerSec: number): number {
+  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and bytes displays share one visual ceiling.
+  if (peakBytesPerSec <= 0) return DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
+  return ceil125(peakBytesPerSec * 8) / 8;
+}
+
+function niceStep(span: number): number {
+  if (span <= 0) return 1;
+  const base = 10 ** Math.floor(Math.log10(span));
+  const mantissa = span / base; // [1, 10)
+  return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
+}
+
+/** A value range: min is the left edge, span its width in the metric's own units. */
+export interface NiceDomain {
+  min: number;
+  max: number;
+  span: number;
+}
+
+/** A 1-2-5 domain around the values; the minimum span keeps a flat series off the chart edge. */
+export function niceDomain(values: number[], floor = 12): NiceDomain {
+  if (!values.length) return { min: 0, max: floor, span: floor };
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+  const rawSpan = Math.max(0, rawMax - rawMin);
+  const weighted = Math.max(rawSpan * 1.35, rawMax * 0.16, floor);
+  const center = (rawMin + rawMax) / 2;
+  const step = niceStep(weighted);
+  const min = Math.max(0, Math.floor((center - weighted / 2) / step) * step);
+  const max = Math.ceil((center + weighted / 2) / step) * step;
+  const span = Math.max(step, max - min);
+  return { min, max: min + span, span };
+}
+
+function ceil125(value: number): number {
+  const base = 10 ** Math.floor(Math.log10(value));
+  const mantissa = value / base;
+  return (
+    (mantissa <= 1 ? 1 : mantissa <= 2 ? 2 : mantissa <= 5 ? 5 : 10) * base
+  );
+}
+
+/** Select the gauge ceiling independently from the chart ceiling: the next decade in bit/s, above an optional floor. */
+export function gaugeScaleForPeak(
+  peakBytesPerSec: number,
+  floorBitsPerSec = 0,
+): number {
+  const bits = Math.max(0, peakBytesPerSec) * 8;
+  const decade =
+    Number.isFinite(bits) && bits > 0 ? 10 ** Math.ceil(Math.log10(bits)) : 1;
+  return Math.max(floorBitsPerSec, decade) / 8;
+}
 
 let times = new Float64Array(256);
 let rates = new Float64Array(256);
@@ -91,9 +142,7 @@ export function throughputScales(
   const floor = unitIndex >= 2 ? 1_000_000_000 : 0;
   return {
     chartBytesPerSec: chartThroughputScale(peak),
-    gaugeBytesPerSec: gaugeScaleForPeak(Math.max(peak, raw), {
-      minimumBitsPerSec: floor,
-    }),
+    gaugeBytesPerSec: gaugeScaleForPeak(Math.max(peak, raw), floor),
     unitIndex,
   };
 }

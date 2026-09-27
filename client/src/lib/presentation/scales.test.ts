@@ -3,9 +3,11 @@ import type { ThroughputSample } from "../runner/contract";
 import { singleLatencyBucket } from "../runner/series";
 import {
   gaugeLatency,
+  gaugeScaleForPeak,
   latencyAxisMs,
   latencyBucketExceedsScale,
   latencyScale,
+  niceDomain,
   throughputScales,
 } from "./scales";
 
@@ -91,4 +93,21 @@ test("the gauge uses the shared axis only once a bucket measured the RTT it show
         completedRttMs,
       }),
     ).toEqual(expected);
+});
+
+test("the gauge takes the next decade above its floor; the chart keeps its 1-2-5 step", () => {
+  expect(gaugeScaleForPeak(1, 1e9)).toBe(125_000_000);
+  expect(gaugeScaleForPeak(125_000_001, 1e9)).toBe(1_250_000_000);
+  expect(gaugeScaleForPeak(12_501)).toBe(125_000);
+  expect(gaugeScaleForPeak(12_500_000)).toBe(12_500_000);
+});
+
+test("chart domains snap to a 1-2-5 ladder without collapsing a flat range", () => {
+  const ranges = [[], [10, 12], [100, 900], [50, 50]];
+  expect(ranges.map((values) => niceDomain(values))).toEqual([
+    { min: 0, max: 12, span: 12 },
+    { min: 0, max: 20, span: 20 },
+    { min: 0, max: 2000, span: 2000 },
+    { min: 40, max: 60, span: 20 },
+  ]);
 });
