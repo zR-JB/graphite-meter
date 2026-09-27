@@ -1,29 +1,32 @@
 //! Concrete discovery responses shared by HTTP listener adapters.
 use crate::{
     admission::Admission,
-    config::{Config, ConfigError},
-    preflight::Preflight,
+    config::{Config, ConfigError, NativeKind},
+    preflight::{Preflight, discovery_host},
     probe::Probe,
 };
 use bytes::Bytes;
-use http::{Request, Response, header, uri::Authority};
+use graphite_meter_core::origin::target_origin;
+use http::{Request, Response, StatusCode, header, uri::Authority};
 use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
 
+const MAX_HOSTS: usize = 64;
+
 pub struct Discovery {
     config: Arc<Config>,
     preflight: Preflight,
     probe: Probe,
-    hosts: Mutex<HashMap<String, HostResponses>>,
+    configured: HashMap<String, Arc<HostResponses>>,
+    hosts: Mutex<HashMap<String, Arc<HostResponses>>>,
 }
 
-#[derive(Clone)]
 struct HostResponses {
     preflight: Bytes,
-    catalog: Bytes,
+    catalog: Option<Bytes>,
 }
 
 impl Discovery {
@@ -32,10 +35,34 @@ impl Discovery {
         admission: Option<Admission>,
         bootstrap_port: Option<u16>,
     ) -> Result<Self, ConfigError> {
+        let preflight = Preflight::new(config.clone())?;
+        let public = &config.public;
+        let origins = ["http://localhost", config.auth.public_url.as_str()]
+            .into_iter()
+            .chain(NativeKind::ALL.map(|kind| config.listener(kind).public_origin.as_str()))
+            .chain(
+                public
+                    .both
+                    .iter()
+                    .chain(&public.throughput)
+                    .chain(&public.latency)
+                    .map(String::as_str),
+            );
+        let mut configured = HashMap::new();
+        for origin in origins {
+            if let Ok(Some(origin)) = target_origin(origin)
+                && discovery_host(&origin.host) == origin.host
+                && !configured.contains_key(&origin.host)
+            {
+                let responses = build(&config, &preflight, &origin.host)?;
+                configured.insert(origin.host, Arc::new(responses));
+            }
+        }
         Ok(Self {
-            preflight: Preflight::new(config.clone())?,
             probe: Probe::new(config.clone(), bootstrap_port, admission),
+            preflight,
             config,
+            configured,
             hosts: Mutex::default(),
         })
     }
@@ -43,62 +70,75 @@ impl Discovery {
     pub fn respond(&self, request: &Request<()>, peer: SocketAddr) -> Result<Option<Response<Bytes>>, ConfigError> {
         let response = match request.uri().path() {
             "/probe" => self.probe.respond(peer, request.version(), request.headers())?,
-            "/preflight" => json_response(self.for_host(authority(request)?)?.preflight)?,
-            "/servers" => json_response(self.for_host(authority(request)?)?.catalog)?,
+            "/preflight" => json_response(self.for_host(&request_host(request))?.preflight.clone())?,
+            "/servers" => match &self.for_host(&request_host(request))?.catalog {
+                Some(catalog) => json_response(catalog.clone())?,
+                None => Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+                    .body(Bytes::from_static(b"server catalogue unavailable\n"))?,
+            },
             _ => return Ok(None),
         };
         Ok(Some(response))
     }
-    fn for_host(&self, authority: &str) -> Result<HostResponses, ConfigError> {
-        let authority = (!authority.contains('@'))
-            .then(|| authority.parse::<Authority>().ok())
-            .flatten();
-        let host = authority.as_ref().map_or("localhost", |authority| {
-            authority.host().trim_start_matches('[').trim_end_matches(']')
-        });
-        let host = crate::preflight::discovery_host(host);
-        let mut hosts = self.hosts.lock().expect("discovery cache poisoned");
-        if let Some(responses) = hosts.get(host) {
+
+    fn for_host(&self, host: &str) -> Result<Arc<HostResponses>, ConfigError> {
+        let host = discovery_host(host);
+        if let Some(responses) = self.configured.get(host) {
             return Ok(responses.clone());
         }
-        let mut catalog = self.config.published_catalog();
-        let local = &mut catalog.servers[0];
-        local.additional_origins.extend(
-            self.preflight
-                .connect_origins(host)?
-                .into_iter()
-                .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://")),
-        );
-        let data = serde_json::to_vec(&catalog)?;
-        let refused = match catalog.validate() {
-            Err(error) => Some(error.to_string()),
-            Ok(()) if data.len() > 64 << 10 => Some("published catalogue exceeds 64 KiB".into()),
-            Ok(()) => None,
-        };
-        if let Some(error) = refused {
-            crate::log!("[gm:discovery] server catalogue for host {host:?}: {error:?}");
-            return Err(error.into());
+        if let Some(responses) = self.hosts.lock().expect("discovery cache poisoned").get(host) {
+            return Ok(responses.clone());
         }
-        let responses = HostResponses {
-            preflight: serde_json::to_vec(&self.preflight.build_for_host(host)?)?.into(),
-            catalog: data.into(),
-        };
-        if hosts.len() < 64 {
-            hosts.insert(host.to_owned(), responses.clone());
+        let responses = Arc::new(build(&self.config, &self.preflight, host)?);
+        let mut hosts = self.hosts.lock().expect("discovery cache poisoned");
+        if hosts.len() >= MAX_HOSTS
+            && let Some(evicted) = hosts.keys().next().cloned()
+        {
+            hosts.remove(&evicted);
         }
+        hosts.insert(host.to_owned(), responses.clone());
         Ok(responses)
     }
 }
 
-fn authority(request: &Request<()>) -> Result<&str, ConfigError> {
-    if let Some(authority) = request.uri().authority() {
-        return Ok(authority.as_str());
+/// An invalid catalogue is logged once per build and answered 500 until the host is built again.
+fn build(config: &Config, preflight: &Preflight, host: &str) -> Result<HostResponses, ConfigError> {
+    let mut catalog = config.published_catalog();
+    catalog.servers[0].additional_origins.extend(
+        preflight
+            .connect_origins(host)?
+            .into_iter()
+            .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://")),
+    );
+    let data = serde_json::to_vec(&catalog)?;
+    let refused = match catalog.validate() {
+        Err(error) => Some(error.to_string()),
+        Ok(()) if data.len() > 64 << 10 => Some("published catalogue exceeds 64 KiB".into()),
+        Ok(()) => None,
+    };
+    if let Some(error) = &refused {
+        crate::log!("[gm:discovery] server catalogue for host {host:?}: {error:?}");
     }
-    Ok(request
-        .headers()
-        .get(header::HOST)
-        .ok_or("missing request authority")?
-        .to_str()?)
+    Ok(HostResponses {
+        preflight: serde_json::to_vec(&preflight.build_for_host(host)?)?.into(),
+        catalog: refused.is_none().then(|| data.into()),
+    })
+}
+
+pub(crate) fn request_host<B>(request: &Request<B>) -> String {
+    request
+        .uri()
+        .authority()
+        .cloned()
+        .or_else(|| request.headers().get(header::HOST)?.to_str().ok()?.parse().ok())
+        .filter(|authority: &Authority| !authority.as_str().contains('@'))
+        .map_or_else(
+            || "localhost".into(),
+            |authority| authority.host().trim_start_matches('[').trim_end_matches(']').into(),
+        )
 }
 
 fn json_response(data: Bytes) -> Result<Response<Bytes>, ConfigError> {

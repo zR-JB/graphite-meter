@@ -331,15 +331,26 @@ pub fn security_headers(authorization_origin: Option<&str>) -> Result<HeaderMap,
     let mut headers = HeaderMap::new();
     headers.insert("cache-control", HeaderValue::from_static("no-store"));
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    harden(&mut headers, false);
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_str(&csp).map_err(|_| InvalidAuthorizationOrigin)?,
+    );
+    Ok(headers)
+}
+
+/// Go's hardening headers, and HSTS for this host alone once a request under authentication is known secure.
+pub fn harden(headers: &mut HeaderMap, secure: bool) {
     headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     headers.insert(
         "permissions-policy",
         HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
     );
-    headers.insert(
-        "content-security-policy",
-        HeaderValue::from_str(&csp).map_err(|_| InvalidAuthorizationOrigin)?,
-    );
-    Ok(headers)
+    if secure {
+        headers.insert(
+            http::header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
 }

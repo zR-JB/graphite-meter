@@ -42,9 +42,6 @@ impl HttpServer {
         lease: Option<AuthLease>,
         pending: &Mutex<Option<Upgrade>>,
     ) -> Response<ResponseBody> {
-        if !matches!(*request.method(), Method::GET | Method::HEAD) {
-            return method_not_allowed("GET, HEAD");
-        }
         let permit = match self.admission.acquire_keys(Class::Request, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {

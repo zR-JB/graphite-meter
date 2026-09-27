@@ -5,6 +5,7 @@ use super::{http_quic::ReceiveCredit, *};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
     failure::LaneEnding,
+    route::Route,
     wire::{self, UploadProgress},
 };
 use graphite_meter_http3::{
@@ -42,30 +43,29 @@ impl HttpServer {
         credit: ReceiveCredit,
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
-        if let Some(response) = self.validate_request(&request) {
-            return refuse(stream, response.status()).await;
+        if let Some(response) = self.validate_request(&request, true) {
+            return answer(stream, response).await;
         }
+        let listener = Listener {
+            ui: false,
+            webtransport: true,
+        };
         let connection = Connection {
             peer,
             tls: true,
-            listener: Listener {
-                ui: false,
-                webtransport: true,
-            },
+            listener,
         };
         let (request, lease) = if let Some(auth) = &self.auth {
             match auth.policy().authorize(request, connection) {
                 Ok(guard) => {
                     let (request, authorization, _, _) = guard.into_parts();
                     let Authorization::Authenticated(lease) = authorization else {
-                        return refuse(stream, StatusCode::FORBIDDEN).await;
+                        return answer(stream, self.harden(text_response(StatusCode::FORBIDDEN))).await;
                     };
                     (request, Some(lease))
                 }
                 Err(rejected) => {
-                    let mut response = self
-                        .auth_refusal(rejected.request(), rejected.reason(), connection)
-                        .map(|_| ());
+                    let mut response = self.auth_refusal(rejected.request(), rejected.reason(), connection);
                     response.headers_mut().remove(header::CONNECTION);
                     return answer(stream, response).await;
                 }
@@ -73,26 +73,33 @@ impl HttpServer {
         } else {
             (request, None)
         };
-        if lease.is_none() && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
-            return refuse(stream, StatusCode::BAD_REQUEST).await;
+        let route = graphite_meter_core::route::lookup(request.uri().path()).filter(|&route| mounts(listener, route));
+        let refusal = self
+            .refuse_route(&request, route, lease.as_ref(), peer)
+            .or_else(|| route.is_none().then(|| text_response(StatusCode::NOT_FOUND)));
+        if let Some(response) = refusal {
+            return answer(stream, self.harden(response)).await;
         }
-        let route = match request.uri().path() {
-            "/wt/ping" => SessionRoute::Ping,
-            "/wt/download" => SessionRoute::Download,
-            "/wt/upload" => SessionRoute::Upload,
-            _ => return refuse(stream, StatusCode::NOT_FOUND).await,
+        let route = route.expect("a mounted WebTransport route");
+        let class = crate::route::spec(route).admission.expect("WT admission class");
+        let route = match route {
+            Route::WtPing => SessionRoute::Ping,
+            Route::WtDownload => SessionRoute::Download,
+            _ => SessionRoute::Upload,
         };
         let owner = lease
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let class =
-            crate::route::spec(graphite_meter_core::route::lookup(request.uri().path()).expect("validated WT route"))
-                .admission
-                .expect("WT admission class");
         let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
             Ok(permit) => permit,
-            Err(error) => return refuse(stream, StatusCode::from_u16(error.status()).expect("known status")).await,
+            Err(error) => {
+                let mut response = text_response(StatusCode::from_u16(error.status()).expect("known status"));
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
+                return answer(stream, self.harden(response)).await;
+            }
         };
         let _admitted = credit.work().admit();
         let lifetime = if class == Class::Session {
@@ -250,21 +257,16 @@ impl HttpServer {
     }
 }
 
-async fn refuse(stream: RequestStream, status: StatusCode) -> Result<(), http3::Error> {
-    let mut response = Response::new(());
-    *response.status_mut() = status;
-    if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
-        response
-            .headers_mut()
-            .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
-    }
-    answer(stream, response).await
-}
-
-async fn answer(stream: RequestStream, response: Response<()>) -> Result<(), http3::Error> {
+async fn answer(stream: RequestStream, response: Response<ResponseBody>) -> Result<(), http3::Error> {
     let (mut send, _receive) = stream.split();
+    let (parts, mut body) = response.into_parts();
     tokio::time::timeout(Duration::from_secs(10), async {
-        send.send_response(response).await?;
+        send.send_response(Response::from_parts(parts, ())).await?;
+        while let Some(Ok(frame)) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+            if let Ok(data) = frame.into_data() {
+                send.send_data(data).await?;
+            }
+        }
         send.finish().await
     })
     .await

@@ -35,7 +35,9 @@ impl Probe {
         if !client.usable {
             return Ok(Response::builder()
                 .status(400)
-                .body(Bytes::from_static(b"ambiguous client address"))?);
+                .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+                .body(Bytes::from_static(b"ambiguous client address\n"))?);
         }
         let protocol = match version {
             Version::HTTP_3 => ProtocolNegotiated::Http3,

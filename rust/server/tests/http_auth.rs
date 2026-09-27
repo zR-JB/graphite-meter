@@ -236,6 +236,11 @@ async fn password_flow() {
     let (ok, body) = h.request("GET", "/download?bytes=1000", &headers, "").await;
     assert!(ok.starts_with("HTTP/1.1 200"));
     assert_eq!(body.len(), 1000);
+    assert!(
+        ok.contains("strict-transport-security: max-age=31536000\r\n")
+            && ok.contains("referrer-policy: same-origin\r\n")
+    );
+    assert!(!ok.contains("x-frame-options") && !ok.contains("content-security-policy"));
     assert!(ok.contains("access-control-allow-credentials: true"));
     assert!(!ok.contains("access-control-allow-origin: *"));
     let (bad, _) = h

@@ -17,24 +17,14 @@ impl HttpServer {
     pub(super) fn upload_control(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
         let id = upload_id(request);
         match request.uri().path() {
-            "/upload/session" => {
-                if request.method() != Method::POST {
-                    return method_not_allowed("POST");
-                }
-                match self.uploads.mint() {
-                    Ok(id) => json_response(&serde_json::json!({"uploadId": id})),
-                    Err(error) => refusal(error),
-                }
-            }
-            "/upload/checkpoint" => {
-                if request.method() != Method::POST {
-                    return method_not_allowed("POST");
-                }
-                match self.uploads.checkpoint(&id, owner) {
-                    Ok(checkpoint) => json_response(&checkpoint),
-                    Err(error) => refusal(error),
-                }
-            }
+            "/upload/session" => match self.uploads.mint() {
+                Ok(id) => json_response(&serde_json::json!({"uploadId": id})),
+                Err(error) => refusal(error),
+            },
+            "/upload/checkpoint" => match self.uploads.checkpoint(&id, owner) {
+                Ok(checkpoint) => json_response(&checkpoint),
+                Err(error) => refusal(error),
+            },
             "/upload/progress" => {
                 if !matches!(*request.method(), Method::GET | Method::DELETE) {
                     return method_not_allowed("GET, DELETE");
@@ -102,9 +92,6 @@ impl HttpServer {
         B: Body<Data = Bytes> + Unpin,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        if request.method() != Method::POST {
-            return Ok(method_not_allowed("POST"));
-        }
         let operation = match self.upload_operation(owner) {
             Ok(operation) => operation,
             Err(error) => return Ok(admission_refusal(error)),

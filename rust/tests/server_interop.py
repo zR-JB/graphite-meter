@@ -98,8 +98,8 @@ def main() -> None:
                 print("curl HTTP/3 download: clean FIN, 65537 bytes", flush=True)
 
                 for method, path, allow in (
-                    ("POST", "/download?bytes=65537", "GET, HEAD"),
-                    ("GET", "/upload", "POST"),
+                    ("POST", "/download?bytes=65537", "GET, HEAD, OPTIONS"),
+                    ("GET", "/upload", "OPTIONS, POST"),
                 ):
                     headers = directory / f"curl-h3-{method.lower()}-{path.split('?')[0].strip('/')}.headers"
                     result = subprocess.run([

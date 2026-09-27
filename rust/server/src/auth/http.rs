@@ -151,7 +151,7 @@ impl Service {
             (&Method::POST, "/auth/cli/token") => self.exchange(request, false),
             (&Method::POST, "/auth/browser/token") => self.exchange(request, true),
             (_, "/wt/session" | "/ws/session") => self.ticket(authorized),
-            _ => response(StatusCode::NOT_FOUND),
+            _ => error_response(StatusCode::NOT_FOUND),
         };
         Some(result)
     }
@@ -601,15 +601,8 @@ impl Service {
 
     fn ticket(&self, authorized: &AuthorizedRequest<Bytes>) -> Response<Bytes> {
         let request = authorized.request();
-        if request.method() != Method::POST {
-            let mut response = response(StatusCode::METHOD_NOT_ALLOWED);
-            response
-                .headers_mut()
-                .insert(header::ALLOW, HeaderValue::from_static("POST"));
-            return response;
-        }
         let Some(lease) = principal(authorized) else {
-            return response(StatusCode::FORBIDDEN);
+            return error_response(StatusCode::FORBIDDEN);
         };
         let query = query(request);
         let kind = if request.uri().path() == "/ws/session" {
@@ -628,16 +621,16 @@ impl Service {
                 StatusCode::OK,
                 json!({"token":ticket.token, "expires":unix_ms(ticket.expires)}),
             ),
-            Err(TicketError::InvalidTarget) => error_response(StatusCode::BAD_REQUEST, "invalid socket target\n"),
-            Err(TicketError::NoSession) => error_response(StatusCode::FORBIDDEN, "no session to bind a token to\n"),
+            Err(TicketError::InvalidTarget) => error_response(StatusCode::BAD_REQUEST),
+            Err(TicketError::NoSession) => error_response(StatusCode::FORBIDDEN),
             Err(TicketError::Capacity) => {
-                let mut result = error_response(StatusCode::TOO_MANY_REQUESTS, "webtransport token capacity reached\n");
+                let mut result = error_response(StatusCode::TOO_MANY_REQUESTS);
                 result
                     .headers_mut()
                     .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
                 result
             }
-            Err(TicketError::RandomUnavailable) => response(StatusCode::SERVICE_UNAVAILABLE),
+            Err(TicketError::RandomUnavailable) => error_response(StatusCode::SERVICE_UNAVAILABLE),
         }
     }
 
@@ -665,10 +658,7 @@ fn response(status: StatusCode) -> Response<Bytes> {
     let mut response = Response::new(Bytes::new());
     *response.status_mut() = status;
     *response.headers_mut() = pages::security_headers(None).expect("static auth CSP");
-    response.headers_mut().insert(
-        header::STRICT_TRANSPORT_SECURITY,
-        HeaderValue::from_static("max-age=31536000"),
-    );
+    pages::harden(response.headers_mut(), true);
     response
 }
 fn html(status: StatusCode, body: String) -> Response<Bytes> {
@@ -688,13 +678,13 @@ fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Bytes
     *response.body_mut() = value.to_string().into();
     response
 }
-fn error_response(status: StatusCode, body: &'static str) -> Response<Bytes> {
+fn error_response(status: StatusCode) -> Response<Bytes> {
     let mut response = response(status);
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/plain; charset=utf-8"),
     );
-    *response.body_mut() = Bytes::from_static(body.as_bytes());
+    *response.body_mut() = format!("{}\n", crate::http_server::error_text(status)).into();
     response
 }
 fn redirect(destination: &str) -> Response<Bytes> {

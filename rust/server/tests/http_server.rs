@@ -106,7 +106,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
             let body = &response[boundary + 4..];
             if status == 405 {
-                assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
+                assert!(headers.contains("allow: GET, HEAD, OPTIONS\r\n"), "{headers}");
             } else if status != 200 || method == "HEAD" {
                 if status == 204 || method == "HEAD" { assert!(body.is_empty()); }
             } else if path.starts_with("/download") {
@@ -271,9 +271,9 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let path = format!("/upload?id={id}");
         let first = vec![1; 1234];
         let second = vec![2; 5678];
-        let (rejected, _) = upload_request(address, "PUT", &path, "192.0.2.1", &second).await;
-        assert!(rejected.starts_with("HTTP/1.1 405"));
-        assert!(rejected.contains("allow: POST"));
+        let (rejected, body) = upload_request(address, "PUT", &path, "192.0.2.1", &second).await;
+        assert!(rejected.starts_with("HTTP/1.1 400") && rejected.contains("connection: close"));
+        assert_eq!(body, b"request body not accepted\n");
         let (first, second) = tokio::join!(
             upload_request(address, "POST", &path, "192.0.2.1", &first),
             upload_request(address, "POST", &path, "192.0.2.1", &second),
@@ -297,7 +297,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         assert!(headers.contains("x-graphite-upload-refusal: invalid"));
         let (headers, _) = upload_request(address, "GET", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 405"));
-        assert!(headers.contains("allow: POST\r\n"), "{headers}");
+        assert!(headers.contains("allow: OPTIONS, POST\r\n"), "{headers}");
 
         let (headers, body) = upload_request(
             address,

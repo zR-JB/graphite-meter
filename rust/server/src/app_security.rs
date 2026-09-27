@@ -5,7 +5,7 @@ use crate::{
     preflight::Preflight,
 };
 use graphite_meter_core::origin::{browser_connect_source_supported, canonical_origin, target_origin};
-use http::{HeaderMap, HeaderValue, uri::Authority};
+use http::{HeaderMap, HeaderValue};
 use std::sync::Arc;
 
 pub struct AppSecurity {
@@ -47,15 +47,8 @@ impl AppSecurity {
         })
     }
 
-    pub fn headers(&self, authority: &str) -> Result<HeaderMap, ConfigError> {
-        let authority: Authority = authority.parse()?;
-        if authority.as_str().contains('@') {
-            return Err("request authority must not contain credentials".into());
-        }
-        let host = self
-            .authenticated_host
-            .as_deref()
-            .unwrap_or_else(|| authority.host().trim_start_matches('[').trim_end_matches(']'));
+    pub fn headers(&self, host: &str) -> Result<HeaderMap, ConfigError> {
+        let host = self.authenticated_host.as_deref().unwrap_or(host);
         let mut sources = self.configured_sources.clone();
         for source in self.preflight.connect_origins(host)? {
             let http_origin = source.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
@@ -76,18 +69,7 @@ impl AppSecurity {
         let mut headers = HeaderMap::new();
         headers.insert("content-security-policy", HeaderValue::from_str(&csp)?);
         headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
-        headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
-        headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
-        headers.insert(
-            "permissions-policy",
-            HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
-        );
-        if self.authenticated_host.is_some() {
-            headers.insert(
-                "strict-transport-security",
-                HeaderValue::from_static("max-age=31536000"),
-            );
-        }
+        crate::auth::pages::harden(&mut headers, self.authenticated_host.is_some());
         Ok(headers)
     }
 }

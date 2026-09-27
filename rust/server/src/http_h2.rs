@@ -251,6 +251,10 @@ impl Body for H2Body {
             None => Poll::Ready(None),
         }
     }
+
+    fn is_end_stream(&self) -> bool {
+        self.stream.is_end_stream()
+    }
 }
 
 impl Drop for H2Body {

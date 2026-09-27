@@ -458,14 +458,15 @@ impl HttpServer {
     }
 
     pub fn respond(&self, request: Request<()>, peer: SocketAddr) -> Response<ResponseBody> {
-        if let Some(response) = self.validate_request(&request) {
+        if let Some(response) = self.validate_request(&request, true) {
             return response;
         }
         if self.auth.is_some() {
             return text_response(StatusCode::FORBIDDEN);
         }
-        if !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
-            return text_response(StatusCode::BAD_REQUEST);
+        let route = graphite_meter_core::route::lookup(request.uri().path());
+        if let Some(response) = self.refuse_route(&request, route, None, peer) {
+            return response;
         }
         let owner = self.upload_owner(&request, peer);
         self.respond_authorized(request, peer, &owner)
@@ -479,23 +480,15 @@ impl HttpServer {
                 .body(ResponseBody::empty())
                 .expect("static response")
         } else if self.auth.is_none() && matches!(path, "/wt/session" | "/ws/session") {
-            if request.method() == Method::POST {
-                Response::builder()
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::CACHE_CONTROL, "no-store")
-                    .body(ResponseBody::bytes(Bytes::from_static(br#"{"token":"","expires":0}"#)))
-                    .expect("static public socket session")
-            } else {
-                method_not_allowed("POST")
-            }
+            Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::CACHE_CONTROL, "no-store")
+                .body(ResponseBody::bytes(Bytes::from_static(br#"{"token":"","expires":0}"#)))
+                .expect("static public socket session")
         } else if path == "/download" {
             self.download(&request, owner)
         } else if path.starts_with("/upload") {
             self.upload_control(&request, owner)
-        } else if matches!(path, "/probe" | "/preflight" | "/servers")
-            && !matches!(*request.method(), Method::GET | Method::HEAD)
-        {
-            method_not_allowed("GET, HEAD")
         } else {
             match self.discovery.respond(&request, peer) {
                 Ok(Some(response)) => response.map(ResponseBody::bytes),
@@ -509,7 +502,7 @@ impl HttpServer {
         response
     }
 
-    fn validate_request<B>(&self, request: &Request<B>) -> Option<Response<ResponseBody>> {
+    fn validate_request<B>(&self, request: &Request<B>, body_ended: bool) -> Option<Response<ResponseBody>> {
         // Hyper's read-buffer capacity can exceed its configured growth limit.
         // Check the parsed header size as well before executing any endpoint.
         let header_bytes = request.headers().iter().fold(
@@ -519,9 +512,48 @@ impl HttpServer {
         if header_bytes > MAX_HEADER_BYTES {
             return Some(text_response(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE));
         }
+        // Like Go: a declared length, or an unknown one outside HTTP/3, is a body only POST may carry.
+        let declared = request
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok()?.parse::<u64>().ok());
+        let unknown = declared.is_none() && request.version() != http::Version::HTTP_3 && !body_ended;
+        if request.method() != Method::POST && (declared.is_some_and(|length| length > 0) || unknown) {
+            let mut response = text_body(StatusCode::BAD_REQUEST, "request body not accepted");
+            if request.version() <= http::Version::HTTP_11 {
+                response
+                    .headers_mut()
+                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+            }
+            return Some(response);
+        }
+        None
+    }
+
+    fn refuse_route<B>(
+        &self,
+        request: &Request<B>,
+        route: Option<graphite_meter_core::route::Route>,
+        lease: Option<&AuthLease>,
+        peer: SocketAddr,
+    ) -> Option<Response<ResponseBody>> {
         let path = request.uri().path();
         if path.contains('\\') || path.split('/').any(|part| matches!(part, "." | "..")) {
             return Some(text_response(StatusCode::NOT_FOUND));
+        }
+        let spec = route.map(crate::route::spec)?;
+        if !spec.serves(request.method()) {
+            return Some(method_not_allowed(spec.allow));
+        }
+        if spec.admission.is_some()
+            && lease.is_none()
+            && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable
+        {
+            let mut response = text_body(StatusCode::BAD_REQUEST, "ambiguous client address");
+            if self.auth.is_none() {
+                Access::Public.apply_measurement(response.headers_mut());
+            }
+            return Some(response);
         }
         None
     }
@@ -537,15 +569,12 @@ impl HttpServer {
         B: Body<Data = Bytes> + Unpin,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        if let Some(response) = self.validate_request(&request) {
+        if let Some(response) = self.validate_request(&request, request.body().is_end_stream()) {
             return Ok(response);
         }
-        if !connection.listener.ui
-            && matches!(
-                request.uri().path(),
-                "/preflight" | "/servers" | "/ws/session" | "/ws/ping"
-            )
-        {
+        let published = graphite_meter_core::route::lookup(request.uri().path());
+        let route = published.filter(|&route| mounts(connection.listener, route));
+        if !connection.listener.ui && route != published {
             return Ok(text_response(StatusCode::NOT_FOUND));
         }
         let mut lease = None;
@@ -561,12 +590,15 @@ impl HttpServer {
                 let mut response = Response::new(ResponseBody::empty());
                 *response.status_mut() = StatusCode::NO_CONTENT;
                 *response.headers_mut() = headers.clone();
-                return Ok(response);
+                return Ok(self.harden(response));
             }
             if let Authorization::Authenticated(guard) = authorized.authorization() {
                 lease = Some(guard.clone());
             }
             origin = authorized.request().headers().get(header::ORIGIN).cloned();
+            if let Some(response) = self.refuse_route(authorized.request(), route, lease.as_ref(), connection.peer) {
+                return Ok(self.harden(response));
+            }
             let path = authorized.request().uri().path();
             if path == "/login" || path.starts_with("/auth/") || matches!(path, "/ws/session" | "/wt/session") {
                 let logout = path == "/auth/logout" && authorized.request().method() == Method::POST;
@@ -608,18 +640,14 @@ impl HttpServer {
                 return Ok(response);
             }
             authorized.into_parts().0
+        } else if let Some(response) = self.refuse_route(&request, route, None, connection.peer) {
+            return Ok(response);
         } else {
             request
         };
-        if lease.is_none()
-            && !client_address::resolve(connection.peer, request.headers(), &self.config.trusted_proxies).usable
-        {
-            return Ok(text_response(StatusCode::BAD_REQUEST));
-        }
         let owner = lease
             .as_ref()
             .map_or_else(|| self.upload_owner(&request, connection.peer), AuthLease::owner);
-        let route = graphite_meter_core::route::lookup(request.uri().path());
         let measurement = route.is_some();
         let upload = route == Some(graphite_meter_core::route::Route::Upload) && request.method() == Method::POST;
         let guard = lease.clone();
@@ -629,17 +657,11 @@ impl HttpServer {
                 if !connection.listener.ui || path == "/login" || path.starts_with("/auth/") {
                     return Ok(text_response(StatusCode::NOT_FOUND));
                 }
-                let authority = request
-                    .uri()
-                    .authority()
-                    .map(|authority| authority.as_str())
-                    .or_else(|| request.headers().get(header::HOST).and_then(|host| host.to_str().ok()))
-                    .unwrap_or_default();
                 let mut response = self
                     .assets
-                    .serve(request.method(), request.uri().path())
+                    .serve(request.method(), request.uri().path(), request.headers())
                     .map(ResponseBody::bytes);
-                match self.app_security.headers(authority) {
+                match self.app_security.headers(&crate::discovery::request_host(&request)) {
                     Ok(headers) => response.headers_mut().extend(headers),
                     Err(_) => return Ok(text_response(StatusCode::BAD_REQUEST)),
                 }
@@ -688,7 +710,15 @@ impl HttpServer {
         {
             self.retain_operation(&mut response, lease, operations);
         }
-        Ok(response)
+        Ok(self.harden(response))
+    }
+
+    /// Go's Enforce sets these on every response once a request under authentication is known secure.
+    fn harden(&self, mut response: Response<ResponseBody>) -> Response<ResponseBody> {
+        if self.auth.is_some() {
+            crate::auth::pages::harden(response.headers_mut(), true);
+        }
+        response
     }
 
     fn retain_operation(
@@ -759,21 +789,14 @@ impl HttpServer {
         let mut response = Response::new(ResponseBody::empty());
         *response.status_mut() = StatusCode::FORBIDDEN;
         *response.headers_mut() = crate::auth::pages::security_headers(None).expect("static auth CSP");
-        if policy.trust(request, connection.peer, connection.tls).secure {
-            response.headers_mut().insert(
-                header::STRICT_TRANSPORT_SECURITY,
-                http::HeaderValue::from_static("max-age=31536000"),
-            );
-        }
-        if matches!(
-            request.version(),
-            http::Version::HTTP_09 | http::Version::HTTP_10 | http::Version::HTTP_11
-        ) {
-            response
-                .headers_mut()
-                .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
-        }
+        let secure = policy.trust(request, connection.peer, connection.tls).secure;
+        crate::auth::pages::harden(response.headers_mut(), secure);
         if reason == crate::auth::policy::Refusal::AuthenticationRequired {
+            if request.version() <= http::Version::HTTP_11 {
+                response
+                    .headers_mut()
+                    .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+            }
             let public = policy.public_origin();
             response
                 .headers_mut()
@@ -816,9 +839,6 @@ impl HttpServer {
     }
 
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        if request.method() != Method::GET && request.method() != Method::HEAD {
-            return method_not_allowed("GET, HEAD");
-        }
         let permit = match self.admission.acquire_keys(Class::Request, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {
@@ -854,6 +874,20 @@ impl HttpServer {
             .header(header::CONTENT_LENGTH, count)
             .body(body)
             .expect("valid download headers")
+    }
+}
+
+fn mounts(listener: Listener, route: graphite_meter_core::route::Route) -> bool {
+    use graphite_meter_core::route::{Kind, Route};
+    match route.kind() {
+        Kind::WebTransport => listener.webtransport,
+        _ => {
+            listener.ui
+                || !matches!(
+                    route,
+                    Route::Preflight | Route::Servers | Route::WsSession | Route::Ping
+                )
+        }
     }
 }
 
@@ -910,14 +944,22 @@ fn download_bytes(query: &str) -> u64 {
 }
 
 fn text_response(status: StatusCode) -> Response<ResponseBody> {
+    text_body(status, error_text(status))
+}
+
+pub(crate) fn error_text(status: StatusCode) -> &'static str {
+    match status {
+        StatusCode::NOT_FOUND => "404 page not found",
+        _ => status.canonical_reason().unwrap_or("error"),
+    }
+}
+
+fn text_body(status: StatusCode, text: &str) -> Response<ResponseBody> {
     Response::builder()
         .status(status)
         .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
         .header("x-content-type-options", "nosniff")
-        .body(ResponseBody::bytes(Bytes::from(format!(
-            "{}\n",
-            status.canonical_reason().unwrap_or("error")
-        ))))
+        .body(ResponseBody::bytes(format!("{text}\n").into()))
         .expect("static error response")
 }
 
@@ -1266,6 +1308,10 @@ mod tests {
         fn poll_frame(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
             panic!("rejected upload method must not read the request body");
         }
+
+        fn is_end_stream(&self) -> bool {
+            true
+        }
     }
 
     #[tokio::test]
@@ -1286,7 +1332,7 @@ mod tests {
             peer,
         );
         assert_eq!(download.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(download.headers()[header::ALLOW], "GET, HEAD");
+        assert_eq!(download.headers()[header::ALLOW], "GET, HEAD, OPTIONS");
         let head = server.respond(
             Request::builder()
                 .method(Method::HEAD)
@@ -1301,13 +1347,14 @@ mod tests {
         drop(head);
         let _admitted = server.respond(Request::get("/download?bytes=1").body(()).unwrap(), peer);
         for (method, path, allow) in [
-            (Method::POST, "/download?bytes=1", "GET, HEAD"),
-            (Method::POST, "/probe", "GET, HEAD"),
-            (Method::DELETE, "/preflight", "GET, HEAD"),
-            (Method::POST, "/servers", "GET, HEAD"),
-            (Method::GET, "/upload/session", "POST"),
-            (Method::GET, "/upload/checkpoint", "POST"),
-            (Method::POST, "/upload/progress", "GET, DELETE"),
+            (Method::POST, "/download?bytes=1", "GET, HEAD, OPTIONS"),
+            (Method::POST, "/probe", "GET, HEAD, OPTIONS"),
+            (Method::DELETE, "/preflight", "GET, HEAD, OPTIONS"),
+            (Method::POST, "/servers", "GET, HEAD, OPTIONS"),
+            (Method::GET, "/upload/session", "OPTIONS, POST"),
+            (Method::GET, "/upload/checkpoint", "OPTIONS, POST"),
+            (Method::POST, "/upload/progress", "DELETE, GET, HEAD, OPTIONS"),
+            (Method::HEAD, "/upload/progress", "GET, DELETE"),
         ] {
             let request = Request::builder().method(method).uri(path).body(()).unwrap();
             let response = server.respond(request, peer);
@@ -1315,19 +1362,25 @@ mod tests {
             assert_eq!(response.headers()[header::ALLOW], allow, "{path}");
         }
 
-        let uri = format!("/upload?id={id}");
         let request = Request::builder()
             .method(Method::GET)
-            .uri(uri)
+            .uri(format!("/upload?id={id}"))
             .body(UnreadBody)
             .unwrap();
-        let owner = server.upload_owner(&request, peer);
+        let connection = Connection {
+            peer,
+            tls: false,
+            listener: Listener {
+                ui: true,
+                webtransport: false,
+            },
+        };
         let response = server
-            .receive_upload(request, &owner, &Arc::new(Mutex::new(Vec::new())))
+            .respond_incoming(request, connection, &Arc::new(Mutex::new(Vec::new())), None)
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(response.headers()[header::ALLOW], "POST");
+        assert_eq!(response.headers()[header::ALLOW], "OPTIONS, POST");
         assert_eq!(server.uploads.retained(), 0);
     }
 
