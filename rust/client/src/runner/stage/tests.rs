@@ -171,7 +171,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
         stage
             .server_results
             .iter()
-            .all(|server| server.down_bytes > 0)
+            .all(|server| server.down_bytes() > 0)
     );
     near_task.abort();
     far_task.abort();
@@ -321,7 +321,7 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     .await?;
     assert!(first.is_empty());
     assert!(observed.borrow().results[0].complete);
-    let first_bytes = observed.borrow().results[0].down_bytes;
+    let first_bytes = observed.borrow().results[0].down_bytes();
     assert!(first_bytes > 0);
     {
         let snapshot = observed.borrow();
@@ -331,15 +331,15 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
             first
                 .server_results
                 .iter()
-                .map(|server| server.down_bytes)
+                .map(|server| server.down_bytes())
                 .sum::<u64>(),
-            first.down_bytes
+            first.down_bytes()
         );
         assert!(
             first
                 .server_results
                 .iter()
-                .all(|server| server.down_bps.is_some())
+                .all(|server| server.down_bps().is_some())
         );
     }
 
@@ -358,22 +358,22 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
     assert!(snapshot.results[0].complete);
-    assert_eq!(snapshot.results[0].down_bytes, first_bytes);
+    assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
     assert!(!snapshot.results[1].complete);
-    assert!(snapshot.results[1].down_bytes > 0);
-    assert!(snapshot.results[1].down_bps.is_some());
+    assert!(snapshot.results[1].down_bytes() > 0);
+    assert!(snapshot.results[1].down_bps().is_some());
     let contributions = &snapshot.results[1].server_results;
     assert_eq!(contributions.len(), 2);
     assert_eq!(
         contributions
             .iter()
-            .map(|server| server.down_bytes)
+            .map(|server| server.down_bytes())
             .sum::<u64>(),
-        snapshot.results[1].down_bytes
+        snapshot.results[1].down_bytes()
     );
-    assert!(contributions[0].down_bps.is_none());
+    assert!(contributions[0].down_bps().is_none());
     assert!(contributions[0].error.is_some());
-    assert!(contributions[1].down_bps.is_some());
+    assert!(contributions[1].down_bps().is_some());
     assert!(snapshot.servers[0].error.is_some());
     assert!(snapshot.servers[1].error.is_none());
     drop(snapshot);
@@ -392,7 +392,7 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 3);
     assert!(snapshot.results[0].complete);
-    assert_eq!(snapshot.results[0].down_bytes, first_bytes);
+    assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
     assert!(!snapshot.results[2].complete);
     assert!(snapshot.servers[1].error.is_some());
     near_task.abort();
@@ -737,8 +737,8 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
             .reason,
         graphite_meter_core::failure::FailureReason::Timeout
     );
-    assert!(result.down_bps.is_some());
-    assert!(result.server_results[0].down_bps.is_some());
+    assert!(result.down_bps().is_some());
+    assert!(result.server_results[0].down_bps().is_some());
     Ok(())
 }
 

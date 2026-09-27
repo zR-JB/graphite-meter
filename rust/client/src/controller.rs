@@ -253,7 +253,7 @@ impl Controller {
 }
 
 async fn execute(
-    work: Work,
+    mut work: Work,
     http: Http,
     snapshots: watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
@@ -283,6 +283,21 @@ async fn execute(
             Ok(()) => return Ok(()),
             Err(error) => error,
         };
+        if crate::failure::reason(error.as_ref())
+            == graphite_meter_core::failure::FailureReason::SignInRequired
+            && snapshots
+                .borrow()
+                .results
+                .iter()
+                .any(|result| result.elapsed > Duration::ZERO)
+            && matches!(work, Work::Run(_))
+        {
+            work = Work::Verify(work.config().clone());
+            snapshots.send_modify(|snapshot| {
+                snapshot.status = "Sign-in expired. Checking the selected servers…".into();
+            });
+            continue;
+        }
         let Some(required) = authentication_required(error.as_ref()) else {
             return Err(error);
         };

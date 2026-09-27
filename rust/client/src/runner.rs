@@ -336,7 +336,7 @@ pub async fn run(
         snapshot.results.clear();
         snapshot.failures.clear();
         snapshot.server_latencies.clear();
-        snapshot.history.clear();
+        snapshot.history = Default::default();
         snapshot.latest = Point::default();
         snapshot.stage = None;
     });

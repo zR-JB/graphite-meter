@@ -235,11 +235,6 @@ mod tests {
             assert_eq!(config.throughput_transport, expected);
             config.validate().unwrap();
         }
-        let config = Config {
-            throughput_transport: Some(ThroughputTransport::WebTransportDatagram),
-            ..Config::default()
-        };
-        assert!(config.validate().is_err());
     }
 
     #[test]

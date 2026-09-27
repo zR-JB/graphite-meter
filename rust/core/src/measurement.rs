@@ -19,10 +19,10 @@ pub enum Stage {
 }
 
 impl Stage {
-    fn needs_down(self) -> bool {
+    pub fn needs_down(self) -> bool {
         self != Self::Upload
     }
-    fn needs_up(self) -> bool {
+    pub fn needs_up(self) -> bool {
         self != Self::Download
     }
 }
@@ -107,6 +107,7 @@ pub struct AggregationInterval {
     down_peak: f64,
     up_peak: f64,
     samples: usize,
+    server_peaks: BTreeMap<String, (f64, f64)>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -194,6 +195,7 @@ impl AggregateMeasurements {
             down_peak: 0.0,
             up_peak: 0.0,
             samples: 0,
+            server_peaks: BTreeMap::new(),
         });
         self.first = None;
         self.last = None;
@@ -272,6 +274,20 @@ impl AggregateMeasurements {
         interval.window = Some(full);
         interval.samples += 1;
         if let Some(peak) = peak {
+            for component in &peak.down {
+                let rates = interval
+                    .server_peaks
+                    .entry(component.server_id.clone())
+                    .or_default();
+                rates.0 = rates.0.max(component.bytes_per_sec);
+            }
+            for component in &peak.up {
+                let rates = interval
+                    .server_peaks
+                    .entry(component.server_id.clone())
+                    .or_default();
+                rates.1 = rates.1.max(component.bytes_per_sec);
+            }
             if let Some(rate) = peak.down_bytes_per_sec {
                 interval.down_peak = interval.down_peak.max(rate);
             }
@@ -356,27 +372,62 @@ impl AggregateMeasurements {
         result
     }
 
-    pub fn server_rate(&self, stage: Stage, direction: Direction, id: &str) -> Option<f64> {
-        self.intervals
+    pub fn server_result(&self, stage: Stage, direction: Direction, id: &str) -> MeasurementResult {
+        let totals = self.stage_total_for_server(stage, id);
+        let mut result = MeasurementResult {
+            stage,
+            direction,
+            total_bytes: match direction {
+                Direction::Down => totals.down,
+                Direction::Up => totals.up,
+            },
+            mean_bytes_per_sec: None,
+            peak_bytes_per_sec: None,
+            samples: 0,
+            elapsed_nanos: None,
+            unavailable_reason: Some(UnavailableReason::SurvivorEvidence),
+        };
+        for interval in self
+            .intervals
             .iter()
             .rev()
             .take_while(|interval| interval.stage == stage)
             .filter(|interval| interval.complete)
-            .filter_map(|interval| interval.window.as_ref())
-            .find_map(|window| {
-                let components = match direction {
-                    Direction::Down => &window.down,
-                    Direction::Up => &window.up,
-                };
-                components
-                    .iter()
-                    .find(|component| {
-                        component.server_id == id
-                            && component.duration_nanos >= MIN_SURVIVOR_NANOS
-                            && component.bytes > 0
-                    })
-                    .map(|component| component.bytes_per_sec)
-            })
+        {
+            let Some(window) = &interval.window else {
+                continue;
+            };
+            let components = match direction {
+                Direction::Down => &window.down,
+                Direction::Up => &window.up,
+            };
+            if let Some(component) = components.iter().find(|component| {
+                component.server_id == id
+                    && component.duration_nanos >= MIN_SURVIVOR_NANOS
+                    && component.bytes > 0
+            }) {
+                result.mean_bytes_per_sec = Some(component.bytes_per_sec);
+                result.peak_bytes_per_sec = Some(
+                    interval
+                        .server_peaks
+                        .get(id)
+                        .map_or(component.bytes_per_sec, |rates| match direction {
+                            Direction::Down => rates.0,
+                            Direction::Up => rates.1,
+                        })
+                        .max(component.bytes_per_sec),
+                );
+                result.samples = interval.samples;
+                result.elapsed_nanos = Some(component.duration_nanos);
+                result.unavailable_reason = None;
+                break;
+            }
+        }
+        result
+    }
+
+    pub fn server_rate(&self, stage: Stage, direction: Direction, id: &str) -> Option<f64> {
+        self.server_result(stage, direction, id).mean_bytes_per_sec
     }
 
     fn resume_at(&mut self, boundary: Boundary) -> Option<AggregateWindow> {

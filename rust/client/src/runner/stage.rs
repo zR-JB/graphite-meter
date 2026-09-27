@@ -424,17 +424,14 @@ fn server_contributions(
         .iter()
         .map(|server| {
             let id = &server.entry.id;
-            let totals = accounting.stage_total_for_server(stage, id);
             ServerContribution {
                 id: id.clone(),
-                down_bytes: totals.down,
-                up_bytes: totals.up,
-                down_bps: accounting
-                    .server_rate(stage, Direction::Down, id)
-                    .map(|rate| rate * 8.0),
-                up_bps: accounting
-                    .server_rate(stage, Direction::Up, id)
-                    .map(|rate| rate * 8.0),
+                down: stage
+                    .needs_down()
+                    .then(|| accounting.server_result(stage, Direction::Down, id)),
+                up: stage
+                    .needs_up()
+                    .then(|| accounting.server_result(stage, Direction::Up, id)),
                 error: snapshot
                     .servers
                     .iter()
@@ -586,19 +583,29 @@ pub(super) async fn measure(
         snapshot.phase = Phase::Preparing;
         snapshot.stage = Some(stage);
         snapshot.status = format!("Preparing {}", stage.name());
-        snapshot.history.clear();
         snapshot.latest = Point::default();
-        snapshot.server_latencies = if stage == Stage::Latency || config.loaded_latency {
-            servers
-                .iter()
-                .map(|server| ServerLatency {
-                    id: server.entry.id.clone(),
-                    ..ServerLatency::default()
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let offset = snapshot
+            .results
+            .iter()
+            .map(|result| result.elapsed)
+            .sum::<Duration>();
+        snapshot.history.add(Point {
+            elapsed: offset,
+            ..Point::default()
+        });
+        let mut previous = std::mem::take(&mut snapshot.server_latencies);
+        snapshot.server_latencies = servers
+            .iter()
+            .map(|server| ServerLatency {
+                id: server.entry.id.clone(),
+                history: previous
+                    .iter_mut()
+                    .find(|host| host.id == server.entry.id)
+                    .map(|host| std::mem::take(&mut host.history))
+                    .unwrap_or_default(),
+                ..ServerLatency::default()
+            })
+            .collect();
     });
     let transfer_stage = match stage {
         Stage::Latency => None,
@@ -982,14 +989,14 @@ pub(super) async fn measure(
                         latency.sample(snapshot, started.elapsed());
                         snapshot.sample(Point {
                             elapsed: started.elapsed(),
+                            sample_count: 1,
                             down_bps: window.as_ref()
                                 .and_then(|window| window.down_bytes_per_sec)
                                 .map(|rate| rate * 8.0),
                             up_bps: window.as_ref()
                                 .and_then(|window| window.up_bytes_per_sec)
                                 .map(|rate| rate * 8.0),
-                            latency_ms: snapshot.server_latencies.first()
-                                .and_then(|host| host.latest_ms),
+                            latency_ms: None,
                         });
                     });
                 }
@@ -1074,22 +1081,10 @@ pub(super) async fn measure(
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: ended.duration_since(started),
-                down_bytes: down.as_ref().map_or(0, |result| result.total_bytes),
-                up_bytes: up.as_ref().map_or(0, |result| result.total_bytes),
-                down_bps: down
-                    .as_ref()
-                    .and_then(|result| result.mean_bytes_per_sec)
-                    .map(|rate| rate * 8.0),
-                up_bps: up
-                    .as_ref()
-                    .and_then(|result| result.mean_bytes_per_sec)
-                    .map(|rate| rate * 8.0),
-                latency: snapshot
-                    .server_latencies
-                    .first()
-                    .and_then(|host| latency.hosts.get(&host.id))
-                    .map(|host| host.accumulator.snapshot())
-                    .unwrap_or_default(),
+                down: down.clone(),
+                up: up.clone(),
+                intervals: accounting.intervals().clone(),
+                omitted_intervals: accounting.omitted_intervals(),
                 server_latencies: snapshot
                     .server_latencies
                     .iter()
@@ -1128,11 +1123,10 @@ pub(super) async fn measure(
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: Duration::ZERO,
-                down_bytes: 0,
-                up_bytes: 0,
-                down_bps: None,
-                up_bps: None,
-                latency: LatencyAccumulator::default().snapshot(),
+                down: None,
+                up: None,
+                intervals: accounting.intervals().clone(),
+                omitted_intervals: accounting.omitted_intervals(),
                 complete: false,
                 server_latencies: snapshot
                     .server_latencies
@@ -1179,15 +1173,21 @@ impl LatencyMeasurements {
     }
 
     fn sample(&mut self, snapshot: &mut Snapshot, elapsed: Duration) {
+        let offset = snapshot
+            .results
+            .iter()
+            .map(|result| result.elapsed)
+            .sum::<Duration>();
         for host in &mut snapshot.server_latencies {
             host.latest_ms = self
                 .hosts
                 .get_mut(&host.id)
                 .and_then(|state| state.latest.take());
-            if host.history.len() == 300 {
-                host.history.pop_front();
-            }
-            host.history.push_back((elapsed, host.latest_ms));
+            host.history.add(Point {
+                elapsed: offset + elapsed,
+                latency_ms: host.latest_ms,
+                ..Point::default()
+            });
         }
     }
 }

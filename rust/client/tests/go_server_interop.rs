@@ -200,13 +200,13 @@ async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Err
         );
         if stage.downloads() {
             assert!(
-                result.down_bytes > 0,
+                result.down_bytes() > 0,
                 "{} received no download",
                 stage.name()
             );
         }
         if stage.uploads() {
-            assert!(result.up_bytes > 0, "{} received no upload", stage.name());
+            assert!(result.up_bytes() > 0, "{} received no upload", stage.name());
         }
     }
     println!(

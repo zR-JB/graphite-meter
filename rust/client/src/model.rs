@@ -49,26 +49,41 @@ pub struct Point {
     pub down_bps: Option<f64>,
     pub up_bps: Option<f64>,
     pub latency_ms: Option<f64>,
+    pub sample_count: usize,
 }
 
 #[derive(Clone, Debug)]
 pub struct StageResult {
     pub stage: Stage,
     pub elapsed: Duration,
-    pub down_bytes: u64,
-    pub up_bytes: u64,
-    pub down_bps: Option<f64>,
-    pub up_bps: Option<f64>,
-    pub latency: graphite_meter_core::latency::LatencySummary,
+    pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
+    pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
+    pub intervals: VecDeque<graphite_meter_core::measurement::AggregationInterval>,
+    pub omitted_intervals: usize,
     pub complete: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
     pub server_results: Vec<ServerContribution>,
 }
 
 impl StageResult {
+    pub fn down_bps(&self) -> Option<f64> {
+        self.down
+            .as_ref()?
+            .mean_bytes_per_sec
+            .map(|rate| rate * 8.0)
+    }
+    pub fn up_bps(&self) -> Option<f64> {
+        self.up.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
+    }
+    pub fn down_bytes(&self) -> u64 {
+        self.down.as_ref().map_or(0, |result| result.total_bytes)
+    }
+    pub fn up_bytes(&self) -> u64 {
+        self.up.as_ref().map_or(0, |result| result.total_bytes)
+    }
     pub fn has_results(&self) -> bool {
-        (!self.stage.downloads() || self.down_bps.is_some())
-            && (!self.stage.uploads() || self.up_bps.is_some())
+        (!self.stage.downloads() || self.down_bps().is_some())
+            && (!self.stage.uploads() || self.up_bps().is_some())
             && (self.stage != Stage::Latency
                 || self.server_latencies.iter().any(|host| {
                     host.summary.distribution.is_some()
@@ -96,11 +111,27 @@ pub struct ServerFailure {
 #[derive(Clone, Debug)]
 pub struct ServerContribution {
     pub id: String,
-    pub down_bytes: u64,
-    pub up_bytes: u64,
-    pub down_bps: Option<f64>,
-    pub up_bps: Option<f64>,
+    pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
+    pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
     pub error: Option<String>,
+}
+
+impl ServerContribution {
+    pub fn down_bps(&self) -> Option<f64> {
+        self.down
+            .as_ref()?
+            .mean_bytes_per_sec
+            .map(|rate| rate * 8.0)
+    }
+    pub fn up_bps(&self) -> Option<f64> {
+        self.up.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
+    }
+    pub fn down_bytes(&self) -> u64 {
+        self.down.as_ref().map_or(0, |result| result.total_bytes)
+    }
+    pub fn up_bytes(&self) -> u64 {
+        self.up.as_ref().map_or(0, |result| result.total_bytes)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -110,11 +141,22 @@ pub struct ServerLatencyResult {
     pub error: Option<String>,
 }
 
+impl ServerLatencyResult {
+    pub fn median(&self) -> Option<u64> {
+        if self.error.is_some() && self.summary.count + self.summary.timeouts < 3 {
+            return None;
+        }
+        self.summary
+            .distribution
+            .map(|distribution| distribution.p50)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct ServerLatency {
     pub id: String,
     pub latest_ms: Option<f64>,
-    pub history: VecDeque<(Duration, Option<f64>)>,
+    pub history: Trace,
     pub error: Option<String>,
 }
 
@@ -139,10 +181,10 @@ impl ServerSummary {
 
     pub fn throughput_label(&self) -> Option<String> {
         let target = self.throughput.as_ref()?;
-        let transport = match target.transport {
-            ThroughputTransport::FetchStream => "Fetch stream",
-            ThroughputTransport::WebTransport => "WebTransport stream",
-            ThroughputTransport::WebTransportDatagram => "Unsupported",
+        let transport = if target.transport == ThroughputTransport::FetchStream {
+            "Fetch streams"
+        } else {
+            "WebTransport streams"
         };
         let protocol = match target.protocol {
             Protocol::Http1 => "HTTP/1.1",
@@ -160,7 +202,7 @@ impl ServerSummary {
         let target = self.latency.as_ref()?;
         let (transport, protocol) = match target.transport {
             LatencyTransport::WebSocket => ("WebSocket", "HTTP/1.1"),
-            LatencyTransport::WebTransport => ("WebTransport", "HTTP/3"),
+            LatencyTransport::WebTransport => ("WebTransport datagrams", "HTTP/3"),
         };
         Some(format!(
             "{transport} · {protocol} · {}",
@@ -199,7 +241,7 @@ pub struct Snapshot {
     pub stage: Option<Stage>,
     pub status: String,
     pub latest: Point,
-    pub history: VecDeque<Point>,
+    pub history: Trace,
     pub results: Vec<StageResult>,
     pub servers: Vec<ServerSummary>,
     pub error: Option<String>,
@@ -226,11 +268,61 @@ impl Snapshot {
         });
     }
 
-    pub fn sample(&mut self, point: Point) {
+    pub fn sample(&mut self, mut point: Point) {
         self.latest = point.clone();
-        if self.history.len() == 300 {
-            self.history.pop_front();
-        }
-        self.history.push_back(point);
+        point.elapsed += self
+            .results
+            .iter()
+            .map(|result| result.elapsed)
+            .sum::<Duration>();
+        self.history.add(point);
     }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Trace {
+    pub points: VecDeque<Point>,
+    step: Duration,
+}
+
+impl Trace {
+    pub fn add(&mut self, mut point: Point) {
+        point.sample_count = 1;
+        self.step = self.step.max(Duration::from_millis(50));
+        if let Some(last) = self.points.back_mut()
+            && point.elapsed.saturating_sub(last.elapsed) < self.step
+            && last.down_bps.is_some() == point.down_bps.is_some()
+            && last.up_bps.is_some() == point.up_bps.is_some()
+            && last.latency_ms.is_some() == point.latency_ms.is_some()
+        {
+            merge(last, point);
+            return;
+        }
+        if self.points.len() == 480 {
+            let mut coarsened = VecDeque::with_capacity(240);
+            while let Some(mut first) = self.points.pop_front() {
+                if let Some(second) = self.points.pop_front() {
+                    merge(&mut first, second);
+                }
+                coarsened.push_back(first);
+            }
+            self.points = coarsened;
+            self.step *= 2;
+        }
+        self.points.push_back(point);
+    }
+}
+
+fn merge(first: &mut Point, second: Point) {
+    let total = first.sample_count + second.sample_count;
+    for (a, b) in [
+        (&mut first.down_bps, second.down_bps),
+        (&mut first.up_bps, second.up_bps),
+        (&mut first.latency_ms, second.latency_ms),
+    ] {
+        *a = a.zip(b).map(|(a, b)| {
+            (a * first.sample_count as f64 + b * second.sample_count as f64) / total as f64
+        });
+    }
+    first.sample_count = total;
 }

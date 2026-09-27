@@ -93,10 +93,10 @@ fn report(snapshot: &Snapshot) {
             "{}{}: down {}, up {}, received down {} bytes / up {} bytes",
             result.stage.name(),
             if result.complete { "" } else { " (partial)" },
-            rate(result.down_bps),
-            rate(result.up_bps),
-            result.down_bytes,
-            result.up_bytes
+            rate(result.down_bps()),
+            rate(result.up_bps()),
+            result.down_bytes(),
+            result.up_bytes()
         );
         for host in &result.server_latencies {
             let p50 = host.summary.distribution.map_or_else(
@@ -120,10 +120,10 @@ fn report(snapshot: &Snapshot) {
                 println!(
                     "  {}: down {}, up {}, received down {} bytes / up {} bytes",
                     safe(&server.id),
-                    rate(server.down_bps),
-                    rate(server.up_bps),
-                    server.down_bytes,
-                    server.up_bytes,
+                    rate(server.down_bps()),
+                    rate(server.up_bps()),
+                    server.down_bytes(),
+                    server.up_bytes(),
                 );
                 if let Some(error) = &server.error {
                     println!("    Unavailable: {}", safe(error));

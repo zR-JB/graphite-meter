@@ -6,12 +6,9 @@ use crate::model::Stage;
 impl Ui {
     pub(super) fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        if area.width < 45 || area.height < 12 {
+        if area.width < 40 || area.height < 12 {
             frame.render_widget(
-                Paragraph::new(
-                    "Graphite Meter\nEnlarge terminal to at least 45 × 12.\nq quit · Esc cancel",
-                )
-                .wrap(Wrap { trim: true }),
+                Paragraph::new("Enlarge the terminal to at least 40×12.").wrap(Wrap { trim: true }),
                 area,
             );
             return;
@@ -21,16 +18,23 @@ impl Ui {
             vertical: 1,
         });
         let regions = Layout::vertical([
-            Constraint::Length(3),
+            Constraint::Length(2),
             Constraint::Min(4),
-            Constraint::Length(3),
+            Constraint::Length(if self.help { 4 } else { 2 }),
         ])
         .split(area);
-        let status = if self.snapshot.status.is_empty() {
-            format!("{:?}", self.snapshot.phase)
-        } else {
-            self.snapshot.status.clone()
-        };
+        let status = match self.snapshot.phase {
+            Phase::Setup => "Not started",
+            Phase::Preparing => "Checking paths",
+            Phase::Warmup => "Warmup",
+            Phase::Measuring => self.snapshot.stage.map_or("Checking paths", Stage::name),
+            Phase::Complete => "Complete",
+            Phase::Partial => "Partial",
+            Phase::Incomplete => "Incomplete",
+            Phase::Cancelled => "Stopped",
+            Phase::Failed => "Failed",
+        }
+        .to_owned();
         let status = safe_text_width(&status, usize::from(regions[0].width / 2).saturating_sub(4));
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
@@ -61,17 +65,23 @@ impl Ui {
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]),
-                Line::from(vec![
-                    Span::styled("native rust client  ", Style::new().fg(self.theme.muted)),
-                    Span::styled(
-                        safe_text_width(
-                            &self.config.url,
-                            usize::from(regions[0].width)
-                                .saturating_sub("native rust client  ".width()),
-                        ),
-                        Style::new().fg(self.theme.brand_strong),
+                Line::styled(
+                    safe_text_width(
+                        &if self.live {
+                            self.snapshot
+                                .servers
+                                .iter()
+                                .filter(|server| server.checked())
+                                .map(|server| server.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(" · ")
+                        } else {
+                            self.config.url.clone()
+                        },
+                        usize::from(regions[0].width),
                     ),
-                ]),
+                    Style::new().fg(self.theme.muted),
+                ),
             ]),
             regions[0],
         );
@@ -86,52 +96,74 @@ impl Ui {
         } else {
             self.theme.warning
         };
-        let shortcuts = if self.cancel == CancelState::Confirming {
-            "Esc confirm cancel · any other key continue · q quit"
-        } else if self.cancel == CancelState::Requested {
-            "Cancelling run · q quit"
+        let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
+            vec!["Esc confirm stop", "any key continue", "q quit"]
         } else if self.live {
-            if regions[2].width < 75 {
-                if self.active() {
-                    "d details · l peer · Esc cancel · q quit"
-                } else {
-                    "r rerun · d details · l peer · q quit"
-                }
-            } else if self.active() {
-                "d per-server · l latency peer · Tab sections · Esc cancel · ? help · q quit"
+            if self.active() {
+                vec![
+                    "Esc stop",
+                    "d details",
+                    "l latency server",
+                    "? keys",
+                    "q quit",
+                ]
             } else {
-                "r rerun · d per-server · l latency peer · Tab sections · ? help · q quit"
+                vec![
+                    "Enter Run again",
+                    "Esc setup",
+                    "d details",
+                    "l latency server",
+                    "? keys",
+                    "q quit",
+                ]
             }
+        } else if self.rows.selected() == Some(0) {
+            vec![
+                "Enter Start test",
+                "↓ settings",
+                "s servers",
+                "v Recheck paths",
+                "? keys",
+                "q quit",
+            ]
         } else {
-            match regions[2].width {
-                0..=74 => "r run · Tab section · ? help · q quit",
-                75..=109 => {
-                    "r run · v verify · s servers · Tab sections · ←/→ pages · Esc cancel · ? help · q quit"
-                }
-                _ => {
-                    "r run · v verify · s servers · l latency · Tab sections · ←/→ setup pages · Esc cancel · ? help · q quit"
-                }
-            }
+            vec![
+                "←/→ change",
+                "Enter edit/toggle",
+                "↑/↓ focus",
+                "r Start test",
+                "? keys",
+                "q quit",
+            ]
         };
-        frame.render_widget(
-            Paragraph::new(vec![
-                Line::styled(
-                    safe_text(notice, usize::from(regions[2].width) * 2),
-                    Style::new().fg(notice_color),
-                ),
-                Line::styled(shortcuts, Style::new().fg(self.theme.muted)),
-            ])
-            .wrap(Wrap { trim: true }),
-            regions[2],
-        );
-        if self.details {
+        let mut footer = String::new();
+        for hint in hints {
+            let next = if footer.is_empty() {
+                hint.to_owned()
+            } else {
+                format!("{footer} · {hint}")
+            };
+            if next.width() > usize::from(regions[2].width) {
+                break;
+            }
+            footer = next;
+        }
+        let mut lines = vec![
+            Line::styled(
+                safe_text_width(notice, usize::from(regions[2].width)),
+                Style::new().fg(notice_color),
+            ),
+            Line::styled(footer, Style::new().fg(self.theme.brand_strong)),
+        ];
+        if self.help {
+            lines.extend([Line::from("Tab/Shift-Tab focus · Space stage · a automatic paths"), Line::from("r start · v Recheck paths · s servers · u available · d Details · l Latency server · q quit")]);
+        }
+        frame.render_widget(Paragraph::new(lines), regions[2]);
+        if self.popup == Popup::Details {
             self.draw_details(frame);
         }
-        if self.chooser {
+        if self.popup == Popup::Servers {
             self.draw_servers(frame);
-        }
-        if self.help {
-            self.draw_help(frame);
         }
         if let Some(edit) = &self.edit {
             let area = popup(frame.area(), 80, 7);
@@ -167,7 +199,7 @@ impl Ui {
         let auth = self.snapshot.auth.as_ref().expect("active approval");
         let area = popup(frame.area(), 100, 12);
         frame.render_widget(Clear, area);
-        frame.render_widget(panel("Client approval required", self.theme), area);
+        frame.render_widget(panel("Sign in", self.theme), area);
         let inner = area.inner(Margin {
             horizontal: 1,
             vertical: 1,
@@ -188,7 +220,7 @@ impl Ui {
         );
         frame.render_widget(
             Paragraph::new(safe_text_width(
-                &format!("Confirmation code: {}", auth.code),
+                &format!("Match this code: {}", auth.code),
                 width,
             ))
             .style(
@@ -222,54 +254,74 @@ impl Ui {
     }
 
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
-        let setup = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(area);
-        frame.render_widget(
-            Tabs::new(PAGES.map(|page| page.label))
-                .select(self.page)
-                .style(Style::new().fg(self.theme.muted))
-                .highlight_style(
-                    Style::new()
-                        .fg(self.theme.inverse)
-                        .bg(self.theme.brand)
-                        .add_modifier(Modifier::BOLD),
-                )
-                .divider(" "),
-            setup[0],
-        );
-        let content = setup[1];
-        let (fields_area, plan_area) = if content.width >= 95 {
+        let content = area;
+        let (fields_area, plan_area) = if frame.area().width >= 100 {
             let regions =
-                Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
                     .split(content);
             (regions[0], regions[1])
-        } else if self.page == 0 && content.height >= 12 {
+        } else if content.height >= 12 {
             let regions =
                 Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(content);
             (regions[0], regions[1])
         } else {
             (content, Rect::default())
         };
-        let items = PAGES[self.page]
+        let items = self
             .fields()
             .iter()
             .map(|field| {
+                use super::setup::Field;
+                if *field == Field::Start {
+                    return ListItem::new(Line::from(Span::styled(
+                        " Start test ",
+                        Style::new()
+                            .fg(self.theme.inverse)
+                            .bg(self.theme.brand)
+                            .add_modifier(Modifier::BOLD),
+                    )));
+                }
+                if *field == Field::Advanced {
+                    return ListItem::new(Line::from(format!(
+                        "{} Advanced",
+                        if self.advanced { "⌄" } else { "›" }
+                    )));
+                }
                 let value = field.value(&self.config);
-                ListItem::new(Line::from(vec![
-                    Span::raw(format!("{:<25} ", field.label())),
+                let mut lines = Vec::new();
+                if *field == Field::Servers {
+                    lines.push(Line::styled(
+                        "Connection paths",
+                        Style::new()
+                            .fg(self.theme.brand_strong)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                if *field == Field::LatencyStage {
+                    lines.push(Line::styled(
+                        "Stages",
+                        Style::new()
+                            .fg(self.theme.brand_strong)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                lines.push(Line::from(vec![
+                    Span::raw(format!("{:<22} ", field.label())),
                     Span::styled(
                         if value.is_empty() {
-                            "automatic / default".into()
+                            "Automatic".into()
                         } else {
                             safe_text(&value, 200)
                         },
                         Style::new().fg(self.theme.brand_strong),
                     ),
-                ]))
+                ]));
+                ListItem::new(lines)
             })
             .collect::<Vec<_>>();
         frame.render_stateful_widget(
             List::new(items)
-                .block(panel("Enter edit/toggle", self.theme))
+                .block(panel("Test setup", self.theme))
                 .highlight_style(
                     Style::new()
                         .fg(self.theme.text)
@@ -312,10 +364,10 @@ impl Ui {
                 for server in checked {
                     lines.push(safe_text(&server.name, 120));
                     if let Some(label) = server.throughput_label() {
-                        lines.push(format!("  ↓ {label}"));
+                        lines.push(format!("  Download {label}"));
                     }
                     if let Some(label) = server.latency_label() {
-                        lines.push(format!("  RTT {label}"));
+                        lines.push(format!("  Latency {label}"));
                     }
                     if let Some(error) = &server.error {
                         lines.push(format!("  Unavailable: {}", safe_text(error, 120)));
@@ -350,7 +402,7 @@ impl Ui {
                 .collect::<Vec<_>>()
                 .join("\n");
             frame.render_widget(
-                Paragraph::new(text).block(panel("Run plan", self.theme)),
+                Paragraph::new(text).block(panel("Servers", self.theme)),
                 plan_area,
             );
         }
@@ -375,339 +427,629 @@ impl Ui {
     }
 
     fn draw_live(&self, frame: &mut Frame, area: Rect) {
-        if area.height < 14 || area.width < 72 {
+        if area.height < 14 {
             self.draw_live_compact(frame, area);
             return;
         }
-        let regions = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Min(3),
-            Constraint::Length(7),
-        ])
-        .split(area);
-        let focus = self.focused_latency();
-        let focus_name = self.latency_name(focus);
-        let metrics = format!(
-            "↓ {}   ↑ {}   RTT {} [{}]   elapsed {:.1}s",
-            rate(self.snapshot.latest.down_bps),
-            rate(self.snapshot.latest.up_bps),
-            milliseconds(
-                focus
-                    .filter(|host| host.error.is_none())
-                    .and_then(|host| host.latest_ms)
-            ),
-            safe_text(focus_name, 50),
-            self.snapshot.latest.elapsed.as_secs_f64()
-        );
-        let stage = self.snapshot.stage.map_or("Waiting", Stage::name);
-        frame.render_widget(
-            Paragraph::new(metrics)
-                .block(panel(stage, self.theme))
-                .style(Style::new().fg(self.theme.brand_strong)),
-            regions[0],
-        );
-        let points = self
-            .snapshot
-            .history
-            .iter()
-            .rev()
-            .take(MAX_POINTS)
-            .collect::<Vec<_>>();
-        let latency = self.snapshot.stage == Some(Stage::Latency);
-        let series = |download: bool| {
-            points
+        let results_height = (4
+            + self
+                .snapshot
+                .results
                 .iter()
-                .rev()
-                .filter_map(|point| {
-                    let value = if latency {
-                        if download { point.latency_ms } else { None }
-                    } else if download {
-                        point.down_bps
-                    } else {
-                        point.up_bps
-                    }?;
-                    let scale = if latency { 1.0 } else { 1_000_000.0 };
-                    (value.is_finite() && value >= 0.0)
-                        .then_some((point.elapsed.as_secs_f64(), value / scale))
-                })
-                .collect::<Vec<_>>()
-        };
-        let down = if latency {
-            focus
-                .map(|host| {
-                    host.history
-                        .iter()
-                        .filter_map(|(elapsed, value)| {
-                            value
-                                .filter(|value| value.is_finite() && *value >= 0.0)
-                                .map(|value| (elapsed.as_secs_f64(), value))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
+                .filter(|result| result.stage != Stage::Latency)
+                .count()
+            + self
+                .snapshot
+                .results
+                .iter()
+                .filter(|result| self.result_latency(result).is_some())
+                .count()
+            + self.snapshot.failures.len())
+        .min(u16::MAX as usize) as u16;
+        let track_height = if area.height < 24 {
+            2
+        } else if self.active() {
+            6
         } else {
-            series(true)
+            4
         };
-        let up = series(false);
-        let maximum = down
-            .iter()
-            .chain(&up)
-            .map(|point| point.1)
-            .fold(1.0_f64, f64::max)
-            * 1.1;
-        let start = points
-            .last()
-            .map_or(0.0, |point| point.elapsed.as_secs_f64());
-        let end = points
-            .first()
-            .map_or(start + 1.0, |point| point.elapsed.as_secs_f64())
-            .max(start + 1.0);
-        let datasets = vec![
-            Dataset::default()
-                .name(if latency { "RTT ms" } else { "↓ Mbps" })
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
-                .style(Style::new().fg(self.theme.brand))
-                .data(&down),
-            Dataset::default()
-                .name(if latency { "" } else { "↑ Mbps" })
-                .marker(Marker::Braille)
-                .graph_type(GraphType::Scatter)
-                .style(Style::new().fg(self.theme.brand_strong))
-                .data(&up),
-        ];
-        // Scatter plots leave missing observations empty; no loss is interpolated.
-        frame.render_widget(
-            Chart::new(datasets)
-                .block(panel(
-                    if latency {
-                        "Recent observed latency"
-                    } else {
-                        "Recent observed throughput"
-                    },
-                    self.theme,
-                ))
-                .x_axis(
-                    Axis::default()
-                        .bounds([start, end])
-                        .labels([format!("{start:.0}s"), format!("{end:.0}s")]),
-                )
-                .y_axis(
-                    Axis::default()
-                        .bounds([0.0, maximum])
-                        .labels(["0".to_owned(), format!("{maximum:.0}")]),
-                ),
-            regions[1],
-        );
-        let rows = self.snapshot.results.iter().take(16).map(|result| {
-            // A later stage may have no live latency probes, but earlier
-            // stage results still own their recorded per-server summaries.
-            let focused_id = focus
-                .map(|host| host.id.as_str())
-                .or(self.latency_focus.as_deref());
-            let summary = match focused_id {
-                Some(id) => result.server_latencies.iter().find(|host| host.id == id),
-                None => result.server_latencies.first(),
-            }
-            .map(|host| &host.summary);
-            Row::new(vec![
-                format!(
-                    "{}{}",
-                    result.stage.name(),
-                    if result.complete { "" } else { " (partial)" }
-                ),
-                rate(result.down_bps),
-                rate(result.up_bps),
-                milliseconds(
-                    summary
-                        .and_then(|summary| summary.distribution)
-                        .map(|d| d.p50 as f64 / 1_000_000.0),
-                ),
-                summary.map_or_else(|| "—".into(), |summary| summary.timeouts.to_string()),
-                summary.map_or_else(|| "—".into(), |summary| summary.unresolved.to_string()),
+        let chart_height = area.height.saturating_sub(results_height + track_height);
+        let show_chart = chart_height >= 9;
+        let (track_area, timeline_area, results_area) = if frame.area().width >= 100 {
+            let regions =
+                Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)])
+                    .split(area);
+            let columns =
+                Layout::horizontal([Constraint::Percentage(32), Constraint::Percentage(68)])
+                    .split(regions[0]);
+            (columns[0], columns[1], regions[1])
+        } else {
+            let regions = Layout::vertical([
+                Constraint::Length(track_height),
+                Constraint::Length(if show_chart { chart_height } else { 0 }),
+                Constraint::Min(1),
             ])
-        });
-        frame.render_widget(
-            Table::new(
-                rows,
-                [
-                    Constraint::Percentage(24),
-                    Constraint::Percentage(19),
-                    Constraint::Percentage(19),
-                    Constraint::Percentage(16),
-                    Constraint::Percentage(11),
-                    Constraint::Percentage(11),
-                ],
-            )
-            .header(
-                Row::new(["Stage", "Down", "Up", "RTT p50", "Timeout", "Pending"])
-                    .style(Style::new().fg(self.theme.brand_strong)),
-            )
-            .block(panel(
-                "Stage results · d per-server · receiver upload",
-                self.theme,
-            )),
-            regions[2],
-        );
-    }
-    fn draw_live_compact(&self, frame: &mut Frame, area: Rect) {
-        let width = usize::from(
-            area.width
-                .saturating_sub(if area.height < 7 { 0 } else { 2 }),
-        );
-        let stage = self.snapshot.stage.map_or("Waiting", Stage::name);
-        let focus = self.focused_latency();
-        let focus_name = self.latency_name(focus);
-        let mut lines = vec![
-            format!(
-                "{stage} · {:.1}s",
-                self.snapshot.latest.elapsed.as_secs_f64()
-            ),
-            format!(
-                "↓ {}   ↑ {}",
-                rate(self.snapshot.latest.down_bps),
-                rate(self.snapshot.latest.up_bps)
-            ),
-            format!(
-                "RTT {} · {}",
-                milliseconds(
-                    focus
-                        .filter(|host| host.error.is_none())
-                        .and_then(|host| host.latest_ms)
-                ),
-                safe_text(focus_name, 50)
-            ),
-        ];
-        if self.snapshot.results.is_empty() {
-            lines.push("No stage result yet".to_owned());
+            .split(area);
+            (regions[0], regions[1], regions[2])
+        };
+        let mut track = Vec::new();
+        for stage in &self.requested.stages {
+            let result = self
+                .snapshot
+                .results
+                .iter()
+                .find(|result| result.stage == *stage);
+            let value = if let Some(result) = result {
+                if result.has_results() {
+                    let headline = if *stage == Stage::Latency {
+                        milliseconds(
+                            self.result_latency(result)
+                                .and_then(|host| host.median())
+                                .map(|median| median as f64 / 1e6),
+                        )
+                    } else {
+                        [
+                            stage.downloads().then(|| rate(result.down_bps())),
+                            stage.uploads().then(|| rate(result.up_bps())),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                    };
+                    format!(
+                        "{} {headline}{}",
+                        if result.complete { "✓" } else { "!" },
+                        if result.complete { "" } else { " Partial" }
+                    )
+                } else {
+                    "✗ Failed".into()
+                }
+            } else if self.active() && self.snapshot.stage == Some(*stage) {
+                match self.snapshot.phase {
+                    Phase::Preparing => "checking paths".into(),
+                    Phase::Warmup => "warmup".into(),
+                    _ => {
+                        let elapsed = self.elapsed().as_secs_f64();
+                        let duration = self.requested.duration(*stage).as_secs_f64();
+                        let filled = (elapsed / duration * 8.0).clamp(0.0, 8.0) as usize;
+                        format!(
+                            "{}{} {elapsed:.1} s / {duration:.0} s",
+                            "█".repeat(filled),
+                            "░".repeat(8 - filled)
+                        )
+                    }
+                }
+            } else if self.snapshot.phase == Phase::Cancelled {
+                "✗ Stopped".into()
+            } else {
+                format!("○ {} s", self.requested.duration(*stage).as_secs())
+            };
+            track.push(Line::from(safe_text_width(
+                &format!("{:<14} {value}", stage.name()),
+                usize::from(area.width.saturating_sub(2)),
+            )));
+        }
+        if track_area.height == 2 {
+            let index = self
+                .snapshot
+                .stage
+                .and_then(|stage| {
+                    self.requested
+                        .stages
+                        .iter()
+                        .position(|planned| *planned == stage)
+                })
+                .unwrap_or(0);
+            frame.render_widget(
+                Paragraph::new(track.into_iter().skip(index).take(2).collect::<Vec<_>>()),
+                track_area,
+            );
         } else {
-            for result in self.snapshot.results.iter().rev().take(4) {
-                lines.push(format!(
-                    "{}{}: ↓ {}  ↑ {}",
-                    result.stage.name(),
-                    if result.complete { "" } else { " (partial)" },
-                    rate(result.down_bps),
-                    rate(result.up_bps),
-                ));
-            }
+            frame.render_widget(
+                Paragraph::new(track).block(panel("Test", self.theme)),
+                track_area,
+            );
         }
-        let lines = lines
-            .into_iter()
-            .map(|line| Line::from(safe_text_width(&line, width)))
-            .collect::<Vec<_>>();
-        let mut summary = Paragraph::new(lines).style(Style::new().fg(self.theme.brand_strong));
-        if area.height >= 7 {
-            summary = summary.block(panel("Live · d per-server results", self.theme));
+        if timeline_area.height >= 9 {
+            self.draw_timeline(frame, timeline_area);
         }
-        frame.render_widget(summary, area);
+        self.draw_results(frame, results_area);
     }
-    fn draw_details(&mut self, frame: &mut Frame) {
-        let area = popup(frame.area(), 108, frame.area().height.saturating_sub(2));
+
+    fn draw_live_compact(&self, frame: &mut Frame, area: Rect) {
         let mut lines = Vec::new();
+        if self.active() {
+            lines.push(format!(
+                "{} · {:.1} s",
+                self.snapshot.stage.map_or("Checking paths", Stage::name),
+                self.elapsed().as_secs_f64()
+            ));
+            lines.push(format!(
+                "Download {} · Upload {}",
+                rate(self.shown_down),
+                rate(self.shown_up)
+            ));
+            lines.push(format!(
+                "Latency {} · {}",
+                milliseconds(self.focused_latency().and_then(|host| host.latest_ms)),
+                self.latency_name(self.focused_latency())
+            ));
+        }
+        for result in self.snapshot.results.iter().rev().take(4) {
+            let headline = if result.stage == Stage::Latency {
+                milliseconds(
+                    self.result_latency(result)
+                        .and_then(|host| host.median())
+                        .map(|median| median as f64 / 1e6),
+                )
+            } else {
+                [
+                    result.stage.downloads().then(|| rate(result.down_bps())),
+                    result.stage.uploads().then(|| rate(result.up_bps())),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" / ")
+            };
+            lines.push(format!(
+                "{} {}: {headline}",
+                if result.complete { "✓" } else { "!" },
+                result.stage.name()
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(
+                lines
+                    .into_iter()
+                    .map(|line| Line::from(safe_text_width(&line, usize::from(area.width))))
+                    .collect::<Vec<_>>(),
+            ),
+            area,
+        );
+    }
+
+    fn result_latency<'a>(
+        &'a self,
+        result: &'a crate::model::StageResult,
+    ) -> Option<&'a crate::model::ServerLatencyResult> {
+        match &self.latency_focus {
+            Some(id) => result.server_latencies.iter().find(|host| &host.id == id),
+            None => result.server_latencies.first(),
+        }
+    }
+
+    fn draw_results(&self, frame: &mut Frame, area: Rect) {
+        let idle = self
+            .snapshot
+            .results
+            .iter()
+            .find(|result| result.stage == Stage::Latency)
+            .and_then(|result| self.result_latency(result))
+            .and_then(|host| host.median());
+        let mut lines = vec![Line::styled(
+            "Throughput              Download           Upload",
+            Style::new()
+                .fg(self.theme.brand_strong)
+                .add_modifier(Modifier::BOLD),
+        )];
         for result in &self.snapshot.results {
+            if result.stage == Stage::Latency {
+                continue;
+            }
+            lines.push(Line::from(format!(
+                "{:<23} {:<18} {}",
+                result.stage.name(),
+                if result.stage.downloads() {
+                    rate(result.down_bps())
+                } else {
+                    "—".into()
+                },
+                if result.stage.uploads() {
+                    rate(result.up_bps())
+                } else {
+                    "—".into()
+                }
+            )));
+        }
+        if area.width >= 90 {
             lines.push(Line::styled(
-                format!(
-                    "{}{}  ↓ {}  ↑ {}",
-                    result.stage.name(),
-                    if result.complete { "" } else { " (partial)" },
-                    rate(result.down_bps),
-                    rate(result.up_bps),
-                ),
+                "Latency        Median       Added        p95          Jitter       Probe timeouts",
                 Style::new()
                     .fg(self.theme.brand_strong)
                     .add_modifier(Modifier::BOLD),
             ));
-            for server in &result.server_results {
-                let name = self
-                    .snapshot
-                    .servers
-                    .iter()
-                    .find(|summary| summary.id == server.id)
-                    .map_or(server.id.as_str(), |summary| summary.name.as_str());
-                lines.push(Line::from(format!(
-                    "  {}  ↓ {}  ↑ {}",
-                    safe_text(name, 32),
-                    rate(server.down_bps),
-                    rate(server.up_bps),
-                )));
-                lines.push(Line::styled(
-                    format!(
-                        "    received ↓ {} B  ↑ {} B",
-                        server.down_bytes, server.up_bytes
-                    ),
-                    Style::new().fg(self.theme.muted),
-                ));
-                if let Some(host) = result
-                    .server_latencies
-                    .iter()
-                    .find(|host| host.id == server.id)
-                {
-                    let p50 = host
-                        .summary
-                        .distribution
-                        .map(|distribution| distribution.p50 as f64 / 1_000_000.0);
-                    lines.push(Line::styled(
+        } else {
+            lines.push(Line::styled(
+                "Latency · Median · Added · p95 · Jitter · Probe timeouts",
+                Style::new()
+                    .fg(self.theme.brand_strong)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        for result in &self.snapshot.results {
+            let Some(host) = self.result_latency(result) else {
+                continue;
+            };
+            let median = host.median();
+            let added = if result.stage == Stage::Latency {
+                None
+            } else {
+                median
+                    .zip(idle)
+                    .map(|(loaded, idle)| (loaded as f64 - idle as f64) / 1e6)
+            };
+            let cells = [
+                milliseconds(median.map(|median| median as f64 / 1e6)),
+                added.map_or_else(
+                    || "—".into(),
+                    |value| format!("{} ms", graphite_meter_core::format::added_ms(value)),
+                ),
+                milliseconds(
+                    median
+                        .and(host.summary.distribution)
+                        .map(|distribution| distribution.p95 as f64 / 1e6),
+                ),
+                milliseconds(host.summary.jitter.map(|jitter| jitter as f64 / 1e6)),
+                host.summary.timeout_ratio().map_or_else(
+                    || "—".into(),
+                    |ratio| {
                         format!(
-                            "    RTT {}  replies {}  timeouts {}  pending {}",
-                            milliseconds(p50),
-                            host.summary.count,
+                            "{}/{} ({:.1}%)",
                             host.summary.timeouts,
-                            host.summary.unresolved,
+                            host.summary.count + host.summary.timeouts,
+                            ratio * 100.0
+                        )
+                    },
+                ),
+            ];
+            let name = match result.stage {
+                Stage::Latency => "Idle",
+                Stage::Download => "Loaded down",
+                Stage::Upload => "Loaded up",
+                Stage::Bidirectional => "Loaded bi-dir",
+            };
+            if area.width >= 90 {
+                lines.push(Line::from(format!(
+                    "{name:<14} {:<12} {:<12} {:<12} {:<12} {}",
+                    cells[0], cells[1], cells[2], cells[3], cells[4]
+                )));
+            } else {
+                lines.push(Line::from(format!("{name}: {}", cells.join(" · "))));
+            }
+        }
+        for failure in &self.snapshot.failures {
+            lines.push(Line::styled(
+                failure.reason.label(),
+                Style::new().fg(self.theme.error),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(lines)
+                .block(panel("Results", self.theme))
+                .wrap(Wrap { trim: true }),
+            area,
+        );
+    }
+
+    fn draw_timeline(&self, frame: &mut Frame, area: Rect) {
+        let regions = Layout::vertical([
+            Constraint::Length(if self.active() {
+                if area.height < 12 { 1 } else { 2 }
+            } else {
+                0
+            }),
+            Constraint::Length(if area.height >= 12 { 1 } else { 0 }),
+            Constraint::Percentage(50),
+            Constraint::Min(1),
+        ])
+        .split(area);
+        if self.active() {
+            let focus = self.focused_latency();
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "Download {} · Upload {} · Latency {}\nLatency to {} · l switches server",
+                    rate(self.shown_down),
+                    rate(self.shown_up),
+                    milliseconds(focus.and_then(|host| host.latest_ms)),
+                    self.latency_name(focus)
+                )),
+                regions[0],
+            );
+        }
+        let total = self
+            .requested
+            .stages
+            .iter()
+            .map(|stage| self.requested.duration(*stage).as_secs_f64())
+            .sum::<f64>()
+            .max(1.0);
+        let mut marks = String::new();
+        let plot_width = usize::from(area.width.saturating_sub(16));
+        let mut at = 0.0;
+        for stage in &self.requested.stages {
+            let column = (at / total * plot_width as f64) as usize;
+            if column >= marks.width() {
+                marks.push_str(&" ".repeat(column - marks.width()));
+                marks.push_str(if *stage == Stage::Latency {
+                    "Idle"
+                } else {
+                    stage.name()
+                });
+            }
+            at += self.requested.duration(*stage).as_secs_f64();
+        }
+        frame.render_widget(
+            Paragraph::new(safe_text_width(
+                &format!("{:>14}{marks}", ""),
+                usize::from(area.width),
+            ))
+            .style(Style::new().fg(self.theme.muted)),
+            regions[1],
+        );
+        for (latency, region) in [(false, regions[2]), (true, regions[3])] {
+            let mut series = Vec::<(Vec<(f64, f64)>, ratatui::style::Color)>::new();
+            for (upload, color) in [(false, self.theme.brand), (true, self.theme.brand_strong)] {
+                if latency && upload {
+                    continue;
+                }
+                let mut segment = Vec::new();
+                for point in if latency {
+                    self.focused_latency()
+                        .map(|host| &host.history.points)
+                        .unwrap_or(&self.snapshot.history.points)
+                } else {
+                    &self.snapshot.history.points
+                } {
+                    let value = if latency {
+                        point.latency_ms
+                    } else if upload {
+                        point.up_bps
+                    } else {
+                        point.down_bps
+                    };
+                    if let Some(value) = value.filter(|value| value.is_finite() && *value >= 0.0) {
+                        segment.push((point.elapsed.as_secs_f64(), value));
+                    } else if !segment.is_empty() {
+                        series.push((std::mem::take(&mut segment), color));
+                    }
+                }
+                if !segment.is_empty() {
+                    series.push((segment, color));
+                }
+            }
+            let max = series
+                .iter()
+                .flat_map(|(points, _)| points)
+                .map(|(_, value)| *value)
+                .fold(0.0_f64, f64::max);
+            let scale = if latency {
+                1.0
+            } else if max >= 1.2e9 {
+                1e9
+            } else if max >= 1.2e6 {
+                1e6
+            } else if max >= 1.2e3 {
+                1e3
+            } else {
+                1.0
+            };
+            let units = if latency {
+                "ms"
+            } else if scale == 1e9 {
+                "Gbit/s"
+            } else if scale == 1e6 {
+                "Mbit/s"
+            } else if scale == 1e3 {
+                "kbit/s"
+            } else {
+                "bit/s"
+            };
+            let ceiling = axis_ceiling(max / scale);
+            for (points, _) in &mut series {
+                for (_, value) in points {
+                    *value /= scale;
+                }
+            }
+            let datasets = series
+                .iter()
+                .map(|(points, color)| {
+                    Dataset::default()
+                        .marker(Marker::Braille)
+                        .graph_type(GraphType::Line)
+                        .style(Style::new().fg(*color))
+                        .data(points)
+                })
+                .collect::<Vec<_>>();
+            frame.render_widget(
+                Chart::new(datasets)
+                    .block(panel(
+                        if latency {
+                            "Latency · ms"
+                        } else {
+                            "Throughput"
+                        },
+                        self.theme,
+                    ))
+                    .x_axis(
+                        Axis::default()
+                            .bounds([0.0, total])
+                            .labels(["0 s".to_owned(), format!("{total:.0} s")]),
+                    )
+                    .y_axis(Axis::default().bounds([0.0, ceiling]).labels([
+                        format!("{:>12}", "0"),
+                        format!(
+                            "{:>12}",
+                            format!("{} {units}", graphite_meter_core::format::speed(ceiling))
                         ),
-                        Style::new().fg(self.theme.muted),
-                    ));
-                    if let Some(error) = &host.error {
-                        lines.push(Line::styled(
-                            format!("    Latency: {}", safe_text(error, 110)),
-                            Style::new().fg(self.theme.error),
-                        ));
-                    }
-                }
-                if let Some(error) = &server.error {
-                    lines.push(Line::styled(
-                        format!("    {}", safe_text(error, 120)),
-                        Style::new().fg(self.theme.error),
-                    ));
-                }
+                    ])),
+                region,
+            );
+        }
+    }
+
+    fn draw_details(&mut self, frame: &mut Frame) {
+        let area = popup(frame.area(), 84, frame.area().height.saturating_sub(2));
+        let mut lines = vec![Line::styled(
+            self.snapshot.status.clone(),
+            Style::new()
+                .fg(self.theme.brand_strong)
+                .add_modifier(Modifier::BOLD),
+        )];
+        for result in &self.snapshot.results {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                result.stage.name(),
+                Style::new()
+                    .fg(self.theme.brand_strong)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            for measurement in [&result.down, &result.up].into_iter().flatten() {
+                let name =
+                    if measurement.direction == graphite_meter_core::measurement::Direction::Down {
+                        "Download"
+                    } else {
+                        "Upload"
+                    };
+                lines.push(Line::from(format!(
+                    "{name}: {}",
+                    throughput_facts(measurement)
+                )));
             }
-            if result.stage == Stage::Latency {
-                for host in &result.server_latencies {
-                    let p50 = host
-                        .summary
-                        .distribution
-                        .map(|distribution| distribution.p50 as f64 / 1_000_000.0);
+            if !result.server_results.is_empty() {
+                lines.push(Line::from(format!(
+                    "{:<23} {:<20} Upload",
+                    "Throughput", "Download"
+                )));
+                lines.push(Line::from(format!(
+                    "{:<23} {:<20} {}",
+                    "Combined",
+                    rate(result.down_bps()),
+                    rate(result.up_bps())
+                )));
+                for server in &result.server_results {
+                    let name = self.server_name(&server.id);
                     lines.push(Line::from(format!(
-                        "  {}  RTT {}  replies {}  timeouts {}  pending {}",
-                        safe_text(&host.id, 32),
-                        milliseconds(p50),
-                        host.summary.count,
-                        host.summary.timeouts,
-                        host.summary.unresolved,
+                        "{:<23} {:<20} {}",
+                        safe_text(name, 22),
+                        rate(server.down_bps()),
+                        rate(server.up_bps())
                     )));
-                    if let Some(error) = &host.error {
-                        lines.push(Line::styled(
-                            format!("    {}", safe_text(error, 120)),
-                            Style::new().fg(self.theme.error),
-                        ));
-                    }
                 }
             }
-            lines.push(Line::from(""));
+            lines.push(Line::styled(
+                "Latency median by server",
+                Style::new().fg(self.theme.brand_strong),
+            ));
+            for host in &result.server_latencies {
+                lines.push(Line::from(format!(
+                    "{} · Median {} · {} replies",
+                    self.server_name(&host.id),
+                    milliseconds(host.median().map(|value| value as f64 / 1e6)),
+                    host.summary.count
+                )));
+                let mut facts = Vec::new();
+                if host.summary.unresolved > 0 {
+                    facts.push(format!("unfinished probes {}", host.summary.unresolved));
+                }
+                if host.summary.send_failures > 0 {
+                    facts.push(format!("failed sends {}", host.summary.send_failures));
+                }
+                if !facts.is_empty() {
+                    lines.push(Line::from(facts.join(" · ")));
+                }
+                if let Some(timing) = host.summary.reflector_timing {
+                    lines.push(Line::from(format!(
+                        "Server timing ({} paired replies, means): raw {} · handling {}",
+                        timing.count,
+                        milliseconds(Some(timing.mean_raw_rtt as f64 / 1e6)),
+                        milliseconds(Some(timing.mean_handling as f64 / 1e6))
+                    )));
+                }
+            }
+        }
+        if !self.snapshot.failures.is_empty() {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(
+                "Left the test",
+                Style::new()
+                    .fg(self.theme.brand_strong)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            for failure in &self.snapshot.failures {
+                lines.push(Line::from(format!(
+                    "{} · {} · {}",
+                    self.server_name(&failure.server_id),
+                    failure.stage.name(),
+                    failure.reason.label()
+                )));
+            }
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "Aggregation intervals",
+            Style::new()
+                .fg(self.theme.brand_strong)
+                .add_modifier(Modifier::BOLD),
+        ));
+        for result in &self.snapshot.results {
+            if result.omitted_intervals > 0 {
+                lines.push(Line::from(format!(
+                    "{} earlier intervals omitted",
+                    result.omitted_intervals
+                )));
+            }
+            for interval in &result.intervals {
+                let reason = match interval.reason {
+                    graphite_meter_core::measurement::IntervalReason::StageStart => "stage-start",
+                    graphite_meter_core::measurement::IntervalReason::Dropout => "dropout",
+                    graphite_meter_core::measurement::IntervalReason::EvidenceResumed => {
+                        "evidence-resumed"
+                    }
+                };
+                lines.push(Line::from(format!(
+                    "{} · {reason} · {:.1}–{:.1} s{}",
+                    result.stage.name(),
+                    interval.start_nanos as f64 / 1e9,
+                    interval.end_nanos as f64 / 1e9,
+                    if interval.complete {
+                        ""
+                    } else {
+                        " · incomplete"
+                    }
+                )));
+                lines.push(Line::from(
+                    interval
+                        .participants
+                        .iter()
+                        .map(|id| self.server_name(id))
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                ));
+            }
         }
         let visible = usize::from(area.height.saturating_sub(2));
-        let maximum_scroll = lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16;
-        self.details_scroll = self.details_scroll.min(maximum_scroll);
+        self.details_scroll = self
+            .details_scroll
+            .min(lines.len().saturating_sub(visible).min(u16::MAX as usize) as u16);
         frame.render_widget(Clear, area);
         frame.render_widget(
             Paragraph::new(lines)
                 .scroll((self.details_scroll, 0))
-                .block(panel(
-                    "Per-server results · ↑/↓ scroll · d/Esc close",
-                    self.theme,
-                )),
+                .block(panel("Details · ↑/↓ scroll · d/Esc close", self.theme)),
             area,
         );
     }
+
+    fn server_name<'a>(&'a self, id: &'a str) -> &'a str {
+        self.snapshot
+            .servers
+            .iter()
+            .find(|server| server.id == id)
+            .map_or(id, |server| server.name.as_str())
+    }
+
     fn draw_servers(&mut self, frame: &mut Frame) {
         let area = popup(frame.area(), 100, 24);
         frame.render_widget(Clear, area);
@@ -772,28 +1114,6 @@ impl Ui {
             );
         }
     }
-    fn draw_help(&self, frame: &mut Frame) {
-        let area = popup(frame.area(), 78, 18);
-        frame.render_widget(Clear, area);
-        frame.render_widget(
-            Paragraph::new(concat!(
-                "SETUP\n↑/↓ or j/k  select setting     ←/→  change setup page\n",
-                "Enter/Space  edit or toggle   s  server chooser\n",
-                "v  verify configuration    a  automatic transport paths\n",
-                "r  start measurement\n\n",
-                "MEASUREMENT\nEsc twice  cancel active run    r  rerun after completion\n",
-                "l  next latency server        d  per-server results\n",
-                "Tab/Shift-Tab  section\n\n",
-                "EDITING\n←/→ Home/End  move cursor      Enter  apply     Esc  discard\n",
-                "Paste is bounded and terminal controls are removed.\n\n",
-                "q or Ctrl-C  quit              ? or Esc  close help\n",
-                "Missing samples remain missing; partial results stay labelled.",
-            ))
-            .block(panel("Keyboard help", self.theme))
-            .wrap(Wrap { trim: true }),
-            area,
-        );
-    }
 }
 
 fn wrap_columns(value: &str, width: usize) -> Vec<Line<'static>> {
@@ -811,4 +1131,36 @@ fn wrap_columns(value: &str, width: usize) -> Vec<Line<'static>> {
     }
     lines.push(Line::from(current));
     lines
+}
+
+fn axis_ceiling(value: f64) -> f64 {
+    if value <= 0.0 {
+        return 0.1;
+    }
+    let power = 10.0_f64.powf(value.log10().floor());
+    [1.0, 2.0, 2.5, 5.0, 10.0]
+        .into_iter()
+        .find(|step| step * power >= value)
+        .unwrap()
+        * power
+}
+
+fn throughput_facts(measurement: &graphite_meter_core::measurement::MeasurementResult) -> String {
+    let mut facts = vec![
+        format!(
+            "peak {}",
+            rate(measurement.peak_bytes_per_sec.map(|rate| rate * 8.0))
+        ),
+        graphite_meter_core::format::bytes(measurement.total_bytes),
+    ];
+    if let Some(elapsed) = measurement.elapsed_nanos {
+        facts.push(format!("{:.1} s", elapsed as f64 / 1e9));
+    }
+    if measurement.samples > 0 {
+        facts.push(format!("{} samples", measurement.samples));
+    }
+    if measurement.direction == graphite_meter_core::measurement::Direction::Up {
+        facts.push("receiver-timed".into());
+    }
+    facts.join(" · ")
 }

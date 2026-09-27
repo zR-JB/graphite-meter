@@ -5,8 +5,10 @@ use crossterm::event::KeyCode;
 use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
 use std::time::Duration;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
+    Start,
+    Advanced,
     Url,
     Servers,
     ThroughputOrigin,
@@ -19,95 +21,102 @@ pub(super) enum Field {
     UploadStage,
     BidiStage,
     Warmup,
-    LatencyDuration,
-    DownloadDuration,
-    UploadDuration,
-    BidiDuration,
     Streams,
     AutoStreams,
     PingInterval,
     LoadedLatency,
     Insecure,
 }
-const FIELDS: [Field; 21] = [
-    Field::Url,
+const FIELDS: [Field; 19] = [
+    Field::Start,
     Field::Servers,
+    Field::Protocol,
+    Field::ThroughputTransport,
+    Field::LatencyTransport,
     Field::LatencyStage,
     Field::DownloadStage,
     Field::UploadStage,
     Field::BidiStage,
+    Field::Warmup,
+    Field::Advanced,
+    Field::Url,
+    Field::ThroughputOrigin,
+    Field::LatencyOrigin,
     Field::Streams,
     Field::AutoStreams,
-    Field::LoadedLatency,
-    Field::Warmup,
-    Field::LatencyDuration,
-    Field::DownloadDuration,
-    Field::UploadDuration,
-    Field::BidiDuration,
     Field::PingInterval,
-    Field::ThroughputOrigin,
-    Field::Protocol,
-    Field::ThroughputTransport,
-    Field::LatencyOrigin,
-    Field::LatencyTransport,
+    Field::LoadedLatency,
     Field::Insecure,
 ];
 
-#[derive(Clone, Copy)]
-pub(super) struct SetupPage {
-    pub(super) label: &'static str,
-    start: usize,
-    end: usize,
-}
-impl SetupPage {
-    pub(super) fn fields(self) -> &'static [Field] {
-        &FIELDS[self.start..self.end]
+impl Ui {
+    pub(super) fn fields(&self) -> &'static [Field] {
+        &FIELDS[..if self.advanced { FIELDS.len() } else { 11 }]
+    }
+    pub(super) fn change_field(&mut self, direction: isize) {
+        let field = self.fields()[self.rows.selected().unwrap_or(0)];
+        if let Some(stage) = field.stage() {
+            let duration = match stage {
+                Stage::Latency => &mut self.config.latency_duration,
+                Stage::Download => &mut self.config.download_duration,
+                Stage::Upload => &mut self.config.upload_duration,
+                Stage::Bidirectional => &mut self.config.bidirectional_duration,
+            };
+            *duration = if direction > 0 {
+                duration.saturating_add(Duration::from_secs(1))
+            } else {
+                duration.saturating_sub(Duration::from_secs(1))
+            }
+            .clamp(Duration::from_secs(1), Duration::from_secs(300));
+        } else if field == Field::Warmup {
+            self.config.warmup = if direction > 0 {
+                self.config
+                    .warmup
+                    .saturating_add(Duration::from_millis(100))
+            } else {
+                self.config
+                    .warmup
+                    .saturating_sub(Duration::from_millis(100))
+            }
+            .min(Duration::from_secs(4));
+        } else {
+            let cycles = if direction > 0 {
+                1
+            } else {
+                match field {
+                    Field::Protocol => 4,
+                    Field::ThroughputTransport | Field::LatencyTransport => 2,
+                    Field::PingInterval => 3,
+                    _ => 1,
+                }
+            };
+            for _ in 0..cycles {
+                self.activate();
+            }
+        }
     }
 }
-pub(super) const PAGES: [SetupPage; 4] = [
-    SetupPage {
-        label: "Server",
-        start: 0,
-        end: 2,
-    },
-    SetupPage {
-        label: "Run setup",
-        start: 2,
-        end: 9,
-    },
-    SetupPage {
-        label: "Timing",
-        start: 9,
-        end: 15,
-    },
-    SetupPage {
-        label: "Connections",
-        start: 15,
-        end: 21,
-    },
-];
+
 impl Field {
     pub(super) fn label(self) -> &'static str {
         match self {
-            Self::Url => "Discovery URL",
-            Self::Servers => "Server IDs",
+            Self::Start => "Start test",
+            Self::Advanced => "Advanced",
+            Self::Url => "Catalogue URL",
+            Self::Servers => "Test servers",
             Self::ThroughputOrigin => "Throughput origin",
             Self::Protocol => "HTTP protocol",
             Self::ThroughputTransport => "Throughput transport",
             Self::LatencyOrigin => "Latency origin",
             Self::LatencyTransport => "Latency transport",
-            Self::LatencyStage => "Latency stage",
-            Self::DownloadStage => "Download stage",
-            Self::UploadStage => "Upload stage",
-            Self::BidiStage => "Bidirectional stage",
+            Self::LatencyStage => "Latency",
+            Self::DownloadStage => "Download",
+            Self::UploadStage => "Upload",
+            Self::BidiStage => "Bidirectional",
             Self::Warmup => "Warmup (seconds)",
-            Self::LatencyDuration => "Latency (seconds)",
-            Self::DownloadDuration => "Download (seconds)",
-            Self::UploadDuration => "Upload (seconds)",
-            Self::BidiDuration => "Bidirectional (seconds)",
             Self::Streams => "Streams (0 = automatic)",
             Self::AutoStreams => "Automatic stream ceiling",
-            Self::PingInterval => "Ping interval (ms)",
+            Self::PingInterval => "Latency cadence",
             Self::LoadedLatency => "Loaded latency",
             Self::Insecure => "Skip TLS verification",
         }
@@ -123,9 +132,14 @@ impl Field {
     }
     pub(super) fn value(self, config: &Config) -> String {
         if let Some(stage) = self.stage() {
-            return on_off(config.stages.contains(&stage)).into();
+            return format!(
+                "{} · {} s",
+                on_off(config.stages.contains(&stage)),
+                config.duration(stage).as_secs()
+            );
         }
         match self {
+            Self::Start | Self::Advanced => String::new(),
             Self::Url => config.url.clone(),
             Self::Servers => config.servers.join(","),
             Self::ThroughputOrigin => config.throughput_origin.clone().unwrap_or_default(),
@@ -140,25 +154,26 @@ impl Field {
             .into(),
             Self::ThroughputTransport => match config.throughput_transport {
                 None => "automatic",
-                Some(ThroughputTransport::FetchStream) => "HTTP stream",
-                Some(ThroughputTransport::WebTransport) => "WebTransport stream",
-                Some(ThroughputTransport::WebTransportDatagram) => "Unsupported",
+                Some(ThroughputTransport::FetchStream) => "Fetch streams",
+                Some(_) => "WebTransport streams",
             }
             .into(),
             Self::LatencyTransport => match config.latency_transport {
                 None => "automatic",
                 Some(LatencyTransport::WebSocket) => "WebSocket",
-                Some(LatencyTransport::WebTransport) => "WebTransport",
+                Some(LatencyTransport::WebTransport) => "WebTransport datagrams",
             }
             .into(),
             Self::Warmup => seconds(config.warmup),
-            Self::LatencyDuration => seconds(config.latency_duration),
-            Self::DownloadDuration => seconds(config.download_duration),
-            Self::UploadDuration => seconds(config.upload_duration),
-            Self::BidiDuration => seconds(config.bidirectional_duration),
             Self::Streams => config.streams.to_string(),
             Self::AutoStreams => config.auto_streams.to_string(),
-            Self::PingInterval => (config.ping_interval.as_secs_f64() * 1000.0).to_string(),
+            Self::PingInterval => match config.ping_interval.as_millis() {
+                0 => "Reply-driven".into(),
+                80 => "Fast (80 ms)".into(),
+                250 => "Medium (250 ms)".into(),
+                600 => "Slow (600 ms)".into(),
+                _ => format!("Custom ({} ms)", config.ping_interval.as_millis()),
+            },
             Self::LoadedLatency => on_off(config.loaded_latency).into(),
             Self::Insecure => on_off(config.insecure).into(),
             _ => unreachable!("stage field handled above"),
@@ -270,7 +285,7 @@ impl Ui {
         let Some(&field) = self
             .rows
             .selected()
-            .and_then(|index| PAGES[self.page].fields().get(index))
+            .and_then(|index| self.fields().get(index))
         else {
             return;
         };
@@ -283,6 +298,17 @@ impl Ui {
             return;
         }
         match field {
+            Field::PingInterval => {
+                self.config.ping_interval = match self.config.ping_interval.as_millis() {
+                    0 => Duration::from_millis(80),
+                    80 => Duration::from_millis(250),
+                    250 => Duration::from_millis(600),
+                    _ => Duration::ZERO,
+                }
+            }
+            Field::Start => {}
+            Field::Advanced => self.advanced = !self.advanced,
+            Field::Servers => self.popup = super::Popup::Servers,
             Field::Protocol => {
                 self.config.throughput_protocol = match self.config.throughput_protocol {
                     None => Some(Protocol::Http1),
@@ -298,10 +324,7 @@ impl Ui {
                     Some(ThroughputTransport::FetchStream) => {
                         Some(ThroughputTransport::WebTransport)
                     }
-                    Some(
-                        ThroughputTransport::WebTransport
-                        | ThroughputTransport::WebTransportDatagram,
-                    ) => None,
+                    Some(_) => None,
                 }
             }
             Field::LatencyTransport => {
@@ -389,10 +412,6 @@ impl Ui {
                     })?;
                 match field {
                     Field::Warmup => self.config.warmup = duration,
-                    Field::LatencyDuration => self.config.latency_duration = duration,
-                    Field::DownloadDuration => self.config.download_duration = duration,
-                    Field::UploadDuration => self.config.upload_duration = duration,
-                    Field::BidiDuration => self.config.bidirectional_duration = duration,
                     Field::PingInterval => self.config.ping_interval = duration,
                     _ => return Err("this field is not editable text".into()),
                 }

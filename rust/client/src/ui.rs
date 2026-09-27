@@ -24,10 +24,10 @@ use ratatui::{
     text::{Line, Span},
     widgets::{
         Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem,
-        ListState, Paragraph, Row, Table, Tabs, Wrap,
+        ListState, Paragraph, Wrap,
     },
 };
-use setup::{Edit, PAGES};
+use setup::Edit;
 use std::{
     io::{self, IsTerminal},
     time::Duration,
@@ -45,7 +45,6 @@ pub enum Command {
 }
 
 const MAX_TEXT: usize = 4096;
-const MAX_POINTS: usize = 300;
 const MAX_SERVERS: usize = 128;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,6 +53,14 @@ enum CancelState {
     Idle,
     Confirming,
     Requested,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Popup {
+    #[default]
+    None,
+    Servers,
+    Details,
 }
 
 /// Return paths, cancellation and partial initialization all restore the terminal.
@@ -93,7 +100,7 @@ pub async fn run(
     let mut session = TerminalSession::enter()?;
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
-    let mut refresh = tokio::time::interval(Duration::from_millis(100));
+    let mut refresh = tokio::time::interval(Duration::from_millis(33));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut dirty = true;
     let mut snapshot_changed = false;
@@ -107,6 +114,10 @@ pub async fn run(
                 if snapshot_changed {
                     ui.update(snapshots.borrow_and_update().clone());
                     snapshot_changed = false;
+                    dirty = true;
+                }
+                if ui.live && ui.active() {
+                    ui.frame();
                     dirty = true;
                 }
                 if dirty {
@@ -138,12 +149,11 @@ struct Ui {
     requested: Config,
     snapshot: Snapshot,
     theme: Theme,
-    page: usize,
+    advanced: bool,
     rows: ListState,
     servers: ListState,
     live: bool,
-    chooser: bool,
-    details: bool,
+    popup: Popup,
     details_scroll: u16,
     auth_scroll: u16,
     help: bool,
@@ -152,6 +162,9 @@ struct Ui {
     awaiting: bool,
     cancel: CancelState,
     latency_focus: Option<String>,
+    received_at: tokio::time::Instant,
+    shown_down: Option<f64>,
+    shown_up: Option<f64>,
 }
 impl Ui {
     fn new(config: Config, snapshot: Snapshot) -> Self {
@@ -159,17 +172,17 @@ impl Ui {
         rows.select(Some(0));
         let mut servers = ListState::default();
         servers.select(Some(0));
+        let (shown_down, shown_up) = (snapshot.latest.down_bps, snapshot.latest.up_bps);
         Self {
             requested: config.clone(),
             config,
             snapshot,
             theme: Theme::terminal(),
-            page: 0,
+            advanced: false,
             rows,
             servers,
             live: false,
-            chooser: false,
-            details: false,
+            popup: Popup::None,
             details_scroll: 0,
             auth_scroll: 0,
             help: false,
@@ -178,6 +191,9 @@ impl Ui {
             awaiting: false,
             cancel: CancelState::Idle,
             latency_focus: None,
+            received_at: tokio::time::Instant::now(),
+            shown_down,
+            shown_up,
         }
     }
     fn update(&mut self, mut snapshot: Snapshot) {
@@ -187,16 +203,8 @@ impl Ui {
         if snapshot.error != self.snapshot.error {
             self.notice.clear();
         }
-        while snapshot.history.len() > MAX_POINTS {
-            snapshot.history.pop_front();
-        }
         snapshot.servers.truncate(MAX_SERVERS);
         snapshot.server_latencies.truncate(4);
-        for host in &mut snapshot.server_latencies {
-            while host.history.len() > MAX_POINTS {
-                host.history.pop_front();
-            }
-        }
         snapshot.results.truncate(16);
         self.awaiting = false;
         if snapshot.auth.is_some()
@@ -211,15 +219,37 @@ impl Ui {
             self.cancel = CancelState::Idle;
         }
         if snapshot.results.is_empty() || snapshot.auth.is_some() {
-            self.details = false;
+            self.popup = Popup::None;
             self.details_scroll = 0;
         }
+        if snapshot.stage != self.snapshot.stage {
+            self.shown_down = None;
+            self.shown_up = None;
+        }
+        self.received_at = tokio::time::Instant::now();
         self.snapshot = snapshot;
+    }
+    fn frame(&mut self) {
+        for (shown, target) in [
+            (&mut self.shown_down, self.snapshot.latest.down_bps),
+            (&mut self.shown_up, self.snapshot.latest.up_bps),
+        ] {
+            *shown =
+                target.map(|target| shown.map_or(target, |value| value + 0.35 * (target - value)));
+        }
+    }
+    fn elapsed(&self) -> Duration {
+        self.snapshot.latest.elapsed
+            + if self.active() {
+                self.received_at.elapsed()
+            } else {
+                Duration::ZERO
+            }
     }
     fn notice(&self) -> (&str, bool) {
         if self.cancel == CancelState::Confirming {
             (
-                "Cancel the run? Esc confirms; any other key continues.",
+                "Stop the test? Esc confirms; any other key continues.",
                 false,
             )
         } else if self.cancel == CancelState::Requested {
@@ -238,19 +268,6 @@ impl Ui {
                 self.snapshot.phase,
                 Phase::Preparing | Phase::Warmup | Phase::Measuring
             )
-    }
-    fn change_page(&mut self, direction: isize) {
-        self.page = (self.page as isize + direction).rem_euclid(PAGES.len() as isize) as usize;
-        self.rows.select(Some(0));
-    }
-    fn change_section(&mut self, direction: isize) {
-        let current = if self.live { PAGES.len() } else { self.page };
-        let next = (current as isize + direction).rem_euclid((PAGES.len() + 1) as isize) as usize;
-        self.live = next == PAGES.len();
-        if !self.live {
-            self.page = next;
-            self.rows.select(Some(0));
-        }
     }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) -> bool {
         let requested = match &command {
@@ -343,7 +360,7 @@ impl Ui {
                     self.cancel = CancelState::Requested;
                 }
             } else {
-                self.notice = "Run continues.".into();
+                self.notice = "Test continues.".into();
             }
             return false;
         }
@@ -351,16 +368,10 @@ impl Ui {
             self.help = !self.help;
             return false;
         }
-        if self.help {
-            if key.code == KeyCode::Esc {
-                self.help = false;
-            }
-            return false;
-        }
-        if self.chooser {
+        if self.popup == Popup::Servers {
             let length = self.snapshot.servers.len();
             match key.code {
-                KeyCode::Esc | KeyCode::Enter => self.chooser = false,
+                KeyCode::Esc | KeyCode::Enter => self.popup = Popup::None,
                 KeyCode::Up | KeyCode::Char('k') => move_selection(&mut self.servers, length, -1),
                 KeyCode::Down | KeyCode::Char('j') => move_selection(&mut self.servers, length, 1),
                 KeyCode::Char(' ') => self.toggle_server(),
@@ -368,9 +379,9 @@ impl Ui {
             }
             return false;
         }
-        if self.details {
+        if self.popup == Popup::Details {
             match key.code {
-                KeyCode::Esc | KeyCode::Char('d') => self.details = false,
+                KeyCode::Esc | KeyCode::Char('d') => self.popup = Popup::None,
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.details_scroll = self.details_scroll.saturating_sub(1);
                 }
@@ -387,13 +398,14 @@ impl Ui {
             }
             return false;
         }
+        let field_count = self.fields().len();
         match key.code {
             KeyCode::Char('d')
                 if self.live
                     && self.snapshot.auth.is_none()
                     && !self.snapshot.results.is_empty() =>
             {
-                self.details = true;
+                self.popup = Popup::Details;
                 self.details_scroll = 0;
             }
             KeyCode::Char('l') if !self.snapshot.server_latencies.is_empty() => {
@@ -404,15 +416,22 @@ impl Ui {
                     .unwrap_or(0);
                 self.latency_focus = Some(hosts[(current + 1) % hosts.len()].id.clone());
             }
-            KeyCode::Char('r') if !self.active() => match self.config.validate() {
-                Ok(()) => {
-                    if self.send(Command::Run(self.config.clone()), commands) {
-                        self.live = true;
-                        self.details = false;
+            KeyCode::Char('r') | KeyCode::Enter
+                if !self.active()
+                    && (key.code == KeyCode::Char('r')
+                        || self.live
+                        || self.rows.selected() == Some(0)) =>
+            {
+                match self.config.validate() {
+                    Ok(()) => {
+                        if self.send(Command::Run(self.config.clone()), commands) {
+                            self.live = true;
+                            self.popup = Popup::None;
+                        }
                     }
+                    Err(error) => self.notice = error.to_string(),
                 }
-                Err(error) => self.notice = error.to_string(),
-            },
+            }
             KeyCode::Char('v') if !self.active() => {
                 self.send(Command::Verify(self.config.clone()), commands);
             }
@@ -424,12 +443,29 @@ impl Ui {
             KeyCode::Esc if self.active() => {
                 self.send(Command::Cancel, commands);
             }
-            KeyCode::Esc => self.live = false,
-            KeyCode::Tab => self.change_section(1),
-            KeyCode::BackTab => self.change_section(-1),
+            KeyCode::Esc => {
+                self.live = false;
+                self.rows.select(Some(0));
+            }
+            KeyCode::Tab if !self.live => move_selection(&mut self.rows, field_count, 1),
+            KeyCode::BackTab if !self.live => move_selection(&mut self.rows, field_count, -1),
             KeyCode::Char('s') if !self.active() => {
-                self.chooser = true;
+                self.popup = Popup::Servers;
                 self.notice = "Space selects up to four servers; Enter applies.".into();
+            }
+            KeyCode::Char('u') if !self.active() => {
+                self.config.servers = self
+                    .snapshot
+                    .servers
+                    .iter()
+                    .filter(|server| server.checked() && server.error.is_none())
+                    .take(4)
+                    .map(|server| server.id.clone())
+                    .collect();
+                if !self.config.servers.is_empty() {
+                    self.send(Command::Verify(self.config.clone()), commands);
+                }
+                self.notice = "Using the available servers.".into();
             }
             KeyCode::Char('a') if !self.active() => {
                 self.config.throughput_origin = None;
@@ -439,13 +475,13 @@ impl Ui {
                 self.config.latency_transport = None;
                 self.notice = "Transport paths set to automatic.".into();
             }
-            KeyCode::Left if !self.live => self.change_page(-1),
-            KeyCode::Right if !self.live => self.change_page(1),
+            KeyCode::Left if !self.live => self.change_field(-1),
+            KeyCode::Right if !self.live => self.change_field(1),
             KeyCode::Up | KeyCode::Char('k') if !self.live => {
-                move_selection(&mut self.rows, PAGES[self.page].fields().len(), -1)
+                move_selection(&mut self.rows, field_count, -1)
             }
             KeyCode::Down | KeyCode::Char('j') if !self.live => {
-                move_selection(&mut self.rows, PAGES[self.page].fields().len(), 1)
+                move_selection(&mut self.rows, field_count, 1)
             }
             KeyCode::Enter | KeyCode::Char(' ') if !self.live && !self.active() => self.activate(),
             _ => {}
@@ -533,16 +569,20 @@ fn safe_text_width(value: &str, columns: usize) -> String {
     text
 }
 fn rate(value: Option<f64>) -> String {
-    match value.filter(|v| v.is_finite() && *v >= 0.0) {
-        Some(value) if value >= 1_000_000_000.0 => format!("{:.2} Gbit/s", value / 1_000_000_000.0),
-        Some(value) => format!("{:.2} Mbit/s", value / 1_000_000.0),
-        None => "—".into(),
-    }
+    value
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map_or_else(
+            || "—".into(),
+            |value| graphite_meter_core::format::rate(value / 8.0),
+        )
 }
 fn milliseconds(value: Option<f64>) -> String {
     value
-        .filter(|v| v.is_finite() && *v >= 0.0)
-        .map_or_else(|| "—".into(), |v| format!("{v:.2} ms"))
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map_or_else(
+            || "—".into(),
+            |value| format!("{} ms", graphite_meter_core::format::latency_ms(value)),
+        )
 }
 
 #[cfg(test)]

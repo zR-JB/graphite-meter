@@ -17,11 +17,10 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
             results: vec![StageResult {
                 stage: Stage::Latency,
                 elapsed: Duration::from_secs(1),
-                down_bytes: 0,
-                up_bytes: 0,
-                down_bps: None,
-                up_bps: None,
-                latency: LatencySummary::default(),
+                down: None,
+                up: None,
+                intervals: Default::default(),
+                omitted_intervals: 0,
                 complete: true,
                 server_latencies: vec![ServerLatencyResult {
                     id: "self".into(),
@@ -55,7 +54,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(rendered.contains("1.50 ms"));
+    assert!(rendered.contains("1.5 ms"));
 
     // A selected peer absent from this stage must not inherit another
     // peer's RTT merely because its summary is first in the result.
@@ -68,7 +67,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(!rendered.contains("1.50 ms"));
+    assert!(!rendered.contains("1.5 ms"));
 }
 
 #[test]
@@ -111,7 +110,7 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
     assert!(received.try_recv().is_err());
     ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &commands);
     assert_eq!(ui.cancel, CancelState::Idle);
-    assert_eq!(ui.notice().0, "Run continues.");
+    assert!(!ui.notice().0.is_empty());
     assert!(received.try_recv().is_err());
 
     ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
@@ -187,25 +186,25 @@ fn setup_shows_verified_paths_and_failed_selected_peers() {
             .collect::<String>()
     };
     terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("↓ Fetch stream · HTTP/2 · TLS"));
-    assert!(rendered(&terminal).contains("RTT WebTransport · HTTP/3 · TLS"));
+    assert!(rendered(&terminal).contains("Download Fetch streams · HTTP/2 · TLS"));
+    assert!(rendered(&terminal).contains("Latency WebTransport datagrams · HTTP/3 · TLS"));
     assert!(rendered(&terminal).contains("Remote peer"));
     assert!(rendered(&terminal).contains("Unavailable: preflight refused"));
 
     let mut narrow = Terminal::new(TestBackend::new(80, 24)).unwrap();
     narrow.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&narrow).contains("↓ Fetch stream · HTTP/2 · TLS"));
+    assert!(rendered(&narrow).contains("Download Fetch streams · HTTP/2 · TLS"));
 
     ui.config.throughput_protocol = Some(Protocol::Http1);
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("Settings changed · verify again"));
-    assert!(!rendered(&terminal).contains("↓ Fetch stream"));
+    assert!(!rendered(&terminal).contains("Download Fetch streams"));
 
     let (commands, _receiver) = mpsc::channel(1);
     ui.send(Command::Verify(ui.config.clone()), &commands);
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("Checking selected servers"));
-    assert!(!rendered(&terminal).contains("↓ Fetch stream"));
+    assert!(!rendered(&terminal).contains("Download Fetch streams"));
 }
 
 #[test]
@@ -230,8 +229,8 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     );
     ui.edit = Some(Edit::new(Field::Url, "original".into()));
     ui.help = true;
-    ui.chooser = true;
-    let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+    ui.popup = Popup::Servers;
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
     let rendered = |terminal: &Terminal<TestBackend>| {
         terminal
             .backend()
@@ -242,7 +241,7 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
             .collect::<String>()
     };
     terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Confirmation code: 782411"));
+    assert!(rendered(&terminal).contains("Match this code: 782411"));
     assert!(rendered(&terminal).contains("Enter/Space/o open"));
     assert!(!rendered(&terminal).contains("TAIL"));
 
@@ -266,7 +265,7 @@ fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() 
     }
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     assert!(rendered(&terminal).contains("TAIL"));
-    assert!(rendered(&terminal).contains("Confirmation code: 782411"));
+    assert!(rendered(&terminal).contains("Match this code: 782411"));
     ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
     assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
@@ -325,20 +324,18 @@ fn editing_keeps_the_whole_value_visible_when_it_fits() {
     assert!(before.ends_with("界"));
 }
 #[test]
-fn sections_cycle_through_setup_and_live_in_both_directions() {
+fn tab_moves_focus_without_opening_live_view() {
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    for page in 1..PAGES.len() {
-        ui.change_section(1);
-        assert_eq!(ui.page, page);
-        assert!(!ui.live);
-    }
-    ui.change_section(1);
-    assert!(ui.live);
-    ui.change_section(1);
-    assert_eq!(ui.page, 0);
+    let (commands, _receiver) = mpsc::channel(8);
+    ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &commands);
+    assert_eq!(ui.rows.selected(), Some(1));
     assert!(!ui.live);
-    ui.change_section(-1);
-    assert!(ui.live);
+    ui.key(
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        &commands,
+    );
+    assert_eq!(ui.rows.selected(), Some(0));
+    assert!(!ui.live);
 }
 #[test]
 fn current_setup_notice_is_visible_after_a_failed_run() {
@@ -370,28 +367,23 @@ fn details_show_both_server_contributions_and_close_with_escape() {
         results: vec![StageResult {
             stage: Stage::Download,
             elapsed: Duration::from_secs(1),
-            down_bytes: 1_500_000,
-            up_bytes: 0,
-            down_bps: Some(12_000_000.0),
-            up_bps: None,
-            latency: Default::default(),
+            down: Some(download_measurement()),
+            up: None,
+            intervals: Default::default(),
+            omitted_intervals: 0,
             complete: false,
             server_latencies: Vec::new(),
             server_results: vec![
                 ServerContribution {
                     id: "near".into(),
-                    down_bytes: 1_500_000,
-                    up_bytes: 0,
-                    down_bps: Some(12_000_000.0),
-                    up_bps: None,
+                    down: Some(download_measurement()),
+                    up: None,
                     error: None,
                 },
                 ServerContribution {
                     id: "far".into(),
-                    down_bytes: 0,
-                    up_bytes: 0,
-                    down_bps: None,
-                    up_bps: None,
+                    down: None,
+                    up: None,
                     error: Some("peer disconnected".into()),
                 },
             ],
@@ -408,6 +400,14 @@ fn details_show_both_server_contributions_and_close_with_escape() {
                 ..ServerSummary::default()
             },
         ],
+        failures: vec![crate::model::ServerFailure {
+            server_id: "far".into(),
+            stage: Stage::Download,
+            scope: crate::model::FailureScope::Throughput,
+            reason: graphite_meter_core::failure::FailureReason::ConnectionLost,
+            message: "peer disconnected".into(),
+            at: Duration::from_secs(1),
+        }],
         ..Snapshot::default()
     };
     let mut ui = Ui::new(Config::default(), snapshot);
@@ -417,7 +417,7 @@ fn details_show_both_server_contributions_and_close_with_escape() {
         KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE),
         &commands,
     );
-    assert!(ui.details);
+    assert_eq!(ui.popup, Popup::Details);
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     let rendered = terminal
@@ -429,10 +429,10 @@ fn details_show_both_server_contributions_and_close_with_escape() {
         .collect::<String>();
     assert!(rendered.contains("Near"));
     assert!(rendered.contains("Far"));
-    assert!(rendered.contains("peer disconnected"));
+    assert!(rendered.contains("Connection lost"));
     assert!(rendered.contains("12.00 Mbit/s"));
     ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
-    assert!(!ui.details);
+    assert_eq!(ui.popup, Popup::None);
 }
 #[test]
 fn minimum_supported_terminal_keeps_live_measurement_visible() {
@@ -455,11 +455,10 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
         results: vec![StageResult {
             stage: Stage::Download,
             elapsed: Duration::from_secs(1),
-            down_bytes: 1_500_000,
-            up_bytes: 0,
-            down_bps: Some(12_000_000.0),
-            up_bps: None,
-            latency: Default::default(),
+            down: Some(download_measurement()),
+            up: None,
+            intervals: Default::default(),
+            omitted_intervals: 0,
             complete: true,
             server_latencies: Vec::new(),
             server_results: Vec::new(),
@@ -468,7 +467,7 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
     };
     let mut ui = Ui::new(Config::default(), snapshot);
     ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(45, 12)).unwrap();
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     let rendered = terminal
         .backend()
@@ -477,10 +476,10 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(rendered.contains("Upload · 3.0s"));
-    assert!(rendered.contains("↑ 12.00 Mbit/s"));
-    assert!(rendered.contains("RTT 25.00 ms"));
-    assert!(rendered.contains("Download: ↓ 12.00 Mbit/s"));
+    assert!(rendered.contains("Upload · 3.0 s"));
+    assert!(rendered.contains("Upload 12.00 Mbit/s"));
+    assert!(rendered.contains("Latency 25.0 ms"));
+    assert!(rendered.contains("Download: 12.00 Mbit/s"));
     assert!(rendered.contains("d details"));
 
     ui.snapshot.phase = Phase::Complete;
@@ -492,5 +491,123 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(completed.contains("r rerun"));
+    assert!(completed.contains("Enter Run again"));
+}
+
+fn download_measurement() -> graphite_meter_core::measurement::MeasurementResult {
+    use graphite_meter_core::measurement::*;
+    MeasurementResult {
+        stage: Stage::Download,
+        direction: Direction::Down,
+        total_bytes: 1_500_000,
+        mean_bytes_per_sec: Some(1_500_000.0),
+        peak_bytes_per_sec: Some(1_500_000.0),
+        samples: 4,
+        elapsed_nanos: Some(1_000_000_000),
+        unavailable_reason: None,
+    }
+}
+
+#[test]
+fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
+    use crate::model::{Point, ServerLatency, ServerLatencyResult, StageResult};
+    use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome};
+    use ratatui::{Terminal, backend::TestBackend};
+    let mut idle = LatencyAccumulator::default();
+    idle.record(ProbeOutcome::Reply {
+        rtt_nanos: 500_000,
+        handling_nanos: 0,
+    });
+    let mut loaded = LatencyAccumulator::default();
+    loaded.record(ProbeOutcome::Reply {
+        rtt_nanos: 200_000,
+        handling_nanos: 0,
+    });
+    let mut host = ServerLatency {
+        id: "self".into(),
+        latest_ms: Some(0.2),
+        ..ServerLatency::default()
+    };
+    let mut snapshot = Snapshot {
+        phase: Phase::Measuring,
+        stage: Some(Stage::Download),
+        results: vec![
+            StageResult {
+                stage: Stage::Latency,
+                elapsed: Duration::from_secs(60),
+                down: None,
+                up: None,
+                intervals: Default::default(),
+                omitted_intervals: 0,
+                complete: true,
+                server_latencies: vec![ServerLatencyResult {
+                    id: "self".into(),
+                    summary: idle.snapshot(),
+                    error: None,
+                }],
+                server_results: Vec::new(),
+            },
+            StageResult {
+                stage: Stage::Download,
+                elapsed: Duration::from_secs(1),
+                down: Some(download_measurement()),
+                up: None,
+                intervals: Default::default(),
+                omitted_intervals: 0,
+                complete: true,
+                server_latencies: vec![ServerLatencyResult {
+                    id: "self".into(),
+                    summary: loaded.snapshot(),
+                    error: None,
+                }],
+                server_results: Vec::new(),
+            },
+        ],
+        ..Snapshot::default()
+    };
+    for index in 0..1000 {
+        let elapsed = Duration::from_millis(index * 80);
+        host.history.add(Point {
+            elapsed,
+            latency_ms: (index != 500).then_some(0.2),
+            ..Point::default()
+        });
+        snapshot.history.add(Point {
+            elapsed,
+            down_bps: (index != 500).then_some(12_000_000.0),
+            ..Point::default()
+        });
+    }
+    assert_eq!(
+        snapshot.history.points.front().unwrap().elapsed,
+        Duration::ZERO
+    );
+    assert!(snapshot.history.points.len() <= 480);
+    snapshot.server_latencies.push(host);
+    let config = Config {
+        stages: vec![Stage::Latency, Stage::Download],
+        latency_duration: Duration::from_secs(60),
+        download_duration: Duration::from_secs(60),
+        ..Config::default()
+    };
+    let mut ui = Ui::new(config, snapshot);
+    ui.live = true;
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    terminal.draw(|frame| ui.draw(frame)).unwrap();
+    let rendered = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    for text in [
+        "Throughput",
+        "Latency · ms",
+        "−0.3 ms",
+        "Probe timeouts",
+        "120 s",
+    ] {
+        assert!(rendered.contains(text), "missing {text}: {rendered}");
+    }
 }

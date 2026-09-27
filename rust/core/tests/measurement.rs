@@ -117,6 +117,12 @@ fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_keeps_headline() 
         ),
         (Some(4000.0), Some(4000.0), 8000)
     );
+    assert_eq!(
+        engine
+            .server_result(Stage::Download, Direction::Down, "a")
+            .peak_bytes_per_sec,
+        Some(3000.0)
+    );
     start(
         &mut engine,
         Stage::Download,
