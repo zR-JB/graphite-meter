@@ -149,7 +149,7 @@ async function withController(
       ? { id: server, name: server, url: origin.origin }
       : server,
   );
-  let idle = false;
+  const idle = new Set<string>();
   const runner = new TestRunner();
   const controller = createApplicationController(store, {
     loadCatalog: async () => ({
@@ -157,12 +157,12 @@ async function withController(
       defaultSelection: options.selected ?? [servers[0].id],
     }),
     discover: testServerDiscovery,
-    prepare: async (config, _previous, roles) => ({
+    prepare: async (config, _previous, roles, _signal, { server }) => ({
       ...preparation(config),
       idle: roles.includes("latency")
         ? {
-            start: () => void (idle = true),
-            stop: () => void (idle = false),
+            start: () => void idle.add(server.id),
+            stop: () => void idle.delete(server.id),
             onEvent() {},
           }
         : undefined,
@@ -176,7 +176,7 @@ async function withController(
       controller,
       store,
       runner,
-      idle: () => idle,
+      idle: () => idle.size > 0,
       setVisibility(state) {
         document.visibilityState = state;
         documentEvents.emit("visibilitychange");
@@ -271,57 +271,43 @@ test("a failed Start stays idle and lapses once its selection verifies", async (
   );
 });
 
-test("a server that fails its start check is left out while another survives", async () => {
+test("the first selected server leads latency, not the fastest; one failing its start check is left out", async () => {
   let dead = false;
   const runner = new TestRunner();
   const started: Parameters<NonNullable<Dependencies["createRunner"]>>[] = [];
   await withController(
     {
-      servers: ["self", remote("peer")],
-      selected: ["self", "peer"],
+      servers: ["self", remote("a"), remote("b")],
+      selected: ["a", "b"],
       discover: async (_signal, credentials) => {
-        if (dead && credentials.server.id === "peer")
-          throw new Error("offline");
+        if (dead && credentials.server.id === "a") throw new Error("offline");
         return testServerDiscovery();
+      },
+      prepare: async (config, _previous, _roles, _signal, credentials) => {
+        const paths = evidence();
+        paths.latency!.rttMs = credentials.server.id === "b" ? 1 : 40;
+        return preparation(config, paths);
       },
       createRunner: (...args) => (started.push(args), runner),
     },
-    async ({ controller, view }) => {
-      await until(() => view("peer").readiness === "verified");
-      dead = true;
+    async ({ controller, store }) => {
+      controller.configureRun({
+        stages: { ...store.config.stages, download: false, upload: false },
+      });
+      await until(() => store.selectionValidation === "verified");
       controller.toggleRun();
       await until(() => runner.starts === 1);
-      const [[servers, , dropped]] = started;
-      expect(servers.map(({ server }) => server.id)).toEqual(["self"]);
-      expect(dropped).toMatchObject([
-        { server: { id: "peer" }, reason: "preparation-failed" },
-      ]);
-    },
-  );
-});
-
-test("a primary latency server that fails its start check refuses the start", async () => {
-  let dead = false;
-  const runner = new TestRunner();
-  await withController(
-    {
-      servers: ["self", remote("peer")],
-      selected: ["self", "peer"],
-      discover: async (_signal, credentials) => {
-        if (dead && credentials.server.id === "peer")
-          throw new Error("offline");
-        return testServerDiscovery();
-      },
-      createRunner: () => runner,
-    },
-    async ({ controller, store, view }) => {
-      controller.configureLatency("primary", "peer");
-      await until(() => view("peer").readiness === "verified");
+      expect([started[0][1], store.latencyFocus]).toEqual(["a", "a"]);
+      controller.returnToStart();
       dead = true;
       controller.toggleRun();
-      await until(() => store.startError !== "");
-      expect(store.startError).toBe("node-a: Connection check failed");
-      expect(runner.starts).toBe(0);
+      await until(() => runner.starts === 2);
+      const [servers, focus, dropped] = started[1];
+      expect(servers.map(({ server }) => server.id)).toEqual(["b"]);
+      expect([focus, store.latencyFocus]).toEqual(["b", "b"]);
+      expect(dropped).toMatchObject([
+        { server: { id: "a" }, reason: "preparation-failed" },
+      ]);
     },
   );
 });
@@ -368,13 +354,13 @@ test("without idle latency the connection settles from verified paths", async ()
         true,
         "connected",
       ]);
-      controller.configureLatency("primary", "peer");
+      controller.applyServers(["peer"]);
       await until(() => store.selectionValidation === "verified");
       expect([idle(), store.effectiveConnectivity]).toEqual([
         false,
         "connected",
       ]);
-      controller.configureLatency("primary", "self");
+      controller.applyServers(["self", "peer"]);
       controller.toggleStage("latency");
       await until(() => store.selectionValidation === "verified");
       expect([idle(), store.effectiveConnectivity]).toEqual([
@@ -393,16 +379,16 @@ test("returning to start releases the run so late events cannot reach the fresh 
     controller.returnToStart();
     expect(store.phase).toBe("idle");
     late({
-      type: "serverFailure",
-      failure: {
-        serverId: "self",
-        stage: "download",
-        atMs: 0,
-        scope: "throughput",
-        reason: "connection-lost",
-        message: "",
+      type: "serverDetails",
+      details: {
+        selection: [],
+        participants: [],
+        latencyFocus: "self",
+        intervals: [],
+        omittedIntervals: 0,
+        failures: [],
+        servers: [],
       },
-      participants: [],
     });
     expect(store.serverDetails).toBeNull();
   });

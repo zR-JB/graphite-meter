@@ -372,9 +372,11 @@
     width: 100%;
     height: 100%;
   }
+  /* The ring turns as a square; its empty corners must not widen a phone's page. */
   .live {
     opacity: 0;
     pointer-events: none;
+    overflow: clip;
   }
   .live.visible {
     opacity: 1;

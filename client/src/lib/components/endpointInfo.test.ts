@@ -41,7 +41,7 @@ test("occupancy reads as slots, cautions only past half and needs a slot limit",
     [{ active: 1, max: 2 }, "1 of 2 slots"],
     [
       { active: 3, max: 4 },
-      "3 of 4 slots · server busy — results may be affected",
+      "3 of 4 slots, server busy: results may be affected",
     ],
     [{ active: 0, max: 0 }, null],
     [undefined, null],
@@ -78,10 +78,10 @@ test("HTTP capability paths preserve advertised version and TLS mode", () => {
     },
   } as unknown as TransportDiscovery);
   expect(paths).toEqual([
-    "HTTP/1.1 · clear",
-    "HTTP/2 · TLS",
-    "HTTP/3 · TLS",
-    "Negotiated HTTP · TLS",
+    "HTTP/1.1 (clear)",
+    "HTTP/2 (TLS)",
+    "HTTP/3 (TLS)",
+    "Negotiated HTTP (TLS)",
   ]);
   expect(advertisedServerHttpPaths(null)).toBeNull();
 });
@@ -105,7 +105,7 @@ test("HTTP capability paths do not claim a latency-only WebTransport target", ()
 
 test("path evidence retains each protocol observation boundary", () => {
   for (const [mode, browser, server, expected] of [
-    ["throughput", "h2", "http/1.1", "Browser HTTP/2 · server HTTP/1.1"],
+    ["throughput", "h2", "http/1.1", "Browser HTTP/2, server HTTP/1.1"],
     ["latency", "h2", "http/1.1", "Server HTTP/1.1"],
     ["latency", undefined, undefined, "Pending"],
   ] as const)

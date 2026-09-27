@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -11,6 +10,7 @@
     throughputValueAtFraction,
   } from "./gaugeScale";
   import StageTrack from "./StageTrack.svelte";
+  import ServerLens from "./ServerLens.svelte";
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
@@ -28,7 +28,7 @@
   } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { handoff, Smoothed } from "../presentation/motion.svelte";
+  import { handoff } from "../presentation/motion.svelte";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -42,30 +42,7 @@
         )
       : indicatedServers,
   );
-  const serverCount = $derived(
-    participants.length < indicatedServers.length
-      ? `${participants.length} of ${indicatedServers.length} servers`
-      : `${indicatedServers.length} servers`,
-  );
-  const serverIndicator = $derived(
-    store.isRunning
-      ? `Testing ${serverCount}`
-      : store.result
-        ? `Tested ${serverCount}`
-        : `${indicatedServers.length} servers selected`,
-  );
   const phase = $derived(store.phase);
-  let resultsBody = $state(0);
-  const resultsHeight = new Smoothed();
-  $effect(() => {
-    const height = resultsBody;
-    untrack(() =>
-      resultsHeight.set(height, {
-        over: 240,
-        snap: resultsHeight.current === 0,
-      }),
-    );
-  });
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
   );
@@ -231,16 +208,11 @@
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
-  <div class="instrument" style:--results-height={`${resultsHeight.current}px`}>
-    <div class="well stage">
+  <div class="instrument">
+    <div class="dial">
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
-          <Icon name="server" />
-          <span
-            {@attach tooltip(() =>
-              participants.map((server) => server.name).join(", "),
-            )}>{serverIndicator}</span
-          >
+          <ServerLens servers={indicatedServers} {participants} />
         </div>
       {/if}
       <div
@@ -279,13 +251,8 @@
                 class:partial={terminal.dashed}
                 aria-hidden="true"
               >
-                <span class="terminal-direction">
-                  <span
-                    class="tone-icon terminal-icon"
-                    data-tone={terminal.direction}
-                  >
-                    <Icon name={STAGE[terminal.direction].icon} />
-                  </span>
+                <span class="terminal-direction" data-tone={terminal.direction}>
+                  <span class="terminal-dot"></span>
                   {STAGE[terminal.direction].label}
                 </span>
                 <span class="terminal-number">{terminal.value}</span>
@@ -324,115 +291,87 @@
       </div>
     </div>
 
-    <div class="instrument-controls">
-      <div class="run-slot"><RunButton /></div>
-      <div class="stage-head"><StageTrack /></div>
-    </div>
-
-    <div class="results-slot" style:height={`${resultsHeight.current}px`}>
-      <div class="results-body" bind:clientHeight={resultsBody}>
-        <ResultCards live={liveReadout} />
-      </div>
-    </div>
-
     {#if store.latencyEnabled}
-      <div class="well latency-panel">
-        <LatencyProfile />
-      </div>
+      <div class="latency-slot"><LatencyProfile /></div>
     {/if}
+
+    <div class="run-bar">
+      <StageTrack />
+      <RunButton />
+    </div>
+
+    <div class="results"><ResultCards live={liveReadout} /></div>
   </div>
 </section>
 
 <style>
-  /* The container .instrument queries; a block, as a flex box here kept a stale height in Chromium. */
   .gauge-panel {
     container: viz / inline-size;
+    height: 100%;
   }
-  /* The dial yields to the rest of the stage (chrome, controls, results, chart) before the page would scroll. */
+  /* The dial and latency share the top; the run bar and the transfer cards keep their height, the top takes the rest. */
   .instrument {
-    --rest-height: calc(435px + var(--results-height));
-    --gauge-well-height: clamp(
-      200px,
-      min(35svh, 100svh - var(--rest-height)),
-      360px
-    );
     display: grid;
-    gap: var(--space-3) var(--space-2);
+    height: 100%;
+    gap: var(--space-4) var(--space-5);
     grid-template:
-      "gauge" var(--gauge-well-height)
-      "controls" auto
+      "dial" minmax(280px, 42svh)
+      "run" auto
       "results" auto
       "latency" auto
-      / 1fr;
-  }
-  .instrument:not(:has(.latency-panel)) {
-    grid-template:
-      "gauge" var(--gauge-well-height)
-      "controls" auto
-      "results" auto
-      / 1fr;
+      / minmax(0, 1fr);
   }
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
-        "gauge latency" minmax(var(--gauge-well-height), auto)
-        "controls controls" auto
+        "dial latency" minmax(min-content, 1fr)
+        "run run" auto
         "results results" auto
-        / minmax(240px, 1fr) minmax(240px, 1fr);
+        / minmax(240px, 4fr) minmax(0, 8fr);
     }
-    .instrument:not(:has(.latency-panel)) {
+    .instrument:not(:has(.latency-slot)) {
       grid-template:
-        "gauge gauge" var(--gauge-well-height)
-        "controls controls" auto
-        "results results" auto
-        / minmax(240px, 1fr) minmax(240px, 1fr);
+        "dial" minmax(220px, 1fr)
+        "run" auto
+        "results" auto
+        / minmax(0, 1fr);
     }
   }
-  @media (min-width: 1800px) and (min-height: 1000px) {
-    .instrument {
-      --gauge-well-height: clamp(
-        280px,
-        min(43svh, 32cqw, 100svh - var(--rest-height)),
-        560px
-      );
-    }
-  }
-  @media (max-width: 759px) and (orientation: portrait) {
-    .instrument {
-      /* A phone retains a readable dial while the document carries results. */
-      --gauge-well-height: clamp(280px, 32svh, 320px);
-    }
-    .stage {
-      min-height: 280px;
-    }
-  }
-  .stage {
-    grid-area: gauge;
+  .dial {
+    grid-area: dial;
     position: relative;
     display: flex;
     flex-direction: column;
-    min-width: 240px;
-    min-height: 200px;
-    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
   }
-  .latency-panel {
+  /* Never shorter than its content: a tight screen scrolls rather than overlapping the run bar. */
+  .latency-slot {
     grid-area: latency;
+    display: grid;
+    min-width: 0;
+  }
+  .results {
+    grid-area: results;
+    min-width: 0;
+  }
+  /* What runs next and the one action that runs it, on one line. */
+  .run-bar {
+    grid-area: run;
+    min-width: 0;
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    align-items: center;
     justify-content: center;
-    min-width: 240px;
-    min-height: 200px;
-    padding: var(--space-2);
+    gap: var(--space-3) var(--space-4);
   }
   .server-indicator {
-    position: absolute;
-    z-index: 1;
-    inset: var(--space-3) auto auto var(--space-3);
     display: flex;
+    flex: none;
     align-items: center;
     gap: 6px;
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-xs) / 1.4 var(--font-sans);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
   }
   .server-indicator :global(svg) {
     width: 14px;
@@ -445,46 +384,6 @@
     /* The hero number scales with cqmin, the dimension that sizes the ring. */
     container-type: size;
   }
-  .instrument-controls {
-    --stage-controls-width: 540px;
-    grid-area: controls;
-    display: grid;
-    align-content: center;
-    align-items: center;
-    justify-self: center;
-    gap: var(--space-3);
-    width: 100%;
-    padding-block: var(--space-2);
-  }
-  .instrument-controls:has(:global(.quad)) {
-    --stage-controls-width: 700px;
-  }
-  @media (max-height: 800px) {
-    .instrument {
-      --rest-height: calc(365px + var(--results-height));
-      row-gap: var(--space-2);
-    }
-    .instrument-controls {
-      gap: var(--space-2);
-      padding-block: var(--space-1);
-    }
-    .latency-panel {
-      padding-block: var(--space-1);
-    }
-  }
-  .run-slot {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 46px;
-  }
-  .stage-head {
-    width: 100%;
-    max-width: var(--stage-controls-width);
-    justify-self: center;
-  }
-
   .gauge-ticks,
   .metric-wrap {
     position: absolute;
@@ -497,10 +396,9 @@
     position: absolute;
     translate: var(--x) var(--y);
     color: var(--text-soft);
-    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-    opacity: 0.75;
   }
   .gauge-tick[data-anchor-x="end"] {
     --x: -100%;
@@ -522,20 +420,20 @@
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }
-  /* Tabular figures keep a live value from shifting layout. */
+  /* Tabular figures keep a live value from shifting layout; light weight reads as a measured value. */
   .gauge-value,
   .terminal-number {
     max-width: 100%;
     color: var(--text);
     font-family: var(--font-display);
-    font-weight: var(--w-strong);
+    font-weight: 300;
     font-variant-numeric: lining-nums tabular-nums;
-    letter-spacing: var(--track-tight);
+    letter-spacing: -0.03em;
     white-space: nowrap;
   }
   .gauge-value {
     min-width: 5ch;
-    font-size: clamp(20px, 14cqmin, 64px);
+    font-size: clamp(24px, 17cqmin, 76px);
     line-height: 0.95;
     text-align: center;
   }
@@ -564,7 +462,7 @@
     align-items: center;
     gap: 6px;
     color: var(--text-muted);
-    font-size: clamp(var(--type-xs), 3.6cqmin, 13px);
+    font-size: clamp(var(--type-xs), 3.6cqmin, 14px);
     font-weight: var(--w-strong);
     line-height: 1;
     white-space: nowrap;
@@ -574,29 +472,31 @@
       display: none;
     }
   }
-  .terminal-icon {
-    width: 20px;
-    height: 20px;
+  .terminal-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
   }
   .terminal-number {
-    font-size: clamp(28px, 15.5cqmin, 62px);
+    font-size: clamp(30px, 17cqmin, 76px);
     line-height: 1;
   }
   /* Unit symbols are case-significant: Mbit/s, kB/s, MiB/s. */
   .terminal-unit,
   .gauge-unit {
-    color: var(--text-soft);
-    font-family: var(--font-mono);
+    color: var(--text-muted);
+    font-family: var(--font-sans);
     line-height: 1;
   }
   .terminal-unit {
-    font-size: clamp(var(--type-xs), 3.8cqmin, var(--type-md));
+    font-size: clamp(var(--type-sm), 4cqmin, var(--type-lg));
     font-weight: var(--w-normal);
   }
   .gauge-unit {
     margin-top: var(--space-1);
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
+    font-size: var(--type-md);
+    font-weight: var(--w-normal);
   }
   .terminal-partial {
     color: var(--tone);
@@ -606,10 +506,8 @@
   .gauge-footer {
     display: grid;
     align-items: center;
-    min-height: calc(
-      var(--space-2) + var(--space-3) + var(--space-1) + 2.7 * var(--type-sm)
-    );
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    min-height: calc(var(--space-2) + 2.7 * var(--type-sm));
+    padding-top: var(--space-1);
   }
   .gauge-notes {
     display: grid;
@@ -618,31 +516,16 @@
   }
   .gauge-hint {
     color: var(--text-muted);
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
-    line-height: 1.35;
+    font: var(--w-normal) var(--type-body) / 1.35 var(--font-sans);
   }
-  /* A user abort stays neutral at full text strength. */
   .gauge-status {
     color: var(--text);
-    font: var(--w-heavy) var(--type-xs) var(--font-mono);
-    letter-spacing: var(--track-wide);
-    text-transform: uppercase;
+    font: var(--w-strong) var(--type-body) / 1.35 var(--font-sans);
   }
   .gauge-status.error {
     color: var(--err);
   }
   .gauge-status.preparation {
-    color: var(--brand-strong);
-  }
-  /* Padding, not overflow-clip-margin, keeps shadows in: Chrome hides anchored tips inside a clip margin. */
-  .results-slot {
-    grid-area: results;
-    align-self: start;
-    margin: calc(-1 * var(--space-1));
-    overflow: clip;
-  }
-  .results-body {
-    padding: var(--space-1);
+    color: var(--text-muted);
   }
 </style>

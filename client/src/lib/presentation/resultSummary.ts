@@ -6,6 +6,7 @@ import {
   formatLatency,
   formatRate,
   resultRate,
+  throughputUnitIndex,
   type RateUnits,
 } from "../format";
 import type {
@@ -27,13 +28,12 @@ interface SummaryEvidence extends Pick<
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   added: AddedLatency | null;
-  latencySource?: string;
 }
 export interface SummaryRow {
   label: string;
   value: string;
   stage?: TransportRole;
-  tip?: string;
+  short?: string;
 }
 interface WireRate {
   value: string;
@@ -48,16 +48,32 @@ export interface SummaryCard {
   num: string;
   unit: string;
   tip: string;
-  wire?: WireRate | null;
+  wire?: WireRate;
   rows: SummaryRow[];
   accessible?: string;
+  graph?: CardGraph | null;
+}
+/** One stage's series on the run's timeline; the leading edge while it runs. */
+export interface CardGraph {
+  lanes: TracePoint[][];
+  latency: { t: number; ms: number }[];
+  start: number;
+  span: number;
+}
+/** Shared by every card: rate and latency ceilings, the idle floor, and how a rate reads. */
+export interface CardScale {
+  ceiling: number;
+  baseline: number | null;
+  latencyTop: number;
+  rate: (bytesPerSec: number) => string;
 }
 
+/** The stage track's order, so each chip sits under its stage. */
 export const CARD_ORDER = [
+  "latency",
   "download",
   "upload",
   "bidirectional",
-  "latency",
 ] as const;
 const LOADED = ["download", "upload", "bidirectional"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
@@ -69,27 +85,35 @@ const shownStatus = (stages: Record<TransportRole, string>) =>
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
   stages: Record<TransportRole, string>,
-  run: Omit<SummaryEvidence, "status" | "latencySource">,
+  run: Omit<SummaryEvidence, "status">,
   details: MultiServerResult | null | undefined,
   shown: string,
-  latencyFocus: string | null | undefined,
 ): SummaryEvidence {
-  const multiple = details && details.selection.length > 1;
   return (
     (details && shown && serverEvidence(details, shown)) || {
       ...run,
       status: shownStatus(stages),
-      latencySource: multiple
-        ? details.selection.find((server) => server.id === latencyFocus)?.name
-        : undefined,
     }
   );
 }
 
-const stability = (pct: number | null, tip: string): SummaryRow[] =>
-  pct === null
-    ? []
-    : [{ label: "Stability", value: `${Math.round(pct)}%`, tip }];
+export const laneShort = (
+  bytesPerSec: number | null | undefined,
+  combined: number | null | undefined,
+  units: RateUnits,
+) =>
+  bytesPerSec == null
+    ? MISSING
+    : combined == null
+      ? formatRate(bytesPerSec, units)
+      : resultRate(
+          bytesPerSec,
+          units,
+          throughputUnitIndex(combined, units.base, units.kind),
+        ).num;
+
+const stability = (pct: number | null): SummaryRow[] =>
+  pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
 
 /** From half a percent of overhead the wire estimate sits under the headline. */
 function wire(
@@ -109,34 +133,18 @@ function wire(
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
-  const { reportedMs, jitterMs, stabilityPct } = latency;
+  const { reportedMs, jitterMs } = latency;
   const added = LOADED.flatMap((stage): SummaryRow[] => {
     const ms = evidence.added?.[stage];
     return ms == null
       ? []
-      : [
-          {
-            label: "Added",
-            value: `${fmtAddedMs(ms)} ms`,
-            stage,
-            tip: JARGON.addedLatency,
-          },
-        ];
+      : [{ label: "Added", value: `${fmtAddedMs(ms)} ms`, stage }];
   });
-  const jitter = formatLatency(jitterMs);
-  const steady = card.status === "complete" ? (stabilityPct ?? null) : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [
-      { label: "Jitter", value: jitter, tip: JARGON.jitter },
-      ...added,
-      ...stability(steady, JARGON.latencyStability),
-      ...(evidence.latencySource
-        ? [{ label: "Server", value: evidence.latencySource }]
-        : []),
-    ],
+    rows: [{ label: "Jitter", value: formatLatency(jitterMs) }, ...added],
   };
 }
 
@@ -151,30 +159,35 @@ function bidirectionalCard(
     lanes?.down?.reportedBytesPerSec,
     lanes?.up?.reportedBytesPerSec,
   );
+  const value = model.combinedBytesPerSec;
   const lane = (stage: "download" | "upload", bytesPerSec: number | null) => ({
     label: STAGE[stage].short,
     value:
       bytesPerSec === null ? "unavailable" : formatRate(bytesPerSec, units),
+    short: laneShort(bytesPerSec, value, units),
     stage,
   });
-  const value = model.combinedBytesPerSec;
   const rows =
     value === null && !model.survivingDirection
       ? []
       : [lane("download", model.down), lane("upload", model.up)];
   if (value === null) return { ...card, rows };
   const complete = card.status === "complete";
+  const moved = (lanes?.down?.totalBytes ?? 0) + (lanes?.up?.totalBytes ?? 0);
   return {
     ...card,
     ...resultRate(value, units),
     wire: showWire && complete ? wire(lanes?.wire, value, units) : undefined,
     rows: [
       ...rows,
+      { label: "Down + up", value: formatRate(value, units) },
+      ...(moved
+        ? [{ label: "Transferred", value: fmtBytes(moved, units.base) }]
+        : []),
       ...stability(
         complete && lanes?.down && lanes.up
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
-        JARGON.rateStability,
       ),
     ],
   };
@@ -216,21 +229,11 @@ export function summaryCards(
           {
             label: "Transferred",
             value: fmtBytes(result.totalBytes, units.base),
-            tip: JARGON.transferred,
           },
           ...(peak == null
             ? []
-            : [
-                {
-                  label: "Peak",
-                  value: formatRate(peak, units),
-                  tip: JARGON.peak,
-                },
-              ]),
-          ...stability(
-            complete ? result.stabilityPct : null,
-            JARGON.rateStability,
-          ),
+            : [{ label: "Peak", value: formatRate(peak, units) }]),
+          ...stability(complete ? result.stabilityPct : null),
         ],
       },
     ];
@@ -255,41 +258,34 @@ export const resultSentence = (cards: SummaryCard[]) =>
     )
     .join("; ");
 
-/** Every row a stage's card will hold, still MISSING, so settling moves nothing. */
-export function pendingRows(
-  key: TransportRole,
-  loaded: TransportRole[],
-  multiple: boolean,
-): SummaryRow[] {
-  const row = (label: string, tip?: string, stage?: TransportRole) => ({
-    label,
-    value: MISSING,
-    tip,
-    stage,
-  });
-  if (key === "latency")
-    return [
-      row("Jitter", JARGON.jitter),
-      ...loaded.map((stage) => row("Added", JARGON.addedLatency, stage)),
-      row("Stability", JARGON.latencyStability),
-      ...(multiple ? [row("Server")] : []),
-    ];
-  return [
-    ...(key === "bidirectional"
-      ? [
-          row(STAGE.download.short, undefined, "download"),
-          row(STAGE.upload.short, undefined, "upload"),
-        ]
-      : [row("Transferred", JARGON.transferred), row("Peak", JARGON.peak)]),
-    row("Stability", JARGON.rateStability),
-  ];
+export const cardTip = (card: SummaryCard) =>
+  [
+    card.label,
+    card.tip.split("\n")[1],
+    ...card.rows
+      .filter((row) => row.value !== MISSING)
+      .map((row) =>
+        row.stage && row.label !== STAGE[row.stage].short
+          ? `${row.label} under ${STAGE[row.stage].short.toLowerCase()}\t${row.value}`
+          : `${row.label}\t${row.value}`,
+      ),
+  ].join("\n");
+
+interface TracePoint {
+  t: number;
+  v: number;
 }
 
 /** Failed server stages, live or saved, one line per server and reason: who, which stages, why; `scope` narrows to one server. */
 export function serverIssues(details: MultiServerResult, scope = "") {
   const lines = new Map<
     string,
-    { server: string; stages: string[]; reason: string }
+    {
+      server: string;
+      stages: string[];
+      reason: string;
+      throughput: TransportRole[];
+    }
   >();
   for (const failure of details.failures) {
     if (scope && failure.serverId !== scope) continue;
@@ -299,16 +295,18 @@ export function serverIssues(details: MultiServerResult, scope = "") {
         server: serverName(details.selection, failure.serverId),
         stages: [],
         reason: reasonLabel(failure.reason),
+        throughput: [],
       });
-    lines
-      .get(key)!
-      .stages.push(
-        `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""}`,
-      );
+    const line = lines.get(key)!;
+    const latency = failure.scope === "latency";
+    line.stages.push(
+      `${STAGE[failure.stage].label}${latency ? " latency" : ""}`,
+    );
+    if (!latency) line.throughput.push(failure.stage);
   }
-  return [...lines.values()].map(({ server, stages, reason }) => ({
-    server,
-    text: `${stages.join(", ")} · ${reason}`,
+  return [...lines.values()].map(({ stages, ...line }) => ({
+    ...line,
+    stages: stages.join(", "),
   }));
 }
 

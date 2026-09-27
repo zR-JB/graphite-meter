@@ -19,8 +19,8 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await open(page);
   const settings = await openSettings(page);
   await settings.getByRole("button", { name: "custom", exact: true }).click();
-  const warmup = settings.getByRole("textbox", { name: "Warmup ms" });
-  await warmup.fill("1234");
+  const warmup = settings.getByRole("textbox", { name: "Warmup in seconds" });
+  await warmup.fill("1.2");
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
   const wireLabel = "Show estimated wire rate";
   const wire = settings.getByRole("checkbox", { name: wireLabel });
@@ -35,7 +35,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await keep.click();
   await expect(dialog).toHaveCount(0);
   await expect(reset).toBeFocused();
-  await expect(warmup).toHaveValue("1234");
+  await expect(warmup).toHaveValue("1.2");
 
   await reset.click();
   await dialog.getByRole("button", { name: "Reset settings" }).click();
@@ -77,7 +77,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
 });
 
 test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1600, height: 900 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });
@@ -141,7 +141,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
 
-  const link = dialog.locator(".component:last-child a");
+  const link = dialog.locator(".group:last-child .component:last-child a");
   const close = dialog.getByRole("button", { name: "Close", exact: true });
   await link.evaluate((el: HTMLElement) => el.focus());
   // Past the last control a modal hands focus to the browser, never the page.
@@ -218,7 +218,6 @@ test("the first result saves after the application server becomes unreachable", 
   try {
     await open(page, oslo.server.url, {
       servers: [frankfurt],
-      latency: { mode: "primary", serverId: frankfurt.id },
       config: {
         stages: { ...baseConfig.stages, latency: false, upload: false },
         skipLoadedLatencyWhenStageOff: true,

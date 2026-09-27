@@ -1,299 +1,342 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
-  import type { SummaryCard, SummaryRow } from "../presentation/resultSummary";
-  import type { MultiServerResult } from "../runner/measure";
-  import ServerScope from "./ServerScope.svelte";
-  import { tipGroup, tooltip } from "../actions/tooltip";
+  import StageGraph from "./StageGraph.svelte";
   import {
-    MISSING,
-    STAGE,
-    STATUS,
-    STATUS_TONE,
-  } from "../presentation/vocabulary";
+    cardTip,
+    type CardScale,
+    type SummaryCard,
+    type SummaryRow,
+  } from "../presentation/resultSummary";
+  import type { MultiServerResult } from "../runner/measure";
+  import type { TransportRole } from "../runner/contract";
+  import { term, tipGroup, tooltip } from "../actions/tooltip";
+  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
 
   let {
     cards,
+    scale = null,
+    head = null,
     fade = 1,
-    reserve = false,
     details,
     issues = [],
     scope = "",
-    onscope,
-    locked = false,
   }: {
     cards: SummaryCard[];
+    /** Graphs share one rate and latency scale so their heights compare. */
+    scale?: CardScale | null;
+    /** The running stage's leading edge. */
+    head?: { key: string; t: number; values: (number | null)[] } | null;
     fade?: number;
-    reserve?: boolean;
     details?: MultiServerResult | null;
-    issues?: { server: string; text: string }[];
+    issues?: {
+      server: string;
+      stages: string;
+      reason: string;
+      throughput: TransportRole[];
+    }[];
     scope?: string;
-    onscope?: (id: string) => void;
-    locked?: boolean;
   } = $props();
+  // One shown server's reasons sit on the card they failed; only All servers needs an attributed list.
+  const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
+  const onCards = $derived(
+    attributed ? [] : issues.filter((issue) => issue.throughput.length),
+  );
+  const listed = $derived(
+    attributed ? issues : issues.filter((issue) => !issue.throughput.length),
+  );
+  // Latency has its own card; this row holds the transfers.
+  const transfers = $derived(cards.filter((card) => card.key !== "latency"));
+  // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
+  const FACT_ORDER = ["Peak", "Stability", "Down + up", "Transferred"];
+  const facts = (card: SummaryCard) =>
+    card.rows
+      .filter((row) => !row.stage)
+      .toSorted(
+        (a, b) => FACT_ORDER.indexOf(a.label) - FACT_ORDER.indexOf(b.label),
+      );
 </script>
 
-<!-- Facts read "value term"; the term carries the explainer, a run of stage icons shares one term. -->
-{#snippet facts(rows: SummaryRow[])}
-  <span class="facts"
-    ><span class="facts-line">
-      {#each rows as row, i (row.label + row.stage)}
-        {@const lane = row.stage && row.label === STAGE[row.stage].short}
-        {@const joined = row.stage && rows[i + 1]?.label === row.label}
-        <span class="fact">
-          {#if row.stage}<span class="fact-icon" data-tone={row.stage}
-              ><Icon name={STAGE[row.stage].icon} /></span
-            ><span class="sr-only">{STAGE[row.stage].short}</span>{/if}
-          <span class="fact-value">{row.value}</span>
-          {#if !lane && !joined}<span
-              class="fact-term"
-              {@attach row.tip ? tooltip(() => row.tip!) : null}
-              >{row.label.toLowerCase()}</span
-            >{/if}
-        </span>
-      {/each}
-    </span></span
-  >
-{/snippet}
-
-<div
-  class="result-summary"
-  class:reserve
-  style:--cards={Math.min(4, cards.length)}
-  style:--fade={fade}
->
-  {#if details && details.selection.length > 1 && onscope}
-    <div class="summary-scope">
-      {#if details.participants.length < details.selection.length}<span
-          class="hint"
-          >{details.participants.length} of {details.selection.length} servers</span
-        >{/if}
-      <ServerScope
-        servers={details.selection}
-        value={scope}
-        onchange={onscope}
-        disabled={locked}
-        disabledIds={details.selection
-          .filter(
-            ({ id }) => !details.servers.some(({ server }) => server.id === id),
-          )
-          .map(({ id }) => id)}
-        aggregate="Combined"
-        label="Result measurements"
-      />
-    </div>
-  {/if}
+<div class="result-summary">
   <div class="result-cards" data-tip-group {@attach tipGroup}>
-    {#each cards as card (card.key)}
-      {@const stability = card.rows.find((row) => row.label === "Stability")}
-      <article class="surface result-card enter {card.status}">
-        <span class="head" data-tone={card.key}>
-          <span class="tone-icon" aria-hidden="true"
-            ><Icon name={card.icon} /></span
+    {#each transfers as card (card.key)}
+      {@const quiet = card.status === "pending" || card.status === "not-run"}
+      {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
+      {@const lanes = card.rows.filter(
+        (row): row is SummaryRow & { stage: TransportRole } => !!row.stage,
+      )}
+      {@const reason = onCards.find((issue) =>
+        issue.throughput.includes(card.key),
+      )?.reason}
+      <article
+        class="card {card.status}"
+        data-tone={card.key}
+        style:--fade={fade}
+      >
+        <header class="card-head">
+          <span class="dot" aria-hidden="true"></span>
+          <h3 {@attach tooltip(() => cardTip(card))}>
+            {STAGE[card.key].label}
+          </h3>
+          {#if tone || card.status === "active"}<span class="state"
+              >{#if tone && tone !== "neutral"}<span
+                  class="status-dot"
+                  data-tone={tone}
+                ></span>{/if}{card.status === "active"
+                ? STATUS.running
+                : STATUS[card.status as keyof typeof STATUS]}</span
+            >{/if}
+        </header>
+        {#key scope}
+          <div
+            class="headline enter"
+            class:quiet
+            aria-hidden={card.accessible ? "true" : undefined}
           >
-          <span class="label" {@attach tooltip(() => card.tip)}
-            >{card.label}</span
-          >
-          {#if card.status !== "complete" && card.status !== "active" && card.status !== "pending"}
-            <span class="badge" data-tone={STATUS_TONE[card.status]}
-              >{STATUS[card.status]}</span
-            >
-          {:else if stability && stability.value !== MISSING}
-            <span class="stability"
-              >{stability.value}
-              <span
-                class="fact-term"
-                {@attach stability.tip ? tooltip(() => stability.tip!) : null}
-                >stable</span
-              ></span
+            {#if card.key === "bidirectional" && lanes.length === 2 && !quiet}
+              {#each lanes as lane (lane.stage)}
+                <span class="pair" data-tone={lane.stage}
+                  ><span class="arrow" aria-hidden="true"
+                    >{lane.stage === "download" ? "↓" : "↑"}</span
+                  ><span class="sr-only">{STAGE[lane.stage].short}</span><span
+                    class="num">{lane.short}</span
+                  ></span
+                >
+              {/each}
+            {:else}
+              <span class="num">{card.num}</span>
+            {/if}
+            {#if card.unit && !quiet}<span class="unit">{card.unit}</span>{/if}
+          </div>
+        {/key}
+        <div class="line">
+          {#if reason && !quiet}
+            <span class="reason">{reason}</span>
+          {:else if card.wire}
+            {@const wire = card.wire}
+            <span class="wire"
+              ><span class="label" {@attach term(() => wire.tip)}>Wire</span>
+              {wire.value}
+              <span class="delta">{wire.overhead}</span></span
             >
           {/if}
-        </span>
-        {#key scope}
-          <span class="readout enter">
-            <span
-              class="val"
-              aria-hidden={card.accessible ? "true" : undefined}
-            >
-              <span class="num">{card.num}</span>
-              {#if card.unit}<span class="unit">{card.unit}</span>{/if}
-            </span>
-            {#if card.wire}
-              {@const wire = card.wire}
-              <span class="wire"
-                >{wire.value}
-                <span class="fact-term" {@attach tooltip(() => wire.tip)}
-                  >wire {wire.overhead}</span
-                ></span
-              >
-            {:else if card.wire === null}
-              <span class="wire"></span>
-            {/if}
-            {@render facts(card.rows.filter((row) => row !== stability))}
-          </span>
-        {/key}
+        </div>
+        {#if card.graph && scale}
+          <div class="graph-slot">
+            <StageGraph
+              tone={card.key as "download" | "upload" | "bidirectional"}
+              lanes={card.graph.lanes}
+              laneNames={card.key === "bidirectional"
+                ? [STAGE.download.short, STAGE.upload.short]
+                : []}
+              latency={card.graph.latency}
+              start={card.graph.start}
+              span={card.graph.span}
+              head={head?.key === card.key ? head : null}
+              ceiling={scale.ceiling}
+              baseline={scale.baseline}
+              latencyTop={scale.latencyTop}
+              rate={scale.rate}
+              label="{STAGE[card.key].label} over time"
+            />
+          </div>
+        {/if}
+        <dl class="facts">
+          {#each facts(card) as row (row.label)}
+            <div>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          {/each}
+        </dl>
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
   </div>
-  <!-- One shown server needs no attribution: its reasons sit as quiet lines under the cards. -->
-  {#if issues.length && ((details?.selection.length ?? 1) <= 1 || scope)}
-    <ul class="issue-lines enter" aria-label="Issues">
-      {#each issues as issue, index (index)}<li>{issue.text}</li>{/each}
-    </ul>
-  {:else if issues.length}
-    <section class="group enter" aria-label="Issues">
-      <h3>Issues</h3>
-      <dl class="kv">
-        {#each issues as issue, index (index)}
-          <div>
-            <dt>{issue.server}</dt>
-            <dd>{issue.text}</dd>
-          </div>
-        {/each}
-      </dl>
-    </section>
+  {#if listed.length}
+    <dl class="issues enter" class:attributed aria-label="Issues">
+      {#each listed as issue, index (index)}
+        {#if attributed}<dt>{issue.server}</dt>
+          <dd>{issue.stages}</dd>
+        {:else}<dt>{issue.stages}</dt>{/if}
+        <dd class="reason">{issue.reason}</dd>
+      {/each}
+    </dl>
   {/if}
 </div>
 
 <style>
   .result-summary {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3);
     width: 100%;
-    max-width: calc(var(--cards) * 280px);
-    margin-inline: auto;
     container: results / inline-size;
-  }
-  .summary-scope {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
   }
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-4) var(--space-5);
   }
-  @container results (max-width: 540px) {
-    .result-cards {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-    .result-cards > :global(:last-child:nth-child(odd)) {
-      grid-column: 1 / -1;
-    }
-  }
-  @container results (max-width: 480px) {
-    .result-cards {
-      grid-template-columns: minmax(0, 1fr);
-    }
-  }
-  .result-card {
+  /* A card is its stage's light on the page: a rule in its hue and a wash that fades out, no box. */
+  .card {
+    --wash: 0%;
     display: grid;
-    align-content: start;
+    grid-template-rows: 20px auto 18px;
+    grid-auto-rows: auto;
     gap: 6px;
     min-width: 0;
-    padding: 10px var(--space-3);
-    transition: var(--transition-control);
+    padding: var(--space-3) var(--space-4) var(--space-3);
+    border-top: 2px solid
+      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 78%
+    );
+    transition:
+      --wash var(--dur-graph) var(--ease-out),
+      border-color var(--dur-graph) var(--ease-out);
   }
-  .result-card.active {
-    border-color: var(--brand-line);
+  .card:is(.complete, .partial, .failed, .stopped) {
+    --wash: 9%;
   }
-  .head {
+  .card.active {
+    --wash: 16%;
+  }
+  .card:is(.pending, .not-run) {
+    --rule: 30%;
+  }
+  .card-head {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
   }
-  .head .badge,
-  .stability {
-    margin-left: auto;
+  .dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
   }
-  .label {
-    font-size: var(--type-sm);
-    font-weight: var(--w-heavy);
-  }
-  .readout > *,
-  .head .badge,
-  .stability {
-    opacity: var(--fade);
-  }
-  .readout {
-    display: grid;
-    gap: 3px;
-    min-width: 0;
-  }
-  .val {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-  }
-  .num {
-    font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: var(--track-tight);
-  }
-  .unit {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-xs) var(--font-mono);
-  }
-  .wire,
-  .facts,
-  .stability {
-    color: var(--text-muted);
-    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
-    font-variant-numeric: tabular-nums;
-  }
-  /* Each fact wraps whole; its middot sits in the gap before it, clipped at a line start. */
-  .facts {
-    display: block;
-    overflow: hidden;
-  }
-  .wire {
-    min-height: 1lh;
-  }
-  @container results (min-width: 481px) {
-    .reserve .facts {
-      min-height: 2lh;
-    }
-  }
-  .facts-line {
-    display: flex;
-    flex-wrap: wrap;
-    margin-left: calc(-1 * var(--space-3));
-  }
-  .fact {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    padding-left: var(--space-3);
+  h3 {
+    color: var(--text);
+    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
     white-space: nowrap;
   }
-  .fact::before {
-    content: "·";
-    position: absolute;
-    left: calc(var(--space-3) / 2);
-    translate: -50%;
+  .state {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+  }
+  .headline,
+  .line,
+  .facts,
+  .graph-slot {
+    opacity: var(--fade);
+  }
+  .headline {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    white-space: nowrap;
+  }
+  /* Light numerals read as measured values, not as headings. */
+  .num {
+    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.025em;
+  }
+  .pair {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+  }
+  .pair .num {
+    font-size: clamp(26px, 2vw, 36px);
+  }
+  .arrow {
+    color: var(--tone);
+    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+  }
+  .quiet .num {
     color: var(--text-soft);
   }
-  .issue-lines {
+  .unit {
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
+  }
+  .line {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-body) / 18px var(--font-sans);
+    white-space: nowrap;
+  }
+  .wire .label {
+    color: var(--text-soft);
+  }
+  .delta {
+    margin-left: 4px;
+    color: var(--tone-ink);
+    font-weight: var(--w-strong);
+  }
+  .reason {
+    color: var(--err);
+    font-weight: var(--w-strong);
+  }
+  .graph-slot {
+    height: clamp(64px, 11svh, 132px);
+    min-height: 0;
+  }
+  .facts {
     display: grid;
-    justify-items: center;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
+    gap: var(--space-2) var(--space-3);
+    padding-top: var(--space-2);
+    border-top: var(--hairline) solid var(--border-subtle);
+  }
+  .facts:empty {
+    visibility: hidden;
+  }
+  .facts > div {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+  .facts dt {
+    overflow: hidden;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .facts dd {
+    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .issues {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: center;
+    gap: 2px var(--space-3);
     color: var(--text-muted);
     font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
-    text-align: center;
   }
-  .fact-icon {
-    display: inline-grid;
-    color: var(--tone);
+  .issues.attributed {
+    grid-template-columns: auto auto auto;
   }
-  .fact-icon :global(svg) {
-    width: 11px;
-    height: 11px;
+  .attributed dt {
+    color: var(--text);
+    font-weight: var(--w-strong);
   }
-  .fact-term {
+  .issues .reason {
     color: var(--text-soft);
+    font-weight: var(--w-normal);
   }
 </style>

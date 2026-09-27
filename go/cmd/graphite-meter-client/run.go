@@ -347,7 +347,7 @@ func (m *model) apply(e goclient.Event) {
 			r.stages[i].state, r.stages[i].since = state, e.At
 		}
 		if e.Phase == goclient.PhaseMeasuring {
-			r.marks = append(r.marks, mark{at, compactStage(e.Stage)})
+			r.marks = append(r.marks, mark{at, e.Stage})
 			for dir := range r.history {
 				r.history[dir] = r.history[dir].add(at, math.NaN())
 			}

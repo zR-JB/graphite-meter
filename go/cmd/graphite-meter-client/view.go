@@ -125,11 +125,14 @@ func (m model) progress() int {
 
 func (m model) header(w int) string {
 	left := m.st.title.Render("Graphite Meter")
-	pill := m.st.pill
-	if m.run != nil && !m.running() {
-		pill = m.st.outcome[m.run.outcome]
+	label, pill := m.statusLabel(), m.st.pill
+	switch r := m.run; {
+	case r != nil && !m.running():
+		pill = m.st.outcome[r.outcome]
+	case r != nil && label == stageLabels[r.stage]:
+		pill = pill.Background(m.st.stage[r.stage].GetForeground())
 	}
-	right := pill.Render(m.statusLabel())
+	right := pill.Render(label)
 	spacer := strings.Repeat(" ", max(1, w-lipgloss.Width(left)-lipgloss.Width(right)))
 	context := m.cfg.BaseURL
 	if m.run != nil && m.run.details != nil {
@@ -458,7 +461,7 @@ func (m model) testFields(w int) []string {
 		}
 		servers := strings.Join(names, ", ")
 		if len(names) > 1 {
-			servers += " · Combined"
+			servers += " (all servers)"
 			streams = "per server · " + streams
 		}
 		field("Servers", servers)
@@ -475,7 +478,8 @@ func (m model) stageTrack(w int) []string {
 	barW := min(max(w-34, 6), 30)
 	var lines []string
 	for _, s := range m.run.stages {
-		name := m.st.text.Render(pad(stageLabels[s.name], 14))
+		hue := m.st.stage[s.name]
+		name := hue.Render(pad(stageLabels[s.name], 14))
 		elapsed := m.now.Sub(s.since)
 		switch s.state {
 		case stagePreparing:
@@ -485,7 +489,7 @@ func (m model) stageTrack(w int) []string {
 		case stageMeasuring:
 			clock := m.st.value.Render(fmtClock(min(elapsed, s.duration)))
 			clock += m.st.muted.Render(" / " + fmtSetting(s.duration))
-			lines = append(lines, name+m.st.bar(elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
+			lines = append(lines, name+m.st.bar(hue, elapsed.Seconds(), s.duration.Seconds(), barW)+"  "+clock)
 		case stageDone:
 			value := m.headline(s.name)
 			if value == "" {
@@ -540,8 +544,7 @@ func (m model) liveView(w, h int) string {
 	loaded := len(dirs) > 0 && m.cfg.LoadedLatency
 	var lines []series
 	for _, dir := range dirs {
-		style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
-		lines = append(lines, series{style, r.history[dir].points})
+		lines = append(lines, m.st.stageSeries(r.history[dir].points, r.marks)...)
 	}
 	var out []string
 	if r.live() {
@@ -552,10 +555,10 @@ func (m model) liveView(w, h int) string {
 	}
 	chartH := h - len(out)
 	span := m.now.Sub(r.started).Seconds()
-	rtt := []series{{m.st.rtt, r.rtt[r.latencyServer()].points}}
+	rtt := m.st.stageSeries(r.rtt[r.latencyServer()].points, r.marks)
 	switch {
 	case chartH < 5:
-	case len(lines) == 0:
+	case len(dirs) == 0:
 		out = append(out, m.st.chart(rtt, r.marks, msAxis, span, w, chartH))
 	case loaded && chartH >= 12:
 		out = append(out, m.st.chart(lines, r.marks, rateAxis, span, w, chartH-5),
@@ -670,6 +673,7 @@ func (m model) resultsView(w int, latencyHeading string) results {
 	}
 	measured := false
 	for i, stage := range r.plan {
+		hue := m.st.stage[stage.Name]
 		if len(stage.Directions) > 0 {
 			for _, result := range r.results {
 				if result.Stage != stage.Name {
@@ -689,7 +693,7 @@ func (m model) resultsView(w int, latencyHeading string) results {
 				rates += "  " + m.st.warn.Render(stageStatusLabels[stagePartial])
 			}
 			if rates != "" {
-				throughput = append(throughput, []string{compactStage(stage.Name), rates})
+				throughput = append(throughput, []string{hue.Render(compactStage(stage.Name)), rates})
 			}
 		}
 		population, ok := latency[stage.Name]
@@ -701,7 +705,7 @@ func (m model) resultsView(w int, latencyHeading string) results {
 				cells[1] = ""
 			}
 			out.added = out.added || cells[1] != ""
-			latencyRows = append(latencyRows, append([]string{compactPopulation(stage.Name)}, cells...))
+			latencyRows = append(latencyRows, append([]string{hue.Render(compactPopulation(stage.Name))}, cells...))
 			label := populationLabel(stage.Name)
 			out.notes = append(out.notes, m.note(label, latencyFacts(population.Latency), w)...)
 			if timing := population.Latency.ReflectorTiming; timing != nil {
@@ -710,7 +714,7 @@ func (m model) resultsView(w int, latencyHeading string) results {
 			}
 			failed(stage.Name, label, population.Err)
 		case len(stage.Directions) == 0 && !r.live():
-			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), r.unmeasured(i)})
+			latencyRows = append(latencyRows, []string{hue.Render(compactPopulation(stage.Name)), r.unmeasured(i)})
 		}
 	}
 	if !measured {
@@ -719,12 +723,12 @@ func (m model) resultsView(w int, latencyHeading string) results {
 	if out.added {
 		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
-	combined := ""
+	scope := ""
 	if m.multipleRunServers() {
-		combined = "Combined"
+		scope = "All servers"
 	}
 	if len(throughput) > 0 {
-		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
+		out.throughput = m.st.grid([]string{"Throughput", scope}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
 		headers := []string{latencyHeading, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
@@ -810,8 +814,8 @@ func (m model) throughputReport(w int) string {
 	var rows []row
 	labelW, valueW := 0, 0
 	for i, stage := range r.plan {
+		style := m.st.stage[stage.Name]
 		for _, dir := range stage.Directions {
-			style := map[goclient.Direction]lipgloss.Style{goclient.Down: m.st.down, goclient.Up: m.st.up}[dir]
 			row := row{label: style.Render(arrows[dir]) + " " + m.st.text.Render(stageLabels[stage.Name])}
 			at := slices.IndexFunc(r.results, func(result goclient.Result) bool {
 				return result.Stage == stage.Name && result.Direction == dir

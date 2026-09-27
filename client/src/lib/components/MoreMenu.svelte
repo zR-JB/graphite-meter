@@ -73,17 +73,6 @@
   .more-menu {
     width: min(236px, calc(100vw - 16px));
   }
-  .more-menu :global(button) {
-    min-height: 48px;
-  }
-  .more-menu :global(:is(strong, small)) {
-    display: block;
-  }
-  .more-menu :global(small) {
-    margin-top: 2px;
-    color: var(--text-muted);
-    font-size: var(--type-xs);
-  }
   .danger .more-menu :global(button) {
     color: var(--err);
   }

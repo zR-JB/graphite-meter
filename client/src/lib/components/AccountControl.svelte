@@ -52,10 +52,10 @@
     class="account"
     method="post"
     action="/auth/logout"
-    aria-label={`${label} · ${provider}`}
+    aria-label={`${label}, ${provider}`}
   >
     <input type="hidden" name="csrf" value={session.csrf} />
-    <div class="identity" {@attach tooltip(() => `${label} · ${provider}`)}>
+    <div class="identity" {@attach tooltip(() => `${label}\n${provider}`)}>
       <span class="avatar" aria-hidden="true">
         <svg viewBox="0 0 20 20">
           <circle cx="10" cy="7" r="3" />
@@ -112,19 +112,14 @@
 {/if}
 
 <style>
-  /* One control strip: identity, then the two sign-out scopes. The provider
-     lives in the tooltip and the form's accessible name. */
+  /* Quiet like the rest of the top bar: who is signed in, then the two sign-out scopes.
+     The provider lives in the tooltip and the form's accessible name. */
   .account {
     display: flex;
     align-items: center;
+    gap: 2px;
     min-width: 0;
     max-width: min(36vw, 300px);
-    height: var(--control-h);
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    box-shadow: var(--elev-tile);
   }
   .identity {
     display: flex;
@@ -138,12 +133,11 @@
     display: grid;
     flex: none;
     place-items: center;
-    width: 20px;
-    height: 20px;
-    border: 1px solid var(--brand-line);
+    width: 22px;
+    height: 22px;
     border-radius: var(--r-full);
-    background: var(--brand-soft);
-    color: var(--brand-strong);
+    background: var(--track);
+    color: var(--text-muted);
   }
   svg {
     fill: none;
@@ -158,27 +152,21 @@
   .name {
     overflow: hidden;
     min-width: 0;
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .signout {
-    height: 100%;
-    border-radius: 0;
-    box-shadow: -1px 0 0 var(--border);
+  .signout svg {
+    width: var(--icon);
+    height: var(--icon);
   }
   @media (hover: hover) {
     .signout:hover {
-      background: var(--err-soft);
       color: var(--err);
     }
   }
-  .signout:focus-visible {
-    outline-offset: -3px;
-  }
-  /* Narrow and touch layouts keep only the sign-out action, as a topbar
-     button of its own. */
+  /* Narrow and touch layouts keep only the sign-out action, as a top-bar button of its own. */
   @media (max-width: 759px), (pointer: coarse) {
     .account {
       display: contents;
@@ -186,15 +174,6 @@
     .identity,
     .everywhere {
       display: none;
-    }
-    .signout {
-      --btn-line: var(--border);
-      height: auto;
-      border-radius: calc(var(--r-chrome) + var(--hit-pad));
-      background: var(--surface-2) padding-box;
-      box-shadow:
-        inset 0 0 0 1px var(--btn-line),
-        var(--elev-tile);
     }
   }
 </style>

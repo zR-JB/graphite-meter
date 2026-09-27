@@ -5,13 +5,13 @@
        light-scheme values are the defaults. Keep in sync with the brand and
        text tokens in src/app.css and the glyph in the app topbar. -->
   <style>
-    .hex { stroke: #2f717a; }
-    .needle { stroke: #26272a; }
-    .hub { fill: #26272a; }
+    .hex { stroke: #047781; }
+    .needle { stroke: #1f2329; }
+    .hub { fill: #1f2329; }
     @media (prefers-color-scheme: dark) {
-      .hex { stroke: #6db0b8; }
-      .needle { stroke: #d9dce0; }
-      .hub { fill: #d9dce0; }
+      .hex { stroke: #46ccda; }
+      .needle { stroke: #e3e6eb; }
+      .hub { fill: #e3e6eb; }
     }
   </style>
   <path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2.4" stroke-linejoin="round"/>

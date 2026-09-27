@@ -136,7 +136,6 @@ func prepareRun(
 	}
 	work.Wait()
 	var failures []error
-	var best time.Duration
 	for i := range prepared.Servers {
 		server := &prepared.Servers[i]
 		if server.Connection != nil {
@@ -152,11 +151,7 @@ func prepareRun(
 			failures = append(failures, fmt.Errorf("%s: %w", server.Server.Name, server.Err))
 			continue
 		}
-		rtt := server.Connection.WarmRTT
-		if prepared.LatencyFocus == "" || rtt > 0 && (best <= 0 || rtt < best) {
-			prepared.LatencyFocus = server.Server.ID
-			best = rtt
-		}
+		prepared.LatencyFocus = cmp.Or(prepared.LatencyFocus, server.Server.ID)
 	}
 	if len(failures) > 0 {
 		return prepared, errors.Join(failures...)

@@ -47,8 +47,8 @@
   class="elapsed"
   class:secondary={left.shown.show}
   style:opacity={counters.opacity}
-  ><span class="caption">elapsed&nbsp;</span><span class="readout"
-    >{fmtDuration(counters.shown.elapsedMs)}</span
+  ><span class="readout">{fmtDuration(counters.shown.elapsedMs)}</span><span
+    class="caption">&nbsp;elapsed</span
   ></span
 >
 <span class="transferred" style:opacity={counters.opacity}
@@ -63,9 +63,7 @@
     style:opacity={left.opacity}
   >
     {#if left.shown.recovering}{CONNECTIVITY.recovering.label}<span
-        class="caption"
-      >
-        · {fmtDuration(left.shown.ms)} left</span
+        class="caption">, {fmtDuration(left.shown.ms)} left</span
       >{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
       left{/if}
   </span>

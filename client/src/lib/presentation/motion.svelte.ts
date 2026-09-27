@@ -22,7 +22,7 @@ function run(now: number): void {
   request();
 }
 
-/** The latest frame's time, for a redraw that cannot wait for the next frame. */
+/** The shared clock's latest frame time. */
 export const frameTime = () => lastFrame;
 
 /** Runs `task` on every frame until it returns false or the returned stop is called. */

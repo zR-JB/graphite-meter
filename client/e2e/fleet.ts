@@ -4,7 +4,7 @@ import type { RunnerConfig } from "../src/lib/runner/contract";
 import { STAGES } from "../src/lib/runner/schedule";
 import { STAGE } from "../src/lib/presentation/vocabulary";
 import { describe, launch, type Server } from "./servers";
-import { expect, type Page } from "./webview";
+import { expect, settled, type Page } from "./webview";
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
@@ -47,7 +47,6 @@ export const baseConfig = {
 export interface Seed {
   servers?: Pick<Server, "id" | "url">[];
   config?: Partial<Record<keyof RunnerConfig, unknown>>;
-  latency?: { mode: "all" | "primary"; serverId: string };
 }
 
 export async function open(page: Page, origin = home.url, seed: Seed = {}) {
@@ -58,7 +57,7 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
       storageTypes: "local_storage,indexeddb",
     });
   await page.addInitScript(
-    ({ servers, config, latency }) => {
+    ({ servers, config }) => {
       if (localStorage.getItem("graphite-meter:v1")) return;
       if (servers)
         localStorage.setItem(
@@ -67,17 +66,12 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
         );
       localStorage.setItem(
         "graphite-meter:v1",
-        JSON.stringify({
-          config,
-          latencySelection: latency,
-          resultHistoryPreference: "enabled",
-        }),
+        JSON.stringify({ config, resultHistoryPreference: "enabled" }),
       );
     },
     {
       servers: seed.servers?.map(({ id, url }) => ({ id, url })),
       config: { ...baseConfig, ...seed.config },
-      latency: seed.latency ?? { mode: "primary", serverId: "self" },
     },
   );
   await page.goto(origin);
@@ -90,6 +84,8 @@ export async function openSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.some((el) => !el.inert)))
     .toBe(true);
+  // The sheet slides in with its column; a pointer aimed mid-slide misses its row.
+  await page.evaluate(settled);
   return panel;
 }
 
@@ -157,7 +153,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
     if (status !== "not-run" && (await track.state()).length)
       await expect(track).toHaveAttribute(
         "class",
-        new RegExp(`\\bseg--${status}\\b`),
+        new RegExp(`\\bchip--${status}\\b`),
       );
   }
   return record!;

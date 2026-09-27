@@ -50,17 +50,3 @@ export function monotoneCurve(
     };
   });
 }
-export function traceSmoothLine(
-  ctx: CanvasRenderingContext2D,
-  points: ReadonlyArray<PathPoint>,
-): void {
-  for (const segment of monotoneCurve(points))
-    ctx.bezierCurveTo(
-      segment.control1.x,
-      segment.control1.y,
-      segment.control2.x,
-      segment.control2.y,
-      segment.end.x,
-      segment.end.y,
-    );
-}
