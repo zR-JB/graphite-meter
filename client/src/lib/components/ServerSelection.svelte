@@ -9,7 +9,7 @@
   } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
-  import { JARGON, READINESS } from "../presentation/vocabulary";
+  import { JARGON, preflightNote, READINESS } from "../presentation/vocabulary";
   const controller = getApplicationController();
   const descriptionId = $props.id();
   let retrying = $state<string[]>([]);
@@ -53,9 +53,9 @@
 
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="server-setting">
-    <div class="server-heading">
+    <div class="server-heading" {@attach tooltip(() => JARGON.testServers)}>
       <strong>Test servers</strong>
-      <small>{selected.length} selected</small>
+      <small>{selected.length} selected · up to 4</small>
     </div>
     <div
       class="server-choices"
@@ -85,8 +85,13 @@
             };
           }}
           {@attach tooltip(() =>
-            [server.name, server.location, new URL(server.url).host]
-              .concat(preflightMs == null ? [] : [JARGON.preflight])
+            [
+              server.name,
+              [new URL(server.url).host, server.location]
+                .filter(Boolean)
+                .join(" · "),
+              preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
+            ]
               .filter(Boolean)
               .join("\n"),
           )}
@@ -126,13 +131,15 @@
         </label>
       {/each}
     </div>
-    <p class="selection-help">Choose up to 4. Their speeds are combined.</p>
     <span class="sr-only" id={descriptionId}
       >Preflight request times include connection setup and the response. They
       are not latency measurements.</span
     >
     {#if selected.length > 1 && store.latencyEnabled}
-      <div class="latency-policy">
+      <label
+        class="latency-policy"
+        {@attach tooltip(() => JARGON.latencyServer)}
+      >
         <strong>Latency server</strong>
         <ServerScope
           servers={selected}
@@ -149,7 +156,7 @@
               id || store.primaryLatencyServer,
             )}
         />
-      </div>
+      </label>
     {/if}
   </div>
 {/if}
@@ -387,9 +394,6 @@
   .server-preflight span {
     color: var(--text-soft);
     font-size: var(--type-2xs);
-  }
-  .selection-help {
-    font-size: var(--type-xs);
   }
   .feedback-message {
     min-height: 1.5em;
