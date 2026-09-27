@@ -66,11 +66,13 @@ impl DeadlineEstimator {
             })
     }
 
-    pub fn observe(&mut self, rtt_nanos: u64) {
-        let rtt = rtt_nanos.min(Self::CEIL_NANOS);
+    pub fn observe(&mut self, rtt: u64) {
         self.srtt_rttvar = Some(match self.srtt_rttvar {
             None => (rtt, rtt / 2),
-            Some((srtt, rttvar)) => ((7 * srtt + rtt) / 8, (3 * rttvar + srtt.abs_diff(rtt)) / 4),
+            Some((srtt, rttvar)) => (
+                srtt.saturating_mul(7).saturating_add(rtt) / 8,
+                rttvar.saturating_mul(3).saturating_add(srtt.abs_diff(rtt)) / 4,
+            ),
         });
     }
 }

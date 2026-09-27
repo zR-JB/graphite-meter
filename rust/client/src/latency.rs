@@ -99,8 +99,19 @@ pub(crate) async fn run_kind(
     let end = Instant::now()
         .checked_add(duration)
         .ok_or("latency duration exceeds clock range")?;
+    // One estimate per stage, as in Go: a redial must not restart at the 250 ms floor.
+    let mut estimator = DeadlineEstimator::default();
     loop {
-        let result = measure(socket, interval, window, end, &observations, &mut cancel).await;
+        let result = measure(
+            socket,
+            interval,
+            window,
+            end,
+            &mut estimator,
+            &observations,
+            &mut cancel,
+        )
+        .await;
         let Err(error) = result else {
             return Ok(());
         };
@@ -440,6 +451,7 @@ async fn measure(
     interval: Duration,
     window: usize,
     end: Instant,
+    estimator: &mut DeadlineEstimator,
     observations: &mpsc::Sender<Observation>,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<(), Error> {
@@ -449,7 +461,6 @@ async fn measure(
     let mut next_id = 0_u32;
     let mut next_send = Instant::now();
     let mut sending = true;
-    let mut estimator = DeadlineEstimator::default();
     let mut expiry = tokio::time::interval(Duration::from_millis(50));
     let result = loop {
         if (!sending || Instant::now() >= end) && pending.is_empty() {
@@ -496,6 +507,7 @@ async fn measure(
                         let Ok(pong) = wire::decode_pong(&text) else { continue };
                         if let Some(sent) = late.remove(&pong.id) {
                             estimator.observe(received.saturating_duration_since(sent).as_nanos() as u64);
+                            if interval.is_zero() { next_send = received; }
                             continue;
                         }
                         let Some((sent, deadline)) = pending.remove(&pong.id) else { continue };
@@ -653,6 +665,7 @@ mod tests {
                 Duration::from_millis(interval),
                 16,
                 Instant::now() + Duration::from_millis(duration),
+                &mut DeadlineEstimator::default(),
                 &observations,
                 &mut cancelled,
             )

@@ -96,22 +96,6 @@ impl std::error::Error for PreparationFailure {
     }
 }
 
-pub async fn verify(
-    config: &Config,
-    http: &Http,
-    snapshots: &watch::Sender<Snapshot>,
-) -> Result<(), Error> {
-    let preparation = prepare(config, http, snapshots).await?;
-    if !preparation.failures.is_empty() {
-        return Err(preferred(preparation.failures));
-    }
-    snapshots.send_modify(|snapshot| {
-        snapshot.phase = Phase::Setup;
-        snapshot.status = "Selected servers verified".into();
-    });
-    Ok(())
-}
-
 async fn prepare(
     config: &Config,
     http: &Http,
