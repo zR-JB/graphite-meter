@@ -16,10 +16,66 @@ const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
+const INCOMING_BYTES: u64 = 64 * 1024;
+const INCOMING_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) const BUFFER_BYTES: u32 = 120 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
+    pub(crate) fn quic_endpoint(
+        &self,
+        tls: Arc<rustls::ServerConfig>,
+        address: SocketAddr,
+    ) -> Result<quinn::Endpoint, ConfigError> {
+        let socket = graphite_meter_core::socket::udp_socket(address)?;
+        let socket_buffers = socket2::SockRef::from(&socket);
+        let kernel_bytes = socket_buffers
+            .recv_buffer_size()?
+            .checked_add(socket_buffers.send_buffer_size()?)
+            .ok_or("UDP socket buffer size overflow")?;
+        let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
+        let socket = runtime.wrap_udp_socket(socket)?;
+        let endpoint_config = quinn::EndpointConfig::default();
+        let packet_bytes =
+            usize::try_from(endpoint_config.get_max_udp_payload_size().min(64 * 1024))?;
+        let receive_bytes = packet_bytes
+            .checked_mul(socket.max_receive_segments().get())
+            .ok_or("QUIC receive segment size overflow")?;
+        let batch_bytes = receive_bytes
+            .checked_mul(quinn::udp::BATCH_SIZE)
+            .ok_or("QUIC receive batch size overflow")?;
+        let incoming_bytes = receive_bytes
+            .checked_mul(
+                self.config
+                    .max_connections
+                    .checked_add(1)
+                    .ok_or("QUIC incoming count overflow")?,
+            )
+            .and_then(|bytes| bytes.checked_add(INCOMING_TOTAL_BYTES as usize))
+            .ok_or("QUIC incoming buffer size overflow")?;
+        let bytes = kernel_bytes
+            .checked_add(batch_bytes)
+            .and_then(|bytes| bytes.checked_add(incoming_bytes))
+            .ok_or("QUIC endpoint buffer size overflow")?;
+        let lease = Arc::new(
+            self.memory
+                .acquire(u32::try_from(bytes)?)
+                .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
+        );
+        if self.memory.bytes.available_permits() < BUFFER_BYTES as usize {
+            return Err(
+                "server memory budget must cover QUIC endpoint buffers and one connection".into(),
+            );
+        }
+        quinn::Endpoint::new_with_abstract_socket(
+            endpoint_config,
+            Some(self.quic_config(tls)?),
+            Box::new(BudgetedSocket { socket, lease }),
+            runtime,
+        )
+        .map_err(Into::into)
+    }
+
     pub fn quic_config(
         &self,
         tls: Arc<rustls::ServerConfig>,
@@ -29,6 +85,10 @@ impl HttpServer {
         }
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+        config
+            .max_incoming(self.config.max_connections)
+            .incoming_buffer_size(INCOMING_BYTES)
+            .incoming_buffer_size_total(INCOMING_TOTAL_BYTES);
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams(
             u32::try_from(
@@ -225,6 +285,62 @@ impl HttpServer {
                 }
             }
         }
+    }
+}
+
+#[derive(Debug)]
+struct BudgetedSocket {
+    socket: Box<dyn quinn::AsyncUdpSocket>,
+    lease: Arc<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl quinn::AsyncUdpSocket for BudgetedSocket {
+    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+        Box::pin(BudgetedSender {
+            sender: self.socket.create_sender(),
+            _lease: self.lease.clone(),
+        })
+    }
+
+    fn poll_recv(
+        &mut self,
+        cx: &mut Context<'_>,
+        bufs: &mut [io::IoSliceMut<'_>],
+        meta: &mut [quinn::udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.socket.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.socket.local_addr()
+    }
+
+    fn max_receive_segments(&self) -> std::num::NonZeroUsize {
+        self.socket.max_receive_segments()
+    }
+
+    fn may_fragment(&self) -> bool {
+        self.socket.may_fragment()
+    }
+}
+
+#[derive(Debug)]
+struct BudgetedSender {
+    sender: Pin<Box<dyn quinn::UdpSender>>,
+    _lease: Arc<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl quinn::UdpSender for BudgetedSender {
+    fn poll_send(
+        mut self: Pin<&mut Self>,
+        transmit: &quinn::udp::Transmit<'_>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        self.sender.as_mut().poll_send(transmit, cx)
+    }
+
+    fn max_transmit_segments(&self) -> std::num::NonZeroUsize {
+        self.sender.max_transmit_segments()
     }
 }
 
@@ -583,6 +699,120 @@ fn stop(mut stream: ReceiveStream) {
 mod tests {
     use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, SendWindow, Sessions, desired_send_window};
     use std::{sync::Arc, time::Duration};
+
+    fn endpoint_tls() -> Arc<rustls::ServerConfig> {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
+        let mut tls =
+            rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(
+                    vec![CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap()],
+                    PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap(),
+                )
+                .unwrap();
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        Arc::new(tls)
+    }
+
+    #[tokio::test]
+    async fn endpoint_buffers_refuse_without_connection_capacity_and_refund_on_drop() {
+        use super::*;
+        let config = Arc::new(Config {
+            max_connections: 4,
+            max_connections_per_client: 4,
+            ..Config::default()
+        });
+        let small =
+            HttpServer::with_memory(config.clone(), BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES)
+                .unwrap();
+        let available = small.memory.bytes.available_permits();
+        let tls = endpoint_tls();
+        assert!(
+            small
+                .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
+                .is_err()
+        );
+        assert_eq!(small.memory.bytes.available_permits(), available);
+
+        let server =
+            HttpServer::with_memory(config, 2 * BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES)
+                .unwrap();
+        let available = server.memory.bytes.available_permits();
+        let endpoint = server
+            .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
+            .unwrap();
+        let reserved = available - server.memory.bytes.available_permits();
+        assert!(reserved > INCOMING_TOTAL_BYTES as usize);
+        assert!(server.memory.bytes.available_permits() >= BUFFER_BYTES as usize);
+        let remaining = server
+            .memory
+            .acquire(server.memory.bytes.available_permits() as u32)
+            .unwrap();
+        assert!(
+            server
+                .quic_endpoint(tls, "127.0.0.1:0".parse().unwrap())
+                .is_err()
+        );
+        assert_eq!(server.memory.bytes.available_permits(), 0);
+        drop(remaining);
+        let address = endpoint.local_addr().unwrap();
+        drop(endpoint);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while server.memory.bytes.available_permits() != available {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(std::net::UdpSocket::bind(address).is_ok());
+    }
+
+    #[tokio::test]
+    async fn retained_udp_sender_keeps_socket_budget_until_last_drop() {
+        use super::*;
+        use quinn::AsyncUdpSocket;
+        let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let runtime = quinn::default_runtime().unwrap();
+        let socket = runtime
+            .wrap_udp_socket(
+                graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap()).unwrap(),
+            )
+            .unwrap();
+        let memory = MemoryBudget::new(64 * 1024);
+        let socket = BudgetedSocket {
+            socket,
+            lease: Arc::new(memory.acquire(64 * 1024).unwrap()),
+        };
+        let address = socket.local_addr().unwrap();
+        let mut sender = socket.create_sender();
+        drop(socket);
+        assert_eq!(memory.bytes.available_permits(), 0);
+        let transmit = quinn::udp::Transmit {
+            destination: receiver.local_addr().unwrap(),
+            ecn: None,
+            contents: b"retained",
+            segment_size: None,
+            src_ip: None,
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            std::future::poll_fn(|cx| sender.as_mut().poll_send(&transmit, cx))
+                .await
+                .unwrap();
+            let mut payload = [0; 32];
+            let (length, peer) = receiver.recv_from(&mut payload).await.unwrap();
+            assert_eq!(&payload[..length], b"retained");
+            assert_eq!(peer, address);
+        })
+        .await
+        .unwrap();
+        assert!(std::net::UdpSocket::bind(address).is_err());
+        drop(sender);
+        assert_eq!(memory.bytes.available_permits(), 64 * 1024);
+        assert!(std::net::UdpSocket::bind(address).is_ok());
+    }
 
     #[test]
     fn send_window_growth_shares_one_budget_and_returns_it_on_drop() {
