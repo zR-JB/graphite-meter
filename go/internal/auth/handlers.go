@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"encoding/json/v2"
 	"net/http"
 	"net/url"
 	"time"
@@ -10,17 +9,18 @@ import (
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 	s.loginSecurityHeaders(w.Header())
 	csrf := randomToken(32)
-	setHTTPOnlyCookie(w, loginCookie, csrf, s.now().Add(10*time.Minute), http.SameSiteStrictMode)
+	setCookie(w, loginCookie, csrf, time.Now().Add(10*time.Minute), http.SameSiteStrictMode)
 	password, oidc := authModes(s.cfg.Mode)
 	data := loginView{
 		Styles: authStyles, CSRF: csrf,
 		Password:  password,
 		OIDC:      oidc,
 		OIDCReady: s.oidc != nil && s.oidc.ready(), Provider: s.cfg.OIDCProviderName,
-		Notice: string(parseNotice(r.URL.Query().Get("error"))), Status: parseStatus(r.URL.Query().Get("reason")),
+		Notice:    string(parseNotice(r.URL.Query().Get("error"))),
+		Status:    parseStatus(r.URL.Query().Get("reason")),
 		Challenge: challengeOrEmpty(r.URL.Query().Get("challenge")),
 	}
-	renderLogin(w, loginTemplate, data)
+	render(w, loginTemplate, data)
 }
 
 func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
@@ -59,10 +59,8 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.rotateSuppliedSession(r, sess)
-	setHTTPOnlyCookie(w, sessionCookie, raw, sess.expires, http.SameSiteStrictMode)
-	setCSRFCookie(w, sess.csrf, sess.expires)
-	s.counters.local.Add(1)
-	clearCookie(w, loginCookie)
+	issueSessionCookies(w, raw, sess)
+	s.count(countLocal)
 	dest := "/"
 	if challenge := r.FormValue("challenge"); validChallenge(challenge) {
 		dest = "/auth/cli?challenge=" + url.QueryEscape(challenge)
@@ -87,10 +85,8 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 		forbidden(w)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	remaining := p.Expires.Sub(s.now())
-	remaining = max(remaining, 0)
-	_ = json.MarshalWrite(w, map[string]any{
+	remaining := max(time.Until(p.Expires), 0)
+	writeJSON(w, map[string]any{
 		"name": p.Name, "provider": p.Provider, "expires": p.Expires,
 		"csrf": p.session.csrf, "remainingMs": remaining.Milliseconds(),
 		"maximumLifetimeMs": sessionLifetime.Milliseconds(),
@@ -116,9 +112,9 @@ func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
 		s.deleteSessionLocked(p.session)
 	}
 	s.mu.Unlock()
-	s.counters.logout.Add(1)
-	clearCookie(w, sessionCookie)
-	clearCookie(w, loginCookie)
-	clearCookie(w, csrfCookie)
+	s.count(countLogout)
+	for _, name := range []string{sessionCookie, loginCookie, csrfCookie} {
+		clearCookie(w, name, http.SameSiteStrictMode)
+	}
 	http.Redirect(w, r, "/login?reason=signed_out", http.StatusSeeOther)
 }

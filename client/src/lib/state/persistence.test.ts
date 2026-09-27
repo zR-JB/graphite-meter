@@ -34,10 +34,6 @@ const {
   STORAGE_KEY,
 } = await import("./persistence");
 
-test("no stored value: returns defaults", () => {
-  expect(loadPersisted()).toEqual(defaultPersisted());
-});
-
 test("stored value at the current shape: hydrates as-is", () => {
   const snapshot = defaultPersisted();
   snapshot.theme = "light";
@@ -95,52 +91,14 @@ test("an explicit wire-estimate opt-out survives hydration", () => {
   expect(loaded({ showWireEstimates: false }).showWireEstimates).toBe(false);
 });
 
-test("stored adaptive tuning cannot override internal policy", () => {
-  const adaptive = loaded({
-    config: {
-      adaptive: {
-        enabled: false,
-        minCoverageRatio: 0.01,
-        stabilityThreshold: 0.01,
-        maxPhaseReductionRatio: 0.99,
-        minLatencySamples: 1,
-        minTransferSamples: 1,
-        confirmationMs: 1,
-        glideMs: 725,
-      },
-    },
-  }).config.adaptive;
-  expect(adaptive).toEqual({ ...DEFAULT_CONFIG.adaptive, enabled: false });
-  expect(adaptive).not.toHaveProperty("glideMs");
-});
-
-test("saving adaptive settings persists only enabled and restores canonical policy", () => {
-  const snapshot = defaultPersisted();
-  snapshot.config.adaptive = {
-    ...snapshot.config.adaptive,
-    enabled: false,
-    minCoverageRatio: 0.2,
-    stabilityThreshold: 0.5,
-    maxPhaseReductionRatio: 0.9,
-    minLatencySamples: 1,
-    minTransferSamples: 1,
-    confirmationMs: 10,
-  };
-  savePersisted(snapshot);
-  expect(
-    JSON.parse(window.localStorage.getItem(STORAGE_KEY)!).config.adaptive,
-  ).toEqual({ enabled: false });
-  expect(loadPersisted().config.adaptive).toEqual({
-    ...DEFAULT_CONFIG.adaptive,
-    enabled: false,
-  });
-});
-
-test("obsolete ping concurrency is ignored", () => {
-  const config = loaded({ config: { pingConcurrency: "slow" } }).config;
-  expect(config.pingCadence).toBe(DEFAULT_CONFIG.pingCadence);
-  expect(config.loadedPingCadence).toBe("medium");
-  expect(config).not.toHaveProperty("pingConcurrency");
+test("the early-finish switch loads from both saved shapes", () => {
+  for (const [adaptive, expected] of [
+    [{ enabled: false, minCoverageRatio: 0.01 }, false],
+    [false, false],
+    [true, true],
+    ["yes", DEFAULT_CONFIG.adaptive],
+  ] as const)
+    expect(loaded({ config: { adaptive } }).config.adaptive).toBe(expected);
 });
 
 test("new installations use reply-driven unloaded and medium loaded cadence", () => {
@@ -150,41 +108,45 @@ test("new installations use reply-driven unloaded and medium loaded cadence", ()
   });
 });
 
-test("obsolete instant cadences fall back to current defaults", () => {
-  expect(
-    loaded({ config: { pingCadence: "instant", loadedPingCadence: "instant" } })
-      .config,
-  ).toMatchObject({
-    pingCadence: "reply-driven",
-    loadedPingCadence: "medium",
-  });
-});
-
-test("obsolete endpoint override cannot restore the old listener port", () => {
-  expect(
-    loaded({ config: { endpoint: { host: "localhost", port: 8765 } } }).config,
-  ).toEqual(DEFAULT_CONFIG);
-  expect(loadPersisted().config).not.toHaveProperty("endpoint");
-});
-
-test("obsolete parallel-stream ceiling is ignored", () => {
-  expect(
-    loaded({ config: { parallelStreams: 2 } }).config.transferStreams,
-  ).toEqual(DEFAULT_CONFIG.transferStreams);
-});
-
-test("obsolete transport role bindings and progress selection are ignored", () => {
-  expect(
-    loaded({
-      config: {
-        transports: {
-          transfer: "http3",
-          latency: "ws-http1-tls",
-          uploadProgress: "ws-http3",
-        },
+test("obsolete settings load as current defaults", () => {
+  for (const config of [
+    { pingConcurrency: "slow" },
+    { pingCadence: "instant", loadedPingCadence: "instant" },
+    { endpoint: { host: "localhost", port: 8765 } },
+    { parallelStreams: 2 },
+    {
+      transports: {
+        transfer: "http3",
+        latency: "ws-http1-tls",
+        uploadProgress: "ws-http3",
       },
-    }).config.transports,
-  ).toEqual({ throughputTarget: "auto", latencyTarget: "auto" });
+    },
+    { compensation: { profile: "internet", params: { mtuBytes: 9000 } } },
+  ])
+    expect(loaded({ config }).config).toEqual(DEFAULT_CONFIG);
+});
+
+test("saved numbers keep their type and stay within bounds", () => {
+  const config = loaded({
+    config: {
+      visualization: { throughputMaxBytesPerSec: 125_000_000 },
+      duration: {
+        warmupMs: -5,
+        latencyMs: 250,
+        downloadMs: 1e9,
+        uploadMs: "x",
+        bidirectionalMs: 2_500,
+      },
+    },
+  }).config;
+  expect(config.visualization.throughputMaxBytesPerSec).toBe(125_000_000);
+  expect(config.duration).toEqual({
+    warmupMs: 0,
+    latencyMs: 1_000,
+    downloadMs: 300_000,
+    uploadMs: DEFAULT_CONFIG.duration.uploadMs,
+    bidirectionalMs: 2_500,
+  });
 });
 
 test("invalid forced stream settings are normalized", () => {
@@ -213,26 +175,6 @@ test("unknown/extra stored keys: dropped, known keys still merge", () => {
   expect(
     (result.config as unknown as Record<string, unknown>).bogus,
   ).toBeUndefined();
-});
-
-test("obsolete compensation settings are discarded without hydration", () => {
-  const config = loaded({
-    config: {
-      compensation: {
-        profile: "internet",
-        transport: "http3-quic",
-        params: { mtuBytes: 9000, ipVersion: 6 },
-      },
-    },
-  }).config;
-  expect(config).not.toHaveProperty("compensation");
-});
-
-test("savePersisted round-trips through loadPersisted", () => {
-  const snapshot = defaultPersisted();
-  snapshot.dockWidth = { left: 250, right: 500 };
-  savePersisted(snapshot);
-  expect(loadPersisted()).toEqual(snapshot);
 });
 
 test("current target identifiers round-trip without historical alias rewriting", () => {

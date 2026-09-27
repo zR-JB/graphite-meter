@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
-import { ROUTES } from "./backendPure";
+import { ROUTES } from "../paths";
 
-// The SAME fixture the Go route test asserts against (go/internal/server/routes_test.go).
+// The same fixture the Go route catalog asserts against.
 const pinPath = `${import.meta.dir}/../../../../../api/routes.txt`;
 
 function parsePin(text: string): Record<string, string> {

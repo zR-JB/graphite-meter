@@ -1,5 +1,6 @@
 // Browser throughput benchmark (`mise run bench-throughput`); keep run reports outside the repository.
 // It writes raw rows from fresh cell permutations, so session drift inflates spread rather than biasing one cell.
+import { afterAll, describe } from "bun:test";
 import { test, expect, origins, harnessOrigin } from "./fixtures";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import type { CellSpec, CellResult } from "./harness";
@@ -22,24 +23,13 @@ const active = Object.fromEntries(
 
 const cells = buildCells(active);
 const DIR = "bench/results";
-const filterSource = process.env.GM_BENCH_FILTER;
-let cellFilter: RegExp | undefined;
-if (filterSource) {
-  try {
-    cellFilter = new RegExp(filterSource);
-  } catch (error) {
-    throw new Error(
-      `invalid GM_BENCH_FILTER regex ${JSON.stringify(filterSource)}`,
-      {
-        cause: error,
-      },
-    );
-  }
-}
-const selectedCells = cellFilter
-  ? cells.filter((cell) => cellFilter.test(cell.id))
+// GM_BENCH_FILTER selects cells whose id contains any comma-separated literal term.
+const filterSource = process.env.GM_BENCH_FILTER ?? "";
+const terms = filterSource.split(",").filter(Boolean);
+const selectedCells = terms.length
+  ? cells.filter((cell) => terms.some((term) => cell.id.includes(term)))
   : cells;
-if (cellFilter && selectedCells.length === 0)
+if (terms.length && selectedCells.length === 0)
   throw new Error(
     `GM_BENCH_FILTER ${JSON.stringify(filterSource)} matched no benchmark cells`,
   );
@@ -71,17 +61,17 @@ function record(
 }
 
 async function runCell(
-  page: import("../browser/webview").Page,
+  page: import("../e2e/webview").Page,
   spec: CellSpec,
 ): Promise<CellResult> {
   await page.goto(`${harnessOrigin}/bench/harness.html`);
   return page.evaluate((s) => window.__gmBench.run(s), spec);
 }
 
-test.describe("matrix", () => {
+describe("matrix", () => {
   for (let rep = 1; rep <= REPS; rep++) {
     for (const cell of shuffled(selectedCells, SEED + rep)) {
-      test(`${cell.id} r${rep}`, async ({ page }) => {
+      test(`${cell.id} r${rep}`, async (page) => {
         const result = await runCell(page, {
           ...cell.spec,
           warmupMs: WARMUP_MS,
@@ -95,7 +85,7 @@ test.describe("matrix", () => {
   }
 });
 
-test.afterAll(() => {
+afterAll(() => {
   const project = "chromium";
   const path = `${DIR}/${project}.ndjson`;
   if (!existsSync(path)) return;

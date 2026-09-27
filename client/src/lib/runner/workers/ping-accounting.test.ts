@@ -1,7 +1,6 @@
-import { stubGlobals } from "../../test-helpers.test";
+import { stubGlobals } from "../../test-helpers.testutil";
 import { expect, test } from "bun:test";
-import { RunAccumulator } from "../evaluation";
-import { DEFAULT_CONFIG } from "../../state/defaults";
+import { ServerLatency } from "../measure";
 import type { PingSample } from "./pingSample";
 
 type Batch = { type: "samples"; samples: PingSample[] };
@@ -37,16 +36,17 @@ async function replay(replies: number) {
   try {
     await import(`./ping-worker.ts?accounting=${replies}`);
     const handler = globalThis.onmessage as (event: MessageEvent) => void;
-    const send = (data: unknown) => handler({ data } as MessageEvent);
+    const send = (data: unknown) =>
+      handler({ data, origin: "" } as MessageEvent);
     send({
       type: "start",
-      url: "ws://meter.test/ping",
+      url: "ws://meter.test/ws/ping",
       transport: "websocket",
       intervalMs: 250,
       replyDriven: true,
       maxInFlight: 4,
-      lossK: 4,
-      lossFloorMs: 250,
+      deadlineK: 4,
+      deadlineFloorMs: 250,
     });
     socket!.onopen();
     send({ type: "measure" });
@@ -70,13 +70,18 @@ async function replay(replies: number) {
 
 test("reply-driven accounting retains nine replies and one timeout regardless of display cadence", async () => {
   const samples = (await replay(9)).flatMap((batch) => batch.samples);
-  expect(samples.filter((sample) => !sample.lost)).toHaveLength(9);
-  expect(samples.filter((sample) => sample.lost)).toHaveLength(1);
+  expect(samples.filter((sample) => !sample.timedOut)).toHaveLength(9);
+  expect(samples.filter((sample) => sample.timedOut)).toHaveLength(1);
   expect(samples[0].observedAtEpochMs).toBe(51_002);
-  const accum = new RunAccumulator();
+  const latency = new ServerLatency();
   for (const sample of samples)
-    accum.pushLatency("latency", sample.rtt, sample.lost);
-  expect(accum.latencyResult(DEFAULT_CONFIG)!.probeTimeoutPct).toBe(10);
+    latency.observe(
+      "latency",
+      { rttMs: sample.rtt, timedOut: sample.timedOut, observedAtMs: 0 },
+      0,
+      0,
+    );
+  expect(latency.stages.latency.timeoutRatio).toBe(0.1);
 });
 
 test("a fast reply burst produces bounded batches without discarding outcomes", async () => {
@@ -84,6 +89,6 @@ test("a fast reply burst produces bounded batches without discarding outcomes", 
   expect(batches.length).toBeGreaterThan(1);
   expect(batches.every((batch) => batch.samples.length <= 128)).toBe(true);
   const samples = batches.flatMap((batch) => batch.samples);
-  expect(samples.filter((sample) => !sample.lost)).toHaveLength(1_025);
-  expect(samples.filter((sample) => sample.lost)).toHaveLength(1);
+  expect(samples.filter((sample) => !sample.timedOut)).toHaveLength(1_025);
+  expect(samples.filter((sample) => sample.timedOut)).toHaveLength(1);
 });

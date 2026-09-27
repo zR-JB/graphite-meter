@@ -5,9 +5,9 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 )
 
-// Download streams incompressible random bytes for the client's download measurement.
 type Download struct {
 	block []byte
 	meter *Meter // optional verbose per-second logger; nil unless -verbose
@@ -18,41 +18,41 @@ const (
 	maxBytes     int64 = 64 * 1024 * 1024 * 1024 // 64 GiB hard ceiling
 )
 
-// NewDownload builds the endpoint bound to the shared RNG block. meter may be nil (no verbose logging).
 func NewDownload(block []byte, meter *Meter) *Download {
 	return &Download{block: block, meter: meter}
 }
 
-// HandleHTTP sets the response framing before streaming bytes.
-func (d *Download) HandleHTTP(w http.ResponseWriter, r *http.Request) error {
-	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		w.Header().Set("Allow", "GET, HEAD")
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
-		return nil
-	}
-	n := parseBytes(r.URL.Query().Get("bytes"))
-	h := w.Header()
-	h.Set("Content-Type", "application/octet-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("Content-Length", strconv.FormatInt(n, 10))
-	if r.Method == http.MethodHead {
-		return nil
-	}
-	return d.HandleDownload(r.Context(), n, w)
+func (d *Download) Handler(idle time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { d.serve(w, r, idle) })
 }
 
-// HandleDownload repeats the shared random block into the supplied sink.
-func (d *Download) HandleDownload(ctx context.Context, n int64, sink io.Writer) error {
+func (d *Download) serve(w http.ResponseWriter, r *http.Request, idle time.Duration) {
+	n := parseBytes(r.URL.Query().Get("bytes"))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+	if r.Method != http.MethodHead {
+		limit, _ := r.Context().Deadline()
+		controller := http.NewResponseController(w)
+		sink := &idleWriter{w: w, idle: idleDeadline{set: controller.SetWriteDeadline, bound: idle, limit: limit}}
+		sink.idle.moved(time.Now())
+		defer sink.idle.endWith(r.Context())()
+		d.Stream(r.Context(), n, sink)
+	}
+}
+
+// Stream repeats the shared block into sink; cancellation or a failed write is the client leaving.
+func (d *Download) Stream(ctx context.Context, n int64, sink io.Writer) {
 	d.meter.Open()
 	defer d.meter.Close()
-
 	block := d.block
 	blockLen := int64(len(block))
+	done := ctx.Done()
 	var off int64
 	for n > 0 {
 		select {
-		case <-ctx.Done():
-			return nil // client went away or request cancelled, not an error
+		case <-done:
+			return
 		default:
 		}
 		chunk := min(blockLen-off, n)
@@ -64,10 +64,9 @@ func (d *Download) HandleDownload(ctx context.Context, n int64, sink io.Writer) 
 			off = 0
 		}
 		if werr != nil {
-			return nil // client disconnect mid-stream is normal; stop quietly
+			return
 		}
 	}
-	return nil
 }
 
 func parseBytes(raw string) int64 {

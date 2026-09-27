@@ -30,3 +30,5 @@ invalid | unknown upload id | 400
 globalFull | upload capacity exhausted | 503
 clientFull | client upload capacity exhausted | 429
 ownerMismatch | upload id belongs to another client | 403
+idle | idle | 408
+revoked | authentication required | 403

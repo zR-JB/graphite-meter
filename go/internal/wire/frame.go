@@ -53,5 +53,15 @@ func EncodePing(id uint32) string {
 }
 
 func EncodePong(id uint32, handlingNanos uint64) string {
-	return "PONG," + strconv.FormatUint(uint64(id), 10) + "," + strconv.FormatUint(handlingNanos, 10)
+	return string(AppendPong(nil, id, handlingNanos))
+}
+
+// MaxPongLen is the longest PONG frame: both counters at their maximum.
+const MaxPongLen = len("PONG,4294967295,18446744073709551615")
+
+func AppendPong(dst []byte, id uint32, handlingNanos uint64) []byte {
+	dst = append(dst, "PONG,"...)
+	dst = strconv.AppendUint(dst, uint64(id), 10)
+	dst = append(dst, ',')
+	return strconv.AppendUint(dst, handlingNanos, 10)
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"net/http"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,12 +13,11 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// A browser CONNECT carries neither cookies nor headers, so the whole authenticated WebTransport path rests on a token.
-
-// mintWTToken asks /wt/session for one CONNECT token as the browser does.
-func (s *authenticatedStack) mintWTToken(t *testing.T) string {
+// mintWTToken asks /wt/session for one CONNECT token to path as the browser does.
+func (s *authenticatedStack) mintWTToken(t *testing.T, path string) string {
 	t.Helper()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+route.WTPing), nil)
+	req, _ := http.NewRequest(http.MethodPost,
+		s.origin+route.WTSession+"?target="+url.QueryEscape(s.h3URL+path), nil)
 	req.Header.Set("Origin", s.origin)
 	req.Header.Set("X-CSRF-Token", s.csrf.Value)
 	req.AddCookie(s.session)
@@ -41,39 +39,6 @@ func (s *authenticatedStack) mintWTToken(t *testing.T) string {
 		t.Fatal("mint returned an empty token")
 	}
 	return out.Token
-}
-
-// wtTransport returns a transport for the stack's HTTP/3 listener.
-func (s *authenticatedStack) wtTransport(t *testing.T) *webtransport.Transport {
-	t.Helper()
-	d := insecureWTTransport()
-	t.Cleanup(func() { _ = d.Close() })
-	return d
-}
-
-// connectPing dials the ping bus, retrying only while the listener comes up.
-func (s *authenticatedStack) connectPing(t *testing.T, d *webtransport.Transport, query string, hdr http.Header) (*webtransport.Session, int) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	target := s.h3URL + route.WTPing + query
-	if hdr == nil && strings.Contains(query, "token=") {
-		hdr = http.Header{"Origin": {s.origin}}
-	}
-	for {
-		res, sess, err := d.Dial(ctx, target, hdr)
-		if err == nil {
-			t.Cleanup(func() { _ = sess.CloseWithError(0, "") })
-			return sess, http.StatusOK
-		}
-		if res != nil {
-			return nil, res.StatusCode
-		}
-		if ctx.Err() != nil {
-			t.Fatalf("dial %s: %v", target, err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 }
 
 // answersPing proves the session reached the ping endpoint rather than merely completing a handshake.
@@ -98,63 +63,53 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 	t.Fatal("ping bus never answered its probe")
 }
 
-func TestWebTransportConnectSpendsAMintedTokenOnce(t *testing.T) {
+// A CONNECT needs a once-only same-origin token or a native grant; signing out ends the login's session.
+func TestWebTransportConnectAuthentication(t *testing.T) {
+	t.Parallel()
 	s := newAuthenticatedStack(t)
-	d := s.wtTransport(t)
-	token := s.mintWTToken(t)
-	query := "?token=" + url.QueryEscape(token)
-
-	sess, status := s.connectPing(t, d, query, nil)
-	if status != http.StatusOK {
-		t.Fatalf("minted CONNECT status=%d, want a session", status)
+	page := http.Header{"Origin": {s.origin}}
+	dial := func(target string, hdr http.Header) (*webtransport.Session, int) {
+		t.Helper()
+		d := insecureWTTransport()
+		t.Cleanup(func() { _ = d.Close() })
+		return dialWebTransport(t, d, target, hdr)
+	}
+	// Enforce is the only origin policy a CONNECT passes through.
+	for _, path := range []string{route.WTPing, route.WTDownload, route.WTUpload} {
+		target := func() string { return s.h3URL + path + "?token=" + url.QueryEscape(s.mintWTToken(t, path)) }
+		if sess, _ := dial(target(), http.Header{"Origin": {"https://attacker.example"}}); sess != nil {
+			t.Fatalf("a %s CONNECT carrying a foreign Origin opened a session", path)
+		}
+		if sess, status := dial(target(), page); sess == nil {
+			t.Fatalf("%s CONNECT from the canonical origin = %d", path, status)
+		}
+	}
+	ping := s.h3URL + route.WTPing
+	token := ping + "?token=" + url.QueryEscape(s.mintWTToken(t, route.WTPing))
+	sess, status := dial(token, page)
+	if sess == nil {
+		t.Fatalf("minted CONNECT = %d, want a session", status)
 	}
 	answersPing(t, sess)
-
-	// A captured URL is worthless once its CONNECT has landed.
-	if _, status := s.connectPing(t, s.wtTransport(t), query, nil); status != http.StatusForbidden {
-		t.Errorf("replayed token status=%d, want %d", status, http.StatusForbidden)
+	for _, tc := range []struct {
+		name, target string
+		hdr          http.Header
+	}{
+		// A captured URL is worthless once its CONNECT has landed.
+		{"replayed token", token, page},
+		{"no credential", ping, nil},
+		{"forged token", ping + "?token=gmw_nonsense", page},
+	} {
+		if _, status := dial(tc.target, tc.hdr); status != http.StatusForbidden {
+			t.Errorf("%s CONNECT = %d, want %d", tc.name, status, http.StatusForbidden)
+		}
 	}
-}
-
-func TestWebTransportConnectRefusesWithoutACredential(t *testing.T) {
-	s := newAuthenticatedStack(t)
-	if _, status := s.connectPing(t, s.wtTransport(t), "", nil); status != http.StatusForbidden {
-		t.Errorf("uncredentialed CONNECT status=%d, want %d", status, http.StatusForbidden)
+	granted, status := dial(ping, http.Header{"Authorization": {"Bearer " + s.grant(t)}})
+	if granted == nil {
+		t.Fatalf("granted CONNECT = %d, want a session", status)
 	}
-	if _, status := s.connectPing(t, s.wtTransport(t), "?token=gmw_nonsense", nil); status != http.StatusForbidden {
-		t.Errorf("forged token status=%d, want %d", status, http.StatusForbidden)
-	}
-}
-
-func TestWebTransportConnectAcceptsANativeGrant(t *testing.T) {
-	s := newAuthenticatedStack(t)
-	hdr := http.Header{"Authorization": {"Bearer " + s.grant(t)}}
-	sess, status := s.connectPing(t, s.wtTransport(t), "", hdr)
-	if status != http.StatusOK {
-		t.Fatalf("granted CONNECT status=%d, want a session", status)
-	}
-	answersPing(t, sess)
-}
-
-func TestEndingTheAuthSessionUnwindsALiveWebTransportSession(t *testing.T) {
-	s := newAuthenticatedStack(t)
-	sess, status := s.connectPing(t, s.wtTransport(t), "?token="+url.QueryEscape(s.mintWTToken(t)), nil)
-	if status != http.StatusOK {
-		t.Fatalf("minted CONNECT status=%d, want a session", status)
-	}
-	answersPing(t, sess)
-
-	form := url.Values{"csrf": {s.csrf.Value}}.Encode()
-	req, _ := http.NewRequest(http.MethodPost, s.origin+"/auth/logout", strings.NewReader(form))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Origin", s.origin)
-	req.AddCookie(s.session)
-	res, err := s.uiClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-
+	answersPing(t, granted)
+	s.signOut(t)
 	select {
 	case <-sess.Context().Done():
 	case <-time.After(5 * time.Second):

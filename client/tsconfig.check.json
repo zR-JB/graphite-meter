@@ -7,9 +7,12 @@
     "src/**/*.ts",
     "src/**/*.js",
     "src/**/*.svelte",
-    "browser/**/*.ts",
+    "../go/internal/auth/assets/*.js",
     "bench/**/*.ts",
-    "e2e/**/*.ts"
+    "e2e/**/*.ts",
+    "scripts/**/*.ts",
+    "vite.config.ts",
+    "vite.e2e.config.ts"
   ],
   "exclude": []
 }

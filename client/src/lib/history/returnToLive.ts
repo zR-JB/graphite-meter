@@ -1,9 +1,11 @@
 import type { Phase } from "../runner/contract";
+import { phaseLabel } from "../presentation/vocabulary";
 
+type Tone = "warmup" | "latency" | "download" | "upload" | "bidirectional";
 type ReturnToLive = {
   icon: "bolt" | "ping" | "download" | "upload" | "bidirectional";
   label: string;
-  tone: "warmup" | "latency" | "download" | "upload" | "bidirectional";
+  tone: Tone;
 };
 
 export function returnToLiveIndicator(
@@ -11,38 +13,22 @@ export function returnToLiveIndicator(
   phase: Phase,
   recovering: boolean,
 ): ReturnToLive | null {
-  if (preparing)
-    return { icon: "bolt", label: "Starting test", tone: "warmup" };
-  switch (phase) {
-    case "connecting":
-      return { icon: "bolt", label: "Verifying path", tone: "warmup" };
-    case "warmup":
-      return { icon: "bolt", label: "Warming up", tone: "warmup" };
-    case "latency":
-      return {
-        icon: "ping",
-        label: recovering ? "Latency recovering" : "Measuring latency",
-        tone: "latency",
-      };
-    case "download":
-      return {
-        icon: "download",
-        label: recovering ? "Download recovering" : "Downloading",
-        tone: "download",
-      };
-    case "upload":
-      return {
-        icon: "upload",
-        label: recovering ? "Upload recovering" : "Uploading",
-        tone: "upload",
-      };
-    case "bidirectional":
-      return {
-        icon: "bidirectional",
-        label: recovering ? "Bi-dir recovering" : "Bidirectional",
-        tone: "bidirectional",
-      };
-    default:
-      return null;
-  }
+  if (preparing || phase === "connecting" || phase === "warmup")
+    return {
+      icon: "bolt",
+      label: phaseLabel(preparing ? "connecting" : phase),
+      tone: "warmup",
+    };
+  if (
+    phase !== "latency" &&
+    phase !== "download" &&
+    phase !== "upload" &&
+    phase !== "bidirectional"
+  )
+    return null;
+  return {
+    icon: phase === "latency" ? "ping" : phase,
+    label: `${phaseLabel(phase)}${recovering ? " · recovering" : ""}`,
+    tone: phase,
+  };
 }

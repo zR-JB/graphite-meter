@@ -1,12 +1,10 @@
 import { test, expect } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import source from "../../../go/internal/auth/assets/pending.js" with { type: "text" };
 
-// pending.js is a plain script inlined into the auth pages and pinned by digest, so it exports nothing: evaluate the.
+// pending.js is a digest-pinned classic script that exports nothing, so the test evaluates its bundled text.
 type Landing = { redirected: boolean; url: string };
 type Classifier = (response: Landing, here: { pathname: string }) => boolean;
 
-const source = readFileSync(join(import.meta.dir, "pending.js"), "utf8");
 const { leftThisPage } = new Function(
   "document",
   `${source}\nreturn { leftThisPage };`,

@@ -2,14 +2,14 @@ package goclient
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -27,88 +27,128 @@ func (b wsBus) Send(ctx context.Context, msg string) error {
 
 func (b wsBus) Recv(ctx context.Context) (string, error) {
 	_, msg, err := b.conn.Read(ctx)
-	return string(msg), err
+	return string(msg), laneEnding(err)
 }
 
-func (b wsBus) Close() { b.conn.Close(websocket.StatusNormalClosure, "") } //nolint:errcheck // the samples are already collected
+func (b wsBus) Close() { _ = b.conn.Close(websocket.StatusNormalClosure, "") }
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
-	if r.latencyTarget.Transport == wire.TransportWebTransport {
-		sess, err := wtDial(ctx, r.cfg, r.latencyTarget.Origin, r.latencyTarget.Routes.WTPing, nil)
+	return dialLatencyBus(ctx, r.cred, r.websocketHTTP, r.latencyTarget)
+}
+
+func dialLatencyBus(
+	ctx context.Context,
+	cred credential,
+	client *http.Client,
+	target *wire.LatencyTarget,
+) (pingBus, error) {
+	if target.Transport == wire.TransportWebTransport {
+		sess, err := wtDial(ctx, cred, target.Origin, route.WTPing, nil)
 		if err != nil {
 			return nil, err
 		}
 		return wtBus{sess: sess}, nil
 	}
-	u, err := wsEndpoint(r.latencyTarget.Origin, r.latencyTarget.Routes.Ping)
+	u, err := wsEndpoint(target.Origin, route.Ping)
 	if err != nil {
 		return nil, err
 	}
-	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{HTTPClient: r.websocketHTTP, CompressionMode: websocket.CompressionDisabled})
+	conn, response, err := websocket.Dial(ctx, u, &websocket.DialOptions{
+		HTTPClient:      client,
+		CompressionMode: websocket.CompressionDisabled,
+	})
 	if err != nil {
 		if authErr := authResponseError(response); authErr != nil {
 			return nil, authErr
 		}
-		return nil, err
+		return nil, fmt.Errorf("latency WebSocket connection failed: %w", err)
 	}
 	return wsBus{conn: conn}, nil
 }
 
-const busRedialWindow = 2 * time.Second
-
-func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, error) {
-	redialCtx, cancel := context.WithDeadline(ctx, deadline)
+func verifyLatency(
+	ctx context.Context,
+	cred credential,
+	client *http.Client,
+	target *wire.LatencyTarget,
+) (time.Duration, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	var lastErr error
+	bus, err := dialLatencyBus(ctx, cred, client, target)
+	if err != nil {
+		return 0, err
+	}
+	defer bus.Close()
+	datagrams := target.Transport == wire.TransportWebTransport
 	for {
-		dialCtx, dialCancel := context.WithTimeout(redialCtx, 3*time.Second)
-		bus, err := r.dialPingBus(dialCtx)
-		dialCancel()
-		if err == nil {
-			return bus, nil
+		sent := time.Now()
+		if err := bus.Send(ctx, wire.EncodePing(0)); err != nil {
+			return 0, fmt.Errorf("latency probe failed: %w", err)
 		}
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); authRequired {
-			return nil, err
-		}
-		if !errors.Is(err, context.DeadlineExceeded) || lastErr == nil {
-			lastErr = err
-		}
-		select {
-		case <-redialCtx.Done():
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
+		for {
+			replyCtx, cancelReply := ctx, context.CancelFunc(func() {})
+			if datagrams {
+				replyCtx, cancelReply = context.WithTimeout(ctx, 750*time.Millisecond)
 			}
-			if lastErr != nil {
-				return nil, fmt.Errorf("latency channel not reconnected within %v: %w", busRedialWindow, lastErr)
+			reply, err := bus.Recv(replyCtx)
+			cancelReply()
+			if err != nil && (!datagrams || ctx.Err() != nil) {
+				return 0, fmt.Errorf("latency readiness failed: %w", err)
 			}
-			return nil, redialCtx.Err()
-		case <-time.After(wtRedialBackoff):
+			if err != nil {
+				break
+			}
+			if pong, err := wire.DecodePong(reply); err == nil && pong.ID == 0 {
+				return time.Since(sent), nil
+			}
 		}
 	}
 }
 
-func (r *runner) measureLatency(ctx context.Context, stage string, underLoad bool, duration time.Duration, gate *stageGate) (result LatencyStats, failure error) {
-	if r.latencyTarget == nil {
-		return LatencyStats{}, fmt.Errorf("no latency target selected")
-	}
+func (r *runner) redialPingBus(ctx context.Context, deadline time.Time) (pingBus, error) {
+	var bus pingBus
+	err := restore(ctx, deadline, "latency channel", func(ctx context.Context) error {
+		var err error
+		bus, err = r.dialPingBus(ctx)
+		return err
+	})
+	return bus, err
+}
+
+func (r *runner) measureLatency(
+	ctx context.Context,
+	stage Stage,
+	underLoad bool,
+	duration time.Duration,
+	gate *stageGate,
+) (result LatencyStats, failure error) {
 	conn, err := r.dialPingBus(ctx)
 	if err != nil {
 		return LatencyStats{}, err
 	}
-
 	measureCtx, cancel := context.WithCancel(ctx)
-
-	pending := make(map[uint32]time.Time)
-	var mu sync.Mutex // guards pending and stats
-	var nextID uint32
-	stats := latencyStats{}
-	timeoutAfter := max(4*r.cfg.PingInterval, 250*time.Millisecond)
+	interval := r.cfg.PingInterval
+	if underLoad {
+		interval = r.cfg.LoadedPingInterval
+	}
+	replyDriven := interval == PingReplyDriven
+	probes := &probeLedger{pending: map[uint32]probe{}, late: map[uint32]time.Time{}, window: 16}
+	switch {
+	case underLoad:
+		probes.window = 2
+	case replyDriven:
+		probes.window = 4
+	}
+	var replied chan struct{}
+	pace := time.NewTicker(max(interval, probeTimeoutFloor))
+	defer pace.Stop()
+	if replyDriven {
+		replied = make(chan struct{}, 1)
+	} else {
+		pace.Reset(interval)
+	}
 	recvErr := make(chan error, 1)
-	var everPong atomic.Bool
-	var measuring atomic.Bool
 	var readers sync.WaitGroup
-	var measureTimer <-chan time.Time
-	var measuredUntil time.Time // guarded by mu, like pending and stats
 	defer func() {
 		cancel()
 		readers.Wait()
@@ -119,189 +159,291 @@ func (r *runner) measureLatency(ctx context.Context, stage string, underLoad boo
 			gate.cancel(failure)
 		}
 	}()
-	finish := func(failure error) (LatencyStats, error) {
-		mu.Lock()
-		var elapsed time.Duration
-		if measuring.Load() {
-			cutoff := time.Now()
-			if measuredUntil.Before(cutoff) {
-				cutoff = measuredUntil
-			}
-			elapsed = cutoff.Sub(measuredUntil.Add(-duration))
-			stats.closePending(pending, cutoff, timeoutAfter)
-		}
-		measuring.Store(false)
-		clear(pending)
-		out := stats.snapshot()
-		out.TimeoutAfter, out.Elapsed = timeoutAfter, elapsed
-		mu.Unlock()
-		return out, failure
+	finish := func(err error) (LatencyStats, error) { return probes.finish(time.Now(), duration), err }
+	emit := func(at time.Time, sample LatencySample) {
+		r.emit(Event{Kind: EventLatency, At: at, Stage: stage, Latency: sample})
 	}
-
-	readLoop := func(bus pingBus) {
-		for {
-			msg, err := bus.Recv(measureCtx)
-			if err != nil {
-				recvErr <- err
-				return
-			}
-			now := time.Now() // Reply receipt ends raw RTT before diagnostic parsing.
-			f, err := wire.DecodePong(msg)
-			if err != nil {
-				continue
-			}
-			mu.Lock()
-			sent, ok := pending[f.ID]
-			if measuring.Load() && !measuredUntil.IsZero() && !now.Before(measuredUntil) {
-				mu.Unlock()
-				continue
-			}
-			if ok {
-				everPong.Store(true)
-				delete(pending, f.ID)
-			}
-			if !ok || !measuring.Load() {
-				mu.Unlock()
-				continue
-			}
-			rtt := now.Sub(sent)
-			timedOut := rtt >= timeoutAfter
-			handling := stats.add(rtt, timedOut, f.HandlingNanos)
-			mu.Unlock()
-			r.emit(Event{
-				Kind:    EventLatency,
-				At:      now,
-				Stage:   stage,
-				Latency: LatencySample{Stage: stage, RTT: rtt, UnderLoad: underLoad, TimedOut: timedOut, ReflectorHandling: handling},
-			})
-		}
-	}
-	startReader := func(bus pingBus) { readers.Go(func() { readLoop(bus) }) }
-	startReader(conn)
-
-	ticker := time.Tick(r.cfg.PingInterval)
-	timeoutTicker := time.Tick(50 * time.Millisecond)
-	send := func() error {
-		mu.Lock()
-		id := nextID
-		nextID++
-		now := time.Now()
-		if measuring.Load() && !now.Before(measuredUntil) {
-			mu.Unlock()
-			return nil
-		}
-		pending[id] = now
-		mu.Unlock()
-		err := conn.Send(measureCtx, wire.EncodePing(id))
-		if err != nil {
-			mu.Lock()
-			if _, ok := pending[id]; ok {
-				delete(pending, id)
-				if measuring.Load() {
-					stats.sendFailures++
+	startReader := func(bus pingBus) {
+		readers.Go(func() {
+			for {
+				msg, err := bus.Recv(measureCtx)
+				if err != nil {
+					recvErr <- err
+					return
+				}
+				now := time.Now() // Reply receipt ends raw RTT before diagnostic parsing.
+				f, err := wire.DecodePong(msg)
+				if err != nil {
+					continue
+				}
+				if rtt, timedOut, ok := probes.reply(f.ID, now, f.HandlingNanos); ok {
+					emit(now, LatencySample{RTT: rtt, TimedOut: timedOut})
+				}
+				select {
+				case replied <- struct{}{}:
+				default:
 				}
 			}
-			mu.Unlock()
+		})
+	}
+	send := func() error {
+		id, ok := probes.register(time.Now())
+		if !ok {
+			return nil
+		}
+		if replyDriven {
+			pace.Reset(probes.backup())
+		}
+		err := conn.Send(measureCtx, wire.EncodePing(id))
+		if err != nil {
+			probes.sendFailed(id)
 		}
 		return err
 	}
+	startReader(conn)
 	if err := send(); err != nil {
 		return finish(err)
 	}
 	gate.reportReady()
 	start := gate.start
+	var drain <-chan time.Time
+	expiry := time.Tick(50 * time.Millisecond)
 	for {
 		select {
 		case <-start:
 			start = nil
-			mu.Lock()
-			clear(pending)
-			measuring.Store(true)
-			if gate.boundaryStart.IsZero() {
-				measuredUntil = time.Now().Add(duration)
-			} else {
-				measuredUntil = gate.boundaryStart.Add(duration)
+			opened := gate.boundaryStart
+			if opened.IsZero() {
+				opened = time.Now()
 			}
-			mu.Unlock()
-			timer := time.NewTimer(max(0, time.Until(measuredUntil)))
+			probes.open(opened.Add(duration))
+			timer := time.NewTimer(time.Until(opened.Add(duration)))
 			defer timer.Stop()
-			measureTimer = timer.C
+			drain = timer.C
 		case <-measureCtx.Done():
-			return finish(measureCtx.Err())
-		case <-measureTimer:
-			return finish(nil)
-		case err := <-recvErr:
-			if measureCtx.Err() != nil {
-				return finish(measureCtx.Err())
+			return finish(context.Cause(measureCtx))
+		case <-drain:
+			drain = nil
+			if probes.drained(time.Now()) {
+				return finish(nil)
 			}
-			if !everPong.Load() {
+		case err := <-recvErr:
+			switch {
+			case measureCtx.Err() != nil:
+				return finish(context.Cause(measureCtx))
+			case permanent(err):
+				return finish(err)
+			case !probes.interrupt(time.Now()):
+				return finish(fmt.Errorf("latency channel failed: %w", err))
+			case probes.ended(time.Now()):
+				return finish(nil)
+			}
+			conn.Close()
+			fresh, err := r.redialPingBus(measureCtx, probes.bound(time.Now().Add(redialWindow)))
+			if err != nil {
+				if measureCtx.Err() != nil {
+					return finish(context.Cause(measureCtx))
+				}
 				return finish(fmt.Errorf("latency channel failed: %w", err))
 			}
-			mu.Lock()
-			if measuring.Load() {
-				at := time.Now()
-				if measuredUntil.Before(at) {
-					at = measuredUntil
-				}
-				stats.closePending(pending, at, timeoutAfter)
-			}
-			clear(pending)
-			stats.breakContinuity()
-			mu.Unlock()
-			conn.Close()
-			redialDeadline := time.Now().Add(busRedialWindow)
-			if measuring.Load() && measuredUntil.Before(redialDeadline) {
-				redialDeadline = measuredUntil
-			}
-			fresh, dialErr := r.redialPingBus(measureCtx, redialDeadline)
-			if dialErr != nil {
-				if measureCtx.Err() != nil {
-					return finish(measureCtx.Err())
-				}
-				return finish(fmt.Errorf("latency channel failed: %w", dialErr))
-			}
 			conn = fresh
-			mu.Lock()
-			clear(pending)
-			mu.Unlock()
 			startReader(conn)
-		case <-ticker:
+		case <-pace.C:
 			_ = send()
-		case now := <-timeoutTicker:
-			if !measuring.Load() {
-				continue
+		case <-replied:
+			_ = send()
+		case now := <-expiry:
+			for _, at := range probes.expire(now) {
+				emit(at, LatencySample{TimedOut: true})
 			}
-			mu.Lock()
-			if !measuredUntil.IsZero() && measuredUntil.Before(now) {
-				now = measuredUntil
+			if probes.ended(now) && probes.drained(now) {
+				return finish(nil)
 			}
-			maps.DeleteFunc(pending, func(_ uint32, sent time.Time) bool {
-				if now.Sub(sent) < timeoutAfter {
-					return false
-				}
-				stats.add(0, true, 0)
-				r.emit(Event{
-					Kind:    EventLatency,
-					At:      now,
-					Stage:   stage,
-					Latency: LatencySample{Stage: stage, UnderLoad: underLoad, TimedOut: true},
-				})
-				return true
-			})
-			mu.Unlock()
 		}
 	}
 }
 
-// closePending separates known deadline expirations from probes interrupted before their deadline.
-func (s *latencyStats) closePending(pending map[uint32]time.Time, cutoff time.Time, timeout time.Duration) {
-	for _, sent := range pending {
-		if cutoff.Sub(sent) >= timeout {
-			s.timeouts++
-		} else {
-			s.unresolved++
+const (
+	probeTimeoutFloor = 250 * time.Millisecond
+	probeTimeoutCeil  = 10 * time.Second
+)
+
+type probe struct {
+	sent, deadline time.Time
+	measured       bool
+}
+
+type probeLedger struct {
+	mu           sync.Mutex
+	pending      map[uint32]probe
+	late         map[uint32]time.Time
+	nextID       uint32
+	stats        latencyStats
+	until        time.Time
+	srtt, rttvar time.Duration
+	answered     bool
+	window       int
+}
+
+func (l *probeLedger) timeout() time.Duration {
+	if !l.answered {
+		return probeTimeoutFloor
+	}
+	return min(max(l.srtt+4*max(l.rttvar, time.Millisecond), probeTimeoutFloor), probeTimeoutCeil)
+}
+
+func (l *probeLedger) backup() time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.timeout()
+}
+
+func (l *probeLedger) observe(rtt time.Duration) {
+	if !l.answered {
+		l.srtt, l.rttvar, l.answered = rtt, rtt/2, true
+		return
+	}
+	l.rttvar = (3*l.rttvar + max(l.srtt-rtt, rtt-l.srtt)) / 4
+	l.srtt = (7*l.srtt + rtt) / 8
+}
+
+func (l *probeLedger) bound(t time.Time) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.until.IsZero() && l.until.Before(t) {
+		return l.until
+	}
+	return t
+}
+
+func (l *probeLedger) open(until time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.until = until
+}
+
+func (l *probeLedger) ended(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return !l.until.IsZero() && !now.Before(l.until)
+}
+
+func (l *probeLedger) drained(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !now.Before(l.until.Add(probeTimeoutCeil)) {
+		return true
+	}
+	for _, p := range l.pending {
+		if p.measured {
+			return false
 		}
 	}
-	clear(pending)
-	s.breakContinuity()
+	return true
+}
+
+func (l *probeLedger) register(now time.Time) (uint32, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	id := l.nextID
+	l.nextID++
+	if !l.until.IsZero() && !now.Before(l.until) || len(l.pending) >= l.window {
+		return 0, false
+	}
+	l.pending[id] = probe{sent: now, deadline: now.Add(l.timeout()), measured: !l.until.IsZero()}
+	return id, true
+}
+
+func (l *probeLedger) sendFailed(id uint32) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if p, ok := l.pending[id]; ok {
+		delete(l.pending, id)
+		if p.measured {
+			l.stats.sendFailures++
+		}
+	}
+}
+
+func (l *probeLedger) reply(id uint32, at time.Time, handlingNanos uint64) (time.Duration, bool, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if sent, ok := l.late[id]; ok {
+		delete(l.late, id)
+		l.observe(at.Sub(sent))
+		return 0, false, false
+	}
+	p, ok := l.pending[id]
+	if !ok {
+		return 0, false, false
+	}
+	delete(l.pending, id)
+	rtt := at.Sub(p.sent)
+	l.observe(rtt)
+	if !p.measured {
+		return 0, false, false
+	}
+	timedOut := !at.Before(p.deadline)
+	l.stats.add(rtt, timedOut, handlingNanos)
+	return rtt, timedOut, true
+}
+
+func (l *probeLedger) expire(now time.Time) []time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var expired []time.Time
+	for id, p := range l.pending {
+		if now.Before(p.deadline) {
+			continue
+		}
+		delete(l.pending, id)
+		l.late[id] = p.sent
+		if p.measured {
+			l.stats.add(0, true, 0)
+			expired = append(expired, p.deadline)
+		}
+	}
+	maps.DeleteFunc(l.late, func(_ uint32, sent time.Time) bool { return now.Sub(sent) > probeTimeoutCeil })
+	return expired
+}
+
+func (l *probeLedger) interrupt(now time.Time) (answered bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.answered {
+		return false
+	}
+	l.closePending(now)
+	return true
+}
+
+func (l *probeLedger) finish(now time.Time, duration time.Duration) LatencyStats {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var elapsed time.Duration
+	if !l.until.IsZero() {
+		cutoff := now
+		if l.until.Before(now) {
+			cutoff = l.until
+		}
+		elapsed = cutoff.Sub(l.until.Add(-duration))
+		l.closePending(now)
+	}
+	out := l.stats.snapshot()
+	out.Elapsed = elapsed
+	return out
+}
+
+func (l *probeLedger) closePending(now time.Time) {
+	for _, p := range l.pending {
+		switch {
+		case !p.measured:
+		case !now.Before(p.deadline):
+			l.stats.timeouts++
+		default:
+			l.stats.unresolved++
+		}
+	}
+	clear(l.pending)
+	l.stats.breakContinuity()
 }

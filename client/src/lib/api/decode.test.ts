@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import preflightGolden from "../../../../api/preflight.golden.json";
+import probeGolden from "../../../../api/probe.golden.json";
 import {
   MAX_CONTROL_BYTES,
   parsePreflight,
@@ -62,6 +64,9 @@ test("discovery bounds lists and metadata and rejects unknown protocols", () => 
     {},
     { ...discovery(), generation: "" },
     { ...discovery(), generation: "x".repeat(257) },
+    { ...discovery(), server: { name: "Home‮gnp.exe" } },
+    { ...discovery(), server: { name: "Home", location: "Oslo\u0085" } },
+    { ...discovery(), engineVersion: "dev⁦" },
     {
       ...discovery(),
       capabilities: {
@@ -184,7 +189,32 @@ test("auth documents validate lifetimes, account fields, and required finite min
     expect(() => parseWtToken({ token: "gmw_invalid", expires })).toThrow();
 });
 
+test("the shared golden documents decode unchanged", () => {
+  expect<unknown>(parsePreflight(preflightGolden)).toEqual(preflightGolden);
+  expect<unknown>(parseProbe(probeGolden)).toEqual(probeGolden);
+});
+
+test("only an explicit true advertises upload checkpoints", () => {
+  const advertised = (uploadCheckpoint: unknown) => {
+    const value = discovery();
+    Object.assign(value.capabilities, { uploadCheckpoint });
+    return parsePreflight(value).capabilities.uploadCheckpoint;
+  };
+  expect([true, false, "yes", 1, undefined].map(advertised)).toEqual([
+    true,
+    false,
+    false,
+    false,
+    undefined,
+  ]);
+});
+
 test("discovery requires an explicit supported transport on every target", () => {
+  const throughput = discovery();
+  Object.assign(throughput.capabilities.throughput[0], {
+    transport: "websocket",
+  });
+  expect(() => parsePreflight(throughput)).toThrow();
   for (const role of ["throughput", "latency"] as const) {
     for (const transport of [undefined, null, "", "udp"]) {
       const value = discovery();

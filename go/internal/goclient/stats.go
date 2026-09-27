@@ -1,66 +1,10 @@
 package goclient
 
 import (
-	"context"
 	"math"
 	"slices"
-	"sync"
 	"time"
 )
-
-type laneGroup struct {
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	errs   chan error
-	ready  chan struct{}
-}
-
-func (r *runner) startLanes(ctx context.Context, streams int, body func(ctx context.Context, lane int, ready func()) error) *laneGroup {
-	laneCtx, cancel := context.WithCancel(ctx)
-	g := &laneGroup{cancel: cancel, errs: make(chan error, streams), ready: make(chan struct{}, streams)}
-	stagger := r.laneStaggerStep(streams)
-	for lane := range streams {
-		g.wg.Go(func() {
-			if !staggerSleep(laneCtx, lane, stagger) {
-				return
-			}
-			if err := body(laneCtx, lane, sync.OnceFunc(func() { g.ready <- struct{}{} })); err != nil {
-				select {
-				case g.errs <- err:
-				default:
-				}
-			}
-		})
-	}
-	return g
-}
-
-func (g *laneGroup) waitReady(ctx context.Context) error {
-	for range cap(g.ready) {
-		if err := g.waitStart(ctx, g.ready, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (g *laneGroup) waitStart(ctx context.Context, start <-chan struct{}, stageErr <-chan error) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-g.errs:
-		return err
-	case err := <-stageErr:
-		return err
-	case <-start:
-		return nil
-	}
-}
-
-func (g *laneGroup) stop() {
-	g.cancel()
-	g.wg.Wait()
-}
 
 type latencyStats struct {
 	values                             []time.Duration
@@ -75,13 +19,13 @@ type latencyStats struct {
 
 func (s *latencyStats) breakContinuity() { s.hasPrevious = false }
 
-func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) *time.Duration {
+func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64) {
 	if timeout {
 		s.timeouts++
-		return nil
+		return
 	}
-	if rtt <= 0 {
-		return nil
+	if rtt < 0 {
+		return
 	}
 	if s.hasPrevious {
 		delta := rtt - s.previous
@@ -94,27 +38,27 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 	s.previous, s.hasPrevious = rtt, true
 	s.values = append(s.values, rtt)
 	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
-	if handlingNanos <= math.MaxInt64 {
-		handling := time.Duration(handlingNanos)
-		if handling <= rtt {
-			s.timingCount++
-			s.timingRawSum += rtt
-			s.handlingSum += handling
-			return new(handling)
-		}
+	if handlingNanos <= math.MaxInt64 && time.Duration(handlingNanos) <= rtt {
+		s.timingCount++
+		s.timingRawSum += rtt
+		s.handlingSum += time.Duration(handlingNanos)
 	}
-	return nil
 }
 
 func (s *latencyStats) snapshot() LatencyStats {
-	out := LatencyStats{Count: len(s.values), Timeouts: s.timeouts, Unresolved: s.unresolved, SendFailures: s.sendFailures, JitterPairs: s.pairs}
+	out := LatencyStats{
+		Count:        len(s.values),
+		Timeouts:     s.timeouts,
+		Unresolved:   s.unresolved,
+		SendFailures: s.sendFailures,
+		JitterPairs:  s.pairs,
+	}
 	if s.timingCount > 0 {
 		count := time.Duration(s.timingCount)
 		out.ReflectorTiming = &ReflectorTimingStats{
-			Count:           s.timingCount,
-			MeanRawRTT:      s.timingRawSum / count,
-			MeanHandling:    s.handlingSum / count,
-			MeanAdjustedRTT: (s.timingRawSum - s.handlingSum) / count,
+			Count:        s.timingCount,
+			MeanRawRTT:   s.timingRawSum / count,
+			MeanHandling: s.handlingSum / count,
 		}
 	}
 	if s.pairs > 0 {
@@ -123,19 +67,11 @@ func (s *latencyStats) snapshot() LatencyStats {
 	if len(s.values) == 0 {
 		return out
 	}
-	xs := slices.Clone(s.values)
-	slices.Sort(xs)
-	var sum time.Duration
-	for _, v := range xs {
-		sum += v
-	}
-	out.Min, out.Max, out.Mean = xs[0], xs[len(xs)-1], sum/time.Duration(len(xs))
-	out.P10, out.P50 = percentile(xs, 0.10), median(xs)
-	out.P90, out.P95 = percentile(xs, 0.90), percentile(xs, 0.95)
+	xs := slices.Sorted(slices.Values(s.values))
+	out.P50, out.P95 = median(xs), percentile(xs, 0.95)
 	return out
 }
 
-// median is the midpoint of the two central observations for an even-sized sorted population.
 func median(xs []time.Duration) time.Duration {
 	if len(xs) == 0 {
 		return 0
@@ -147,7 +83,6 @@ func median(xs []time.Duration) time.Duration {
 	return xs[mid-1] + (xs[mid]-xs[mid-1])/2
 }
 
-// percentile selects the nearest rank from a sorted observation population.
 func percentile(xs []time.Duration, p float64) time.Duration {
 	if len(xs) == 0 {
 		return 0

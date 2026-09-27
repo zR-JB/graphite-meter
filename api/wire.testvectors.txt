@@ -1,4 +1,4 @@
-# Graphite Meter 0.7 ping protocol conformance corpus.
+# Graphite Meter ping protocol conformance corpus.
 # operation | input | expected (INVALID means malformed)
 # Go verifies all directions; the browser verifies encode-ping and decode-pong.
 encode-ping | 0 | PING,0

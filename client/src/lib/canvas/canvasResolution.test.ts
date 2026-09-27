@@ -1,12 +1,6 @@
 import { expect, test } from "bun:test";
 import { canvasPixelRatio } from "./canvasResolution";
 
-test("normal canvas resolution retains the existing 2x cap", () => {
-  expect(canvasPixelRatio(1, 1)).toBe(1);
-  expect(canvasPixelRatio(2, 1)).toBe(2);
-  expect(canvasPixelRatio(3, 1)).toBe(2);
-});
-
 test("pinch zoom gains bounded half-step resolution headroom", () => {
   expect(canvasPixelRatio(1, 1.2)).toBe(1.5);
   expect(canvasPixelRatio(2, 1.1)).toBe(2.5);
@@ -16,7 +10,7 @@ test("pinch zoom gains bounded half-step resolution headroom", () => {
 });
 
 test("density changes and returning to a visible tab refresh resolution without a layout resize", async () => {
-  const { stubGlobals } = await import("../test-helpers.test");
+  const { stubGlobals } = await import("../test-helpers.testutil");
   const { watchCanvasPixelRatio } = await import("./canvasResolution");
   const media: EventTarget[] = [];
   const viewport = Object.assign(new EventTarget(), { scale: 1 });

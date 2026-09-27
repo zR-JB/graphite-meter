@@ -40,15 +40,6 @@ runs:
         fi
         echo "context=$context" >>"$GITHUB_OUTPUT"
 
-    - id: versions
-      name: Read trusted repository Bun version
-      shell: bash
-      run: |
-        set -euo pipefail
-        bun=$(python3 scripts/ci/toolchains.py get runtime.bun)
-        [[ -n "$bun" ]] || { echo "trusted mise.toml Bun version is empty" >&2; exit 2; }
-        echo "bun=$bun" >>"$GITHUB_OUTPUT"
-
     - name: Prepare OCI output directory
       shell: bash
       env:
@@ -100,4 +91,3 @@ runs:
           GM_CLIENT_BUILD_PROFILE=prod
           GM_CLIENT_REVISION=${{ inputs.revision }}
           GM_CLIENT_VALIDATE=${{ inputs.client-validate }}
-          BUN_VERSION=${{ steps.versions.outputs.bun }}

@@ -7,86 +7,76 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
-	"hash/fnv"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/transport"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// UploadStore holds per-test state shared between POST /upload lanes and the /upload/progress stream.
-type UploadStore struct {
-	shards   [uploadShardCount]uploadShard
-	tokenKey func() ([sha256.Size]byte, bool)
-	live     atomic.Int32 // live aggregates retained through completion replay
-	ownersMu sync.Mutex
-	byOwner  map[string]int
-}
-
-type uploadShard struct {
-	mu sync.Mutex
-	m  map[string]*uploadAgg
-}
-
+// uploadAgg is one receiver. Its counters are atomic; the rest is guarded by the Upload's mu.
 type uploadAgg struct {
-	bytes          atomic.Int64 // cumulative drained bytes across ALL this id's POST lanes
+	bytes          atomic.Int64 // drained bytes across all of this id's lanes
 	firstChunkMono atomic.Int64 // mono ns of the first drained chunk; set exactly once
-	lastTouchMono  atomic.Int64 // mono ns of the last drained chunk; the sweeper's idle clock
-	posts          atomic.Int32 // live POST lanes for this id (diagnostics; NOT a deleter)
-	postsMu        sync.Mutex
-	postsChanged   chan struct{} // closed and replaced on every change: a broadcast
-	finished       chan struct{} // explicitly closed by DELETE /upload/progress
+	lastTouch      int64        // mono ns a lane last joined or left: the sweeper's idle clock
+	client         uploadClient
+	lanes          int
+	lanesChanged   chan struct{} // closed and replaced on every change: a broadcast
+	finished       chan struct{} // closed by DELETE /upload/progress
 	expired        chan struct{} // closed when idle state is reaped
-	finishOnce     sync.Once
-	progressMu     sync.Mutex
-	progressHeld   chan struct{} // closed when a later claim supersedes the holder
-	owner          string
-}
-
-func (a *uploadAgg) postsWaiter() <-chan struct{} {
-	a.postsMu.Lock()
-	defer a.postsMu.Unlock()
-	if a.postsChanged == nil {
-		a.postsChanged = make(chan struct{})
-	}
-	return a.postsChanged
-}
-
-func (a *uploadAgg) claimProgress() chan struct{} {
-	a.progressMu.Lock()
-	defer a.progressMu.Unlock()
-	if a.progressHeld != nil {
-		close(a.progressHeld)
-	}
-	a.progressHeld = make(chan struct{})
-	return a.progressHeld
-}
-
-func (a *uploadAgg) releaseProgress(claim chan struct{}) {
-	a.progressMu.Lock()
-	defer a.progressMu.Unlock()
-	if a.progressHeld == claim {
-		a.progressHeld = nil
-	}
+	feed           chan struct{} // closed when a later feed supersedes the holder
 }
 
 func (a *uploadAgg) recordChunk(now int64, n int) {
-	a.firstChunkMono.CompareAndSwap(0, now)
+	if a.firstChunkMono.Load() == 0 {
+		a.firstChunkMono.CompareAndSwap(0, now)
+	}
 	a.bytes.Add(int64(n))
-	a.lastTouchMono.Store(now) // keeps the id from looking idle to the sweeper
 }
 
-func (a *uploadAgg) changePosts(delta int32) {
-	a.posts.Add(delta)
-	a.postsMu.Lock()
-	defer a.postsMu.Unlock()
-	if a.postsChanged != nil {
-		close(a.postsChanged)
-		a.postsChanged = nil
+func (a *uploadAgg) isFinished() bool {
+	select {
+	case <-a.finished:
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *uploadAgg) setLanesLocked(n int) {
+	a.lanes = n
+	if a.lanesChanged != nil {
+		close(a.lanesChanged)
+		a.lanesChanged = nil
+	}
+}
+
+func (u *Upload) leave(a *uploadAgg) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	a.setLanesLocked(a.lanes - 1)
+	a.lastTouch = u.now()
+}
+
+func (u *Upload) claimFeed(a *uploadAgg) chan struct{} {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if a.feed != nil {
+		close(a.feed)
+	}
+	a.feed = make(chan struct{})
+	return a.feed
+}
+
+func (u *Upload) releaseFeed(a *uploadAgg, claim chan struct{}) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if a.feed == claim {
+		a.feed = nil
 	}
 }
 
@@ -99,80 +89,46 @@ func (a *uploadAgg) elapsedNanos(now int64) int64 {
 }
 
 const (
-	uploadShardCount        = 32
 	maxLiveUploads          = 1000
 	maxLiveUploadsPerClient = 32
 	uploadReconnectGrace    = 30 * time.Second
-	uploadIDTTL             = 2*wire.WTIdleBound + uploadReconnectGrace
 	uploadTokenTTL          = 2 * time.Minute
-	uploadSweepInterval     = 5 * time.Second
+	// A retained ID outlives its signed token, so sweeping cannot forget a live token's state.
+	uploadIDTTL         = max(2*wire.IdleBound+uploadReconnectGrace, uploadTokenTTL)
+	uploadSweepInterval = 5 * time.Second
 )
 
-// NewUploadStore builds an empty store with its shard maps initialised.
-func NewUploadStore() *UploadStore {
-	s := &UploadStore{
-		byOwner: make(map[string]int),
-		tokenKey: sync.OnceValues(func() ([sha256.Size]byte, bool) {
-			var key [sha256.Size]byte
-			_, err := rand.Read(key[:])
-			return key, err == nil
-		}),
-	}
-	for i := range s.shards {
-		s.shards[i].m = make(map[string]*uploadAgg)
-	}
-	return s
-}
+// mono is the monotonic receiver clock in ns; it starts at 1 so zero marks an unset anchor.
+func (u *Upload) mono(t time.Time) int64 { return int64(t.Sub(u.epoch)) + 1 }
 
-var uploadMonoOrigin = time.Now()
+func (u *Upload) now() int64 { return u.mono(time.Now()) }
 
-func monoNanos() int64 { return int64(time.Since(uploadMonoOrigin)) }
-
-func (s *UploadStore) shard(id string) *uploadShard {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(id))
-	return &s.shards[h.Sum32()%uploadShardCount]
-}
-
-// Mint generates a URL-safe, authenticated upload-session token without storing per-token state.
-func (s *UploadStore) Mint() string {
-	key, ok := s.tokenKey()
-	if !ok {
-		return ""
-	}
-	var nonce [16]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return ""
-	}
-	return s.signID(monoNanos(), nonce, key)
-}
-
-func (s *UploadStore) signID(issued int64, nonce [16]byte, key [sha256.Size]byte) string {
-	var payload [8 + len(nonce)]byte
-	binary.BigEndian.PutUint64(payload[:8], uint64(issued)) //nosec G115 -- issued is a positive monotonic-nanos timestamp
-	copy(payload[8:], nonce[:])
-	mac := hmac.New(sha256.New, key[:])
+func (u *Upload) Mint() string {
+	var payload [8 + 16]byte
+	binary.BigEndian.PutUint64(payload[:8], uint64(u.now())) //nosec G115 -- a positive monotonic timestamp
+	_, _ = rand.Read(payload[8:])
+	mac := hmac.New(sha256.New, u.tokenKey[:])
 	_, _ = mac.Write(payload[:])
 	return "gmu_" + base64.RawURLEncoding.EncodeToString(slices.Concat(payload[:], mac.Sum(nil)))
 }
 
-func (s *UploadStore) validID(id string) bool {
-	key, ok := s.tokenKey()
-	if len(id) < 4 || id[:4] != "gmu_" || !ok {
+func (u *Upload) validID(id string) bool {
+	encoded, ok := strings.CutPrefix(id, "gmu_")
+	if !ok {
 		return false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(id[4:])
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil || len(raw) != 8+16+sha256.Size {
 		return false
 	}
 	payload, tag := raw[:24], raw[24:]
-	mac := hmac.New(sha256.New, key[:])
+	mac := hmac.New(sha256.New, u.tokenKey[:])
 	_, _ = mac.Write(payload)
 	if !hmac.Equal(tag, mac.Sum(nil)) {
 		return false
 	}
-	issued := int64(binary.BigEndian.Uint64(payload[:8])) //nosec G115 -- round-trips the value signID wrote
-	now := monoNanos()
+	issued := int64(binary.BigEndian.Uint64(payload[:8])) //nosec G115 -- round-trips the value Mint wrote
+	now := u.now()
 	return issued > 0 && issued <= now && now-issued <= int64(uploadTokenTTL)
 }
 
@@ -186,130 +142,145 @@ const (
 	uploadAccessOwnerMismatch
 )
 
-func (s *UploadStore) getOrCreateFor(id, owner string) (*uploadAgg, uploadAccess) {
-	return s.getOrCreateForActivity(id, owner, true)
+var uploadAccessInfos = [...]struct {
+	message, code string
+	status        int
+}{
+	uploadAccessOK:            {},
+	uploadAccessInvalid:       {"unknown upload id", "invalid", http.StatusBadRequest},
+	uploadAccessGlobalFull:    {"upload capacity exhausted", "globalFull", http.StatusServiceUnavailable},
+	uploadAccessClientFull:    {"client upload capacity exhausted", "clientFull", http.StatusTooManyRequests},
+	uploadAccessOwnerMismatch: {"upload id belongs to another client", "ownerMismatch", http.StatusForbidden},
 }
 
-func (s *UploadStore) getOrCreateForActivity(id, owner string, touch bool) (*uploadAgg, uploadAccess) {
-	if id == "" {
-		return nil, uploadAccessInvalid
+// uploadRefusalError carries the classified refusal across transports that have no HTTP status line.
+type uploadRefusalError struct{ access uploadAccess }
+
+func (e *uploadRefusalError) Error() string {
+	return "upload refused: " + uploadAccessInfos[e.access].message
+}
+
+func writeUploadAccessError(w http.ResponseWriter, access uploadAccess) {
+	info := uploadAccessInfos[access]
+	w.Header().Set("X-Graphite-Upload-Refusal", info.code)
+	if access == uploadAccessGlobalFull || access == uploadAccessClientFull {
+		w.Header().Set("Retry-After", "1")
 	}
-	sh := s.shard(id)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	if agg, ok := sh.m[id]; ok {
-		if agg.owner != "" && owner != agg.owner {
-			return nil, uploadAccessOwnerMismatch
-		}
-		if touch {
-			agg.lastTouchMono.Store(monoNanos())
+	http.Error(w, info.message, info.status)
+}
+
+// accessFor resolves or creates id's receiver; lanes join under the lock, watchers stay passive.
+func (u *Upload) accessFor(id string, c uploadClient, join bool) (*uploadAgg, uploadAccess) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	agg, ok := u.receivers[id]
+	if c.owner == "" || ok && c.owner != agg.client.owner {
+		return nil, uploadAccessOwnerMismatch
+	}
+	if ok {
+		if join {
+			if agg.isFinished() {
+				return nil, uploadAccessInvalid
+			}
+			agg.setLanesLocked(agg.lanes + 1)
+			agg.lastTouch = u.now()
 		}
 		return agg, uploadAccessOK
 	}
-	if !s.validID(id) {
+	if _, evicted := u.evicted[id]; evicted || !u.validID(id) {
 		return nil, uploadAccessInvalid
 	}
-	for {
-		n := s.live.Load()
-		if n >= maxLiveUploads {
-			return nil, uploadAccessGlobalFull
-		}
-		if s.live.CompareAndSwap(n, n+1) {
-			break
-		}
+	if transport.ShareFull(c.keys, maxLiveUploadsPerClient, func(key string) int { return u.byClient[key] }) {
+		return nil, uploadAccessClientFull
 	}
-	budget := uploadBudget(owner)
-	if budget != "" {
-		s.ownersMu.Lock()
-		if s.byOwner[budget] >= maxLiveUploadsPerClient {
-			s.ownersMu.Unlock()
-			s.live.Add(-1)
-			return nil, uploadAccessClientFull
-		}
-		s.byOwner[budget]++
-		s.ownersMu.Unlock()
+	if len(u.receivers) >= maxLiveUploads && !u.evictEmptyLocked() {
+		return nil, uploadAccessGlobalFull
 	}
-	agg := &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), owner: owner}
-	agg.lastTouchMono.Store(monoNanos())
-	sh.m[id] = agg
+	for _, key := range c.keys {
+		u.byClient[key]++
+	}
+	agg = &uploadAgg{finished: make(chan struct{}), expired: make(chan struct{}), client: c}
+	agg.lastTouch = u.now()
+	u.receivers[id] = agg
+	if join {
+		agg.lanes = 1
+	}
 	return agg, uploadAccessOK
 }
 
-func (s *UploadStore) releaseOwner(agg *uploadAgg) {
-	budget := uploadBudget(agg.owner)
-	if budget == "" {
-		return
+// evictEmptyLocked expires the stalest receiver without bytes, lanes or finish; its id stays refused.
+func (u *Upload) evictEmptyLocked() bool {
+	if len(u.evicted) >= maxLiveUploads {
+		return false
 	}
-	s.ownersMu.Lock()
-	s.byOwner[budget]--
-	if s.byOwner[budget] == 0 {
-		delete(s.byOwner, budget)
+	victim := ""
+	var oldest int64
+	for id, agg := range u.receivers {
+		if agg.lanes == 0 && agg.bytes.Load() == 0 && !agg.isFinished() && (victim == "" || agg.lastTouch < oldest) {
+			victim, oldest = id, agg.lastTouch
+		}
 	}
-	s.ownersMu.Unlock()
+	if victim != "" {
+		u.expireLocked(victim)
+		u.evicted[victim] = u.now() + int64(uploadTokenTTL)
+	}
+	return victim != ""
 }
 
-// Delegated owners share their subject's retention budget while keeping distinct access rights.
-func uploadBudget(owner string) string {
-	budget, _, _ := strings.Cut(owner, "\x00")
-	return budget
+func (u *Upload) expireLocked(id string) {
+	agg := u.receivers[id]
+	delete(u.receivers, id)
+	close(agg.expired)
+	for _, key := range agg.client.keys {
+		if u.byClient[key]--; u.byClient[key] == 0 {
+			delete(u.byClient, key)
+		}
+	}
 }
 
-// finishFor marks id's upload complete on behalf of owner, releasing the progress stream to emit its terminal record.
-func (s *UploadStore) finishFor(id, owner string) uploadAccess {
-	agg, ok := s.get(id)
-	if !ok {
+func (u *Upload) finishFor(id, owner string) uploadAccess {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	agg, ok := u.receivers[id]
+	switch {
+	case !ok:
 		return uploadAccessInvalid
-	}
-	if agg.owner != "" && owner != agg.owner {
+	case owner != agg.client.owner:
 		return uploadAccessOwnerMismatch
+	case !agg.isFinished():
+		close(agg.finished)
 	}
-	agg.finishOnce.Do(func() { close(agg.finished) })
 	return uploadAccessOK
 }
 
-func (s *UploadStore) get(id string) (*uploadAgg, bool) {
-	if id == "" {
-		return nil, false
-	}
-	sh := s.shard(id)
-	sh.mu.Lock()
-	defer sh.mu.Unlock()
-	agg, ok := sh.m[id]
+func (u *Upload) get(id string) (*uploadAgg, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	agg, ok := u.receivers[id]
 	return agg, ok
 }
 
-func (s *UploadStore) expire(agg *uploadAgg) {
-	close(agg.expired)
-	s.live.Add(-1)
-	s.releaseOwner(agg)
-}
-
-func (s *UploadStore) sweep(ttl time.Duration) {
-	now := monoNanos()
-	aggCutoff := now - int64(ttl)
-	for i := range s.shards {
-		sh := &s.shards[i]
-		sh.mu.Lock()
-		maps.DeleteFunc(sh.m, func(_ string, agg *uploadAgg) bool {
-			if agg.posts.Load() != 0 || agg.lastTouchMono.Load() >= aggCutoff {
-				return false
-			}
-			s.expire(agg)
-			return true
-		})
-		sh.mu.Unlock()
+func (u *Upload) sweep(ttl time.Duration) {
+	now := u.now()
+	cutoff := now - int64(ttl)
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	maps.DeleteFunc(u.evicted, func(_ string, until int64) bool { return until < now })
+	for id, agg := range u.receivers {
+		if agg.lanes == 0 && agg.lastTouch < cutoff {
+			u.expireLocked(id)
+		}
 	}
 }
 
-// RunSweeper reaps idle aggregates until ctx is cancelled.
-func (s *UploadStore) RunSweeper(ctx context.Context) {
+func (u *Upload) RunSweeper(ctx context.Context) {
 	ticker := time.Tick(uploadSweepInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker:
-			s.sweep(uploadIDTTL)
+			u.sweep(uploadIDTTL)
 		}
 	}
 }

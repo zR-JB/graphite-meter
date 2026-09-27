@@ -127,17 +127,17 @@ test("path evidence retains each protocol observation boundary", () => {
 
 test("endpoint path status describes verified paths by mode", () => {
   for (const [mode, expected] of [
-    ["live", { label: "Ready", tone: "ready" }],
-    ["running", { label: "In use", tone: "active" }],
-    ["result", { label: "Used", tone: "used" }],
+    ["live", { label: "Ready", tone: "ok" }],
+    ["running", { label: "In use", tone: "brand" }],
+    ["result", { label: "Used", tone: "neutral" }],
   ] as const)
     expect(endpointPathStatus("verified", mode)).toEqual(expected);
 });
 
 test("endpoint path status keeps non-verified validation truthful", () => {
   for (const [validation, mode, expected] of [
-    ["checking", "result", { label: "Checking", tone: "checking" }],
-    ["failed", "running", { label: "Failed", tone: "failed" }],
+    ["checking", "result", { label: "Checking", tone: "brand" }],
+    ["failed", "running", { label: "Failed", tone: "err" }],
   ] as const)
     expect(endpointPathStatus(validation, mode)).toEqual(expected);
 });

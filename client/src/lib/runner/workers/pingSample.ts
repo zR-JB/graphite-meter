@@ -1,7 +1,7 @@
 /* Canonical ping outcome crossing the worker boundary. */
 export interface PingSample {
   rtt: number;
-  lost: boolean;
+  timedOut: boolean;
   /** Validated server application handling interval; milliseconds, same reply as RTT. */
   reflectorHandlingMs?: number;
   /** Probe submission time; determines membership at a stage's stop boundary. */
@@ -27,19 +27,18 @@ export const PING_STOP_MARGIN_MS = 250;
 
 export function pingSample(
   rtt: number,
-  lost: boolean,
+  timedOut: boolean,
   observedAtMs = performance.now(),
   timeOriginMs = performance.timeOrigin,
 ): PingSample {
   return {
     rtt,
-    lost,
+    timedOut,
     observedAtEpochMs: timeOriginMs + observedAtMs,
   };
 }
 
-/* Epoch-based performance coordinates remain comparable when the worker and window
- * have different time origins; subtract the receiving realm's origin to translate. */
+/** Worker and window clocks differ in origin; the receiving realm's origin translates an epoch time. */
 export function pingSampleContextTime(
   sample: PingSample,
   timeOriginMs = performance.timeOrigin,
@@ -47,8 +46,7 @@ export function pingSampleContextTime(
   return sample.observedAtEpochMs - timeOriginMs;
 }
 
-/** The codec has validated uint64 digits. Impossible or imprecise clock pairs
- * retain raw RTT but supply no adjusted diagnostic; never clamp them to zero. */
+/** Validated uint64 nanoseconds; an impossible or imprecise value gives no handling time, never zero. */
 export function reflectorHandlingMs(
   rawRttMs: number,
   nanos: string,

@@ -1,254 +1,130 @@
 # CI / release control plane
 
-This directory is Graphite Meter's dependency-free GitHub Actions policy and
-provenance layer. The intended split is deliberately small:
+Workflow YAML owns events, jobs, permissions and environments. `mise` owns
+pinned tools and project commands. Stdlib-only, type-checked Python in this
+directory owns trust decisions, GitHub JSON validation and artifact
+verification. `publish.sh` holds the Skopeo registry writes and `release.py
+publish` the GitHub Release; `test_release_transaction.py` runs both against a
+stateful fake GitHub, Docker and Skopeo. `fixtures.py` fakes `gh` by exact API path and pagination, the
+checked-out commit and the container engine, so trust tests run the real
+commands.
 
-- workflow YAML owns events, jobs, dependencies, permissions, environments, and
-  short publication transactions;
-- `mise` owns pinned tools and project build/test commands;
-- typed, stdlib-only Python in `scripts/ci/` owns trust decisions, GitHub API
-  shape validation, provenance checks, and artifact verification.
-
-There are no standalone CI shell scripts in this directory. The small Bash
-blocks that remain in no-checkout publication workflows are transaction plumbing
-for `gh`/Skopeo and intentionally stay in YAML: moving them into embedded Python
-would not make them type-checkable, while checking out repository scripts into a
-write-capable job would weaken the publication boundary.
-
-## Working on this pipeline
-
-Start with [development setup](../../docs/DEVELOPMENT.md#prerequisites), then run the focused checks:
+## Working on the pipeline
 
 ```sh
-mise run toolchain-check
-mise run workflow-check
-mise run pipeline-test
+mise run workflow-check    # actionlint, zizmor, workflow_policy.py, tool pins
+mise run pipeline-test     # ty type check, control-plane and legal tests
 ```
 
-Use `mise run check` for the deterministic repository gate and `mise run ci` for the full gate.
-Task definitions live in [mise.toml](../../mise.toml); workflow files live in
-[.github/workflows](../../.github/workflows). Local release validation does not publish a release.
+`mise run check` is the deterministic developer gate; `mise run ci` runs every
+CI job's task locally, and the policy fails if one of its steps has no CI job.
+`Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
+narrow PR runs only; every push to main runs every job.
 
-## JSON and typing boundary
+| Job | mise task |
+| --- | --- |
+| `tooling` | `workflow-check`, `pipeline-test` |
+| `core` | `legal-check`, `core-check` |
+| `go` | `server-race` |
+| `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |
+| `smoke` | `container-smoke` |
+| `release` | `release-check` |
+| `security` | `security`, `client-audit` |
+| `secret-scan` | `secret-scan-ci` |
 
-`github_api.py` is the single GitHub JSON decoding boundary. `json.loads()` is
-narrowed into recursive JSON types and security-sensitive callers validate
-objects, arrays, strings, integers, and optional values before policy code uses
-them. The control plane intentionally has no Pydantic or other PyPI runtime
-dependency.
+## Releases
 
-Python uses only the standard library; tests also execute Bash and jq to exercise the actual
-privileged workflow logic. `pipeline-test` type-checks the Python modules and exercises trust decisions,
-artifact verification, and staged-hook isolation through their callable boundaries.
+```sh
+gh workflow run release-request.yml --ref main -f tag=v1.2.3 -f mode=publish
+```
 
-## Trust boundaries
+A prerelease adds `-f pr=N -f sha=<PR head>` to a `vX.Y.Z-{alpha,beta,rc}.N`
+tag; `mode=validate` stops before any write. Approve the `ghcr-release`
+deployment when the Release run asks.
 
-### Normal CI
+1. **Untrusted build.** `release-request.yml` is a `workflow_dispatch` job on
+   main with `contents: read`, no secrets and no caches. Only `release.py
+   prepare` sees the inputs, which GitHub also renders into the run title. A
+   stable build checks the committed legal outputs, stamps the version and
+   builds the native archives, the third-party source archive and the OCI
+   image from main; a prerelease builds only the image, which BuildKit fetches
+   as the exact remote commit without a token.
+2. **Trusted verification.** `release.yml` runs main's tooling on
+   `workflow_run` for main dispatches only and never executes the requested
+   source. It binds `request.json` to the run title, the owner, the first
+   attempt and bounded artifacts, verifies the image and archives as data, and
+   requires either every main CI job and CodeQL for a stable release or, for a
+   prerelease, an open PR containing current main with identical `.github`,
+   `.githooks`, `scripts` and mise trees, its newest CI Gate and CodeQL check.
+   Publish mode also requires `ghcr-release` to have reviewers and main-only
+   deployments.
+3. **Approved publication.** One `ghcr-release` job holds the only write
+   credentials. It rechecks the handoff digests and all trust above, pushes the
+   verified digest to its exact version tag, and for a stable release
+   publishes the GitHub Release and points the `major.minor` and `latest`
+   aliases at the highest published releases, which also repairs aliases a
+   cancelled run left behind.
 
-`ci.yml` runs pull-request and main-push checks with read-only repository access.
-The path plan comes from `.github/ci-paths.yml`; project operations use named
-`mise run` tasks. `Gate` is the single ordinary branch-protection status.
+The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
+retained 35 days to cover the approval window; the recheck fails closed.
+GitHub's automatic source archives provide the project source; a stable
+release adds the third-party source archive and a source-availability note.
 
-The browser/server transport E2E suite does not keep a Vite development server
-alive beside the test runner. Vite builds the small transport harness once into
-`client/.e2e-dist`, and `Bun.serve()` serves those immutable assets on an
-OS-assigned loopback port. Bun.WebView drives the pinned Linux Chromium while
-the fixture owns the real Graphite Meter backend process. The Go server integration tests use an
-internal socket-provider seam so tests hand already-bound TCP/UDP sockets into
-the production listener assembly path; they never probe a free port, release it,
-and race to bind the same number later.
+OCI builds request `provenance: mode=max`, pin the privileged binfmt image and
+keep BuildKit's insecure entitlements disabled. The Dockerfile may not select a
+custom frontend. Verification requires one runnable `linux/amd64` and
+`linux/arm64` manifest, each with one linked SLSA provenance statement whose
+source (the fetched commit, or the local checkout's revision) is the release
+commit of this repository, and copies every blob inside a network-less Skopeo
+container whose only mount is the read-only archive. The untrusted build writes
+that provenance, so it shows which source was built but does not authenticate
+it. Build arguments carry no secrets because max provenance records them.
 
-### PR prereleases
+### Owner setup
 
-1. `prerelease-request.yml` is a **low-authority producer**. Manual
-   `workflow_dispatch` can be pointed at a selected ref, so the candidate job is
-   gated to the repository default branch and has only `contents: read`, no
-   secrets/write permission, no shared dependency caches, and no publication path.
-   It checks out only trusted request/build tooling plus the trusted `mise.toml` and `mise.lock`.
-   The raw dispatch SHA reaches only `prerelease.py request-prepare`; after exact
-   40-character validation, the trusted OCI action gives that sanitized SHA to
-   BuildKit as a public remote Git context. PR files never exist in the runner
-   workspace, and the Docker build receives no `github.token`.
-2. `prerelease-publish.yml` is the trusted default-branch `workflow_run` consumer.
-   It accepts a producer run only when GitHub's API proves that the exact run came
-   from `prerelease-request.yml`, was attempt 1, was dispatched from `main` at the
-   exact current-main SHA, completed successfully, and was initiated by the
-   repository owner. A selected stale/feature ref can therefore build only
-   low-authority data; it can never authorize publication.
-3. The publisher never checks out PR source. On a fresh runner it downloads the
-   candidate artifact as untrusted data, checks the exact file set/checksum, binds
-   its metadata to the open same-repository PR, requires that PR to contain exact
-   current main, requires the complete CI/release control plane to be byte-identical
-   to that main SHA, then requires the newest exact PR CI Gate and PR-bound CodeQL
-   check before environment approval.
-4. After approval, PR head/current-main/Gate/CodeQL are rechecked. Any main advance
-   or PR/CI/CodeQL change requires a fresh prerelease request. `_publish-oci.yml`
-   performs one final API-only source/CI/CodeQL freshness check immediately before
-   registry authentication while still executing no repository code.
-5. The old label-triggered candidate hop is intentionally absent. GitHub suppresses
-   most workflow runs caused by events created with the repository `GITHUB_TOKEN`,
-   including `pull_request:labeled`, so publication does not depend on a
-   workflow-created label triggering another workflow.
+1. **Actions → General:** workflow permissions *Read repository contents and
+   packages*; artifact retention at least 35 days; if actions are
+   allow-listed, add `actions/create-github-app-token`.
+2. **Environment `ghcr-release`:** required reviewer = owner; deployment
+   branches = selected branch `main` only, no tags. Its secrets and variables
+   are the only release credentials; define none at repository level.
+3. **`GHCR_TOKEN` (environment secret):** a classic personal access token of
+   the owner with only `write:packages` (clear the preselected `repo`), with an
+   expiry and a rotation reminder. GHCR accepts no App or fine-grained token.
+4. **Release App:** a GitHub App owned by the owner, webhook off, repository
+   permission *Contents: read and write* only, installed on this repository
+   only. Store its client ID as environment variable `RELEASE_APP_CLIENT_ID`
+   and a private key as environment secret `RELEASE_APP_PRIVATE_KEY`.
+5. **GHCR package → Manage Actions access:** give this repository *Read*, not
+   *Write* or *Admin*, so no workflow token can push images.
+6. **Rulesets:** tags `refs/tags/v*` restrict creation, update and deletion with
+   the Release App as the only bypass actor; `main` requires pull requests, the
+   `Gate` and CodeQL checks and blocks force pushes and deletion.
+7. **Releases:** enable release immutability.
 
-The pre-approval and post-approval checks are intentional, not duplicate policy:
-first avoid asking a human to approve already-invalid state; then prove that the
-mutable state still holds immediately before the first irreversible write. Trusted
-publication handoffs are retained for 35 days so the artifact lifetime covers the
-platform's approval/wait lifetime; repository/organization Actions retention must
-therefore allow at least 35 days. Extending artifact storage does not extend trust,
-because the post-approval and last-mile checks still fail closed on stale state.
+## Workflow policy
 
-### Stable releases
+`actionlint` checks workflow syntax and expressions. `zizmor` (configured in
+`.github/zizmor.yml`) requires full-SHA action pins, non-persisted checkout
+credentials and no dangerous triggers other than the reviewed `workflow_run`.
+`workflow_policy.py` holds the project's own trust rules, and
+`test_workflow_policy.py` breaks a copy of the repository once per rule.
 
-Stable publication is never tag-push triggered and the write-capable release
-workflow is **not** directly manually dispatched. `release-request.yml` is a
-zero-write manual request workflow. Because GitHub allows a manual dispatch to
-select a branch/tag, that request is treated as untrusted input and only uploads a
-small request artifact.
+When adding an external action, review it and its composite dependencies,
+allow it in repository settings, pin the SHA with a version comment for
+Dependabot and run the checks above.
 
-`release.yml` is a trusted default-branch `workflow_run` consumer of `Request
-stable release`. Its guard accepts the request only when GitHub proves the request
-run was attempt 1, owner-initiated, dispatched from `main`, completed successfully,
-and has the exact same SHA as the current default-branch consumer. The immutable
-release source thereafter is `${{ github.sha }}` directly; no guard job output is
-reused as a second source identity.
+## Pre-commit
 
-The request has two modes:
+The hook refuses commits to `main` and whitespace errors, and scans the index
+with the pinned Gitleaks. `precommit.py` selects the mise checks for the staged
+paths, counting both sides of a rename; `api/`, `mise.toml` and `mise.lock`
+select the full `check`. The checks run on the exact staged tree in a disposable
+worktree with frozen client dependencies. `workflow-check` refuses tracked TLS
+key and certificate names and PEM material.
 
-- `validate`: full build/verification, zero publication;
-- `publish`: same build, protected-environment approval, then a fresh current-main
-  - Gate + CodeQL recheck before write-capable jobs.
+## Python and dependencies
 
-Before any write-capable job, the release guard also preflights a pre-existing
-`vMAJOR.MINOR.PATCH` ref and refuses if it targets a different commit. Publication
-order is exact version OCI image → verified draft GitHub Release → monotonic
-`major.minor`/`latest` OCI aliases. `_publish-release.yml` uses GitHub's CLI/API
-directly, verifies the release target SHA and GitHub-recorded asset SHA-256
-digests, and does not run third-party release code with `contents: write`. Native
-release archives are rejected for traversal paths, links/devices, duplicate
-members, unexpected files, or missing checksums. Stable releases do not duplicate
-Graphite Meter's own tagged repository tree inside a custom source asset: GitHub's
-automatic `Source code (zip)` / `Source code (tar.gz)` links provide the project
-source for the release tag, while the verified
-`graphite-meter_VERSION_third-party-source.tar.gz` asset carries the external
-Go/npm/manual source material and legal/provenance inventories. The publisher
-prepends an explicit source-availability notice to generated release notes and
-fails closed on retries if that notice is missing or stale. `_promote-oci.yml`
-globally serializes alias movement and rejects SemVer rollback.
-
-The OCI build explicitly requests BuildKit `provenance: mode=max`. The privileged
-`binfmt` image launched by `setup-qemu-action` is pinned by digest rather than
-accepting that action's floating `latest` default. `setup-buildx-action` also gets
-an explicit benign daemon flag, which replaces its default
-`security.insecure`/`network.host` entitlements; this build needs neither.
-Verification requires an OCI v1 index with exactly one runnable `linux/amd64` and `linux/arm64`
-manifest plus exactly one correctly linked BuildKit attestation manifest for each
-runnable digest, then forces the pinned immutable Skopeo container to copy `--all` into its
-own ephemeral filesystem so every referenced manifest/blob must be readable. The
-archive is the verifier container's only host bind mount, it is read-only, and
-local verification runs with container networking disabled. This avoids both
-root-owned verifier output on the runner and unnecessary verifier network access.
-Build arguments contain no secrets; max-level provenance would make build-argument
-values observable.
-
-Stable native artifacts are verified immediately after the exact release payload
-is built, before the more expensive multi-platform OCI build. The verifier checks
-the built server's embedded version through `graphite-meter --version`; it does
-not boot a fixed-port HTTP server merely to read `/preflight`. The stable workflow
-also does not rebuild a second representative `release-check` payload after the
-exact artifacts already exist.
-
-## Policy and tests
-
-`mise run workflow-check` runs `workflow_policy.py`. It deliberately does **not**
-mirror GitHub's allowed-action package list or maintain a second action SHA
-database. GitHub repository settings are the authority for which external action
-packages may execute. The local checker only enforces the zero-maintenance
-property that every external `uses:` reference is an immutable 40-character
-commit SHA, plus the pipeline-specific trust boundaries.
-
-The ordinary release-package CI job also executes the exact digest-pinned immutable
-Skopeo container's `--version` contract through the same typed parser used by OCI
-verification, so a CLI output/digest-version mismatch is caught on a workflow PR
-instead of at first publication.
-
-Other checked invariants include:
-
-- explicit `ubuntu-24.04` runner-major labels instead of floating `ubuntu-latest`;
-- explicit max-level OCI provenance with no GitHub-secret references in the build action;
-- digest-pinned privileged QEMU/binfmt input and no BuildKit insecure daemon entitlements;
-- low-authority prerelease producer permissions, default-branch job guard, and no PR checkout on the runner;
-- no repository checkout/code execution in isolated publication workflows;
-- exact-tag and stable-alias concurrency guards;
-- zero-write stable manual request plus trusted default-branch consumer, never tag-push/direct write-capable dispatch;
-- protected-environment approval before the final mutable trust recheck;
-- GitHub Release target/asset-digest verification;
-- local OCI verification with no network and no writable host output mount;
-- matching pinned browser versions, runtime launch preflights, and child-process cleanup flags;
-- exact staged-tree pre-commit checks, including staged deletions/renames;
-- no tracked certificate/private-key material.
-
-`mise run pipeline-test` type-checks all repository Python tooling with the
-version-pinned standalone `ty` binary, then runs the control-plane and legal
-positive and negative regression tests. Workflow policy checks configuration and trust boundaries;
-Python verifier behavior is tested by invoking it, while browser/E2E runs exercise their harness.
-The suite does not duplicate implementation bodies as required source strings. The Git hook bootstraps Python from the staged mise configuration, then invokes
-`scripts/ci/precommit.py`; the Python module owns check selection and execution.
-The typed hook records the exact staged Git tree, materializes that tree in a
-disposable detached worktree, installs client dependencies from that tree's frozen lockfile when
-needed, and runs selected component checks there. Prepared tool binaries can be shared; the
-working tree's `node_modules` cannot substitute for staged dependencies. Protocol/schema edits
-under `api/` select the complete deterministic gate. Deleted
-paths and the old side of renames participate in check planning, so removing or
-renaming a workflow cannot skip pipeline validation. Gitleaks still scans the
-staged index directly. This prevents an unstaged local fix from making a broken
-staged commit appear healthy while keeping ignored dependency/tool directories
-out of Git history.
-
-## External action maintenance
-
-GitHub Settings and workflow YAML each have one non-overlapping responsibility:
-
-1. GitHub **Actions permissions** allow only the external action packages the
-   repository intends to trust.
-2. GitHub **Require actions to be pinned to a full-length commit SHA** enforces
-   immutable refs on the platform.
-3. Workflow `uses:` lines keep the exact 40-character SHA plus a same-line version
-   comment so Dependabot can update them normally.
-4. `workflow_policy.py` repeats only the SHA _shape_ check locally for fast
-   pre-commit/CI feedback; there is no package/SHA allowlist file to maintain.
-
-When adding a new external action package, review it **and any composite-action
-dependencies it invokes**, add every required package pattern in repository
-Settings, use an exact 40-character SHA in YAML, then run `mise run workflow-check`
-and `mise run pipeline-test`. The pinned `jdx/mise-action` verifies mise download
-checksums against signed upstream metadata. It installs only the tools explicitly
-selected by each job before saving its tool cache. Go build/module and Bun
-package caches remain separate. Automatic tool installation is disabled in CI,
-so a later task cannot silently add unused toolchains to a narrowly scoped job.
-
-## Python development gate
-
-`mise run setup` installs the version-pinned standalone `ty` binary through mise.
-CI selects it only in jobs that run Python checks.
-The scripts use the exact Python patch from `mise.toml` and the standard library only:
-there are no Python package dependencies, pip installs, or virtual environments.
-
-`mise run python-check` checks all scripts and tests and fails on warnings or type
-errors. It runs offline as part of `mise run pipeline-test` and `mise run check`; the
-staged hook uses the same checker against the staged scripts. A regression
-runs the actual task with an incorrect annotated return value, then verifies
-that its correction passes. `ty` validates types but does not require every
-function to have annotations; keep the tooling explicitly annotated in review.
-
-Update `aqua:astral-sh/ty` in `mise.toml`, regenerate `mise.lock`, and run
-`mise run setup` to update the checker. Python tooling does not use the client's Bun dependencies.
-
-## Dependency updates
-
-CI installs the committed Bun lockfile with `--frozen-lockfile`. Dedupe output is
-advisory: compatible duplicate versions are valid resolutions, and automated
-updates can introduce them without changing application behavior. CI does not
-rewrite the lockfile or test a different resolution. Run `bun dedupe` in `client/`
-after a dependency refresh to commit a normalized lockfile. Type checks, tests,
-security scans and reviewed legal inventories remain required.
+Python uses the exact patch release from `mise.toml` and the standard library
+only. `mise run python-check` runs the pinned `ty` with warnings as errors. CI
+installs the Bun lockfile frozen; `bun dedupe` output is advisory.

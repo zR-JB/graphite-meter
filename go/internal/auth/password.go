@@ -34,7 +34,8 @@ func HashPassword(password string) (string, error) {
 	}
 	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	b64 := base64.RawStdEncoding
-	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", argonMemory, argonTime, argonThreads, b64.EncodeToString(salt), b64.EncodeToString(key)), nil
+	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s", argonMemory, argonTime, argonThreads,
+		b64.EncodeToString(salt), b64.EncodeToString(key)), nil
 }
 
 func parsePasswordHash(encoded string) ([]byte, []byte, error) {

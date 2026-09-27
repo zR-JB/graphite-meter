@@ -1,82 +1,56 @@
 <script lang="ts">
-  /* Contextual keyboard-shortcut strip: a tokenized row of keycaps mirroring
-     the global keyboard map in <Console>, which owns the real handler. The
-     primary hint flips with run state (Space = Start test or Abort), and the
-     "R · Run again" cap appears once a run resolves. */
+  // Mirrors Console's shortcuts; R is an alias for Space.
   import { store } from "../state/store.svelte";
+  import { RUN_ACTION, runActionLabel } from "../presentation/vocabulary";
 
-  // Mirror RunButton's label exactly (Start test → Abort → Run again) so the hint
-  // never names an action the button doesn't show.
-  const resolved = $derived(
-    store.phase === "complete" ||
-      store.phase === "aborted" ||
-      store.phase === "error",
-  );
   const primary = $derived(
-    store.preparing
-      ? "Cancel start"
-      : store.isRunning
-        ? "Abort"
-        : resolved
-          ? "Run again"
-          : "Start test",
+    runActionLabel(store.preparing, store.isRunning, store.phase),
   );
 </script>
 
-<div class="command-hints" aria-label="Keyboard shortcuts">
-  <span><kbd>Space</kbd>{primary}</span>
+<div class="command-hints" role="group" aria-label="Keyboard shortcuts">
+  <span
+    ><kbd>Space</kbd><span class="stack">
+      {#each Object.values(RUN_ACTION) as label (label)}
+        <span class:current={label === primary} aria-hidden={label !== primary}
+          >{label}</span
+        >
+      {/each}
+    </span></span
+  >
   <span><kbd>S</kbd>Settings</span>
-  <span><kbd>D</kbd>Info</span>
+  <span><kbd>D</kbd>Details</span>
   {#if store.savingResults}
     <span><kbd>H</kbd>History</span>
-  {/if}
-  {#if resolved}
-    <span><kbd>R</kbd>Run again</span>
   {/if}
 </div>
 
 <style>
-  /* A quiet row of keycap and label pairs: one keycap in the faceplate tile
-     language, a muted label, generous spacing between groups. */
   .command-hints {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-4);
     color: var(--text-soft);
-    font-family: var(--font-sans);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
   }
-
   span {
     display: inline-flex;
     align-items: center;
     gap: 5px;
   }
-
-  kbd {
-    display: inline-grid;
-    place-items: center;
-    min-width: 16px;
-    height: 15px;
-    padding: 0 4px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    box-shadow: var(--elev-tile);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0;
+  /* Every run action shares one cell, so a label change never moves the strip. */
+  .stack {
+    display: grid;
   }
-
-  /* The 28px status zone has no room for keycaps on a phone; the
-     visible ShortcutHints strip is a desktop affordance. */
+  .stack > * {
+    grid-area: 1 / 1;
+  }
+  .stack > :not(.current) {
+    visibility: hidden;
+  }
+  /* The status strip has no room for keycaps on narrow screens. */
   @container status (max-width: 1100px) {
-    /* bp: stacked */
     .command-hints {
       display: none;
     }

@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG } from "../state/defaults";
 const BASE_CONFIG: RunnerConfig = structuredClone(DEFAULT_CONFIG);
 BASE_CONFIG.transferStreams = { mode: "auto", count: 6 };
 BASE_CONFIG.transports = { throughputTarget: "auto", latencyTarget: "auto" };
-BASE_CONFIG.adaptive.enabled = false;
+BASE_CONFIG.adaptive = false;
 type ConfigOverrides = Omit<Partial<RunnerConfig>, "stages" | "duration"> & {
   stages?: Partial<RunnerConfig["stages"]>;
   duration?: Partial<RunnerConfig["duration"]>;

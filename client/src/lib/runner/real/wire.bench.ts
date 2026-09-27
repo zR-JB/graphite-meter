@@ -7,9 +7,9 @@ let sink: unknown;
 
 function bench(name: string, fn: () => void): void {
   fn();
-  const started = performance.now();
+  const started = Bun.nanoseconds();
   for (let i = 0; i < N; i++) fn();
-  const ns = ((performance.now() - started) * 1e6) / N;
+  const ns = (Bun.nanoseconds() - started) / N;
   console.log(`${name.padEnd(20)} ${ns.toFixed(1).padStart(7)} ns/op`);
 }
 

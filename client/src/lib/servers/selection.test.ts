@@ -1,14 +1,26 @@
 import { expect, test } from "bun:test";
-import { classifyTransportDiscovery } from "../runner/real/backendPure";
-import { DEFAULT_CONFIG } from "../state/defaults";
-import { testPreparedPaths } from "../runner/test-helpers.test";
 import {
+  classifyTransportDiscovery,
+  planServerStreams,
   portableTransportSelection,
-  serverTransportOptions,
-} from "./transportOptions";
-import { planServerStreams } from "./streamBudget";
+} from "../runner/paths";
+import { pathOptions } from "../presentation/paths";
+import { DEFAULT_CONFIG } from "../state/defaults";
+import { testPreparedPaths } from "../runner/test-helpers.testutil";
 import { parseCatalog } from "./catalog";
 
+function configFor(
+  role: "throughput" | "latency",
+  selected: string,
+  datagrams: boolean,
+) {
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.experimentalDatagramThroughput = datagrams;
+  config.transports[
+    role === "throughput" ? "throughputTarget" : "latencyTarget"
+  ] = selected;
+  return config;
+}
 const servers = [
   { id: "a", name: "A", url: "https://a.example" },
   { id: "b", name: "B", url: "https://b.example" },
@@ -16,28 +28,28 @@ const servers = [
 const discoveries = new Map(
   servers.map((server, index) => [
     server.id,
-    classifyTransportDiscovery(
-      [
-        {
-          baseUrl: server.url,
-          transport: "fetch-stream",
-          protocol: index ? "http2" : "http1",
-        },
-      ],
-      [{ baseUrl: server.url, transport: "websocket" }],
-      server.url,
-      true,
-    ),
+    {
+      discovery: classifyTransportDiscovery(
+        [
+          {
+            baseUrl: server.url,
+            transport: "fetch-stream",
+            protocol: index ? "http2" : "http1",
+          },
+        ],
+        [{ baseUrl: server.url, transport: "websocket" }],
+        server.url,
+        true,
+      ),
+    },
   ]),
 );
 test("automatic may use different reliable protocols while explicit compatibility covers every server", () => {
-  const options = serverTransportOptions(
+  const options = pathOptions(
     "throughput",
     servers,
     discoveries,
-    false,
-    "auto",
-    false,
+    configFor("throughput", "auto", false),
   );
   expect(options.find((option) => option.value === "auto")?.disabled).toBe(
     false,
@@ -49,13 +61,11 @@ test("automatic may use different reliable protocols while explicit compatibilit
     options.find((option) => option.value === "protocol:http2")?.detail,
   ).toBe("Unavailable on A");
   expect(
-    serverTransportOptions(
+    pathOptions(
       "latency",
       servers,
       discoveries,
-      false,
-      "auto",
-      false,
+      configFor("latency", "auto", false),
     ).find((option) => option.value === "transport:websocket")?.disabled,
   ).toBe(false);
   expect(
@@ -72,13 +82,13 @@ test("server transport options name the browser's IPv6 configuration remedy", ()
     "http://ui.example",
     false,
   );
-  const options = serverTransportOptions(
+  const options = pathOptions(
     "throughput",
     [{ id: "ipv6", name: "IPv6 meter", url: origin }],
-    new Map([["ipv6", discovery]]),
-    false,
-    "auto",
-    false,
+    new Map([["ipv6", { discovery }]]),
+    configFor("throughput", "auto", false),
+    undefined,
+    true,
   );
   expect(
     options.find((option) => option.value === "protocol:http1"),
@@ -94,7 +104,7 @@ test("server transport options name the browser's IPv6 configuration remedy", ()
 
 test("shared H1 origins preserve progress and checkpoint capacity", () => {
   const paths = servers.map((server) => ({
-    id: server.id,
+    server,
     paths: testPreparedPaths(),
   }));
   const config = {
@@ -115,11 +125,13 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     transferStreams: { mode: "forced" as const, count: 3 },
   };
   expect(() => planServerStreams(forced, paths, activity)).toThrow(
-    "control capacity",
+    "control capacity of A, B.",
   );
 });
 test("a direct H1 upload reserves progress and receiver checkpoint capacity", () => {
-  const paths = [{ id: "self", paths: testPreparedPaths() }];
+  const paths = [
+    { server: { id: "self", name: "Home" }, paths: testPreparedPaths() },
+  ];
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
     transferStreams: { mode: "forced" as const, count: 4 },
@@ -152,7 +164,7 @@ test("four participants share a run-wide 128 stream ceiling", () => {
   const paths = Array.from({ length: 4 }, (_, i) => {
     const paths = testPreparedPaths();
     paths.throughput.fetch.protocol = "http2";
-    return { id: String(i), paths };
+    return { server: { id: String(i), name: String(i) }, paths };
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
@@ -186,7 +198,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   const paths = catalog.servers.slice(1).map((server) => {
     const paths = testPreparedPaths();
     paths.throughput.fetch.protocol = "http2";
-    return { id: server.id, paths };
+    return { server, paths };
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
@@ -213,7 +225,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
 });
 
 test("switching servers carries a transport preference without the previous origin", () => {
-  const discovery = discoveries.get("a")!;
+  const { discovery } = discoveries.get("a")!;
   expect(
     portableTransportSelection("throughput", servers[0].url, discovery),
   ).toBe("protocol:http1");

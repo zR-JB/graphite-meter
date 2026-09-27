@@ -1,11 +1,9 @@
-import type { Phase, TransportRole } from "../runner/contract";
-
-export const STAGE_ORDER = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const satisfies readonly TransportRole[];
+import type {
+  FailureReason,
+  Phase,
+  StageStatus,
+  TransportRole,
+} from "../runner/contract";
 
 export type StagePresentationStatus =
   | "disabled"
@@ -22,42 +20,29 @@ export interface StagePresentation {
   status: StagePresentationStatus;
   fill: number;
   warming: boolean;
-  failure: boolean;
-  hasUsableResult: boolean;
+  failure: FailureReason | null;
 }
 
 interface StagePresentationInput {
   configured: boolean;
+  settled: StageStatus | undefined;
   phase: Phase;
   phaseStage: TransportRole | null;
   phaseFraction: number;
   measuring: boolean;
-  hasUsableResult: boolean;
-  hasFailure: boolean;
-  finished?: boolean;
+  failure: FailureReason | null;
 }
 
 export function deriveStagePresentation(
   stage: TransportRole,
   input: StagePresentationInput,
 ): StagePresentation {
-  const base = {
-    stage,
-    configured: input.configured,
-    failure: input.hasFailure,
-    hasUsableResult: input.hasUsableResult,
-  };
   let status: StagePresentationStatus = "pending";
   let fill = 0;
   let warming = false;
-  if (!input.configured) status = "disabled";
-  else if (input.hasFailure) {
-    status = input.hasUsableResult ? "partial" : "failed";
-    fill = input.hasUsableResult ? 100 : 0;
-  } else if (input.hasUsableResult) {
-    status = "complete";
-    fill = 100;
-  } else if (
+  if (!input.configured || input.settled === "not-run") status = "disabled";
+  else if (input.settled) status = input.settled;
+  else if (
     input.phaseStage === stage &&
     (input.phase === "warmup" || input.phase === stage)
   ) {
@@ -65,7 +50,13 @@ export function deriveStagePresentation(
     status = input.measuring ? "active" : "recovering";
     fill = warming ? 0 : Math.round(input.phaseFraction * 200) / 2;
   }
-  if (status === "pending" && input.configured && input.finished)
-    status = "failed";
-  return { ...base, status, fill, warming };
+  if (status === "complete" || status === "partial") fill = 100;
+  return {
+    stage,
+    configured: input.configured,
+    status,
+    fill,
+    warming,
+    failure: input.failure,
+  };
 }

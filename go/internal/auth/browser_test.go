@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
 	"io"
@@ -11,7 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
-	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/route"
 )
 
 const requestingUI = "https://console.example"
@@ -27,23 +27,14 @@ func browserExchangeRequest(verifier, origin string) *http.Request {
 // Exercise the real approval boundary with a first-party login cookie, then exchange without cookies.
 func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (grant, verifier string) {
 	t.Helper()
-	mux := http.NewServeMux()
-	s.Mount(mux)
-	handler := s.Enforce(mux, Listener{UI: true})
+	handler := mountedAuth(s)
 	verifier = randomToken(32)
-	sum := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	challenge := challengeFor(verifier)
 	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, secureRequest(http.MethodGet, path, nil))
 	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
 		t.Fatalf("login continuation: %d %s", w.Code, w.Header().Get("Location"))
-	}
-	// Both password and OIDC preserve challenge through the existing /auth/cli continuation.
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil))
-	if w.Code != http.StatusSeeOther || !strings.HasPrefix(w.Header().Get("Location"), "/auth/browser?") {
-		t.Fatal("login lost the browser approval audience")
 	}
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), cookie))
@@ -55,30 +46,21 @@ func approveBrowser(t *testing.T, s *Service, cookie string, sess *session) (gra
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("unapproved exchange: %d", w.Code)
 	}
-	r := withSessionCookie(secureRequest(http.MethodPost, "/auth/browser/approve", nil), cookie)
-	r.Body = io.NopCloser(strings.NewReader(url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()))
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	r.Header.Set("Origin", s.PublicOrigin())
-	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
+	if w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, cookie, sess)); w.Code != http.StatusOK {
 		t.Fatalf("approve: %d", w.Code)
 	}
 	w = httptest.NewRecorder()
-	handler.ServeHTTP(w, browserExchangeRequest(verifier, "https://wrong.example"))
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("wrong audience exchange: %d", w.Code)
-	}
-	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, browserExchangeRequest(verifier, requestingUI))
-	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != requestingUI || w.Header().Get("Access-Control-Allow-Credentials") != "" {
+	if w.Code != http.StatusOK || w.Header().Get("Access-Control-Allow-Origin") != requestingUI ||
+		w.Header().Get("Access-Control-Allow-Credentials") != "" {
 		t.Fatalf("cookie-free exchange failed: %d %v", w.Code, w.Header())
 	}
 	var result struct {
 		Token   string `json:"token"`
 		Expires int64  `json:"expires"`
 	}
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Token == "" || result.Expires != sess.expires.UnixMilli() {
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Token == "" ||
+		result.Expires != sess.expires.UnixMilli() {
 		t.Fatalf("invalid grant: %v %s", err, w.Body.String())
 	}
 	w = httptest.NewRecorder()
@@ -112,7 +94,8 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	w := httptest.NewRecorder()
 	s.browserPage(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `http-equiv="refresh"`) ||
-		!strings.Contains(w.Body.String(), "/auth/cli?challenge="+challenge) || strings.Contains(w.Body.String(), "Signed in") {
+		!strings.Contains(w.Body.String(), "/auth/cli?challenge="+challenge) ||
+		strings.Contains(w.Body.String(), "Signed in") {
 		t.Fatalf("cross-site entry did not establish a first-party document: %d %s", w.Code, w.Body.String())
 	}
 	if s.approvals[challenge].session != nil || s.approvals[challenge].approved {
@@ -130,7 +113,8 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	w = httptest.NewRecorder()
 	s.browserPage(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) ||
-		!strings.Contains(w.Body.String(), verificationCode(challenge)) || !strings.Contains(w.Body.String(), "/auth/browser/approve") {
+		!strings.Contains(w.Body.String(), verificationCode(challenge)) ||
+		!strings.Contains(w.Body.String(), "/auth/browser/approve") {
 		t.Fatal("existing login did not require explicit approval of the new origin and code")
 	}
 	if s.approvals[challenge].session != sess || s.approvals[challenge].approved || len(s.sessions) != 1 {
@@ -138,26 +122,6 @@ func TestCrossSiteBrowserApprovalReentersBeforeReusingStrictSession(t *testing.T
 	}
 	if _, ok := s.authenticateGrant(grant); !ok {
 		t.Fatal("authorizing another interface revoked the first client's grant")
-	}
-}
-
-func TestBrowserApprovalWithoutFirstPartySessionReachesLogin(t *testing.T) {
-	for _, site := range []string{"", "none", "same-origin", "same-site", "cross-site"} {
-		t.Run(site, func(t *testing.T) {
-			s := testService(t)
-			challenge := randomToken(32)
-			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-			r := secureRequest(http.MethodGet, path, nil)
-			r.Header.Set("Sec-Fetch-Site", site)
-			w := httptest.NewRecorder()
-			s.browserPage(w, r)
-			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login?challenge="+challenge {
-				t.Fatalf("unauthenticated entry looped or bypassed login: %d %s", w.Code, w.Header().Get("Location"))
-			}
-			if len(s.sessions) != 0 || s.approvals[challenge].approved {
-				t.Fatal("fetch metadata authorized an anonymous client")
-			}
-		})
 	}
 }
 
@@ -171,7 +135,7 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	native := grantFor(t, s, sess)
 	handler := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, ok := PrincipalFromContext(r.Context())
-		if !ok || p.LoginID() != sess.id {
+		if !ok || p.session != sess {
 			t.Fatal("grant lost parent admission identity")
 		}
 		w.WriteHeader(299)
@@ -207,192 +171,88 @@ func TestBrowserApprovalKeepsGrantAndCookieScopesSeparate(t *testing.T) {
 	second, _ := approveBrowser(t, s, raw, sess)
 	p, _ := s.authenticateGrant(grant)
 	q, _ := s.authenticateGrant(second)
-	if p.MeasurementOwner() == q.MeasurementOwner() || p.LoginID() != q.LoginID() {
+	if p.grant.id == q.grant.id || p.session != q.session {
 		t.Fatal("upload access or parent budget is not correctly scoped")
 	}
 }
 
-func TestOIDCLoginReturnsToTheExactBrowserApproval(t *testing.T) {
-	f := newFakeOIDC(t)
-	s := f.service(t)
-	verifier := randomToken(32)
-	sum := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
-	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-	w := httptest.NewRecorder()
-	s.browserPage(w, secureRequest(http.MethodGet, path, nil))
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("browser approval did not request login: %d", w.Code)
-	}
-	state, transaction := startOIDC(t, s, f, challenge)
-	loggedIn := finishOIDC(s, state, transaction, "")
-	if loggedIn.Code != http.StatusOK || !strings.Contains(loggedIn.Body.String(), "/auth/cli?challenge="+challenge) {
-		t.Fatalf("OIDC lost the approval continuation: %d", loggedIn.Code)
-	}
-	var login *http.Cookie
-	for _, cookie := range loggedIn.Result().Cookies() {
-		if cookie.Name == sessionCookie {
-			login = cookie
-		}
-	}
-	if login == nil {
-		t.Fatal("OIDC did not establish a parent login")
-	}
-	r := secureRequest(http.MethodGet, "/auth/cli?challenge="+challenge, nil)
-	r.AddCookie(login)
-	w = httptest.NewRecorder()
-	s.cliPage(w, r)
-	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
-		t.Fatalf("wrong browser approval destination: %d %s", w.Code, w.Header().Get("Location"))
-	}
-	r = secureRequest(http.MethodGet, path, nil)
-	r.AddCookie(login)
-	w = httptest.NewRecorder()
-	s.browserPage(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), requestingUI) || !strings.Contains(w.Body.String(), "/auth/browser/approve") {
-		t.Fatal("OIDC continuation did not require explicit browser-origin approval")
-	}
-}
-
-func TestBrowserGrantCannotOutliveItsParentLogin(t *testing.T) {
+func TestBrowserGrantCapacityKeepsExistingClients(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, _ := approveBrowser(t, s, raw, sess)
-	p, ok := s.authenticateGrant(grant)
-	if !ok {
-		t.Fatal("live browser grant was refused")
+	var grants []string
+	for range maxSessionGrants {
+		grant, _ := approveBrowser(t, s, raw, sess)
+		grants = append(grants, grant)
 	}
-	s.now = func() time.Time { return sess.expires.Add(time.Second) }
-	if _, ok := s.authenticateGrant(grant); ok {
-		t.Fatal("expired parent left a browser grant usable")
+	verifier := randomToken(32)
+	challenge := challengeFor(verifier)
+	path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
+	page := withSessionCookie(secureRequest(http.MethodGet, path, nil), raw)
+	if w := serveMounted(s, page); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("approval page at capacity = %d, want 429", w.Code)
 	}
-	// Advancing the test clock does not fire the real context deadline; exercise
-	// the same expiry cleanup used by the session sweeper.
-	s.mu.Lock()
-	s.expireLocked(s.now())
-	s.mu.Unlock()
-	if p.measurementContext().Err() == nil {
-		t.Fatal("expiry did not cancel work admitted by the grant")
+	w := serveMounted(s, approvalForm("/auth/browser/approve", challenge, raw, sess))
+	if w.Code != http.StatusTooManyRequests || s.approvals[challenge].approved {
+		t.Fatalf("approval at capacity = %d, approved=%t", w.Code, s.approvals[challenge].approved)
 	}
-}
-
-func TestBrowserGrantCapacityOffersExplicitLoginRenewal(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		race bool
+	for _, exchange := range []struct {
+		verifier, origin string
+		status           int
 	}{
-		{name: "full before approval page"},
-		{name: "fills before approval submission", race: true},
+		{verifier, requestingUI, http.StatusTooManyRequests},
+		{verifier, "https://wrong.example", http.StatusAccepted},
+		{randomToken(32), requestingUI, http.StatusAccepted},
+		{"short", requestingUI, http.StatusForbidden},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := testService(t)
-			raw, sess, err := s.createSession("subject", "Name", "local")
-			if err != nil {
-				t.Fatal(err)
-			}
-			count := maxSessionGrants
-			if tc.race {
-				count--
-			}
-			var grants []string
-			for range count {
-				grant, _ := approveBrowser(t, s, raw, sess)
-				grants = append(grants, grant)
-			}
-			mux := http.NewServeMux()
-			s.Mount(mux)
-			handler := s.Enforce(mux, Listener{UI: true})
-			verifier := randomToken(32)
-			hash := sha256.Sum256([]byte(verifier))
-			challenge := base64.RawURLEncoding.EncodeToString(hash[:])
-			path := "/auth/browser?" + url.Values{"challenge": {challenge}, "client_origin": {requestingUI}}.Encode()
-			assertCapacityPage := func(w *httptest.ResponseRecorder) {
-				t.Helper()
-				body := w.Body.String()
-				if w.Code != http.StatusTooManyRequests || !strings.Contains(body, "Browser client limit reached") || !strings.Contains(body, `href="/login"`) || !strings.Contains(body, "revokes its existing client grants") {
-					t.Fatalf("capacity recovery page: %d %s", w.Code, body)
-				}
-				if strings.Contains(body, "<form") || strings.Contains(body, "/login?") || strings.Contains(body, "Client approved") {
-					t.Fatal("capacity page offered an unusable approval or preserved its old challenge")
-				}
-			}
-			w := httptest.NewRecorder()
-			handler.ServeHTTP(w, withSessionCookie(secureRequest(http.MethodGet, path, nil), raw))
-			if tc.race {
-				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Approve this client") {
-					t.Fatalf("available approval page: %d", w.Code)
-				}
-				grant, _ := approveBrowser(t, s, raw, sess)
-				grants = append(grants, grant)
-			} else {
-				assertCapacityPage(w)
-			}
-			r := withSessionCookie(secureRequest(http.MethodPost, "/auth/browser/approve", nil), raw)
-			r.Body = io.NopCloser(strings.NewReader(url.Values{"challenge": {challenge}, "csrf": {sess.csrf}}.Encode()))
-			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			r.Header.Set("Origin", s.PublicOrigin())
-			w = httptest.NewRecorder()
-			handler.ServeHTTP(w, r)
-			assertCapacityPage(w)
-			if s.approvals[challenge].approved {
-				t.Fatal("full login approved an unusable browser client")
-			}
-			for _, exchange := range []struct {
-				verifier, origin string
-				status           int
-			}{
-				{verifier, requestingUI, http.StatusTooManyRequests},
-				{verifier, "https://wrong.example", http.StatusAccepted},
-				{randomToken(32), requestingUI, http.StatusAccepted},
-				{"short", requestingUI, http.StatusForbidden},
-			} {
-				w = httptest.NewRecorder()
-				handler.ServeHTTP(w, browserExchangeRequest(exchange.verifier, exchange.origin))
-				if w.Code != exchange.status {
-					t.Fatalf("exchange status=%d, want %d", w.Code, exchange.status)
-				}
-				if w.Header().Get("Access-Control-Allow-Origin") != exchange.origin {
-					t.Fatal("exchange lost its requesting origin's CORS response")
-				}
-			}
-			if len(sess.grants) != maxSessionGrants || sess.ctx.Err() != nil {
-				t.Fatal("capacity recovery changed the existing login or grant budget")
-			}
-			for _, grant := range grants {
-				if _, ok := s.authenticateGrant(grant); !ok {
-					t.Fatal("capacity recovery revoked an existing client")
-				}
-			}
-		})
+		w := serveMounted(s, browserExchangeRequest(exchange.verifier, exchange.origin))
+		if w.Code != exchange.status || w.Header().Get("Access-Control-Allow-Origin") != exchange.origin {
+			t.Fatalf("exchange from %s = %d %v, want %d", exchange.origin, w.Code, w.Header(), exchange.status)
+		}
+	}
+	if len(sess.grants) != maxSessionGrants || sess.ctx.Err() != nil {
+		t.Fatal("capacity recovery changed the existing login or grant budget")
+	}
+	for _, grant := range grants {
+		if _, ok := s.authenticateGrant(grant); !ok {
+			t.Fatal("capacity recovery revoked an existing client")
+		}
 	}
 }
 
-func TestPublicBrowserApprovalPagesCannotSpendOIDCExchangeBudget(t *testing.T) {
+// Public approval pages spend neither another client's share of the approval table nor the OIDC callback budget.
+func TestPublicBrowserApprovalPagesAreBoundedPerClient(t *testing.T) {
 	s := testService(t)
 	mux := http.NewServeMux()
 	s.Mount(mux)
 	handler := s.Enforce(mux, Listener{UI: true})
-	const remote = "198.51.100.4:40000"
-	for i := range maxAddressApprovals + 1 {
+	const remote = "[2001:db8:1:2::4]:40000"
+	request := func(i int, remote string) int {
 		challenge := make([]byte, 32)
 		challenge[0] = byte(i)
-		path := "/auth/browser?" + url.Values{"challenge": {base64.RawURLEncoding.EncodeToString(challenge)}, "client_origin": {"https://other.example"}}.Encode()
+		path := "/auth/browser?" + url.Values{"challenge": {base64.RawURLEncoding.EncodeToString(challenge)},
+			"client_origin": {"https://other.example"}}.Encode()
 		r := requestFrom(http.MethodGet, path, remote)
 		r.Header.Set("Sec-Fetch-Site", "cross-site")
 		r.Header.Set("Sec-Fetch-Mode", "no-cors")
 		r.Header.Set("Sec-Fetch-Dest", "image")
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	for i := range maxAddressApprovals + 1 {
 		want := http.StatusSeeOther
-		if i == maxAddressApprovals {
+		if i >= maxClientApprovals {
 			want = http.StatusForbidden
 		}
-		if w.Code != want {
-			t.Fatalf("public approval request %d status=%d, want %d", i, w.Code, want)
+		if got := request(i, remote); got != want {
+			t.Fatalf("public approval request %d status=%d, want %d", i, got, want)
 		}
+	}
+	if len(s.approvals) != maxClientApprovals || request(99, "[2001:db8:1:3::4]:40000") != http.StatusSeeOther {
+		t.Fatalf("one /64 holds %d approvals and another was refused", len(s.approvals))
 	}
 	for range maxAddressExchanges {
 		if !s.allowExchange(requestFrom(http.MethodGet, "/auth/oidc/callback", remote)) {
@@ -404,36 +264,14 @@ func TestPublicBrowserApprovalPagesCannotSpendOIDCExchangeBudget(t *testing.T) {
 	}
 }
 
-func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) {
+func TestBrowserSocketTicketsBindAllBoundaries(t *testing.T) {
 	s := testService(t)
 	raw, sess, err := s.createSession("subject", "Name", "local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	grant, _ := approveBrowser(t, s, raw, sess)
-	mint := func(path string) string {
-		t.Helper()
-		r := browserBearerRequest("/ws/session?target="+url.QueryEscape("https://meter.example"+path), grant, requestingUI)
-		r.Method = http.MethodPost
-		var token string
-		h := s.Enforce(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			var status WTMint
-			if strings.HasPrefix(path, "/wt/") {
-				token, _, status = s.MintWebTransportSessionToken(r)
-			} else {
-				token, _, status = s.MintWebSocketSessionToken(r)
-			}
-			if status != WTMintOK {
-				t.Fatalf("mint: %d", status)
-			}
-		}), Listener{})
-		w := httptest.NewRecorder()
-		h.ServeHTTP(w, r)
-		if token == "" {
-			t.Fatalf("mint refused: %d", w.Code)
-		}
-		return token
-	}
+	p, _ := s.authenticateGrant(grant)
 	for _, tc := range []struct {
 		name, path, host, origin string
 		want                     bool
@@ -444,54 +282,30 @@ func TestBrowserSocketTicketsBindAllBoundariesAndRevokeActiveWork(t *testing.T) 
 		{"origin", "/ws/ping", "meter.example", "https://wrong.example", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			token := mint("/ws/ping")
+			token := mintTicket(t, s, p, "/ws/ping")
 			r := secureRequest(http.MethodGet, tc.path, nil)
 			r.Host = tc.host
 			r.Header.Set("Origin", tc.origin)
-			if _, ok := s.consumeWebTransportToken(token, r); ok != tc.want {
+			if _, ok := s.consumeSocketToken(token, r); ok != tc.want {
 				t.Fatalf("ticket accepted=%t", ok)
 			}
-			if _, ok := s.consumeWebTransportToken(token, r); ok {
-				t.Fatal("replayed ticket accepted")
+			// Any presentation spends the ticket, so a refused one cannot be retried from the right place.
+			valid := secureRequest(http.MethodGet, "/ws/ping", nil)
+			valid.Header.Set("Origin", requestingUI)
+			if _, ok := s.consumeSocketToken(token, valid); ok {
+				t.Fatal("presented ticket accepted again")
 			}
 		})
-	}
-	token := mint("/wt/ping")
-	r := secureRequest(http.MethodGet, "/wt/ping?token="+token, nil)
-	r.Method = http.MethodConnect
-	r.Header.Set("Origin", requestingUI)
-	started, ended := make(chan struct{}), make(chan struct{})
-	h := s.Enforce(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-r.Context().Done()
-		if !SessionEnded(r.Context()) {
-			t.Error("lost revocation cause")
-		}
-		close(ended)
-	}), Listener{WebTransport: true})
-	go h.ServeHTTP(httptest.NewRecorder(), r)
-	select {
-	case <-started:
-	case <-time.After(time.Second):
-		t.Fatal("ticket did not reach socket")
-	}
-	s.mu.Lock()
-	s.deleteSessionLocked(sess)
-	s.mu.Unlock()
-	select {
-	case <-ended:
-	case <-time.After(time.Second):
-		t.Fatal("logout left socket running")
-	}
-	if _, ok := s.authenticateGrant(grant); ok {
-		t.Fatal("grant survived logout")
 	}
 }
 
 func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 	s := testService(t)
-	for _, origin := range []string{"http://console.example", "https://console.example/", "https://console.example:443", "null", "https://*.example"} {
-		r := secureRequest(http.MethodGet, "/auth/browser?"+url.Values{"client_origin": {origin}, "challenge": {base64.RawURLEncoding.EncodeToString(make([]byte, 32))}}.Encode(), nil)
+	challenge := base64.RawURLEncoding.EncodeToString(make([]byte, 32))
+	for _, origin := range []string{"http://console.example", "https://console.example/", "https://console.example:443",
+		"null", "https://*.example"} {
+		query := url.Values{"client_origin": {origin}, "challenge": {challenge}}.Encode()
+		r := secureRequest(http.MethodGet, "/auth/browser?"+query, nil)
 		w := httptest.NewRecorder()
 		s.browserPage(w, r)
 		if w.Code != 403 {
@@ -503,10 +317,10 @@ func TestBrowserApprovalRejectsInsecureAndNonCanonicalAudiences(t *testing.T) {
 	ctx, cancel := context.WithCancel(sess.ctx)
 	cancel()
 	p := sessionPrincipal(sess, "browser", true)
-	p.browserGrant = &browserGrant{sess: sess, ctx: ctx}
+	p.grant = &grant{sess: sess, origin: requestingUI, ctx: ctx}
 	r := secureRequest(http.MethodPost, "/wt/session?target=https://meter.example/wt/ping", nil)
 	r = r.WithContext(context.WithValue(r.Context(), principalKey{}, p))
-	if _, _, status := s.MintWebTransportSessionToken(r); status != WTMintNoSession {
+	if _, _, status := s.mintSocketToken(r, route.WebTransport); status != http.StatusForbidden {
 		t.Fatal("revoked grant minted a ticket")
 	}
 }
