@@ -118,6 +118,7 @@
     const metrics = entries(lane);
     if (!metrics.length) return;
     if (event.key === "Escape") {
+      if (hover) event.preventDefault();
       hover = null;
       return;
     }

@@ -92,8 +92,12 @@ function tooltipAction(node: HTMLElement, initial: string) {
     for (const [target, type, listener, capture] of dismissListeners)
       target.removeEventListener(type, listener as EventListener, capture);
   }
-  function onKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && bubble) hide();
+  // An open tip takes Escape, so it never reaches page shortcuts such as stopping a run.
+  function onEscape(event: KeyboardEvent) {
+    if (event.key !== "Escape") return;
+    hide();
+    event.preventDefault();
+    event.stopPropagation();
   }
   function onPointerEnter(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
@@ -140,6 +144,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
     [document, "visibilitychange", onVisibilityDismiss, false],
     [document, "toggle", onPopoverToggle, true],
     [document, "pointerdown", onDocumentPointerDown, true],
+    [document, "keydown", onEscape, true],
   ] as const;
   const nodeListeners = [
     ["pointerdown", onPointerDown],
@@ -148,7 +153,6 @@ function tooltipAction(node: HTMLElement, initial: string) {
     ["focusin", onFocus],
     ["focusout", hide],
     ["pointerup", onPointerUp],
-    ["keydown", onKeydown],
     ["click", onClick],
   ] as const;
   for (const [type, listener] of nodeListeners)
