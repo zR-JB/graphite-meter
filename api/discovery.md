@@ -11,7 +11,7 @@ Both clients cap discovery, probe, upload-session, native approval and browser W
 
 | Field | Limit |
 | --- | --- |
-| Throughput / latency endpoints | ≤ 32 each; `transport` required on every target (never inferred from its absence), from the enumerations in [preflight.schema.json](preflight.schema.json). |
+| Throughput / latency endpoints | ≤ 32 each, counted as sent (an input bound, before any target is skipped); `transport` (and a throughput target's `protocol`) required and nonempty on every target, never inferred from its absence. A value outside the enumerations in [preflight.schema.json](preflight.schema.json) skips that target, so newer servers stay usable ([preflight.forward.golden.json](preflight.forward.golden.json)). |
 | Endpoint `baseUrl` | `.` (the origin that served discovery) or an HTTP(S) origin ≤ 2048 bytes, no credentials, path, query or fragment. |
 | Server name, location, engine version, generation | ≤ 256 UTF-8 bytes; generation nonempty. |
 | Probe evidence | Published IP-version, source and negotiated-protocol values; IP text 1–64 bytes; optional occupancy = integer active ≥ 0 and maximum > 0. |
