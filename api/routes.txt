@@ -15,7 +15,7 @@
 # as its fixture:
 #   Go — go/internal/route/catalog_test.go (the catalog the server mounts from)
 #   Go — go/internal/auth/routes_test.go (credential and CORS boundaries)
-#   TS — client/src/lib/runner/real/routes.test.ts (backendPure.ts ROUTES)
+#   TS — client/src/lib/runner/real/routes.test.ts (runner/paths.ts ROUTES)
 #
 preflight | /preflight | http
 probe | /probe | http
