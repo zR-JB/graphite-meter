@@ -4,6 +4,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
 use graphite_meter_core::{
+    approval,
     catalog::{ServerCatalog, ServerEntry},
     discovery::{Preflight, Probe, Protocol, ProtocolNegotiated},
     origin::{canonical_origin, split_url, target_origin},
@@ -21,7 +22,6 @@ use hyper::{
 };
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use serde::de::DeserializeOwned;
-use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -481,12 +481,11 @@ impl Http {
         getrandom::fill(&mut entropy).map_err(|_| "secure randomness unavailable")?;
         let verifier = zeroize::Zeroizing::new(URL_SAFE_NO_PAD.encode(entropy));
         zeroize::Zeroize::zeroize(&mut entropy);
-        let hash = Sha256::digest(verifier.as_bytes());
-        let challenge = URL_SAFE_NO_PAD.encode(hash);
+        let challenge = approval::challenge(&verifier);
         let origin = destination_origin(&login)?;
         Ok(PendingAuthorization {
             browser_url: format!("{origin}/auth/cli?challenge={challenge}"),
-            code: approval_code(&hash[..5]),
+            code: approval::verification_code(&challenge).expect("own challenge"),
             deadline: tokio::time::Instant::now() + AUTHORIZATION_TIMEOUT,
             source,
             verifier,
@@ -570,14 +569,6 @@ fn validated_login(source: &str, raw: &str) -> Result<String> {
         return Err("server returned an invalid authentication URL".into());
     }
     Ok(raw.to_owned())
-}
-fn approval_code(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let bits = bytes.iter().fold(0_u64, |bits, byte| (bits << 8) | u64::from(*byte));
-    (0..8)
-        .rev()
-        .map(|index| ALPHABET[((bits >> (index * 5)) & 31) as usize] as char)
-        .collect()
 }
 
 #[cfg(test)]
@@ -694,8 +685,6 @@ mod tests {
                 .begin_authorization("https://meter.example", "https://meter.example/login")
                 .is_err()
         );
-        assert_eq!(approval_code(&[0, 0, 0, 0, 0]), "AAAAAAAA");
-        assert_eq!(approval_code(&[255, 255, 255, 255, 255]), "77777777");
     }
 
     #[test]

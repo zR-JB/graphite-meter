@@ -572,7 +572,6 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
- "sha2",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
@@ -584,8 +583,10 @@ dependencies = [
 name = "graphite-meter-core"
 version = "0.8.6"
 dependencies = [
+ "base64",
  "serde",
  "serde_json",
+ "sha2",
  "socket2",
 ]
 

@@ -1,14 +1,11 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use graphite_meter_core::approval::challenge;
 use graphite_meter_server::auth::{
     ApprovalError, ApprovalKind, Exchange, ExchangeError, SessionStore, valid_challenge,
 };
-use sha2::{Digest, Sha256};
 use std::sync::{Arc, Barrier};
 
 const AUDIENCE: &str = "https://client.example";
-fn challenge(verifier: &str) -> String {
-    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
-}
 
 #[test]
 fn cli_exchange_requires_approval_is_single_use_and_keeps_parent_identity() {

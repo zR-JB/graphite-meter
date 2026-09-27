@@ -3,11 +3,7 @@ use super::{
     grant::{AuthLease, GrantError, MAX_SESSION_GRANTS, secure_browser_origin},
     session::{SessionLease, SessionStore, State},
 };
-use base64::{
-    Engine as _, alphabet,
-    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD},
-};
-use sha2::{Digest, Sha256};
+use graphite_meter_core::approval;
 use std::{net::IpAddr, time::Duration};
 use tokio::time::Instant;
 
@@ -15,12 +11,6 @@ const APPROVAL_LIFETIME: Duration = Duration::from_secs(120);
 const MAX_APPROVALS: usize = 256;
 const MAX_SESSION_APPROVALS: usize = 8;
 const MAX_CLIENT_APPROVALS: usize = 8;
-const CHALLENGE_BASE64: GeneralPurpose = GeneralPurpose::new(
-    &alphabet::URL_SAFE,
-    GeneralPurposeConfig::new()
-        .with_decode_padding_mode(DecodePaddingMode::RequireNone)
-        .with_decode_allow_trailing_bits(true),
-);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ApprovalKind {
@@ -115,7 +105,7 @@ impl SessionStore {
         challenge: &str,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
-        let code = verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
+        let code = approval::verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
         let mut state = self.0.lock().expect("session mutex poisoned");
         let now = Instant::now();
         state.sweep(now);
@@ -161,7 +151,7 @@ impl SessionStore {
         session: Option<&SessionLease>,
         client: IpAddr,
     ) -> Result<ApprovalView, ApprovalError> {
-        let code = verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
+        let code = approval::verification_code(challenge).ok_or(ApprovalError::InvalidChallenge)?;
         if !secure_browser_origin(origin) {
             return Err(ApprovalError::InvalidOrigin);
         }
@@ -267,7 +257,7 @@ impl SessionStore {
     }
 
     fn exchange_at(&self, verifier: &str, origin: Option<&str>, now: Instant) -> Result<Exchange, ExchangeError> {
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let challenge = approval::challenge(verifier);
         let mut state = self.0.lock().expect("session mutex poisoned");
         let Some(approval) = state.approvals.get(&challenge) else {
             return Ok(Exchange::Pending);
@@ -304,36 +294,7 @@ impl SessionStore {
 }
 
 pub fn valid_challenge(challenge: &str) -> bool {
-    challenge_bytes(challenge).is_some()
-}
-
-fn challenge_bytes(challenge: &str) -> Option<[u8; 32]> {
-    if challenge.len() > 64 {
-        return None;
-    }
-    let normalized: Vec<_> = challenge
-        .bytes()
-        .filter(|byte| !matches!(byte, b'\r' | b'\n'))
-        .collect();
-    let mut bytes = [0; 32];
-    if CHALLENGE_BASE64.decode_slice(normalized, &mut bytes).ok()? != 32 {
-        return None;
-    }
-    Some(bytes)
-}
-
-fn verification_code(challenge: &str) -> Option<String> {
-    let bytes = challenge_bytes(challenge)?;
-    let value = bytes[..5]
-        .iter()
-        .fold(0u64, |value, byte| (value << 8) | u64::from(*byte));
-    const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    Some(
-        (0..8)
-            .rev()
-            .map(|position| ALPHABET[((value >> (position * 5)) & 31) as usize] as char)
-            .collect(),
-    )
+    approval::verification_code(challenge).is_some()
 }
 
 #[cfg(test)]
@@ -344,7 +305,7 @@ mod tests {
     fn reentry_keeps_original_deadline_and_revocation_removes_attached_approvals() {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"));
+        let challenge = approval::challenge("verifier");
         store
             .begin_browser_approval(&challenge, "https://client.example", None, "192.0.2.1".parse().unwrap())
             .unwrap();
@@ -367,7 +328,7 @@ mod tests {
     fn expired_approval_cannot_be_marked_approved() {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"));
+        let challenge = approval::challenge("verifier");
         store
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
             .unwrap();
@@ -383,7 +344,7 @@ mod tests {
         let store = SessionStore::new();
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let verifier = "v".repeat(32);
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+        let challenge = approval::challenge(&verifier);
         store
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
             .unwrap();
