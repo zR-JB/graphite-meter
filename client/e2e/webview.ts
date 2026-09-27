@@ -389,7 +389,9 @@ export class Page {
     const log = [...this.errors, ...this.console].join("\n");
     await Bun.write(`${stem}.txt`, `${this.raw.url}\n\n${log}\n\n${dom}`);
   }
-  close() {
+  /** Views of one file share storage, so a closed view's app must not outlive its test. */
+  async close() {
+    await this.raw.navigate("about:blank").catch(() => {});
     this.raw.close();
   }
 }
@@ -461,7 +463,7 @@ export function test(name: string, fn: (page: Page) => Promise<unknown>) {
       await page.artifact(name).catch(() => {});
       throw error;
     } finally {
-      page.close();
+      await page.close();
     }
   });
 }
