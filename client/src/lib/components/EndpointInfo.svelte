@@ -295,9 +295,10 @@
   </div>
 
   <p class="actions">
-    <button class="btn" type="button" onclick={copyReport}
-      >{copied ? "Copied" : "Copy diagnostic report"}</button
-    >
+    <button class="btn copy" type="button" onclick={copyReport}>
+      <span class:hidden={copied}>Copy diagnostic report</span>
+      <span class:hidden={!copied} aria-hidden={!copied}>Copied</span>
+    </button>
     <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
       >About &amp; legal</button
     >
@@ -305,6 +306,16 @@
 </section>
 
 <style>
+  /* Both labels share one cell, so the button keeps its width. */
+  .copy {
+    display: inline-grid;
+  }
+  .copy > span {
+    grid-area: 1 / 1;
+  }
+  .copy > .hidden {
+    visibility: hidden;
+  }
   .infra {
     display: grid;
     gap: var(--space-4);
