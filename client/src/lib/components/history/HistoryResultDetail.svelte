@@ -193,7 +193,7 @@
   aria-labelledby={`result-${record.id}-title`}
   tabindex="-1"
 >
-  <header class="surface-head detail-head">
+  <header class="sheet-head detail-head">
     <button
       class="btn btn-quiet back"
       type="button"
@@ -236,7 +236,7 @@
     </dl>
     <div class="head-actions">
       <button
-        class="btn btn-icon btn-inset"
+        class="btn btn-icon btn-quiet"
         type="button"
         aria-label="Delete this result"
         {@attach tooltip(() => "Delete this result")}
@@ -245,7 +245,7 @@
         <Icon name="trash" />
       </button>
       <button
-        class="btn btn-icon btn-inset close-detail"
+        class="btn btn-icon btn-quiet close-detail"
         type="button"
         aria-label="Close result"
         {@attach tooltip(() => "Close (Esc)")}
@@ -395,13 +395,18 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    background: var(--surface-1);
     container: detail / inline-size;
   }
+  /* Inside its pane's scroller, the head shares the pane's gutter. */
   .detail-head {
     position: sticky;
     top: 0;
     z-index: 2;
+    overflow: visible;
+    scrollbar-gutter: auto;
+    padding-inline-end: calc(var(--panel-pad) - 12px);
+    background: var(--bg);
+    background-attachment: fixed;
   }
   .title {
     display: flex;
@@ -415,11 +420,6 @@
     font: var(--w-strong) var(--type-md) / 1.3 var(--font-display);
     letter-spacing: var(--track-tight);
   }
-  .head-actions {
-    display: flex;
-    gap: 6px;
-    margin-left: auto;
-  }
   .back {
     display: none;
     margin-left: calc(-1 * var(--space-2));
@@ -427,7 +427,7 @@
   .detail-body {
     display: grid;
     gap: var(--space-5);
-    padding: var(--space-4);
+    padding: var(--space-1) var(--panel-pad) var(--space-6);
   }
   .detail-body > :global(.result-summary) {
     max-width: none;
@@ -442,15 +442,9 @@
   .latency {
     grid-column: 1 / -1;
   }
-  .source,
-  .aside {
-    color: var(--text-soft);
-  }
   .source {
+    color: var(--text-soft);
     font-size: var(--type-sm);
-  }
-  .aside {
-    margin-left: var(--space-2);
   }
   .status {
     display: flex;
@@ -473,11 +467,6 @@
     }
     .head-facts {
       order: 4;
-    }
-  }
-  @container detail (max-width: 460px) {
-    .detail-body {
-      padding-inline: var(--space-3);
     }
   }
 </style>

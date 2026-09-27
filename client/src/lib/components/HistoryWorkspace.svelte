@@ -412,12 +412,12 @@
 </script>
 
 <section
-  class="history-workspace surface enter"
+  class="history-workspace enter"
   bind:this={workspace}
   aria-labelledby="history-title"
   tabindex="-1"
 >
-  <header class="surface-head history-head">
+  <header class="sheet-head history-head">
     <h1 id="history-title">History</h1>
     {#if records.length}
       <dl class="head-facts">
@@ -458,7 +458,7 @@
         </MoreMenu>
       {/if}
       <button
-        class="btn btn-icon btn-inset close-history"
+        class="btn btn-icon btn-quiet close-history"
         type="button"
         aria-label="Close History"
         onclick={onClose}
@@ -739,33 +739,10 @@
     overflow: hidden;
     container: history / inline-size;
   }
-  /* One head recipe for History and its detail: title, labelled facts, then actions. */
-  .history-workspace :global(:is(.history-head, .detail-head)) {
-    display: flex;
-    flex: none;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-1) var(--space-4);
-    min-height: 56px;
-    padding: var(--space-2) var(--space-4);
-  }
-  .history-workspace :global(.head-facts) {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 2px var(--space-4);
-    min-width: 0;
-    font-size: var(--type-sm);
-    line-height: 1.4;
-  }
-  .history-workspace :global(.head-facts > div) {
-    display: flex;
-    gap: 6px;
-  }
-  .history-workspace :global(.head-facts dt) {
-    color: var(--text-soft);
-  }
-  .history-workspace :global(.head-facts dd) {
-    font-weight: var(--w-normal);
+  /* Both panes scroll beneath the head, so its rule always shows. */
+  .history-head {
+    border-bottom-color: var(--border);
+    animation: none;
   }
   .history-workspace :global(.outcome) {
     display: inline-flex;
@@ -775,20 +752,10 @@
     font-size: var(--type-sm);
     white-space: nowrap;
   }
-  h1 {
-    font: var(--w-strong) var(--type-lg) / 1.2 var(--font-display);
-    letter-spacing: var(--track-tight);
-  }
-  .head-actions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: auto;
-  }
   .notices {
     display: grid;
     gap: var(--space-1);
-    padding: var(--space-3) var(--space-4) 0;
+    padding: var(--space-3) var(--panel-pad) 0;
   }
   .notice {
     align-items: center;
@@ -807,9 +774,12 @@
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
   }
-  .detail-pane {
-    background: var(--surface-1);
+  @supports (animation-timeline: scroll()) {
+    .detail-pane {
+      scroll-timeline: --sheet block;
+    }
   }
   .has-detail .history-list {
     visibility: hidden;
@@ -835,7 +805,7 @@
       minmax(8.5rem, 1.2fr) auto
       repeat(var(--metric-columns), minmax(6rem, 1fr));
     row-gap: var(--space-5);
-    padding: 0 var(--space-4) var(--space-4);
+    padding: 0 var(--panel-pad) var(--space-6);
   }
   .column-head,
   .day,
@@ -851,19 +821,22 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    margin: 0 calc(-1 * var(--space-4)) calc(-1 * var(--space-3));
-    padding: var(--space-2) var(--space-4) 0;
-    background: var(--surface-1);
+    margin: 0 calc(-1 * var(--panel-pad)) calc(-1 * var(--space-3));
+    padding: var(--space-3) var(--panel-pad) 0;
+    background: var(--bg);
+    background-attachment: fixed;
   }
   .column-head button {
     position: relative;
     display: flex;
+    flex-wrap: wrap;
+    align-content: flex-start;
     align-items: baseline;
     justify-content: flex-end;
-    gap: 5px;
+    gap: 0 5px;
     min-width: 0;
     min-height: var(--control-h);
-    padding: 7px var(--space-3);
+    padding: 6px var(--space-3);
     border-radius: var(--r-well);
     color: var(--text-muted);
     font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
@@ -886,7 +859,7 @@
   .column-head i {
     position: absolute;
     right: 3px;
-    top: calc(50% - 4px);
+    top: 12px;
     width: 5px;
     height: 5px;
     border: solid var(--brand-strong);
@@ -919,8 +892,10 @@
     height: var(--icon-sm);
   }
   .unit {
+    flex-basis: 100%;
     color: var(--text-soft);
-    font: var(--w-strong) var(--type-xs) var(--font-mono);
+    font: var(--w-normal) var(--type-2xs) / 1.4 var(--font-mono);
+    text-align: end;
   }
   .day > h3 {
     grid-column: 1 / -1;
@@ -989,7 +964,7 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
-    padding: 0 var(--space-4) var(--space-5);
+    padding: 0 var(--panel-pad) var(--space-5);
     color: var(--text-soft);
     font-size: var(--type-sm);
   }
@@ -1002,11 +977,6 @@
     .history-table {
       grid-template-columns: repeat(var(--metric-columns), minmax(0, 1fr));
       row-gap: var(--space-4);
-      padding-inline: var(--space-3);
-    }
-    .column-head {
-      margin: 0 calc(-1 * var(--space-3)) calc(-1 * var(--space-2));
-      padding-inline: var(--space-3);
     }
     .column-head > button:first-child,
     .outcome-head {
@@ -1016,15 +986,8 @@
       display: none;
     }
     .column-head button {
-      flex-wrap: wrap;
-      align-content: center;
-      gap: 0 4px;
-      padding: 6px var(--space-2);
+      padding-inline: var(--space-2);
       font-size: var(--type-xs);
-    }
-    .column-head button .unit {
-      flex-basis: 100%;
-      text-align: end;
     }
     .result-row {
       position: relative;
@@ -1050,12 +1013,6 @@
     }
     .history-workspace:has(.has-detail) .history-head .head-facts {
       display: none;
-    }
-  }
-  @container history (max-width: 560px) {
-    .history-workspace :global(:is(.history-head, .detail-head)),
-    .notices {
-      padding-inline: var(--space-3);
     }
   }
 </style>

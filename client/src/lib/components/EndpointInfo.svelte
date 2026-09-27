@@ -90,19 +90,16 @@
     };
   });
 
-  function capabilities(role: PathRole) {
+  function capabilities(role: PathRole): string[] | string {
     const advertised = advertisedServerCapabilities(discovery, role);
-    if (!advertised) return { value: "Checking server" };
+    if (!advertised) return "Checking server";
     const values = advertised.transports.map((value) =>
       transportLabel(value, role),
     );
-    if (!values.length) return { value: "None advertised" };
-    return {
-      value: values.join(", "),
-      aside: advertised.browserBlocked
-        ? "Some clear origins blocked by this page"
-        : undefined,
-    };
+    if (!values.length) return "None advertised";
+    return advertised.browserBlocked
+      ? [...values, "Some clear origins blocked by this page"]
+      : values;
   }
   const unreachable = $derived(
     !failures.length && selectedServer
@@ -146,6 +143,11 @@
       throughputTransport,
     ),
   );
+
+  const streams = $derived.by(() => {
+    const [value, aside] = transferStreams.split(" · ");
+    return { value, aside };
+  });
 
   function diagnosticReport() {
     return JSON.stringify(
@@ -202,21 +204,20 @@
   </div>
 {/snippet}
 
+{#snippet list(label: string, items: string[] | string)}
+  <div>
+    <dt>{label}</dt>
+    <dd class="list">
+      {#each typeof items === "string" ? [items] : items as item (item)}<span
+          >{item}</span
+        >{/each}
+    </dd>
+  </div>
+{/snippet}
+
 <section class="infra">
   <div class="group server-card">
-    <div class="group-head">
-      <h3>
-        {pathMode === "live" ? "Selected server" : "Tested server"}
-      </h3>
-      {#if availableServers.length > 1}
-        <ServerScope
-          servers={availableServers}
-          value={selectedServer?.id ?? ""}
-          label="Inspect server"
-          onchange={(id) => (inspectedServer = id)}
-        />
-      {/if}
-    </div>
+    <h3>{pathMode === "live" ? "Selected server" : "Tested server"}</h3>
     {#each failures as failure}
       <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
     {:else}
@@ -225,6 +226,19 @@
         </p>{/if}
     {/each}
     <dl class="kv" data-tip-group {@attach tipGroup}>
+      {#if availableServers.length > 1}
+        <div>
+          <dt>Server</dt>
+          <dd>
+            <ServerScope
+              servers={availableServers}
+              value={selectedServer?.id ?? ""}
+              label="Inspect server"
+              onchange={(id) => (inspectedServer = id)}
+            />
+          </dd>
+        </div>
+      {/if}
       {@render row("Name", server?.name ?? "Checking server")}
       {#if selectedServer}{@render row("Address", selectedServer.url)}{/if}
       {#if server?.location}{@render row("Location", server.location)}{/if}
@@ -256,7 +270,7 @@
                   ? "Not selected"
                   : "Not measured"}</span
             >
-            {#if inTest}<span class="path-status" data-tone={status.tone}
+            {#if inTest}<span class="path-status"
                 >{#if status.tone !== "neutral"}<span
                     class="status-dot inline"
                     data-tone={status.tone}
@@ -276,7 +290,7 @@
         JARGON.pathEvidence,
         true,
       )}
-      {@render row("Streams", transferStreams, JARGON.forcedStreams)}
+      {@render row("Streams", streams, JARGON.forcedStreams)}
       {@render row("Upload feed", uploadProgressPath, JARGON.uploadFeed)}
       {#if latencyRequested}
         {@render row(
@@ -294,14 +308,16 @@
   <div class="group">
     <h3>Server supports</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row(
+      {@render list(
         "HTTP",
         httpPaths === null
           ? "Checking server"
-          : httpPaths.join(", ") || "None advertised",
+          : httpPaths.length
+            ? httpPaths
+            : "None advertised",
       )}
-      {@render row("Throughput", capabilities("throughput"))}
-      {@render row("Latency", capabilities("latency"))}
+      {@render list("Throughput", capabilities("throughput"))}
+      {@render list("Latency", capabilities("latency"))}
     </dl>
   </div>
 
@@ -324,59 +340,50 @@
     </dl>
   </div>
 
-  <p class="actions">
-    <button class="btn copy" type="button" onclick={copyReport}>
+  <div class="kv">
+    <button class="link-row copy" type="button" onclick={copyReport}>
       <span class:hidden={copied}>Copy diagnostic report</span>
-      <span class:hidden={!copied} aria-hidden={!copied}
-        ><Icon name="check" />Copied</span
-      >
+      <span class:hidden={!copied} aria-hidden={!copied}>Copied</span>
+      <Icon name={copied ? "check" : "copy"} />
     </button>
-    <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
-      >About &amp; legal</button
+    <button class="link-row" type="button" onclick={onOpenLegal}
+      >About &amp; legal<Icon name="chevron" /></button
     >
-  </p>
+  </div>
 </section>
 
 <style>
-  /* Both labels share one cell, so the button keeps its width. */
-  .copy {
-    display: inline-grid;
-  }
-  .copy > span {
-    display: inline-flex;
-    grid-area: 1 / 1;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-  }
-  .copy > .hidden {
-    visibility: hidden;
-  }
   .infra {
     display: grid;
     gap: var(--space-5);
   }
   .path dd {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-3);
+    display: grid;
+    gap: 2px;
   }
   .path-status {
     display: inline-flex;
-    flex: none;
     align-items: center;
     gap: 6px;
     color: var(--text-soft);
-    white-space: nowrap;
+    font: var(--role-caption);
   }
-  .aside {
-    margin-left: var(--space-2);
-    color: var(--text-soft);
+  .list {
+    display: grid;
   }
-  .actions {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-2);
+  .kv button.link-row {
+    min-height: var(--row-h);
+    text-align: start;
+  }
+  /* Both labels share one cell, so the row never reflows. */
+  .copy {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+  .copy > span {
+    grid-area: 1 / 1;
+  }
+  .copy > .hidden {
+    visibility: hidden;
   }
 </style>

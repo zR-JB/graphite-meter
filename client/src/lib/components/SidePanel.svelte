@@ -119,7 +119,7 @@
     {open}
     modal={false}
     onCancel={onClose}
-    class="panel {side}"
+    class="panel sheet {side}"
     label={title}
     attach={(node) => {
       panelEl = node;
@@ -142,20 +142,22 @@
     <div class="sheet-handle" aria-hidden="true">
       <span class="sheet-grip" aria-hidden="true"></span>
     </div>
-    <header class="panel-head">
+    <header class="sheet-head">
       <!-- svelte-ignore a11y_autofocus -->
       <h2 tabindex="-1" autofocus>{title}</h2>
-      <button
-        class="btn btn-icon btn-quiet"
-        aria-label={`Close ${title}`}
-        {@attach tooltip(() => "Close (Esc)")}
-        onclick={onClose}
-      >
-        <Icon name="close" />
-      </button>
+      <div class="head-actions">
+        <button
+          class="btn btn-icon btn-quiet"
+          aria-label={`Close ${title}`}
+          {@attach tooltip(() => "Close (Esc)")}
+          onclick={onClose}
+        >
+          <Icon name="close" />
+        </button>
+      </div>
     </header>
 
-    <div class="panel-body">{@render children()}</div>
+    <div class="panel-body sheet-body">{@render children()}</div>
     <!-- After the content, so Tab from the title reaches the controls first. -->
     {#if docked}
       <div
@@ -190,7 +192,6 @@
     border-inline-start-width: var(--hairline);
     background: var(--bg);
     color: var(--text);
-    timeline-scope: --panel-scroll;
   }
   .panel-layer > :global(dialog.panel.left) {
     border-inline-width: 0 var(--hairline);
@@ -313,7 +314,7 @@
       bottom: 0;
       overflow-y: auto;
     }
-    .panel-layer:not(.docked) .panel-head {
+    .panel-layer:not(.docked) .sheet-head {
       position: sticky;
       z-index: 1;
       top: 0;
@@ -325,50 +326,8 @@
     }
   }
 
-  /* The head reserves the body's scrollbar gutter, so the close mark ends on the lists' edge. */
-  .panel-head {
-    display: flex;
-    flex: none;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    min-width: 0;
-    min-height: 56px;
-    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
-      var(--panel-text);
-    overflow: hidden;
-    scrollbar-gutter: stable;
-    border-bottom: var(--hairline) solid transparent;
-  }
-  h2 {
-    min-width: 0;
-    font: var(--role-panel-title);
-    letter-spacing: var(--track-tight);
-    overflow-wrap: anywhere;
-  }
   .panel-body {
     flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    padding: var(--space-1) var(--panel-pad) var(--space-6);
-    overflow: hidden auto;
-    overscroll-behavior: contain;
     touch-action: pan-y;
-    scrollbar-gutter: stable;
-  }
-  @supports (animation-timeline: scroll()) {
-    .panel-body {
-      scroll-timeline: --panel-scroll block;
-    }
-    .panel-head {
-      animation: rule-in linear both;
-      animation-timeline: --panel-scroll;
-      animation-range: 0 var(--space-3);
-    }
-  }
-  @keyframes rule-in {
-    to {
-      border-bottom-color: var(--border);
-    }
   }
 </style>

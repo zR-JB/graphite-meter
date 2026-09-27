@@ -44,31 +44,31 @@
 <Dialog
   {open}
   onCancel={onClose}
-  class="float legal-dialog"
+  class="float sheet legal-dialog"
   labelledby="legal-dialog-title"
   lightDismiss
 >
-  <header class="surface-head legal-head">
+  <header class="sheet-head">
     <h2 id="legal-dialog-title">About &amp; legal</h2>
-    <button
-      class="btn btn-icon btn-inset"
-      type="button"
-      aria-label="Close"
-      {@attach tooltip(() => "Close (Esc)")}
-      onclick={onClose}><Icon name="close" /></button
-    >
+    <div class="head-actions">
+      <button
+        class="btn btn-icon btn-quiet"
+        type="button"
+        aria-label="Close"
+        {@attach tooltip(() => "Close (Esc)")}
+        onclick={onClose}><Icon name="close" /></button
+      >
+    </div>
   </header>
 
-  <div class="legal-body">
+  <div class="sheet-body legal-body">
     {#if loadState === "loading"}
       <p class="legal-status" role="status">Loading legal notices…</p>
     {:else if loadState === "error"}
       <div class="legal-status" role="alert">
         <p>Unable to load legal notices.</p>
-        <button
-          type="button"
-          class="btn btn-inset"
-          onclick={() => load(retryLegal)}>Retry</button
+        <button type="button" class="btn" onclick={() => load(retryLegal)}
+          >Retry</button
         >
       </div>
     {:else if data}
@@ -94,33 +94,22 @@
             </dd>
           </div>
         </dl>
-        <p class="legal-links">
-          <a
-            class="btn"
-            href={data.sourceURL}
-            target="_blank"
-            rel="noopener noreferrer">Source code</a
-          >
-          <a
-            class="btn"
-            href={data.licenseURL}
-            target="_blank"
-            rel="noopener noreferrer">Project license</a
-          >
-          <a
-            class="btn"
-            href={data.noticesURL}
-            target="_blank"
-            rel="noopener noreferrer">Third-party notices</a
-          >
-        </p>
+        <div class="kv">
+          {#each [["Source code", data.sourceURL], ["Project license", data.licenseURL], ["Third-party notices", data.noticesURL]] as [label, href] (label)}
+            <a class="link-row" {href} target="_blank" rel="noopener noreferrer"
+              >{label}<Icon name="external" /></a
+            >
+          {/each}
+        </div>
       </section>
 
       <section class="third-party" aria-labelledby="third-party-title">
-        <h3 id="third-party-title">Third-party software</h3>
+        <div class="group-head">
+          <h3 id="third-party-title">Third-party software</h3>
+        </div>
         {#each ecosystems as [ecosystem, components] (ecosystem)}
           <section class="group" aria-label={ECOSYSTEM[ecosystem] ?? ecosystem}>
-            <h3>{ECOSYSTEM[ecosystem] ?? ecosystem}</h3>
+            <h4 class="list-label">{ECOSYSTEM[ecosystem] ?? ecosystem}</h4>
             <dl class="kv components">
               {#each components as component (component.name + component.version)}
                 <div class="component">
@@ -153,40 +142,26 @@
   :global(dialog.legal-dialog) {
     --dialog-width: 880px;
     --dialog-height: min(86svh, 760px);
-  }
-  .legal-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    min-height: 56px;
-    padding: var(--space-2) var(--space-4);
-  }
-  h2 {
-    font: var(--w-strong) var(--type-lg) var(--font-display);
-    letter-spacing: var(--track-tight);
+    --panel-pad: var(--space-5);
   }
   .legal-body {
     display: grid;
     align-content: start;
-    gap: var(--space-5);
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    padding: var(--space-5);
+    gap: var(--space-6);
   }
-  .legal-links {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+  .group > .kv + .kv {
+    margin-top: var(--space-2);
   }
   .third-party {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-4);
   }
-  .third-party > h3 {
-    padding-inline: var(--space-3);
-    font: var(--w-strong) var(--type-md) / 1.3 var(--font-sans);
+  .third-party > .group-head {
+    padding-inline: var(--row-inset);
+  }
+  /* Component names, not field labels: the column fits a module path. */
+  .components {
+    --kv-label: 16rem;
   }
   .components dd {
     display: grid;
@@ -195,23 +170,28 @@
   }
   .components a {
     width: fit-content;
+    color: var(--text-muted);
+    text-decoration-color: transparent;
     overflow-wrap: anywhere;
   }
-  .aside {
-    margin-left: var(--space-2);
-    color: var(--text-soft);
+  @media (hover: hover) {
+    .components a:hover {
+      color: var(--brand-strong);
+      text-decoration-color: currentColor;
+    }
   }
   .legal-status {
     display: grid;
     place-items: start;
     gap: var(--space-3);
     min-height: 10rem;
+    padding-inline: var(--row-inset);
     color: var(--text-muted);
-    font-size: var(--type-sm);
+    font: var(--role-row);
   }
   @media (max-width: 759px) {
-    .legal-body {
-      padding: var(--space-3);
+    :global(dialog.legal-dialog) {
+      --panel-pad: var(--space-3);
     }
     .components dd {
       grid-template-columns: auto minmax(0, 1fr);
@@ -219,9 +199,5 @@
     .components a {
       grid-column: 1 / -1;
     }
-  }
-  /* Component names, not field labels: the column fits a module path. */
-  .components {
-    --kv-label: 16rem;
   }
 </style>

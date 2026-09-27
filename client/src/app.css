@@ -173,7 +173,6 @@
   --kv-label: 6.75rem;
   --panel-pad: var(--space-4);
   --row-inset: var(--space-3);
-  --panel-text: calc(var(--panel-pad) + var(--row-inset));
   --check: 14px;
   --hit: 44px;
   --icon: 16px;
@@ -633,13 +632,17 @@
     background: var(--err-soft) padding-box;
     color: var(--text);
   }
-  .btn-quiet {
+  :is(.btn-quiet, .head-actions .btn) {
     --btn-line: transparent;
     background: transparent;
     box-shadow: none;
   }
+  .head-actions .btn[aria-expanded="true"] {
+    background: var(--hover-wash) padding-box;
+  }
   @media (hover: hover) {
-    .btn-quiet:hover:not(:disabled) {
+    :is(.btn-quiet, .head-actions .btn):hover:not(:disabled) {
+      --btn-line: transparent;
       background: var(--hover-wash) padding-box;
     }
   }
@@ -715,10 +718,73 @@
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
   }
-  .surface-head {
-    border-bottom: var(--hairline) solid var(--border);
-    background: var(--sheen), var(--surface-1);
-    box-shadow: var(--elev-tile);
+
+  .sheet {
+    timeline-scope: --sheet;
+  }
+  /* The head reserves its scroller's gutter, so the last action ends on the lists' edge. */
+  .sheet-head {
+    display: flex;
+    flex: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-4);
+    min-width: 0;
+    min-height: 56px;
+    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
+      calc(var(--panel-pad) + var(--row-inset));
+    overflow: hidden;
+    scrollbar-gutter: stable;
+    border-bottom: var(--hairline) solid transparent;
+  }
+  .sheet-head > :is(h1, h2) {
+    min-width: 0;
+    font: var(--role-panel-title);
+    letter-spacing: var(--track-tight);
+    overflow-wrap: anywhere;
+  }
+  .head-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin-inline-start: auto;
+  }
+  .head-facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px var(--space-4);
+    min-width: 0;
+    font: var(--role-label);
+  }
+  .head-facts > div {
+    display: flex;
+    gap: 6px;
+  }
+  .head-facts dt {
+    color: var(--text-soft);
+  }
+  .sheet-body {
+    min-width: 0;
+    min-height: 0;
+    padding: var(--space-1) var(--panel-pad) var(--space-6);
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  @supports (animation-timeline: scroll()) {
+    .sheet-body {
+      scroll-timeline: --sheet block;
+    }
+    .sheet-head {
+      animation: sheet-rule linear both;
+      animation-timeline: --sheet;
+      animation-range: 0 var(--space-3);
+    }
+  }
+  @keyframes sheet-rule {
+    to {
+      border-bottom-color: var(--border);
+    }
   }
 
   .tone-icon {
@@ -776,6 +842,10 @@
     flex: 1 1 10rem;
     min-width: 0;
     overflow-wrap: anywhere;
+  }
+  .kv dd .aside {
+    margin-inline-start: var(--space-2);
+    color: var(--text-soft);
   }
 
   .kv.choices,
@@ -1003,6 +1073,9 @@
   dialog.float {
     background: var(--surface-1);
     backdrop-filter: none;
+  }
+  dialog.float.sheet {
+    background: var(--bg);
   }
 
   .tooltip,

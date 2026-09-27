@@ -120,7 +120,7 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
   phone a bottom sheet.
 - **One text edge per panel.** Containers (grouped lists, buttons, fields) sit on `--panel-pad` (16 px). Text sits
   `--row-inset` (12 px) inside a container, and every free line (the panel title, group titles, list labels,
-  captions, status lines) starts on that same edge, `--panel-text` (28 px). Check and radio marks sit on the text
+  captions, status lines) starts on that same edge, 28 px in (`--panel-pad` + `--row-inset`). Check and radio marks sit on the text
   edge, and their names 24 px in. The close mark ends on the lists' outer edge.
 - Radii rise with elevation and are concentric (inner = outer − padding): `--r-well` 6 px for inner parts and chips,
   `--r-chrome` 8 px for controls and grouped lists, `--r-surface` 12 px for cards, housings, panels and floats,
@@ -136,7 +136,7 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Plate | `.kv` grouped list | `--surface-1`, a `--border-subtle` hairline and the lit top edge, no drop shadow: a group reads by its fill, so a panel of eight groups is not a card kit. |
 | Floating | `.float`, `.popover`, `.tooltip`, `.inspect-card` | Glass: `--glass` with `--glass-blur`, a hairline `--border-strong`, and `--elev-float` or `--elev-tooltip`. |
 | Dialog | `dialog.float` | Opaque `--surface-1` over `--scrim`. A dialog holds reading text. |
-| Panel | side panel, sheet | The canvas (`--bg`): docked, the shell's canvas runs on beneath it; as a flyout or sheet it floats with `--elev-float`. Its grouped lists are the plates. The head's rule appears only once content scrolls beneath it. |
+| Sheet | `.sheet`: side panels, History's panes, the About & legal dialog | The canvas (`--bg`), so its grouped lists read as plates. A docked panel and History let the shell's canvas run on beneath them; a flyout, phone sheet or dialog floats with `--elev-float`. |
 
 - **Hairlines.** `--hairline` is 1 px, and 0.5 px (one device pixel) from 2 dppx. A hairline marks structure only:
   the edge of a plate, well or float (`--border`), the rule under a header that content scrolls beneath (`--border`),
@@ -179,7 +179,16 @@ ping are the phase marks.
   a 2 px track, with no separators; the chosen radio row takes the selected wash, and hover adds the hover wash. A
   row shows one line, its name; the technical detail (endpoint, availability) is in its tip. Unavailable choices
   fold into one quiet row.
-- **Link row** (`.link-row`): a row that opens another surface, with a trailing chevron and the hover wash.
+- **Link row** (`.link-row`): a row that opens another surface (trailing chevron), an external page (trailing
+  arrow) or runs a command (trailing glyph), with the hover wash. Actions at the end of a sheet are link rows in a
+  plate, not a row of buttons.
+- **Sheet head** (`.sheet-head`): the title (`--role-panel-title`) on the text edge, optional `.head-facts` (labelled
+  pairs such as Results 37, Span …), then `.head-actions`, which are always quiet buttons. Its rule appears only once
+  content scrolls beneath it; History's head keeps it, since both panes scroll under it. `.sheet-body` is the
+  scroller, with a stable gutter that the head reserves too.
+- **Facts** (`dl.kv`): a qualifier that belongs to a value (`127.0.0.1 IPv4, socket peer`) is an `.aside` in soft
+  ink, never joined with a middle dot. A list of values stands one per line. A state that belongs to a value (a
+  path's Ready or In use) is a caption under it, dot and word.
 - **Check and radio marks** (`input.check`): the native inputs, 14 px, drawn with the field edge; checked takes the
   brand line and wash.
 

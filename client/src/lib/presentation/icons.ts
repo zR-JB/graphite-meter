@@ -15,6 +15,8 @@ export const ICON = {
   contrast: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg>`,
   check: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M20 6 9 17l-5-5"/></svg>`,
   chevron: `<svg viewBox="0 0 24 24" ${STROKE}><path d="m9 5 7 7-7 7"/></svg>`,
+  external: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M8 16 16 8M9 8h7v7"/></svg>`,
+  copy: `<svg viewBox="0 0 24 24" ${STROKE}><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>`,
   close: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
   info: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
   history: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16v13H4z"/><path d="M8 4h8"/><path d="M8 11h8M8 15h5"/></svg>`,

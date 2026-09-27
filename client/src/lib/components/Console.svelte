@@ -871,6 +871,7 @@
     overscroll-behavior: contain;
   }
   .history-stage {
+    padding: 0;
     overflow: hidden;
   }
   /* A viewport too short for the instruments scrolls this column. */
