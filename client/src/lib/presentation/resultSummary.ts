@@ -33,7 +33,6 @@ export interface SummaryRow {
   label: string;
   value: string;
   stage?: TransportRole;
-  tip?: string;
 }
 interface WireRate {
   value: string;
@@ -48,16 +47,18 @@ export interface SummaryCard {
   num: string;
   unit: string;
   tip: string;
-  wire?: WireRate | null;
+  wire?: WireRate;
   rows: SummaryRow[];
   accessible?: string;
+  trace?: Trace | null;
 }
 
+/** The stage track's order, so each chip sits under its stage. */
 export const CARD_ORDER = [
+  "latency",
   "download",
   "upload",
   "bidirectional",
-  "latency",
 ] as const;
 const LOADED = ["download", "upload", "bidirectional"] as const;
 const SHOWN_STATUS = new Set(["complete", "partial", "failed"]);
@@ -86,10 +87,8 @@ export function summaryEvidence(
   );
 }
 
-const stability = (pct: number | null, tip: string): SummaryRow[] =>
-  pct === null
-    ? []
-    : [{ label: "Stability", value: `${Math.round(pct)}%`, tip }];
+const stability = (pct: number | null): SummaryRow[] =>
+  pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
 
 /** From half a percent of overhead the wire estimate sits under the headline. */
 function wire(
@@ -114,25 +113,17 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
     const ms = evidence.added?.[stage];
     return ms == null
       ? []
-      : [
-          {
-            label: "Added",
-            value: `${fmtAddedMs(ms)} ms`,
-            stage,
-            tip: JARGON.addedLatency,
-          },
-        ];
+      : [{ label: "Added", value: `${fmtAddedMs(ms)} ms`, stage }];
   });
-  const jitter = formatLatency(jitterMs);
   const steady = card.status === "complete" ? (stabilityPct ?? null) : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
     rows: [
-      { label: "Jitter", value: jitter, tip: JARGON.jitter },
+      { label: "Jitter", value: formatLatency(jitterMs) },
       ...added,
-      ...stability(steady, JARGON.latencyStability),
+      ...stability(steady),
       ...(evidence.latencySource
         ? [{ label: "Server", value: evidence.latencySource }]
         : []),
@@ -174,7 +165,6 @@ function bidirectionalCard(
         complete && lanes?.down && lanes.up
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
-        JARGON.rateStability,
       ),
     ],
   };
@@ -216,21 +206,11 @@ export function summaryCards(
           {
             label: "Transferred",
             value: fmtBytes(result.totalBytes, units.base),
-            tip: JARGON.transferred,
           },
           ...(peak == null
             ? []
-            : [
-                {
-                  label: "Peak",
-                  value: formatRate(peak, units),
-                  tip: JARGON.peak,
-                },
-              ]),
-          ...stability(
-            complete ? result.stabilityPct : null,
-            JARGON.rateStability,
-          ),
+            : [{ label: "Peak", value: formatRate(peak, units) }]),
+          ...stability(complete ? result.stabilityPct : null),
         ],
       },
     ];
@@ -255,35 +235,80 @@ export const resultSentence = (cards: SummaryCard[]) =>
     )
     .join("; ");
 
-/** Every row a stage's card will hold, still MISSING, so settling moves nothing. */
-export function pendingRows(
-  key: TransportRole,
-  loaded: TransportRole[],
-  multiple: boolean,
-): SummaryRow[] {
-  const row = (label: string, tip?: string, stage?: TransportRole) => ({
-    label,
-    value: MISSING,
-    tip,
-    stage,
-  });
-  if (key === "latency")
-    return [
-      row("Jitter", JARGON.jitter),
-      ...loaded.map((stage) => row("Added", JARGON.addedLatency, stage)),
-      row("Stability", JARGON.latencyStability),
-      ...(multiple ? [row("Server")] : []),
-    ];
-  return [
-    ...(key === "bidirectional"
-      ? [
-          row(STAGE.download.short, undefined, "download"),
-          row(STAGE.upload.short, undefined, "upload"),
-        ]
-      : [row("Transferred", JARGON.transferred), row("Peak", JARGON.peak)]),
-    row("Stability", JARGON.rateStability),
-  ];
+export const cardTip = (card: SummaryCard) =>
+  [
+    card.label,
+    card.tip.split("\n")[1],
+    ...card.rows
+      .filter((row) => row.value !== MISSING)
+      .map((row) =>
+        row.stage && row.label !== STAGE[row.stage].short
+          ? `${row.label} ${STAGE[row.stage].short.toLowerCase()}  ${row.value}`
+          : `${row.label}  ${row.value}`,
+      ),
+  ].join("\n");
+
+interface TracePoint {
+  t: number;
+  v: number;
 }
+const TRACE_W = 100;
+const TRACE_H = 32;
+/** Lanes binned over the stage's planned time and summed; the floor rises to the lowest bin, at most to three quarters of the peak. */
+export function tracePaths(
+  series: TracePoint[][],
+  plannedMs: number,
+  columns = 36,
+) {
+  const all = series.flat();
+  if (all.length < 2) return null;
+  const start = Math.min(...all.map((point) => point.t));
+  const span =
+    Math.max(plannedMs, Math.max(...all.map((point) => point.t)) - start) || 1;
+  const bins = new Float64Array(columns);
+  const seen = new Uint8Array(columns);
+  for (const [lane, points] of series.entries()) {
+    const sums = new Float64Array(columns);
+    const counts = new Uint16Array(columns);
+    for (const { t, v } of points) {
+      const i = Math.min(
+        columns - 1,
+        Math.floor(((t - start) / span) * columns),
+      );
+      sums[i] += v;
+      counts[i]++;
+    }
+    for (let i = 0; i < columns; i++)
+      if (counts[i]) {
+        bins[i] += sums[i] / counts[i];
+        seen[i] |= 1 << lane;
+      }
+  }
+  const full = (1 << series.length) - 1;
+  const kept = [...bins.keys()].filter((i) => seen[i] === full);
+  if (kept.length < 2) return null;
+  const values = kept.map((i) => bins[i]);
+  const top = Math.max(...values);
+  const floor = Math.min(...values, top * 0.75);
+  const points = kept.map((i) => [
+    ((i + 0.5) / columns) * TRACE_W,
+    TRACE_H - 3 - ((bins[i] - floor) / (top - floor || 1)) * (TRACE_H - 7),
+  ]);
+  const mid = (a: number[], b: number[]) =>
+    `${(a[0] + b[0]) / 2} ${(a[1] + b[1]) / 2}`;
+  const [x0, y0] = points[0];
+  const [xn, yn] = points.at(-1)!;
+  const line = `M${x0} ${y0} L${mid(points[0], points[1])} ${points
+    .slice(1, -1)
+    .map((p, i) => `Q${p[0]} ${p[1]} ${mid(p, points[i + 2])}`)
+    .join(" ")} L${xn} ${yn}`;
+  return {
+    line,
+    area: `${line} L${xn} ${TRACE_H + 1} L${x0} ${TRACE_H + 1} Z`,
+    head: { x: xn / TRACE_W, y: yn / TRACE_H },
+  };
+}
+export type Trace = NonNullable<ReturnType<typeof tracePaths>>;
 
 /** Failed server stages, live or saved, one line per server and reason: who, which stages, why; `scope` narrows to one server. */
 export function serverIssues(details: MultiServerResult, scope = "") {
@@ -308,6 +333,8 @@ export function serverIssues(details: MultiServerResult, scope = "") {
   }
   return [...lines.values()].map(({ server, stages, reason }) => ({
     server,
+    stages: stages.join(", "),
+    reason,
     text: `${stages.join(", ")} · ${reason}`,
   }));
 }

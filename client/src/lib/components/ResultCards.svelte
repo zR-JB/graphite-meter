@@ -15,11 +15,11 @@
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
-    pendingRows,
     resultSentence,
     summaryCards,
     serverIssues,
     summaryEvidence,
+    tracePaths,
     type SummaryCard,
     type SummaryRow,
   } from "../presentation/resultSummary";
@@ -59,44 +59,43 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Until a run completes, every planned stage holds a card with all its rows; values fill in, nothing moves.
+  // Until a run completes, every planned stage holds a card; values fill in, nothing moves.
   const planned = $derived(
     CARD_ORDER.filter((key) => status(key) !== "disabled"),
   );
-  const multiple = $derived(
-    ((details ?? store.serverDetails)?.selection.length ??
-      store.selectedServers.length) > 1,
-  );
-  const skeleton = (key: Stage) =>
-    pendingRows(
-      key,
-      planned.filter((stage) => stage !== "latency"),
-      multiple,
+  // The chart's series per stage, over its plan until complete; the run's, so a scoped server shows no throughput trace.
+  const traces = $derived.by(() => {
+    const plan = (store.run?.config ?? store.config).duration;
+    const lane = (key: Stage, dir: "down" | "up") =>
+      store.throughput
+        .filter((s) => s.phase === key && s.dir === dir)
+        .map((s) => ({ t: s.t, v: s.bytesPerSec }));
+    const idle = store.latency.flatMap((b) =>
+      b.phase === "latency" && b.medianRttMs !== null
+        ? [{ t: b.t, v: b.medianRttMs }]
+        : [],
     );
-  const same = (a: SummaryRow, b: SummaryRow) =>
-    a.label === b.label && a.stage === b.stage;
-  function held(card: SummaryCard): SummaryCard {
-    const rows = skeleton(card.key);
+    const trace = (key: Stage, series: { t: number; v: number }[][]) =>
+      tracePaths(series, status(key) === "complete" ? 0 : plan[`${key}Ms`]);
     return {
-      ...card,
-      rows: [
-        ...rows.map((row) => card.rows.find((got) => same(row, got)) ?? row),
-        ...card.rows.filter((got) => !rows.some((row) => same(row, got))),
-      ],
-    };
-  }
+      latency: trace("latency", [idle]),
+      ...(!shown && {
+        download: trace("download", [lane("download", "down")]),
+        upload: trace("upload", [lane("upload", "up")]),
+        bidirectional: trace("bidirectional", [
+          lane("bidirectional", "down"),
+          lane("bidirectional", "up"),
+        ]),
+      }),
+    } as Partial<Record<Stage, SummaryCard["trace"]>>;
+  });
   const cards = $derived(
     (store.phase !== "complete" && store.phase !== "error"
-      ? planned.map((key) => {
-          const card = settled.find((card) => card.key === key);
-          return card ? held(card) : liveCard(key);
-        })
+      ? planned.map(
+          (key) => settled.find((card) => card.key === key) ?? liveCard(key),
+        )
       : settled
-    ).map((card) =>
-      card.key === "latency" || !store.showWireEstimates
-        ? card
-        : { ...card, wire: card.wire ?? null },
-    ),
+    ).map((card) => ({ ...card, trace: traces[card.key] })),
   );
 
   const view = handoff(
@@ -119,23 +118,22 @@
 
   // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
   function liveRows(key: Stage): SummaryRow[] {
-    const lanes = { download: live.rates?.down, upload: live.rates?.up };
-    return skeleton(key).map((row) =>
-      row.label === "Transferred"
-        ? { ...row, value: fmtBytes(store.liveStageBytes, units.base) }
-        : key === "bidirectional" && row.stage && row.stage !== "latency"
-          ? {
-              ...row,
-              value:
-                lanes[row.stage as "download" | "upload"] == null
-                  ? MISSING
-                  : formatRate(
-                      lanes[row.stage as "download" | "upload"],
-                      units,
-                    ),
-            }
-          : row,
-    );
+    if (key === "latency") return [];
+    if (key !== "bidirectional")
+      return [
+        {
+          label: "Transferred",
+          value: fmtBytes(store.liveStageBytes, units.base),
+        },
+      ];
+    return (["download", "upload"] as const).map((stage) => {
+      const rate = live.rates?.[stage === "download" ? "down" : "up"];
+      return {
+        label: STAGE[stage].short,
+        value: rate == null ? MISSING : formatRate(rate, units),
+        stage,
+      };
+    });
   }
 
   // Animated values are visual only; the accessible value uses receiver accounting.
@@ -180,7 +178,7 @@
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
-      rows: own || stopped ? liveRows(key) : skeleton(key),
+      rows: own || stopped ? liveRows(key) : [],
       accessible: active
         ? timeout
           ? "probe timeout"
