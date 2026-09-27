@@ -10,7 +10,10 @@
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
   import { pathOptions } from "../../presentation/paths";
-  import { normalizeStreamCount } from "../../runner/paths";
+  import {
+    BROWSER_CONNECTION_BUDGET,
+    normalizeStreamCount,
+  } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
@@ -25,7 +28,12 @@
     READINESS_TIP,
     STAGE,
   } from "../../presentation/vocabulary";
-  import { fmtDuration } from "../../format";
+  import {
+    fmtDuration,
+    rateUnit,
+    rateValueAt,
+    rawRateFrom,
+  } from "../../format";
   import { untrack } from "svelte";
   import {
     announce,
@@ -187,6 +195,17 @@
   }
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
+  const queuedStreams = $derived(
+    forced &&
+      store.config.transferStreams.count > BROWSER_CONNECTION_BUDGET &&
+      store.selectedServers.some((id) => {
+        const path = store.servers.get(id)?.paths?.throughput;
+        return (
+          path?.target.transport === "fetch-stream" &&
+          path.fetch.protocol === "http1"
+        );
+      }),
+  );
   const streams = (patch: Partial<RunnerConfig["transferStreams"]>) =>
     controller.configureRun({
       transferStreams: { ...store.config.transferStreams, ...patch },
@@ -197,11 +216,19 @@
   const vizAuto = $derived(
     store.config.visualization.throughputMaxBytesPerSec === "auto",
   );
+  // The maximum keeps one prefix, so a typed number never changes meaning.
+  const MAX_UNIT = 2;
+  const vizUnit = $derived(rateUnit(store.unitBase, store.unitKind, MAX_UNIT));
   const vizDisplay = $derived(
     vizAuto
       ? 0
-      : store.toUnit(
-          store.config.visualization.throughputMaxBytesPerSec as number,
+      : Number(
+          rateValueAt(
+            store.config.visualization.throughputMaxBytesPerSec as number,
+            store.unitBase,
+            store.unitKind,
+            MAX_UNIT,
+          ).toPrecision(4),
         ),
   );
   function setVizAuto(auto: boolean) {
@@ -210,13 +237,20 @@
     );
   }
   function setVizMax(event: Event) {
-    const current = Number(vizDisplay.toFixed(2));
     commitNumber(
       event,
       "gauge",
-      current,
-      (value) => (value > 0 ? value : current),
-      (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
+      vizDisplay,
+      (value) => (value > 0 ? value : vizDisplay),
+      (value) =>
+        gaugeMax(
+          Math.max(
+            1,
+            Math.round(
+              rawRateFrom(value, store.unitBase, store.unitKind, MAX_UNIT),
+            ),
+          ),
+        ),
     );
   }
 
@@ -302,7 +336,13 @@
         </div>
       </div>
       {#each activeDurationFields as [key, label] (key)}
-        {@const tip = key === "warmupMs" ? JARGON.warmup : ""}
+        {@const [min, max] = DURATION_LIMITS[key]}
+        {@const tip =
+          key === "warmupMs"
+            ? JARGON.warmup
+            : durationMode === "custom"
+              ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
+              : ""}
         {#if durationMode === "custom"}
           <div>
             <label class="row">
@@ -310,8 +350,8 @@
               <span class="number">
                 <input
                   type="number"
-                  min="0"
-                  max={DURATION_LIMITS[key][1]}
+                  {min}
+                  {max}
                   step="500"
                   disabled={store.preparing}
                   value={store.config.duration[key]}
@@ -410,10 +450,10 @@
               <input
                 type="number"
                 min="1"
-                value={Number(vizDisplay.toFixed(2))}
+                value={vizDisplay}
                 onchange={setVizMax}
               />
-              <span>{store.unitLabel}</span>
+              <span>{vizUnit}</span>
             </span>
           </label>
         </div>
@@ -528,6 +568,12 @@
       )}
     </div>
     {@render rejectedHint("streams")}
+    {#if queuedStreams}
+      <p class="hint">
+        Browsers run {BROWSER_CONNECTION_BUDGET} HTTP/1.1 requests per server at once.
+        Streams past that wait for a free connection.
+      </p>
+    {/if}
     {#if store.streamPlanError}
       <p class="notice" data-tone="warn" role="status">
         {store.streamPlanError}

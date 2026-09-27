@@ -41,7 +41,7 @@
     (store.serverCatalog?.servers ?? []).filter(
       (server) =>
         store.selectedServers.includes(server.id) &&
-        ((store.serverCatalog?.servers.length ?? 0) > 1 ||
+        (store.selectedServers.length > 1 ||
           store.servers.get(server.id)?.readiness === "sign-in") &&
         (retrying.includes(server.id) ||
           ["failed", "sign-in"].includes(

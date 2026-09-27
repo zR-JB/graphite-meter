@@ -392,19 +392,12 @@
   .detail-body > :global(.result-summary) {
     max-width: none;
   }
+  /* Fact groups share the width in columns, so a long server list stays beside the rest. */
   .facts {
     display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
     gap: var(--space-4);
-    align-content: start;
-  }
-  @container detail (min-width: 1000px) {
-    .detail-body {
-      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-      align-items: start;
-    }
-    .detail-body > :global(:first-child) {
-      grid-column: 1 / -1;
-    }
+    align-items: start;
   }
   @container history (max-width: 820px) {
     .back {

@@ -74,6 +74,22 @@ test("automatic may use different reliable protocols while explicit compatibilit
     ),
   ).toBe(false);
 });
+test("path availability ignores a failed server's stale discovery", () => {
+  const views = new Map(
+    [...discoveries].map(([id, view]) => [
+      id,
+      { ...view, readiness: id === "b" ? "failed" : "verified" },
+    ]),
+  );
+  const option = pathOptions(
+    "throughput",
+    servers,
+    views,
+    configFor("throughput", "auto", false),
+  ).find((option) => option.value === "protocol:http1");
+  expect(option).toMatchObject({ disabled: false, detail: "Available on A" });
+});
+
 test("server transport options name the browser's IPv6 configuration remedy", () => {
   const origin = "http://[::1]:7246";
   const discovery = classifyTransportDiscovery(

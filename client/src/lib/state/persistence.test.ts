@@ -123,6 +123,19 @@ test("saved numbers keep their type and stay within bounds", () => {
   });
 });
 
+test("a stage saved with 0 ms loads switched off at its default time", () => {
+  const config = loaded({
+    config: {
+      stages: { latency: true, download: true, upload: true },
+      duration: { warmupMs: 0, uploadMs: 0 },
+    },
+  }).config;
+  expect(config.stages.upload).toBe(false);
+  expect(config.stages.download).toBe(true);
+  expect(config.duration.uploadMs).toBe(DEFAULT_CONFIG.duration.uploadMs);
+  expect(config.duration.warmupMs).toBe(0);
+});
+
 test("invalid forced stream settings are normalized", () => {
   expect(
     loaded({ config: { transferStreams: { mode: "forced", count: 999.4 } } })

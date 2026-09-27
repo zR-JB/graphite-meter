@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Dismissal lasts the page's lifetime and returns when the count changes.
+  let dismissedMalformed = $state(0);
+</script>
+
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import type { IconName } from "../presentation/icons";
@@ -12,7 +17,7 @@
     onHistoryChanged,
   } from "../history/repository";
   import { formatRecentCompletion } from "../history/format";
-  import { formatLatency, formatRate } from "../format";
+  import { formatLatency, formatRate, throughputUnitIndex } from "../format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
@@ -52,12 +57,16 @@
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
+  const malformedShown = $derived(
+    malformedCount > 0 && malformedCount !== dismissedMalformed,
+  );
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
   let pages = $state(1);
   let renderedAt = $state(wallNow());
   let workspace = $state<HTMLElement>();
+  let list = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
   let previousSelectedId: string | null = null;
   let confirm = $state<
@@ -68,9 +77,8 @@
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
-  const ordered = $derived(
-    sortPreparedHistory(prepareHistorySort(records), sort, descending),
-  );
+  const prepared = $derived(prepareHistorySort(records));
+  const ordered = $derived(sortPreparedHistory(prepared, sort, descending));
   const selectedIndex = $derived(
     selectedId ? ordered.findIndex((record) => record.id === selectedId) : -1,
   );
@@ -153,6 +161,7 @@
     sort = next;
     descending = nextDescending;
     pages = 1;
+    list?.scrollTo({ top: 0 });
   }
 
   function loadMore() {
@@ -211,6 +220,26 @@
   }
 
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One prefix per rate column, from its median, so a column reads in one unit.
+  const tiers = $derived.by(() => {
+    const tier = (column: "download" | "upload" | "bidirectional") => {
+      const values = prepared
+        .flatMap((entry) => entry.keys[column] ?? [])
+        .sort((a, b) => a - b);
+      return values.length
+        ? throughputUnitIndex(
+            values[values.length >> 1],
+            units.base,
+            units.kind,
+          )
+        : undefined;
+    };
+    return {
+      download: tier("download"),
+      upload: tier("upload"),
+      bidirectional: tier("bidirectional"),
+    };
+  });
 
   function metric(record: HistoryRecord, column: HistoryColumn): string {
     const { stages, bidirectional } = record.result;
@@ -220,7 +249,7 @@
       return value == null
         ? stageStatusLabel(stages.latency)
         : formatLatency(value);
-    if (value != null) return formatRate(value, units);
+    if (value != null) return formatRate(value, units, tiers[column]);
     if (column !== "bidirectional") return stageStatusLabel(stages[column]);
     const { survivingDirection } = bidirectionalResultPresentation(
       bidirectional?.down?.reportedBytesPerSec,
@@ -243,10 +272,22 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+    const recentDay = ["Today", "Yesterday"].includes(
+      groupHeading(record.completedAt),
+    );
+    const day = new Date(record.completedAt).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
     return {
       record,
       exact,
-      primary: byDay ? time : `${dateLabel(record.completedAt)}, ${time}`,
+      primary: !byDay
+        ? `${dateLabel(record.completedAt)}, ${time}`
+        : recentDay
+          ? time
+          : `${day}, ${time}`,
       secondary: recent,
       outcome,
       metrics,
@@ -273,14 +314,13 @@
   }
 
   const byDay = $derived(sort === "date");
-  function dayHeading(value: number): string {
+  // Recent days, then months, so sparse history never gets a heading per result.
+  function groupHeading(value: number): string {
     const day = (time: number) => new Date(time).toDateString();
     if (day(value) === day(renderedAt)) return "Today";
     if (day(value) === day(renderedAt - 86_400_000)) return "Yesterday";
     return new Date(value).toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
+      month: "long",
       year: "numeric",
     });
   }
@@ -382,7 +422,7 @@
     </div>
   </header>
 
-  {#if store.historyWarning || actionError || malformedCount || (records.length && !store.savingResults)}
+  {#if store.historyWarning || actionError || malformedShown || (records.length && !store.savingResults)}
     <div class="notices">
       {#if records.length && !store.savingResults}
         <p class="notice" data-tone="warn">
@@ -398,11 +438,21 @@
       {#each [store.historyWarning, actionError].filter(Boolean) as message (message)}
         <p class="notice" data-tone="warn" role="status">{message}</p>
       {/each}
-      {#if malformedCount}
+      {#if malformedShown}
         <p class="notice" data-tone="warn" role="status">
-          {malformedCount} unsupported or malformed {malformedCount === 1
-            ? "record was"
-            : "records were"} ignored.
+          <span
+            >{malformedCount} unsupported or malformed {malformedCount === 1
+              ? "record was"
+              : "records were"} ignored.</span
+          >
+          <button
+            class="btn"
+            type="button"
+            onclick={() => {
+              dismissedMalformed = malformedCount;
+              workspace?.focus({ preventScroll: true });
+            }}>Dismiss</button
+          >
         </p>
       {/if}
     </div>
@@ -442,7 +492,7 @@
     </div>
   {:else}
     <div class="workspace-body" class:has-detail={selectedId !== null}>
-      <div class="history-list">
+      <div class="history-list" bind:this={list}>
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
@@ -480,8 +530,8 @@
           </div>
           <ol aria-label="Saved results">
             {#each visible as record, index (record.id)}
-              {@const day = byDay ? dayHeading(record.completedAt) : ""}
-              {#if day && (index === 0 || day !== dayHeading(visible[index - 1].completedAt))}
+              {@const day = byDay ? groupHeading(record.completedAt) : ""}
+              {#if day && (index === 0 || day !== groupHeading(visible[index - 1].completedAt))}
                 <li class="day" aria-hidden="true">{day}</li>
               {/if}
               <li>
@@ -800,19 +850,20 @@
     min-width: 0;
     padding: 9px 10px;
   }
+  /* The badge wraps below a date that needs the whole cell. */
   .date-cell {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: 2px var(--space-2);
   }
   time {
     display: flex;
-    flex: 1;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 var(--space-2);
     min-width: 0;
-    white-space: nowrap;
   }
   time strong,
   .metric-cell strong {
