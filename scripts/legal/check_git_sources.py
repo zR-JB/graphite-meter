@@ -5,7 +5,7 @@ Offline: every git package in rust/Cargo.lock is pinned by full-SHA rev to a
 (fork, rev) entry in legal/rust-forks.json, and every entry is in use.
 With --verify (network, release time): each rev is on its fork branch, the base
 is the commit of the upstream tag and an ancestor of rev, the change set matches
-diffSha256 and touches only modifiedPackages and workspace manifests, and the
+diffSha256 and touches only reviewed package paths and workspace manifests, and the
 commit subjects match the recorded list.
 """
 from __future__ import annotations
@@ -89,6 +89,7 @@ def check_fork(fork: dict, directory: Path) -> list[str]:
     for line in changes.splitlines():
         path = line.split('\t', 1)[1]
         if (path not in WORKSPACE_FILES and path not in fork.get('metadataFiles', [])
+                and path not in fork.get('modifiedFiles', [])
                 and path.split('/', 1)[0] not in fork['modifiedPackages']):
             errors.append(f'{name}: change outside modifiedPackages: {path}')
     subjects = git(directory, 'log', '--reverse', '--format=%s', f'{base}..{rev}').splitlines()

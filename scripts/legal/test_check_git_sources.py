@@ -78,11 +78,15 @@ class ForkTests(unittest.TestCase):
 
     def test_only_reviewed_metadata_paths_are_allowed(self) -> None:
         self.rev = commit(self.fork, '.github/workflows/graphite-meter.yml', 'test fork')
+        self.rev = commit(self.fork, 'src/lib.rs', 'fix root package')
         record = self.record()
-        record['commits'].append({'subject': 'test fork'})
+        record['commits'] += [{'subject': 'test fork'}, {'subject': 'fix root package'}]
         errors = check_fork(record, self.scratch / 'unreviewed')
         self.assertTrue(any('outside modifiedPackages' in error for error in errors))
         record['metadataFiles'] = ['.github/workflows/graphite-meter.yml']
+        self.assertTrue(any('outside modifiedPackages: src/lib.rs' in error
+                            for error in check_fork(record, self.scratch / 'metadata')))
+        record['modifiedFiles'] = ['src/lib.rs']
         self.assertEqual(check_fork(record, self.scratch / 'reviewed'), [])
 
     def test_revision_off_the_fork_branch_fails(self) -> None:

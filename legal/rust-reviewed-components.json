@@ -1819,7 +1819,7 @@
     "ecosystem": "cargo",
     "name": "h2",
     "reviewedVersion": "0.4.19",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstream": "git+https://github.com/zR-JB/h2?rev=8df5360fe933afe48e5e8c804727a5569111e357#8df5360fe933afe48e5e8c804727a5569111e357",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
@@ -1829,9 +1829,9 @@
         "kind": "license"
       }
     ],
-    "modified": false,
+    "modified": true,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/hyperium/h2; revision d57d1b852fec9dda6d42d3454502006d52104da8. Cargo archive SHA-256 ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/zR-JB/h2; revision 8df5360fe933afe48e5e8c804727a5569111e357. Based on hyperium/h2 v0.4.19 (d57d1b852fec9dda6d42d3454502006d52104da8). Reviewed MIT copyright/permission/disclaimer text; LICENSE is unchanged from the reviewed upstream archive. Allocation ownership and regression changes are recorded in legal/rust-forks.json; preserve the upstream attribution and include the modified source in the source offer."
   },
   {
     "ecosystem": "cargo",

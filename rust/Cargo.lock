@@ -693,8 +693,7 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
+source = "git+https://github.com/zR-JB/h2?rev=8df5360fe933afe48e5e8c804727a5569111e357#8df5360fe933afe48e5e8c804727a5569111e357"
 dependencies = [
  "atomic-waker",
  "bytes",

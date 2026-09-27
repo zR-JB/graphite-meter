@@ -154,5 +154,76 @@
     "metadataFiles": [
       ".github/workflows/graphite-meter.yml"
     ]
+  },
+  {
+    "fork": "https://github.com/zR-JB/h2",
+    "branch": "graphite-meter/h2-v0.4.19",
+    "rev": "8df5360fe933afe48e5e8c804727a5569111e357",
+    "upstream": "https://github.com/hyperium/h2",
+    "baseTag": "v0.4.19",
+    "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
+    "diffSha256": "023af39f0f7bd1d0412aca0ab3839e9e3b311c4270a84677a7bad79af7b3cd39",
+    "modifiedPackages": [
+      "h2"
+    ],
+    "modifiedFiles": [
+      "src/client.rs",
+      "src/codec/error.rs",
+      "src/codec/framed_write.rs",
+      "src/codec/mod.rs",
+      "src/frame/data.rs",
+      "src/frame/headers.rs",
+      "src/hpack/header.rs",
+      "src/hpack/table.rs",
+      "src/proto/connection.rs",
+      "src/proto/streams/buffer.rs",
+      "src/proto/streams/counts.rs",
+      "src/proto/streams/prioritize.rs",
+      "src/proto/streams/recv.rs",
+      "src/proto/streams/send.rs",
+      "src/proto/streams/state.rs",
+      "src/proto/streams/store.rs",
+      "src/proto/streams/stream.rs",
+      "src/proto/streams/streams.rs",
+      "src/server.rs",
+      "tests/h2-support/src/raw.rs",
+      "tests/h2-support/src/util.rs",
+      "tests/h2-tests/Cargo.toml",
+      "tests/h2-tests/tests/client_request.rs",
+      "tests/h2-tests/tests/flow_control.rs",
+      "tests/h2-tests/tests/informational_responses.rs",
+      "tests/h2-tests/tests/receive_budget_wire.rs",
+      "tests/h2-tests/tests/server.rs",
+      "tests/h2-tests/tests/stream_states.rs"
+    ],
+    "commits": [
+      {
+        "subject": "Bound buffered receive events and backing storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound queued send metadata and codec storage",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Fix upstream strict lint and test cleanup",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Preserve client concurrency and refund discarded requests",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Add strict owner fork gates",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Refund in-flight DATA when the codec is dropped",
+        "origin": "graphite-meter"
+      }
+    ],
+    "metadataFiles": [
+      ".github/workflows/graphite-meter.yml"
+    ]
   }
 ]
