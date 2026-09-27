@@ -132,7 +132,7 @@ async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Err
         throughput_transport: Some(case.throughput),
         latency_transport: Some(case.latency),
         warmup: Duration::from_millis(100),
-        latency_duration: Duration::from_millis(600),
+        latency_duration: Duration::from_secs(1),
         download_duration: Duration::from_secs(1),
         // Exercise the reported fetch-upload boundary at the TUI's default
         // duration; the other transports keep this CI replay short.
