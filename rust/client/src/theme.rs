@@ -90,7 +90,9 @@ impl Depth {
     fn terminal() -> Self {
         let term = std::env::var("TERM").unwrap_or_default().to_ascii_lowercase();
         let color_term = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
-        if matches!(color_term.as_str(), "truecolor" | "24bit")
+        // Windows consoles render 24-bit color without advertising it; Go's TUI assumes the same.
+        if cfg!(windows)
+            || matches!(color_term.as_str(), "truecolor" | "24bit")
             || term.ends_with("-direct")
             || term.ends_with("-truecolor")
         {

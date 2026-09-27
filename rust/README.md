@@ -28,7 +28,8 @@ Press `d` for Details, `l` to change the displayed latency server, `?` for help,
 and `q` to quit. Esc asks to stop an active test; Enter runs again after it ends.
 Pass `--report` for a single run without the TUI; redirected output also uses
 report mode. Completion exits 0, a failed or incomplete run exits 1, and signals
-exit 130 (interrupt) or 143 (terminate). The carbon palette follows `COLORFGBG` when available
+exit 130 (interrupt, or Ctrl-Break on Windows) or 143 (terminate, or a closed
+Windows console). The carbon palette follows `COLORFGBG` when available
 and adapts to truecolor, 256-color, or ANSI terminals. Set `GM_TUI_THEME=light`
 or `dark` to override the background choice. `NO_COLOR` disables color.
 The TUI can connect to either implementation's server.

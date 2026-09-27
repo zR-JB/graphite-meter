@@ -66,10 +66,20 @@ async fn run(action: Action) -> Result<i32, Error> {
             signal.store(code, Ordering::Relaxed);
         }
     };
-    #[cfg(not(unix))]
-    let shutdown = async move {
-        let _ = tokio::signal::ctrl_c().await;
-        signal.store(130, Ordering::Relaxed);
+    // Like Go on Windows: Ctrl-C and Ctrl-Break interrupt, closing the console terminates.
+    #[cfg(windows)]
+    let shutdown = {
+        use tokio::signal::windows;
+        let (mut interrupt, mut interrupt_break, mut close) =
+            (windows::ctrl_c()?, windows::ctrl_break()?, windows::ctrl_close()?);
+        async move {
+            let code = tokio::select! {
+                _ = interrupt.recv() => 130,
+                _ = interrupt_break.recv() => 130,
+                _ = close.recv() => 143,
+            };
+            signal.store(code, Ordering::Relaxed);
+        }
     };
     let finished = if report_only || !std::io::stdout().is_terminal() {
         Some(controller::run_once(config, shutdown).await?)
