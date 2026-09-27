@@ -168,7 +168,7 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
             rtt_nanos: 0,
             handling_nanos: 0
         }),
-        None
+        Some(0)
     );
     assert_eq!(
         stats.record(ProbeOutcome::Reply {
@@ -177,5 +177,5 @@ fn reflector_duration_bounds_and_large_sums_are_exact() {
         }),
         None
     );
-    assert_eq!(stats.snapshot().count, 3);
+    assert_eq!(stats.snapshot().count, 4);
 }

@@ -353,6 +353,7 @@ impl StageResources {
         // Snapshot every local counter before waiting on any remote clock.
         // Parallel checkpoints prevent one server's RTT from shifting its peers.
         let mut boundary = self.local_boundary(epoch);
+        boundary.final_boundary = matches!(kind, BoundaryKind::Final);
         let budget = if matches!(kind, BoundaryKind::Final) {
             FINAL_CHECKPOINT_BUDGET
         } else {
@@ -917,7 +918,8 @@ pub(super) async fn measure(
                         latency.observe(event, started, end);
                     }
                 },
-                _ = sample.tick() => {
+                scheduled = sample.tick() => {
+                    let stalled_tick = scheduled.elapsed() > CHECKPOINT_BUDGET;
                     let window = if transfer_stage.is_some() {
                         let boundary = {
                             let checkpoint = resources.boundary(epoch, BoundaryKind::Sample);
@@ -937,7 +939,8 @@ pub(super) async fn measure(
                         };
                         let Some(boundary) = boundary else { break; };
                         match boundary {
-                            Ok(boundary) => {
+                            Ok(mut boundary) => {
+                                boundary.stalled = stalled_tick;
                                 let stalled = resources.transfers.iter().find_map(|transfer| {
                                     let bytes = boundary.down.get(&transfer.id).copied().unwrap_or_default()
                                         .saturating_add(boundary.observed_up.get(&transfer.id).map_or(0, |up| up.maximum)

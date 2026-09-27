@@ -79,9 +79,6 @@ impl LatencyAccumulator {
                 let Ok(rtt) = u64::try_from(rtt_nanos) else {
                     return None;
                 };
-                if rtt == 0 {
-                    return None;
-                }
                 if let Some(previous) = self.previous {
                     self.variation_sum += u128::from(rtt.abs_diff(previous));
                     self.jitter_pairs += 1;

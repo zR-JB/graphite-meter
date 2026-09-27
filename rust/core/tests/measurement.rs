@@ -96,7 +96,7 @@ fn receiver_rates_keep_each_server_clock_and_unique_byte_ledger() {
 }
 
 #[test]
-fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_revokes_headline() {
+fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_keeps_headline() {
     let mut engine = AggregateMeasurements::default();
     start(
         &mut engine,
@@ -127,15 +127,15 @@ fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_revokes_headline(
     engine.observe(boundary(2100, &[("b", 4200)], &[]));
     engine.observe(boundary(2500, &[("b", 5000)], &[]));
     let result = engine.result(Stage::Download, Direction::Down);
-    assert_eq!(result.mean_bytes_per_sec, None);
+    assert_eq!(result.mean_bytes_per_sec, Some(4000.0));
     assert_eq!(result.total_bytes, 9000);
     assert_eq!(
         engine.server_rate(Stage::Download, Direction::Down, "a"),
-        None
+        Some(2000.0)
     );
     assert_eq!(
         engine.server_rate(Stage::Download, Direction::Down, "b"),
-        None
+        Some(2000.0)
     );
     assert_eq!(
         engine.intervals()[0]
@@ -153,7 +153,7 @@ fn opposite_fluctuations_have_one_coordinated_peak_and_dropout_revokes_headline(
     );
     assert_eq!(
         engine.server_rate(Stage::Download, Direction::Down, "a"),
-        None
+        Some(2000.0)
     );
 }
 
@@ -173,7 +173,7 @@ fn measured_zero_is_distinct_from_missing_and_recovery_keeps_unique_bytes() {
         engine
             .result(Stage::Upload, Direction::Up)
             .mean_bytes_per_sec,
-        Some(0.0)
+        None
     );
     let mut missing = boundary(1200, &[], &[]);
     missing.observed_up.insert(
@@ -185,7 +185,7 @@ fn measured_zero_is_distinct_from_missing_and_recovery_keeps_unique_bytes() {
     );
     engine.observe(missing);
     let result = engine.result(Stage::Upload, Direction::Up);
-    assert_eq!(result.mean_bytes_per_sec, Some(0.0));
+    assert_eq!(result.mean_bytes_per_sec, None);
     assert_eq!(result.total_bytes, 400);
     engine.observe(boundary(1500, &[], &[("a", "id", 700, 1600)]));
     engine.observe(boundary(2500, &[], &[("a", "id", 1700, 2600)]));
@@ -431,8 +431,8 @@ fn download_regression_never_credits_replayed_bytes_or_keeps_old_rate() {
 }
 
 #[test]
-fn checkpoint_misses_span_only_a_bounded_gap() {
-    for (resume_ms, spans) in [(1500, true), (2501, false)] {
+fn checkpoint_misses_span_the_gap_without_a_sampler_stall() {
+    for (resume_ms, spans) in [(1500, true), (2501, true)] {
         let mut engine = AggregateMeasurements::default();
         start(
             &mut engine,

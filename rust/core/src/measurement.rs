@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-pub const SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+pub const SAMPLE_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 pub const CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(1500);
 pub const FINAL_CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
 pub const MAX_CHECKPOINT_GAP: std::time::Duration =
@@ -58,6 +58,8 @@ pub struct ObservedUpload {
 #[derive(Debug, Clone, Default)]
 pub struct Boundary {
     pub at_nanos: u64,
+    pub stalled: bool,
+    pub final_boundary: bool,
     pub down: BTreeMap<String, u64>,
     pub up: BTreeMap<String, ReceiverSnapshot>,
     pub observed_up: BTreeMap<String, ObservedUpload>,
@@ -102,6 +104,9 @@ pub struct AggregationInterval {
     pub complete: bool,
     pub reason: IntervalReason,
     pub window: Option<AggregateWindow>,
+    down_peak: f64,
+    up_peak: f64,
+    samples: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -134,9 +139,7 @@ pub struct AggregateMeasurements {
     omitted_intervals: usize,
     first: Option<Boundary>,
     last: Option<Boundary>,
-    down_peak: f64,
-    up_peak: f64,
-    samples: usize,
+    peak_from: Option<Boundary>,
     totals: BTreeMap<String, ByteTotals>,
     stage_totals: BTreeMap<Stage, BTreeMap<String, ByteTotals>>,
     uploads: BTreeMap<String, ObservedUpload>,
@@ -188,12 +191,13 @@ impl AggregateMeasurements {
             complete: true,
             reason,
             window: None,
+            down_peak: 0.0,
+            up_peak: 0.0,
+            samples: 0,
         });
         self.first = None;
         self.last = None;
-        self.down_peak = 0.0;
-        self.up_peak = 0.0;
-        self.samples = 0;
+        self.peak_from = None;
     }
 
     pub fn observe(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
@@ -205,11 +209,9 @@ impl AggregateMeasurements {
                 (!interval.stage.needs_down() || boundary.down.contains_key(id))
                     && (!interval.stage.needs_up() || boundary.up.contains_key(id))
             });
-        let gap_too_large = self.last.as_ref().is_some_and(|last| {
-            boundary.at_nanos.saturating_sub(last.at_nanos) > MAX_CHECKPOINT_GAP.as_nanos() as u64
-        });
-        if gap_too_large {
+        if self.first.is_some() && boundary.stalled {
             self.intervals.back_mut().unwrap().complete = false;
+            return self.resume_at(boundary);
         }
         if !valid {
             return None;
@@ -221,11 +223,29 @@ impl AggregateMeasurements {
             let interval = self.intervals.back_mut().unwrap();
             interval.start_nanos = boundary.at_nanos;
             interval.end_nanos = boundary.at_nanos;
+            self.peak_from = Some(boundary.clone());
             self.first = Some(boundary.clone());
             self.last = Some(boundary);
             return None;
         }
         let interval = self.intervals.back().unwrap();
+        let last = self.last.as_ref().unwrap();
+        if boundary.at_nanos <= last.at_nanos
+            || interval.participants.iter().any(|id| {
+                interval.stage.needs_up()
+                    && last.up.get(id).is_some_and(|start| {
+                        let end = &boundary.up[id];
+                        start.id == end.id && end.bytes >= start.bytes && end.nanos == start.nanos
+                    })
+                    || boundary.final_boundary
+                        && (interval.stage.needs_down() && boundary.down[id] <= last.down[id]
+                            || interval.stage.needs_up()
+                                && boundary.up[id].id == last.up[id].id
+                                && boundary.up[id].bytes <= last.up[id].bytes)
+            })
+        {
+            return None;
+        }
         let sample = aggregate_window(self.last.as_ref().unwrap(), &boundary, interval);
         let full = aggregate_window(self.first.as_ref().unwrap(), &boundary, interval);
         let (Some(sample), Some(full)) = (sample, full) else {
@@ -234,16 +254,30 @@ impl AggregateMeasurements {
             interval.end_nanos = boundary.at_nanos;
             return self.resume_at(boundary);
         };
+        let peak = aggregate_window(self.peak_from.as_ref().unwrap(), &boundary, interval).filter(
+            |window| {
+                window.end_nanos - window.start_nanos >= 500_000_000
+                    && window
+                        .up
+                        .iter()
+                        .all(|component| component.duration_nanos >= 500_000_000)
+            },
+        );
+        if peak.is_some() {
+            self.peak_from = Some(boundary.clone());
+        }
         self.last = Some(boundary.clone());
         let interval = self.intervals.back_mut().unwrap();
         interval.end_nanos = boundary.at_nanos;
         interval.window = Some(full);
-        self.samples += 1;
-        if let Some(rate) = sample.down_bytes_per_sec {
-            self.down_peak = self.down_peak.max(rate);
-        }
-        if let Some(rate) = sample.up_bytes_per_sec {
-            self.up_peak = self.up_peak.max(rate);
+        interval.samples += 1;
+        if let Some(peak) = peak {
+            if let Some(rate) = peak.down_bytes_per_sec {
+                interval.down_peak = interval.down_peak.max(rate);
+            }
+            if let Some(rate) = peak.up_bytes_per_sec {
+                interval.up_peak = interval.up_peak.max(rate);
+            }
         }
         Some(sample)
     }
@@ -269,56 +303,80 @@ impl AggregateMeasurements {
             elapsed_nanos: None,
             unavailable_reason: Some(UnavailableReason::SurvivorEvidence),
         };
-        let Some(interval) = self.intervals.back() else {
-            return result;
-        };
-        if interval.stage != stage || !interval.complete {
-            return result;
-        }
-        let Some(window) = &interval.window else {
-            return result;
-        };
-        let Some(elapsed) = interval.end_nanos.checked_sub(interval.start_nanos) else {
-            return result;
-        };
-        if elapsed < MIN_SURVIVOR_NANOS {
-            return result;
-        }
-        let (components, rate, peak) = match direction {
-            Direction::Down => (&window.down, window.down_bytes_per_sec, self.down_peak),
-            Direction::Up => (&window.up, window.up_bytes_per_sec, self.up_peak),
-        };
-        if rate.is_none()
-            || components.is_empty()
-            || components
-                .iter()
-                .any(|component| component.duration_nanos < MIN_SURVIVOR_NANOS)
+        if self
+            .intervals
+            .back()
+            .is_none_or(|interval| interval.stage != stage || interval.participants.is_empty())
         {
-            result.unavailable_reason = Some(UnavailableReason::ComponentEvidence);
             return result;
         }
-        result.mean_bytes_per_sec = rate;
-        result.peak_bytes_per_sec = Some(peak);
-        result.samples = self.samples;
-        result.elapsed_nanos = Some(elapsed);
-        result.unavailable_reason = None;
+        for interval in self
+            .intervals
+            .iter()
+            .rev()
+            .take_while(|interval| interval.stage == stage)
+        {
+            if !interval.complete {
+                continue;
+            }
+            let Some(window) = &interval.window else {
+                continue;
+            };
+            let elapsed = interval.end_nanos.saturating_sub(interval.start_nanos);
+            if elapsed < MIN_SURVIVOR_NANOS {
+                continue;
+            }
+            let (components, rate, peak) = match direction {
+                Direction::Down => (&window.down, window.down_bytes_per_sec, interval.down_peak),
+                Direction::Up => (&window.up, window.up_bytes_per_sec, interval.up_peak),
+            };
+            if components.is_empty()
+                || components
+                    .iter()
+                    .any(|component| component.duration_nanos < MIN_SURVIVOR_NANOS)
+                || !components.iter().any(|component| component.bytes > 0)
+            {
+                result.unavailable_reason = Some(UnavailableReason::ComponentEvidence);
+                continue;
+            }
+            result.mean_bytes_per_sec = rate;
+            result.peak_bytes_per_sec = rate.map(|rate| peak.max(rate));
+            result.samples = interval.samples;
+            result.elapsed_nanos = Some(match direction {
+                Direction::Down => elapsed,
+                Direction::Up => components
+                    .iter()
+                    .map(|component| component.duration_nanos)
+                    .max()
+                    .unwrap(),
+            });
+            result.unavailable_reason = None;
+            return result;
+        }
         result
     }
 
-    /// A peer's rate is valid only when the coordinated survivor window is
-    /// valid. Its lifetime byte total is available separately even if this
-    /// rate is unavailable or the peer dropped out of the final interval.
     pub fn server_rate(&self, stage: Stage, direction: Direction, id: &str) -> Option<f64> {
-        self.result(stage, direction).mean_bytes_per_sec?;
-        let window = self.intervals.back()?.window.as_ref()?;
-        let components = match direction {
-            Direction::Down => &window.down,
-            Direction::Up => &window.up,
-        };
-        components
+        self.intervals
             .iter()
-            .find(|component| component.server_id == id)
-            .map(|component| component.bytes_per_sec)
+            .rev()
+            .take_while(|interval| interval.stage == stage)
+            .filter(|interval| interval.complete)
+            .filter_map(|interval| interval.window.as_ref())
+            .find_map(|window| {
+                let components = match direction {
+                    Direction::Down => &window.down,
+                    Direction::Up => &window.up,
+                };
+                components
+                    .iter()
+                    .find(|component| {
+                        component.server_id == id
+                            && component.duration_nanos >= MIN_SURVIVOR_NANOS
+                            && component.bytes > 0
+                    })
+                    .map(|component| component.bytes_per_sec)
+            })
     }
 
     fn resume_at(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
