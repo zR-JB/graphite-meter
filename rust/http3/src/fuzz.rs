@@ -202,6 +202,7 @@ type Events = Vec<(u8, Vec<u8>)>;
 fn push(events: &mut Events, event: Event) {
     let (tag, bytes) = match event {
         Event::Head(bytes) => (b'h', bytes),
+        Event::Data(bytes) if bytes.is_empty() => return,
         Event::Data(bytes) => (b'd', bytes),
         Event::Trailers(bytes) => (b't', bytes),
     };
