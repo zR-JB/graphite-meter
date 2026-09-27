@@ -93,8 +93,9 @@ reads the linker map of every Rust build and refuses a target whose compiler, li
 files or imported libraries differ from its record; the error prints this build's unreviewed
 record, and `--review-template` writes it to `platform-candidate.json`. Review the candidate,
 add a `noticeName` for each package text that covers its native files, approve it and commit
-it to the environment's file. macOS records come from the release request's macOS job, the
-only environment with Apple's SDK.
+it to the environment's file. Texts the environment lacks, such as musl's and LLVM's for the
+static musl targets, are committed under `legal/manual` and named by repository path. macOS
+records come from the release request's macOS job, the only environment with Apple's SDK.
 
 ## Generated files
 

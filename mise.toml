@@ -468,11 +468,12 @@ mkdir -p "corpus/$usage_target" "artifacts/$usage_target"
 '''
 
 [tasks.rust-client-package]
-description = "Package the experimental native Linux x86_64 Rust TUI with reviewed source and notices"
+description = "Package the experimental Linux and Windows Rust TUIs in the reviewed builder image"
 usage = 'arg "[version]" default="development"'
 run = '''
 #!/usr/bin/env sh
 set -eu
-python3 scripts/package-rust.py "$usage_version" --platform linux/amd64 --output "${RELEASE_DIST:-go/dist}" \
-  --supplement "${GM_RUST_PLATFORM_SUPPLEMENT:-legal/rust-platform-linux-gnu.json}"
+engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo docker)}
+"$engine" build -f container/Dockerfile.rust --target tui-artifacts --build-arg VERSION="$usage_version" \
+  --output "type=local,dest=${RELEASE_DIST:-go/dist}" .
 '''

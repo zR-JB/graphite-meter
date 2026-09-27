@@ -34,8 +34,9 @@ and adapts to truecolor, 256-color, or ANSI terminals. Set `GM_TUI_THEME=light`
 or `dark` to override the background choice. `NO_COLOR` disables color.
 The TUI can connect to either implementation's server.
 
-`mise run rust-client-package VERSION` creates an experimental Linux amd64 GNU
-archive with reviewed dependency notices and matching source. Release requests can
+`mise run rust-client-package VERSION` builds the experimental Linux and Windows
+TUI archives in the pinned builder image, with reviewed dependency notices and
+matching source; Linux TUIs are static musl executables like Go's. Release requests can
 opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
 `VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. Every

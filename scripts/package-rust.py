@@ -76,15 +76,10 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
             shutil.copyfile(REPO / filename, package / filename)
         shutil.copyfile(legal / "LEGAL.txt", package / "THIRD_PARTY_NOTICES.txt")
         source_name = f"{base}_third-party-source.tar.gz"
-        requirement = ""
-        if goos == "linux":
-            info = subprocess.check_output(["readelf", "--version-info", str(binary)], text=True)
-            glibc = max(re.findall(r"\bGLIBC_(\d+(?:\.\d+)+)\b", info), key=lambda item: tuple(map(int, item.split("."))))
-            requirement = f"; requires glibc {glibc} or newer"
         (package / "SOURCE.txt").write_text(
             "Graphite Meter source: https://github.com/zR-JB/graphite-meter\n"
             f"Matching release: v{version}\nDependency source archive: {source_name}\n"
-            f"Experimental native target: {target}{requirement}\n"
+            f"Experimental native target: {target}\n"
         )
         # Finish both staged files before replacing either destination.
         archive_path = child(stage, f"{base}.zip" if goos == "windows" else f"{base}.tar.gz")

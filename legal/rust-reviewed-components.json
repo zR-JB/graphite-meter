@@ -1086,6 +1086,29 @@
   },
   {
     "ecosystem": "cargo",
+    "name": "dlmalloc",
+    "reviewedVersion": "0.2.14",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "MIT/Apache-2.0",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT",
+        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/alexcrichton/dlmalloc-rs; revision f2c9f2b0c356e173b34c902f74641b8b3aeffb22. Cargo archive SHA-256 ad5208a115eaba24916f7456929832e310a81518c641f93fee4f89aa93aa3675. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; the port of Doug Lea's public-domain dlmalloc adds no notice. Preserve all packaged attribution and alternative license texts."
+  },
+  {
+    "ecosystem": "cargo",
     "name": "document-features",
     "reviewedVersion": "0.2.12",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",

@@ -351,7 +351,7 @@ def verify_rust_artifacts(dist: Path, version: str, selection: str, lock_sha256:
     if selection in ("server", "both"):
         for arch in sorted(PLATFORMS):
             verify_rust_source(dist / f"graphite-meter-server_{version}_linux_{arch}_rust_third-party-source.tar.gz",
-                               "graphite-meter-server", targets[f"linux/{arch}"], lock_sha256)
+                               "graphite-meter-server", targets[f"linux/{arch}"].replace("musl", "gnu"), lock_sha256)
     if selection in ("tui", "both"):
         for platform, target in targets.items():
             verify_rust_client_archive(dist, version, platform, target, lock_sha256)

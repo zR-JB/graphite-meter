@@ -27,7 +27,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
     && rm -rf /var/lib/apt/lists/* \
     && cd rust && rustup target add $(awk '$1 !~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt)
-ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
     --platform $(awk '$1 !~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
 
@@ -58,11 +60,10 @@ ARG PROFILE=release
 ENV GM_ENGINE_VERSION=${VERSION}-rust \
     GM_RUST_ASSET_DIR=/src/client/dist
 COPY --from=browser /src/client/ /src/client/
-# Bun's isolated linker resolves module source through its installation cache.
-# Keep the same paths so the legal scan reads the exact bundled packages.
+# The legal scan reads the bundled packages through Bun's installation cache, at the same paths.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
-RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { sub(/musl$/, "gnu", $2); print $2 }' scripts/tui-targets.txt) \
     && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
         --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
         --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \
