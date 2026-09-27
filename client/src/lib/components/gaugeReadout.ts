@@ -83,7 +83,11 @@ export function gaugeReadout(input: GaugeReadoutInput) {
       ? `${status.headline} — ${status.action}`
       : "";
   // Preparation speaks only through its outcome; the result cards announce a completed run.
-  const quiet = input.preparing || phase === "idle" || phase === "complete";
+  const quiet =
+    input.preparing ||
+    phase === "idle" ||
+    phase === "connecting" ||
+    phase === "complete";
   return {
     display: displayed(input),
     terminal,

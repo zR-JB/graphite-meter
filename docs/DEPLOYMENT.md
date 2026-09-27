@@ -42,7 +42,8 @@ export GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIF
 docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 ```
 
-It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only. For issuance and renewal, see the
+It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key must be readable by the
+[container user](#container-user). For issuance and renewal, see the
 [TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
 
 ### Authentication overlay
@@ -52,7 +53,8 @@ the host (its comments cover OIDC, hybrid and a proxy container). It needs Compo
 on `127.0.0.1` only and trusts only the network gateway the proxy's connections arrive from; stack no public ports
 on it, because loopback and IPv6 clients of a published port arrive from that gateway too.
 
-1. Save one [password hash](#authentication) line to `/etc/graphite-meter/auth-password-hash`.
+1. Save one [password hash](#authentication) line to `/etc/graphite-meter/auth-password-hash`, owned by the
+   [container user](#container-user).
 2. Edit the overlay's public URL and secret path.
 3. Configure [proxy forwarding](#reverse-proxies), then start both files:
 
@@ -69,6 +71,26 @@ mise run server-build-prod && ./go/graphite-meter                               
 
 Stop any container already bound to 7246 first. Source builds carry a development identity; release automation
 stamps the version and source revision.
+
+### Container user
+
+The image runs as the unprivileged user `65532:65532` and writes nothing. Mounted keys and secrets must be readable
+by it:
+
+- **Docker native TLS**: certbot keys are root `0600`; give the group read once and certbot keeps it on renewal.
+
+  ```sh
+  sudo chgrp -R 65532 /etc/letsencrypt/live /etc/letsencrypt/archive
+  sudo chmod -R g+rX /etc/letsencrypt/live /etc/letsencrypt/archive
+  ```
+
+- **Docker secrets**: `sudo chown 65532:65532 FILE && sudo chmod 0400 FILE`.
+- **Quadlet**: nothing. Podman secrets are world-readable inside the container, and the TLS and Tailscale units
+  map your user, which owns their keys, to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
+
+Rootful Docker gives container root the host's root. *Rootless Podman already maps root to my user, so why a
+non-root user?* Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
+files; the keep-id units run as your user, as root did before.
 
 ## Native listeners
 
@@ -260,7 +282,8 @@ terminal and `NO_COLOR` is unset.
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
 group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
 current screen. **Latency server** chooses whose latency is the run's result (Automatic: the lowest preparation
-round trip); every selected server is still probed, and `l` switches the server shown.
+round trip); if that server leaves the test, a surviving one takes over. Every selected server is still probed, and
+`l` switches the server shown; the printed report keeps the result's.
 
 | Key | Where | Action |
 | --- | --- | --- |
@@ -274,7 +297,7 @@ round trip); every selected server is still probed, and `l` switches the server 
 | enter (r), esc | finished | Run again; back to setup. |
 | d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
 | ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. |
+| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 
@@ -283,6 +306,10 @@ treats the engine version as metadata, not a compatibility test. Existing deploy
 add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
 schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
 defaults.
+
+The image now runs as [`65532:65532`](#container-user). Before pulling it, make Docker-mounted keys and secrets
+readable by that user and reinstall the TLS and Tailscale Quadlet units; their old copies, auto-updated or not,
+cannot read their keys.
 
 ## Troubleshooting
 

@@ -64,7 +64,7 @@ func (m model) readiness() []readiness {
 		case m.prepare == prepareChecking:
 			r.state = pathChecking
 		case goclient.IsAuthRequired(s.Err):
-			r.state, r.detail = pathFailed, "Sign-in required."
+			r.state = pathSignIn
 		case s.Err != nil || s.Connection == nil:
 			r.state = pathFailed
 			if s.Err != nil {
@@ -265,7 +265,7 @@ func (m model) detailsView(w int, full bool) string {
 		populations = append(populations, compactPopulation(stage.Name))
 	}
 	lines := []string{m.st.heading.Render(m.outcomeNotice())}
-	if notes := m.resultsView(w).notes; full && len(notes) > 0 {
+	if notes := m.resultsView(w, "Latency").notes; full && len(notes) > 0 {
 		lines = append(append(lines, notes...), "")
 	}
 	lines = append(lines, m.st.grid(headers, rows, w), "",
@@ -273,8 +273,8 @@ func (m model) detailsView(w int, full bool) string {
 	if len(details.Failures) > 0 {
 		lines = append(lines, "", m.st.heading.Render("Issues"))
 		for _, f := range details.Failures {
-			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s: %s", m.serverName(f.ServerID),
-				compactStage(f.Stage), f.Scope, fmtClock(f.At), failureLabels[f.Reason], errorText(f.Err)))
+			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s", m.serverName(f.ServerID),
+				compactStage(f.Stage), f.Scope, fmtClock(f.At), failureLabels[f.Reason]))
 		}
 	}
 	if full && details.Outcome != goclient.OutcomeRunning && len(details.Intervals) > 0 {
@@ -288,9 +288,10 @@ func (m model) detailsView(w int, full bool) string {
 			for i, id := range interval.Participants {
 				names[i] = m.serverName(id)
 			}
-			lines = append(lines, m.st.muted.Render(fmt.Sprintf("%s %.1f–%.1f s · %s · %s",
-				compactStage(interval.Stage), interval.Start.Seconds(), interval.End.Seconds(),
-				strings.Join(names, ", "), state)))
+			parts := []string{fmt.Sprintf("%s %.1f–%.1f s", compactStage(interval.Stage), interval.Start.Seconds(),
+				interval.End.Seconds()), strings.Join(names, ", "), state}
+			parts = slices.DeleteFunc(parts, func(part string) bool { return part == "" })
+			lines = append(lines, m.st.muted.Render(strings.Join(parts, " · ")))
 		}
 		if details.OmittedIntervals > 0 {
 			lines = append(lines, m.st.muted.Render(fmt.Sprintf(

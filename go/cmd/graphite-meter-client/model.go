@@ -34,6 +34,7 @@ type (
 		events []goclient.Event
 	}
 	freshnessMsg struct{}
+	interruptMsg struct{}
 )
 
 const (
@@ -160,6 +161,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsMsg:
 		return m.handleEvents(msg)
 	case freshnessMsg:
+	case interruptMsg:
+		return m.interrupt()
 	default:
 		if m.edit != nil {
 			return m.updateEdit(msg)
@@ -171,8 +174,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
-		m.interrupted = m.running()
-		return m, tea.Quit
+		return m.interrupt()
 	case m.edit != nil:
 		return m.handleEditKey(msg)
 	case key.Matches(msg, keys.quit):
@@ -318,8 +320,16 @@ func (m model) quit() (tea.Model, tea.Cmd) {
 	if m.running() {
 		m.controller.CancelRun()
 		m.quitting, m.stopPrompt = true, false
-		m.notice = "Stopping the test before quitting…"
+		m.notice = "Stopping the test before quitting… ctrl+c quits at once."
 		return m, nil
 	}
 	return m, tea.Quit
+}
+
+func (m model) interrupt() (tea.Model, tea.Cmd) {
+	m.interrupted = m.interrupted || m.running()
+	if m.quitting || !m.running() {
+		return m, tea.Quit
+	}
+	return m.quit()
 }

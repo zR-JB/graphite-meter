@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,11 +17,18 @@ import (
 )
 
 func errorText(err error) string {
-	text := wire.CleanText(err.Error(), 320)
-	if _, untrusted := errors.AsType[*tls.CertificateVerificationError](err); untrusted {
-		text += " Turn on Skip TLS verify (-insecure) only for a server you trust."
+	_, transport := errors.AsType[*url.Error](err)
+	op, network := errors.AsType[*net.OpError](err)
+	switch cert, untrusted := errors.AsType[*tls.CertificateVerificationError](err); {
+	case untrusted:
+		return "Certificate not trusted: " + wire.CleanText(strings.TrimPrefix(cert.Err.Error(), "x509: "), 200) +
+			". Turn on Skip TLS verify (-insecure) only for a server you trust."
+	case network && op.Op == "dial":
+		return "Server could not be reached"
+	case transport || network:
+		return failureLabels[goclient.ReasonOf(err)]
 	}
-	return text
+	return wire.CleanText(err.Error(), 320)
 }
 
 var rateUnits = []string{"bit/s", "kbit/s", "Mbit/s", "Gbit/s", "Tbit/s"}
