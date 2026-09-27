@@ -372,7 +372,7 @@
     outline-offset: var(--ring-offset, 2px);
   }
   label > :is([type="radio"], [type="checkbox"]):focus-visible,
-  :is(section, article)[tabindex="-1"]:focus-visible {
+  :is(section, article, h2)[tabindex="-1"]:focus-visible {
     outline: none;
   }
   :is(p, dd) a:not(.btn) {
@@ -677,8 +677,10 @@
   .group > .kv dt {
     font-weight: var(--w-normal);
   }
+  /* The sans space is narrow beside a middot; values joined by " · " need the air. */
   .group > .kv dd {
     font-variant-numeric: tabular-nums;
+    word-spacing: 0.12em;
   }
   /* A row with an explainer brightens its label while pointed at. */
   .group > .kv > [tabindex]:is(:hover, :focus-visible) dt {

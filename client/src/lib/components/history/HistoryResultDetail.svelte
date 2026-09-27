@@ -161,7 +161,6 @@
   );
   const environment = $derived(
     [
-      ["IP family", ipVersion ? `IPv${ipVersion}` : null],
       ["Client", record.build],
       ["Server", record.engine],
     ].filter((row): row is [string, string] => !!row[1]),
@@ -297,6 +296,10 @@
             {#if row.url}<div>
                 <dt>Address</dt>
                 <dd>{row.url}</dd>
+              </div>{/if}
+            {#if ipVersion && row.id === run.latencyFocus}<div>
+                <dt>IP family</dt>
+                <dd>IPv{ipVersion}</dd>
               </div>{/if}
             {#if multiple}
               <div>

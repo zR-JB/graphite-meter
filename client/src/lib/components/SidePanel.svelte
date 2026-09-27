@@ -143,7 +143,8 @@
     <header class="panel-head">
       <div class="title">
         {#if kicker}<span class="caps">{kicker}</span>{/if}
-        <h2>{title}</h2>
+        <!-- svelte-ignore a11y_autofocus -->
+        <h2 tabindex="-1" autofocus>{title}</h2>
       </div>
       <button
         class="btn btn-icon btn-inset"
@@ -156,7 +157,7 @@
     </header>
 
     <div class="panel-body">{@render children()}</div>
-    <!-- After the content: opening focuses the close button, not the handle. -->
+    <!-- After the content, so Tab from the title reaches the controls first. -->
     {#if docked}
       <div
         class="resize-handle"
