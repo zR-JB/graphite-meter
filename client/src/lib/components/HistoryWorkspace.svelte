@@ -243,10 +243,22 @@
       hour: "2-digit",
       minute: "2-digit",
     });
+    const recentDay = ["Today", "Yesterday"].includes(
+      groupHeading(record.completedAt),
+    );
+    const day = new Date(record.completedAt).toLocaleDateString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
     return {
       record,
       exact,
-      primary: byDay ? time : `${dateLabel(record.completedAt)}, ${time}`,
+      primary: !byDay
+        ? `${dateLabel(record.completedAt)}, ${time}`
+        : recentDay
+          ? time
+          : `${day}, ${time}`,
       secondary: recent,
       outcome,
       metrics,
@@ -273,14 +285,13 @@
   }
 
   const byDay = $derived(sort === "date");
-  function dayHeading(value: number): string {
+  // Recent days, then months, so sparse history never gets a heading per result.
+  function groupHeading(value: number): string {
     const day = (time: number) => new Date(time).toDateString();
     if (day(value) === day(renderedAt)) return "Today";
     if (day(value) === day(renderedAt - 86_400_000)) return "Yesterday";
     return new Date(value).toLocaleDateString(undefined, {
-      weekday: "short",
-      month: "short",
-      day: "numeric",
+      month: "long",
       year: "numeric",
     });
   }
@@ -480,8 +491,8 @@
           </div>
           <ol aria-label="Saved results">
             {#each visible as record, index (record.id)}
-              {@const day = byDay ? dayHeading(record.completedAt) : ""}
-              {#if day && (index === 0 || day !== dayHeading(visible[index - 1].completedAt))}
+              {@const day = byDay ? groupHeading(record.completedAt) : ""}
+              {#if day && (index === 0 || day !== groupHeading(visible[index - 1].completedAt))}
                 <li class="day" aria-hidden="true">{day}</li>
               {/if}
               <li>
