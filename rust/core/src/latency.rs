@@ -60,7 +60,7 @@ impl DeadlineEstimator {
 
     pub fn deadline_nanos(self) -> u64 {
         self.srtt_rttvar.map_or(Self::FLOOR_NANOS, |(srtt, rttvar)| {
-            srtt.saturating_add(4 * rttvar.max(1_000_000))
+            srtt.saturating_add(rttvar.max(1_000_000).saturating_mul(4))
                 .clamp(Self::FLOOR_NANOS, Self::CEIL_NANOS)
         })
     }
