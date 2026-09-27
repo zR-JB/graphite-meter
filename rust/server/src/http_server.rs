@@ -119,11 +119,12 @@ impl HttpServer {
     }
 
     pub fn cover_handshake(&self, handshake_bytes: usize) -> Result<(), ConfigError> {
+        let endpoint = self.endpoint_bytes.load(Ordering::Relaxed);
         check_buffer_budget(
             &self.config,
             self.memory.limit,
             handshake_bytes,
-            self.endpoint_bytes.load(Ordering::Relaxed),
+            (endpoint != 0).then_some(endpoint),
         )?;
         self.handshake_bytes.store(handshake_bytes, Ordering::Relaxed);
         Ok(())
@@ -1141,10 +1142,12 @@ fn holds_permit(operations: &Operations) -> bool {
 
 pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {
     let endpoint = if config.listener(crate::config::NativeKind::H3).address.is_empty() {
-        0
+        None
     } else {
-        http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), config.max_connections, 0, 1)
-            .ok_or("QUIC endpoint buffer size overflow")?
+        Some(
+            http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), config.max_connections, 0, 1)
+                .ok_or("QUIC endpoint buffer size overflow")?,
+        )
     };
     check_buffer_budget(config, config.max_buffer_bytes, 0, endpoint)
 }
@@ -1153,11 +1156,19 @@ fn check_buffer_budget(
     config: &Config,
     limit: usize,
     handshake_bytes: usize,
-    endpoint_bytes: usize,
+    quic_endpoint_bytes: Option<usize>,
 ) -> Result<(), ConfigError> {
-    let floor = http_quic::connection_floor(&config.limits, handshake_bytes)
-        .saturating_add(http_quic::noq_floor(&config.limits)?)
-        .max(http_h2::BUFFER_BYTES as usize);
+    let quic = match quic_endpoint_bytes {
+        Some(_) => http_quic::connection_floor(&config.limits, handshake_bytes)
+            .saturating_add(http_quic::noq_floor(&config.limits)?),
+        None => 0,
+    };
+    let h2 = if config.listener(crate::config::NativeKind::H2).address.is_empty() {
+        0
+    } else {
+        http_h2::BUFFER_BYTES as usize
+    };
+    let (floor, endpoint_bytes) = (quic.max(h2), quic_endpoint_bytes.unwrap_or(0));
     let minimum =
         floor as u128 * config.max_connections as u128 + endpoint_bytes as u128 + DOWNLOAD_BLOCK_BYTES as u128;
     if minimum > limit as u128 {

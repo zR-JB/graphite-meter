@@ -80,7 +80,7 @@ impl HttpServer {
             &self.config,
             self.memory.limit,
             self.handshake_bytes.load(Ordering::Relaxed),
-            bytes,
+            Some(bytes),
         )?;
         let lease = Arc::new(
             self.memory
@@ -1078,6 +1078,11 @@ mod tests {
         let minimum = idle - measured.memory.available() + floors + DOWNLOAD_BLOCK_BYTES;
         drop(endpoint);
         let small = HttpServer::with_memory(config.clone(), minimum - 1).unwrap();
+        assert!(
+            small.cover_handshake(minimum).is_ok(),
+            "chain charged QUIC floors without an endpoint"
+        );
+        small.cover_handshake(0).unwrap();
         let available = small.memory.available();
         let Err(error) = small.quic_endpoint(tls.clone(), address) else {
             panic!("endpoint started without room for every connection floor");

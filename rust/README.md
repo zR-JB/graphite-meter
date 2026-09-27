@@ -53,10 +53,12 @@ including allowed and denied group membership. Other deployments remain untested
 
 The server shares one buffer budget across QUIC and HTTP/2 listeners,
 configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
-It must cover `GM_MAX_CONNECTIONS` times the larger connection floor below, the
-QUIC endpoint buffers and the shared download block. Configuration checks what
-it knows; loading or reloading the certificate chain and binding the QUIC socket
-check the actual terms, and a reload that does not fit keeps the previous chain.
+It must cover `GM_MAX_CONNECTIONS` times the larger connection floor of the
+enabled HTTP/2 and HTTP/3 listeners below, the QUIC endpoint buffers when HTTP/3
+is enabled and the shared download block; HTTP/1 connections hold no floor.
+Configuration checks what it knows; loading or reloading the certificate chain
+and binding the QUIC socket check the actual terms, and a reload that does not
+fit keeps the previous chain.
 QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until Noq drops the connection, a QUIC connection
 holds a floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3

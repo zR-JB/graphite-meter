@@ -18,11 +18,26 @@ fn password() -> Config {
 #[test]
 fn authentication_constrains_advertised_origins_and_secret_sources() {
     password().validate().unwrap();
-    let memory = Config {
+    let mut memory = Config {
         max_buffer_bytes: 1024 * 1024,
+        tls_cert: "cert.pem".into(),
+        tls_key: "key.pem".into(),
         ..Config::default()
     };
-    assert!(memory.validate().is_err());
+    memory.validate().expect("HTTP/1 connections hold no floor");
+    memory.native[NativeKind::H2 as usize].address = ":8444".into();
+    assert!(
+        memory
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .starts_with("GM_MAX_BUFFER_BYTES")
+    );
+    memory.max_buffer_bytes = 1024 * 1024 * 1024;
+    memory.validate().expect("HTTP/2 floors fit without the QUIC endpoint");
+    memory.native[NativeKind::H3 as usize].address = ":8443".into();
+    let error = memory.validate().unwrap_err().to_string();
+    assert!(error.contains("QUIC endpoint buffers"), "{error}");
     let invalid_cases: [InvalidConfigCase; 10] = [
         ("insecure auth origin", |config| {
             config.auth.public_url = "http://meter.example".into()
