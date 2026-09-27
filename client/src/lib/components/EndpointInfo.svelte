@@ -26,6 +26,7 @@
   } from "../presentation/vocabulary";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
+  import Icon from "./Icon.svelte";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
@@ -79,29 +80,35 @@
     store.isRunning ? "running" : activePaths ? "result" : "live",
   );
 
-  function clientEvidence(role: PathRole) {
-    const connection = connections[role];
-    if (!connection.clientIp) return "Pending";
-    const source =
-      connection.clientIpSource === "forwarded"
-        ? "trusted proxy"
-        : "socket peer";
-    return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
-  }
+  const client = $derived.by(() => {
+    const { clientIp, clientIpVersion, clientIpSource } =
+      connections.throughput;
+    if (!clientIp) return { value: "Pending" };
+    return {
+      value: clientIp,
+      aside: `IPv${clientIpVersion}, ${clientIpSource === "forwarded" ? "trusted proxy" : "socket peer"}`,
+    };
+  });
 
   function capabilities(role: PathRole) {
     const advertised = advertisedServerCapabilities(discovery, role);
-    if (!advertised) return "Checking server";
+    if (!advertised) return { value: "Checking server" };
     const values = advertised.transports.map((value) =>
       transportLabel(value, role),
     );
-    if (!values.length) return "None advertised";
-    return `${values.join(" · ")}${
-      advertised.browserBlocked
-        ? " · some clear origins blocked by this page"
-        : ""
-    }`;
+    if (!values.length) return { value: "None advertised" };
+    return {
+      value: values.join(", "),
+      aside: advertised.browserBlocked
+        ? "Some clear origins blocked by this page"
+        : undefined,
+    };
   }
+  const unreachable = $derived(
+    !failures.length && selectedServer
+      ? store.servers.get(selectedServer.id)?.readiness === "failed"
+      : false,
+  );
 
   // The feed rides the session carrying the bytes, or its own fetch.
   const uploadProgressPath = $derived.by(() => {
@@ -180,10 +187,18 @@
   }
 </script>
 
-{#snippet row(label: string, value: string, tip?: string, marked = false)}
+{#snippet row(
+  label: string,
+  fact: string | { value: string; aside?: string },
+  tip?: string,
+  marked = false,
+)}
+  {@const { value, aside } = typeof fact === "string" ? { value: fact } : fact}
   <div>
     <dt {@attach tip ? (marked ? term : tooltip)(() => tip) : null}>{label}</dt>
-    <dd>{value}</dd>
+    <dd>
+      {value}{#if aside}<span class="aside">{aside}</span>{/if}
+    </dd>
   </div>
 {/snippet}
 
@@ -204,6 +219,10 @@
     </div>
     {#each failures as failure}
       <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
+    {:else}
+      {#if unreachable}<p class="notice" data-tone="err">
+          {validation.throughput.message ?? "Server could not be reached"}
+        </p>{/if}
     {/each}
     <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row("Name", server?.name ?? "Checking server")}
@@ -230,11 +249,6 @@
             {role === "throughput" ? "Throughput path" : "Latency path"}
           </dt>
           <dd>
-            {#if inTest && status.tone !== "neutral"}<span
-                class="status-dot"
-                data-tone={status.tone}
-                aria-hidden="true"
-              ></span>{/if}
             <span
               >{inTest
                 ? connection.summary
@@ -242,9 +256,13 @@
                   ? "Not selected"
                   : "Not measured"}</span
             >
-            {#if inTest && connection.validation !== "verified"}<span
-                class="status">{status.label}</span
-              >{:else if inTest}<span class="sr-only">{status.label}</span>{/if}
+            {#if inTest}<span class="path-status" data-tone={status.tone}
+                >{#if status.tone !== "neutral"}<span
+                    class="status-dot"
+                    data-tone={status.tone}
+                    aria-hidden="true"
+                  ></span>{/if}{status.label}</span
+              >{/if}
           </dd>
         </div>
       {/each}
@@ -269,11 +287,7 @@
           JARGON.pretestLatency,
         )}
       {/if}
-      {@render row(
-        "Your address",
-        clientEvidence("throughput"),
-        JARGON.clientAddress,
-      )}
+      {@render row("Your address", client, JARGON.clientAddress)}
     </dl>
   </div>
 
@@ -294,12 +308,12 @@
   <div class="group">
     <h3>Build</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
-      {@render row(
-        "Client",
-        [BUILD.profile, BUILD.version && `v${BUILD.version}`, BUILD.revision]
+      {@render row("Client", {
+        value: BUILD.version ? `v${BUILD.version}` : BUILD.revision,
+        aside: [BUILD.profile, BUILD.version && BUILD.revision]
           .filter(Boolean)
-          .join(" · "),
-      )}
+          .join(", "),
+      })}
       {@render row(
         "Server",
         discovery?.engineVersion ?? MISSING,
@@ -313,7 +327,9 @@
   <p class="actions">
     <button class="btn copy" type="button" onclick={copyReport}>
       <span class:hidden={copied}>Copy diagnostic report</span>
-      <span class:hidden={!copied} aria-hidden={!copied}>Copied</span>
+      <span class:hidden={!copied} aria-hidden={!copied}
+        ><Icon name="check" />Copied</span
+      >
     </button>
     <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
       >About &amp; legal</button
@@ -327,14 +343,18 @@
     display: inline-grid;
   }
   .copy > span {
+    display: inline-flex;
     grid-area: 1 / 1;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
   .copy > .hidden {
     visibility: hidden;
   }
   .infra {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-5);
   }
   .group-head {
     display: flex;
@@ -345,13 +365,20 @@
   .path dd {
     display: flex;
     align-items: baseline;
-    gap: var(--space-2);
+    justify-content: space-between;
+    gap: var(--space-3);
   }
-  .path .status-dot {
-    translate: 0 -1px;
+  .path-status {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-soft);
+    white-space: nowrap;
   }
-  .status {
-    color: var(--tone, var(--text-soft));
+  .aside {
+    margin-left: var(--space-2);
+    color: var(--text-soft);
   }
   .actions {
     display: flex;
