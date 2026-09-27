@@ -112,7 +112,6 @@ async fn prepare(
     };
     config.validate()?;
     snapshots.send_modify(|snapshot| {
-        snapshot.phase = Phase::Preparing;
         snapshot.error = None;
         snapshot.status = "Loading server catalogue".into();
     });
@@ -354,6 +353,7 @@ pub async fn run_prepared(
     prepared: Option<PreparedRun>,
 ) -> Result<(), Error> {
     snapshots.send_modify(|snapshot| {
+        snapshot.plan.clone_from(&config.stages);
         snapshot.results.clear();
         snapshot.failures.clear();
         snapshot.server_latencies.clear();

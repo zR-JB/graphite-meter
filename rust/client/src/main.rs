@@ -6,8 +6,17 @@ use graphite_meter_client::{
     Error,
     cli::{self, Action},
     controller,
-    model::Snapshot,
+    model::Phase,
+    report, ui,
 };
+use std::{
+    io::IsTerminal,
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+    },
+};
+use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
@@ -20,7 +29,7 @@ async fn main() {
     }
 }
 fn fail(error: &Error, code: i32) -> i32 {
-    eprintln!("graphite-meter Rust client: {}", safe(&error.to_string()));
+    eprintln!("graphite-meter-client: {}", safe(&error.to_string()));
     code
 }
 async fn run(action: Action) -> Result<i32, Error> {
@@ -50,189 +59,84 @@ async fn run(action: Action) -> Result<i32, Error> {
         Action::Run { config, report } => (*config, report),
     };
     let _ = graphite_meter_client::crypto::provider().install_default();
-    use std::io::IsTerminal;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicU8, Ordering},
-    };
+    let headless = report_only || !std::io::stdout().is_terminal();
     let caught = Arc::new(AtomicU8::new(0));
-    let signal = caught.clone();
-    #[cfg(unix)]
-    let shutdown = {
-        let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        async move {
-            let code = tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 };
-            signal.store(code, Ordering::Relaxed);
-        }
-    };
-    // Like Go on Windows: Ctrl-C and Ctrl-Break interrupt, closing the console terminates.
-    #[cfg(windows)]
-    let shutdown = {
-        use tokio::signal::windows;
-        let (mut interrupt, mut interrupt_break, mut close) =
-            (windows::ctrl_c()?, windows::ctrl_break()?, windows::ctrl_close()?);
-        async move {
-            let code = tokio::select! {
-                _ = interrupt.recv() => 130,
-                _ = interrupt_break.recv() => 130,
-                _ = close.recv() => 143,
-            };
-            signal.store(code, Ordering::Relaxed);
-        }
-    };
-    let finished = if report_only || !std::io::stdout().is_terminal() {
-        Some(controller::run_once(config, shutdown).await?)
+    let interrupts = interrupts(headless, caught.clone())?;
+    let (finished, exit) = if headless {
+        (
+            Some(controller::run_once(config, interrupts).await?),
+            ui::Exit::default(),
+        )
     } else {
-        let (finished, exit) = controller::run(config, shutdown).await?;
-        if exit == graphite_meter_client::ui::Exit::Interrupted {
-            caught.store(130, Ordering::Relaxed);
-        }
-        finished
+        controller::run(config, interrupts).await?
     };
-    if let Some(snapshot) = &finished {
-        report(snapshot);
+    let width = crossterm::terminal::size()
+        .ok()
+        .filter(|_| std::io::stdout().is_terminal())
+        .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
+    if let Some(snapshot) = finished.as_ref().filter(|_| !exit.running) {
+        match report::render(snapshot, width) {
+            Some(report) => println!("{}", report.lines().map(safe).collect::<Vec<_>>().join("\n")),
+            None if headless => eprintln!(
+                "graphite-meter-client: {}",
+                snapshot.error.as_deref().unwrap_or("Test stopped before it started.")
+            ),
+            None => {}
+        }
     }
+    let last = finished.map(|snapshot| snapshot.phase);
     let signal = caught.load(Ordering::Relaxed);
-    Ok(match finished.map(|snapshot| snapshot.phase) {
-        _ if signal != 0 => i32::from(signal),
-        None | Some(graphite_meter_client::model::Phase::Complete) => 0,
-        Some(_) => 1,
+    let interrupted = exit.interrupted || signal != 0 && (exit.running || last == Some(Phase::Cancelled));
+    Ok(if interrupted {
+        if signal == 143 { 143 } else { 130 }
+    } else if last.is_none_or(|phase| phase == Phase::Complete) {
+        0
+    } else {
+        1
     })
 }
 
-fn report(snapshot: &Snapshot) {
-    println!("Graphite Meter · {}", safe(&snapshot.status));
-    for server in snapshot.servers.iter().filter(|server| server.has_check_result()) {
-        println!(
-            "{} · {} · {}",
-            safe(&server.name),
-            safe(&server.origin),
-            if server.checked() {
-                safe(&server.connection_label())
-            } else {
-                "Unavailable".into()
-            }
-        );
-        if let Some(error) = &server.error {
-            println!("  Unavailable: {}", safe(error));
+fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()>, Error> {
+    let (sender, receiver) = mpsc::channel(4);
+    let interrupt = move |code: u8| {
+        if caught.swap(code, Ordering::Relaxed) != 0 && headless {
+            std::process::exit(code.into());
         }
+        let _ = sender.try_send(());
+    };
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut interrupts = signal(SignalKind::interrupt())?;
+        let mut terminations = signal(SignalKind::terminate())?;
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = interrupts.recv() => interrupt(130),
+                    _ = terminations.recv() => interrupt(143),
+                }
+            }
+        });
     }
-    for result in &snapshot.results {
-        let ending = match snapshot.stage_status(result) {
-            graphite_meter_client::model::StageStatus::Complete => String::new(),
-            status => format!(" · {}", status.label()),
-        };
-        if result.stage == graphite_meter_client::model::Stage::Latency {
-            println!("{}{ending}", result.stage.name());
-        } else {
-            println!(
-                "{}{ending}: {} {}, {} {}",
-                result.stage.name(),
-                graphite_meter_client::vocabulary::DOWNLOAD.label,
-                rate(result.down_bps()),
-                graphite_meter_client::vocabulary::UPLOAD.label,
-                rate(result.up_bps())
-            );
-            for measurement in [&result.down, &result.up].into_iter().flatten() {
-                let direction = if measurement.direction == graphite_meter_core::measurement::Direction::Down {
-                    graphite_meter_client::vocabulary::DOWNLOAD
-                } else {
-                    graphite_meter_client::vocabulary::UPLOAD
-                };
-                println!(
-                    "  {} · {}",
-                    direction.label,
-                    graphite_meter_client::vocabulary::throughput_facts(measurement)
-                );
+    // Like Go on Windows: Ctrl-C and Ctrl-Break interrupt, closing the console terminates.
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+        let (mut interrupts, mut breaks, mut closes) =
+            (windows::ctrl_c()?, windows::ctrl_break()?, windows::ctrl_close()?);
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = interrupts.recv() => interrupt(130),
+                    _ = breaks.recv() => interrupt(130),
+                    _ = closes.recv() => interrupt(143),
+                }
             }
-        }
-        for host in &result.server_latencies {
-            let name = snapshot
-                .servers
-                .iter()
-                .find(|server| server.id == host.id)
-                .map_or(host.id.as_str(), |server| server.name.as_str());
-            let median = host.median().map_or_else(
-                || "—".into(),
-                |value| format!("{} ms", graphite_meter_core::format::latency_ms(value as f64 / 1e6)),
-            );
-            let timeouts = graphite_meter_client::vocabulary::probe_timeouts(host.summary);
-            let milliseconds = |value: Option<u64>| {
-                value.map_or_else(
-                    || "—".into(),
-                    |value| format!("{} ms", graphite_meter_core::format::latency_ms(value as f64 / 1e6)),
-                )
-            };
-            let added = snapshot.added_ms(result, &host.id).map_or_else(
-                || "—".into(),
-                |value| format!("{} ms", graphite_meter_core::format::added_ms(value)),
-            );
-            use graphite_meter_client::vocabulary as words;
-            println!(
-                "  {}: {} {}, {} {}, {} {}, {} {}, {} {}",
-                safe(name),
-                words::MEDIAN.label,
-                median,
-                words::ADDED.label,
-                added,
-                words::P95.label,
-                milliseconds(host.median().and(host.summary.distribution).map(|value| value.p95)),
-                words::JITTER.label,
-                milliseconds(host.summary.jitter),
-                words::PROBE_TIMEOUTS.label,
-                timeouts
-            );
-            println!("    {}", words::latency_facts(host.summary, host.elapsed));
-            if let Some(timing) = words::reflector_facts(host.summary) {
-                println!("    {timing}");
-            }
-            if let Some(ending) = host.ending {
-                println!("    Latency unavailable: {ending:?}");
-            }
-        }
-        if result.server_results.len() > 1 {
-            for server in &result.server_results {
-                println!(
-                    "  {}: Download {}, Upload {}, received Download {} / Upload {}",
-                    safe(
-                        snapshot
-                            .servers
-                            .iter()
-                            .find(|host| host.id == server.id)
-                            .map_or(server.id.as_str(), |host| host.name.as_str())
-                    ),
-                    rate(server.down_bps()),
-                    rate(server.up_bps()),
-                    graphite_meter_core::format::bytes(server.down_bytes()),
-                    graphite_meter_core::format::bytes(server.up_bytes()),
-                );
-            }
-        }
+        });
     }
-    if !snapshot.failures.is_empty() {
-        println!("Left the test");
-        for failure in &snapshot.failures {
-            let name = snapshot
-                .servers
-                .iter()
-                .find(|host| host.id == failure.server_id)
-                .map_or(failure.server_id.as_str(), |host| host.name.as_str());
-            println!(
-                "  {}",
-                safe(&graphite_meter_client::vocabulary::failure_facts(failure, name))
-            );
-        }
-    }
-    if let Some(error) = &snapshot.error {
-        println!("Error: {}", safe(error));
-    }
+    Ok(receiver)
 }
-fn rate(value: Option<f64>) -> String {
-    value
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or_else(|| "—".into(), |value| graphite_meter_core::format::rate(value / 8.0))
-}
+
 fn safe(value: &str) -> String {
     value
         .chars()

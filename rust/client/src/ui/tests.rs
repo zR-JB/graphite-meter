@@ -39,7 +39,9 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
                 }],
                 server_results: Vec::new(),
             }],
+            participants: vec!["self".into()],
             latency_focus: Some("self".into()),
+            plan: vec![Stage::Latency],
             ..Snapshot::default()
         },
     );
@@ -372,6 +374,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
     assert!(snapshot.history.points.len() <= 480);
     snapshot.server_latencies.push(host);
     snapshot.latency_focus = Some("self".into());
+    snapshot.plan = vec![Stage::Latency, Stage::Download];
     let config = Config {
         stages: vec![Stage::Latency, Stage::Download],
         latency_duration: Duration::from_secs(60),

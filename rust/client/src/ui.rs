@@ -33,10 +33,10 @@ use std::{
 use tokio::sync::{mpsc, watch};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Exit {
-    Quit,
-    Interrupted,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Exit {
+    pub interrupted: bool,
+    pub running: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -44,7 +44,6 @@ pub enum Command {
     Run(Config),
     Verify(Config),
     Cancel,
-    Quit,
     OpenBrowser,
 }
 
@@ -100,6 +99,7 @@ pub async fn run(
     config: Config,
     mut snapshots: watch::Receiver<Snapshot>,
     commands: mpsc::Sender<Command>,
+    mut interrupts: mpsc::Receiver<()>,
 ) -> Result<Exit, Error> {
     let mut session = TerminalSession::enter()?;
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
@@ -114,11 +114,20 @@ pub async fn run(
                 changed.map_err(|_| "measurement controller stopped")?;
                 snapshot_changed = true;
             }
+            Some(()) = interrupts.recv() => {
+                if ui.interrupt(&commands) {
+                    return Ok(ui.exit());
+                }
+                dirty = true;
+            }
             _ = refresh.tick() => {
                 if snapshot_changed {
                     ui.update(snapshots.borrow_and_update().clone());
                     snapshot_changed = false;
                     dirty = true;
+                    if ui.quitting && !ui.running() {
+                        return Ok(ui.exit());
+                    }
                 }
                 if ui.active() {
                     ui.frame();
@@ -134,7 +143,7 @@ pub async fn run(
                 match event? {
                     Event::Key(key) if key.kind != KeyEventKind::Release => {
                         if ui.key(key, &commands) {
-                            return Ok(if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) { Exit::Interrupted } else { Exit::Quit });
+                            return Ok(ui.exit());
                         }
                         dirty = true;
                     }
@@ -167,6 +176,8 @@ struct Ui {
     notice: String,
     awaiting: bool,
     cancel: CancelState,
+    quitting: bool,
+    interrupted: bool,
     latency_pick: Option<String>,
     received_at: tokio::time::Instant,
     shown_down: Option<f64>,
@@ -196,6 +207,8 @@ impl Ui {
             notice: String::new(),
             awaiting: false,
             cancel: CancelState::Idle,
+            quitting: false,
+            interrupted: false,
             latency_pick: None,
             received_at: tokio::time::Instant::now(),
             shown_down,
@@ -212,6 +225,22 @@ impl Ui {
         snapshot.servers.truncate(MAX_SERVERS);
         snapshot.server_latencies.truncate(4);
         snapshot.results.truncate(16);
+        let live = |snapshot: &Snapshot| matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring);
+        if live(&self.snapshot) && !live(&snapshot) && !self.quitting {
+            self.notice.clear();
+        }
+        if self.live && !self.quitting && self.snapshot.participants.is_empty() && !snapshot.participants.is_empty() {
+            self.notice = "Test started. Press esc to stop.".into();
+        }
+        let failed = snapshot
+            .failures
+            .get(self.snapshot.failures.len()..)
+            .and_then(<[_]>::last);
+        if let Some(failure) = failed.filter(|_| !self.quitting) {
+            let server = snapshot.servers.iter().find(|server| server.id == failure.server_id);
+            let name = server.map_or(failure.server_id.as_str(), |server| server.name.as_str());
+            self.notice = format!("{name}: {}", failure.reason.label());
+        }
         self.awaiting = false;
         if snapshot.auth.is_some() || !matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
             if self.cancel != CancelState::Idle {
@@ -226,6 +255,9 @@ impl Ui {
         if snapshot.stage != self.snapshot.stage {
             self.shown_down = None;
             self.shown_up = None;
+        }
+        if snapshot.phase == Phase::Checking {
+            self.live = false;
         }
         if self
             .latency_pick
@@ -255,9 +287,9 @@ impl Ui {
     }
     fn notice(&self) -> (&str, bool) {
         if self.cancel == CancelState::Confirming {
-            ("Stop the test? Esc confirms; any other key continues.", false)
+            ("Stop the test? esc confirms, any other key continues.", false)
         } else if self.cancel == CancelState::Requested {
-            ("Cancelling run; waiting for owned IO.", false)
+            ("Stopping the test…", false)
         } else if !self.notice.is_empty() {
             (&self.notice, false)
         } else if let Some(error) = self.snapshot.error.as_deref() {
@@ -270,7 +302,35 @@ impl Ui {
         self.latency_pick.as_deref().or(self.snapshot.latency_focus.as_deref())
     }
     fn active(&self) -> bool {
-        self.awaiting || matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring)
+        self.awaiting
+            || matches!(
+                self.snapshot.phase,
+                Phase::Checking | Phase::Preparing | Phase::Warmup | Phase::Measuring
+            )
+    }
+    fn running(&self) -> bool {
+        self.snapshot.auth.is_none()
+            && (self.awaiting && self.live
+                || matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring))
+    }
+    fn exit(&self) -> Exit {
+        Exit {
+            interrupted: self.interrupted,
+            running: self.running(),
+        }
+    }
+    fn quit(&mut self, commands: &mpsc::Sender<Command>) -> bool {
+        if !self.running() {
+            return true;
+        }
+        self.send(Command::Cancel, commands);
+        (self.quitting, self.cancel) = (true, CancelState::Idle);
+        self.notice = "Stopping the test before quitting… ctrl+c quits at once.".into();
+        false
+    }
+    fn interrupt(&mut self, commands: &mpsc::Sender<Command>) -> bool {
+        self.interrupted |= self.running();
+        self.quitting || self.quit(commands)
     }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) -> bool {
         let requested = match &command {
@@ -306,14 +366,11 @@ impl Ui {
     }
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            return true;
+            return self.interrupt(commands);
         }
         if self.snapshot.auth.is_some() {
             match key.code {
-                KeyCode::Char('q') => {
-                    let _ = commands.try_send(Command::Quit);
-                    return true;
-                }
+                KeyCode::Char('q') => return true,
                 KeyCode::Char('o') | KeyCode::Enter | KeyCode::Char(' ') => {
                     self.send(Command::OpenBrowser, commands);
                 }
@@ -352,8 +409,7 @@ impl Ui {
             return false;
         }
         if key.code == KeyCode::Char('q') {
-            let _ = commands.try_send(Command::Quit);
-            return true;
+            return self.quit(commands);
         }
         if self.cancel == CancelState::Confirming {
             self.cancel = CancelState::Idle;
@@ -421,6 +477,7 @@ impl Ui {
                         if self.send(Command::Run(self.config.clone()), commands) {
                             self.live = true;
                             self.popup = Popup::None;
+                            self.notice = "Checking paths before the test. Press esc to stop.".into();
                         }
                     }
                     Err(error) => self.notice = error.to_string(),

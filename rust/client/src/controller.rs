@@ -7,7 +7,7 @@ use crate::{
     runner,
     ui::{self, Command},
 };
-use std::{collections::HashSet, future::Future, process::Stdio, time::Duration};
+use std::{collections::HashSet, process::Stdio, time::Duration};
 use tokio::{
     process::Child,
     sync::{mpsc, watch},
@@ -16,6 +16,7 @@ use tokio::{
 };
 
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
+const SIGN_IN: &str = "Sign-in required; run graphite-meter-client in a terminal to sign in.";
 #[derive(Clone)]
 enum Work {
     Run(Config),
@@ -29,33 +30,32 @@ impl Work {
     }
 }
 
-pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
+pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
-    let mut controller = Controller::with_snapshots(&config, snapshots)?;
+    let mut controller = Controller::with_snapshots(&config, snapshots, true)?;
     controller.launch(Work::Verify(config.clone()))?;
     let result = {
-        let terminal = ui::run(config, receiver, commands);
-        tokio::pin!(terminal, shutdown);
+        let terminal = ui::run(config, receiver, commands, interrupts);
+        tokio::pin!(terminal);
         loop {
             tokio::select! {
                 result = &mut terminal => break result,
-                _ = &mut shutdown => break Ok(ui::Exit::Quit),
-                command = incoming.recv() => {
-                    match command {
-                        Some(Command::Quit) | None => break Ok(ui::Exit::Quit),
-                        Some(Command::Run(config)) => {
-                            if let Err(error) = controller.replace(Work::Run(config)) {
-                                break Err(error);
-                            }
+                Some(command) = incoming.recv() => {
+                    let replaced = match command {
+                        Command::Run(config) => controller.replace(Work::Run(config)),
+                        Command::Verify(config) => controller.replace(Work::Verify(config)),
+                        Command::Cancel => {
+                            controller.cancel();
+                            Ok(())
                         }
-                        Some(Command::Verify(config)) => {
-                            if let Err(error) = controller.replace(Work::Verify(config)) {
-                                break Err(error);
-                            }
+                        Command::OpenBrowser => {
+                            controller.open_browser();
+                            Ok(())
                         }
-                        Some(Command::Cancel) => controller.cancel(),
-                        Some(Command::OpenBrowser) => controller.open_browser(),
+                    };
+                    if let Err(error) = replaced {
+                        break Err(error);
                     }
                 }
                 Some(result) = controller.operations.join_next() => {
@@ -77,25 +77,20 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
     Ok((controller.finished, result?))
 }
 
-pub async fn run_once(config: Config, shutdown: impl Future<Output = ()>) -> Result<Snapshot, Error> {
+pub async fn run_once(config: Config, mut interrupts: mpsc::Receiver<()>) -> Result<Snapshot, Error> {
     let mut controller = Controller::new(&config)?;
     let mut events = controller.start(config, None)?;
     let result = {
         let finished = controller.finish();
-        tokio::pin!(finished, shutdown);
-        let mut prompt = None;
+        tokio::pin!(finished);
         let mut stage = None;
         loop {
             tokio::select! {
                 result = &mut finished => break Some(result),
-                _ = &mut shutdown => break None,
+                Some(()) = interrupts.recv() => break None,
                 result = events.changed() => {
                     if result.is_err() { continue; }
                     let snapshot = events.borrow_and_update();
-                    if let Some(auth) = &snapshot.auth && prompt.as_ref() != Some(&auth.browser_url) {
-                        eprintln!("Sign in · Match code {}\n{}", crate::ui::safe_text(&auth.code, 64), crate::ui::safe_text(&auth.browser_url, 4096));
-                        prompt = Some(auth.browser_url.clone());
-                    }
                     if snapshot.phase == Phase::Measuring && stage != snapshot.stage {
                         stage = snapshot.stage;
                         if let Some(stage) = stage { eprintln!("{}…", stage.name()); }
@@ -122,15 +117,17 @@ pub struct Controller {
     finished: Option<Snapshot>,
     cancelling: bool,
     cancel_deadline: Option<Instant>,
+    started: Instant,
     http: Http,
-    insecure: bool,
+    config: Config,
+    interactive: bool,
     browser: Option<Child>,
     browser_deadline: Option<Instant>,
 }
 impl Controller {
     pub fn new(config: &Config) -> Result<Self, Error> {
         let (snapshots, _) = watch::channel(Snapshot::default());
-        Self::with_snapshots(config, snapshots)
+        Self::with_snapshots(config, snapshots, false)
     }
 
     pub fn events(&self) -> watch::Receiver<Snapshot> {
@@ -183,7 +180,7 @@ impl Controller {
         Ok(())
     }
 
-    fn with_snapshots(config: &Config, snapshots: watch::Sender<Snapshot>) -> Result<Self, Error> {
+    fn with_snapshots(config: &Config, snapshots: watch::Sender<Snapshot>, interactive: bool) -> Result<Self, Error> {
         Ok(Self {
             snapshots,
             operations: JoinSet::new(),
@@ -194,19 +191,22 @@ impl Controller {
             finished: None,
             cancelling: false,
             cancel_deadline: None,
+            started: Instant::now(),
             http: Http::new(config.insecure)?,
-            insecure: config.insecure,
+            config: config.clone(),
+            interactive,
             browser: None,
             browser_deadline: None,
         })
     }
     fn launch(&mut self, work: Work) -> Result<(), Error> {
         assert!(self.operations.is_empty());
-        if self.insecure != work.config().insecure {
+        if self.config.insecure != work.config().insecure {
             self.http = Http::new(work.config().insecure)?;
-            self.insecure = work.config().insecure;
         }
+        self.config = work.config().clone();
         self.running = matches!(work, Work::Run(_));
+        self.started = Instant::now();
         if !self.running {
             self.prepared = None;
         }
@@ -221,7 +221,11 @@ impl Controller {
         };
         self.snapshots.send_replace(Snapshot {
             servers,
-            phase: Phase::Preparing,
+            phase: if self.running {
+                Phase::Preparing
+            } else {
+                Phase::Checking
+            },
             status: "Preparing selected servers".into(),
             ..Snapshot::default()
         });
@@ -236,8 +240,9 @@ impl Controller {
         } else {
             None
         };
+        let interactive = self.interactive;
         self.operations
-            .spawn(async move { execute(work, http, snapshots, cancelled, prepared).await });
+            .spawn(async move { execute(work, http, snapshots, cancelled, prepared, interactive).await });
         Ok(())
     }
     fn replace(&mut self, work: Work) -> Result<(), Error> {
@@ -275,10 +280,13 @@ impl Controller {
     ) -> Result<(), Error> {
         self.cancel = None;
         self.cancel_deadline = None;
+        let running = self.running;
         if self.cancelling {
-            let running = self.running;
             self.snapshots.send_modify(|snapshot| {
-                if matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
+                if matches!(
+                    snapshot.phase,
+                    Phase::Checking | Phase::Preparing | Phase::Warmup | Phase::Measuring
+                ) {
                     (snapshot.phase, snapshot.status) = if running {
                         (Phase::Cancelled, "Stopped".into())
                     } else {
@@ -295,26 +303,35 @@ impl Controller {
             match result {
                 Ok(prepared) => self.prepared = prepared,
                 Err(error) => {
+                    let signed_out = authentication_required(error.as_ref()).is_some();
                     self.snapshots.send_modify(|snapshot| {
-                        snapshot.phase = if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
-                            Phase::Incomplete
+                        (snapshot.phase, snapshot.status) =
+                            if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
+                                (Phase::Incomplete, "Incomplete".into())
+                            } else {
+                                (Phase::Failed, "Failed".into())
+                            };
+                        let text = crate::failure::text(error.as_ref());
+                        let started = !snapshot.participants.is_empty() || !snapshot.results.is_empty();
+                        snapshot.error = Some(if !running || started {
+                            text
+                        } else if signed_out {
+                            SIGN_IN.into()
                         } else {
-                            Phase::Failed
-                        };
-                        snapshot.status = if snapshot.phase == Phase::Incomplete {
-                            "Incomplete"
-                        } else {
-                            "Failed"
-                        }
-                        .into();
-                        snapshot.error = Some(error.to_string());
+                            format!("Test could not start: {text}")
+                        });
                         snapshot.auth = None;
                     });
+                    if running && signed_out && self.interactive {
+                        self.pending.get_or_insert_with(|| Work::Verify(self.config.clone()));
+                    }
                 }
             }
         }
         self.cancelling = false;
-        if self.running {
+        if running {
+            let duration = self.started.elapsed();
+            self.snapshots.send_modify(|snapshot| snapshot.duration = duration);
             self.finished = Some(self.snapshots.borrow().clone());
         }
         if let Some(work) = self.pending.take() {
@@ -362,6 +379,7 @@ async fn execute(
     snapshots: watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
     mut prepared: Option<runner::PreparedRun>,
+    interactive: bool,
 ) -> Result<Option<runner::PreparedRun>, Error> {
     let mut approvals = HashSet::new();
     loop {
@@ -399,7 +417,7 @@ async fn execute(
         if measured && matches!(work, Work::Run(_)) {
             return Err(error);
         }
-        let Some(required) = authentication_required(error.as_ref()) else {
+        let Some(required) = authentication_required(error.as_ref()).filter(|_| interactive) else {
             return Err(error);
         };
         let origin = required.origin.clone();
@@ -409,7 +427,9 @@ async fn execute(
         }
         let pending = http.begin_authorization(&origin, &login)?;
         snapshots.send_modify(|snapshot| {
-            snapshot.phase = Phase::Preparing;
+            if matches!(work, Work::Run(_)) {
+                snapshot.phase = Phase::Preparing;
+            }
             snapshot.error = None;
             snapshot.status = "Approve this client in your browser".into();
             snapshot.auth = Some(AuthPrompt {
@@ -487,7 +507,7 @@ mod tests {
                 .into(),
                 ..Snapshot::default()
             });
-            let mut controller = Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
+            let mut controller = Controller::with_snapshots(&Config::default(), snapshots.clone(), true).unwrap();
             controller.running = true;
             let (cancel, mut cancelled_signal) = watch::channel(false);
             controller.cancel = Some(cancel);

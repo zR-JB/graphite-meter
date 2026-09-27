@@ -38,19 +38,8 @@ impl Ui {
             Constraint::Length(if self.help { 1 + help_lines.len() as u16 } else { 2 }),
         ])
         .split(area);
-        let status = match self.snapshot.phase {
-            Phase::Setup => "Not started",
-            Phase::Preparing => "Checking paths",
-            Phase::Warmup => "Warmup",
-            Phase::Measuring => "Running",
-            Phase::Complete => "Complete",
-            Phase::Partial => "Partial",
-            Phase::Incomplete => "Incomplete",
-            Phase::Cancelled => "Stopped",
-            Phase::Failed => "Failed",
-        }
-        .to_owned();
-        let status = safe_text_width(&status, usize::from(regions[0].width / 2).saturating_sub(4));
+        let status = crate::report::status(&self.snapshot);
+        let status = safe_text_width(status, usize::from(regions[0].width / 2).saturating_sub(4));
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
         let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
@@ -373,7 +362,7 @@ impl Ui {
                     .collect::<Vec<_>>();
                 if checked.is_empty() {
                     lines.push(
-                        if self.snapshot.phase == Phase::Preparing {
+                        if self.snapshot.phase == Phase::Checking {
                             "Checking selected servers"
                         } else {
                             "Not checked"
@@ -442,21 +431,15 @@ impl Ui {
             self.draw_live_compact(frame, area);
             return;
         }
-        let results_height = (4
-            + self
-                .snapshot
-                .results
-                .iter()
-                .filter(|result| result.stage != Stage::Latency)
-                .count()
-            + self
-                .snapshot
-                .results
-                .iter()
-                .filter(|result| self.result_latency(result).is_some())
-                .count()
-            + self.snapshot.failures.len())
-        .min(u16::MAX as usize) as u16;
+        let (results, failures) = crate::report::results(
+            &self.snapshot,
+            self.latency_server(),
+            usize::from(area.width.saturating_sub(2)),
+        );
+        let results_height = match results.len() + failures.len() {
+            0 => 0,
+            lines => (lines + 2).min(usize::from(u16::MAX)) as u16,
+        };
         let track_height = if area.height < 24 {
             2
         } else if self.active() {
@@ -530,7 +513,16 @@ impl Ui {
         if timeline_area.height >= 9 {
             self.draw_timeline(frame, timeline_area);
         }
-        self.draw_results(frame, results_area);
+        if results_height > 0 {
+            let lines = results.iter().map(|line| Line::from(safe_text(line, MAX_TEXT)));
+            let failures = failures
+                .iter()
+                .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), Style::new().fg(self.theme.error)));
+            frame.render_widget(
+                Paragraph::new(lines.chain(failures).collect::<Vec<_>>()).block(panel("Results", self.theme)),
+                results_area,
+            );
+        }
     }
 
     fn draw_live_compact(&self, frame: &mut Frame, area: Rect) {
@@ -601,103 +593,6 @@ impl Ui {
             .server_latencies
             .iter()
             .find(|host| Some(host.id.as_str()) == shown)
-    }
-
-    fn draw_results(&self, frame: &mut Frame, area: Rect) {
-        let mut lines = vec![Line::styled(
-            "Throughput              Download           Upload",
-            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-        )];
-        for result in &self.snapshot.results {
-            if result.stage == Stage::Latency {
-                continue;
-            }
-            lines.push(Line::from(format!(
-                "{:<23} {:<18} {}",
-                result.stage.name(),
-                if result.stage.downloads() {
-                    rate(result.down_bps())
-                } else {
-                    "—".into()
-                },
-                if result.stage.uploads() {
-                    rate(result.up_bps())
-                } else {
-                    "—".into()
-                }
-            )));
-        }
-        if area.width >= 90 {
-            lines.push(Line::styled(
-                format!(
-                    "{:<15}{:<13}{:<13}{:<13}{:<13}{}",
-                    crate::vocabulary::LATENCY.label,
-                    crate::vocabulary::MEDIAN.label,
-                    crate::vocabulary::ADDED.label,
-                    crate::vocabulary::P95.label,
-                    crate::vocabulary::JITTER.label,
-                    crate::vocabulary::PROBE_TIMEOUTS.label
-                ),
-                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            lines.push(Line::styled(
-                [
-                    crate::vocabulary::LATENCY,
-                    crate::vocabulary::MEDIAN,
-                    crate::vocabulary::ADDED,
-                    crate::vocabulary::P95,
-                    crate::vocabulary::JITTER,
-                    crate::vocabulary::PROBE_TIMEOUTS,
-                ]
-                .map(|term| term.label)
-                .join(" · "),
-                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-            ));
-        }
-        for result in &self.snapshot.results {
-            let Some(host) = self.result_latency(result) else {
-                continue;
-            };
-            let median = host.median();
-            let cells = [
-                milliseconds(median.map(|median| median as f64 / 1e6)),
-                self.snapshot.added_ms(result, &host.id).map_or_else(
-                    || "—".into(),
-                    |value| format!("{} ms", graphite_meter_core::format::added_ms(value)),
-                ),
-                milliseconds(
-                    median
-                        .and(host.summary.distribution)
-                        .map(|distribution| distribution.p95 as f64 / 1e6),
-                ),
-                milliseconds(host.summary.jitter.map(|jitter| jitter as f64 / 1e6)),
-                crate::vocabulary::probe_timeouts(host.summary),
-            ];
-            let name = match result.stage {
-                Stage::Latency => "Idle",
-                Stage::Download => "Loaded down",
-                Stage::Upload => "Loaded up",
-                Stage::Bidirectional => "Loaded bi-dir",
-            };
-            if area.width >= 90 {
-                lines.push(Line::from(format!(
-                    "{name:<14} {:<12} {:<12} {:<12} {:<12} {}",
-                    cells[0], cells[1], cells[2], cells[3], cells[4]
-                )));
-            } else {
-                lines.push(Line::from(format!("{name}: {}", cells.join(" · "))));
-            }
-        }
-        for failure in &self.snapshot.failures {
-            lines.push(Line::styled(failure.reason.label(), Style::new().fg(self.theme.error)));
-        }
-        frame.render_widget(
-            Paragraph::new(lines)
-                .block(panel("Results", self.theme))
-                .wrap(Wrap { trim: true }),
-            area,
-        );
     }
 
     fn draw_timeline(&self, frame: &mut Frame, area: Rect) {
@@ -844,109 +739,12 @@ impl Ui {
 
     fn draw_details(&mut self, frame: &mut Frame) {
         let area = popup(frame.area(), 84, frame.area().height.saturating_sub(2));
-        let mut lines = vec![Line::styled(
-            self.snapshot.status.clone(),
-            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-        )];
-        for result in &self.snapshot.results {
-            lines.push(Line::raw(""));
-            lines.push(Line::styled(
-                result.stage.name(),
-                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-            ));
-            for measurement in [&result.down, &result.up].into_iter().flatten() {
-                let name = if measurement.direction == graphite_meter_core::measurement::Direction::Down {
-                    "Download"
-                } else {
-                    "Upload"
-                };
-                lines.push(Line::from(format!(
-                    "{name}: {}",
-                    crate::vocabulary::throughput_facts(measurement)
-                )));
-            }
-            if !result.server_results.is_empty() {
-                lines.push(Line::from(format!("{:<23} {:<20} Upload", "Throughput", "Download")));
-                lines.push(Line::from(format!(
-                    "{:<23} {:<20} {}",
-                    "Combined",
-                    rate(result.down_bps()),
-                    rate(result.up_bps())
-                )));
-                for server in &result.server_results {
-                    let name = self.server_name(&server.id);
-                    lines.push(Line::from(format!(
-                        "{:<23} {:<20} {}",
-                        safe_text(name, 22),
-                        rate(server.down_bps()),
-                        rate(server.up_bps())
-                    )));
-                }
-            }
-            lines.push(Line::styled(
-                "Latency median by server",
-                Style::new().fg(self.theme.brand_strong),
-            ));
-            for host in &result.server_latencies {
-                lines.push(Line::from(format!(
-                    "{} · Median {} · {} replies",
-                    self.server_name(&host.id),
-                    milliseconds(host.median().map(|value| value as f64 / 1e6)),
-                    host.summary.count
-                )));
-                lines.push(Line::from(crate::vocabulary::latency_facts(host.summary, host.elapsed)));
-                if let Some(timing) = crate::vocabulary::reflector_facts(host.summary) {
-                    lines.push(Line::from(timing));
-                }
-            }
-        }
-        if !self.snapshot.failures.is_empty() {
-            lines.push(Line::raw(""));
-            lines.push(Line::styled(
-                "Left the test",
-                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-            ));
-            for failure in &self.snapshot.failures {
-                lines.extend(wrap_columns(
-                    &safe_text(
-                        &crate::vocabulary::failure_facts(failure, self.server_name(&failure.server_id)),
-                        MAX_TEXT,
-                    ),
-                    usize::from(area.width.saturating_sub(2)),
-                ));
-            }
-        }
-        lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            "Aggregation intervals",
-            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-        ));
-        for result in &self.snapshot.results {
-            if result.omitted_intervals > 0 {
-                lines.push(Line::from(format!(
-                    "{} earlier intervals omitted",
-                    result.omitted_intervals
-                )));
-            }
-            for interval in &result.intervals {
-                lines.push(Line::from(format!(
-                    "{} · {} · {:.1}–{:.1} s{}",
-                    result.stage.name(),
-                    interval.reason.name(),
-                    interval.start_nanos as f64 / 1e9,
-                    interval.end_nanos as f64 / 1e9,
-                    if interval.complete { "" } else { " · incomplete" }
-                )));
-                lines.push(Line::from(
-                    interval
-                        .participants
-                        .iter()
-                        .map(|id| self.server_name(id))
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                ));
-            }
-        }
+        let width = usize::from(area.width.saturating_sub(2));
+        let details = crate::report::details(&self.snapshot, self.latency_server(), width);
+        let mut lines: Vec<_> = details
+            .lines()
+            .map(|line| Line::from(safe_text(line, MAX_TEXT)))
+            .collect();
         lines.push(Line::raw(""));
         lines.push(Line::styled("Values", Style::new().fg(self.theme.brand_strong)));
         for term in crate::vocabulary::VALUES {
@@ -966,14 +764,6 @@ impl Ui {
                 .block(panel("Details · ↑/↓ scroll · d/Esc close", self.theme)),
             area,
         );
-    }
-
-    fn server_name<'a>(&'a self, id: &'a str) -> &'a str {
-        self.snapshot
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .map_or(id, |server| server.name.as_str())
     }
 
     fn draw_servers(&mut self, frame: &mut Frame) {

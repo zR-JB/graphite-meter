@@ -10,6 +10,7 @@ pub mod latency;
 pub mod model;
 pub mod net;
 pub mod quic;
+pub mod report;
 pub mod runner;
 pub mod selection;
 pub mod stream_plan;

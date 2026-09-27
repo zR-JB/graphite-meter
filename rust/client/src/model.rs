@@ -31,6 +31,7 @@ impl Stage {
 pub enum Phase {
     #[default]
     Setup,
+    Checking,
     Preparing,
     Warmup,
     Measuring,
@@ -138,9 +139,6 @@ impl ServerContribution {
     pub fn down_bytes(&self) -> u64 {
         self.down.as_ref().map_or(0, |result| result.total_bytes)
     }
-    pub fn up_bytes(&self) -> u64 {
-        self.up.as_ref().map_or(0, |result| result.total_bytes)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -246,6 +244,8 @@ pub struct Snapshot {
     pub failures: Vec<ServerFailure>,
     pub participants: Vec<String>,
     pub latency_focus: Option<String>,
+    pub plan: Vec<Stage>,
+    pub duration: Duration,
 }
 
 impl Snapshot {
@@ -306,15 +306,6 @@ impl Snapshot {
         if let Some(survivor) = survivor {
             self.latency_focus = Some(survivor.clone());
         }
-    }
-
-    pub fn added_ms(&self, loaded: &StageResult, id: &str) -> Option<f64> {
-        let median = |result: &StageResult| result.server_latencies.iter().find(|host| host.id == id)?.median();
-        let idle = self.results.iter().find(|result| result.stage == Stage::Latency)?;
-        if loaded.stage == Stage::Latency {
-            return None;
-        }
-        Some((median(loaded)? as f64 - median(idle)? as f64) / 1e6)
     }
 
     pub fn failure(

@@ -122,11 +122,24 @@ async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Erro
         String::from_utf8_lossy(&output.stderr)
     );
     let report = String::from_utf8(output.stdout)?;
-    assert!(report.contains("Complete"));
-    assert!(report.contains("local peer: Median"));
-    assert!(report.contains("Probe timeouts 0/") && report.contains("(0.0%)"));
-    assert!(report.contains("replies · 1.0 s"));
-    assert!(report.contains("Server timing (") && report.contains("paired replies, means): raw"));
+    assert!(
+        report.starts_with("Graphite Meter  Complete  local peer · "),
+        "{report}"
+    );
+    let idle = report
+        .lines()
+        .find(|line| line.starts_with("Idle "))
+        .unwrap_or_default();
+    assert!(
+        idle.rsplit_once("  ")
+            .is_some_and(|(_, timeouts)| timeouts.starts_with("0 / ")),
+        "{report}"
+    );
+    assert!(
+        report.contains("Server handling of the mean round trip: Idle "),
+        "{report}"
+    );
+    assert_eq!(String::from_utf8(output.stderr)?, "Latency…\n");
     Ok(())
 }
 
@@ -143,12 +156,13 @@ async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> 
     peer.abort();
     let report = String::from_utf8(output.stdout)?;
     assert_eq!(output.status.code(), Some(1), "{report}");
-    assert!(report.starts_with("Graphite Meter · Incomplete"), "{report}");
     assert!(
-        report.contains("twin peer · Download throughput · at 1.")
-            && report.contains("Sign-in required: authentication required (HTTP 403)"),
+        report.starts_with("Graphite Meter  Incomplete  2 servers · "),
         "{report}"
     );
+    assert!(report.contains("\ntwin peer · Download throughput · at 1."), "{report}");
+    assert!(report.contains(" · Sign-in required\n"), "{report}");
+    println!("{report}");
     Ok(())
 }
 
@@ -169,7 +183,11 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
         );
         let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output()).await??;
         assert_eq!(output.status.code(), Some(code));
-        assert!(String::from_utf8(output.stdout)?.contains("Stopped"));
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            "graphite-meter-client: Test stopped before it started.\n"
+        );
     }
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
@@ -184,13 +202,26 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
     let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
     peer.await??;
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8(output.stdout)?.contains("Failed"));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.starts_with("graphite-meter-client: Test could not start: "),
+        "{stderr}"
+    );
+    let (origin, peer) = latency_peer(true).await?;
+    peer.abort();
+    let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(output.stderr)?,
+        "graphite-meter-client: Test could not start: Server could not be reached\n"
+    );
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 #[tokio::test]
-async fn tui_stop_and_raw_interrupt_preserve_exit_reason() -> Result<(), Error> {
+async fn tui_quit_and_interrupt_exit_like_the_go_client() -> Result<(), Error> {
     let (origin, peer) = latency_peer(false).await?;
     let script = r#"
 import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
@@ -204,7 +235,15 @@ p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-
 os.close(slave)
 output = b''
 step = 0
+mark = 0
 mode = sys.argv[3]
+measuring = '░'.encode()
+keys = {'check-quit': [(b'Checking', b'q')],
+        'setup-interrupt': [(b'WebSocket', b'\x03')],
+        'run-interrupt': [(b'WebSocket', b'r'), (measuring, b'\x03')],
+        'run-quit': [(b'WebSocket', b'r'), (measuring, b'q')],
+        'run-abort': [(b'WebSocket', b'r'), (measuring, b'\x03\x03')],
+        'confirmed-stop': [(b'WebSocket', b'r'), (measuring, b'\x1b'), (b'confirm', b'\x1b'), (b'Stopped', b'q')]}[mode]
 deadline = time.monotonic() + 8
 try:
     while time.monotonic() < deadline:
@@ -214,21 +253,10 @@ try:
             except OSError:
                 break
             output += data
-            if step == 0 and mode == 'check-quit' and b'Checking paths' in output:
-                os.write(master, b'q')
-                step = 1
-            elif step == 0 and b'WebSocket' in output:
-                os.write(master, b'\x03' if mode == 'setup-interrupt' else b'r')
-                step = 1
-            elif step == 1 and b'Running' in output:
-                os.write(master, b'\x03' if mode == 'run-interrupt' else b'\x1b')
-                step = 2
-            elif step == 2 and b'confirm stop' in output:
-                os.write(master, b'\x1b')
-                step = 3
-            elif step == 3 and b'Stopped' in output:
-                os.write(master, b'q')
-                step = 4
+            if step < len(keys) and keys[step][0] in output[mark:]:
+                os.write(master, keys[step][1])
+                step += 1
+                mark = len(output)
         if p.poll() is not None:
             while select.select([master], [], [], 0)[0]:
                 try:
@@ -249,11 +277,13 @@ finally:
 "#;
     let silent = TcpListener::bind("127.0.0.1:0").await?;
     let silent_origin = format!("http://{}", silent.local_addr()?);
-    for (mode, step, code) in [
-        ("check-quit", 1, 0),
-        ("setup-interrupt", 1, 130),
-        ("run-interrupt", 2, 130),
-        ("confirmed-stop", 4, 1),
+    for (mode, step, code, report) in [
+        ("check-quit", 1, 0, false),
+        ("setup-interrupt", 1, 0, false),
+        ("run-interrupt", 2, 130, true),
+        ("run-quit", 2, 1, true),
+        ("run-abort", 2, 130, false),
+        ("confirmed-stop", 4, 1, true),
     ] {
         let output = Command::new("python3")
             .args([
@@ -270,10 +300,15 @@ finally:
         assert_eq!(result["step"], step);
         assert_eq!(result["code"], code);
         let text = result["text"].as_str().unwrap();
-        assert!(text.contains("\x1b[?1049l"));
         assert!(text.contains("\x1b[?25h"));
-        let stopped = !matches!(mode, "setup-interrupt" | "check-quit");
-        assert_eq!(text.contains("Graphite Meter · Stopped"), stopped, "{mode}: {text:?}");
+        let (_, printed) = text
+            .rsplit_once("\x1b[?1049l")
+            .ok_or("the alternate screen stayed open")?;
+        assert_eq!(
+            printed.contains("Graphite Meter  Stopped"),
+            report,
+            "{mode}: {printed:?}"
+        );
     }
     peer.abort();
     Ok(())
