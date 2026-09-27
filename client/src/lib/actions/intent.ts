@@ -1,5 +1,5 @@
 // Tips and plot readouts answer a pointer that comes to rest, not one passing by.
-const WARM_MS = 400;
+const WARM_MS = 500;
 let warm = false;
 let cooling = 0;
 
@@ -33,7 +33,7 @@ export function restDetector(onRest: () => void, radius = 4) {
           cancel();
           onRest();
         },
-        warm ? Math.min(ms, 100) : ms,
+        warm && event.pointerType === "mouse" ? Math.min(ms, 100) : ms,
       );
     },
     cancel,

@@ -24,7 +24,7 @@
     reasonLabel,
     transportLabel,
   } from "../presentation/vocabulary";
-  import { tipGroup, tooltip } from "../actions/tooltip";
+  import { term, tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
@@ -175,9 +175,9 @@
   }
 </script>
 
-{#snippet row(label: string, value: string, tip?: string)}
+{#snippet row(label: string, value: string, tip?: string, marked = false)}
   <div>
-    <dt {@attach tip ? tooltip(() => tip) : null}>{label}</dt>
+    <dt {@attach tip ? (marked ? term : tooltip)(() => tip) : null}>{label}</dt>
     <dd>{value}</dd>
   </div>
 {/snippet}
@@ -204,7 +204,12 @@
       {@render row("Name", server?.name ?? "Checking server")}
       {#if selectedServer}{@render row("Address", selectedServer.url)}{/if}
       {#if server?.location}{@render row("Location", server.location)}{/if}
-      {#if serverLoad}{@render row("Load", serverLoad, JARGON.serverLoad)}{/if}
+      {#if serverLoad}{@render row(
+          "Load",
+          serverLoad,
+          JARGON.serverLoad,
+          true,
+        )}{/if}
     </dl>
   </div>
 
@@ -240,6 +245,7 @@
           connections.throughput.serverProtocol,
         ),
         JARGON.pathEvidence,
+        true,
       )}
       {@render row("Streams", transferStreams, JARGON.forcedStreams)}
       {@render row("Upload feed", uploadProgressPath, JARGON.uploadFeed)}

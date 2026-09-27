@@ -11,7 +11,7 @@
   const controller = getApplicationController();
   import { pathOptions } from "../../presentation/paths";
   import { normalizeStreamCount } from "../../runner/paths";
-  import { tooltip } from "../../actions/tooltip";
+  import { term, tooltip } from "../../actions/tooltip";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
@@ -306,7 +306,7 @@
         {#if durationMode === "custom"}
           <div>
             <label class="row">
-              <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
+              <span {@attach tip ? term(() => tip) : null}>{label}</span>
               <span class="number">
                 <input
                   type="number"
@@ -323,7 +323,7 @@
           </div>
         {:else}
           <div class="row">
-            <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
+            <span {@attach tip ? term(() => tip) : null}>{label}</span>
             <span class="value"
               >{fmtDuration(DURATION_PRESETS[durationMode][key])}</span
             >
@@ -493,7 +493,7 @@
       <div>
         <label class="row">
           <span
-            {@attach tooltip(() =>
+            {@attach term(() =>
               forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
             )}
             >{forced
