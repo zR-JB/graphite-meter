@@ -364,11 +364,12 @@ func (u *quicUse) closeIfIdle(unused bool) {
 	}
 }
 
-// webTransportSession marks r's QUIC connection as carrying a session; its end says who closed it.
-func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
+// webTransportSession marks r's QUIC connection as carrying a session; its end says who closed it, and cut
+// closes the connection under a handler that outlived its session.
+func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) {
 	u, ok := r.Context().Value(quicUseKey{}).(*quicUse)
 	if !ok {
-		return func(bool) {}
+		return func(bool) {}, func() {}
 	}
 	u.mu.Lock()
 	if !u.sessions {
@@ -383,7 +384,7 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
 			u.linger = wtCloseLinger
 		}
 		u.mu.Unlock()
-	}
+	}, func() { _ = u.conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeNoError), "") }
 }
 
 // sessionConns counts open connections that carried a session, so a shutdown lets each end with its cause.
