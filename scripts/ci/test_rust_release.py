@@ -32,8 +32,14 @@ class RustArchiveBoundaryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             dist = Path(temporary)
             marker = dist / "executed"
+            header = bytearray(64)
+            header[:7] = b"\x7fELF\x02\x01\x01"
+            header[16:18] = (3).to_bytes(2, "little")
+            header[18:20] = (62).to_bytes(2, "little")
+            header[20:24] = (1).to_bytes(4, "little")
+            header[52:54] = (64).to_bytes(2, "little")
             files = {
-                f"{base}/graphite-meter-client": f"#!/bin/sh\ntouch '{marker}'\n".encode(),
+                f"{base}/graphite-meter-client": bytes(header) + f"touch '{marker}'\n".encode(),
                 f"{base}/BUILD.json": json.dumps(metadata).encode(),
                 f"{base}/LEGAL.txt": b"fixture notices\n",
                 f"{base}/LICENSE": Path("LICENSE").read_bytes(),
@@ -60,6 +66,18 @@ class RustArchiveBoundaryTests(unittest.TestCase):
                     archive.addfile(member, io.BytesIO(payload))
             with patch("subprocess.Popen", side_effect=AssertionError("artifact execution")):
                 verify_rust_client_archive(dist, version)
+                header[18:20] = (183).to_bytes(2, "little")
+                files[f"{base}/graphite-meter-client"] = bytes(header)
+                with tarfile.open(dist / f"{base}.tar.gz", "w:gz") as archive:
+                    directory = tarfile.TarInfo(base)
+                    directory.type = tarfile.DIRTYPE
+                    archive.addfile(directory)
+                    for name, payload in files.items():
+                        member = tarfile.TarInfo(name)
+                        member.size = len(payload)
+                        archive.addfile(member, io.BytesIO(payload))
+                with self.assertRaisesRegex(VerificationError, "AMD64 ELF"):
+                    verify_rust_client_archive(dist, version)
             self.assertFalse(marker.exists())
 
     def test_metadata_read_rejects_oversize_member(self) -> None:

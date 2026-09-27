@@ -575,10 +575,16 @@ class CommandTests(unittest.TestCase):
         handoff = self.root / "handoff"
         (handoff / "image").mkdir(parents=True)
         (handoff / "image" / OCI).write_bytes(b"verified")
+        (handoff / "rust-image").mkdir()
+        (handoff / "rust-image" / OCI).write_bytes(b"verified Rust")
         write_release_assets(handoff / "assets", "1.2.3")
         closed = {PULL: PR | {"state": "closed"}}
         for stable, env, responses, error in (
             (True, {}, {}, None), (False, {}, {}, None),
+            (False, {"RUST": "tui"}, {}, None),
+            (False, {"RUST": "server", "RUST_OCI_SHA256": hashlib.sha256(b"verified Rust").hexdigest()}, {}, None),
+            (False, {"RUST": "tui", "ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
+            (False, {"RUST": "server", "RUST_OCI_SHA256": "0" * 64}, {}, "Rust OCI handoff"),
             (True, {"OCI_SHA256": "0" * 64}, {}, "OCI handoff"),
             (True, {"ASSETS_SHA256": "0" * 64}, {}, "asset handoff"),
             (True, {"HEAD": OLD}, {}, "checked-out tooling"),

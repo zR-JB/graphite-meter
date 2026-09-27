@@ -286,6 +286,20 @@ def verify_rust_client_archive(dist: Path, version: str, lock_sha256: str | None
     required = {f"{base}/{name}" for name in (
         "graphite-meter-client", "BUILD.json", "LEGAL.txt", "LICENSE", "COPYRIGHT", "SOURCE.txt")}
     require_same("Rust TUI archive files", required | {base}, names)
+    with tarfile.open(path, "r:gz") as archive:
+        executable = archive.getmember(f"{base}/graphite-meter-client")
+        if not executable.isfile() or not 64 <= executable.size <= 128 * 1024 * 1024:
+            fail("Rust TUI executable is not a bounded regular file")
+        handle = archive.extractfile(executable)
+        if handle is None:
+            fail("Rust TUI executable is unreadable")
+        header = handle.read(64)
+    if (header[:7] != b"\x7fELF\x02\x01\x01"
+            or int.from_bytes(header[16:18], "little") not in (2, 3)
+            or int.from_bytes(header[18:20], "little") != 62
+            or int.from_bytes(header[20:24], "little") != 1
+            or int.from_bytes(header[52:54], "little") != 64):
+        fail("Rust TUI executable is not a Linux AMD64 ELF binary")
     metadata = decode_json(read_tar_text(path, f"{base}/BUILD.json"), path.name)
     if not isinstance(metadata, dict) or any(metadata.get(key) != value for key, value in {
         "schemaVersion": 1, "implementation": "rust", "version": version + "-rust",

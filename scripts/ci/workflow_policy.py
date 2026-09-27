@@ -71,8 +71,19 @@ CONTEXT = {
         "PUBLISHER_SHA": "github.sha", "WORKFLOW_REF": "github.workflow_ref",
         "REQUEST_RUN_ID": "github.event.workflow_run.id",
     },
+    "run: python3 scripts/ci/release.py recheck": {
+        "REPOSITORY": "github.repository", "TAG": "needs.verify.outputs.tag",
+        "SOURCE_SHA": "needs.verify.outputs.sha", "MAIN_SHA": "needs.verify.outputs.main_sha",
+        "PR": "needs.verify.outputs.pr", "RUST": "needs.verify.outputs.rust",
+        "OCI_SHA256": "needs.verify.outputs.oci_sha256",
+        "RUST_OCI_SHA256": "needs.verify.outputs.rust_oci_sha256",
+        "ASSETS_SHA256": "needs.verify.outputs.assets_sha256",
+    },
     "run: python3 scripts/ci/release.py publish": {
         "REPOSITORY": "github.repository", "TARGET_SHA": "github.sha",
+        "TAG": "needs.verify.outputs.tag",
+        "SOURCE_SHA": "needs.verify.outputs.sha", "PR": "needs.verify.outputs.pr",
+        "RUST": "needs.verify.outputs.rust",
     },
 }
 FORBIDDEN = {
@@ -131,7 +142,7 @@ def check_actions(root: Path) -> None:
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():
-                env = re.findall(r"(?m)^ +([A-Z_]+): (.*)$", step) if marker in step else []
+                env = re.findall(r"(?m)^ +([A-Z][A-Z0-9_]*): (.*)$", step) if marker in step else []
                 for variable, value in bindings.items() if env else ():
                     if [found for key, found in env if key == variable] != [f"${{{{ {value} }}}}"]:
                         fail(f"{name}: {variable} must be exactly ${{{{ {value} }}}}")

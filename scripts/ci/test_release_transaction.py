@@ -224,7 +224,8 @@ class RegistryTests(unittest.TestCase):
 
 
 class ReleasePublicationTests(unittest.TestCase):
-    def publish(self, state: State, assets: dict[str, bytes] = ASSETS) -> tuple[str | None, str, State]:
+    def publish(self, state: State, assets: dict[str, bytes] = ASSETS,
+                **identity: str) -> tuple[str | None, str, State]:
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / "bin").mkdir()
@@ -239,7 +240,7 @@ class ReleasePublicationTests(unittest.TestCase):
                 "GH_STATE": str(root / "state.json"), "GH_TOKEN": "secret-token",
                 "REPOSITORY": "owner/repo", "TAG": TAG, "TARGET_SHA": SHA,
                 "ASSETS_DIR": str(root / "assets"), "RUNNER_TEMP": directory,
-            }
+            } | identity
             output, error = io.StringIO(), None
             with (patch.dict(os.environ, env), patch("release.time.sleep"),
                   contextlib.redirect_stdout(output), contextlib.redirect_stderr(output)):
@@ -248,6 +249,26 @@ class ReleasePublicationTests(unittest.TestCase):
                 except ControlPlaneError as exc:
                     error = str(exc)
             return error, output.getvalue(), json.loads((root / "state.json").read_text())
+
+    def test_rust_prerelease_assets_target_the_verified_pr_commit(self) -> None:
+        tag = "v1.2.3-rc.1"
+        source = "graphite-meter-client_1.2.3-rc.1_linux_amd64_rust_third-party-source.tar.gz"
+        assets = {source: b"verified source", "checksums.txt": b"verified checksums"}
+        identity = {"TAG": tag, "PR": "101", "SOURCE_SHA": OTHER_SHA, "RUST": "tui"}
+        error, output, published = self.publish(copy.deepcopy(EMPTY), assets, **identity)
+        self.assertIsNone(error, output)
+        release = published["releases"][0]
+        self.assertEqual((release["draft"], release["prerelease"], release["target_commitish"]),
+                         (False, True, OTHER_SHA))
+        self.assertEqual(published["tags"], {tag: {"type": "commit", "sha": OTHER_SHA}})
+        self.assertIn(OTHER_SHA, release["body"])
+        error, output, retried = self.publish(copy.deepcopy(published), assets, **identity)
+        self.assertIsNone(error, output)
+        self.assertEqual(retried["writes"], published["writes"])
+        for change in ({"RUST": "none"}, {"SOURCE_SHA": SHA}):
+            error, _, rejected = self.publish(copy.deepcopy(published), assets, **(identity | change))
+            self.assertIsNotNone(error)
+            self.assertEqual(rejected["writes"], published["writes"])
 
     def test_release_without_the_third_party_source_offer_is_refused(self) -> None:
         error, _, after = self.publish(copy.deepcopy(EMPTY), {"checksums.txt": b"checksums"})
@@ -293,7 +314,7 @@ class ReleasePublicationTests(unittest.TestCase):
             (EMPTY, lambda state: state | {"patch_error": "drop"}, "publication did not become", False),
             (published, edit(draft=True, upload_url="https://example.invalid/upload{?name}"),
              "unexpected release upload URL", False),
-            (published, edit(prerelease=True), "already exists as a prerelease", True),
+            (published, edit(prerelease=True), "different release kind", True),
             (published, tampered, "published but asset names/digests differ", True),
             (published, edit(body="notes"), "notice is missing or stale", True),
             (published, lambda state: state | other_tag, f"already exists at {OTHER_SHA}", True),

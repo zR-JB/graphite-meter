@@ -102,9 +102,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "release.py publish"),
     (RELEASE, "run: scripts/ci/publish.sh aliases", "run: echo promoted", "publish.sh aliases"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
-     "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha"),
+     "SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}", "head_sha|SOURCE_SHA"),
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
-     "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head"),
+     "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head|SOURCE_SHA"),
     (RELEASE, "secrets.GHCR_TOKEN", "secrets['GHCR_TOKEN']", r"secrets\["),
     (OCI, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
     (OCI, "no-cache: true", "no-cache: false", "no-cache"),
@@ -151,10 +151,10 @@ class WorkflowPolicyTests(unittest.TestCase):
 
     def test_release_identity_comes_only_from_the_run_context(self) -> None:
         for name, marker in ((REQUEST, "release.py prepare"), (RELEASE, "release.py verify"),
-                             (RELEASE, "release.py publish")):
+                             (RELEASE, "release.py publish"), (RELEASE, "release.py recheck")):
             text = (ROOT / name).read_text()
             step = next(step for step in re.split(r"(?m)^(?=      - )", text) if marker in step)
-            for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z_]+): \$\{\{ github\.", step):
+            for variable in re.findall(r"(?m)^ +(?!GH_TOKEN)([A-Z][A-Z0-9_]*): \$\{\{ (?:github|needs)\.", step):
                 with self.subTest(marker=marker, variable=variable):
                     root = self.tree()
                     rebound = re.sub(rf"(?m)^( +{variable}): .*$", r"\1: ${{ github.job }}", step)

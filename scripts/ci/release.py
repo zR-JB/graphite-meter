@@ -313,12 +313,14 @@ def command_verify() -> None:
         shutil.copyfile(candidate / "graphite-meter-rust.oci.tar", handoff / "rust-image" / OCI)
     if release.stable:
         shutil.copytree(assets, handoff / "assets")
+    elif release.rust != "none":
+        shutil.copytree(rust_assets, handoff / "assets")
     append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
         oci_sha256=digest, digest=manifest, rust=release.rust,
         rust_oci_sha256=rust_digest, rust_digest=rust_manifest,
-        assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
+        assets_sha256=assets_sha256(handoff / "assets") if release.stable or release.rust != "none" else "",
     )
     append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"
@@ -338,7 +340,7 @@ def command_recheck() -> None:
     exact_files(handoff / "image", {OCI})
     if file_sha256(handoff / "image" / OCI) != env("OCI_SHA256"):
         fail("approved OCI handoff does not match the verified archive")
-    if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
+    if (release.stable or release.rust != "none") and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
         fail("approved asset handoff does not match the verified assets")
     if release.rust_server:
         exact_files(handoff / "rust-image", {OCI})
@@ -378,18 +380,28 @@ def source_notice(release: Release, source: str) -> str:
 
 
 def command_publish() -> None:
-    """Publish the verified assets as the stable GitHub Release at its exact tag, idempotently."""
+    """Publish verified native artifacts at their exact source tag, idempotently."""
     gh, repository = default_api, env("REPOSITORY")
-    release = parse_release(env("TAG"), env_sha("TARGET_SHA"), 0)
+    pr = env_int("PR") if os.environ.get("PR") else 0
+    release = parse_release(env("TAG"), env_sha("SOURCE_SHA") if pr else env_sha("TARGET_SHA"), pr,
+                            os.environ.get("RUST", "none"))
+    if not release.stable and release.rust == "none":
+        fail("PR GitHub Releases require an explicit Rust artifact opt-in")
     tag, base = release.tag, f"repos/{repository}"
+    prerelease = not release.stable
     assets = runner_path("ASSETS_DIR")
     exact_files(assets, names := {entry.name for entry in assets.iterdir()})
     local = {name: "sha256:" + file_sha256(assets / name) for name in names}
     source = f"graphite-meter_{release.version}_third-party-source.tar.gz"
-    if source not in local:
-        fail(f"release handoff is missing the third-party source asset {source}")
-    notice = source_notice(release, source)
     rust_sources = sorted(name for name in names if name.endswith("_rust_third-party-source.tar.gz"))
+    if release.stable:
+        if source not in local:
+            fail(f"release handoff is missing the third-party source asset {source}")
+        notice = source_notice(release, source)
+    else:
+        if not rust_sources:
+            fail("Rust prerelease handoff is missing its dependency source offer")
+        notice = source_notice(release, rust_sources.pop(0))
     if rust_sources:
         notice += "\n\nMatching experimental Rust dependency sources: " + ", ".join(
             f"**{name}**" for name in rust_sources) + "."
@@ -405,8 +417,8 @@ def command_publish() -> None:
                and item.get("tag_name") == tag]
     if len(matches) > 1:
         fail(f"multiple releases unexpectedly use tag {tag}")
-    if matches and matches[0].get("prerelease") is not False:
-        fail(f"{tag} already exists as a prerelease")
+    if matches and matches[0].get("prerelease") is not prerelease:
+        fail(f"{tag} already exists with a different release kind")
     if matches and matches[0].get("draft") is False:
         if asset_digests(repository, int_field(matches[0], "id", "release")) != local:
             fail(f"{tag} is published but asset names/digests differ")
@@ -417,7 +429,7 @@ def command_publish() -> None:
         return
     if not matches:
         draft: JsonObject = {"tag_name": tag, "target_commitish": release.sha, "draft": True,
-                             "prerelease": False, "generate_release_notes": True, "body": notice}
+                             "prerelease": prerelease, "generate_release_notes": True, "body": notice}
         matches = [expect_object(gh(f"{base}/releases", method="POST", body=draft), "release")]
     release_id = int_field(matches[0], "id", "release")
 
@@ -452,7 +464,8 @@ def command_publish() -> None:
     require_tag()
     try:
         gh(f"{base}/releases/{release_id}", method="PATCH",
-           body={"draft": False, "prerelease": False, "make_latest": "legacy"})
+           body={"draft": False, "prerelease": prerelease,
+                 "make_latest": "legacy" if release.stable else "false"})
     except ControlPlaneError as exc:
         print(f"::warning::publishing {tag} failed ({exc}); reconciling release state")
 
@@ -463,8 +476,8 @@ def command_publish() -> None:
             if "(HTTP 404)" in str(exc):
                 return None
             raise
-        if item.get("tag_name") != tag or item.get("prerelease") is not False:
-            fail(f"release {release_id} is no longer the stable {tag} release")
+        if item.get("tag_name") != tag or item.get("prerelease") is not prerelease:
+            fail(f"release {release_id} is no longer the expected {tag} release")
         return item if item.get("draft") is False else None
 
     final = converge(f"{tag} publication", published)

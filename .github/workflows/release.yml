@@ -104,8 +104,8 @@ jobs:
           compression-level: 0
           overwrite: true
 
-      - name: Upload verified stable asset handoff
-        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.stable == 'true'
+      - name: Upload verified native artifact handoff
+        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.assets_sha256 != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets
@@ -153,8 +153,8 @@ jobs:
           name: release-image
           path: ${{ runner.temp }}/handoff/image
 
-      - name: Download verified stable asset handoff
-        if: needs.verify.outputs.stable == 'true'
+      - name: Download verified native artifact handoff
+        if: needs.verify.outputs.assets_sha256 != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-assets
@@ -206,7 +206,7 @@ jobs:
 
       - id: app
         name: Mint the release App token
-        if: needs.verify.outputs.stable == 'true'
+        if: needs.verify.outputs.assets_sha256 != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
@@ -214,12 +214,15 @@ jobs:
           permission-contents: write
 
       - name: Publish the verified GitHub Release
-        if: needs.verify.outputs.stable == 'true'
+        if: needs.verify.outputs.assets_sha256 != ''
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ needs.verify.outputs.tag }}
           TARGET_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ needs.verify.outputs.sha }}
+          PR: ${{ needs.verify.outputs.pr }}
+          RUST: ${{ needs.verify.outputs.rust }}
           ASSETS_DIR: ${{ runner.temp }}/handoff/assets
         run: python3 scripts/ci/release.py publish
 
