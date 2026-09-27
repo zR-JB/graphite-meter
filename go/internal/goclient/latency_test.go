@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -134,33 +133,34 @@ func TestLaneEndingReadsEveryWireEnding(t *testing.T) {
 
 func TestMeasureLatencyFailsPromptlyOnAnUnprovenBus(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if conn, err := websocket.Accept(w, r, nil); err == nil {
-			_ = conn.Close(websocket.StatusNormalClosure, "")
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if conn, err := websocket.Accept(w, r, nil); err == nil {
+				_ = conn.Close(websocket.StatusNormalClosure, "")
+			}
+		}))
+		begin := time.Now()
+		_, err := r.measureLatency(t.Context(), StageLatency, false, 5*time.Second, testStageGate(make(chan struct{})))
+		if err == nil || time.Since(begin) > 0 {
+			t.Fatalf("closed bus returned %v after %v", err, time.Since(begin))
 		}
-	}))
-	defer srv.Close()
-	r := testRunner(srv)
-	begin := time.Now()
-	_, err := r.measureLatency(t.Context(), StageLatency, false, 5*time.Second, testStageGate(make(chan struct{})))
-	if err == nil || time.Since(begin) > 500*time.Millisecond {
-		t.Fatalf("closed bus returned %v after %v", err, time.Since(begin))
-	}
+	})
 }
 
 func TestRedialPingBusDoesNotRetryPermanentAuthenticationFailure(t *testing.T) {
 	t.Parallel()
-	var requests atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Graphite-Meter-Auth", "required")
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	defer srv.Close()
-	_, err := testRunner(srv).redialPingBus(t.Context(), time.Now().Add(redialWindow))
-	if _, ok := errors.AsType[*AuthRequiredError](err); !ok || requests.Load() != 1 {
-		t.Fatalf("redial error = %v after %d requests, want AuthRequiredError after one", err, requests.Load())
-	}
+	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int64
+		r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			requests.Add(1)
+			w.Header().Set("Graphite-Meter-Auth", "required")
+			w.WriteHeader(http.StatusForbidden)
+		}))
+		_, err := r.redialPingBus(t.Context(), time.Now().Add(redialWindow))
+		if !IsAuthRequired(err) || requests.Load() != 1 {
+			t.Fatalf("redial error = %v after %d requests, want AuthRequiredError after one", err, requests.Load())
+		}
+	})
 }
 
 func TestClosingProbesSeparatesTimeoutsFromUnresolved(t *testing.T) {

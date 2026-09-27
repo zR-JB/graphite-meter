@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -18,32 +17,33 @@ import (
 func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	t.Parallel()
 	const size = 256 * 1024
-	var requests atomic.Int32
-	second := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch requests.Add(1) {
-		case 1:
-			_, _ = w.Write(make([]byte, size))
-			return
-		case 2:
-			close(second)
+	synctest.Test(t, func(t *testing.T) {
+		var requests atomic.Int32
+		second := make(chan struct{})
+		r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch requests.Add(1) {
+			case 1:
+				_, _ = w.Write(make([]byte, size))
+				return
+			case 2:
+				close(second)
+			}
+			<-r.Context().Done()
+		}))
+		ctx, cancel := context.WithCancel(t.Context())
+		var total atomic.Uint64
+		done := make(chan struct{})
+		go func() {
+			_ = r.downloadLane(ctx, r.target.Origin, 0, &total, func() {})
+			close(done)
+		}()
+		<-second
+		cancel()
+		<-done
+		if got := total.Load(); got != size {
+			t.Errorf("total = %d, want %d with no partial second request counted", got, size)
 		}
-		<-r.Context().Done()
-	}))
-	defer srv.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	var total atomic.Uint64
-	done := make(chan struct{})
-	go func() {
-		_ = testRunner(srv).downloadLane(ctx, srv.URL, 0, &total, func() {})
-		close(done)
-	}()
-	<-second
-	cancel()
-	<-done
-	if got := total.Load(); got != size {
-		t.Errorf("total = %d, want %d with no partial second request counted", got, size)
-	}
+	})
 }
 
 func TestUploadSessionIsReleasedWhenSetupFails(t *testing.T) {
@@ -59,21 +59,21 @@ func TestUploadSessionIsReleasedWhenSetupFails(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-	r := testRunner(srv)
-	r.teardown = t.Context()
-	if err := r.measureUpload(t.Context(), testStageGate(make(chan struct{}))); err == nil {
-		t.Fatal("upload measured without a progress feed")
-	}
-	select {
-	case id := <-released:
-		if id != "minted" {
-			t.Fatalf("released upload %q, want the minted session", id)
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, mux)
+		r.teardown = t.Context()
+		if err := r.measureUpload(t.Context(), testStageGate(make(chan struct{}))); err == nil {
+			t.Fatal("upload measured without a progress feed")
 		}
-	default:
-		t.Fatal("a failed setup left the minted upload session open")
-	}
+		select {
+		case id := <-released:
+			if id != "minted" {
+				t.Fatalf("released upload %q, want the minted session", id)
+			}
+		default:
+			t.Fatal("a failed setup left the minted upload session open")
+		}
+	})
 }
 
 func lane(r *runner, dir Direction, base string) func(context.Context) error {
@@ -191,9 +191,9 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 		cancelAfter time.Duration
 		warmup      time.Duration
 	}{
-		{"streaming download", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
+		{"streaming download", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", pacedDownload) },
 			150 * time.Millisecond, 0},
-		{"download warmup", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
+		{"download warmup", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", pacedDownload) },
 			150 * time.Millisecond, 3 * time.Second},
 		{"silent download", StageDownload, func(mux *http.ServeMux) {
 			mux.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
@@ -201,7 +201,7 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 				<-r.Context().Done()
 			})
 		}, 150 * time.Millisecond, 0},
-		{"already cancelled", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
+		{"already cancelled", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", pacedDownload) },
 			0, 0},
 		{"stalled upload", StageUpload, func(mux *http.ServeMux) {
 			mountSilentReceiver(mux)
@@ -209,27 +209,27 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			mux := http.NewServeMux()
-			c.mount(mux)
-			srv := httptest.NewServer(mux)
-			defer srv.Close()
-			r := testRunner(srv)
-			r.cfg.Warmup = c.warmup
-			var log eventLog
-			r.emit = log.emit
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			time.AfterFunc(c.cancelAfter, cancel)
-			started := time.Now()
-			result, err := r.testTransferResult(ctx, c.stage, 5*time.Second)
-			elapsed := time.Since(started)
-			if outcome := log.details().Outcome; !errors.Is(err, context.Canceled) || elapsed > 1500*time.Millisecond ||
-				outcome != OutcomeStopped {
-				t.Fatalf("stage returned %v (%s) after %v, want a prompt stop", err, outcome, elapsed)
-			}
-			if c.name == "silent download" && result.TotalBytes != 0 {
-				t.Errorf("TotalBytes = %d from a server that wrote nothing", result.TotalBytes)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				mux := http.NewServeMux()
+				c.mount(mux)
+				r := pipedRunner(t, mux)
+				r.cfg.Warmup = c.warmup
+				var log eventLog
+				r.emit = log.emit
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				time.AfterFunc(c.cancelAfter, cancel)
+				started := time.Now()
+				result, err := r.testTransferResult(ctx, c.stage, 5*time.Second)
+				elapsed := time.Since(started)
+				if outcome := log.details().Outcome; !errors.Is(err, context.Canceled) ||
+					elapsed > c.cancelAfter+100*time.Millisecond || outcome != OutcomeStopped {
+					t.Fatalf("stage returned %v (%s) after %v, want a prompt stop", err, outcome, elapsed)
+				}
+				if c.name == "silent download" && result.TotalBytes != 0 {
+					t.Errorf("TotalBytes = %d from a server that wrote nothing", result.TotalBytes)
+				}
+			})
 		})
 	}
 }

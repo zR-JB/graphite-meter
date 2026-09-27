@@ -105,17 +105,6 @@ func (r *runner) testTransferResult(ctx context.Context, stage Stage, duration t
 	return result, err
 }
 
-func testRunner(srv *httptest.Server) *runner {
-	return &runner{
-		cfg:           Config{BaseURL: srv.URL}.normalized(),
-		http:          srv.Client(),
-		target:        fetchTarget(srv.URL),
-		latencyTarget: new(testChannel("test-ws", srv.URL)),
-		streams:       byDirection[int]{down: 1, up: 1},
-		emit:          func(Event) {},
-	}
-}
-
 func testStageGate(start chan struct{}) *stageGate {
 	return &stageGate{start: start, reportReady: func() {}, cancel: func(error) {}}
 }
@@ -181,6 +170,12 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/probe", writeProbe)
 }
 
+// pacedDownload lets virtual time pass between writes over a pipe.
+func pacedDownload(w http.ResponseWriter, _ *http.Request) {
+	time.Sleep(time.Millisecond)
+	_, _ = w.Write(make([]byte, 32*1024))
+}
+
 func writeDownload(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	_, _ = w.Write(make([]byte, 64*1024))
@@ -229,7 +224,9 @@ func mountSilentReceiver(mux *http.ServeMux) {
 	mux.HandleFunc(route.UploadSession, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.UploadSession{UploadID: "silent"})
 	})
-	mux.HandleFunc(route.Upload, func(_ http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) })
+	mux.HandleFunc(route.Upload, func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, pacedBody{r.Body, r.Context(), nil})
+	})
 	started := time.Now()
 	mux.HandleFunc(route.UploadCheckpoint, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintf(w, `{"bytes":0,"nanos":%d}`, time.Since(started)+1)
