@@ -21,17 +21,6 @@ CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job.
 
-| Job | mise task |
-| --- | --- |
-| `tooling` | `workflow-check`, `pipeline-test` |
-| `core` | `legal-check`, `core-check` |
-| `go` | `server-race` |
-| `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |
-| `smoke` | `container-smoke` |
-| `release` | `release-check` |
-| `security` | `security`, `client-audit` |
-| `secret-scan` | `secret-scan-ci` |
-
 ## Releases
 
 ```sh
