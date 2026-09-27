@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 graphite-meter-core = { path = "../core" }
-base64 = "0.22.1"
+base64.workspace = true
 http = "1"
 hyper = { version = "1.11.1", features = ["client", "http1"] }
 hyper-util = { version = "0.1.20", features = ["tokio"] }

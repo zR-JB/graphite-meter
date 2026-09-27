@@ -150,52 +150,6 @@
   {
     "ecosystem": "cargo",
     "name": "base64",
-    "reviewedVersion": "0.21.7",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/marshallpierce/rust-base64; revision 9652c787730e58515ce7b44fcafd2430ab424628. Cargo archive SHA-256 9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "base64",
-    "reviewedVersion": "0.22.1",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "0dd882e53de11566d50f8e8e2d5a651bcf3fabee4987d70f306233cf39094ba7",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/marshallpierce/rust-base64; revision e14400697453bcc85997119b874bc03d9601d0af. Cargo archive SHA-256 72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "base64",
     "reviewedVersion": "0.23.1",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
@@ -370,7 +324,7 @@
   {
     "ecosystem": "cargo",
     "name": "cc",
-    "reviewedVersion": "1.4.7",
+    "reviewedVersion": "1.5.1",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -388,7 +342,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/cc-rs; revision f1641a65c4b8f46c9c40b1bc8c1efb9693c02815. Cargo archive SHA-256 54413ede23c2daf518f35156dfde027feb2374004d63bd497f983c8db9c0e313. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/rust-lang/cc-rs; revision d279cdda99af5bf0eec594ee0626218fa91052ab. Cargo archive SHA-256 f360145194ee8e21db5ee7f3fcd4fe52210864c75c985dae33218202c8bbe040. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -1317,7 +1271,7 @@
   {
     "ecosystem": "cargo",
     "name": "find-msvc-tools",
-    "reviewedVersion": "0.1.13",
+    "reviewedVersion": "0.1.14",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -1335,7 +1289,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-lang/cc-rs; revision f1641a65c4b8f46c9c40b1bc8c1efb9693c02815. Cargo archive SHA-256 ef25905e51abafe4dcea6c15fec58c57b601cdbd0ee53d22ea1d3016c587d39b. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/rust-lang/cc-rs; revision 6b0d8e68bf09545a4de9a3cc10efcc0e4b6211bd. Cargo archive SHA-256 aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -2087,7 +2041,7 @@
   {
     "ecosystem": "cargo",
     "name": "hyper-util",
-    "reviewedVersion": "0.1.20",
+    "reviewedVersion": "0.1.21",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -2100,7 +2054,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/hyperium/hyper-util; revision b23a13e2b7ee73e15ba008cd9b19dcd2d3861957. Cargo archive SHA-256 96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/hyperium/hyper-util; revision 23a868965964c1d6bb1b94f30ba4c420a4bebe7c. Cargo archive SHA-256 ddc03d96684f9226b8a787cdb71488417b53ab5ea8fdb1dac946cb9431cc8bff. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -2387,7 +2341,7 @@
   {
     "ecosystem": "cargo",
     "name": "instability",
-    "reviewedVersion": "0.3.13",
+    "reviewedVersion": "0.3.14",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -2400,7 +2354,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/ratatui/instability; revision 2a4affca5ad534fc0826b4c556bdb2b851e4c886. Cargo archive SHA-256 2bf84e73fa6f27f299dec58e13223cf70db80da872eb921d4f6138342a0eabc8. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/ratatui/instability; revision 20792849479a9cee6eea53b031f0230cdf64eee1. Cargo archive SHA-256 4c3b5acc1e2fd9375041a388da33d1eb8aed5f7a8c0dd3543e3ea2805adfbe20. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -2727,7 +2681,7 @@
   {
     "ecosystem": "cargo",
     "name": "lru",
-    "reviewedVersion": "0.18.4",
+    "reviewedVersion": "0.18.5",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
@@ -2740,7 +2694,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/jeromefroe/lru-rs.git; revision 2504ad088ad7a14d609a6c19b92d45b4491d5f69. Cargo archive SHA-256 ff9840bcc50b71349309900da0ce7279aa336ae71d73250b07998932c7d97c25. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/jeromefroe/lru-rs.git; revision f1e972197053a6814e77b77afacb51f03fc03170. Cargo archive SHA-256 ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -3476,7 +3430,7 @@
   {
     "ecosystem": "cargo",
     "name": "rand",
-    "reviewedVersion": "0.10.2",
+    "reviewedVersion": "0.10.3",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -3499,35 +3453,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-random/rand; revision 1540ea327e8beaf0694ea64f6d9eb8eaadd47bd5. Cargo archive SHA-256 c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "rand",
-    "reviewedVersion": "0.8.8",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "35242e7a83f69875e6edeff02291e688c97caafe2f8902e4e19b49d3e78b4cab",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "209fbbe0ad52d9235e37badf9cadfe4dbdc87203179c0899e738b39ade42177b",
-        "kind": "license"
-      },
-      {
-        "name": "COPYRIGHT",
-        "sha256": "90eb64f0279b0d9432accfa6023ff803bc4965212383697eee27a0f426d5f8d5",
-        "kind": "notice"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rust-random/rand; revision 572d3b0c176085c485b8fa7818a04b769097bd72. Cargo archive SHA-256 e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
+    "reviewNotes": "Source: https://github.com/rust-random/rand; revision 9e7d328f60d6372ae22927f37d1a816fc980f25e. Cargo archive SHA-256 65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -3991,7 +3917,7 @@
   {
     "ecosystem": "cargo",
     "name": "rustls-platform-verifier",
-    "reviewedVersion": "0.7.0",
+    "reviewedVersion": "0.7.1",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -4009,7 +3935,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/rustls/rustls-platform-verifier; revision 996b1c903491641b17b3c9afb65d1352f6fc6b76. Cargo archive SHA-256 26d1e2536ce4f35f4846aa13bff16bd0ff40157cdb14cc056c7b14ba41233ba0. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/rustls/rustls-platform-verifier; revision 252e25161a91af476cbea620e29d277592d27ec7. Cargo archive SHA-256 1167586491e2b18b8bfbb293e8180ec17c201c4f076d7cb3070ca964e7598f98. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -4574,7 +4500,7 @@
   {
     "ecosystem": "cargo",
     "name": "smallvec",
-    "reviewedVersion": "1.16.1",
+    "reviewedVersion": "1.16.2",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -4592,7 +4518,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/servo/rust-smallvec; revision 700e1c3ff899cda7799b18e0804889105fc8beea. Cargo archive SHA-256 ba467056f1b547ed52077911161fc86985becbc60e8e1857c8a144dab0def891. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/servo/rust-smallvec; revision ccf5fc71044d491c46a3d79e7ed53948e6da1590. Cargo archive SHA-256 f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
@@ -4907,7 +4833,7 @@
   {
     "ecosystem": "cargo",
     "name": "thiserror",
-    "reviewedVersion": "1.0.69",
+    "reviewedVersion": "2.0.21",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -4925,35 +4851,12 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision 41938bd3a03a70d34ed8e53d99c89c770c7c9c41. Cargo archive SHA-256 b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "thiserror",
-    "reviewedVersion": "2.0.20",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision b1d5db5e039275d95bf7536a2b2192aeb4dc28bf. Cargo archive SHA-256 ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision b1827ee06f81a7d7f954e676771e19a97f9f8e3b. Cargo archive SHA-256 09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
     "name": "thiserror-impl",
-    "reviewedVersion": "1.0.69",
+    "reviewedVersion": "2.0.21",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
@@ -4971,30 +4874,7 @@
     ],
     "modified": false,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision 41938bd3a03a70d34ed8e53d99c89c770c7c9c41. Cargo archive SHA-256 4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "thiserror-impl",
-    "reviewedVersion": "2.0.20",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision b1d5db5e039275d95bf7536a2b2192aeb4dc28bf. Cargo archive SHA-256 bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+    "reviewNotes": "Source: https://github.com/dtolnay/thiserror; revision b1827ee06f81a7d7f954e676771e19a97f9f8e3b. Cargo archive SHA-256 fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
   },
   {
     "ecosystem": "cargo",
