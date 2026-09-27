@@ -953,8 +953,6 @@ fn remaining_ms(expires: SystemTime) -> u64 {
 mod tests {
     use super::super::policy::{Connection, Listener};
     use super::*;
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-    use sha2::{Digest, Sha256};
 
     #[test]
     fn auth_forms_require_unambiguous_body_fields() {
@@ -1144,9 +1142,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn password_browser_cli_ticket_and_logout_flow_through_policy_and_controller() {
+    async fn password_ticket_logout_revokes_lease_and_records_counter_deltas() {
         const PUBLIC: &str = "https://meter.example";
-        const REMOTE: &str = "https://client.example";
         let service = Service::new(&AuthConfig { mode: AuthMode::Password, public_url: PUBLIC.into(), password_hash: "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into(), ..AuthConfig::default() }, vec![], None).unwrap();
         let login = call(&service, Method::GET, "/login", &[], String::new()).await;
         assert_eq!(login.status(), StatusCode::OK);
@@ -1184,79 +1181,6 @@ mod tests {
         let raw_session = set_cookie_value(&signed_in, "__Host-gm_session");
         let session_cookie = format!("__Host-gm_session={raw_session}");
         let csrf = set_cookie_value(&signed_in, "__Host-gm_csrf");
-        let info = call(
-            &service,
-            Method::GET,
-            "/auth/session",
-            &[("cookie", &session_cookie)],
-            String::new(),
-        )
-        .await;
-        let info: serde_json::Value = serde_json::from_slice(info.body()).unwrap();
-        assert_eq!(info["provider"], "local");
-        assert_eq!(info["csrf"], csrf);
-        assert!(info["expires"].is_string());
-        assert_eq!(info["maximumLifetimeMs"], 28_800_000);
-
-        let verifier = "v".repeat(32);
-        let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        let page_url = query_url(
-            "/auth/browser",
-            &[("challenge", &challenge), ("client_origin", REMOTE)],
-        );
-        let opening = call(
-            &service,
-            Method::GET,
-            &page_url,
-            &[
-                ("sec-fetch-site", "cross-site"),
-                ("sec-fetch-mode", "navigate"),
-                ("sec-fetch-dest", "document"),
-            ],
-            String::new(),
-        )
-        .await;
-        assert_eq!(opening.status(), StatusCode::OK);
-        let approval = call(
-            &service,
-            Method::GET,
-            &page_url,
-            &[("cookie", &session_cookie)],
-            String::new(),
-        )
-        .await;
-        assert_eq!(approval.status(), StatusCode::OK);
-        let approved = call(
-            &service,
-            Method::POST,
-            "/auth/browser/approve",
-            &[
-                ("cookie", &session_cookie),
-                ("origin", PUBLIC),
-                ("content-type", "application/x-www-form-urlencoded"),
-            ],
-            encoded(&[("csrf", &csrf), ("challenge", &challenge)]),
-        )
-        .await;
-        assert_eq!(approved.status(), StatusCode::OK);
-        let token = call(
-            &service,
-            Method::POST,
-            "/auth/browser/token",
-            &[("origin", REMOTE), ("content-type", "application/json")],
-            json!({"verifier":verifier}).to_string(),
-        )
-        .await;
-        assert_eq!(token.status(), StatusCode::OK);
-        assert_eq!(token.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], REMOTE);
-        assert!(
-            !token
-                .headers()
-                .contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
-        );
-        let token: serde_json::Value = serde_json::from_slice(token.body()).unwrap();
-        assert!(token["expires"].is_u64());
-        let bearer = format!("Bearer {}", token["token"].as_str().unwrap());
         let ticket = call(
             &service,
             Method::POST,
@@ -1264,7 +1188,11 @@ mod tests {
                 "/wt/session",
                 &[("target", "https://meter.example:8443/wt/ping")],
             ),
-            &[("origin", REMOTE), ("authorization", &bearer)],
+            &[
+                ("origin", PUBLIC),
+                ("cookie", &session_cookie),
+                ("x-csrf-token", &csrf),
+            ],
             String::new(),
         )
         .await;
@@ -1277,7 +1205,7 @@ mod tests {
                 &[("token", ticket["token"].as_str().unwrap())],
             ))
             .header(header::HOST, "meter.example:8443")
-            .header(header::ORIGIN, REMOTE)
+            .header(header::ORIGIN, PUBLIC)
             .body(Bytes::new())
             .unwrap();
         let connected = service
@@ -1289,46 +1217,6 @@ mod tests {
         };
         assert!(active.is_active());
 
-        let cli_verifier = "native-client";
-        let cli_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(cli_verifier.as_bytes()));
-        assert_eq!(
-            call(
-                &service,
-                Method::GET,
-                &query_url("/auth/cli", &[("challenge", &cli_challenge)]),
-                &[("cookie", &session_cookie)],
-                String::new()
-            )
-            .await
-            .status(),
-            StatusCode::OK
-        );
-        assert_eq!(
-            call(
-                &service,
-                Method::POST,
-                "/auth/cli/approve",
-                &[
-                    ("cookie", &session_cookie),
-                    ("origin", PUBLIC),
-                    ("content-type", "application/x-www-form-urlencoded")
-                ],
-                encoded(&[("csrf", &csrf), ("challenge", &cli_challenge)])
-            )
-            .await
-            .status(),
-            StatusCode::OK
-        );
-        let cli = call(
-            &service,
-            Method::POST,
-            "/auth/cli/token",
-            &[("content-type", "application/json")],
-            json!({"verifier":cli_verifier}).to_string(),
-        )
-        .await;
-        let cli: serde_json::Value = serde_json::from_slice(cli.body()).unwrap();
-        assert!(cli["expires"].is_string());
         let logged_out = call(
             &service,
             Method::POST,
@@ -1346,18 +1234,6 @@ mod tests {
             .await
             .unwrap();
         assert!(service.sessions().lookup(&raw_session).is_none());
-        assert!(
-            service
-                .sessions()
-                .lookup_bearer(cli["token"].as_str().unwrap())
-                .is_none()
-        );
-        assert!(
-            service
-                .sessions()
-                .lookup_bearer(token["token"].as_str().unwrap())
-                .is_none()
-        );
         let mut last = [0; Counter::COUNT];
         let window = service.log.window(&mut last).unwrap();
         assert!(
@@ -1365,7 +1241,7 @@ mod tests {
             "{window}"
         );
         assert!(
-            window.contains("logout=1 cli-approval=2 capacity=0"),
+            window.contains("logout=1 cli-approval=0 capacity=0"),
             "{window}"
         );
         assert!(service.log.window(&mut last).is_none());

@@ -189,6 +189,56 @@ async fn password_flow() {
     assert!(!denied.contains("access-control-allow-origin: *"));
     let (session, csrf) = h.login().await;
     let headers = credentials(&session, &csrf);
+    let (_, info) = h.request("GET", "/auth/session", &headers, "").await;
+    let info: serde_json::Value = serde_json::from_slice(&info).unwrap();
+    assert_eq!(info["provider"], "local");
+    assert_eq!(info["csrf"], csrf);
+    assert!(info["expires"].is_string());
+    assert_eq!(info["maximumLifetimeMs"], 28_800_000);
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    use sha2::{Digest, Sha256};
+    let verifier = "native-client";
+    let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let (page, _) = h
+        .request(
+            "GET",
+            &format!("/auth/cli?challenge={challenge}"),
+            &headers,
+            "",
+        )
+        .await;
+    assert!(page.starts_with("HTTP/1.1 200"));
+    let approval = form_urlencoded::Serializer::new(String::new())
+        .append_pair("csrf", &csrf)
+        .append_pair("challenge", &challenge)
+        .finish();
+    let (approved, _) = h
+        .request(
+            "POST",
+            "/auth/cli/approve",
+            &format!("{headers}Content-Type: application/x-www-form-urlencoded\r\n"),
+            &approval,
+        )
+        .await;
+    assert!(approved.starts_with("HTTP/1.1 200"));
+    let (issued, token) = h
+        .request(
+            "POST",
+            "/auth/cli/token",
+            "Content-Type: application/json\r\n",
+            &serde_json::json!({"verifier": verifier}).to_string(),
+        )
+        .await;
+    assert!(issued.starts_with("HTTP/1.1 200"));
+    let token: serde_json::Value = serde_json::from_slice(&token).unwrap();
+    assert!(token["expires"].is_string());
+    let bearer = format!(
+        "Authorization: Bearer {}\r\n",
+        token["token"].as_str().unwrap()
+    );
+    let (authorized, _) = h.request("GET", "/probe", &bearer, "").await;
+    assert!(authorized.starts_with("HTTP/1.1 200"));
+
     for (route, target) in [
         ("/ws/session", "https://localhost/ws/ping"),
         ("/wt/session", "https://localhost:8443/wt/ping"),
@@ -322,6 +372,8 @@ async fn password_flow() {
         .await;
     assert!(ok.starts_with("HTTP/1.1 200"));
     let (denied, _) = h.request("GET", "/probe", &headers, "").await;
+    assert!(denied.starts_with("HTTP/1.1 403"));
+    let (denied, _) = h.request("GET", "/probe", &bearer, "").await;
     assert!(denied.starts_with("HTTP/1.1 403"));
     driver.abort();
     let _ = driver.await;

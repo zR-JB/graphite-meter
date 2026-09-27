@@ -72,7 +72,8 @@ async fn download_length_preserves_go_parsing_and_head_headers() {
 #[tokio::test]
 async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutdown() {
     tokio::time::timeout(Duration::from_secs(10), async {
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let config = Config { server_name: "Local meter".into(), server_location: "Berlin".into(), ..Config::default() };
+        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -80,11 +81,19 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             let _ = stopped.await;
         }));
 
-        for path in ["/preflight", "/servers", "/probe", "/download?bytes=300000"] {
+        let mut generation = None;
+        for (method, path, status) in [
+            ("GET", "/preflight", 200), ("POST", "/preflight", 200), ("HEAD", "/preflight", 200),
+            ("GET", "http://other.example/preflight", 200),
+            ("GET", "/servers", 200), ("GET", "http://[2001:db8::1]/servers", 200),
+            ("POST", "/servers", 405), ("HEAD", "/servers", 405), ("OPTIONS", "/servers", 204),
+            ("GET", "/probe", 200), ("POST", "/probe", 200), ("HEAD", "/probe", 200),
+            ("GET", "/unknown", 404), ("GET", "/download?bytes=300000", 200),
+        ] {
             let mut socket = TcpStream::connect(address).await.unwrap();
             socket
                 .write_all(
-                    format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                    format!("{method} {path} HTTP/1.1\r\nHost: meter.example:80\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
                         .as_bytes(),
                 )
                 .await
@@ -96,14 +105,32 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
                 .position(|part| part == b"\r\n\r\n")
                 .unwrap();
             let headers = std::str::from_utf8(&response[..boundary]).unwrap();
-            assert!(headers.starts_with("HTTP/1.1 200"), "{path}: {headers}");
+            assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
             let body = &response[boundary + 4..];
-            if path.starts_with("/download") {
+            if status == 405 {
+                assert!(body.is_empty());
+                assert!(!headers.contains("content-type:"));
+            } else if status != 200 || method == "HEAD" {
+                if status == 204 || method == "HEAD" { assert!(body.is_empty()); }
+            } else if path.starts_with("/download") {
                 assert_eq!(body.len(), 300000);
                 assert_eq!(&body[..37856], &body[262144..]);
                 assert!(body.iter().any(|byte| *byte != 0));
             } else {
-                let _: serde_json::Value = serde_json::from_slice(body).unwrap();
+                assert!(headers.contains("content-type: application/json"));
+                assert!(headers.contains("cache-control: no-store"));
+                let value: serde_json::Value = serde_json::from_slice(body).unwrap();
+                if path.ends_with("/servers") {
+                    let origin = if path.starts_with("http:") { "http://[2001:db8::1]:7246" } else { "http://meter.example:7246" };
+                    assert_eq!(value["defaultSelection"], serde_json::json!(["self"]));
+                    assert_eq!(value["servers"][0]["name"], "Local meter");
+                    assert_eq!(value["servers"][0]["location"], "Berlin");
+                    assert_eq!(value["servers"][0]["additionalOrigins"], serde_json::json!([origin]));
+                } else if path.ends_with("/preflight") {
+                    if let Some(first) = &generation { assert_eq!(&value["generation"], first); }
+                    else { generation = Some(value["generation"].clone()); }
+                    if path.starts_with("http:") { assert_eq!(value["capabilities"]["throughput"][0]["baseUrl"], "http://other.example:7246"); }
+                }
             }
         }
         stop.send(()).unwrap();
