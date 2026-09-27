@@ -63,7 +63,8 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
         if error.is::<tokio::time::error::Elapsed>() {
             return FailureReason::Timeout;
         }
-        if let Some(io) = error.downcast_ref::<std::io::Error>() {
+        let io = error.downcast_ref::<std::io::Error>();
+        if let Some(io) = io {
             match io.kind() {
                 std::io::ErrorKind::TimedOut => return FailureReason::Timeout,
                 std::io::ErrorKind::InvalidData => {}
@@ -73,7 +74,14 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
         if error.is::<serde_json::Error>() || error.is::<graphite_meter_core::wire::WireError>() {
             return FailureReason::ProtocolError;
         }
-        let Some(source) = error.source() else {
+        // io::Error::source() skips its own payload, which carries a wrapped wire cause.
+        let next = match io {
+            Some(io) => io
+                .get_ref()
+                .map(|inner| inner as &(dyn std::error::Error + 'static)),
+            None => error.source(),
+        };
+        let Some(source) = next else {
             return if preparing {
                 FailureReason::PreparationFailed
             } else {
@@ -103,3 +111,19 @@ impl std::fmt::Display for MeasurementFailure {
     }
 }
 impl std::error::Error for MeasurementFailure {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphite_meter_core::wire::WireError;
+    use std::io::{Error as IoError, ErrorKind};
+
+    #[test]
+    fn invalid_data_is_classified_by_its_payload() {
+        let wrapped = IoError::new(ErrorKind::InvalidData, WireError::InvalidReceiverCheckpoint);
+        assert_eq!(reason(&wrapped, false), FailureReason::ProtocolError);
+        let plain = IoError::new(ErrorKind::InvalidData, "undecodable record");
+        assert_eq!(reason(&plain, true), FailureReason::PreparationFailed);
+        assert_eq!(reason(&plain, false), FailureReason::ConnectionLost);
+    }
+}
