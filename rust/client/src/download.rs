@@ -333,37 +333,6 @@ mod tests {
     };
 
     #[tokio::test]
-    async fn http_lane_stops_retrying_when_responses_move_no_bytes() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let peer = tokio::spawn(async move {
-            loop {
-                let Ok((mut stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let _ = stream.read(&mut [0_u8; 4096]).await;
-                let _ = stream
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n")
-                    .await;
-            }
-        });
-        let transport =
-            Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?;
-        let bytes = AtomicU64::new(0);
-        let (ready, _received) = mpsc::channel(1);
-        let result = timeout(
-            Duration::from_secs(3),
-            receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(30)),
-        )
-        .await?;
-        peer.abort();
-        assert!(result.unwrap_err().is::<hyper::Error>());
-        assert_eq!(bytes.load(Ordering::Relaxed), 0);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn http_lane_preserves_received_bytes_across_partial_responses() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;

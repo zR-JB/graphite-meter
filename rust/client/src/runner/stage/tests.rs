@@ -52,6 +52,28 @@ async fn download_peer_with_gate(
                         let Ok(mut stream) = acceptor.accept(stream).await else { return; };
                         let mut request = [0_u8; 4096];
                         let Ok(length) = stream.read(&mut request).await else { return; };
+                        if request[..length].starts_with(b"GET /ws/ping ") {
+                            use futures_util::SinkExt;
+                            let Ok(header) = std::str::from_utf8(&request[..length]) else { return; };
+                            let Some(key) = header.lines().find_map(|line| line.split_once(':').filter(|(name, _)| name.eq_ignore_ascii_case("sec-websocket-key")).map(|(_, value)| value.trim())) else { return; };
+                            let accept = tokio_tungstenite::tungstenite::handshake::derive_accept_key(key.as_bytes());
+                            if stream.write_all(format!("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n").as_bytes()).await.is_err() { return; }
+                            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(stream, tokio_tungstenite::tungstenite::protocol::Role::Server, None).await;
+                            while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = socket.next().await {
+                                let Ok(id) = graphite_meter_core::wire::decode_ping(&text) else { return; };
+                                if flag.load(Ordering::SeqCst) == 6 {
+                                    let ending = graphite_meter_core::failure::LaneEnding::Idle;
+                                    let _ = socket.send(tokio_tungstenite::tungstenite::Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
+                                        code: ending.websocket_code().into(),
+                                        reason: ending.reason().into(),
+                                    }))).await;
+                                    return;
+                                }
+                                let reply = graphite_meter_core::wire::encode_pong(id, 0);
+                                if socket.send(tokio_tungstenite::tungstenite::Message::Text(reply.into())).await.is_err() { return; }
+                            }
+                            return;
+                        }
                         let request = &request[..length];
                         if request.starts_with(b"GET /preflight ") || request.starts_with(b"GET /probe ") {
                             let body = if request.starts_with(b"GET /preflight ") {
@@ -514,138 +536,81 @@ fn host_latency_populations_and_continuity_are_independent() {
 }
 
 #[tokio::test]
-async fn latency_failure_preserves_payload_and_throughput_failure_stops_only_its_latency() {
-    let (stop, _) = watch::channel(false);
-    let (near_stop, near_cancelled) = watch::channel(false);
-    let (far_stop, far_cancelled) = watch::channel(false);
-    let mut resources = StageResources {
-        transfers: ["near", "far"]
-            .into_iter()
-            .map(|id| Transfer {
-                id: id.into(),
-                down: None,
-                up: None,
-                checkpoint_misses: 0,
-            })
-            .collect(),
-        latency: JoinSet::new(),
-        stop,
-        stop_latency: BTreeMap::from([("near".into(), near_stop), ("far".into(), far_stop)]),
-        retired: JoinSet::new(),
-        failed: Vec::new(),
-        latency_completed: BTreeMap::new(),
-        latency_failed: false,
-    };
-    let (snapshots, observed) = watch::channel(Snapshot {
-        server_latencies: ["near", "far"]
-            .into_iter()
-            .map(|id| ServerLatency {
-                id: id.into(),
-                ..ServerLatency::default()
-            })
-            .collect(),
-        ..Snapshot::default()
-    });
-    let mut accounting = AggregateMeasurements::default();
-    let epoch = Instant::now();
-    resources
-        .recover(
-            LatencyFailure {
-                id: "near".into(),
-                source: "latency socket closed".into(),
-            }
-            .into(),
-            &mut accounting,
-            Some(TransferStage::Bidirectional),
+async fn loaded_latency_failure_keeps_both_http_participants() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    for failure_phase in [Phase::Warmup, Phase::Measuring] {
+        let (near, mode, near_peer) = download_peer().await?;
+        let (far, _, far_peer) = download_peer().await?;
+        let http = Http::new(true)?;
+        let mut servers = vec![
+            prepared_download("near", &near, &http).await?,
+            prepared_download("far", &far, &http).await?,
+        ];
+        for server in &mut servers {
+            server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+                base_url: server.entry.url.clone(),
+                transport: LatencyTransport::WebSocket,
+            });
+        }
+        let config = Config {
+            insecure: true,
+            warmup: Duration::from_millis(500),
+            download_duration: Duration::from_millis(1200),
+            streams: 1,
+            ..Config::default()
+        };
+        let (snapshots, mut observed) = watch::channel(Snapshot::default());
+        let (_stop, cancelled) = watch::channel(false);
+        let run = measure(
+            Stage::Download,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled,
             true,
-            epoch,
-            &snapshots,
-        )
-        .unwrap();
-    assert_eq!(resources.transfers.len(), 2);
-    assert!(*near_cancelled.borrow());
-    assert!(!*far_cancelled.borrow());
-    assert!(observed.borrow().server_latencies[0].error.is_some());
-    assert!(observed.borrow().server_latencies[1].error.is_none());
-    resources
-        .recover(
-            ParticipantFailure {
-                id: "far".into(),
-                source: "payload disconnected".into(),
+        );
+        let fail = async {
+            while observed.borrow().phase != failure_phase {
+                observed.changed().await.unwrap();
             }
-            .into(),
-            &mut accounting,
-            Some(TransferStage::Bidirectional),
-            true,
-            epoch,
-            &snapshots,
-        )
-        .unwrap();
-    assert_eq!(resources.transfers.len(), 1);
-    assert_eq!(resources.transfers[0].id, "near");
-    assert!(*far_cancelled.borrow());
-    resources.close().await.unwrap();
-}
-
-#[tokio::test]
-async fn loaded_latency_failure_during_warmup_keeps_throughput_participant() {
-    let (stop, _) = watch::channel(false);
-    let (latency_stop, stopped) = watch::channel(false);
-    let mut resources = StageResources {
-        transfers: vec![Transfer {
-            id: "near".into(),
-            down: None,
-            up: None,
-            checkpoint_misses: 0,
-        }],
-        latency: JoinSet::new(),
-        stop,
-        stop_latency: BTreeMap::from([("near".into(), latency_stop)]),
-        retired: JoinSet::new(),
-        failed: Vec::new(),
-        latency_completed: BTreeMap::new(),
-        latency_failed: false,
-    };
-    let (snapshots, observed) = watch::channel(Snapshot {
-        server_latencies: vec![ServerLatency {
-            id: "near".into(),
-            ..ServerLatency::default()
-        }],
-        ..Snapshot::default()
-    });
-    let mut accounting = AggregateMeasurements::default();
-    resources
-        .recover(
-            LatencyFailure {
-                id: "near".into(),
-                source: "latency socket closed".into(),
-            }
-            .into(),
-            &mut accounting,
-            Some(TransferStage::Download),
-            false,
-            Instant::now(),
-            &snapshots,
-        )
-        .unwrap();
-    assert_eq!(resources.transfers[0].id, "near");
-    assert!(resources.failed.is_empty());
-    assert!(resources.latency_failed);
-    assert!(*stopped.borrow());
-    assert!(observed.borrow().server_latencies[0].error.is_some());
-    assert!(accounting.intervals().is_empty());
-    resources.close().await.unwrap();
-}
-
-#[test]
-fn requested_stop_does_not_hide_a_latency_error() {
-    assert!(latency_task_result("near", Ok(()), true).is_ok());
-    let error =
-        latency_task_result("near", Err("observation queue full".into()), true).unwrap_err();
-    let failure = error.downcast::<LatencyFailure>().unwrap();
-    assert_eq!(failure.id, "near");
-    assert_eq!(failure.source.to_string(), "observation queue full");
-    assert!(latency_task_result("far", Ok(()), false).is_err());
+            mode.store(6, Ordering::SeqCst);
+        };
+        let (result, ()) =
+            tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, fail) }).await?;
+        assert!(result?.is_empty());
+        let snapshot = observed.borrow();
+        let stage = &snapshot.results[0];
+        assert_eq!(stage.server_results.len(), 2);
+        assert!(
+            stage
+                .server_results
+                .iter()
+                .all(|host| host.down_bytes() > 0)
+        );
+        assert!(!stage.complete);
+        assert!(
+            stage
+                .intervals
+                .iter()
+                .all(|interval| interval.participants.len() == 2)
+        );
+        let near = stage
+            .server_latencies
+            .iter()
+            .find(|host| host.id == "near")
+            .unwrap();
+        let far = stage
+            .server_latencies
+            .iter()
+            .find(|host| host.id == "far")
+            .unwrap();
+        assert!(near.error.is_some());
+        assert!(far.error.is_none());
+        assert!(far.summary.count > 0);
+        near_peer.abort();
+        far_peer.abort();
+    }
+    Ok(())
 }
 
 #[tokio::test]

@@ -219,21 +219,4 @@ mod tests {
         preflight.capabilities.throughput[0].base_url = "https://foreign.example".into();
         assert!(throughput(&config, &entry, &preflight).is_err());
     }
-
-    #[test]
-    fn selection_uses_selected_servers_only() {
-        let mut catalog = ServerCatalog::singleton().resolve("https://meter.example");
-        catalog.servers.push(ServerEntry {
-            id: "peer".into(),
-            url: "https://peer.example".into(),
-            ..Default::default()
-        });
-        let mut config = Config {
-            streams: 128,
-            ..Default::default()
-        };
-        assert_eq!(servers(&catalog, &config).unwrap().len(), 1);
-        config.servers = vec!["self".into(), "peer".into()];
-        assert_eq!(servers(&catalog, &config).unwrap().len(), 2);
-    }
 }

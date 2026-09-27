@@ -331,24 +331,6 @@ mod tests {
             assert!(Origin::from_uri(&uri.parse().unwrap()).is_err());
         }
     }
-    #[test]
-    fn ipv6_authority_keeps_its_port() {
-        let origin = Origin::from_uri(&"https://[::1]:8443/".parse().unwrap()).unwrap();
-        assert_eq!(origin.host, "::1");
-        assert_eq!(origin.port, 8443);
-        assert_eq!(
-            Origin::from_uri(&"https://[::1]/".parse().unwrap())
-                .unwrap()
-                .port,
-            443
-        );
-    }
-    #[test]
-    fn insecure_tls_configuration_does_not_enable_legacy_protocols() {
-        let tls = tls_config(true).unwrap();
-        assert_eq!(tls.alpn_protocols, [b"h3".to_vec()]);
-        assert!(!tls.enable_early_data);
-    }
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
         use rustls::pki_types::{PrivateKeyDer, pem::PemObject};

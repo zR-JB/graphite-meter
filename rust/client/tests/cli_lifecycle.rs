@@ -243,3 +243,30 @@ finally:
     peer.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error> {
+    for args in [
+        vec!["--throughput-transport=webtransport-datagram"],
+        vec!["--stages=typo"],
+        vec!["--ping=typo"],
+        vec!["--warmup=-1s"],
+        vec!["--download-duration=0"],
+        vec!["--server=a", "--server=a"],
+        vec!["--latency-transport=webtransport", "--ping=16s"],
+        vec!["--throughput-origin=https://user:secret@example.com"],
+    ] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(2),
+            Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"))
+                .args(&args)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await??;
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(!output.stderr.is_empty(), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+    Ok(())
+}
