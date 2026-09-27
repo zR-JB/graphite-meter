@@ -37,7 +37,7 @@ export function serverLoadSummary(load: ServerLoad | undefined): string | null {
   if (!load || load.max <= 0) return null;
   const slots = `${load.active} of ${load.max} slots`;
   return load.active / load.max > BUSY_SHARE
-    ? `${slots} · server busy — results may be affected`
+    ? `${slots}, server busy: results may be affected`
     : slots;
 }
 
@@ -76,7 +76,7 @@ export function advertisedServerHttpPaths(
     ...new Set(
       targets.map(
         (target) =>
-          `${httpProtocolLabel(target.protocol)} · ${target.tls ? "TLS" : "clear"}`,
+          `${httpProtocolLabel(target.protocol)} (${target.tls ? "TLS" : "clear"})`,
       ),
     ),
   ];
@@ -94,6 +94,6 @@ export function pathEvidence(
       : null,
     serverProtocol ? `server ${httpProtocolLabel(serverProtocol)}` : null,
   ].filter((value): value is string => value != null);
-  const text = evidence.join(" · ");
+  const text = evidence.join(", ");
   return text ? text[0].toUpperCase() + text.slice(1) : "Pending";
 }
