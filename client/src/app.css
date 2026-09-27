@@ -673,6 +673,13 @@
     background: var(--tone);
     box-shadow: 0 0 0 3px var(--tone-wash);
   }
+  .status-dot.inline {
+    display: inline-block;
+    width: 0.5em;
+    height: 0.5em;
+    vertical-align: middle;
+    box-shadow: none;
+  }
 
   .notice {
     --tone: var(--signal);
@@ -910,6 +917,20 @@
     position: absolute;
     display: grid;
     gap: 2px;
+  }
+  .inspect-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+  :not(.inspect-row) + .inspect-row {
+    margin-top: var(--space-1);
+  }
+  .inspect-row > :first-child {
+    color: var(--text-soft);
+  }
+  .inspect-row > :last-child {
+    font-weight: var(--w-strong);
   }
 
   .popover {

@@ -173,7 +173,7 @@ ping are the phase marks.
 | Field, select | 32 (44 coarse) | `--r-chrome` 8 | 10 inline | row | 1 px `--field-edge`; focus `--brand-line` + halo |
 | Switch | 20 track, 36 wide; row 32 | full | 2 knob | row label | off: `--track`, `--text-soft` knob; on: `--selected-wash`, `--brand` knob |
 | `.badge` | 20 | `--r-well` 6 | 6 inline | badge | tone wash and tone ink |
-| `.status-dot` | 8 + 3 halo | full | — | — | shown only for a non-neutral tone |
+| `.status-dot` | 8 + 3 halo; `.inline`: 0.5 em on the x-height, no halo | full | — | — | shown only for a non-neutral tone |
 | `.menu` item | `--control-h` 32 | `--r-well` 6 | 4 menu, 8 item | row; `small` caption | hover `--hover-wash`; current `--selected-wash`; checklist shows a check |
 | `.tooltip`, `.inspect-card` | content | `--r-chrome` 8 | 8 × 12 | 12 px / 1.4, title line 600 | glass, `--border-strong` hairline, `--elev-tooltip` |
 | `.float` popover | content | `--r-surface` 12 | menu 4 | row | glass, `--border-strong` hairline, `--elev-float` |
@@ -182,7 +182,8 @@ ping are the phase marks.
 
 - **Button** variants: `-accent`, `-quiet` (no ring; hover wash), `-danger`, `-icon`. The run control is the one solid
   brand button.
-- **Tooltip and hover card** share one glass shell. A multi-line tip's first line is its title. A tip opens on hover
+- **Tooltip and hover card** share one glass shell. A multi-line tip's first line is its title. A line with a tab
+  becomes an aligned pair (`.inspect-row`: label `--text-soft`, value 600), set 4 px below any prose line. A tip opens on hover
   intent, keyboard focus or long press, never after a click on a control.
 - **Selectable tile or row** (`.tile`): the same hover and selection washes as a segment.
 
