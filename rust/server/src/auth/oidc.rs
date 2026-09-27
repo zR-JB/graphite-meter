@@ -27,6 +27,8 @@ use tokio::{
 use tokio_rustls::TlsConnector;
 use zeroize::{Zeroize, Zeroizing};
 
+const MAX_TRANSACTIONS: usize = 16384;
+
 #[derive(Deserialize)]
 struct Metadata {
     issuer: String,
@@ -242,7 +244,7 @@ impl Oidc {
         let now = Instant::now();
         transactions.retain(|_, transaction| transaction.deadline > now);
         let client_keys = crate::client_address::client_keys(address);
-        if transactions.len() >= 256
+        if transactions.len() >= MAX_TRANSACTIONS
             || crate::client_address::share_full(&client_keys, 8, |key| {
                 transactions
                     .values()
@@ -250,7 +252,7 @@ impl Oidc {
                     .count()
             })
         {
-            if transactions.len() >= 256 {
+            if transactions.len() >= MAX_TRANSACTIONS {
                 self.log.ceiling(super::logging::Ceiling::OidcTransaction);
             }
             return Err(OidcFailure::Capacity);

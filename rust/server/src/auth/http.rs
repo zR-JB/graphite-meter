@@ -297,6 +297,9 @@ impl Service {
         else {
             return self.oidc_rejected(OidcFailure::Failed, "throttled", challenge);
         };
+        if !self.attempts.allow(Budget::OidcStart, address) {
+            return self.oidc_rejected(OidcFailure::Throttled, "throttled", challenge);
+        }
         let prior = cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token));
         match oidc.start(address, challenge.to_owned(), prior).await {
             Ok(started) => {

@@ -15,6 +15,7 @@ async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
     for (budget, limit) in [
         (Budget::Password, 5),
         (Budget::OidcExchange, 10),
+        (Budget::OidcStart, 10),
         (Budget::BrowserApproval, 10),
     ] {
         for _ in 0..limit {
@@ -23,11 +24,21 @@ async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_secs(60) - Duration::from_nanos(1)).await;
-    for budget in [Budget::Password, Budget::OidcExchange, Budget::BrowserApproval] {
+    for budget in [
+        Budget::Password,
+        Budget::OidcExchange,
+        Budget::OidcStart,
+        Budget::BrowserApproval,
+    ] {
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_nanos(1)).await;
-    for budget in [Budget::Password, Budget::OidcExchange, Budget::BrowserApproval] {
+    for budget in [
+        Budget::Password,
+        Budget::OidcExchange,
+        Budget::OidcStart,
+        Budget::BrowserApproval,
+    ] {
         assert!(limiter.allow(budget, client));
     }
 }

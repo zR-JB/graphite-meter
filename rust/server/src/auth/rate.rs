@@ -14,6 +14,7 @@ const MAX_KEYS: usize = 2048;
 const PASSWORD_ADDRESS_LIMIT: usize = 5;
 const PASSWORD_GLOBAL_LIMIT: usize = 60;
 const EXCHANGE_ADDRESS_LIMIT: usize = 10;
+const OIDC_START_ADDRESS_LIMIT: usize = 10;
 const APPROVAL_ADDRESS_LIMIT: usize = 10;
 
 type Attempts = VecDeque<Instant>;
@@ -24,6 +25,7 @@ pub enum Budget {
     Password,
     KnownDevice,
     OidcExchange,
+    OidcStart,
     BrowserApproval,
 }
 
@@ -32,6 +34,7 @@ struct State {
     password: AddressAttempts,
     failed_passwords: Attempts,
     exchanges: AddressAttempts,
+    starts: AddressAttempts,
     approvals: AddressAttempts,
 }
 
@@ -63,11 +66,13 @@ impl AttemptLimiter {
             password,
             failed_passwords,
             exchanges,
+            starts,
             approvals,
         } = &mut *state;
         let (addresses, limit, ceiling) = match budget {
             Budget::Password | Budget::KnownDevice => (password, PASSWORD_ADDRESS_LIMIT, Ceiling::PasswordAddress),
             Budget::OidcExchange => (exchanges, EXCHANGE_ADDRESS_LIMIT, Ceiling::ExchangeAddress),
+            Budget::OidcStart => (starts, OIDC_START_ADDRESS_LIMIT, Ceiling::StartAddress),
             Budget::BrowserApproval => (approvals, APPROVAL_ADDRESS_LIMIT, Ceiling::ApprovalAddress),
         };
         let known = matches!(budget, Budget::KnownDevice);

@@ -44,6 +44,7 @@ pub(super) enum Ceiling {
     Password,
     PasswordAddress,
     ExchangeAddress,
+    StartAddress,
     ApprovalAddress,
     OidcTransaction,
 }
@@ -53,6 +54,7 @@ impl Ceiling {
             Self::Password => "password-attempt",
             Self::PasswordAddress => "password-attempt-address",
             Self::ExchangeAddress => "oidc-exchange-address",
+            Self::StartAddress => "oidc-start-address",
             Self::ApprovalAddress => "browser-approval-address",
             Self::OidcTransaction => "oidc-transaction",
         }
