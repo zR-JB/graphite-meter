@@ -48,6 +48,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !verifyPassword(s.passwordHash, r.FormValue("password")) {
+		s.noteFailedPassword()
 		s.loginRejected(w, r, reasonPasswordMismatch)
 		return
 	}

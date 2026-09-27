@@ -123,9 +123,10 @@
   --z-toast: 40;
   --z-scrim: 50;
   --z-panel: 51;
-  --z-panel-top: 52;
 
   --control-h: 32px;
+  /* Label column of every key/value list. */
+  --kv-label: 7.5rem;
   --hit: 44px;
   --icon: 16px;
   --icon-sm: 13px;
@@ -140,7 +141,7 @@
   --bg: light-dark(#f5f6f7, #17191c);
   --surface-1: light-dark(#ffffff, #1c1f23);
   --surface-2: light-dark(#f0f3f4, #23262b);
-  --surface-inset: light-dark(#eef1f2, #16191d);
+  --surface-inset: light-dark(#f3f5f6, #16191d);
   /* Surface sheen: the lit top of a tile, layered over its surface colour. */
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
@@ -163,9 +164,11 @@
   --phase-warmup: light-dark(#70767d, #858c94);
   --phase-latency: light-dark(#4b6076, #8ba3ba);
   --phase-download: light-dark(#2f717a, #6db0b8);
-  --phase-upload: light-dark(#7a5f34, #bda36c);
+  --phase-upload: light-dark(#8f6425, #bda36c);
   --phase-bidirectional: light-dark(#6d5e94, #a695c8);
   --phase-complete: light-dark(#445f79, #7590a5);
+  /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
+  --latency-loaded: var(--text);
 
   --ok: light-dark(#285443, #79ad91);
   --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
@@ -179,6 +182,10 @@
   --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
   --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
   --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
+  /* The edge that identifies a field, track or switch: at least 3:1 on every surface. */
+  --field-edge: color-mix(in srgb, var(--text-soft) 70%, transparent);
+  /* Pointer over a selectable tile or row; translucent so it reads on any surface. */
+  --hover-wash: color-mix(in srgb, var(--text) 6%, transparent);
 
   /* Elevation. The ink is the shadow hue; depths differ per theme because a
      dark canvas needs a much denser shadow to read at all. */
@@ -210,7 +217,8 @@
    belongs to, and the derived line and wash follow it. */
 [data-tone],
 .notice,
-.badge {
+.badge,
+.status-dot {
   --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
   --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
 }
@@ -325,12 +333,28 @@
     overflow: clip;
     overscroll-behavior: none;
   }
-  /* One thin scrollbar for every scroll area. */
-  :root {
-    scrollbar-color: var(--border-strong) transparent;
+  /* One thin scrollbar for every scroll area. Chromium draws step buttons for the
+     standard properties on Linux, so engines with the pseudo-elements use those. */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-color: var(--border-strong) transparent;
+    }
+    * {
+      scrollbar-width: thin;
+    }
   }
-  * {
-    scrollbar-width: thin;
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: var(--r-full);
+    background: var(--border-strong) padding-box;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
   body {
     background: var(--canvas);
@@ -348,7 +372,7 @@
     outline-offset: var(--ring-offset, 2px);
   }
   label > :is([type="radio"], [type="checkbox"]):focus-visible,
-  :is(section, article)[tabindex="-1"]:focus-visible {
+  :is(section, article, h2)[tabindex="-1"]:focus-visible {
     outline: none;
   }
   :is(p, dd) a:not(.btn) {
@@ -363,7 +387,7 @@
     min-width: 0;
     min-height: 36px;
     padding: 7px 9px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--field-edge);
     border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--text);
@@ -508,6 +532,10 @@
     .btn {
       --hit-pad: 6px;
     }
+    .segmented > button,
+    .menu > button {
+      min-height: var(--hit);
+    }
   }
 
   /* Status capsule. */
@@ -520,11 +548,23 @@
     padding: 2px 7px;
     border-radius: var(--r-full);
     background: var(--tone-wash);
-    color: var(--tone);
+    /* Small caps on a tinted wash need more than the bare tone to read at 4.5:1. */
+    color: color-mix(in srgb, var(--tone) 78%, var(--text));
     font: var(--w-heavy) var(--type-2xs) / 1.3 var(--font-mono);
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
     white-space: nowrap;
+  }
+
+  /* Status dot: a state's tone beside its name. */
+  .status-dot {
+    --tone: var(--text-soft);
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+    box-shadow: 0 0 0 3px var(--tone-wash);
   }
 
   /* Tone-tinted inline message. */
@@ -601,7 +641,7 @@
     min-width: 0;
   }
   .kv dt {
-    flex: 0 0 var(--kv-label, 7.5rem);
+    flex: 0 0 var(--kv-label);
     color: var(--text-soft);
     font-size: var(--type-xs);
     font-weight: var(--w-strong);
@@ -637,8 +677,10 @@
   .group > .kv dt {
     font-weight: var(--w-normal);
   }
+  /* The sans space is narrow beside a middot; values joined by " · " need the air. */
   .group > .kv dd {
     font-variant-numeric: tabular-nums;
+    word-spacing: 0.12em;
   }
   /* A row with an explainer brightens its label while pointed at. */
   .group > .kv > [tabindex]:is(:hover, :focus-visible) dt {
@@ -656,7 +698,7 @@
     display: flex;
     gap: 3px;
     padding: 3px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--field-edge);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
@@ -670,96 +712,32 @@
     font: var(--w-heavy) var(--type-xs) / 1.2 var(--font-sans);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Selectable tile or row: one wash over the whole hit area on hover, one
+     selected state however the choice is expressed. */
+  .tile,
+  .segmented > button {
     transition: var(--transition-control);
   }
   @media (hover: hover) {
-    .segmented > button:hover:not(:disabled) {
+    :is(.tile, .segmented > button):hover:not(
+        :disabled,
+        [aria-disabled="true"]
+      ) {
+      background-color: var(--hover-wash);
       color: var(--text);
     }
   }
-  .segmented > button[aria-pressed="true"] {
-    background: var(--brand-soft);
+  :is(.tile, .segmented > button):is(
+    [aria-pressed="true"],
+    [aria-checked="true"],
+    [aria-selected="true"],
+    [aria-current]:not([aria-current="false"]),
+    :has(> input:checked)
+  ) {
+    border-color: var(--brand-line);
+    background-color: var(--brand-soft);
     color: var(--brand-strong);
-  }
-
-  /* Disclosure.svelte: the summary is the hit area; its surface carries the ring and opens. */
-  .disclosure {
-    --disclosure-pad: var(--space-3);
-    interpolate-size: allow-keywords;
-    min-width: 0;
-    overflow: clip;
-  }
-  .disclosure > summary {
-    position: relative;
-    display: block;
-    padding: var(--disclosure-pad);
-    list-style: none;
-    transition: var(--transition-control);
-  }
-  .disclosure > summary::-webkit-details-marker {
-    display: none;
-  }
-  .disclosure > summary::after {
-    content: "";
-    position: absolute;
-    top: calc(var(--disclosure-pad) + 4px);
-    right: calc(var(--disclosure-pad) + 3px);
-    width: 6px;
-    height: 6px;
-    border: solid var(--text-soft);
-    border-width: 0 1.5px 1.5px 0;
-    rotate: 45deg;
-    transition: rotate var(--dur-hover) var(--ease-out);
-  }
-  .disclosure[open] > summary::after {
-    rotate: 225deg;
-    translate: 0 3px;
-  }
-  .disclosure > summary:focus-visible {
-    outline: none;
-  }
-  .disclosure:has(> summary:focus-visible) {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  @media (hover: hover) {
-    .disclosure > summary:hover {
-      background: var(--surface-2);
-    }
-  }
-  .disclosure::details-content {
-    block-size: 0;
-    transition:
-      block-size var(--dur-slide) var(--ease-out),
-      content-visibility var(--dur-slide) allow-discrete;
-  }
-  .disclosure[open]::details-content {
-    block-size: auto;
-  }
-  .disclosure-summary {
-    display: grid;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .disclosure-summary > :first-child {
-    padding-right: var(--space-5);
-  }
-  .disclosure-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .disclosure-facts {
-    color: var(--text);
-    font-size: var(--type-sm);
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
-  .disclosure-body {
-    display: grid;
-    gap: var(--space-3);
-    padding: 0 var(--disclosure-pad) var(--disclosure-pad);
   }
 
   /* Centred placeholder for loading, empty and error states. */
@@ -814,15 +792,42 @@
     box-shadow: var(--elev-float);
   }
 
-  /* A readout that follows the pointer over a plot; it never takes the pointer. */
+  /* Hover card: one shell for explainer tooltips and plot readouts. A sans title
+     line, then label/value rows; it never takes the pointer. */
+  .tooltip,
   .inspect-card {
-    position: absolute;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
+    color: var(--text);
     box-shadow: var(--elev-tooltip);
+    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    letter-spacing: 0;
+    text-transform: none;
     pointer-events: none;
+  }
+  /* A plot readout positioned by its plot. */
+  .inspect-card {
+    position: absolute;
+    display: grid;
+    gap: 2px;
+  }
+  .inspect-title {
+    font-weight: var(--w-heavy);
+  }
+  .inspect-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .inspect-row > :first-child {
+    color: var(--text-soft);
+  }
+  .inspect-row > :last-child {
+    font-family: var(--font-mono);
+    font-weight: var(--w-strong);
+    font-variant-numeric: tabular-nums;
   }
 
   /* Popovers anchor to their invoker; the fallbacks flip them on-screen. */
@@ -880,15 +885,17 @@
     width: var(--icon);
     height: var(--icon);
   }
+  /* Focus keeps the global ring, inset; the wash marks only the current choice. */
+  .menu > button:focus-visible {
+    outline-offset: -2px;
+  }
   .menu
     > button:is(
-      :focus-visible,
       .active,
       [aria-current]:not([aria-current="false"]),
       [aria-checked="true"],
       [aria-pressed="true"]
     ) {
-    outline: none;
     background: var(--brand-soft);
     color: var(--text);
   }
@@ -911,18 +918,8 @@
     position-area: block-start;
     position-try-fallbacks: flip-block;
     position-visibility: anchors-visible;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    box-shadow: var(--elev-tooltip);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
-    letter-spacing: 0;
-    text-transform: none;
     white-space: pre-line;
     overflow-wrap: anywhere;
-    pointer-events: none;
     opacity: 0;
     translate: 0 2px;
     transition:

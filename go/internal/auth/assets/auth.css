@@ -31,7 +31,7 @@
 
   --canvas: light-dark(#f0f2f3, #131518);
   --surface-1: light-dark(#ffffff, #1c1f23);
-  --surface-inset: light-dark(#eef1f2, #16191d);
+  --surface-inset: light-dark(#f3f5f6, #16191d);
   --border: light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.11));
 
   --text: light-dark(#26272a, #d9dce0);

@@ -97,7 +97,9 @@
           hover.latencyOverflow && hover.rtt >= layout.viewport.rttMax
             ? latencyOverflowGlyph(layout.plot.top).dot.y
             : layout.latencyY(hover.rtt),
-        color: "var(--warn)",
+        color: hover.rttLoaded
+          ? "var(--latency-loaded)"
+          : "var(--phase-latency)",
       });
     return dots;
   });

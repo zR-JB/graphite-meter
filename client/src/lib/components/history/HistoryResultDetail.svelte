@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
-  import { serverLabel, serverName } from "../../presentation/serverAppearance";
+  import { serverLabel } from "../../presentation/serverAppearance";
   import { tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
@@ -16,12 +16,13 @@
     JARGON,
     OUTCOME,
     STAGE,
-    reasonLabel,
+    STATUS_TONE,
     TRANSPORT,
     transportLabel,
   } from "../../presentation/vocabulary";
   import type { TransportKind } from "../../runner/contract";
   import {
+    serverIssues,
     summaryCards,
     summaryEvidence,
   } from "../../presentation/resultSummary";
@@ -154,19 +155,12 @@
       };
     }),
   );
-  const issues = $derived(
-    run.failures.map((failure) => ({
-      server: serverName(run.selection, failure.serverId),
-      text: `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${reasonLabel(failure.reason)}`,
-    })),
-  );
   const ipVersion = $derived(
     run.servers.find((server) => server.server.id === run.latencyFocus)
       ?.throughput.clientIpVersion,
   );
   const environment = $derived(
     [
-      ["IP family", ipVersion ? `IPv${ipVersion}` : null],
       ["Client", record.build],
       ["Server", record.engine],
     ].filter((row): row is [string, string] => !!row[1]),
@@ -201,7 +195,9 @@
           })}</time
         >
         {#if result.outcome !== "complete"}
-          <span class="badge" data-tone="warn">{OUTCOME[result.outcome]}</span>
+          <span class="badge" data-tone={STATUS_TONE[result.outcome]}
+            >{OUTCOME[result.outcome]}</span
+          >
         {/if}
       </h2>
       <p>
@@ -237,6 +233,7 @@
       {details}
       scope={shown}
       onscope={(id) => (shown = id)}
+      issues={serverIssues(run, shown)}
     />
 
     {#if profile.length}
@@ -300,6 +297,10 @@
                 <dt>Address</dt>
                 <dd>{row.url}</dd>
               </div>{/if}
+            {#if ipVersion && row.id === run.latencyFocus}<div>
+                <dt>IP family</dt>
+                <dd>IPv{ipVersion}</dd>
+              </div>{/if}
             {#if multiple}
               <div>
                 <dt>{STAGE.download.short}</dt>
@@ -325,20 +326,6 @@
           </dl>
         </section>
       {/each}
-
-      {#if issues.length}
-        <section class="group">
-          <h3 class="caps">Issues</h3>
-          <dl class="kv" data-tip-group {@attach tipGroup}>
-            {#each issues as issue, index (index)}
-              <div>
-                <dt>{issue.server}</dt>
-                <dd>{issue.text}</dd>
-              </div>
-            {/each}
-          </dl>
-        </section>
-      {/if}
 
       <section class="group">
         <h3 class="caps">Build</h3>
@@ -418,9 +405,6 @@
     .detail-body > :global(:first-child) {
       grid-column: 1 / -1;
     }
-  }
-  .kv {
-    --kv-label: 7rem;
   }
   @container history (max-width: 820px) {
     .back {

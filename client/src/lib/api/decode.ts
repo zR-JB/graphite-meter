@@ -67,6 +67,16 @@ const known = <T extends string>(
   values: readonly T[],
 ): value is T => values.includes(value as T);
 
+/** A newer server's mechanism is skipped; a missing one refuses the document (api/preflight.forward.golden.json). */
+function mechanism<T extends string>(
+  value: unknown,
+  values: readonly T[],
+): T | null {
+  if (known(value, values)) return value;
+  if (typeof value === "string" && value) return null;
+  throw new Error("unsupported control response value");
+}
+
 function member<T extends string>(value: unknown, values: readonly T[]): T {
   if (!known(value, values))
     throw new Error("unsupported control response value");
@@ -135,16 +145,18 @@ export function parsePreflight(value: unknown) {
         ? {}
         : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
       throughput: targets(capabilities.throughput).flatMap((value) => {
-        const { baseUrl, transport, protocol } = record(value);
-        return known(transport, THROUGHPUT_TRANSPORTS) &&
-          known(protocol, THROUGHPUT_PROTOCOLS)
-          ? [{ baseUrl: origin(baseUrl), transport, protocol }]
+        const target = record(value);
+        const transport = mechanism(target.transport, THROUGHPUT_TRANSPORTS);
+        const protocol = mechanism(target.protocol, THROUGHPUT_PROTOCOLS);
+        return transport && protocol
+          ? [{ baseUrl: origin(target.baseUrl), transport, protocol }]
           : [];
       }),
       latency: targets(capabilities.latency).flatMap((value) => {
-        const { baseUrl, transport } = record(value);
-        return known(transport, LATENCY_TRANSPORTS)
-          ? [{ baseUrl: origin(baseUrl), transport }]
+        const target = record(value);
+        const transport = mechanism(target.transport, LATENCY_TRANSPORTS);
+        return transport
+          ? [{ baseUrl: origin(target.baseUrl), transport }]
           : [];
       }),
     },

@@ -1,11 +1,12 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Docked column on wide layouts, modal flyout or sheet elsewhere.
+  // Docked column on wide layouts; elsewhere a flyout or sheet over a scrim below the topbar.
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
   import { sheetDrag } from "../actions/sheetDrag";
   import { tooltip } from "../actions/tooltip";
+  import { activeModal } from "../actions/focus";
 
   interface Props {
     open: boolean;
@@ -104,18 +105,59 @@
 </script>
 
 <div class="panel-layer" class:docked>
+  {#if !docked}<button
+      class="scrim"
+      class:open
+      type="button"
+      tabindex="-1"
+      aria-hidden="true"
+      onclick={onClose}
+    ></button>{/if}
   <Dialog
     {open}
-    modal={!docked}
+    modal={false}
     onCancel={onClose}
-    lightDismiss
     class="panel {side}"
     label={title}
     attach={(node) => {
       panelEl = node;
-      if (open && !docked) return sheetDrag(onClose)(node);
+      // Escape closes the panel holding focus; a modal on top or an open popover keeps it.
+      const escape = (event: KeyboardEvent) => {
+        if (event.key !== "Escape" || event.defaultPrevented || activeModal())
+          return;
+        if (document.querySelector(":popover-open:not(.tooltip)")) return;
+        event.preventDefault();
+        onClose();
+      };
+      node.addEventListener("keydown", escape);
+      const drag = open && !docked ? sheetDrag(onClose)(node) : undefined;
+      return () => {
+        node.removeEventListener("keydown", escape);
+        drag?.();
+      };
     }}
   >
+    <div class="sheet-handle" aria-hidden="true">
+      <span class="sheet-grip" aria-hidden="true"></span>
+    </div>
+    <header class="panel-head">
+      <div class="title">
+        {#if kicker}<span class="caps">{kicker}</span>{/if}
+        <!-- svelte-ignore a11y_autofocus -->
+        <h2 tabindex="-1" autofocus>{title}</h2>
+      </div>
+      <button
+        class="btn btn-icon btn-inset"
+        aria-label={`Close ${title}`}
+        {@attach tooltip(() => "Close (Esc)")}
+        onclick={onClose}
+      >
+        <Icon name="close" />
+      </button>
+    </header>
+
+    <div class="panel-body">{@render children()}</div>
+    <!-- After the content, so Tab from the title reaches the controls first. -->
     {#if docked}
       <div
         class="resize-handle"
@@ -132,27 +174,6 @@
         onkeydown={onHandleKey}
         ondblclick={() => onResetWidth?.()}
       ></div>
-    {/if}
-    <div class="sheet-handle" aria-hidden="true">
-      <span class="sheet-grip" aria-hidden="true"></span>
-    </div>
-    <header class="panel-head">
-      <div class="title">
-        {#if kicker}<span class="caps">{kicker}</span>{/if}
-        <h2>{title}</h2>
-      </div>
-      <button
-        class="btn btn-icon btn-inset"
-        aria-label={`Close ${title}`}
-        {@attach tooltip(() => "Close (Esc)")}
-        onclick={onClose}
-      >
-        <Icon name="close" />
-      </button>
-    </header>
-
-    {#if open}
-      <div class="panel-body">{@render children()}</div>
     {/if}
   </Dialog>
 </div>
@@ -191,6 +212,7 @@
   .panel-layer:not(.docked) > :global(dialog.panel) {
     --closed: translateX(100%);
     position: fixed;
+    z-index: var(--z-panel);
     inset: var(--topbar-h) 0 var(--statusbar-h) auto;
     width: min(440px, 92vw);
     height: auto;
@@ -214,21 +236,20 @@
       transform: var(--closed);
     }
   }
-  .panel-layer > :global(dialog.panel::backdrop) {
+  .scrim {
+    position: fixed;
+    z-index: var(--z-scrim);
+    inset: var(--topbar-h) 0 0;
     background: var(--scrim);
-    opacity: calc(1 - var(--sheet-drag, 0));
+    opacity: 0;
+    visibility: hidden;
     transition:
       opacity var(--dur-slide) var(--ease-out),
-      overlay var(--dur-slide) allow-discrete,
-      display var(--dur-slide) allow-discrete;
+      visibility var(--dur-slide) allow-discrete;
   }
-  .panel-layer > :global(dialog.panel:not([open])::backdrop) {
-    opacity: 0;
-  }
-  @starting-style {
-    .panel-layer > :global(dialog.panel[open]::backdrop) {
-      opacity: 0;
-    }
+  .scrim.open {
+    opacity: calc(1 - var(--sheet-drag, 0));
+    visibility: visible;
   }
 
   .resize-handle {
@@ -288,6 +309,26 @@
       display: flex;
     }
   }
+  /* Short viewports (and 400% zoom) give the flyout the full height; the whole panel scrolls. */
+  @media (max-height: 480px) {
+    .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
+      top: 0;
+      bottom: 0;
+      overflow-y: auto;
+    }
+    .panel-layer:not(.docked) .panel-head {
+      position: sticky;
+      z-index: 1;
+      top: calc(-1 * var(--space-4));
+      margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0;
+      padding: var(--space-4);
+      background: var(--surface-2);
+    }
+    .panel-layer:not(.docked) .panel-body {
+      flex: none;
+      overflow: visible;
+    }
+  }
 
   .panel-head {
     display: flex;
@@ -320,8 +361,9 @@
     overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    /* Reserve room so overlay scrollbars cannot cover cards or controls. */
-    padding-right: var(--space-2);
+    /* The scrollbar rides the panel edge, outside the content's even inset. */
+    margin-inline: calc(-1 * var(--space-4));
+    padding-inline: var(--space-4);
     scrollbar-gutter: stable;
   }
 </style>

@@ -32,6 +32,7 @@
     LATENCY_POPULATION,
     OUTCOME,
     STAGE,
+    STATUS_TONE,
   } from "../presentation/vocabulary";
   import { announce } from "../presentation/announcer.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -502,7 +503,8 @@
                       </time>
                       {#if row.outcome !== "complete"}<span
                           class="badge"
-                          data-tone="warn">{OUTCOME[row.outcome]}</span
+                          data-tone={STATUS_TONE[row.outcome]}
+                          >{OUTCOME[row.outcome]}</span
                         >{/if}
                     </span>
                     {#each columns as column, index (column)}
@@ -718,6 +720,7 @@
     background: var(--sheen), var(--surface-1);
   }
   .column-head button {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -731,6 +734,9 @@
   .column-head > button:first-child {
     justify-content: flex-start;
   }
+  .column-head > button:first-child i {
+    position: static;
+  }
   @media (hover: hover) {
     .column-head button:hover {
       background: var(--brand-soft);
@@ -740,8 +746,10 @@
   .column-head [aria-pressed="true"] {
     color: var(--brand-strong);
   }
+  /* The sort mark sits in the padding, so labels share their values' edge. */
   .column-head i {
-    flex: none;
+    position: absolute;
+    right: 2px;
     width: 6px;
     height: 6px;
     border: solid currentColor;
@@ -823,7 +831,7 @@
     display: none;
   }
   .metric-cell strong {
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
     font: var(--w-strong) var(--type-xs) / 1.35 var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
@@ -864,6 +872,7 @@
       border-bottom: 1px solid var(--border-subtle);
     }
     .metric-cell {
+      align-content: start;
       gap: 3px;
       padding: 6px 7px 7px;
       text-align: start;

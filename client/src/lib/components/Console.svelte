@@ -170,6 +170,8 @@
     currentRoute.kind === "app" ? currentRoute.panels : [],
   );
   const lastPanel = $derived(currentPanels.at(-1));
+  // A flyout covers the stage and status bar; the topbar and its shortcuts stay live.
+  const flyout = $derived(!dockQuery.current && lastPanel !== undefined);
   const settingsOpen = $derived(
     allowMultiplePanels
       ? currentPanels.includes("settings")
@@ -424,19 +426,20 @@
     (el.isContentEditable ||
       el.matches("textarea, select, input:not([type=checkbox], [type=radio])"));
 
-  // Space and Enter belong to whatever control holds focus.
-  function unownedTarget(el: EventTarget | null): boolean {
-    return (
-      el === document.body ||
-      (el instanceof HTMLElement && el.classList.contains("measurement-stage"))
-    );
-  }
+  // Space runs from the stage only once the user clicked it, never after focus merely returned there.
+  let stageArmed = false;
 
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey)
       return;
     if (document.querySelector(":popover-open:not(.tooltip)")) return;
-    if (isEditable(e.target) || activeModal()) return;
+    if (activeModal()) return;
+    if (e.key === "Escape" && flyout && lastPanel) {
+      dismissPanel(lastPanel);
+      e.preventDefault();
+      return;
+    }
+    if (isEditable(e.target)) return;
 
     if (e.key === "Escape") {
       if (
@@ -451,8 +454,6 @@
         return;
       } else if (lastPanel) {
         dismissPanel(lastPanel);
-      } else if (store.isRunning) {
-        toggleRun();
       } else if (hasPendingStart()) {
         cancelPendingStart();
       } else {
@@ -462,8 +463,12 @@
       return;
     }
 
-    if (e.key === " " || e.key === "Enter") {
-      if (!measurementOpen || !unownedTarget(e.target)) return;
+    if (!store.keyShortcuts) return;
+    if (e.key === " ") {
+      const onStage =
+        e.target instanceof HTMLElement &&
+        e.target.classList.contains("measurement-stage");
+      if (!measurementOpen || !stageArmed || !onStage) return;
       toggleRun();
       e.preventDefault();
       return;
@@ -645,8 +650,26 @@
     </div>
   </header>
 
+  <!-- Panels dock on wide screens and overlay below; docked widths persist. -->
+  <SidePanel
+    open={settingsOpen}
+    docked={dockQuery.current}
+    dockWidth={docks.left}
+    dockMaxWidth={dockMaxLeft}
+    onResize={(px) => setDockWidth("left", px)}
+    onResetWidth={() => resetDockWidth("left")}
+    onClose={() => dismissPanel("settings")}
+    side="left"
+    title="Settings"
+    kicker="Test & Display"
+  >
+    <TestSetupPanel
+      open={settingsOpen}
+      onOpenHistory={(invoker) => historyRoute(null, invoker)}
+    />
+  </SidePanel>
   {#if currentRoute.kind === "not-found"}
-    <section class="stage history-stage">
+    <section class="stage history-stage" inert={flyout}>
       <div class="empty-state">
         <h1>Page not found</h1>
         <p>That client route does not exist.</p>
@@ -654,7 +677,7 @@
       </div>
     </section>
   {:else if historyOpen}
-    <section class="stage history-stage">
+    <section class="stage history-stage" inert={flyout}>
       {#if HistoryWorkspace}<HistoryWorkspace
           selectedId={currentRoute.kind === "app" &&
           currentRoute.workspace.kind === "history"
@@ -677,8 +700,8 @@
             onclick={() => location.reload()}>Retry</button
           >
         </div>{:else}<div class="empty-state" role="status">
-          <span class="empty-icon"><Icon name="history" /></span>Opening
-          History…
+          <span class="empty-icon"><Icon name="history" /></span>
+          <h2>Opening History</h2>
         </div>{/if}
     </section>
   {:else}
@@ -686,31 +709,22 @@
       class="stage measurement-stage"
       aria-label="Measurement workspace"
       tabindex="-1"
+      inert={flyout}
+      onpointerdown={() => (stageArmed = true)}
+      onfocusout={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null))
+          stageArmed = false;
+      }}
     >
       <GaugePanel {status} /><ThroughputChart />
     </section>
   {/if}
 
-  <footer class="status">
+  <footer class="status" inert={flyout}>
     <StatusBar {status} />
     <ShortcutHints />
   </footer>
 
-  <!-- Panels dock on wide screens and overlay below; docked widths persist. -->
-  <SidePanel
-    open={settingsOpen}
-    docked={dockQuery.current}
-    dockWidth={docks.left}
-    dockMaxWidth={dockMaxLeft}
-    onResize={(px) => setDockWidth("left", px)}
-    onResetWidth={() => resetDockWidth("left")}
-    onClose={() => dismissPanel("settings")}
-    side="left"
-    title="Settings"
-    kicker="Test & Display"
-  >
-    <TestSetupPanel onOpenHistory={(invoker) => historyRoute(null, invoker)} />
-  </SidePanel>
   <SidePanel
     open={telemetryOpen}
     docked={dockQuery.current}

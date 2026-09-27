@@ -45,6 +45,11 @@
     border-radius: var(--r-well);
     user-select: none;
   }
+  @media (pointer: coarse) {
+    .switch {
+      min-height: var(--hit);
+    }
+  }
   .switch.disabled {
     cursor: not-allowed;
     opacity: 0.5;
@@ -54,7 +59,7 @@
     flex: none;
     width: 36px;
     height: 20px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--field-edge);
     border-radius: var(--r-full);
     background: var(--surface-inset);
     transition: var(--transition-control);

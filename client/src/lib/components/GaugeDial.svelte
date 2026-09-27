@@ -67,12 +67,16 @@
       fraction: Math.min(1, Math.max(0, arc.fraction)),
     })),
   );
+  // Before a run and after a stop or failure the dial shows its bare track, never a pose that reads as a value.
+  const resting = $derived(
+    input.phase === "idle" ||
+      input.phase === "aborted" ||
+      input.phase === "error",
+  );
   const accent = $derived(
-    input.phase === "idle"
+    resting
       ? "var(--text-soft)"
-      : input.phase === "error" || input.phase === "aborted"
-        ? "var(--err)"
-        : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
+      : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
   );
 
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
@@ -192,11 +196,7 @@
       </radialGradient>
     </defs>
     <g fill="none" stroke-linecap="round">
-      <path
-        d={track}
-        stroke="var(--surface-2)"
-        stroke-width={layout.arcWidth}
-      />
+      <path d={track} stroke="var(--border)" stroke-width={layout.arcWidth} />
       <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
@@ -263,10 +263,11 @@
         layout.arcStart,
         layout.arcSweep,
       )}
+      <!-- Pointer-only: the cards and the announcement carry these values. -->
       <span
         class="head-target"
-        role="img"
-        aria-label={result.description.replace("\n", " ")}
+        aria-hidden="true"
+        tabindex="-1"
         style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
         style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
         {@attach tooltip(() => result.description)}
@@ -275,7 +276,7 @@
   {/if}
   <div
     class="live"
-    class:visible={input.showValue && !completed}
+    class:visible={input.showValue && !completed && !resting}
     style:--sweep={`${sweep.current}deg`}
     aria-hidden="true"
   >

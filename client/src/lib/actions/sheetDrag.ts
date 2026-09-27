@@ -21,9 +21,10 @@ function shouldDismiss(
   return farEnough || recentFlick;
 }
 
-/** Drags a portrait bottom sheet down to dismiss it; `--sheet-drag` fades its backdrop. */
+/** Drags a portrait bottom sheet down to dismiss it; `--sheet-drag` on its parent fades the sibling scrim. */
 export function sheetDrag(onDismiss: () => void) {
   return (node: HTMLElement) => {
+    const host = node.parentElement ?? node;
     let settle: ReturnType<typeof setTimeout> | undefined;
     let gesture:
       | {
@@ -47,12 +48,12 @@ export function sheetDrag(onDismiss: () => void) {
       clearTimeout(settle);
       node.style.transition = "";
       node.style.transform = "";
-      node.style.removeProperty("--sheet-drag");
+      host.style.removeProperty("--sheet-drag");
     }
     function animate(offset: number, ms: number) {
       node.style.transition = ms ? `transform ${ms}ms var(--ease-out)` : "none";
       node.style.transform = `translateY(${offset}px)`;
-      node.style.setProperty(
+      host.style.setProperty(
         "--sheet-drag",
         String(Math.min(1, offset / node.offsetHeight)),
       );
