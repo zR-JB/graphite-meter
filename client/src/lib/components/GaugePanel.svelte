@@ -14,7 +14,7 @@
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
-  import { fmtSpeed, fmtMsTick } from "../format";
+  import { fmtSpeed } from "../format";
   import { gaugeLatency as latencyGauge } from "../presentation/scales";
   import { LiveReadout, liveTargets } from "../presentation/liveReadout.svelte";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
@@ -108,7 +108,7 @@
     if (msTicksActive)
       return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
         fraction,
-        label: fmtMsTick(gaugeLatency.scaleMs * fraction),
+        label: fmtGaugeTick(gaugeLatency.scaleMs * fraction),
       }));
     return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
       fraction,
