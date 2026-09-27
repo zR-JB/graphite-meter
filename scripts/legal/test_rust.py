@@ -13,6 +13,7 @@ from copy import deepcopy
 
 from scripts.legal.model import Component, LegalError
 from scripts.legal.rust import add_cargo_sources, artifacts, cargo
+from scripts.legal.rust_platform import linked
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -49,6 +50,33 @@ class RustArtifactTests(unittest.TestCase):
             messages[0]['target']['kind'] = [kind]
             with self.subTest(kind=kind), self.assertRaises(LegalError):
                 artifacts(messages, 'application', 'application')
+
+
+class RustPlatformTests(unittest.TestCase):
+    def test_each_linker_map_names_the_native_inputs_that_contributed_code(self) -> None:
+        maps = {
+            'GNU ld': 'Archive member included to satisfy reference by file (symbol)\n\n'
+                      '/usr/lib/libgcc.a(_ctors.o)\n                              /build/app.o (__CTOR_LIST__)\n'
+                      '/rust/lib/rustlib/t/lib/libstd.rlib(std.o)\n                              /build/app.o (main)\n'
+                      '/registry/crate/lib/libimport.a(stub.o)\n                              /build/app.o (Stub)\n\n'
+                      'Linker script and memory map\n\nLOAD /usr/lib/gcc/../crt1.o\nLOAD /usr/lib/libunused.a\n'
+                      'LOAD /usr/lib/libc.so\nLOAD /build/app.o\n/DISCARD/\n',
+            'LLD': '             VMA              LMA     Size Align Out     In      Symbol\n'
+                   '             2fc              2fc       20     4         /usr/lib/gcc/../crt1.o:(.note.ABI-tag)\n'
+                   '            1000             1000       10     1         /usr/lib/libgcc.a(_ctors.o):(.text)\n'
+                   '            1010             1010       10     1         /rust/lib/rustlib/t/lib/libstd.rlib(std.o):(.text)\n'
+                   '            1020             1020       10     1         /build/app.o:(.text)\n',
+            'ld64': '# Path: /build/app\n# Object files:\n[  0] linker synthesized\n[  1] /usr/lib/crt1.o\n'
+                    '[  2] /usr/lib/libgcc.a(_ctors.o)\n[  3] /SDK/usr/lib/libSystem.tbd\n'
+                    '[  4] /rust/lib/rustlib/t/lib/libstd.rlib(std.o)\n[  5] /build/app.o\n',
+        }
+        with tempfile.TemporaryDirectory() as scratch:
+            for linker, listing in maps.items():
+                path = Path(scratch) / 'link.map'
+                path.write_text(listing)
+                with self.subTest(linker=linker):
+                    self.assertEqual(linked(path, Path('/rust'), {Path('/build'), Path('/registry/crate')}),
+                                     {'/usr/lib/crt1.o', '/usr/lib/libgcc.a', '$RUST_SYSROOT/lib/rustlib/t/lib/libstd.rlib'})
 
 
 class RustSourceTests(unittest.TestCase):

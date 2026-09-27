@@ -16,6 +16,7 @@ import sys
 import tarfile
 import tempfile
 import tomllib
+import zlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -24,7 +25,7 @@ from .artifacts import add_bytes, add_tree, notices
 from .discovery import discover_browser
 from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
 from .review import add_provenance, component_legal_files, validate_review
-from .rust_platform import notice as platform_notice, verify_dynamic_runtime
+from . import rust_platform as platform
 
 PACKAGES = ('graphite-meter-client', 'graphite-meter-server')
 
@@ -34,7 +35,7 @@ def cargo(repo: Path, *args: str) -> list[str]:
     return ['cargo', f'+{toolchain}', *args]
 
 
-def capture(repo: Path, package: str, target: str, profile: str,
+def capture(repo: Path, package: str, target: str, profile: str, link_map: Path,
             legal_directory: Path | None = None, asset_directory: Path | None = None) -> tuple[dict, list[dict]]:
     """Own the invocation so test/workspace artifacts cannot contaminate the scan."""
     environment = dict(os.environ)
@@ -43,8 +44,9 @@ def capture(repo: Path, package: str, target: str, profile: str,
         environment['GM_RUST_ASSET_DIR'] = str(asset_directory)
     if legal_directory is not None:
         environment['GM_RUST_LEGAL_DIR'] = str(legal_directory)
-    command = cargo(repo, 'build', '--locked', '--package', package, '--bin', package,
-                    '--target', target, '--profile', profile, '--message-format=json')
+    # Only the executable's link gets the map request; a fresh executable keeps the map of its last link.
+    command = cargo(repo, 'rustc', '--locked', '--package', package, '--bin', package, '--target', target,
+                    '--profile', profile, '--message-format=json', '--', platform.link_map_argument(target, link_map))
     result = subprocess.run(command, cwd=repo / 'rust', env=environment,
                             stdout=subprocess.PIPE, check=True, text=True)
     messages = []
@@ -203,7 +205,8 @@ def main() -> None:
     (output / 'LEGAL.txt').unlink(missing_ok=True)
     provenance_path = repo / 'legal/rust-provenance.json'
     provenance = [Provenance.parse(item) for item in array(read_json(provenance_path))] if provenance_path.exists() else []
-    metadata, messages = capture(repo, args.package, args.target, args.profile)
+    link_map = output / f'{args.target}-{args.profile}.map'
+    metadata, messages = capture(repo, args.package, args.target, args.profile, link_map)
     components, inventory, failures = discover(repo, metadata, messages, args.package, reviews, provenance)
     # rustup selects exactly the pinned workspace toolchain.
     channel = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
@@ -213,19 +216,30 @@ def main() -> None:
                 'scope': 'compiled Cargo inputs, including build scripts and procedural macros',
                 'cargoLockSha256': sha256((repo / 'rust/Cargo.lock').read_bytes()), 'components': inventory}
     (output / 'inventory.json').write_bytes(marshal(manifest))
+    sysroot = Path(subprocess.check_output(['rustc', f'+{channel}', '--print', 'sysroot'], text=True).strip())
+    executable = Path(next(message['executable'] for message in messages
+                           if message.get('reason') == 'compiler-artifact' and message.get('executable')
+                           and message['target']['name'] == args.package))
+    cargo_outputs = {Path(metadata['target_directory'])} | {
+        Path(item['manifest_path']).parent for item in metadata['packages']}
+    facts = {'target': args.target, 'compiler': toolchain, 'sysroot': sysroot,
+             'inputs': platform.linked(link_map, sysroot, cargo_outputs),
+             'libraries': platform.imports(executable, args.target)}
+    record = platform.record(supplement, args.target) if supplement else None
     if args.review_template:
         (output / 'review-candidates.json').write_bytes(marshal(review_candidates(components)))
         (output / 'review-errors.json').write_bytes(marshal(failures))
+        (output / 'platform-candidate.json').write_bytes(marshal(platform.candidate(record, **facts)))
         return
     if failures:
         raise LegalError('Rust dependency notices need review:\n' + '\n'.join(failures))
     if supplement is None:
         raise LegalError('reviewed Rust sysroot and platform-library notice supplement is required')
-    extra = platform_notice(supplement, target=args.target, compiler=toolchain, channel=channel)
-    executable = Path(next(message['executable'] for message in messages
-                           if message.get('reason') == 'compiler-artifact' and message.get('executable')
-                           and message['target']['name'] == args.package))
-    verify_dynamic_runtime(executable)
+    try:
+        extra = platform.notice(record, **facts)
+    except (LegalError, OSError) as error:
+        candidate = marshal(platform.candidate(record, **facts)).decode()
+        raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{candidate}') from error
     browser_components: list[Component] = []
     browser_provenance: list[Provenance] = []
     staged_assets = None
@@ -303,12 +317,20 @@ def main() -> None:
     identity = (Path(script['out_dir']) / 'legal-build-identity.txt').read_bytes()
     (output / 'build-identity.txt').write_bytes(identity)
     try:
-        rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, output, staged_assets)
+        rebuilt_metadata, rebuilt_messages = capture(repo, args.package, args.target, args.profile, link_map,
+                                                     output, staged_assets)
         _, rebuilt_inventory, rebuilt_failures = discover(repo, rebuilt_metadata, rebuilt_messages, args.package, reviews, provenance)
-        verify_dynamic_runtime(executable)
-        if rebuilt_failures or rebuilt_inventory != inventory:
-            raise LegalError('embedded-notice rebuild changed the compiled dependency closure')
-    except (LegalError, OSError, ValueError, subprocess.CalledProcessError):
+        if (rebuilt_failures or rebuilt_inventory != inventory
+                or platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
+                or platform.imports(executable, args.target) != facts['libraries']):
+            raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
+        # Checked without running the executable, which may be built for another platform.
+        script = next(message for message in rebuilt_messages
+                      if message.get('reason') == 'build-script-executed' and message['package_id'] == root_id)
+        payload = (Path(script['out_dir']) / 'LEGAL.zlib').read_bytes()
+        if payload not in executable.read_bytes() or zlib.decompress(payload) != (output / 'LEGAL.txt').read_bytes():
+            raise LegalError('executable does not embed the generated notices')
+    except (LegalError, OSError, ValueError, zlib.error, subprocess.CalledProcessError):
         (output / 'LEGAL.txt').unlink(missing_ok=True)
         raise
     # Only shipped (release) builds bundle their compilation input sources, including native

@@ -84,6 +84,17 @@ Use `provenance.json` for local files, forks, replacements, assets, fonts,
 datasets, and other material that package managers cannot describe. Never
 pretend custom material is an ordinary MIT dependency to silence the gate.
 
+## Rust platform records
+
+Each `rust-platform-*.json` file holds one reviewed record per Rust target of a build
+environment: the Rust sysroot and native startup files a linked executable contains, the
+package texts that cover them, and the system libraries it may import. `scripts.legal.rust`
+reads the linker map of every Rust build and refuses a target whose compiler, linked native
+files or imported libraries differ from its record; the error prints this build's unreviewed
+record, and `--review-template` writes it to `platform-candidate.json`. Review the candidate,
+add a `noticeName` for each package text that covers its native files, approve it and commit
+it to the environment's file.
+
 ## Generated files
 
 Do not edit these by hand:
