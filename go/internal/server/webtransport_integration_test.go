@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -357,6 +358,75 @@ func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 						time.Since(ended), context.Cause(conn.Context()))
 				}
 			case <-dialing.Done():
+				t.Fatal("the server kept the connection of its ended session open")
+			}
+		})
+	}
+}
+
+// Chromium and Firefox drop the code of a close whose STOP_SENDING reaches them first; this peer reads it as they do.
+func TestServerEndedSessionClosesInTheOrderBrowsersRead(t *testing.T) {
+	t.Parallel()
+	for _, answers := range []bool{true, false} {
+		t.Run(fmt.Sprintf("peer answers %v", answers), func(t *testing.T) {
+			t.Parallel()
+			base, _, _ := wtServer(t, func(c *config.Config) { c.MaxOperationDuration = 300 * time.Millisecond }, nil)
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			conn, err := quic.DialAddr(ctx, strings.TrimPrefix(base, "https://"), &tls.Config{InsecureSkipVerify: true,
+				NextProtos: []string{http3.NextProtoH3}}, transport.NewQUICConfig()) //nolint:gosec // test certificate
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.CloseWithError(0, "")
+			str, err := (&http3.Transport{EnableDatagrams: true}).NewClientConn(conn).OpenRequestStream(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, _ := http.NewRequestWithContext(ctx, http.MethodConnect, base+"/wt/ping", nil)
+			req.Proto = "webtransport"
+			if err := str.SendRequestHeader(req); err != nil {
+				t.Fatal(err)
+			}
+			if res, err := str.ReadResponse(); err != nil || res.StatusCode != http.StatusOK {
+				t.Fatalf("CONNECT answered %v, %v", res, err)
+			}
+
+			capsules := http3.NewCapsuleParser(str)
+			typ, capsule, err := capsules.Next()
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := io.ReadAll(capsule)
+			want := append(binary.BigEndian.AppendUint32(nil, wire.LaneLifetime.WT), wire.LaneLifetime.Reason...)
+			if err != nil || typ != wtCloseSessionCapsule || !bytes.Equal(payload, want) {
+				t.Fatalf("capsule %#x %q, %v; want the lifetime close %q", typ, payload, err, want)
+			}
+			if _, _, err := capsules.Next(); err != io.EOF {
+				t.Fatalf("after the capsule: %v, want the server's FIN", err)
+			}
+			closed := time.Now()
+			if stopped := context.Cause(str.Context()); stopped != nil {
+				t.Fatalf("the server stopped reading before the peer finished: %v", stopped)
+			}
+			if answers {
+				_ = str.Close()
+			} else {
+				<-str.Context().Done()
+				stopped, ok := errors.AsType[*quic.StreamError](context.Cause(str.Context()))
+				if !ok || !stopped.Remote || stopped.ErrorCode != webtransport.WTSessionGoneErrorCode ||
+					time.Since(closed) < wtCloseLinger/2 {
+					t.Fatalf("stopped after %v with %v, want WT_SESSION_GONE a linger later", time.Since(closed),
+						context.Cause(str.Context()))
+				}
+			}
+			select {
+			case <-conn.Context().Done():
+				ended, ok := errors.AsType[*quic.ApplicationError](context.Cause(conn.Context()))
+				if !ok || !ended.Remote || ended.ErrorCode != quic.ApplicationErrorCode(http3.ErrCodeNoError) {
+					t.Fatalf("connection closed with %v, want the server's H3_NO_ERROR", context.Cause(conn.Context()))
+				}
+			case <-ctx.Done():
 				t.Fatal("the server kept the connection of its ended session open")
 			}
 		})
