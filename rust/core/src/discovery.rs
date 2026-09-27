@@ -57,8 +57,6 @@ pub struct Preflight {
     pub server: ServerInfo,
     #[serde(default, deserialize_with = "null_default")]
     pub engine_version: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub implementation: Option<String>,
     pub generation: String,
     pub capabilities: Capabilities,
 }
@@ -81,51 +79,45 @@ pub struct Capabilities {
 fn throughput_targets<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<ThroughputTarget>, D::Error> {
-    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
-    if targets.len() > 32 {
-        return Err(serde::de::Error::custom("too many throughput targets"));
-    }
-    let mut known = Vec::with_capacity(targets.len());
-    for target in targets {
-        let transport = target
-            .get("transport")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| serde::de::Error::custom("missing throughput transport"))?;
-        if !matches!(
-            transport,
-            "fetch-stream" | "webtransport" | "webtransport-datagram"
-        ) {
-            continue;
-        }
-        let protocol = target
-            .get("protocol")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| serde::de::Error::custom("missing throughput protocol"))?;
-        if !matches!(protocol, "http1" | "http2" | "http3" | "negotiated") {
-            continue;
-        }
-        known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
-    }
-    Ok(known)
+    known_targets(
+        deserializer,
+        &[
+            (
+                "transport",
+                &["fetch-stream", "webtransport", "webtransport-datagram"],
+            ),
+            ("protocol", &["http1", "http2", "http3", "negotiated"]),
+        ],
+    )
 }
 
 fn latency_targets<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Vec<LatencyTarget>, D::Error> {
-    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
-    if targets.len() > 32 {
-        return Err(serde::de::Error::custom("too many latency targets"));
-    }
-    let mut known = Vec::with_capacity(targets.len());
-    for target in targets {
-        let transport = target
-            .get("transport")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| serde::de::Error::custom("missing latency transport"))?;
-        if !matches!(transport, "websocket" | "webtransport") {
-            continue;
+    known_targets(
+        deserializer,
+        &[("transport", &["websocket", "webtransport"])],
+    )
+}
+
+fn known_targets<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
+    deserializer: D,
+    fields: &[(&str, &[&str])],
+) -> Result<Vec<T>, D::Error> {
+    let mut known = Vec::new();
+    for target in Vec::<serde_json::Value>::deserialize(deserializer)? {
+        let mut supported = true;
+        for (field, values) in fields {
+            let value = target
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| serde::de::Error::custom(format!("missing target {field}")))?;
+            supported &= values.contains(&value);
         }
-        known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
+        if supported {
+            known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
+        }
     }
     Ok(known)
 }
@@ -185,10 +177,6 @@ impl Preflight {
                 .chain(self.server.location.chars())
                 .chain(self.engine_version.chars())
                 .all(crate::text::display_character)
-            || self
-                .implementation
-                .as_deref()
-                .is_some_and(|implementation| !matches!(implementation, "go" | "rust"))
             || self.generation.is_empty()
             || self.generation.len() > 256
         {

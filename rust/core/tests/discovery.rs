@@ -198,17 +198,26 @@ fn catalogue_checks_all_discovery_lanes() {
 #[test]
 fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
     let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
-    let throughput = value["capabilities"]["throughput"].as_array_mut().unwrap();
-    let known_count = throughput.len();
-    throughput.push(serde_json::json!({"transport":"future-stream","baseUrl":42}));
-    throughput
-        .push(serde_json::json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
+    let known = value["capabilities"]["throughput"][0].clone();
+    let mut throughput = vec![known.clone(); 32];
+    throughput.push(json!({"transport":"future-stream","protocol":"http1","baseUrl":42}));
+    throughput.push(json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
+    value["capabilities"]["throughput"] = json!(throughput);
     value["capabilities"]["latency"]
         .as_array_mut()
         .unwrap()
-        .push(serde_json::json!({"transport":"future-ping","baseUrl":42}));
+        .push(json!({"transport":"future-ping","baseUrl":42}));
     let decoded = decode_preflight_value(&value).unwrap();
-    assert_eq!(decoded.capabilities.throughput.len(), known_count);
-    value["capabilities"]["throughput"][0]["baseUrl"] = serde_json::json!(42);
+    assert_eq!(decoded.capabilities.throughput.len(), 32);
+    for target in [
+        json!({"transport":"future-stream","baseUrl":"."}),
+        json!({"transport":"","protocol":"http1","baseUrl":"."}),
+        json!({"transport":"fetch-stream","protocol":"","baseUrl":"."}),
+    ] {
+        let mut invalid = value.clone();
+        invalid["capabilities"]["throughput"][32] = target;
+        assert!(decode_preflight_value(&invalid).is_err());
+    }
+    value["capabilities"]["throughput"][0]["baseUrl"] = json!(42);
     assert!(decode_preflight_value(&value).is_err());
 }

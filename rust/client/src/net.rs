@@ -858,7 +858,6 @@ mod tests {
         let preflight = |target: &str| Preflight {
             server: Default::default(),
             engine_version: String::new(),
-            implementation: None,
             generation: "fixture".into(),
             capabilities: Capabilities {
                 upload_checkpoint: false,
