@@ -348,7 +348,6 @@
 
 <style>
   .lanes {
-    --lane-pad: var(--space-3);
     display: grid;
     gap: var(--profile-lane-gap, 6px);
     min-width: 0;
@@ -358,12 +357,7 @@
     display: grid;
     gap: 6px;
     min-width: 0;
-    padding: 6px var(--lane-pad);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-    box-shadow: var(--elev-tile);
-    transition: var(--transition-control);
+    padding-block: 6px;
   }
   @media (max-height: 800px) {
     .lanes[data-variant="bare"] {
@@ -373,13 +367,8 @@
       padding-block: var(--space-1);
     }
   }
-  .lane[data-active="true"] {
-    border-color: var(--tone-line);
-    background: color-mix(
-      in srgb,
-      var(--signal-soft) 70%,
-      var(--surface-inset)
-    );
+  .lane[data-active="true"] .lane-label {
+    color: var(--text);
   }
   .lane-meta {
     display: flex;
@@ -418,6 +407,9 @@
     text-align: end;
     white-space: nowrap;
   }
+  .lane-meta .range-label {
+    min-width: 21ch;
+  }
   .accounting-slot {
     display: inline-flex;
     flex: 0 0 20px;
@@ -443,7 +435,7 @@
   .ticks {
     position: relative;
     height: 13px;
-    margin-inline: calc(var(--lane-pad) + 1px + var(--edge));
+    margin-inline: calc(1px + var(--edge));
   }
   .ticks span {
     position: absolute;
@@ -606,9 +598,6 @@
     font: var(--w-heavy) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-  }
-  .lanes[data-variant="compact"] {
-    --lane-pad: 10px;
   }
   .lanes[data-variant="compact"] .lane {
     padding-block: 9px 10px;
