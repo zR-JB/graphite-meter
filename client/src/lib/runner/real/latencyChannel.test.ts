@@ -457,7 +457,7 @@ test("an unresponsive worker cannot hold stage finalization past the acknowledge
   await ending;
   expect(worker.terminated).toBe(1);
   expect(observations).toEqual([]);
-  expect(stalls).toEqual(["ping worker did not finish its pending probes"]);
+  expect(stalls).toEqual(["latency worker did not finish its pending probes"]);
   expect(accountingComplete()).toBe(false);
 });
 

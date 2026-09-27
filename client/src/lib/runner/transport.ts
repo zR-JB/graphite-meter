@@ -340,7 +340,7 @@ export class ServerStage implements StageTransport {
       });
       this.#latency.prime(idle ? cfg.pingCadence : cfg.loadedPingCadence, idle);
     } else if (this.#activity.stage === "latency")
-      throw new Error("server offers no supported ping transport");
+      throw new Error("server offers no supported latency transport");
     if (this.#activity.transfer.includes("down")) this.#open("down");
     if (this.#activity.transfer.includes("up"))
       await this.#prepareUpload(this.#abort.signal);

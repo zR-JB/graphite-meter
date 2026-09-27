@@ -54,7 +54,8 @@ function startPingWorker(
     { type: "module" },
   );
   worker.onmessage = (e: MessageEvent<PingWorkerEvent>) => on(e.data);
-  worker.onerror = (e: ErrorEvent) => failed(e.message || "ping worker error");
+  worker.onerror = (e: ErrorEvent) =>
+    failed(e.message || "latency worker error");
   worker.postMessage({
     type: "start",
     url: (wt ? target.origin : httpToWs(target.origin)) + route,
@@ -129,7 +130,9 @@ export class LatencyChannel {
     // A hung handshake yields no samples and no stall, so establishment has its own deadline.
     this.#establishTimer = setTimeout(() => {
       this.#establishTimer = null;
-      this.#deps.host.stallLatency("ping connection could not be established");
+      this.#deps.host.stallLatency(
+        "latency connection could not be established",
+      );
     }, PING_ESTABLISH_TIMEOUT_MS);
     const worker: Worker = startPingWorker(
       this.#deps.target,
@@ -172,7 +175,7 @@ export class LatencyChannel {
       if (this.#worker !== worker) return;
       this.#deps.host.latencyIncomplete();
       this.#deps.host.stallLatency(
-        "ping worker did not finish its pending probes",
+        "latency worker did not finish its pending probes",
       );
       if (this.#worker === worker) this.teardown();
     }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
@@ -182,7 +185,7 @@ export class LatencyChannel {
     } catch {
       this.#deps.host.latencyIncomplete();
       this.#deps.host.stallLatency(
-        "ping worker could not finalize its pending probes",
+        "latency worker could not finalize its pending probes",
       );
       if (this.#worker === worker) this.teardown();
     }
