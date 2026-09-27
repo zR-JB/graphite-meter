@@ -58,7 +58,9 @@ show which path limited it.
 address behind one bridge, for one transport (`h1`, `h2`, `h3`, `wt`) and one direction. Native clients run in report
 mode; Chromium runs the shipped UI with product defaults. Every client discards a 4 s warmup, measures 8 s and pings
 over WebSocket at the fast cadence. Netem on the router's two egress links adds half the RTT and the loss rate in
-each direction at 1 Gbit/s, with one bandwidth-delay product of queue (at least 1,000 packets).
+each direction at 1 Gbit/s, with one bandwidth-delay product of queue (at least 1,000 packets). Every namespace sets
+cubic and 128 MiB TCP buffer limits whatever the host tuned; stop tuners that override congestion control per
+connection, such as bpftune, first.
 
 Each run appends one row to `matrix.ndjson`: build identity, load average, the server's peak RSS (VmHWM), its CPU
 time and the bytes delivered each way while the clients run (setup and warmup included), its TCP congestion control
@@ -79,5 +81,4 @@ GM_MULTI_BENCH_MATRIX='rtt=0,100 loss=0,1 count=1 transport=h2,h3 client=go,rust
 cat /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson | python3 client/bench/server-matrix-summary.py  # sessions together
 ```
 
-The full matrix (1,440 cells, 3 repeats) takes about 16 hours. Stop host tuners such as bpftune first: they change TCP
-congestion control per connection and buffer limits while the matrix runs.
+The full matrix (1,440 cells, 3 repeats) takes about 16 hours.

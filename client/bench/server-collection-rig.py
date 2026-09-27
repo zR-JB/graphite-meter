@@ -34,6 +34,8 @@ def command(*args, namespace=None, **kwargs):
 
 keepers = []
 backends = []
+# Linux's default congestion control and buffers for 1 Gbit/s at 300 ms, whatever the host tuned.
+TCP = ["net.ipv4.tcp_congestion_control=cubic", "net.ipv4.tcp_rmem=4096 131072 134217728", "net.ipv4.tcp_wmem=4096 16384 134217728"]
 
 
 def namespace():
@@ -42,6 +44,7 @@ def namespace():
     for _ in range(100):
         if os.readlink(f"/proc/{child.pid}/ns/net") != os.readlink("/proc/self/ns/net"):
             command("ip", "link", "set", "lo", "up", namespace=child.pid)
+            command("sysctl", "-qw", *TCP, namespace=child.pid)
             return child.pid
         time.sleep(0.01)
     raise RuntimeError("network namespace did not start")
@@ -365,7 +368,7 @@ def matrix_run(env, output, router, node, hosts, paths, cell, run, seed):
         for i, host in enumerate(hosts[:count]):
             with (directory / f"client-{i}.out").open("w") as out, (directory / f"client-{i}.err").open("w") as err:
                 clients.append(subprocess.Popen(["nsenter", "-t", str(host), "-n", "--", *argv], env=client_env, stdout=out, stderr=err))
-        # Host tuners such as bpftune set congestion control per connection and buffer limits per namespace.
+        # Tuners such as bpftune still override congestion control per connection, so record what the server used.
         time.sleep(max(0.0, started + WARMUP_S + MEASURE_S / 2 - time.monotonic()))
         sockets = command("ss", "-tin", "state", "established", namespace=node, capture_output=True, text=True).stdout.split()
         tcp = {"congestion": sorted(set(sockets) & set(Path("/proc/sys/net/ipv4/tcp_available_congestion_control").read_text().split())),
@@ -467,6 +470,7 @@ def main():
     output = output_directory()
     output.mkdir(parents=True, exist_ok=True)
     command("ip", "link", "set", "lo", "up")
+    command("sysctl", "-qw", *TCP)
     router = namespace()
     nodes = [namespace() for _ in range(4)]
     link("gmclient", None, "10.80.0.2/24", router, "10.80.0.1/24")
