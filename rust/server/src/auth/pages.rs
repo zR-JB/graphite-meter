@@ -330,6 +330,7 @@ pub fn security_headers(authorization_origin: Option<&str>) -> Result<HeaderMap,
     }
     let mut headers = HeaderMap::new();
     headers.insert("cache-control", HeaderValue::from_static("no-store"));
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
     headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
     headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     headers.insert(

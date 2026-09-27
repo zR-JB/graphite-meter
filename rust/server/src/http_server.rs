@@ -712,10 +712,16 @@ impl HttpServer {
         reason: crate::auth::policy::Refusal,
         connection: Connection,
     ) -> Response<ResponseBody> {
-        let mut response = text_response(StatusCode::FORBIDDEN);
-        response
-            .headers_mut()
-            .insert(header::CACHE_CONTROL, http::HeaderValue::from_static("no-store"));
+        let policy = self.auth.as_ref().expect("auth enabled").policy();
+        let mut response = Response::new(ResponseBody::empty());
+        *response.status_mut() = StatusCode::FORBIDDEN;
+        *response.headers_mut() = crate::auth::pages::security_headers(None).expect("static auth CSP");
+        if policy.trust(request, connection.peer, connection.tls).secure {
+            response.headers_mut().insert(
+                header::STRICT_TRANSPORT_SECURITY,
+                http::HeaderValue::from_static("max-age=31536000"),
+            );
+        }
         if matches!(
             request.version(),
             http::Version::HTTP_09 | http::Version::HTTP_10 | http::Version::HTTP_11
@@ -725,7 +731,7 @@ impl HttpServer {
                 .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
         }
         if reason == crate::auth::policy::Refusal::AuthenticationRequired {
-            let public = self.auth.as_ref().expect("auth enabled").policy().public_origin();
+            let public = policy.public_origin();
             response
                 .headers_mut()
                 .insert("graphite-meter-auth", http::HeaderValue::from_static("required"));
@@ -742,6 +748,12 @@ impl HttpServer {
                     header::LOCATION,
                     format!("{public}/login").parse().expect("validated public origin"),
                 );
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    http::HeaderValue::from_static("text/html; charset=utf-8"),
+                );
+                *response.body_mut() =
+                    ResponseBody::bytes(format!("<a href=\"{public}/login\">Temporary Redirect</a>.\n\n").into());
             }
             if let Some(origin) = request.headers().get(header::ORIGIN) {
                 if origin == public {

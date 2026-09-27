@@ -662,6 +662,10 @@ fn response(status: StatusCode) -> Response<Bytes> {
     let mut response = Response::new(Bytes::new());
     *response.status_mut() = status;
     *response.headers_mut() = pages::security_headers(None).expect("static auth CSP");
+    response.headers_mut().insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        HeaderValue::from_static("max-age=31536000"),
+    );
     response
 }
 fn html(status: StatusCode, body: String) -> Response<Bytes> {

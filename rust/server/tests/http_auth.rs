@@ -117,6 +117,7 @@ impl Harness {
     async fn login(&self) -> (String, String) {
         let (headers, _) = self.request("GET", "/login", "", "").await;
         assert!(headers.starts_with("HTTP/1.1 200"), "{headers}");
+        assert!(headers.contains("x-frame-options: DENY\r\n"), "{headers}");
         let nonce = cookie(&headers, "__Host-gm_login");
         let body = form_urlencoded::Serializer::new(String::new())
             .append_pair("csrf", &nonce)
@@ -173,6 +174,7 @@ async fn password_flow() {
     let (denied, _) = h.request("GET", "/download?bytes=1", "", "").await;
     assert!(denied.starts_with("HTTP/1.1 403"));
     assert!(denied.contains("graphite-meter-auth: required"));
+    assert!(denied.contains("x-frame-options: DENY\r\n") && denied.contains("content-length: 0\r\n"));
     assert!(!denied.contains("access-control-allow-origin: *"));
     let (session, csrf) = h.login().await;
     let headers = credentials(&session, &csrf);
