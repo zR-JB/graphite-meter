@@ -28,7 +28,7 @@ def main() -> None:
     directory = Path(tempfile.mkdtemp(prefix="client-interop-", dir=target))
     print(f"Evidence: {directory}", flush=True)
     subprocess.run(
-        ["cargo", "test", "--locked", "-p", "graphite-meter-client",
+        ["cargo", "test", "--locked", "--workspace",
          "--test", "go_server_interop", "--no-run"],
         cwd=ROOT / "rust", check=True, timeout=600,
     )
@@ -127,7 +127,7 @@ def main() -> None:
             else:
                 raise TimeoutError(f"Go HTTP/3 bootstrap did not start: {log.read_text()}")
             command = [
-                "cargo", "test", "--locked", "-p", "graphite-meter-client",
+                "cargo", "test", "--locked", "--workspace",
                 "--test", "go_server_interop", "go_server_completes_native_transport_stages",
                 "--", "--exact", "--ignored", "--nocapture",
             ]
@@ -215,7 +215,7 @@ def main() -> None:
                 raise TimeoutError(f"authenticated Go server did not start: {auth_log.read_text()}")
             native = subprocess.run(
                 [
-                    "cargo", "test", "--locked", "-p", "graphite-meter-client",
+                    "cargo", "test", "--locked", "--workspace",
                     "--test", "go_server_interop", "go_server_completes_approved_native_stages",
                     "--", "--exact", "--ignored", "--nocapture",
                 ],

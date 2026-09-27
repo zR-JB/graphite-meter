@@ -16,6 +16,8 @@ PASSWORD_HASH = (
     "gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
 )
 H3_TCP = "/tcp (HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control)"
+# Every interop step selects the workspace with dev-dependencies, so all share one build.
+BUILD = ["cargo", "build", "--locked", "--workspace", "--bins", "--examples"]
 
 
 def unused_port(kind: int) -> int:
@@ -29,11 +31,7 @@ def main() -> None:
     parser.add_argument("--server", type=Path, help="Prebuilt server binary")
     args = parser.parse_args()
     if args.server is None:
-        subprocess.run(
-            ["cargo", "build", "--locked", "-p", "graphite-meter-server", "--bin", "graphite-meter-server"],
-            cwd=ROOT / "rust",
-            check=True,
-        )
+        subprocess.run(BUILD, cwd=ROOT / "rust", check=True)
         args.server = ROOT / "rust/target/debug/graphite-meter-server"
     target = ROOT / "rust/target"
     target.mkdir(exist_ok=True)

@@ -8,6 +8,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from server_interop import BUILD
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -73,15 +75,7 @@ def main() -> None:
     args = parser.parse_args()
     binary = args.server
     if binary is None:
-        subprocess.run(
-            [
-                "cargo", "build", "--locked",
-                "-p", "graphite-meter-server",
-                "--example", "h3_interop",
-            ],
-            cwd=ROOT / "rust",
-            check=True,
-        )
+        subprocess.run(BUILD, cwd=ROOT / "rust", check=True)
         binary = ROOT / "rust/target/debug/examples/h3_interop"
     binary = binary.resolve()
     with tempfile.TemporaryDirectory(prefix="gm-rust-interop-") as temporary:
