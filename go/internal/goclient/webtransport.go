@@ -64,9 +64,9 @@ func wtDial(ctx context.Context, cred credential, origin, path string, query url
 	if err != nil {
 		_ = wtTransport.Close()
 		if response != nil && response.StatusCode >= http.StatusBadRequest {
-			return nil, statusOf(response, parsed.Redacted())
+			return nil, statusOf(response, parsed.Path)
 		}
-		return nil, fmt.Errorf("webtransport dial %s: %w", parsed.Redacted(), err)
+		return nil, fmt.Errorf("webtransport dial %s: %w", parsed.Path, err)
 	}
 	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil
 }
