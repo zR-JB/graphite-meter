@@ -637,16 +637,13 @@
   }
   .group > .kv {
     gap: 0;
-    padding-inline: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }
   .group > .kv > div {
-    padding-block: var(--space-2);
-  }
-  .group > .kv > div + div {
-    border-top: 1px solid var(--border-subtle);
+    padding-block: 5px;
   }
   .group > .kv dt {
     font-weight: var(--w-normal);
@@ -855,10 +852,13 @@
     > button:is(
       .active,
       [aria-current]:not([aria-current="false"]),
-      [aria-checked="true"],
       [aria-pressed="true"]
     ) {
     background: var(--brand-soft);
+    color: var(--text);
+  }
+  /* A checklist marks its state with the check, not a wash. */
+  .menu > button[aria-checked="true"] {
     color: var(--text);
   }
   @media (hover: hover) {
