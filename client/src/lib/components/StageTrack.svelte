@@ -327,7 +327,8 @@
     .seg-bar {
       height: 3px;
     }
-    .seg-row {
+    /* A tag word takes its own line; a lone check stays beside the label. */
+    .seg-row:has(> .seg-tag) {
       display: grid;
       grid-template-rows: 14px 12px;
       gap: 2px;
