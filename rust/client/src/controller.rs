@@ -538,4 +538,43 @@ mod tests {
             assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
         }
     }
+
+    #[tokio::test]
+    async fn a_sign_in_that_expires_after_measuring_checks_the_servers_again() {
+        let _ = crate::crypto::provider().install_default();
+        let config = Config {
+            url: "http://127.0.0.1:1".into(),
+            ..Config::default()
+        };
+        let (snapshots, _) = watch::channel(Snapshot::default());
+        let mut controller = Controller::with_snapshots(&config, snapshots.clone(), true).unwrap();
+        controller.running = true;
+        controller.operations.spawn(async move {
+            snapshots.send_modify(|snapshot| {
+                snapshot.results.push(crate::model::StageResult {
+                    stage: crate::model::Stage::Latency,
+                    elapsed: Duration::from_secs(1),
+                    down: None,
+                    up: None,
+                    intervals: Default::default(),
+                    omitted_intervals: 0,
+                    stopped: false,
+                    server_latencies: Vec::new(),
+                    server_results: Vec::new(),
+                })
+            });
+            Err(Box::new(crate::net::AuthRequired {
+                origin: "https://meter.test".into(),
+                login_url: "https://meter.test/login".into(),
+            }) as Error)
+        });
+        let result = controller.operations.join_next().await.unwrap();
+        controller.finished(result).unwrap();
+        assert_eq!(
+            controller.finished.as_ref().map(|run| run.phase),
+            Some(Phase::Incomplete)
+        );
+        assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
+        controller.stop().await;
+    }
 }
