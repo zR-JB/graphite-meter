@@ -1,17 +1,4 @@
-import { jest } from "bun:test";
-
-const globals = globalThis as Record<string, unknown>;
-
-export const messageEvent = <T>(data: T): MessageEvent<T> =>
-  ({ data, origin: "" }) as MessageEvent<T>;
-
-export function stubFetch(handler: typeof fetch): () => void {
-  const real = globalThis.fetch;
-  globalThis.fetch = handler;
-  return () => {
-    globalThis.fetch = real;
-  };
-}
+import { stubGlobals } from "../../test-helpers.testutil";
 
 export function testClock() {
   let time = 0;
@@ -61,40 +48,128 @@ export function testClock() {
 export interface WorkerRealm<Out> {
   posted: Out[];
   send(message: unknown): void;
+  restore(): void;
 }
 
+let realms = 0;
+
+/** Evaluate a fresh copy of a worker module against stubbed globals. */
 export async function bootWorker<Out>(
   modulePath: string,
-  realm: number,
+  globals: Record<string, unknown> = {},
 ): Promise<WorkerRealm<Out>> {
   const posted: Out[] = [];
-  globals.postMessage = (message: Out): void => {
-    posted.push(message);
-  };
-  await import(`${modulePath}?realm=${realm}`);
+  const restore = stubGlobals({
+    onmessage: null,
+    postMessage: (message: Out) => void posted.push(message),
+    ...globals,
+  });
+  await import(`${modulePath}?realm=${realms++}`);
   const handler = globalThis.onmessage as (event: MessageEvent) => void;
   return {
     posted,
-    send: (message) => handler(messageEvent(message)),
+    restore,
+    send: (data) => handler({ data, origin: "" } as MessageEvent),
   };
 }
 
-/** One real task turn, which settles every queued continuation without reading a clock. */
-export const taskTurn = (): Promise<void> =>
-  new Promise((resolve) => {
-    const { port1, port2 } = new MessageChannel();
-    port1.onmessage = (): void => {
-      port1.close();
-      port2.close();
-      resolve();
-    };
-    port2.postMessage(0);
+const finished = (...chunks: Uint8Array[]) =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
   });
 
-export async function elapse(ms: number): Promise<void> {
-  for (let elapsed = 0; elapsed < ms; elapsed += 5) {
-    await taskTurn();
-    jest.advanceTimersByTime(5);
+/** A WebTransport session whose handshake, lanes and datagrams the test drives. */
+export class FakeWebTransport {
+  readonly ready: Promise<void>;
+  readonly closed: Promise<WebTransportCloseInfo>;
+  readonly accept: () => void;
+  readonly refuse: (cause: unknown) => void;
+  readonly end: (info?: WebTransportCloseInfo) => void;
+  readonly sent: string[] = [];
+  closes = 0;
+  lanesOpened = 0;
+  #lanes!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
+  #datagrams!: ReadableStreamDefaultController<Uint8Array>;
+  readonly incomingUnidirectionalStreams = new ReadableStream<
+    ReadableStream<Uint8Array>
+  >({ start: (controller) => void (this.#lanes = controller) });
+  datagrams: {
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+    readonly maxDatagramSize: number;
+  } = {
+    maxDatagramSize: 1200,
+    readable: new ReadableStream<Uint8Array>({
+      start: (controller) => void (this.#datagrams = controller),
+    }),
+    writable: new WritableStream<Uint8Array>({
+      write: (datagram) =>
+        void this.sent.push(new TextDecoder().decode(datagram)),
+    }),
+  };
+
+  constructor(readonly url: string) {
+    const ready = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<WebTransportCloseInfo>();
+    this.ready = ready.promise;
+    this.closed = closed.promise;
+    this.ready.catch(() => {});
+    this.closed.catch(() => {});
+    this.accept = ready.resolve;
+    this.refuse = (cause) => (ready.reject(cause), closed.reject(cause));
+    this.end = (info = { closeCode: 0, reason: "" }) => closed.resolve(info);
   }
-  await taskTurn();
+
+  lane(...chunks: Uint8Array[]): void {
+    this.incoming(finished(...chunks));
+  }
+
+  incoming(stream: ReadableStream<Uint8Array>): void {
+    this.#lanes.enqueue(stream);
+  }
+
+  endLanes(): void {
+    this.#lanes.close();
+  }
+
+  datagram(data: string | Uint8Array): void {
+    this.#datagrams.enqueue(
+      typeof data === "string" ? new TextEncoder().encode(data) : data,
+    );
+  }
+
+  endDatagrams(): void {
+    this.#datagrams.close();
+  }
+
+  createUnidirectionalStream(): Promise<WritableStream<Uint8Array>> {
+    this.lanesOpened++;
+    return Promise.resolve(
+      new WritableStream<Uint8Array>({ write: () => new Promise(() => {}) }),
+    );
+  }
+
+  close(): void {
+    this.closes++;
+    this.end();
+  }
+}
+
+export function fakeWebTransport(
+  open: (session: FakeWebTransport) => void = (session) => session.accept(),
+) {
+  const sessions: FakeWebTransport[] = [];
+  return {
+    sessions,
+    WebTransport: class extends FakeWebTransport {
+      constructor(url: string) {
+        super(url);
+        sessions.push(this);
+        open(this);
+      }
+    },
+  };
 }
