@@ -217,8 +217,8 @@ impl HttpServer {
         .await
     }
 
-    /// TCP companion on the HTTP/3 UDP port. It serves only the authenticated
-    /// probe/OPTIONS route and never gains UI or transfer authority.
+    /// TCP companion on the HTTP/3 UDP port: the probe that advertises HTTP/3, and the upload and
+    /// ticket control a browser may fetch there before it uses QUIC. It never gains UI or transfers.
     pub async fn serve_https_bootstrap(
         self: Arc<Self>,
         listener: TcpListener,
@@ -379,10 +379,15 @@ impl HttpServer {
             let operations = operations.clone();
             let pending_upgrade = pending_upgrade.clone();
             let head = request.method() == Method::HEAD;
+            let probe = request.uri().path() == "/probe" && request.method() != Method::OPTIONS;
             let lifecycle = lifecycle.clone();
             *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active { complete: false };
             async move {
-                let mut response = if bootstrap_port.is_some() && request.uri().path() != "/probe" {
+                let mut response = if bootstrap_port.is_some()
+                    && !matches!(
+                        request.uri().path(),
+                        "/probe" | "/upload/session" | "/upload/checkpoint" | "/upload/progress" | "/wt/session"
+                    ) {
                     text_response(StatusCode::NOT_FOUND)
                 } else {
                     server
@@ -390,6 +395,7 @@ impl HttpServer {
                         .await?
                 };
                 if let Some(port) = bootstrap_port
+                    && probe
                     && response.status().is_success()
                 {
                     response

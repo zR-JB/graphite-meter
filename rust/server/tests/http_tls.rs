@@ -232,7 +232,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
 }
 
 #[tokio::test]
-async fn h3_tcp_bootstrap_only_serves_probe_and_advertises_the_effective_public_port() {
+async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_effective_public_port() {
     tokio::time::timeout(Duration::from_secs(5), async {
         let identity = support::Identity::generate();
         let (tls, roots) = configs(&identity);
@@ -257,6 +257,26 @@ async fn h3_tcp_bootstrap_only_serves_probe_and_advertises_the_effective_public_
             assert!(headers.contains("connection: close"));
             let probe: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(probe["protocolNegotiated"], "http/1.1");
+            let (headers, body) = request(address, &connector, "POST", "/upload/session", b"").await;
+            assert!(
+                headers.starts_with("HTTP/1.1 200") && !headers.contains("alt-svc:"),
+                "{headers}"
+            );
+            let session: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let id = session["uploadId"].as_str().unwrap();
+            for (method, path, status) in [
+                ("POST", format!("/upload/checkpoint?id={id}"), "400"),
+                ("DELETE", format!("/upload/progress?id={id}"), "400"),
+                ("POST", "/wt/session".into(), "200"),
+                ("GET", "/upload/session".into(), "405"),
+            ] {
+                let (headers, _) = request(address, &connector, method, &path, b"").await;
+                assert!(
+                    headers.starts_with(&format!("HTTP/1.1 {status}")),
+                    "{method} {path}: {headers}"
+                );
+                assert!(!headers.contains("alt-svc:"));
+            }
             for path in [
                 "/",
                 "/login",
@@ -271,7 +291,7 @@ async fn h3_tcp_bootstrap_only_serves_probe_and_advertises_the_effective_public_
                 assert!(!headers.contains("alt-svc:"));
             }
             let (headers, _) = request(address, &connector, "OPTIONS", "/probe", b"").await;
-            assert!(headers.starts_with("HTTP/1.1 204"));
+            assert!(headers.starts_with("HTTP/1.1 204") && !headers.contains("alt-svc:"));
             stop.send(()).unwrap();
             serving.await.unwrap().unwrap();
         }
