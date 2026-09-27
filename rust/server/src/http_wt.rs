@@ -217,14 +217,6 @@ impl HttpServer {
         tokio::pin!(stopping);
         let result: Result<(), TransportError> = async {
             loop {
-                // A peer may keep CONNECT DATA continuously ready. Let Tokio
-                // rotate ready work so that it cannot starve session streams
-                // and datagrams. Recheck authorization before each operation;
-                // the revocation future below wakes a blocked loop promptly.
-                if lease.as_ref().is_some_and(|lease| !lease.is_active()) {
-                    ending = LaneEnding::Revoked;
-                    break;
-                }
                 tokio::select! {
                     biased;
                     _ = &mut stopping => { ending = LaneEnding::Shutdown; break; },

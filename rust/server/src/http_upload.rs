@@ -141,7 +141,7 @@ impl HttpServer {
             }
         };
         let mut body = request.into_body();
-        let deadline = Instant::now() + self.config.max_operation_duration;
+        let deadline = operation.lock().expect("operation poisoned").deadline.deadline();
         let mut idle = Instant::now() + Duration::from_secs(30);
         loop {
             let frame = tokio::time::timeout_at(
