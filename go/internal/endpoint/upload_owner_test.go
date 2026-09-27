@@ -36,7 +36,7 @@ func TestUploadRefusalsMatchPin(t *testing.T) {
 		rec := httptest.NewRecorder()
 		switch end := slices.IndexFunc(wire.LaneEnds, func(e wire.LaneEnd) bool { return e.Name == name }); {
 		case end >= 0:
-			writeLaneRefusal(rec, wire.LaneEnds[end])
+			writeLaneRefusal(rec, wire.LaneEnds[end], status)
 		case access == uploadAccessOK:
 			t.Errorf("%s is no refusal the server sends", name)
 			continue

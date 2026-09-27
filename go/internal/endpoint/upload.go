@@ -63,10 +63,10 @@ func (u *Upload) serve(w http.ResponseWriter, r *http.Request, bound time.Durati
 	switch {
 	case err != nil && auth.SessionEnded(r.Context()):
 		auth.SignInRequired(w.Header())
-		writeLaneRefusal(w, wire.LaneRevoked)
+		writeLaneRefusal(w, wire.LaneRevoked, http.StatusForbidden)
 		return
 	case errors.Is(err, os.ErrDeadlineExceeded) && (limit.IsZero() || time.Now().Before(limit)):
-		writeLaneRefusal(w, wire.LaneIdle)
+		writeLaneRefusal(w, wire.LaneIdle, http.StatusRequestTimeout)
 		return
 	case err != nil:
 		return
@@ -257,12 +257,7 @@ func (u *Upload) waitDrained(done, superseded <-chan struct{}, agg *uploadAgg) b
 	}
 }
 
-var laneRefusalStatus = map[string]int{
-	wire.LaneIdle.Name:    http.StatusRequestTimeout,
-	wire.LaneRevoked.Name: http.StatusForbidden,
-}
-
-func writeLaneRefusal(w http.ResponseWriter, end wire.LaneEnd) {
+func writeLaneRefusal(w http.ResponseWriter, end wire.LaneEnd, status int) {
 	w.Header().Set("X-Graphite-Upload-Refusal", end.Name)
-	http.Error(w, end.Reason, laneRefusalStatus[end.Name])
+	http.Error(w, end.Reason, status)
 }
