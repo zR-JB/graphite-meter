@@ -21,6 +21,7 @@
     phaseLabel,
     PING_CADENCE,
     READINESS,
+    counted,
     STAGE,
   } from "../../presentation/vocabulary";
   import { fmtDuration } from "../../format";
@@ -504,9 +505,9 @@
     {/if}
     {#if store.config.transferStreams.mode === "forced"}
       <p class="hint">
-        Starts exactly {store.config.transferStreams.count} requests per server and
-        active direction. The run reserves progress and control capacity and allows
-        at most 128 streams per direction.
+        Starts exactly {counted(store.config.transferStreams.count, "request")} per
+        server and active direction. The run reserves progress and control capacity
+        and allows at most 128 streams per direction.
       </p>
     {:else}
       <p class="hint">

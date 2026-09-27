@@ -58,6 +58,8 @@ const PHASE: Record<Phase, string> = {
 };
 
 export const BLOCKED = "Test cannot start";
+export const counted = (count: number, noun: string) =>
+  `${count} ${count === 1 ? noun : `${noun}s`}`;
 export const READINESS: Record<
   ConnectionValidationState | "sign-in" | "blocked",
   { label: string; tone: "ok" | "brand" | "warn" | "err" }
