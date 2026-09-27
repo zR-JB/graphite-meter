@@ -50,7 +50,7 @@ including allowed and denied group membership. Other deployments remain untested
 
 The server shares one reservation budget across QUIC and HTTP/2 listeners,
 configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
-It reserves 104 MiB before each QUIC handshake and 36 MiB before each HTTP/2 TLS
+It reserves 120 MiB before each QUIC handshake and 36 MiB before each HTTP/2 TLS
 handshake. Once a quarter of either connection capacity or the shared budget is reserved,
 unvalidated QUIC handshakes require Retry. Exhaustion refuses new connections
 while established connections continue. QUIC reserves its 16 MiB receive window for its entire transport
@@ -60,10 +60,11 @@ retains at least the actual unacknowledged payload until acknowledgements or
 transport destruction release it. HTTP/2 reservations outlive their connection,
 local stream futures, and buffers.
 
-The QUIC reservation includes a 16 MiB receive-reassembly metadata allowance.
-The Noq fork caps that metadata separately from payload credit and copies
-defragmented payload into blocks of at most 16 KiB to avoid retaining a large
-allocation for a small tail. The shared 256 KiB download block is charged once.
+The Noq fork shares a 48 MiB allowance across receive metadata, owned payload
+backing and overlapping defragmentation copies. Returned byte slices keep that
+charge until their last owner drops, including after connection destruction;
+application-retained bytes therefore consume this allowance. The shared
+256 KiB download block is charged once.
 Admission refuses a connection or transmit-window increase when the budget
 cannot cover it; connection limits alone do not guarantee admission.
 

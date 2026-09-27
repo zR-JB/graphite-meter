@@ -16,7 +16,7 @@ const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
-pub(super) const BUFFER_BYTES: u32 = 104 * 1024 * 1024;
+pub(super) const BUFFER_BYTES: u32 = 120 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
@@ -271,7 +271,12 @@ impl MemoryBudget {
                         .refund(&connection);
                     true
                 } else {
-                    false
+                    reservation
+                        .window
+                        .lock()
+                        .expect("send window poisoned")
+                        .extra = None;
+                    reservation.weak.has_receive_allocations()
                 }
             });
     }

@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/h3",
     "branch": "graphite-meter/h3-v0.0.8",
-    "rev": "13c5a2698e9cdad89c900a85d9be3b4ebf2b6e55",
+    "rev": "03874beb50d065f4ac8f946ddb7814d2432b7527",
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
-    "diffSha256": "f551facd115a791c5958824815ee89078b8188d8d01e433554038c36e425681c",
+    "diffSha256": "30f4b65e6e086508f1d21e723b887dc67ed7b3c7379d4090e85723448fb96b45",
     "modifiedPackages": [
       "h3",
       "h3-noq"
@@ -63,6 +63,10 @@
       {
         "subject": "Test pending receive ownership in the adapter",
         "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound QPACK literal allocation before decoding headers",
+        "origin": "graphite-meter"
       }
     ],
     "metadataFiles": [
@@ -72,11 +76,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "eab1ae21387de8c3ac0ecce96102edb68066b6dc",
+    "rev": "d28b2e312bbbe259f8c76d30fa16472febddb41c",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "3a40adda5431e36155072053115ca588019be83b0e7f795bc23bb3dd4a2e82c8",
+    "diffSha256": "89dbc840605cb386b9e6f82444462d8ab5a35917ed1a7deb7dbc64ac87786d1a",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -136,6 +140,14 @@
       },
       {
         "subject": "Bound receive reassembly metadata and copy backing",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Charge receive backing through delivered byte ownership",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Expose receive allocation lifetime on weak connection handles",
         "origin": "graphite-meter"
       }
     ],
