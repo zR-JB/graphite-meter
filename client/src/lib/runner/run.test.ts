@@ -649,9 +649,8 @@ test("a stable feed completes early and each result arrives before the next stag
     { adaptive: true },
   );
   h.start();
-  const started = performance.now();
   const result = await h.result();
-  expect(performance.now() - started).toBeLessThan(11_000);
+  expect(result.durationMs).toBeLessThan(11_000);
   expect(result.stages.download).toBe("complete");
   near(result.upload?.reportedBytesPerSec, 4_000);
   const stageResult = h.events.findIndex(

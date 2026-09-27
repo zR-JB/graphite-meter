@@ -1,5 +1,6 @@
 import "./runes.testutil";
-import { expect, spyOn, test } from "bun:test";
+import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import { stubGlobals } from "../test-helpers.testutil";
 import { DEFAULT_CONFIG } from "./defaults";
 import {
   NOT_RUN,
@@ -14,6 +15,11 @@ import {
   ThroughputAggregate,
 } from "../runner/measure";
 import { singleLatencyBucket } from "../runner/series";
+
+// The store reads build tokens when it first loads, whichever test loads it.
+let restoreBuild: () => void;
+beforeAll(() => (restoreBuild = stubGlobals(TEST_BUILD_TOKENS)));
+afterAll(() => restoreBuild());
 
 const throughput: ThroughputResult = {
   reportedBytesPerSec: 12_500_000,
@@ -81,7 +87,6 @@ function result(): RunResult {
 }
 
 test("UI and history use the raw stage summary even when chart samples disagree", async () => {
-  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousPreference = store.resultHistoryPreference;
   try {
@@ -124,7 +129,6 @@ test("UI and history use the raw stage summary even when chart samples disagree"
 });
 
 test("only an enabled complete event creates an immutable history candidate", async () => {
-  Object.assign(globalThis as Record<string, unknown>, TEST_BUILD_TOKENS);
   const { store } = await import("./store.svelte");
   const previousPreference = store.resultHistoryPreference;
   try {
@@ -196,8 +200,6 @@ test("only an enabled complete event creates an immutable history candidate", as
   } finally {
     store.reset();
     store.resultHistoryPreference = previousPreference;
-    for (const key of Object.keys(TEST_BUILD_TOKENS))
-      Reflect.deleteProperty(globalThis, key);
   }
 });
 

@@ -215,11 +215,16 @@ export function deferred<T>() {
   const promise = new Promise<T>((done) => (resolve = done));
   return { promise, resolve };
 }
+const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
+/** Waits up to `turns` task turns for `done`, and fails the test when it never holds. */
 export async function until(done: () => boolean, turns = 100) {
-  for (let turn = 0; turn < turns && !done(); turn++)
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  for (let i = 0; i < turns && !done(); i++) await turn();
+  if (!done()) throw new Error(`condition not met within ${turns} turns`);
 }
-export const settle = () => until(() => false, 10);
+/** A bounded quiet period, for asserting that nothing more happens. */
+export async function settle() {
+  for (let i = 0; i < 10; i++) await turn();
+}
 /** Discovery and both verified paths of one server generation. */
 export function testEvidence(generation = "gen-a"): PreparedPaths {
   const paths = testPreparedPaths();
