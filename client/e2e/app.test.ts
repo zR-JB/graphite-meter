@@ -155,8 +155,12 @@ test("a completed run fits every layout and theme without serious violations", a
   for (const [width, height] of viewports)
     for (const scheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height });
+      // Contrast is judged on settled values; a fade in flight would lower it.
       await page.cdp("Emulation.setEmulatedMedia", {
-        features: [{ name: "prefers-color-scheme", value: scheme }],
+        features: [
+          { name: "prefers-color-scheme", value: scheme },
+          { name: "prefers-reduced-motion", value: "reduce" },
+        ],
       });
       await openSettings(page);
       const layout = () =>
