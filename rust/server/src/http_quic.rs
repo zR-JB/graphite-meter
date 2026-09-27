@@ -5,7 +5,7 @@ use crate::{webtransport, webtransport_send::ResetQueue};
 use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use quinn::SharedBudget;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use webtransport::{Incoming, ReceiveStream, TransportError};
 
@@ -24,6 +24,7 @@ const UNI_STREAMS: u32 = 23;
 const RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
 // One maximal 64 KiB HTTP/3 frame of credit until admitted work raises it.
 const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
+const CREDIT_BYTES: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 // h3 copies one maximal 64 KiB frame plus a 16 KiB block per stream outside Noq's pools.
 const STREAM_FLOOR_BYTES: usize = 80 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
@@ -38,16 +39,17 @@ impl QuicEndpoint {
         self.endpoint.local_addr()
     }
 
-    fn accept(&self, incoming: quinn::Incoming, floor: Lease) -> Option<quinn::Connecting> {
+    fn accept(&self, incoming: quinn::Incoming, floor: Lease) -> Option<(quinn::Connecting, Arc<ConnectionBudget>)> {
         let budget = Arc::new(ConnectionBudget {
             memory: floor.budget.clone(),
             _floor: floor,
+            held: Mutex::default(),
         });
         let mut transport = (*self.config.transport).clone();
-        transport.shared_budget(Some(budget));
+        transport.shared_budget(Some(budget.clone()));
         let mut config = self.config.clone();
         config.transport_config(Arc::new(transport));
-        incoming.accept_with(Arc::new(config)).ok()
+        Some((incoming.accept_with(Arc::new(config)).ok()?, budget))
     }
 }
 
@@ -151,7 +153,7 @@ impl HttpServer {
                         incoming.refuse();
                         continue;
                     };
-                    let Some(connecting) = quic.accept(incoming, floor) else { continue; };
+                    let Some((connecting, budget)) = quic.accept(incoming, floor) else { continue; };
                     let server = self.clone();
                     connections.spawn(async move {
                         let _permit = permit;
@@ -173,7 +175,7 @@ impl HttpServer {
                             }
                         };
                         let stopping = server.stopping.clone();
-                        if let Err(error) = server.clone().serve_quic_connection(quic, peer).await
+                        if let Err(error) = server.clone().serve_quic_connection(quic, budget, peer).await
                             && !*stopping.borrow()
                             && !ended_normally(&*error)
                         {
@@ -198,11 +200,12 @@ impl HttpServer {
     async fn serve_quic_connection(
         self: Arc<Self>,
         quic: quinn::Connection,
+        budget: Arc<ConnectionBudget>,
         peer: SocketAddr,
     ) -> Result<(), TransportError> {
         let max_requests = max_requests(&self.config.limits);
         let (resets, mut pending_resets) = ResetQueue::new(max_requests);
-        let credit = self.receive_credit(quic.clone());
+        let credit = ReceiveCredit::new(quic.clone(), budget);
         let mut window = SendWindow::new();
         let mut initializing = CloseOnDrop(Some(quic.clone()));
         let http = tokio::time::timeout(HEADER_TIMEOUT, webtransport::Connection::new(quic.clone(), 1)).await??;
@@ -431,6 +434,7 @@ pub(super) fn endpoint_bytes(
 pub(super) struct MemoryBudget {
     pub(super) limit: usize,
     used: AtomicUsize,
+    held_back: AtomicBool,
 }
 
 impl MemoryBudget {
@@ -438,6 +442,7 @@ impl MemoryBudget {
         Arc::new(Self {
             limit,
             used: AtomicUsize::new(0),
+            held_back: AtomicBool::new(false),
         })
     }
 
@@ -458,7 +463,32 @@ impl MemoryBudget {
     }
 
     pub(super) fn has_headroom(&self) -> bool {
-        self.used.load(Ordering::Relaxed) < self.limit / 4 * 3
+        let used = self.used.load(Ordering::Relaxed);
+        let headroom = used < self.limit / 4 * 3;
+        // Reported recovery waits for five eighths, so usage hovering at the threshold cannot flood the log.
+        let held_back = self.held_back.load(Ordering::Relaxed);
+        let changed = if held_back {
+            used < self.limit / 8 * 5
+        } else {
+            !headroom
+        };
+        if changed
+            && self
+                .held_back
+                .compare_exchange(held_back, !held_back, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+        {
+            crate::log!(
+                "[gm:memory] window growth {}: {used} of {} buffer bytes in use",
+                if held_back {
+                    "resumed"
+                } else {
+                    "held back by memory pressure"
+                },
+                self.limit
+            );
+        }
+        headroom
     }
 }
 
@@ -488,20 +518,53 @@ impl Drop for Lease {
     }
 }
 
-/// Noq keeps a connection's budget, and so its floor, until the connection is gone, TLS state included.
+/// Noq draws a connection's reserved credit first and keeps this until the connection is gone, TLS state included.
 #[derive(Debug)]
 struct ConnectionBudget {
     memory: Arc<MemoryBudget>,
     _floor: Lease,
+    held: Mutex<Held>,
+}
+
+#[derive(Debug, Default)]
+struct Held {
+    credit: Option<Lease>,
+    undrawn: usize,
+    overdraft: usize,
+}
+
+impl ConnectionBudget {
+    fn reserve(&self) -> bool {
+        let mut held = self.held.lock().expect("connection budget poisoned");
+        if held.credit.is_none()
+            && let Some(credit) = self.memory.lease(CREDIT_BYTES)
+        {
+            held.undrawn += credit.bytes;
+            held.credit = Some(credit);
+        }
+        held.credit.is_some()
+    }
 }
 
 impl SharedBudget for ConnectionBudget {
     fn try_charge(&self, bytes: usize) -> bool {
-        self.memory.try_charge(bytes)
+        let mut held = self.held.lock().expect("connection budget poisoned");
+        let credit = held.undrawn.min(bytes);
+        if credit < bytes && !self.memory.try_charge(bytes - credit) {
+            return false;
+        }
+        held.undrawn -= credit;
+        held.overdraft += bytes - credit;
+        true
     }
 
     fn refund(&self, bytes: usize) {
-        self.memory.refund(bytes);
+        let mut held = self.held.lock().expect("connection budget poisoned");
+        let overdraft = held.overdraft.min(bytes);
+        held.overdraft -= overdraft;
+        held.undrawn += bytes - overdraft;
+        drop(held);
+        self.memory.refund(overdraft);
     }
 }
 
@@ -510,45 +573,44 @@ pub struct ReceiveCredit(Arc<CreditState>);
 
 struct CreditState {
     quic: quinn::Connection,
-    memory: Arc<MemoryBudget>,
-    admitted: Mutex<Admission>,
+    budget: Arc<ConnectionBudget>,
+    funding: Mutex<Funding>,
 }
 
 #[derive(Default)]
-struct Admission {
+struct Funding {
     active: usize,
-    granted: bool,
     ended: Option<tokio::time::Instant>,
 }
 
-impl HttpServer {
-    pub fn receive_credit(&self, quic: quinn::Connection) -> ReceiveCredit {
-        ReceiveCredit(Arc::new(CreditState {
+impl ReceiveCredit {
+    fn new(quic: quinn::Connection, budget: Arc<ConnectionBudget>) -> Self {
+        Self(Arc::new(CreditState {
             quic,
-            memory: self.memory.clone(),
-            admitted: Mutex::default(),
+            budget,
+            funding: Mutex::default(),
         }))
     }
-}
 
-impl ReceiveCredit {
     pub(super) fn quic(&self) -> &quinn::Connection {
         &self.0.quic
     }
 
-    pub(super) fn admit(&self) -> Admitted {
-        let mut admitted = self.0.admitted.lock().expect("receive credit poisoned");
-        admitted.ended = None;
-        if admitted.active == 0 && self.0.memory.has_headroom() {
+    pub(super) fn admit(&self) -> Option<Admitted> {
+        let mut funding = self.0.funding.lock().expect("receive credit poisoned");
+        if funding.active == 0 {
+            if !(self.0.budget.memory.has_headroom() && self.0.budget.reserve()) {
+                return None;
+            }
             self.0.quic.set_receive_window(RECEIVE_WINDOW.into());
-            admitted.granted = true;
         }
-        admitted.active += 1;
-        Admitted(self.clone())
+        funding.active += 1;
+        funding.ended = None;
+        Some(Admitted(self.clone()))
     }
 
     fn leftover_since(&self) -> Option<tokio::time::Instant> {
-        self.0.admitted.lock().expect("receive credit poisoned").ended
+        self.0.funding.lock().expect("receive credit poisoned").ended
     }
 }
 
@@ -556,14 +618,10 @@ pub(super) struct Admitted(ReceiveCredit);
 
 impl Drop for Admitted {
     fn drop(&mut self) {
-        let credit = &self.0.0;
-        let mut admitted = credit.admitted.lock().expect("receive credit poisoned");
-        admitted.active -= 1;
-        if admitted.active == 0 {
-            credit.quic.set_receive_window(RECEIVE_WINDOW_FLOOR.into());
-            if std::mem::take(&mut admitted.granted) {
-                admitted.ended = Some(tokio::time::Instant::now());
-            }
+        let mut funding = self.0.0.funding.lock().expect("receive credit poisoned");
+        funding.active -= 1;
+        if funding.active == 0 {
+            funding.ended = Some(tokio::time::Instant::now());
         }
     }
 }
@@ -1157,73 +1215,93 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn receive_window_grows_only_for_admitted_work_with_headroom() {
+    async fn receive_credit_is_reserved_on_grant_and_never_accumulates() {
         use super::*;
         use futures_util::FutureExt;
         let server = HttpServer::new(Arc::new(Config::default())).unwrap();
-        let (tls, client_config) = tls();
-        let endpoint =
-            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let (tls, mut client_config) = tls();
+        let mut transport = quinn::TransportConfig::default();
+        transport.send_window(2 * u64::from(RECEIVE_WINDOW));
+        client_config.transport_config(Arc::new(transport));
+        let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = quic.local_addr().unwrap();
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let floor = connection_floor(&server.config.limits, 0);
+        tokio::time::timeout(Duration::from_secs(20), async {
             let connect = || async {
-                let (quic, accepted) = tokio::join!(
-                    client.connect(endpoint.local_addr().unwrap(), "localhost").unwrap(),
-                    async { endpoint.accept().await.unwrap().await.unwrap() },
-                );
-                (quic.unwrap(), accepted)
+                let (peer, credit) = tokio::join!(client.connect(address, "localhost").unwrap(), async {
+                    let incoming = quic.endpoint.accept().await.unwrap();
+                    let (connecting, budget) = quic.accept(incoming, server.memory.lease(floor).unwrap()).unwrap();
+                    ReceiveCredit::new(connecting.await.unwrap(), budget)
+                });
+                (peer.unwrap(), credit)
             };
-            let (quic, accepted) = connect().await;
-            let (active, active_server) = connect().await;
-            let admitted_active = server.receive_credit(active_server.clone()).admit();
-            let idle = settled(&server.memory, &[&quic, &active]).await;
-            let mut send = quic.open_uni().await.unwrap();
-            let mut written = 0;
-            while let Some(Ok(count)) = send.write(&[7; 16 * 1024]).now_or_never() {
-                written += count;
-            }
-            assert_eq!(written, RECEIVE_WINDOW_FLOOR as usize);
-            while server.memory.available() + written > idle {
-                tokio::task::yield_now().await;
-            }
-            let charged = idle - server.memory.available();
-            eprintln!("unadmitted peer: {written} bytes sent, {charged} bytes charged");
-            assert!(charged <= 3 * RECEIVE_WINDOW_FLOOR as usize);
+            let fill = |peer: &quinn::Connection| {
+                let peer = peer.clone();
+                async move {
+                    let mut total = 0;
+                    loop {
+                        let mut stream = peer.open_uni().await.unwrap();
+                        let mut written = 0;
+                        while let Some(Ok(count)) = stream.write(&[7; 64 * 1024]).now_or_never() {
+                            written += count;
+                        }
+                        if written == 0 {
+                            return total;
+                        }
+                        total += written;
+                    }
+                }
+            };
+            let round_trip = |peer: &quinn::Connection, credit: &ReceiveCredit| {
+                let (peer, server) = (peer.clone(), credit.quic().clone());
+                async move {
+                    let mut probe = server.open_uni().await.unwrap();
+                    probe.write_all(b"x").await.unwrap();
+                    probe.finish().unwrap();
+                    peer.accept_uni().await.unwrap().read_to_end(1).await.unwrap();
+                }
+            };
+            let (peer, credit) = connect().await;
+            let silent = settled(&server.memory, &[&peer]).await;
+            assert_eq!(fill(&peer).await, RECEIVE_WINDOW_FLOOR as usize);
+            let idle = settled(&server.memory, &[&peer]).await;
+            assert!(
+                silent - idle <= 3 * RECEIVE_WINDOW_FLOOR as usize,
+                "unadmitted reassembly"
+            );
+            let admitted = credit.admit().unwrap();
+            assert_eq!(
+                idle - server.memory.available(),
+                CREDIT_BYTES,
+                "grant charged when made"
+            );
+            round_trip(&peer, &credit).await;
+            assert_eq!(fill(&peer).await, CREDIT_BYTES);
+            let charged = idle - settled(&server.memory, &[&peer]).await;
+            eprintln!("{CREDIT_BYTES} bytes of credit filled: {charged} bytes charged");
+            assert!(charged < CREDIT_BYTES / 4 * 5, "credit charged again as it filled");
+
+            drop(admitted);
+            let regranted = credit.admit().unwrap();
+            round_trip(&peer, &credit).await;
+            assert_eq!(fill(&peer).await, 0, "a new grant added credit the peer still held");
 
             let used = server.memory.limit - server.memory.available();
             let pressure = server.memory.lease(server.memory.limit / 4 * 3 - used).unwrap();
-            assert!(!server.memory.has_headroom());
-            assert_eq!(SendWindow::new().grow(MAX_SEND_WINDOW, &server.memory), None);
-            let admitted = server.receive_credit(accepted.clone()).admit();
-            let mut after_max_data = accepted.open_uni().await.unwrap();
-            after_max_data.write_all(b"x").await.unwrap();
-            after_max_data.finish().unwrap();
-            quic.accept_uni().await.unwrap().read_to_end(1).await.unwrap();
-            assert!(
-                send.write(&[7]).now_or_never().is_none(),
-                "window grew past the threshold"
-            );
-
-            let receiving = tokio::spawn(async move {
-                let mut upload = active_server.accept_uni().await.unwrap();
-                let received = upload.read_to_end(8 << 20).await.unwrap().len();
-                (active_server, received)
-            });
-            let mut upload = active.open_uni().await.unwrap();
-            upload.write_all(&vec![7; 4 << 20]).await.unwrap();
-            upload.finish().unwrap();
-            let (active_server, received) = receiving.await.unwrap();
-            assert_eq!(received, 4 << 20);
-            assert!(active_server.close_reason().is_none());
-
-            drop((admitted, admitted_active, pressure));
-            let admitted = server.receive_credit(accepted.clone()).admit();
-            send.write_all(&vec![7; 1024 * 1024]).await.unwrap();
-            drop(admitted);
-            assert!(accepted.close_reason().is_none());
-            quic.close(0_u32.into(), b"done");
-            active.close(0_u32.into(), b"done");
+            let joined = credit
+                .admit()
+                .expect("admitted work joins a running grant under pressure");
+            let (fresh, fresh_credit) = connect().await;
+            assert!(fresh_credit.admit().is_none(), "granted under pressure");
+            round_trip(&fresh, &fresh_credit).await;
+            assert_eq!(fill(&fresh).await, RECEIVE_WINDOW_FLOOR as usize);
+            drop((joined, regranted));
+            assert!(credit.admit().is_none(), "a new grant period started under pressure");
+            drop(pressure);
+            peer.close(0_u32.into(), b"done");
+            fresh.close(0_u32.into(), b"done");
         })
         .await
         .unwrap();
@@ -1265,12 +1343,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn leftover_credit_closes_a_peer_that_blocks_goaway() {
+    async fn leftover_credit_closes_peers_that_block_goaway_or_upload_under_pressure() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
-        let (tls, mut blocking) = tls();
+        let (tls, client_config) = tls();
         let (address, stop, serving) = serve(&server, tls);
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut blocking = client_config.clone();
         let mut transport = quinn::TransportConfig::default();
         transport.receive_window((256 * 1024_u32).into());
         blocking.transport_config(Arc::new(transport));
@@ -1279,33 +1358,48 @@ mod tests {
                 .body(())
                 .unwrap()
         };
-        let (quic, _sender, _unread) = tokio::time::timeout(Duration::from_secs(10), async {
-            let (quic, mut sender) = h3_client(&client, blocking, address).await;
-            let id = upload_id(&mut sender).await;
-            let mut upload = sender.send_request(post(format!("/upload?id={id}"))).await.unwrap();
-            upload.send_data(Bytes::from(vec![7; 256 * 1024])).await.unwrap();
-            upload.finish().await.unwrap();
-            assert_eq!(upload.recv_response().await.unwrap().status(), StatusCode::OK);
-            while upload.recv_data().await.unwrap().is_some() {}
+        let (peers, _unread, _late, pressure) = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut peers = Vec::new();
+            for config in [blocking, client_config] {
+                let (quic, mut sender) = h3_client(&client, config, address).await;
+                let id = upload_id(&mut sender).await;
+                let mut upload = sender.send_request(post(format!("/upload?id={id}"))).await.unwrap();
+                upload.send_data(Bytes::from(vec![7; 256 * 1024])).await.unwrap();
+                upload.finish().await.unwrap();
+                assert_eq!(upload.recv_response().await.unwrap().status(), StatusCode::OK);
+                while upload.recv_data().await.unwrap().is_some() {}
+                peers.push((quic, sender));
+            }
             let request = http::Request::get("https://localhost/download?bytes=1073741824")
                 .body(())
                 .unwrap();
-            let mut unread = sender.send_request(request).await.unwrap();
+            let mut unread = peers[0].1.send_request(request).await.unwrap();
             unread.finish().await.unwrap();
             assert_eq!(unread.recv_response().await.unwrap().status(), StatusCode::OK);
-            (quic, sender, unread)
+            let used = server.memory.limit - server.memory.available();
+            let pressure = server.memory.lease(server.memory.limit / 4 * 3 - used).unwrap();
+            let id = upload_id(&mut peers[1].1).await;
+            let mut late = peers[1].1.send_request(post(format!("/upload?id={id}"))).await.unwrap();
+            late.send_data(Bytes::from_static(b"late")).await.unwrap();
+            while server.admission.load().0 < 2 {
+                tokio::task::yield_now().await;
+            }
+            (peers, unread, late, pressure)
         })
         .await
         .unwrap();
         tokio::time::pause();
         tokio::time::sleep(IDLE_TIMEOUT + SHUTDOWN_GRACE).await;
         tokio::time::resume();
-        match tokio::time::timeout(Duration::from_secs(2), quic.closed()).await {
-            Ok(quinn::ConnectionError::ApplicationClosed(close)) => {
-                assert_eq!(close.error_code.into_inner(), h3::error::Code::H3_NO_ERROR.value())
+        for (quic, _) in &peers {
+            match tokio::time::timeout(Duration::from_secs(2), quic.closed()).await {
+                Ok(quinn::ConnectionError::ApplicationClosed(close)) => {
+                    assert_eq!(close.error_code.into_inner(), h3::error::Code::H3_NO_ERROR.value())
+                }
+                outcome => panic!("leftover credit kept the connection: {outcome:?}"),
             }
-            outcome => panic!("leftover credit kept the connection: {outcome:?}"),
         }
+        drop(pressure);
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
     }
@@ -1315,19 +1409,24 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
-        let endpoint =
-            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = endpoint.local_addr().unwrap();
+        let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = quic.local_addr().unwrap();
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
+        let floor = connection_floor(&server.config.limits, 0);
         tokio::time::timeout(Duration::from_secs(10), async {
             let connect = || async {
-                let (peer, (accepted, from)) = tokio::join!(client.connect(address, "localhost").unwrap(), async {
-                    let incoming = endpoint.accept().await.unwrap();
-                    let from = incoming.remote_address();
-                    (incoming.await.unwrap(), from)
-                });
-                (peer.unwrap(), server.clone().serve_quic_connection(accepted, from))
+                let (peer, (accepted, budget, from)) =
+                    tokio::join!(client.connect(address, "localhost").unwrap(), async {
+                        let incoming = quic.endpoint.accept().await.unwrap();
+                        let from = incoming.remote_address();
+                        let (connecting, budget) = quic.accept(incoming, server.memory.lease(floor).unwrap()).unwrap();
+                        (connecting.await.unwrap(), budget, from)
+                    });
+                (
+                    peer.unwrap(),
+                    server.clone().serve_quic_connection(accepted, budget, from),
+                )
             };
             let (peer, served) = connect().await;
             peer.close(

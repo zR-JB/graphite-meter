@@ -71,9 +71,10 @@ gone; past the allowance, requests are refused and DATA resets its stream. The
 receive window stays 64 KiB until an admitted upload reads, then grows to
 16 MiB while the budget is under three quarters used, charged until the peer can
 no longer fill it. Under pressure uploads continue at their current window.
-Once the last admitted operation on an HTTP/2 or QUIC connection that raised its
+Once the last admitted upload on an HTTP/2 or QUIC connection that raised its
 window ends, other requests no longer extend its 15-second idle period, so
-leftover credit closes the connection gracefully 15 seconds later.
+leftover credit closes the connection 15 seconds later; requests then in flight
+get five seconds, even if the peer withholds flow control.
 Once a quarter of either connection capacity or the budget is used, unvalidated
 QUIC handshakes require Retry. A connection whose floor does not fit is refused
 while established connections continue.
@@ -82,14 +83,16 @@ Noq charges its receive reassembly, send buffers, packet and control metadata,
 datagrams, and queued incoming packets to the same budget as they fill, within
 unchanged per-connection caps. A refused charge closes only that connection with
 `INTERNAL_ERROR`. Returned byte slices keep their charge until their last owner
-drops, including after connection destruction. Until the connection has an
-admitted operation or session, its receive window is 64 KiB, so a silent or
-unauthenticated peer can make Noq hold at most 192 KiB of reassembly. Admitted
-work raises the window to 16 MiB, and it returns to 64 KiB after the last
-admitted operation ends. Credit already granted stays usable until it is
-consumed. Transmit windows adapt between 2 MiB and 32 MiB. Neither window grows
-once three quarters of the budget is used, so pressure slows new transfers
-instead of closing running ones. Endpoint
+drops, including after connection destruction. Until an admitted upload reads
+on the connection, its receive window is 64 KiB, so a silent or unauthenticated
+peer can make Noq hold at most 192 KiB of reassembly. The first grant reserves
+the rest of a 16 MiB connection window until Noq drops the connection, and Noq
+charges the connection's buffers to it first. The window never shrinks, so the
+peer never holds more credit than is reserved. Transmit windows adapt between
+2 MiB and 32 MiB. Neither window grows once three quarters of the budget is
+used, so pressure slows new transfers instead of closing running ones; one log
+line reports when growth is held back, and one when usage falls below five
+eighths again. Endpoint
 reservations cover the configured UDP socket buffers, receive batches and
 pending incoming packets until the socket and its senders drop. Additional
 incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The

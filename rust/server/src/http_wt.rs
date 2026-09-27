@@ -112,7 +112,8 @@ impl HttpServer {
             Ok(permit) => permit,
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
         };
-        let _admitted = credit.admit();
+        let upload = route == SessionRoute::Upload;
+        let mut admitted = upload.then(|| credit.admit()).flatten();
         let lifetime = if class == Class::Session {
             self.config.max_session_duration
         } else {
@@ -227,6 +228,9 @@ impl HttpServer {
                     _ = &mut stopping => { ending = LaneEnding::Shutdown; break; },
                     _ = lease_ended(lease.clone()) => { ending = LaneEnding::Revoked; break; },
                     _ = tick.tick() => {
+                        if upload && admitted.is_none() {
+                            admitted = credit.admit();
+                        }
                         let last = *activity.lock().expect("WT activity poisoned");
                         if Instant::now().duration_since(last) >= IDLE {
                             ending = LaneEnding::Idle;

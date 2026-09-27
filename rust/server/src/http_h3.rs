@@ -85,7 +85,7 @@ impl HttpServer {
                 // Dispatch may install a lease in this poll. Register its wake
                 // even when QUIC flow control blocks the first response write.
                 if check_operations(&operations, cx)? && admitted.is_none() {
-                    admitted = Some(credit.admit());
+                    admitted = credit.admit();
                 }
             }
             result
