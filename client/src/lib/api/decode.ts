@@ -57,11 +57,24 @@ export function displayText(value: unknown, max: number, allowEmpty = false) {
 export const safeDetail = (text: string, max: number) =>
   UNSAFE_TEXT.test(text) ? "" : text.slice(0, max);
 
+const known = <T extends string>(
+  value: unknown,
+  values: readonly T[],
+): value is T => values.includes(value as T);
+
 function member<T extends string>(value: unknown, values: readonly T[]): T {
-  if (typeof value !== "string" || !values.includes(value as T))
+  if (!known(value, values))
     throw new Error("unsupported control response value");
-  return value as T;
+  return value;
 }
+
+const THROUGHPUT_TRANSPORTS = [
+  "fetch-stream",
+  "webtransport",
+  "webtransport-datagram",
+] as const;
+const THROUGHPUT_PROTOCOLS = ["http1", "http2", "http3", "negotiated"] as const;
+const LATENCY_TRANSPORTS = ["websocket", "webtransport"] as const;
 
 function origin(value: unknown): string {
   const raw = string(value, 2048);
@@ -116,29 +129,19 @@ export function parsePreflight(value: unknown) {
       ...(capabilities.uploadCheckpoint === undefined
         ? {}
         : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
-      throughput: targets(capabilities.throughput).map((value) => {
-        const target = record(value);
-        return {
-          baseUrl: origin(target.baseUrl),
-          transport: member(target.transport, [
-            "fetch-stream",
-            "webtransport",
-            "webtransport-datagram",
-          ]),
-          protocol: member(target.protocol, [
-            "http1",
-            "http2",
-            "http3",
-            "negotiated",
-          ]),
-        };
+      // A newer server's unknown mechanisms are skipped, never the whole document.
+      throughput: targets(capabilities.throughput).flatMap((value) => {
+        const { baseUrl, transport, protocol } = record(value);
+        return known(transport, THROUGHPUT_TRANSPORTS) &&
+          known(protocol, THROUGHPUT_PROTOCOLS)
+          ? [{ baseUrl: origin(baseUrl), transport, protocol }]
+          : [];
       }),
-      latency: targets(capabilities.latency).map((value) => {
-        const target = record(value);
-        return {
-          baseUrl: origin(target.baseUrl),
-          transport: member(target.transport, ["websocket", "webtransport"]),
-        };
+      latency: targets(capabilities.latency).flatMap((value) => {
+        const { baseUrl, transport } = record(value);
+        return known(transport, LATENCY_TRANSPORTS)
+          ? [{ baseUrl: origin(baseUrl), transport }]
+          : [];
       }),
     },
   };
