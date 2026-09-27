@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/term"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/legal"
@@ -105,7 +106,7 @@ func main() {
 		m = final.(model)
 	}
 	if report := m.finalReport(); report != "" {
-		fmt.Println(report)
+		lipgloss.Println(report)
 	}
 	os.Exit(exitStatus(m, caught.Load()))
 }
@@ -135,7 +136,7 @@ func runHeadless(m model) model {
 	defer m.controller.Close()
 	m.width = 100
 	if w, _, err := term.GetSize(os.Stdout.Fd()); err == nil && w > 0 {
-		m.width = w
+		m.width, m.st = w, newStyles(lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
 	}
 	next, _ := m.startRun()
 	m = next.(model)

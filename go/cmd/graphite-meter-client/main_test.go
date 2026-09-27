@@ -240,14 +240,14 @@ func TestLatencySummaryVocabulary(t *testing.T) {
 		err   error
 	}{
 		{goclient.LatencyStats{}, nil, "— | — | — | — | — | 0 replies", nil},
-		{goclient.LatencyStats{Timeouts: 3}, nil, "— | — | — | — | 3/3 (100.0%) | 0 replies", nil},
+		{goclient.LatencyStats{Timeouts: 3}, nil, "— | — | — | — | 3 / 3 (100.0%) | 0 replies", nil},
 		{goclient.LatencyStats{Count: 2, JitterPairs: 1, P50: 12 * time.Millisecond, P95: 20 * time.Millisecond},
-			&idle, "12.0 ms | +2.0 ms | 20.0 ms | < 0.1 ms | 0/2 (0.0%) | 2 replies", nil},
+			&idle, "12.0 ms | +2.0 ms | 20.0 ms | < 0.1 ms | 0 / 2 | 2 replies", nil},
 		{goclient.LatencyStats{Count: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", nil},
 		{goclient.LatencyStats{Count: 1, Timeouts: 1, P50: 8 * time.Millisecond, P95: 9 * time.Millisecond}, &idle,
 			"— | — | 9.0 ms |", lost},
 		{goclient.LatencyStats{Count: 2, Timeouts: 1, P50: 8 * time.Millisecond}, &idle, "8.0 ms | −2.0 ms", lost},
-		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1/1000 (0.10%)", nil},
+		{goclient.LatencyStats{Count: 999, Timeouts: 1}, nil, "1 / 1,000 (0.10%)", nil},
 		{goclient.LatencyStats{Unresolved: 2, SendFailures: 1, Elapsed: 4 * time.Second}, nil,
 			"0 replies | 4.0 s | unfinished probes 2 | failed sends 1", nil},
 	} {
