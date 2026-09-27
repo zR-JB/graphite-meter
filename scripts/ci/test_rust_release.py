@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from github_api import ControlPlaneError as VerificationError, file_sha256 as sha256_file
+from github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file
 from verify_release_assets import read_tar_text, verify_rust_client_archive, verify_rust_server_source, expected_rust_artifacts
 
 
@@ -23,7 +23,7 @@ class RustArchiveBoundaryTests(unittest.TestCase):
             "target": "x86_64-unknown-linux-gnu", "minimumGlibc": "2.36",
             "neededLibraries": ["libc.so.6"], "rustc": "rustc test-fixture\n",
         }
-        inventory = {
+        inventory: JsonObject = {
             "schemaVersion": 1, "package": "graphite-meter-client", "profile": "release",
             "target": metadata["target"], "rustc": metadata["rustc"],
             "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
@@ -100,7 +100,7 @@ class RustServerReleaseTests(unittest.TestCase):
             dist = Path(temporary)
             write_release_assets(dist, "1.2.3")
             name = next(iter(expected_rust_artifacts("1.2.3", "server")))
-            inventory = {
+            inventory: JsonObject = {
                 "schemaVersion": 1, "package": "graphite-meter-server", "profile": "release",
                 "target": "x86_64-unknown-linux-gnu",
                 "cargoLockSha256": sha256_file(Path("rust/Cargo.lock")),
@@ -124,7 +124,7 @@ class RustServerReleaseTests(unittest.TestCase):
                         verify_artifacts("1.2.3", dist, selection)
 
     def test_server_source_identity_and_component_presence(self) -> None:
-        inventory = {
+        inventory: JsonObject = {
             "schemaVersion": 1,
             "package": "graphite-meter-server",
             "profile": "release",
@@ -140,6 +140,10 @@ class RustServerReleaseTests(unittest.TestCase):
             "missing",
             "first_party_key",
             "undeclared_tree",
+            "schema_boolean",
+            "component_array",
+            "component_name",
+            "browser_component",
         ):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:
                 dist = Path(temporary)
@@ -148,6 +152,14 @@ class RustServerReleaseTests(unittest.TestCase):
                     metadata["package"] = "graphite-meter-client"
                 if mutation == "lock":
                     metadata["cargoLockSha256"] = "0" * 64
+                if mutation == "schema_boolean":
+                    metadata["schemaVersion"] = True
+                if mutation == "component_array":
+                    metadata["components"] = {"component": "not an array"}
+                if mutation == "component_name":
+                    metadata["components"] = [{"component": {"name": [], "version": "1.0"}}]
+                if mutation == "browser_component":
+                    metadata["browserComponents"] = ["not an object"]
                 files = {
                     "inventory.json": json.dumps(metadata).encode(),
                     "LEGAL.txt": b"notices",

@@ -14,7 +14,10 @@ import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
-from github_api import TLS_NAME, ControlPlaneError, confined_path, decode_json, fail, file_sha256
+from github_api import (
+    TLS_NAME, ControlPlaneError, JsonObject, confined_path, decode_json, expect_array,
+    expect_object, fail, file_sha256, int_field, object_field, str_field,
+)
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
@@ -207,11 +210,12 @@ def read_tar_text(path: Path, name: str, limit: int = 4 * 1024 * 1024) -> str:
         raise ControlPlaneError(f"cannot read {path.name}/{name}: {exc}") from exc
 
 
-def verify_rust_source(path: Path, package: str, lock_sha256: str | None = None) -> dict:
+def verify_rust_source(path: Path, package: str, lock_sha256: str | None = None) -> JsonObject:
     names = archive_names(path)
-    inventory = decode_json(read_tar_text(path, "inventory.json"), path.name)
-    if not isinstance(inventory, dict) or any(inventory.get(key) != value for key, value in {
-        "schemaVersion": 1, "package": package, "profile": "release", "target": RUST_TARGET,
+    inventory = expect_object(decode_json(read_tar_text(path, "inventory.json"), path.name), path.name)
+    if int_field(inventory, "schemaVersion", path.name) != 1 or any(
+            inventory.get(key) != value for key, value in {
+        "package": package, "profile": "release", "target": RUST_TARGET,
     }.items()):
         fail(f"{path.name} has invalid Rust build identity")
     lock = inventory.get("cargoLockSha256")
@@ -219,42 +223,53 @@ def verify_rust_source(path: Path, package: str, lock_sha256: str | None = None)
         fail("invalid Rust Cargo lock identity")
     if lock != (lock_sha256 or file_sha256(Path("rust/Cargo.lock"))):
         fail("Rust source inventory does not match release Cargo lock")
-    components = inventory.get("components")
-    browser = inventory.get("browserComponents", [])
-    if not isinstance(components, list) or not components or not isinstance(browser, list):
+    components = expect_array(inventory.get("components"), "Rust components")
+    browser = expect_array(inventory.get("browserComponents", []), "Rust browser components")
+    if not components:
         fail(f"{path.name} has no valid dependency inventory")
     trees: set[str] = set()
     for item in components:
-        if not isinstance(item, dict) or not isinstance(item.get("component"), dict):
-            fail("invalid Rust dependency component")
-        component = item["component"]
-        trees.add(f"third_party/cargo/{component.get('name')}-{component.get('version')}/")
-    browser_manual = []
-    for component in browser:
-        if not isinstance(component, dict):
-            fail("invalid Rust browser component")
-        if component.get("ecosystem") == "npm":
-            trees.add(f"third_party/npm/{component.get('name')}-{component.get('version')}/")
+        component = object_field(expect_object(item, "Rust dependency"), "component", "Rust dependency")
+        name = str_field(component, "name", "Rust dependency")
+        version = str_field(component, "version", "Rust dependency")
+        trees.add(f"third_party/cargo/{name}-{version}/")
+    browser_manual: list[tuple[str, str, str]] = []
+    for item in browser:
+        component = expect_object(item, "Rust browser component")
+        identity = tuple(str_field(component, key, "Rust browser component")
+                         for key in ("ecosystem", "name", "version"))
+        if identity[0] == "npm":
+            trees.add(f"third_party/npm/{identity[1]}-{identity[2]}/")
         else:
-            browser_manual.append(component)
+            browser_manual.append((identity[0], identity[1], identity[2]))
     allowed = {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"}
     if decode_json(read_tar_text(path, "legal/rust-forks.json"), "Rust forks") != decode_json(
             Path("legal/rust-forks.json").read_text(), "release Rust forks"):
         fail("Rust source fork identities differ from release tooling")
-    manual_sources = {}
+    manual_sources: dict[tuple[str, str, str], set[str]] = {}
     for filename, scope in (("legal/rust-provenance.json", "rust"),
-                            ("legal/provenance.json", "server/browser")):
+                           ("legal/provenance.json", "server/browser")):
         if scope == "server/browser" and package != "graphite-meter-server":
             continue
-        for entry in decode_json(Path(filename).read_text(), filename):
-            if scope in entry.get("artifactScopes", []):
-                identity = (entry["ecosystem"], entry["name"], entry["version"])
-                files = {file["name"] for file in entry.get("localLegalFiles", [])}
-                files.update(entry.get("localPaths", []))
-                manual_sources[identity] = files
-                allowed.update(files)
-    for component in browser_manual:
-        identity = (component.get("ecosystem"), component.get("name"), component.get("version"))
+        entries = expect_array(decode_json(Path(filename).read_text(), filename), filename)
+        for item in entries:
+            entry = expect_object(item, filename)
+            scopes = expect_array(entry.get("artifactScopes", []), filename)
+            if any(not isinstance(value, str) for value in scopes):
+                fail(f"{filename} artifact scopes must be strings")
+            if scope not in scopes:
+                continue
+            identity = (str_field(entry, "ecosystem", filename), str_field(entry, "name", filename),
+                        str_field(entry, "version", filename))
+            files = {str_field(expect_object(file, filename), "name", filename)
+                     for file in expect_array(entry.get("localLegalFiles", []), filename)}
+            for value in expect_array(entry.get("localPaths", []), filename):
+                if not isinstance(value, str):
+                    fail(f"{filename} local paths must be strings")
+                files.add(value)
+            manual_sources[identity] = files
+            allowed.update(files)
+    for identity in browser_manual:
         if identity not in manual_sources:
             fail("Rust browser inventory contains unreviewed manual source")
         if missing := manual_sources[identity] - names:
@@ -300,14 +315,15 @@ def verify_rust_client_archive(dist: Path, version: str, lock_sha256: str | None
             or int.from_bytes(header[20:24], "little") != 1
             or int.from_bytes(header[52:54], "little") != 64):
         fail("Rust TUI executable is not a Linux AMD64 ELF binary")
-    metadata = decode_json(read_tar_text(path, f"{base}/BUILD.json"), path.name)
-    if not isinstance(metadata, dict) or any(metadata.get(key) != value for key, value in {
-        "schemaVersion": 1, "implementation": "rust", "version": version + "-rust",
+    metadata = expect_object(decode_json(read_tar_text(path, f"{base}/BUILD.json"), path.name), path.name)
+    if int_field(metadata, "schemaVersion", path.name) != 1 or any(
+            metadata.get(key) != value for key, value in {
+        "implementation": "rust", "version": version + "-rust",
         "target": RUST_TARGET,
     }.items()):
         fail("invalid Rust TUI build identity")
-    if not isinstance(metadata.get("minimumGlibc"), str) or re.fullmatch(
-            r"[0-9]+\.[0-9]+", metadata["minimumGlibc"]) is None:
+    glibc = str_field(metadata, "minimumGlibc", "Rust TUI build")
+    if re.fullmatch(r"[0-9]+\.[0-9]+", glibc) is None:
         fail("invalid Rust TUI glibc requirement")
     libraries = metadata.get("neededLibraries")
     if not isinstance(libraries, list) or not libraries or any(
