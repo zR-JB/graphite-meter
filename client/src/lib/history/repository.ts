@@ -57,7 +57,6 @@ function open(): Promise<IDBDatabase> {
       clearTimeout(timer);
       reject(error);
     };
-    // No IndexedDB event is awaited without a bound: a request that never settles is refused.
     let timer = setTimeout(
       () => fail(new Error("History storage did not open in time.")),
       OPEN_MS,
@@ -104,10 +103,9 @@ export class HistoryRepository {
   #db: Promise<IDBDatabase> | null = null;
 
   #transaction(mode: IDBTransactionMode) {
-    // Another version is refused, never upgraded; the next request retries a refused or closed connection.
+    // Another version is refused, never upgraded; a hidden page lets go so it never blocks another tab.
     const opened: Promise<IDBDatabase> = (this.#db ??= open().then(
       (db) => {
-        // A page leaving for the back/forward cache must not hold History against another tab.
         const drop = () => {
           db.close();
           globalThis.removeEventListener?.("pagehide", drop);
