@@ -9,7 +9,7 @@ rust-version = "1.98.1"
 license = "AGPL-3.0-or-later"
 
 [workspace.dependencies]
-h3-noq = { git = "https://github.com/zR-JB/h3", rev = "dc10d4813114da2c200c86322ed18753fa45055d" }
+h3-noq = { git = "https://github.com/zR-JB/h3", rev = "13c5a2698e9cdad89c900a85d9be3b4ebf2b6e55" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -21,5 +21,5 @@ codegen-units = 1
 strip = "symbols"
 
 [patch.crates-io]
-h3 = { git = "https://github.com/zR-JB/h3", rev = "dc10d4813114da2c200c86322ed18753fa45055d" }
+h3 = { git = "https://github.com/zR-JB/h3", rev = "13c5a2698e9cdad89c900a85d9be3b4ebf2b6e55" }
 noq = { git = "https://github.com/zR-JB/noq", rev = "ae24107f60ae728db7d057301d968eca607a4967" }

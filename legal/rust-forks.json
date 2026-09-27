@@ -2,11 +2,11 @@
   {
     "fork": "https://github.com/zR-JB/h3",
     "branch": "graphite-meter/h3-v0.0.8",
-    "rev": "dc10d4813114da2c200c86322ed18753fa45055d",
+    "rev": "13c5a2698e9cdad89c900a85d9be3b4ebf2b6e55",
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
-    "diffSha256": "9bc6a6c9f09e6031afae4f40c663956d6a0438d7cd38ee00a4e5198be5621fc2",
+    "diffSha256": "f551facd115a791c5958824815ee89078b8188d8d01e433554038c36e425681c",
     "modifiedPackages": [
       "h3",
       "h3-noq"
@@ -58,6 +58,10 @@
       },
       {
         "subject": "Own and coalesce retained receive buffers",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Test pending receive ownership in the adapter",
         "origin": "graphite-meter"
       }
     ],
