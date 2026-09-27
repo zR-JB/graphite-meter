@@ -44,15 +44,24 @@ function done(transaction: IDBTransaction): Promise<void> {
   });
 }
 
+const BLOCKED_MS = 1_000;
+
 function open(): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined")
     return Promise.reject(new Error("IndexedDB unavailable"));
   return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+    const fail = (error: Error) => {
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    };
     const opening = indexedDB.open(HISTORY_DB.name, HISTORY_DB.version);
     opening.onupgradeneeded = (event) => {
       if (event.oldVersion !== 0) {
         opening.transaction!.abort();
-        return reject(
+        return fail(
           new Error(
             "Unsupported history database version. Saved data has not been changed.",
           ),
@@ -69,12 +78,19 @@ function open(): Promise<IDBDatabase> {
       });
     };
     opening.onsuccess = () => {
-      opening.result.onversionchange = () => opening.result.close();
+      clearTimeout(timer);
+      if (settled) return opening.result.close();
+      settled = true;
       resolve(opening.result);
     };
     opening.onerror = () =>
-      reject(opening.error ?? new Error("IndexedDB open failed"));
-    opening.onblocked = () => reject(new Error("IndexedDB open blocked"));
+      fail(opening.error ?? new Error("IndexedDB open failed"));
+    opening.onblocked = () => {
+      timer ??= setTimeout(
+        () => fail(new Error("History is open elsewhere in another version.")),
+        BLOCKED_MS,
+      );
+    };
   });
 }
 
@@ -82,12 +98,21 @@ export class HistoryRepository {
   #db: Promise<IDBDatabase> | null = null;
 
   #transaction(mode: IDBTransactionMode) {
-    // A refused open is retried by the next request.
-    this.#db ??= open().catch((error) => {
-      this.#db = null;
-      throw error;
-    });
-    return this.#db.then((db) =>
+    // Another version is refused, never upgraded; the next request retries a refused or closed connection.
+    const opened: Promise<IDBDatabase> = (this.#db ??= open().then(
+      (db) => {
+        db.onversionchange = db.onclose = () => {
+          db.close();
+          if (this.#db === opened) this.#db = null;
+        };
+        return db;
+      },
+      (error) => {
+        if (this.#db === opened) this.#db = null;
+        throw error;
+      },
+    ));
+    return opened.then((db) =>
       db.transaction([HISTORY_DB.resultsStore, HISTORY_DB.metadataStore], mode),
     );
   }

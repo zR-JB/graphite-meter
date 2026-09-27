@@ -269,6 +269,53 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
   );
 });
 
+test("History never waits on another version's connection and never changes its database", async (page) => {
+  const refusal = page.getByRole("heading", { name: "History is unavailable" });
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await history(page);
+  await expect(page.locator(".result-row")).toHaveCount(1);
+  // A newer build's upgrade gets the database at once, and History then refuses it.
+  const upgrade = await page.evaluate(
+    (db) =>
+      new Promise<string>((resolve) => {
+        const opening = indexedDB.open(db.name, db.version + 1);
+        opening.onblocked = () => resolve("blocked");
+        opening.onsuccess = () => {
+          opening.result.close();
+          resolve("upgraded");
+        };
+      }),
+    HISTORY_DB,
+  );
+  expect(upgrade).toBe("upgraded");
+  await page.evaluate(() =>
+    new BroadcastChannel("graphite-meter-history").postMessage(""),
+  );
+  await expect(refusal).toBeVisible();
+
+  // An older build that keeps its connection open is refused within a moment, and never upgraded.
+  await fixturePage(page);
+  await seed(page, { records: [{ id: "preserved" }], version: 1 });
+  const before = await stored(page);
+  await page.goto(home.url);
+  await page.evaluate(
+    (db) =>
+      new Promise<void>((resolve) => {
+        const opening = indexedDB.open(db.name);
+        opening.onsuccess = () => {
+          (window as any).older = opening.result;
+          resolve();
+        };
+      }),
+    HISTORY_DB,
+  );
+  await page.evaluate(() => (location.hash = "#/history"));
+  await expect(refusal).toBeVisible();
+  await page.evaluate(() => (window as any).older.close());
+  expect(await stored(page)).toEqual(before);
+});
+
 test("History refuses other database versions without changing them", async (page) => {
   for (const version of [1, HISTORY_DB.version + 1]) {
     await fixturePage(page);
