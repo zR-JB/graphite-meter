@@ -1,4 +1,4 @@
-//! HTTP/3 frames (RFC 9114 §7.2), read incrementally from arbitrary chunks.
+//! HTTP/3 frames and stream types (RFC 9114 §6.2, §7.2), read incrementally from arbitrary chunks.
 use crate::varint;
 use bytes::{Buf, BufMut, Bytes};
 
@@ -9,6 +9,14 @@ pub(crate) const SETTINGS: u64 = 0x04;
 pub(crate) const PUSH_PROMISE: u64 = 0x05;
 pub(crate) const GOAWAY: u64 = 0x07;
 pub(crate) const MAX_PUSH_ID: u64 = 0x0d;
+/// Opens a peer-initiated WebTransport bidirectional stream in place of a frame type.
+pub(crate) const WEBTRANSPORT_BIDI: u64 = 0x41;
+
+pub(crate) const CONTROL_STREAM: u64 = 0x00;
+pub(crate) const PUSH_STREAM: u64 = 0x01;
+pub(crate) const ENCODER_STREAM: u64 = 0x02;
+pub(crate) const DECODER_STREAM: u64 = 0x03;
+pub(crate) const WEBTRANSPORT_STREAM: u64 = 0x54;
 
 /// Frame types reserved for their HTTP/2 meaning; receipt is H3_FRAME_UNEXPECTED.
 pub(crate) fn is_http2(kind: u64) -> bool {
@@ -70,6 +78,26 @@ impl Pair {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.first.is_none() && self.varint.is_empty()
+    }
+}
+
+/// A unidirectional stream's type, followed by a session ID on WebTransport streams.
+#[derive(Default)]
+pub(crate) struct StreamType {
+    kind: Option<u64>,
+    varint: Varint,
+}
+
+impl StreamType {
+    pub(crate) fn read(&mut self, input: &mut impl Buf) -> Option<(u64, Option<u64>)> {
+        let kind = match self.kind {
+            Some(kind) => kind,
+            None => *self.kind.insert(self.varint.read(input)?),
+        };
+        if kind != WEBTRANSPORT_STREAM {
+            return Some((kind, None));
+        }
+        Some((kind, Some(self.varint.read(input)?)))
     }
 }
 

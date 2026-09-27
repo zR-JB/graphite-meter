@@ -1,5 +1,5 @@
 //! Fuzz target bodies; `cargo test` replays every committed corpus input through them.
-use crate::{fields, frame, qpack, settings};
+use crate::{capsule, fields, frame, qpack, settings};
 use bytes::Bytes;
 
 /// Frames read in arbitrary chunks equal the frames read in one piece.
@@ -97,6 +97,48 @@ pub fn huffman(data: &[u8]) {
     }
 }
 
+/// Capsules read in arbitrary chunks equal those read in one piece, errors included.
+pub fn capsules(data: &[u8]) {
+    let Some((&seed, data)) = data.split_first() else {
+        return;
+    };
+    let read = |chunk: &dyn Fn(usize) -> usize| {
+        let mut reader = capsule::Reader::default();
+        let mut capsules = Vec::new();
+        for mut input in chunks(data, chunk) {
+            while let Some(capsule) = reader.read(&mut input)? {
+                capsules.push(capsule);
+            }
+        }
+        Ok::<_, crate::Code>((capsules, reader.at_boundary()))
+    };
+    assert_eq!(
+        read(&|_| data.len()),
+        read(&|index| (index * usize::from(seed)) % 13 + 1)
+    );
+}
+
+/// A stream's type and session read byte by byte match one read, and datagrams route to CONNECT stream IDs.
+pub fn webtransport_ids(data: &[u8]) {
+    let read = |chunk: &dyn Fn(usize) -> usize| {
+        let mut header = frame::StreamType::default();
+        let mut consumed = 0;
+        for mut input in chunks(data, chunk) {
+            let before = input.len();
+            let result = header.read(&mut input);
+            consumed += before - input.len();
+            if result.is_some() {
+                return (result, consumed);
+            }
+        }
+        (None, consumed)
+    };
+    assert_eq!(read(&|_| data.len()), read(&|_| 1));
+    if let Ok((session, payload)) = capsule::datagram(Bytes::copy_from_slice(data)) {
+        assert!(session.is_multiple_of(4) && session < 1 << 62 && payload.len() < data.len());
+    }
+}
+
 /// Splits `data` into chunks whose lengths `chunk` picks by index; each at least one byte.
 fn chunks<'a>(data: &'a [u8], chunk: &'a dyn Fn(usize) -> usize) -> impl Iterator<Item = Bytes> + 'a {
     let mut rest = Bytes::copy_from_slice(data);
@@ -113,6 +155,8 @@ mod tests {
         replay("settings", super::settings);
         replay("qpack", super::qpack);
         replay("huffman", super::huffman);
+        replay("capsule", super::capsules);
+        replay("webtransport_ids", super::webtransport_ids);
     }
 
     fn replay(target: &str, body: fn(&[u8])) {

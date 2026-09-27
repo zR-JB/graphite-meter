@@ -38,4 +38,18 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "capsule"
+path = "fuzz_targets/capsule.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "webtransport_ids"
+path = "fuzz_targets/webtransport_ids.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
