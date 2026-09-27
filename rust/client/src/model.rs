@@ -83,10 +83,10 @@ impl StageResult {
         (!self.stage.downloads() || self.down_bps().is_some())
             && (!self.stage.uploads() || self.up_bps().is_some())
             && (self.stage != Stage::Latency
-                || self.server_latencies.iter().any(|host| {
-                    host.summary.distribution.is_some()
-                        && (host.error.is_none() || host.summary.count + host.summary.timeouts >= 3)
-                }))
+                || self
+                    .server_latencies
+                    .iter()
+                    .any(|host| host.median().is_some()))
     }
 }
 

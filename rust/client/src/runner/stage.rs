@@ -1111,7 +1111,10 @@ pub(super) async fn measure(
                             .get(&host.id)
                             .map(|host| host.accumulator.snapshot())
                             .unwrap_or_default(),
-                        error: host.error.clone(),
+                        error: host
+                            .error
+                            .clone()
+                            .or_else(|| cancel.borrow().then(|| "Stopped".into())),
                     })
                     .collect(),
                 server_results,
