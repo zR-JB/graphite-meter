@@ -34,11 +34,24 @@
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
+  // Who is in the run: the servers still measuring, counted like the result row.
+  const participants = $derived(
+    store.serverDetails
+      ? indicatedServers.filter(({ id }) =>
+          store.serverDetails!.participants.includes(id),
+        )
+      : indicatedServers,
+  );
+  const serverCount = $derived(
+    participants.length < indicatedServers.length
+      ? `${participants.length} of ${indicatedServers.length} servers`
+      : `${indicatedServers.length} servers`,
+  );
   const serverIndicator = $derived(
     store.isRunning
-      ? `Testing ${indicatedServers.length} servers`
+      ? `Testing ${serverCount}`
       : store.result
-        ? `Tested ${indicatedServers.length} servers`
+        ? `Tested ${serverCount}`
         : `${indicatedServers.length} servers selected`,
   );
   const phase = $derived(store.phase);
@@ -225,7 +238,7 @@
           <Icon name="server" />
           <span
             {@attach tooltip(() =>
-              indicatedServers.map((server) => server.name).join(", "),
+              participants.map((server) => server.name).join(", "),
             )}>{serverIndicator}</span
           >
         </div>
