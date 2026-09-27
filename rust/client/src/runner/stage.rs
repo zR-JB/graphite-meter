@@ -134,12 +134,12 @@ fn latency_task_result(
 }
 
 impl Transfer {
-    async fn close(self) -> Result<(), Error> {
+    async fn close(self, confirm: bool) -> Result<(), Error> {
         if let Some(down) = self.down {
             down.stop().await;
         }
         if let Some(up) = self.up {
-            up.finish().await?;
+            up.finish(confirm).await?;
         }
         Ok(())
     }
@@ -183,16 +183,19 @@ impl StageResources {
         }
     }
 
-    async fn close(mut self) -> Result<(), Error> {
+    async fn close_transfers(&mut self, confirm: bool) -> Result<(), Error> {
         self.stop.send_replace(true);
+        let finalizers = self
+            .transfers
+            .drain(..)
+            .map(|transfer| transfer.close(confirm));
+        let results = futures_util::future::join_all(finalizers).await;
+        results.into_iter().find(Result::is_err).unwrap_or(Ok(()))
+    }
+
+    async fn close(mut self) -> Result<(), Error> {
         self.stop_all_latency();
-        let mut failure = None;
-        let finalizers = self.transfers.drain(..).map(Transfer::close);
-        for result in futures_util::future::join_all(finalizers).await {
-            if let Err(error) = result {
-                failure.get_or_insert(error);
-            }
-        }
+        let mut failure = self.close_transfers(true).await.err();
         while let Some(result) = self.latency.join_next().await {
             if let Err(error) = self.latency_result(result) {
                 failure.get_or_insert(error);
@@ -350,7 +353,7 @@ impl StageResources {
             }
         });
         self.failed.push(failure.id.clone());
-        self.retired.spawn(transfer.close());
+        self.retired.spawn(transfer.close(false));
         if self.transfers.is_empty() {
             return Err(AllParticipantsFailed(*failure).into());
         }
@@ -576,7 +579,7 @@ async fn start_transfer(
     };
     // A bidirectional peer may have a live download when upload setup fails.
     // This also runs when setup times out after the download became ready.
-    let _ = transfer.close().await;
+    let _ = transfer.close(false).await;
     Err(error)
 }
 
@@ -1037,6 +1040,9 @@ pub(super) async fn measure(
         // Preserve received bytes even when cancellation prevents a final remote
         // checkpoint. Missing receiver windows remain explicitly incomplete.
         accounting.observe(resources.local_boundary(epoch));
+    }
+    if *cancel.borrow() {
+        let _ = resources.close_transfers(false).await;
     }
     resources.stop_all_latency();
     let mut result = result;

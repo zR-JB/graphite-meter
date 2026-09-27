@@ -105,7 +105,7 @@ async fn download_peer_with_gate(
                         }
                         if request.starts_with(b"GET /upload/progress") {
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
-                            while !finalized.load(Ordering::SeqCst) && stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
+                            while (matches!(flag.load(Ordering::SeqCst), 9 | 10) || !finalized.load(Ordering::SeqCst)) && stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             let _ = stream.write_all(b"{\"type\":\"complete\",\"bytes\":1,\"nanos\":1}\n").await;
@@ -113,6 +113,7 @@ async fn download_peer_with_gate(
                         }
                         if request.starts_with(b"DELETE /upload/progress") {
                             finalized.store(true, Ordering::SeqCst);
+                            let _ = flag.compare_exchange(9, 10, Ordering::SeqCst, Ordering::SeqCst);
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
@@ -924,5 +925,41 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         .collect();
     assert_eq!(departed.len(), 1);
     assert_ne!(departed[0].id, download.server_results[0].id);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_sends_the_upload_delete_without_awaiting_complete() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    mode.store(9, Ordering::SeqCst);
+    let http = Http::new(true)?;
+    let servers = vec![prepared_download("peer", &origin, &http).await?];
+    let config = Config {
+        warmup: Duration::from_secs(2),
+        upload_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (stop, cancelled) = watch::channel(false);
+    let request_stop = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Warmup)
+            .await
+            .unwrap();
+        stop.send_replace(true);
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(
+            measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+            request_stop
+        )
+    })
+    .await?;
+    peer.abort();
+    result?;
+    assert_eq!(mode.load(Ordering::SeqCst), 10);
     Ok(())
 }

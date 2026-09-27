@@ -58,8 +58,8 @@ impl std::error::Error for SharedFailure {
     }
 }
 
-/// Drop cancels every owned task. Call finish() to drain tasks and explicitly
-/// finish the remote aggregate; cancelled finish/drop relies on server expiry.
+/// Drop cancels every owned task. finish(true) also awaits the aggregate's
+/// `complete`; finish(false) only sends its DELETE. Drop relies on server expiry.
 pub struct Upload {
     transport: Arc<Transport>,
     control: Arc<Transport>,
@@ -245,7 +245,7 @@ impl Upload {
                     Err(error) => error.into(),
                     _ => unreachable!(),
                 };
-                let _ = owner.finish().await;
+                let _ = owner.finish(false).await;
                 Err(error)
             }
         }
@@ -334,8 +334,13 @@ impl Upload {
             });
         }
     }
-    pub async fn finish(mut self) -> Result<Option<ReceiverProgress>, Error> {
-        let result = tokio::time::timeout(CONTROL_TIMEOUT, async {
+    pub async fn finish(mut self, confirm: bool) -> Result<Option<ReceiverProgress>, Error> {
+        let bound = if confirm {
+            CONTROL_TIMEOUT
+        } else {
+            Duration::from_secs(1)
+        };
+        let result = tokio::time::timeout(bound, async {
             let _ = self.stop_lanes.send(true);
             while let Some(result) = self.lanes.join_next().await {
                 result?;
@@ -356,7 +361,7 @@ impl Upload {
                 if let Some(error) = state.error {
                     return Err::<_, Error>(SharedFailure(error).into());
                 }
-                if state.complete {
+                if state.complete || !confirm {
                     return Ok(state.latest);
                 }
                 self.state
