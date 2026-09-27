@@ -76,11 +76,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "563241e95a5ba69315398cea063f100c7b476d2d",
+    "rev": "3c974e6085de28009e76f5ee8694fc888cb51f8d",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "cca6fefcca59cfcfd3afa4d8f81ee79e8f941e1832ba9a43b97a38100f5914c9",
+    "diffSha256": "48d5d37bd57377102fd0b419102179480b80cb9c23267e70068c8b003127aa7e",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -188,6 +188,10 @@
       },
       {
         "subject": "Retain normalized close reason backing",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound stream state through final acknowledgment",
         "origin": "graphite-meter"
       }
     ],

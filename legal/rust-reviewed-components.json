@@ -2945,7 +2945,7 @@
     "ecosystem": "cargo",
     "name": "noq",
     "reviewedVersion": "1.3.0",
-    "upstream": "git+https://github.com/zR-JB/noq?rev=563241e95a5ba69315398cea063f100c7b476d2d#563241e95a5ba69315398cea063f100c7b476d2d",
+    "upstream": "git+https://github.com/zR-JB/noq?rev=3c974e6085de28009e76f5ee8694fc888cb51f8d#3c974e6085de28009e76f5ee8694fc888cb51f8d",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
@@ -2968,7 +2968,7 @@
     "ecosystem": "cargo",
     "name": "noq-proto",
     "reviewedVersion": "1.3.0",
-    "upstream": "git+https://github.com/zR-JB/noq?rev=563241e95a5ba69315398cea063f100c7b476d2d#563241e95a5ba69315398cea063f100c7b476d2d",
+    "upstream": "git+https://github.com/zR-JB/noq?rev=3c974e6085de28009e76f5ee8694fc888cb51f8d#3c974e6085de28009e76f5ee8694fc888cb51f8d",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
@@ -2991,7 +2991,7 @@
     "ecosystem": "cargo",
     "name": "noq-udp",
     "reviewedVersion": "1.3.0",
-    "upstream": "git+https://github.com/zR-JB/noq?rev=563241e95a5ba69315398cea063f100c7b476d2d#563241e95a5ba69315398cea063f100c7b476d2d",
+    "upstream": "git+https://github.com/zR-JB/noq?rev=3c974e6085de28009e76f5ee8694fc888cb51f8d#3c974e6085de28009e76f5ee8694fc888cb51f8d",
     "declaredLicenseExpression": "MIT OR Apache-2.0",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
