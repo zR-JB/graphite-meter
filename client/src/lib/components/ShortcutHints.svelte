@@ -8,22 +8,25 @@
   );
 </script>
 
-<div class="command-hints" role="group" aria-label="Keyboard shortcuts">
-  <span
-    ><kbd>Space</kbd><span class="stack">
-      {#each Object.values(RUN_ACTION) as label (label)}
-        <span class:current={label === primary} aria-hidden={label !== primary}
-          >{label}</span
-        >
-      {/each}
-    </span></span
-  >
-  <span><kbd>S</kbd>Settings</span>
-  <span><kbd>D</kbd>Details</span>
-  {#if store.savingResults}
-    <span><kbd>H</kbd>History</span>
-  {/if}
-</div>
+{#if store.keyShortcuts}
+  <div class="command-hints" role="group" aria-label="Keyboard shortcuts">
+    <span
+      ><kbd>Space</kbd><span class="stack">
+        {#each Object.values(RUN_ACTION) as label (label)}
+          <span
+            class:current={label === primary}
+            aria-hidden={label !== primary}>{label}</span
+          >
+        {/each}
+      </span></span
+    >
+    <span><kbd>S</kbd>Settings</span>
+    <span><kbd>D</kbd>Details</span>
+    {#if store.savingResults}
+      <span><kbd>H</kbd>History</span>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .command-hints {
