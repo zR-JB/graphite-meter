@@ -905,6 +905,7 @@
     padding-inline: 0;
   }
   li {
+    gap: 0;
     padding-block: 0;
   }
   .result-row {

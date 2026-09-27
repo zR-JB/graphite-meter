@@ -594,7 +594,11 @@ const axeSource = resolve(
 function settled() {
   const finite = document
     .getAnimations()
-    .filter((a) => a.effect?.getComputedTiming().iterations !== Infinity);
+    .filter(
+      (a) =>
+        a.timeline === document.timeline &&
+        a.effect?.getComputedTiming().iterations !== Infinity,
+    );
   return Promise.allSettled(finite.map((animation) => animation.finished));
 }
 
