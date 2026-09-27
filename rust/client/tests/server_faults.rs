@@ -117,6 +117,10 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
                                     if reset {
                                         data.reset(code);
                                         if let Ok(reset) = cleanup.try_recv() { reset.complete().await?; }
+                                        loop {
+                                            tokio::time::sleep(Duration::from_millis(200)).await;
+                                            queue.open(&quic, stream.send_id().into_inner(), code).await?.reset(code);
+                                        }
                                     }
                                     std::future::pending::<()>().await;
                                 } else {
@@ -181,7 +185,7 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
     assert_eq!(measured, 8, "{peer:?} counted framing as payload");
     let started = Instant::now();
     fault.send(true)?;
-    let retries_end_lane = reset && !matches!(peer, Peer::WebTransport);
+    let retries_end_lane = reset;
     let ended = tokio::time::timeout(Duration::from_millis(3500), async {
         loop {
             if let Err(error) = download.health() {
@@ -201,7 +205,8 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
                 Peer::H2 => error.is::<hyper::Error>(),
                 Peer::H3 => matches!(error.downcast_ref::<h3::error::StreamError>(),
                     Some(h3::error::StreamError::RemoteTerminate { code }) if *code == h3::error::Code::H3_REQUEST_CANCELLED),
-                Peer::WebTransport => false,
+                Peer::WebTransport => matches!(error.downcast_ref::<h3::quic::StreamErrorIncoming>(),
+                    Some(h3::quic::StreamErrorIncoming::StreamTerminated { error_code }) if *error_code == 0x52e4a40fa8db),
             };
             assert!(cause, "{peer:?}: {error:?}");
         }
