@@ -63,7 +63,7 @@ pub(crate) enum Kind {
 }
 
 /// The caller must validate this selected origin against its catalogue/preflight.
-/// Backpressure is a measurement error, never silently dropped observations.
+/// A probe is skipped while the observation queue lacks room for its outcome, so none is dropped.
 pub(crate) async fn run_kind(
     http: &Http,
     origin: &str,
@@ -86,7 +86,10 @@ pub(crate) async fn run_kind(
     // One estimate per stage, as in Go: a redial must not restart at the 250 ms floor.
     let mut estimator = DeadlineEstimator::default();
     loop {
-        emit(&observations, Observation::ConnectionBoundary)?;
+        observations
+            .send(Observation::ConnectionBoundary)
+            .await
+            .map_err(|_| "latency observation consumer closed")?;
         let result = measure(
             socket,
             interval,
@@ -457,11 +460,11 @@ async fn measure(
                 late.retain(|_, sent| now.duration_since(*sent).as_nanos() <= u128::from(DeadlineEstimator::CEIL_NANOS));
                 if let Some(error) = failure { break Err(error); }
             }
-            () = tokio::time::sleep_until(next_send), if sending && next_send < end => {
+            () = due(next_send), if sending && next_send < end => {
                 let sent = Instant::now();
                 let timeout = Duration::from_nanos(estimator.deadline_nanos());
                 next_send = sent + if interval.is_zero() { timeout } else { interval };
-                if pending.len() >= window { continue; }
+                if pending.len() >= window || observations.capacity() <= pending.len() { continue; }
                 let id = next_id;
                 let Some(next) = next_id.checked_add(1) else { break Err("latency probe identifier exhausted".into()); };
                 next_id = next;
@@ -521,6 +524,13 @@ async fn measure(
     }
     writer.close(reader).await;
     result
+}
+
+/// Ready at once when `at` has passed: tokio rounds every wait up to the next millisecond.
+async fn due(at: Instant) {
+    if at > Instant::now() {
+        tokio::time::sleep_until(at).await;
+    }
 }
 
 fn emit(observations: &mpsc::Sender<Observation>, observation: Observation) -> Result<(), Error> {
@@ -613,7 +623,9 @@ mod tests {
     ) {
         while let Some(Ok(Message::Text(text))) = socket.next().await {
             let id = wire::decode_ping(&text).unwrap();
-            tokio::time::sleep(delay).await;
+            if !delay.is_zero() {
+                tokio::time::sleep(delay).await;
+            }
             if socket
                 .send(Message::Text(wire::encode_pong(id, 0).into()))
                 .await
@@ -677,6 +689,45 @@ mod tests {
             );
             peer.abort();
         }
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn reply_driven_probes_follow_replies_until_the_queue_is_full() -> Result<(), Error> {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (client, server) = tokio::io::duplex(4096);
+        let socket = Socket::from_raw_socket(Box::new(client), Role::Client, None).await;
+        let peer = tokio::spawn(async move {
+            echo(
+                tokio_tungstenite::WebSocketStream::from_raw_socket(server, Role::Server, None).await,
+                Duration::ZERO,
+            )
+            .await;
+        });
+        let (observations, mut receiver) = mpsc::channel(64);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        // Off a millisecond boundary, where tokio's timer rounds a wait up.
+        tokio::time::advance(Duration::from_micros(500)).await;
+        let started = Instant::now();
+        let end = started + Duration::from_millis(10);
+        let bus = Bus::WebSocket(Box::new(socket));
+        measure(
+            bus,
+            Duration::ZERO,
+            4,
+            end,
+            &mut DeadlineEstimator::default(),
+            &observations,
+            &mut cancel,
+        )
+        .await?;
+        let mut samples = 0;
+        while let Ok(Observation::Sample { sent, .. }) = receiver.try_recv() {
+            assert_eq!(sent, started, "a probe waited for a timer");
+            samples += 1;
+        }
+        assert_eq!(samples, 64);
+        peer.abort();
         Ok(())
     }
 
