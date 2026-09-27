@@ -286,18 +286,24 @@ impl Snapshot {
         Some((median(loaded)? as f64 - median(idle)? as f64) / 1e6)
     }
 
-    pub fn failure(&mut self, id: &str, scope: FailureScope, error: &crate::Error) {
-        let Some(stage) = self.stage else { return };
+    pub fn failure(
+        &mut self,
+        id: &str,
+        scope: FailureScope,
+        error: &crate::Error,
+    ) -> Option<graphite_meter_core::failure::FailureReason> {
+        let stage = self.stage?;
         if self.failures.iter().any(|failure| {
             failure.server_id == id && failure.stage == stage && failure.scope == scope
         }) {
-            return;
+            return None;
         }
+        let reason = crate::failure::reason(error.as_ref(), self.phase != Phase::Measuring);
         self.failures.push(ServerFailure {
             server_id: id.into(),
             stage,
             scope,
-            reason: crate::failure::reason(error.as_ref(), self.phase != Phase::Measuring),
+            reason,
             message: error.to_string(),
             at: self
                 .results
@@ -306,6 +312,7 @@ impl Snapshot {
                 .sum::<Duration>()
                 + self.latest.elapsed,
         });
+        Some(reason)
     }
 
     pub fn sample(&mut self, mut point: Point) {

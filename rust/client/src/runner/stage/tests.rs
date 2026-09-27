@@ -860,3 +860,69 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
     peer.abort();
     Ok(())
 }
+
+#[tokio::test]
+async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (near, near_mode, near_peer) = download_peer().await?;
+    let (far, far_mode, far_peer) = download_peer().await?;
+    near_mode.store(6, Ordering::SeqCst);
+    far_mode.store(6, Ordering::SeqCst);
+    let http = Http::new(true)?;
+    let mut servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    for server in &mut servers {
+        server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+            base_url: server.entry.url.clone(),
+            transport: LatencyTransport::WebSocket,
+        });
+    }
+    let config = Config {
+        url: near,
+        servers: vec!["near".into(), "far".into()],
+        stages: vec![Stage::Latency, Stage::Download],
+        warmup: Duration::ZERO,
+        latency_duration: Duration::from_secs(1),
+        download_duration: Duration::from_secs(1),
+        streams: 1,
+        loaded_latency: false,
+        insecure: true,
+        ..Config::default()
+    };
+    let prepared = super::super::PreparedRun {
+        servers,
+        key: config.preparation_key(),
+        verified_at: Instant::now(),
+    };
+    let (snapshots, _) = watch::channel(Snapshot {
+        servers: ["near", "far"]
+            .map(|id| ServerSummary {
+                id: id.into(),
+                ..ServerSummary::default()
+            })
+            .into(),
+        ..Snapshot::default()
+    });
+    let (_stop, cancelled) = watch::channel(false);
+    super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    near_peer.abort();
+    far_peer.abort();
+    let snapshot = snapshots.borrow();
+    assert_eq!(snapshot.phase, Phase::Incomplete);
+    let [latency, download] = &snapshot.results[..] else {
+        panic!("expected latency and download results");
+    };
+    assert!(!latency.complete);
+    assert_eq!(download.server_results.len(), 1);
+    assert!(download.down_bytes() > 0);
+    let departed: Vec<_> = snapshot
+        .servers
+        .iter()
+        .filter(|server| server.error.is_some())
+        .collect();
+    assert_eq!(departed.len(), 1);
+    assert_ne!(departed[0].id, download.server_results[0].id);
+    Ok(())
+}

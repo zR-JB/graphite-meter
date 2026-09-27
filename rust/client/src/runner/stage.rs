@@ -238,9 +238,13 @@ impl StageResources {
         &mut self,
         failure: &LatencyFailure,
         snapshots: &watch::Sender<Snapshot>,
+        latency_stage: bool,
     ) {
+        use graphite_meter_core::failure::FailureReason;
         self.latency_failed = true;
         self.stop_host_latency(&failure.id);
+        let another_remains = latency_stage && self.transfers.len() > 1;
+        let mut leaves = false;
         snapshots.send_modify(|snapshot| {
             if let Some(latency) = snapshot
                 .server_latencies
@@ -250,32 +254,42 @@ impl StageResources {
                 latency.error = Some(failure.source.to_string());
                 latency.latest_ms = None;
             }
-            snapshot.failure(
+            let reason = snapshot.failure(
                 &failure.id,
                 crate::model::FailureScope::Latency,
                 &failure.source,
             );
+            leaves = another_remains
+                && matches!(
+                    reason,
+                    Some(FailureReason::ConnectionLost | FailureReason::Timeout)
+                );
+            if leaves
+                && let Some(server) = snapshot
+                    .servers
+                    .iter_mut()
+                    .find(|server| server.id == failure.id)
+            {
+                server.error = Some(failure.source.to_string());
+            }
             snapshot.status = format!("{failure}; other measurements continue");
         });
+        if leaves {
+            self.transfers.retain(|transfer| transfer.id != failure.id);
+            self.failed.push(failure.id.clone());
+        }
     }
 
     fn latency_completion(
         &mut self,
         completed: Result<LatencyCompletion, tokio::task::JoinError>,
         snapshots: &watch::Sender<Snapshot>,
-        latency_only: bool,
+        latency_stage: bool,
     ) -> Result<(), Error> {
         match self.latency_result(completed) {
             Err(error) if error.is::<LatencyFailure>() => {
                 let failure = error.downcast::<LatencyFailure>()?;
-                self.record_latency_failure(&failure, snapshots);
-                if latency_only && self.stop_latency.values().all(|stop| *stop.borrow()) {
-                    return Err(AllParticipantsFailed(ParticipantFailure {
-                        id: failure.id,
-                        source: failure.source,
-                    })
-                    .into());
-                }
+                self.record_latency_failure(&failure, snapshots, latency_stage);
                 Ok(())
             }
             result => result,
@@ -293,14 +307,7 @@ impl StageResources {
     ) -> Result<(), Error> {
         if error.is::<LatencyFailure>() {
             let failure = error.downcast::<LatencyFailure>()?;
-            self.record_latency_failure(&failure, snapshots);
-            if stage.is_none() && self.stop_latency.values().all(|stop| *stop.borrow()) {
-                return Err(AllParticipantsFailed(ParticipantFailure {
-                    id: failure.id,
-                    source: failure.source,
-                })
-                .into());
-            }
+            self.record_latency_failure(&failure, snapshots, stage.is_none());
             return Ok(());
         }
         let failure = error.downcast::<ParticipantFailure>()?;
@@ -796,6 +803,7 @@ pub(super) async fn measure(
                                 .into(),
                             },
                             snapshots,
+                            stage == Stage::Latency,
                         );
                     }
                 },
@@ -807,9 +815,6 @@ pub(super) async fn measure(
                 last_failure.expect("one preparation failure for each selected server"),
             )
             .into());
-        }
-        if stage == Stage::Latency && resources.stop_latency.values().all(|stop| *stop.borrow()) {
-            return Err("all selected latency sessions failed".into());
         }
         let warmup = servers
             .iter()
