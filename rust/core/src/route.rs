@@ -53,50 +53,35 @@ pub const ALL: [Route; 14] = [
 ];
 
 impl Route {
-    pub const fn path(self) -> &'static str {
+    const fn row(self) -> (&'static str, &'static str, Kind) {
         match self {
-            Self::Preflight => "/preflight",
-            Self::Probe => "/probe",
-            Self::Download => "/download",
-            Self::Upload => "/upload",
-            Self::UploadSession => "/upload/session",
-            Self::UploadProgress => "/upload/progress",
-            Self::WtSession => "/wt/session",
-            Self::WsSession => "/ws/session",
-            Self::Ping => "/ws/ping",
-            Self::WtDownload => "/wt/download",
-            Self::WtUpload => "/wt/upload",
-            Self::WtPing => "/wt/ping",
-            Self::Servers => "/servers",
-            Self::UploadCheckpoint => "/upload/checkpoint",
+            Self::Preflight => ("preflight", "/preflight", Kind::Http),
+            Self::Probe => ("probe", "/probe", Kind::Http),
+            Self::Download => ("download", "/download", Kind::Http),
+            Self::Upload => ("upload", "/upload", Kind::Http),
+            Self::UploadSession => ("uploadSession", "/upload/session", Kind::Http),
+            Self::UploadProgress => ("uploadProgress", "/upload/progress", Kind::Http),
+            Self::WtSession => ("wtSession", "/wt/session", Kind::Http),
+            Self::WsSession => ("wsSession", "/ws/session", Kind::Http),
+            Self::Ping => ("ping", "/ws/ping", Kind::WebSocket),
+            Self::WtDownload => ("wtDownload", "/wt/download", Kind::WebTransport),
+            Self::WtUpload => ("wtUpload", "/wt/upload", Kind::WebTransport),
+            Self::WtPing => ("wtPing", "/wt/ping", Kind::WebTransport),
+            Self::Servers => ("servers", "/servers", Kind::Http),
+            Self::UploadCheckpoint => ("uploadCheckpoint", "/upload/checkpoint", Kind::Http),
         }
     }
 
     pub const fn name(self) -> &'static str {
-        match self {
-            Self::Preflight => "preflight",
-            Self::Probe => "probe",
-            Self::Download => "download",
-            Self::Upload => "upload",
-            Self::UploadSession => "uploadSession",
-            Self::UploadProgress => "uploadProgress",
-            Self::WtSession => "wtSession",
-            Self::WsSession => "wsSession",
-            Self::Ping => "ping",
-            Self::WtDownload => "wtDownload",
-            Self::WtUpload => "wtUpload",
-            Self::WtPing => "wtPing",
-            Self::Servers => "servers",
-            Self::UploadCheckpoint => "uploadCheckpoint",
-        }
+        self.row().0
+    }
+
+    pub const fn path(self) -> &'static str {
+        self.row().1
     }
 
     pub const fn kind(self) -> Kind {
-        match self {
-            Self::Ping => Kind::WebSocket,
-            Self::WtDownload | Self::WtUpload | Self::WtPing => Kind::WebTransport,
-            _ => Kind::Http,
-        }
+        self.row().2
     }
 }
 
