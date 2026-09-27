@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { stubGlobals } from "./test-helpers.testutil";
 import { createUuid, isUuid } from "./uuid";
 
 test("UUID validation accepts supported versions and rejects malformed identities", () => {
@@ -20,6 +21,18 @@ test("UUID validation accepts supported versions and rejects malformed identitie
     expect(isUuid(value)).toBe(false);
 });
 
-test("generated identities satisfy the shared UUID authority", () => {
-  expect(isUuid(createUuid())).toBe(true);
+test("without crypto.randomUUID (plain-HTTP LAN) identities are v4 with RFC variant bits", () => {
+  let fill = 0;
+  const restore = stubGlobals({
+    crypto: {
+      getRandomValues: (bytes: Uint8Array) => bytes.fill(fill),
+    },
+  });
+  try {
+    expect(createUuid()).toBe("00000000-0000-4000-8000-000000000000");
+    fill = 0xff;
+    expect(createUuid()).toBe("ffffffff-ffff-4fff-bfff-ffffffffffff");
+  } finally {
+    restore();
+  }
 });
