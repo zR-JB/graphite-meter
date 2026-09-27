@@ -47,6 +47,34 @@ impl LatencySummary {
     }
 }
 
+/// Probe deadline SRTT + 4·max(RTTVAR, 1 ms) within 250 ms–10 s, learning from every
+/// matched reply, including ones that arrive after their deadline.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DeadlineEstimator {
+    srtt_rttvar: Option<(u64, u64)>,
+}
+
+impl DeadlineEstimator {
+    pub const FLOOR_NANOS: u64 = 250_000_000;
+    pub const CEIL_NANOS: u64 = 10_000_000_000;
+
+    pub fn deadline_nanos(self) -> u64 {
+        self.srtt_rttvar
+            .map_or(Self::FLOOR_NANOS, |(srtt, rttvar)| {
+                srtt.saturating_add(4 * rttvar.max(1_000_000))
+                    .clamp(Self::FLOOR_NANOS, Self::CEIL_NANOS)
+            })
+    }
+
+    pub fn observe(&mut self, rtt_nanos: u64) {
+        let rtt = rtt_nanos.min(Self::CEIL_NANOS);
+        self.srtt_rttvar = Some(match self.srtt_rttvar {
+            None => (rtt, rtt / 2),
+            Some((srtt, rttvar)) => ((7 * srtt + rtt) / 8, (3 * rttvar + srtt.abs_diff(rtt)) / 4),
+        });
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct LatencyAccumulator {
     rtts: std::cell::RefCell<Vec<u64>>,

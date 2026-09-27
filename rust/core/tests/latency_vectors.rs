@@ -1,4 +1,4 @@
-use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome};
+use graphite_meter_core::latency::{DeadlineEstimator, LatencyAccumulator, ProbeOutcome};
 use serde_json::Value;
 
 fn close(actual: Option<f64>, expected: &Value) -> bool {
@@ -30,6 +30,24 @@ fn latency_vectors() {
                 rtt_nanos: rtt,
                 handling_nanos: 0,
             });
+        }
+        if let Some(expected) = c["deadlineMs"].as_array() {
+            let mut estimator = DeadlineEstimator::default();
+            let mut deadlines = vec![estimator.deadline_nanos() as f64 / 1e6];
+            for o in c["outcomes"].as_array().unwrap() {
+                if let Some(rtt) = o["rttMs"].as_f64() {
+                    estimator.observe((rtt * 1e6) as u64);
+                    deadlines.push(estimator.deadline_nanos() as f64 / 1e6);
+                }
+            }
+            let expected: Vec<f64> = expected.iter().map(|d| d.as_f64().unwrap()).collect();
+            if deadlines != expected {
+                failures += 1;
+                println!(
+                    "FAIL deadlines: {} -> got {deadlines:?}; want {expected:?}",
+                    c["name"]
+                );
+            }
         }
         let s = acc.snapshot();
         let e = &c["expect"];

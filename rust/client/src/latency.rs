@@ -4,7 +4,7 @@ use crate::{Error, net::Http};
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport},
-    latency::ProbeOutcome,
+    latency::{DeadlineEstimator, ProbeOutcome},
     origin::canonical_origin,
     wire,
 };
@@ -445,11 +445,11 @@ async fn measure(
 ) -> Result<(), Error> {
     let (mut writer, mut reader) = socket.split();
     let mut pending = BTreeMap::<u32, (Instant, Instant)>::new();
+    let mut late = BTreeMap::<u32, Instant>::new();
     let mut next_id = 0_u32;
     let mut next_send = Instant::now();
     let mut sending = true;
-    let mut srtt: Option<f64> = None;
-    let mut variation = 0.0_f64;
+    let mut estimator = DeadlineEstimator::default();
     let mut expiry = tokio::time::interval(Duration::from_millis(50));
     let result = loop {
         if (!sending || Instant::now() >= end) && pending.is_empty() {
@@ -463,18 +463,20 @@ async fn measure(
             _ = expiry.tick() => {
                 let now = Instant::now();
                 let mut failure = None;
-                pending.retain(|_, (sent, deadline)| {
+                pending.retain(|&id, (sent, deadline)| {
                     if now < *deadline { return true; }
+                    late.insert(id, *sent);
                     if let Err(error) = emit(observations, Observation::Lost { sent: *sent, outcome: ProbeOutcome::Timeout }) {
                         failure = Some(error);
                     }
                     false
                 });
+                late.retain(|_, sent| now.duration_since(*sent).as_nanos() <= u128::from(DeadlineEstimator::CEIL_NANOS));
                 if let Some(error) = failure { break Err(error); }
             }
             () = tokio::time::sleep_until(next_send), if sending && next_send < end => {
                 let sent = Instant::now();
-                let timeout = Duration::from_secs_f64(srtt.map_or(0.25, |mean| mean + 4.0 * variation.max(0.001)).clamp(0.25, 10.0));
+                let timeout = Duration::from_nanos(estimator.deadline_nanos());
                 next_send = sent + if interval.is_zero() { timeout } else { interval };
                 if pending.len() >= window { continue; }
                 let id = next_id;
@@ -492,16 +494,16 @@ async fn measure(
                 match message {
                     Some(Ok(Message::Text(text))) => {
                         let Ok(pong) = wire::decode_pong(&text) else { continue };
+                        if let Some(sent) = late.remove(&pong.id) {
+                            estimator.observe(received.saturating_duration_since(sent).as_nanos() as u64);
+                            continue;
+                        }
                         let Some((sent, deadline)) = pending.remove(&pong.id) else { continue };
                         let rtt = received.saturating_duration_since(sent);
+                        estimator.observe(rtt.as_nanos() as u64);
                         let observation = if received >= deadline {
                             Observation::Lost { sent, outcome: ProbeOutcome::Timeout }
                         } else {
-                            let seconds = rtt.as_secs_f64();
-                            match srtt {
-                                Some(mean) => { variation = 0.75 * variation + 0.25 * (mean - seconds).abs(); srtt = Some(0.875 * mean + 0.125 * seconds); }
-                                None => { srtt = Some(seconds); variation = seconds / 2.0; }
-                            }
                             if interval.is_zero() { next_send = received; }
                             Observation::Sample { sent, received, rtt, server_handling: Duration::from_nanos(pong.handling_nanos) }
                         };
@@ -611,8 +613,13 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn stage_boundary_drains_replies_until_each_fixed_deadline() -> Result<(), Error> {
-        for delay in [150, 300] {
+    async fn deadlines_learn_from_late_replies_and_drain_at_the_stage_boundary() -> Result<(), Error>
+    {
+        for (delay, interval, duration, expected) in [
+            (150, 80, 100, (2, 0)),
+            (300, 80, 100, (0, 2)),
+            (400, 500, 1600, (3, 1)),
+        ] {
             let (client, server) = tokio::io::duplex(4096);
             let socket = Socket::from_raw_socket(
                 Box::new(client),
@@ -643,9 +650,9 @@ mod tests {
             let (_stop, mut cancelled) = watch::channel(false);
             measure(
                 Bus::WebSocket(Box::new(socket)),
-                Duration::from_millis(80),
+                Duration::from_millis(interval),
                 16,
-                Instant::now() + Duration::from_millis(100),
+                Instant::now() + Duration::from_millis(duration),
                 &observations,
                 &mut cancelled,
             )
@@ -662,10 +669,7 @@ mod tests {
                     _ => panic!("unexpected outcome"),
                 }
             }
-            assert_eq!(
-                (replies, timeouts),
-                if delay == 150 { (2, 0) } else { (0, 2) }
-            );
+            assert_eq!((replies, timeouts), expected, "{delay} ms echo");
             peer.abort();
         }
         Ok(())
