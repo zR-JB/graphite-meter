@@ -469,6 +469,7 @@ type Vector = {
     "down" | "up",
     { bytesPerSec: number; peakBytesPerSec: number } | null
   >;
+  servers?: Record<string, Vector["result"]>;
 };
 const vectors: Vector[] = await Bun.file(
   new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
@@ -516,6 +517,11 @@ for (const vector of vectors)
       };
     const { down, up } = m.result(vector.stage, false);
     expect({ down: reported(down), up: reported(up) }).toEqual(vector.result);
+    for (const [id, expected] of Object.entries(vector.servers ?? {}))
+      expect({
+        down: reported(m.serverResult(vector.stage, "down", id)),
+        up: reported(m.serverResult(vector.stage, "up", id)),
+      }).toEqual(expected);
   });
 
 const latencyVectors: {
