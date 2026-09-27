@@ -23,6 +23,17 @@ func TestUploadProgressConformance(t *testing.T) {
 			if (err == nil) != tc.Valid {
 				t.Fatalf("decode %s = %+v, %v; valid=%t", tc.Record, event, err, tc.Valid)
 			}
+			// A checkpoint's counters obey the same contract as a counter record's.
+			var kind struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(tc.Record, &kind) == nil && (kind.Type == "progress" || kind.Type == "complete") {
+				var c UploadCheckpoint
+				err := json.Unmarshal(tc.Record, &c)
+				if (err == nil) != tc.Valid || err == nil && (c.Bytes != event.Bytes || c.Nanos != event.Nanos) {
+					t.Fatalf("checkpoint %s = %+v, %v; valid=%t", tc.Record, c, err, tc.Valid)
+				}
+			}
 			if tc.Valid {
 				encoded, err := json.Marshal(event)
 				if err != nil {
