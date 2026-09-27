@@ -113,11 +113,16 @@ result.multiServer.servers = [
 ];
 
 const saved = () =>
-  buildHistoryRecord(result, { build: "b", engine: "e" }, 200);
+  buildHistoryRecord(result, { build: "b", engine: "e" }, undefined, 200);
 
 test("a record keeps its run's result apart from the live one and reads back unchanged", () => {
   const source = structuredClone(result);
-  const record = buildHistoryRecord(source, { build: "b", engine: "e" }, 200);
+  const record = buildHistoryRecord(
+    source,
+    { build: "b", engine: "e" },
+    undefined,
+    200,
+  );
   source.download!.reportedBytesPerSec = 1;
   expect(record.result.download?.reportedBytesPerSec).toBe(100);
   expect(readHistoryRecord(JSON.parse(JSON.stringify(record)))).toEqual(record);

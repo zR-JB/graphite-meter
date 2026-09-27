@@ -553,10 +553,14 @@ class AppStore {
         ({ server }) => server.id === result.multiServer.latencyFocus,
       ) ?? this.run?.servers[0];
     this.historyCandidate = this.savingResults
-      ? buildHistoryRecord(result, {
-          build: BUILD.clientVersion,
-          engine: focus?.paths.discovery.engineVersion ?? "unknown",
-        })
+      ? buildHistoryRecord(
+          result,
+          {
+            build: BUILD.clientVersion,
+            engine: focus?.paths.discovery.engineVersion ?? "unknown",
+          },
+          this.run?.config,
+        )
       : null;
     this.phase = "complete";
   }

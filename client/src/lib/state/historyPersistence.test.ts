@@ -1,5 +1,6 @@
 import "./runes.testutil";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { DEFAULT_CONFIG } from "./defaults";
 import {
   NOT_RUN,
   TEST_BUILD_TOKENS,
@@ -131,10 +132,17 @@ test("only an enabled complete event creates an immutable history candidate", as
     store.resultHistoryPreference = "enabled";
     const completed = result();
     const paths = testPreparedPaths();
-    store.run = {
-      config: store.config,
-      servers: [{ server: completed.multiServer.selection[0], paths }],
+    const config = {
+      ...structuredClone(DEFAULT_CONFIG),
+      stages: {
+        latency: false,
+        download: true,
+        upload: true,
+        bidirectional: false,
+      },
     };
+    const servers = [{ server: completed.multiServer.selection[0], paths }];
+    store.run = { config, servers };
     store.ingest({ type: "complete", result: completed });
     const candidate = store.historyCandidate!;
     expect(candidate.engine).toBe(paths.discovery.engineVersion);
@@ -152,6 +160,18 @@ test("only an enabled complete event creates an immutable history candidate", as
       paths.throughput.probe.clientIp,
     );
     expect(candidate.result.download?.reportedBytesPerSec).toBe(12_500_000);
+
+    store.reset();
+    store.resultHistoryPreference = "enabled";
+    const claimed = result();
+    claimed.multiServer.failures = [];
+    claimed.stages.upload = "not-run";
+    claimed.outcome = "complete";
+    store.run = { config, servers };
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    store.ingest({ type: "complete", result: claimed });
+    logged.mockRestore();
+    expect(store.historyCandidate!.result.outcome).toBe("incomplete");
 
     store.reset();
     store.resultHistoryPreference = "disabled";

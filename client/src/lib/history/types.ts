@@ -37,6 +37,7 @@ export interface HistoryRecord {
 export function buildHistoryRecord(
   result: RunResult,
   meta: Pick<HistoryRecord, "build" | "engine">,
+  config?: Parameters<typeof incoherence>[1],
   completedAt = Date.now(),
 ): HistoryRecord {
   const record: HistoryRecord = {
@@ -46,7 +47,7 @@ export function buildHistoryRecord(
     ...meta,
     result: structuredClone(result),
   };
-  const problems = incoherence(record.result);
+  const problems = incoherence(record.result, config);
   if (problems.length && record.result.outcome !== "incomplete") {
     console.error("Incoherent result saved as incomplete:", problems);
     record.result.outcome = "incomplete";
