@@ -28,6 +28,7 @@ import {
 } from "../request-auth";
 import { abortable, abortableDelay } from "./abortable";
 import {
+  BROWSER_CONNECTION_BUDGET,
   laneStaggerMs,
   laneUrl,
   needsPings,
@@ -197,6 +198,7 @@ class LaneSet {
     readonly dir: FlowDirection,
     readonly count: number,
     readonly open: (index: number, on: (msg: WorkerMsg) => void) => Lane,
+    readonly needed = count,
   ) {
     const stagger = laneStaggerMs(
       count,
@@ -207,7 +209,7 @@ class LaneSet {
   }
 
   get ready(): boolean {
-    return this.#live && this.#ready.size === this.count;
+    return this.#live && this.#ready.size >= this.needed;
   }
 
   /** An unstaggered lane opens at once, so its worker loads while the page's own server answers. */
@@ -535,19 +537,35 @@ export class ServerStage implements StageTransport {
       );
     } else {
       const spec = { dir, base: fetchTarget.origin, cbSeed: this.#seed };
-      this.#lanes[dir] = new LaneSet(this, dir, streams, (index, on) =>
-        openLane(
-          laneWorker("fetch"),
-          {
-            dir,
-            url: laneUrl(spec, index, uploadId),
-            streams,
-            credentials: mode,
-            headers,
-          },
-          false,
-          on,
-        ),
+      // A forced count past the browser's HTTP/1.1 pool queues lanes that never start; only runnable lanes gate readiness.
+      const runnable =
+        fetchTarget.protocol === "http1"
+          ? Math.max(
+              1,
+              Math.floor(
+                (BROWSER_CONNECTION_BUDGET - 2) /
+                  this.#activity.transfer.length,
+              ),
+            )
+          : streams;
+      this.#lanes[dir] = new LaneSet(
+        this,
+        dir,
+        streams,
+        (index, on) =>
+          openLane(
+            laneWorker("fetch"),
+            {
+              dir,
+              url: laneUrl(spec, index, uploadId),
+              streams,
+              credentials: mode,
+              headers,
+            },
+            false,
+            on,
+          ),
+        Math.min(streams, runnable),
       );
     }
   }

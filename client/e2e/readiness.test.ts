@@ -38,9 +38,15 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
   }
 });
 
-test("a forced stream count beyond the browser's connections is kept exactly", async (page) => {
+test("a forced stream count beyond the browser's connections is kept exactly and still measures", async (page) => {
   await open(page, home.url, {
-    config: { transferStreams: { mode: "forced", count: 12 } },
+    config: {
+      transferStreams: { mode: "forced", count: 12 },
+      transports: {
+        throughputTarget: "protocol:http1",
+        latencyTarget: "transport:websocket",
+      },
+    },
   });
   const settings = await openSettings(page);
   await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
@@ -51,6 +57,11 @@ test("a forced stream count beyond the browser's connections is kept exactly", a
   await expect(page.locator(".infra")).toContainText(
     "Forced · 12 per direction",
   );
+  await page.raw.press("Escape");
+  // Lanes past the browser's HTTP/1.1 pool queue; the runnable ones carry the stage.
+  const saved = await run(page);
+  expect(saved.result.outcome).toBe("complete");
+  expect(saved.result.download?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
 test("without idle latency the page settles Connected and never shows a blocker while loading", async (page) => {

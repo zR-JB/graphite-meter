@@ -261,7 +261,7 @@ export const JARGON = {
     "Expect lower rates than streams, mostly for uploads",
   forcedStreams:
     "Streams\nParallel connections per server and direction\n" +
-    "Automatic: chosen per protocol\nForced: the exact count, within shared connection limits",
+    "Automatic: chosen per protocol\nForced: the exact count, even past the browser's connection limit",
   autoStreamCount:
     "Maximum H1 streams\nCaps parallel HTTP/1.1 requests per direction\n" +
     "HTTP/2 and HTTP/3 choose their own count",
