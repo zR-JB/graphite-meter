@@ -192,7 +192,7 @@ async fn serve_quic() -> Result<Served, TestError> {
         .with_single_cert(vec![certificate.clone()], key)?;
     tls.alpn_protocols = vec![b"h3".to_vec()];
     let server = Arc::new(HttpServer::new(Arc::new(Config::default()))?);
-    let endpoint = quinn::Endpoint::server(server.quic_config(Arc::new(tls))?, "127.0.0.1:0".parse()?)?;
+    let endpoint = server.quic_endpoint(Arc::new(tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve_quic(endpoint, async {

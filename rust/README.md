@@ -58,10 +58,10 @@ QUIC endpoint buffers and the shared download block. Configuration checks what
 it knows; loading or reloading the certificate chain and binding the QUIC socket
 check the actual terms, and a reload that does not fit keeps the previous chain.
 QUIC charges bytes when they are buffered instead of reserving connection
-windows up front. From accept until its task ends, a QUIC connection holds a
-floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3 frame
-and copy block outside Noq, plus the TLS handshake: five server flights of the
-loaded certificate chain and a copy of it. With the default 67 streams and a
+windows up front. From accept until Noq drops the connection, a QUIC connection
+holds a floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3
+frame and copy block outside Noq, plus the TLS handshake: five server flights of
+the loaded certificate chain and a copy of it. With the default 67 streams and a
 two-certificate chain that is 5.3 MiB.
 An HTTP/2 connection holds a 1.5 MiB floor from accept until its task ends:
 512 KiB of TLS and codec buffers and a 1 MiB allowance for decoded headers,

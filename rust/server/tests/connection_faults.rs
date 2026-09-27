@@ -277,12 +277,7 @@ async fn quic_server(
         .with_cert_resolver(Arc::new(Fixed(tls.key.clone())));
     server_tls.alpn_protocols = vec![b"h3".to_vec()];
     let server = Arc::new(HttpServer::new(Arc::new(config))?);
-    let endpoint = quinn::Endpoint::new(
-        quinn::EndpointConfig::default(),
-        Some(server.quic_config(Arc::new(server_tls))?),
-        graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?,
-        quinn::default_runtime().unwrap(),
-    )?;
+    let endpoint = server.quic_endpoint(Arc::new(server_tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
     let (stop, stopped) = oneshot::channel::<()>();
     let task = tokio::spawn(async move {

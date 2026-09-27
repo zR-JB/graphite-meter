@@ -105,17 +105,17 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             }
         }));
     }
-    if let Some(endpoint) = quic {
+    if let Some(quic) = quic {
         crate::log!(
             "graphite-meter {} listening on {}/udp (HTTP/3: probe, transfers, progress, WebTransport)",
             crate::config::ENGINE_VERSION,
-            endpoint.local_addr()?,
+            quic.local_addr()?,
         );
         let server = server.clone();
         let stopped = stopped.clone();
-        services.push(Box::pin(async move {
-            server.serve_quic(endpoint, cancelled(stopped)).await
-        }));
+        services.push(Box::pin(
+            async move { server.serve_quic(quic, cancelled(stopped)).await },
+        ));
     }
     if let Some(tls) = tls {
         let stopped = stopped.clone();

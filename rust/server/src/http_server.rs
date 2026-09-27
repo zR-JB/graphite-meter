@@ -9,7 +9,7 @@ mod http_quic;
 #[path = "http_wt.rs"]
 mod http_wt;
 pub use http_h3::{Http3RequestKind, Http3RequestStream};
-pub use http_quic::ReceiveCredit;
+pub use http_quic::{QuicEndpoint, ReceiveCredit};
 #[path = "http_websocket.rs"]
 mod http_websocket;
 #[path = "http_upload.rs"]

@@ -28,12 +28,35 @@ const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
 const STREAM_FLOOR_BYTES: usize = 80 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
+pub struct QuicEndpoint {
+    endpoint: quinn::Endpoint,
+    config: quinn::ServerConfig,
+}
+
+impl QuicEndpoint {
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.endpoint.local_addr()
+    }
+
+    fn accept(&self, incoming: quinn::Incoming, floor: Lease) -> Option<quinn::Connecting> {
+        let budget = Arc::new(ConnectionBudget {
+            memory: floor.budget.clone(),
+            _floor: floor,
+        });
+        let mut transport = (*self.config.transport).clone();
+        transport.shared_budget(Some(budget));
+        let mut config = self.config.clone();
+        config.transport_config(Arc::new(transport));
+        incoming.accept_with(Arc::new(config)).ok()
+    }
+}
+
 impl HttpServer {
-    pub(crate) fn quic_endpoint(
+    pub fn quic_endpoint(
         &self,
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
-    ) -> Result<quinn::Endpoint, ConfigError> {
+    ) -> Result<QuicEndpoint, ConfigError> {
         let socket = graphite_meter_core::socket::udp_socket(address)?;
         let socket_buffers = socket2::SockRef::from(&socket);
         let kernel_bytes = socket_buffers
@@ -62,16 +85,17 @@ impl HttpServer {
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
         self.endpoint_bytes.store(bytes, Ordering::Relaxed);
-        quinn::Endpoint::new_with_abstract_socket(
+        let config = self.quic_config(tls)?;
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
-            Some(self.quic_config(tls)?),
+            Some(config.clone()),
             Box::new(BudgetedSocket { socket, lease }),
             runtime,
-        )
-        .map_err(Into::into)
+        )?;
+        Ok(QuicEndpoint { endpoint, config })
     }
 
-    pub fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
+    fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
         if tls.alpn_protocols != [b"h3".to_vec()] {
             return Err("HTTP/3 listener requires h3-only TLS ALPN".into());
         }
@@ -98,7 +122,7 @@ impl HttpServer {
 
     pub async fn serve_quic(
         self: Arc<Self>,
-        endpoint: quinn::Endpoint,
+        quic: QuicEndpoint,
         shutdown: impl Future<Output = ()>,
     ) -> Result<(), ConfigError> {
         tokio::pin!(shutdown);
@@ -107,7 +131,7 @@ impl HttpServer {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
                 Some(_) = connections.join_next() => {}
-                incoming = endpoint.accept() => {
+                incoming = quic.endpoint.accept() => {
                     let Some(incoming) = incoming else { break Ok(()); };
                     // Retry spends a round trip to protect admission under load.
                     if !incoming.remote_address_validated()
@@ -123,14 +147,14 @@ impl HttpServer {
                         continue;
                     };
                     let floor = connection_floor(&self.config.limits, self.handshake_bytes.load(Ordering::Relaxed));
-                    let Some(lease) = self.memory.lease(floor) else {
+                    let Some(floor) = self.memory.lease(floor) else {
                         incoming.refuse();
                         continue;
                     };
-                    let Ok(connecting) = incoming.accept() else { continue; };
+                    let Some(connecting) = quic.accept(incoming, floor) else { continue; };
                     let server = self.clone();
                     connections.spawn(async move {
-                        let (_permit, _lease) = (permit, lease);
+                        let _permit = permit;
                         let quic = tokio::select! {
                             biased;
                             _ = stopped(server.stopping.clone()) => return,
@@ -165,9 +189,9 @@ impl HttpServer {
             while connections.join_next().await.is_some() {}
         })
         .await;
-        endpoint.close(0_u32.into(), b"server stopped");
+        quic.endpoint.close(0_u32.into(), b"server stopped");
         connections.shutdown().await;
-        let _ = tokio::time::timeout_at(drain_deadline, endpoint.wait_idle()).await;
+        let _ = tokio::time::timeout_at(drain_deadline, quic.endpoint.wait_idle()).await;
         result
     }
 
@@ -461,6 +485,23 @@ pub(super) struct Lease {
 impl Drop for Lease {
     fn drop(&mut self) {
         self.budget.refund(self.bytes);
+    }
+}
+
+/// Noq keeps a connection's budget, and so its floor, until the connection is gone, TLS state included.
+#[derive(Debug)]
+struct ConnectionBudget {
+    memory: Arc<MemoryBudget>,
+    _floor: Lease,
+}
+
+impl SharedBudget for ConnectionBudget {
+    fn try_charge(&self, bytes: usize) -> bool {
+        self.memory.try_charge(bytes)
+    }
+
+    fn refund(&self, bytes: usize) {
+        self.memory.refund(bytes);
     }
 }
 
@@ -903,11 +944,10 @@ mod tests {
         tokio::sync::oneshot::Sender<()>,
         tokio::task::JoinHandle<Result<(), super::ConfigError>>,
     ) {
-        let endpoint =
-            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
-        let address = endpoint.local_addr().unwrap();
+        let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = quic.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
-        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
+        let serving = tokio::spawn(server.clone().serve_quic(quic, async {
             let _ = stopped.await;
         }));
         (address, stop, serving)
@@ -1188,6 +1228,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_handshake_holds_its_floor_until_noq_drops_the_connection() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let ((identity, _), (_, distrusting)) = (tls(), tls());
+        let (address, stop, serving) = serve(&server, identity);
+        let floor = connection_floor(&server.config.limits, 0);
+        let idle = server.memory.available();
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let connecting = client.connect_with(distrusting, address, "localhost").unwrap();
+        assert!(connecting.await.is_err());
+        tokio::time::pause();
+        for _ in 0..200 {
+            if server.connections.stats().active == 0 {
+                break;
+            }
+            tokio::time::advance(Duration::from_millis(50)).await;
+        }
+        assert_eq!(server.connections.stats().active, 0, "handshake never timed out");
+        assert!(
+            idle - server.memory.available() >= floor,
+            "floor refunded before Noq dropped the connection"
+        );
+        for _ in 0..120 {
+            if server.memory.available() == idle {
+                break;
+            }
+            tokio::time::advance(Duration::from_secs(1)).await;
+        }
+        assert_eq!(server.memory.available(), idle);
+        tokio::time::resume();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn leftover_credit_closes_a_peer_that_blocks_goaway() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
@@ -1275,8 +1350,7 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
-        let endpoint =
-            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
@@ -1318,8 +1392,7 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
-        let endpoint =
-            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
@@ -1407,11 +1480,11 @@ mod tests {
             }
             link.inject(crate::test_link::Fault::None);
             tls.alpn_protocols = vec![b"h3".to_vec()];
-            let endpoint = quinn::Endpoint::server(
-                server.quic_config(Arc::new(tls)).unwrap(),
-                "127.0.0.1:0".parse().unwrap(),
-            )
-            .unwrap();
+            let config = server.quic_config(Arc::new(tls)).unwrap();
+            let endpoint = QuicEndpoint {
+                endpoint: quinn::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
+                config,
+            };
             let quic_address = endpoint.local_addr().unwrap();
             let (stop_h3, stopped_h3) = tokio::sync::oneshot::channel();
             let h3_server = tokio::spawn(server.clone().serve_quic(endpoint, async {
