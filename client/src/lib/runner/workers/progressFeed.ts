@@ -46,6 +46,12 @@ export function classifyUploadFailure(
   return { reason: "protocol-error", retry: false };
 }
 
+/** The delta-seconds Retry-After a busy server sends. */
+export function retryAfterMs(headers: Headers): number | undefined {
+  const seconds = Number(headers.get("Retry-After") || NaN);
+  return seconds > 0 ? seconds * 1000 : undefined;
+}
+
 const oversized = () =>
   new Error("upload progress record exceeds 64 Ki characters");
 const counter = (value: unknown): value is number =>

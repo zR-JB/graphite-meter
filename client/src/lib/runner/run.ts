@@ -151,7 +151,7 @@ export class Run {
   #endRequested = false;
   /** Invalidates stage continuations after abort, finish or a newer stage. */
   #generation = 0;
-  /** Invalidates in-flight evidence after membership or stage changes. */
+  /** Invalidates in-flight stage outcomes after release or a newer stage; a removal leaves the others' outcomes valid. */
   #epoch = 0;
   #early = { index: -1, at: 0 };
   #completedEarly = new Set<TransportRole>();
@@ -878,20 +878,21 @@ export class Run {
 
   #stall(server: Participant, info: StallInfo): void {
     const activity = this.#activity;
-    if (server.removed || server.recovery || !activity) return;
+    if (server.removed || !activity) return;
     if (activity.stage === "latency")
       return this.#stallLatency(server, info.detail ?? "Latency interrupted");
     if (!this.#measuring) return;
-    const abort = new AbortController();
-    server.recovery = { abort, info };
-    this.#live.restart(server.server.id, server.down, this.#clock.read());
-    this.#cancelEarly();
-    this.#resetStability();
-    this.#updateStalled();
-    // An unknown upload id grants one replacement receiver per server and run.
+    if (!server.recovery) {
+      server.recovery = { abort: new AbortController(), info };
+      this.#live.restart(server.server.id, server.down, this.#clock.read());
+      this.#cancelEarly();
+      this.#resetStability();
+      this.#updateStalled();
+    }
+    // An unknown upload id grants one replacement receiver per server and run, even mid-recovery.
     if (info.rotate && info.direction === "up" && !server.rotated) {
       server.rotated = true;
-      void server.stage?.replaceUpload?.(abort.signal);
+      void server.stage?.replaceUpload?.(server.recovery.abort.signal);
     }
   }
 
@@ -1057,7 +1058,6 @@ export class Run {
     server.stage = null;
     this.#live.drop(server.server.id);
     this.#failure(server, "throughput", reason, message);
-    this.#epoch++;
     const survivors = this.#ids();
     this.#updateStalled();
     // A sole server skips to its next stage; several that all fail end the run as incomplete.

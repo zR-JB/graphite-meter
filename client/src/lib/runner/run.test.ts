@@ -60,6 +60,7 @@ interface Peer {
   finish?(host: ParticipantHost): void | Promise<void>;
   discard?(host: ParticipantHost, incomplete: boolean): void;
   checkpoint?(measuring: boolean): Promise<ReceiverCheckpoint | null>;
+  replaceUpload?(signal: AbortSignal): Promise<void>;
   receives?: false;
 }
 
@@ -146,6 +147,7 @@ async function harness(
         },
         checkpoint: () =>
           peer.checkpoint?.(measuring) ?? Promise.resolve(receiver()),
+        replaceUpload: peer.replaceUpload,
       };
       return stage;
     },
@@ -817,6 +819,87 @@ test("an expired grant at the final checkpoint asks for sign-in and removes only
     },
   ]);
   expect(result.multiServer.participants).toEqual(["b"]);
+});
+
+test("removing one server keeps the outcomes the others report in the same preparation or final checkpoint", async () => {
+  const { ServerBusyError } = await import("./transport");
+  const preparing = await harness(
+    two(
+      { prepare: (_, host) => host.fail("sign-in-required", "fixture") },
+      {
+        prepare: () =>
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new ServerBusyError("busy")), 10),
+          ),
+      },
+    ),
+    { download: true },
+    { downloadMs: 1_000 },
+  );
+  preparing.start();
+  await expect(preparing.result()).rejects.toMatchObject({
+    reason: "server-busy",
+  });
+
+  let host: ParticipantHost;
+  const server = { id: "a", name: "a", url: "https://a.example" };
+  const ending = await harness(
+    two(
+      {
+        checkpoint: () =>
+          Promise.reject(new ServerAuthenticationRequired(server)),
+      },
+      {
+        measure: (measured) => (host = measured),
+        checkpoint: async () => {
+          host.fail("protocol-error", "fixture");
+          return null;
+        },
+      },
+    ),
+    { upload: true },
+    { uploadMs: 1_000 },
+  );
+  ending.start();
+  const result = await ending.result();
+  expect(
+    result.multiServer.failures.map(({ serverId, reason }) => [
+      serverId,
+      reason,
+    ]),
+  ).toEqual([
+    ["b", "protocol-error"],
+    ["a", "sign-in-required"],
+  ]);
+});
+
+test("an unknown upload id replaces the receiver once, even while the server is already recovering", async () => {
+  const replaced: AbortSignal[] = [];
+  const h = await harness(
+    [
+      {
+        id: "a",
+        measure: (host) =>
+          setTimeout(() => {
+            host.stall({ reason: "connection-lost", direction: "up" });
+            for (let i = 0; i < 2; i++)
+              host.stall({
+                reason: "connection-lost",
+                direction: "up",
+                rotate: true,
+              });
+            host.resume();
+          }, 300),
+        replaceUpload: async (signal) => void replaced.push(signal),
+      },
+    ],
+    { upload: true },
+    { uploadMs: 1_000 },
+  );
+  h.start();
+  await h.result();
+  expect(replaced).toHaveLength(1);
+  expect(replaced[0].aborted).toBe(true);
 });
 
 test("each server ends its stage as soon as its own final evidence arrives", async () => {

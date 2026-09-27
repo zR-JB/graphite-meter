@@ -12,7 +12,7 @@ import {
   type ProgressDelta,
 } from "./progressWindow";
 import { incompressibleBlock } from "./payload";
-import { classifyUploadFailure } from "./progressFeed";
+import { classifyUploadFailure, retryAfterMs } from "./progressFeed";
 import type { FlowDirection, LaneFailure } from "../contract";
 import { MAX_STREAMS, ROUTES } from "../paths";
 import {
@@ -63,19 +63,15 @@ export const downloadFailure = (status: number): LaneFailure =>
     ? { reason: "server-busy", retry: true }
     : LOST;
 
-/** An HTTP refusal, with the delta-seconds Retry-After a busy server sends. */
-export function refusal(
+export const refusal = (
   res: Response,
   failure: LaneFailure,
-): Extract<OutMsg, { type: "error" }> {
-  const seconds = Number(res.headers.get("Retry-After") || NaN);
-  return {
-    type: "error",
-    detail: `HTTP ${res.status}`,
-    ...failure,
-    retryAfterMs: seconds > 0 ? seconds * 1000 : undefined,
-  };
-}
+): Extract<OutMsg, { type: "error" }> => ({
+  type: "error",
+  detail: `HTTP ${res.status}`,
+  ...failure,
+  retryAfterMs: retryAfterMs(res.headers),
+});
 
 export function fetchInit(
   credentials: RequestCredentials,
