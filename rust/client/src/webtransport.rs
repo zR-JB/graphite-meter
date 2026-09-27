@@ -657,7 +657,7 @@ pub async fn run_latency(
         http,
         origin,
         insecure,
-        (interval, duration),
+        (interval, duration, if interval.is_zero() { 4 } else { 16 }),
         observations,
         cancel,
         crate::latency::Kind::WebTransport,

@@ -100,7 +100,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             "streams" => config.streams = value.parse()?,
             "ping" => {
                 config.ping_interval = match value.trim().to_ascii_lowercase().as_str() {
-                    "instant" => Duration::from_millis(80),
+                    "reply-driven" => Duration::ZERO,
+                    "fast" => Duration::from_millis(80),
                     "medium" => Duration::from_millis(250),
                     "slow" => Duration::from_millis(600),
                     _ => duration(&value)?,
@@ -173,7 +174,7 @@ pub const HELP: &str = "Graphite Meter experimental Rust client
   -bidirectional-duration DURATION  Bidirectional measurement (10s)
   -auto-streams COUNT           Automatic HTTP/1 stream limit (6)
   -streams COUNT                Streams per server and direction (0 = automatic)
-  -ping CADENCE                 instant, medium, slow, or duration (medium)
+  -ping CADENCE                 reply-driven, fast, medium, slow, or duration (reply-driven)
   -loaded-latency=BOOL           Measure latency under load (true)
   -insecure                     Skip TLS certificate verification
   -version                      Print version
@@ -201,7 +202,7 @@ mod tests {
                 "--ping=80ms",
                 "--warmup=.5s",
                 "--loaded-latency=false",
-                "--streams=16",
+                "--streams=14",
             ]
             .map(OsString::from),
         )
@@ -216,7 +217,7 @@ mod tests {
         assert_eq!(config.throughput_protocol, Some(Protocol::Http3));
         assert_eq!(config.warmup, Duration::from_millis(500));
         assert!(!config.loaded_latency);
-        assert_eq!(config.streams, 16);
+        assert_eq!(config.streams, 14);
     }
 
     #[test]

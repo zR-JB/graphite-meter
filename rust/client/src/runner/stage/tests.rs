@@ -401,7 +401,7 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
 }
 
 #[test]
-fn replies_after_stage_end_remain_unresolved() {
+fn replies_sent_before_stage_end_count_during_drain() {
     let start = Instant::now();
     let end = start + Duration::from_secs(1);
     let mut accumulator = LatencyAccumulator::default();
@@ -419,9 +419,9 @@ fn replies_after_stage_end_remain_unresolved() {
         &mut latest,
     );
     let summary = accumulator.snapshot();
-    assert_eq!(summary.count, 0);
-    assert_eq!(summary.unresolved, 1);
-    assert_eq!(latest, None);
+    assert_eq!(summary.count, 1);
+    assert_eq!(summary.unresolved, 0);
+    assert_eq!(latest, Some(20.0));
 }
 
 #[test]

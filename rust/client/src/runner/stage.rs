@@ -700,34 +700,33 @@ pub(super) async fn measure(
                 );
                 latency.hosts.insert(id.clone(), HostLatency::default());
                 let insecure = config.insecure;
-                let interval = config.ping_interval;
+                let interval = if stage == Stage::Latency {
+                    config.ping_interval
+                } else {
+                    Duration::from_millis(250)
+                };
+                let window = if stage != Stage::Latency {
+                    2
+                } else if interval.is_zero() {
+                    4
+                } else {
+                    16
+                };
                 resources.latency.spawn(async move {
-                    let result = match target.transport {
-                        LatencyTransport::WebSocket => {
-                            crate::latency::run(
-                                &http,
-                                &target.base_url,
-                                insecure,
-                                interval,
-                                operation_limit,
-                                observations,
-                                stopped.clone(),
-                            )
-                            .await
-                        }
-                        LatencyTransport::WebTransport => {
-                            crate::webtransport::run_latency(
-                                &http,
-                                &target.base_url,
-                                insecure,
-                                interval,
-                                operation_limit,
-                                observations,
-                                stopped.clone(),
-                            )
-                            .await
-                        }
+                    let kind = match target.transport {
+                        LatencyTransport::WebSocket => crate::latency::Kind::WebSocket,
+                        LatencyTransport::WebTransport => crate::latency::Kind::WebTransport,
                     };
+                    let result = crate::latency::run_kind(
+                        &http,
+                        &target.base_url,
+                        insecure,
+                        (interval, operation_limit, window),
+                        observations,
+                        stopped.clone(),
+                        kind,
+                    )
+                    .await;
                     latency_task_result(id, result, *stopped.borrow())
                 });
             }
@@ -1181,12 +1180,6 @@ fn observe_latency(
         Observation::Sample { sent, .. } | Observation::Lost { sent, .. } => sent,
     };
     if sent < start || sent >= end {
-        return;
-    }
-    if let Observation::Sample { received, .. } = event
-        && received >= end
-    {
-        accumulator.record(graphite_meter_core::latency::ProbeOutcome::Unresolved);
         return;
     }
     if let Observation::Sample { rtt, .. } = event {

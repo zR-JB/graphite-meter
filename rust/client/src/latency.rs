@@ -8,11 +8,7 @@ use graphite_meter_core::{
     origin::canonical_origin,
     wire,
 };
-use std::{
-    collections::BTreeMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     time::Instant,
@@ -21,9 +17,7 @@ use tokio_tungstenite::tungstenite::{
     Message, client::IntoClientRequest, protocol::WebSocketConfig,
 };
 
-const MAX_PENDING: usize = 256;
 type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
-type Pending = Arc<Mutex<BTreeMap<u32, Instant>>>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Observation {
@@ -72,7 +66,7 @@ pub async fn run(
         http,
         origin,
         insecure,
-        (interval, duration),
+        (interval, duration, if interval.is_zero() { 4 } else { 16 }),
         observations,
         cancel,
         Kind::WebSocket,
@@ -90,13 +84,13 @@ pub(crate) async fn run_kind(
     http: &Http,
     origin: &str,
     insecure: bool,
-    timing: (Duration, Duration),
+    timing: (Duration, Duration, usize),
     observations: mpsc::Sender<Observation>,
     mut cancel: watch::Receiver<bool>,
     kind: Kind,
 ) -> Result<(), Error> {
-    let (interval, duration) = timing;
-    if interval.is_zero() || duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
+    let (interval, duration, window) = timing;
+    if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
     let Some(mut socket) = connect(http, origin, insecure, &mut cancel, kind).await? else {
@@ -106,7 +100,7 @@ pub(crate) async fn run_kind(
         .checked_add(duration)
         .ok_or("latency duration exceeds clock range")?;
     loop {
-        let result = measure(socket, interval, end, &observations, &mut cancel).await;
+        let result = measure(socket, interval, window, end, &observations, &mut cancel).await;
         let Err(error) = result else {
             return Ok(());
         };
@@ -397,165 +391,99 @@ impl std::error::Error for Disconnected {}
 async fn measure(
     socket: Bus,
     interval: Duration,
+    window: usize,
     end: Instant,
     observations: &mpsc::Sender<Observation>,
     cancel: &mut watch::Receiver<bool>,
 ) -> Result<(), Error> {
     let (mut writer, mut reader) = socket.split();
-    let pending: Pending = Arc::new(Mutex::new(BTreeMap::new()));
-    let timeout = interval.saturating_mul(4).max(Duration::from_millis(250));
-    let result = {
-        let sending = async {
-            let mut cadence = tokio::time::interval(interval);
-            cadence.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let mut next_id = 0_u32;
-            loop {
-                cadence.tick().await;
+    let mut pending = BTreeMap::<u32, (Instant, Instant)>::new();
+    let mut next_id = 0_u32;
+    let mut next_send = Instant::now();
+    let mut sending = true;
+    let mut srtt: Option<f64> = None;
+    let mut variation = 0.0_f64;
+    let mut expiry = tokio::time::interval(Duration::from_millis(50));
+    let result = loop {
+        if (!sending || Instant::now() >= end) && pending.is_empty() {
+            break Ok(());
+        }
+        tokio::select! {
+            biased;
+            () = cancelled(cancel), if sending => {
+                sending = false;
+            }
+            _ = expiry.tick() => {
+                let now = Instant::now();
+                let mut failure = None;
+                pending.retain(|_, (sent, deadline)| {
+                    if now < *deadline { return true; }
+                    if let Err(error) = emit(observations, Observation::Lost { sent: *sent, outcome: ProbeOutcome::Timeout }) {
+                        failure = Some(error);
+                    }
+                    false
+                });
+                if let Some(error) = failure { break Err(error); }
+            }
+            () = tokio::time::sleep_until(next_send), if sending && next_send < end => {
                 let sent = Instant::now();
-                if sent >= end {
-                    return Ok::<(), Error>(());
-                }
+                let timeout = Duration::from_secs_f64(srtt.map_or(0.25, |mean| mean + 4.0 * variation.max(0.001)).clamp(0.25, 10.0));
+                next_send = sent + if interval.is_zero() { timeout } else { interval };
+                if pending.len() >= window { continue; }
                 let id = next_id;
-                next_id = next_id
-                    .checked_add(1)
-                    .ok_or("latency probe identifier exhausted")?;
-                {
-                    let mut pending = pending.lock().expect("latency pending poisoned");
-                    if pending.len() >= MAX_PENDING {
-                        return Err("too many pending latency probes".into());
-                    }
-                    pending.insert(id, sent);
-                }
-                let written = tokio::time::timeout(
-                    Duration::from_secs(1),
-                    writer.send(wire::encode_ping(id)),
-                )
-                .await;
-                if !matches!(written, Ok(Ok(()))) {
-                    if pending
-                        .lock()
-                        .expect("latency pending poisoned")
-                        .remove(&id)
-                        .is_some()
-                    {
-                        emit(
-                            observations,
-                            Observation::Lost {
-                                sent,
-                                outcome: ProbeOutcome::SendFailure,
-                            },
-                        )?;
-                    }
-                    return Err(Disconnected("latency channel send failed").into());
+                let Some(next) = next_id.checked_add(1) else { break Err("latency probe identifier exhausted".into()); };
+                next_id = next;
+                pending.insert(id, (sent, sent + timeout));
+                if !matches!(tokio::time::timeout(Duration::from_secs(1), writer.send(wire::encode_ping(id))).await, Ok(Ok(()))) {
+                    pending.remove(&id);
+                    if let Err(error) = emit(observations, Observation::Lost { sent, outcome: ProbeOutcome::SendFailure }) { break Err(error); }
+                    break Err(Disconnected("latency channel send failed").into());
                 }
             }
-        };
-        let receiving = async {
-            while let Some(message) = reader.next().await {
-                let received = Instant::now(); // Timestamp before parsing diagnostics.
-                if received >= end {
-                    return Ok::<(), Error>(());
-                }
-                match message.map_err(|_| Disconnected("latency channel receive failed"))? {
-                    Message::Text(text) => {
-                        let Ok(pong) = wire::decode_pong(&text) else {
-                            continue;
-                        };
-                        let sent = pending
-                            .lock()
-                            .expect("latency pending poisoned")
-                            .remove(&pong.id);
-                        let Some(sent) = sent else {
-                            continue;
-                        };
+            message = reader.next() => {
+                let received = Instant::now();
+                match message {
+                    Some(Ok(Message::Text(text))) => {
+                        let Ok(pong) = wire::decode_pong(&text) else { continue };
+                        let Some((sent, deadline)) = pending.remove(&pong.id) else { continue };
                         let rtt = received.saturating_duration_since(sent);
-                        let observation = if rtt >= timeout {
-                            Observation::Lost {
-                                sent,
-                                outcome: ProbeOutcome::Timeout,
-                            }
+                        let observation = if received >= deadline {
+                            Observation::Lost { sent, outcome: ProbeOutcome::Timeout }
                         } else {
-                            Observation::Sample {
-                                sent,
-                                received,
-                                rtt,
-                                server_handling: Duration::from_nanos(pong.handling_nanos),
+                            let seconds = rtt.as_secs_f64();
+                            match srtt {
+                                Some(mean) => { variation = 0.75 * variation + 0.25 * (mean - seconds).abs(); srtt = Some(0.875 * mean + 0.125 * seconds); }
+                                None => { srtt = Some(seconds); variation = seconds / 2.0; }
                             }
+                            if interval.is_zero() { next_send = received; }
+                            Observation::Sample { sent, received, rtt, server_handling: Duration::from_nanos(pong.handling_nanos) }
                         };
-                        emit(observations, observation)?;
+                        if let Err(error) = emit(observations, observation) { break Err(error); }
                     }
-                    Message::Close(_) => {
-                        return Err(Disconnected(
-                            "latency channel closed before measurement ended",
-                        )
-                        .into());
-                    }
+                    Some(Ok(Message::Close(_))) | None => break Err(Disconnected("latency channel closed before measurement ended").into()),
+                    Some(Err(_)) => break Err(Disconnected("latency channel receive failed").into()),
                     _ => {}
                 }
             }
-            Err(Disconnected("latency channel ended before measurement completed").into())
-        };
-        let expiring = expire(&pending, observations, end, timeout);
-        tokio::select! {
-            biased;
-            () = cancelled(cancel) => Ok(()),
-            () = tokio::time::sleep_until(end) => Ok(()),
-            result = sending => result,
-            result = receiving => result,
-            result = expiring => result,
         }
     };
-    let settled = settle(
-        &pending,
-        observations,
-        Instant::now().min(end),
-        timeout,
-        true,
-    );
-    // Both halves remain owned; WT drops its last Arc and closes QUIC here.
+    for (_, (sent, _)) in pending {
+        emit(
+            observations,
+            Observation::Lost {
+                sent,
+                outcome: ProbeOutcome::Unresolved,
+            },
+        )?;
+    }
     writer.close(reader).await;
-    settled.and(result)
+    result
 }
 
 fn emit(observations: &mpsc::Sender<Observation>, observation: Observation) -> Result<(), Error> {
     observations
         .try_send(observation)
         .map_err(|_| "latency observation consumer closed or fell behind".into())
-}
-fn settle(
-    pending: &Pending,
-    observations: &mpsc::Sender<Observation>,
-    now: Instant,
-    timeout: Duration,
-    all: bool,
-) -> Result<(), Error> {
-    let mut pending = pending.lock().expect("latency pending poisoned");
-    let mut failure = false;
-    pending.retain(|_, sent| {
-        let expired = now.saturating_duration_since(*sent) >= timeout;
-        if !all && !expired {
-            return true;
-        }
-        let outcome = if expired {
-            ProbeOutcome::Timeout
-        } else {
-            ProbeOutcome::Unresolved
-        };
-        failure |= emit(
-            observations,
-            Observation::Lost {
-                sent: *sent,
-                outcome,
-            },
-        )
-        .is_err();
-        false
-    });
-    if failure {
-        Err("latency observation consumer closed or fell behind".into())
-    } else {
-        Ok(())
-    }
 }
 async fn cancelled(cancel: &mut watch::Receiver<bool>) {
     while !*cancel.borrow_and_update() {
@@ -565,28 +493,70 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn expire(
-    pending: &Pending,
-    observations: &mpsc::Sender<Observation>,
-    end: Instant,
-    timeout: Duration,
-) -> Result<(), Error> {
-    let mut tick = tokio::time::interval(Duration::from_millis(50));
-    loop {
-        tick.tick().await;
-        settle(
-            pending,
-            observations,
-            Instant::now().min(end),
-            timeout,
-            false,
-        )?;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn stage_boundary_drains_replies_until_each_fixed_deadline() -> Result<(), Error> {
+        for delay in [150, 300] {
+            let (client, server) = tokio::io::duplex(4096);
+            let socket = Socket::from_raw_socket(
+                Box::new(client),
+                tokio_tungstenite::tungstenite::protocol::Role::Client,
+                None,
+            )
+            .await;
+            let peer = tokio::spawn(async move {
+                let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                    server,
+                    tokio_tungstenite::tungstenite::protocol::Role::Server,
+                    None,
+                )
+                .await;
+                while let Some(Ok(Message::Text(text))) = socket.next().await {
+                    let id = wire::decode_ping(&text).unwrap();
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    if socket
+                        .send(Message::Text(wire::encode_pong(id, 0).into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+            let (observations, mut receiver) = mpsc::channel(16);
+            let (_stop, mut cancelled) = watch::channel(false);
+            measure(
+                Bus::WebSocket(Box::new(socket)),
+                Duration::from_millis(80),
+                16,
+                Instant::now() + Duration::from_millis(100),
+                &observations,
+                &mut cancelled,
+            )
+            .await?;
+            let mut replies = 0;
+            let mut timeouts = 0;
+            while let Ok(event) = receiver.try_recv() {
+                match event {
+                    Observation::Sample { .. } => replies += 1,
+                    Observation::Lost {
+                        outcome: ProbeOutcome::Timeout,
+                        ..
+                    } => timeouts += 1,
+                    _ => panic!("unexpected outcome"),
+                }
+            }
+            assert_eq!(
+                (replies, timeouts),
+                if delay == 150 { (2, 0) } else { (0, 2) }
+            );
+            peer.abort();
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn websocket_proxy_uses_absolute_form_and_validates_upgrade() -> Result<(), Error> {
@@ -653,34 +623,5 @@ mod tests {
             .await??;
         }
         Ok(())
-    }
-
-    #[test]
-    fn settling_preserves_expired_vs_unresolved_and_reports_backpressure() {
-        let now = Instant::now();
-        let pending: Pending = Arc::new(Mutex::new(BTreeMap::from([
-            (1, now - Duration::from_millis(300)),
-            (2, now - Duration::from_millis(100)),
-        ])));
-        let (sender, mut receiver) = mpsc::channel(2);
-        settle(&pending, &sender, now, Duration::from_millis(250), true).unwrap();
-        assert!(matches!(
-            receiver.try_recv().unwrap(),
-            Observation::Lost {
-                outcome: ProbeOutcome::Timeout,
-                ..
-            }
-        ));
-        assert!(matches!(
-            receiver.try_recv().unwrap(),
-            Observation::Lost {
-                outcome: ProbeOutcome::Unresolved,
-                ..
-            }
-        ));
-        assert!(pending.lock().unwrap().is_empty());
-        let (sender, _receiver) = mpsc::channel(1);
-        pending.lock().unwrap().extend([(3, now), (4, now)]);
-        assert!(settle(&pending, &sender, now, Duration::from_millis(250), true).is_err());
     }
 }

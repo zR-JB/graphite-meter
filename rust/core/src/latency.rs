@@ -52,7 +52,9 @@ impl LatencySummary {
 
 #[derive(Debug, Default)]
 pub struct LatencyAccumulator {
-    rtts: Vec<u64>,
+    rtts: std::cell::RefCell<Vec<u64>>,
+    sorted: std::cell::Cell<bool>,
+    rtt_sum: u128,
     previous: Option<u64>,
     variation_sum: u128,
     jitter_pairs: usize,
@@ -84,7 +86,9 @@ impl LatencyAccumulator {
                     self.jitter_pairs += 1;
                 }
                 self.previous = Some(rtt);
-                self.rtts.push(rtt);
+                self.rtts.get_mut().push(rtt);
+                self.sorted.set(false);
+                self.rtt_sum += u128::from(rtt);
                 if handling_nanos <= i64::MAX as u64 && handling_nanos <= rtt {
                     self.timing_count += 1;
                     self.timing_raw_sum += u128::from(rtt);
@@ -102,8 +106,9 @@ impl LatencyAccumulator {
     }
 
     pub fn snapshot(&self) -> LatencySummary {
+        let mut sorted = self.rtts.borrow_mut();
         let mut out = LatencySummary {
-            count: self.rtts.len(),
+            count: sorted.len(),
             timeouts: self.timeouts,
             unresolved: self.unresolved,
             send_failures: self.send_failures,
@@ -122,9 +127,10 @@ impl LatencyAccumulator {
                 mean_adjusted_rtt: ((self.timing_raw_sum - self.handling_sum) / count) as u64,
             });
         }
-        if !self.rtts.is_empty() {
-            let mut sorted = self.rtts.clone();
-            sorted.sort_unstable();
+        if !sorted.is_empty() {
+            if !self.sorted.replace(true) {
+                sorted.sort_unstable();
+            }
             let middle = sorted.len() / 2;
             let p50 = if sorted.len().is_multiple_of(2) {
                 sorted[middle - 1] + (sorted[middle] - sorted[middle - 1]) / 2
@@ -134,8 +140,7 @@ impl LatencyAccumulator {
             out.distribution = Some(Distribution {
                 min: sorted[0],
                 max: sorted[sorted.len() - 1],
-                mean: (sorted.iter().map(|&rtt| u128::from(rtt)).sum::<u128>()
-                    / sorted.len() as u128) as u64,
+                mean: (self.rtt_sum / sorted.len() as u128) as u64,
                 p10: nearest_rank(&sorted, 10),
                 p50,
                 p90: nearest_rank(&sorted, 90),
