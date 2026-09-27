@@ -146,7 +146,7 @@ test("saved duplicate terminal points render and hover at the last value without
   }
 });
 
-test("interleaved equal-time replacement invalidates the lane cache even when another lane subsequently appends", () => {
+test("an equal-time replacement invalidates the lane cache despite a later append", () => {
   const { canvas, restore } = canvasEnvironment();
   const sample = (
     t: number,

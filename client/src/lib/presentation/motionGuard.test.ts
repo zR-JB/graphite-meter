@@ -7,7 +7,7 @@ const CLOCK =
   /requestAnimationFrame|performance\.now\(|Date\.now\(|\.animate\(|prefersReducedMotion/;
 const TIMER = /\bset(Timeout|Interval)\(/;
 
-test("only the motion module reads the clock, runs frames or reads reduced motion; timers say why they are not motion", async () => {
+test("only motion reads the clock, frames and reduced motion; timers say why", async () => {
   const problems: string[] = [];
   let scanned = 0;
   const glob = new Glob(

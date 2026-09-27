@@ -423,7 +423,7 @@ test("reconnect ignores old socket PONG events and retains fresh reply timing", 
   );
 });
 
-test("late replies retain only their timeout while drain replies retain paired timing for cutoff filtering", async () => {
+test("late replies keep only their timeout; drain replies keep paired timing", async () => {
   await withWorker(({ jump, reply, stop, samples }) => {
     jump(251);
     reply(1, "1000000");

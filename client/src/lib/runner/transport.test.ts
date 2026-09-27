@@ -174,7 +174,7 @@ async function http(options: { checkpoint?: () => Response } = {}) {
   };
 }
 
-test("HTTP upload lanes start after the receiver feed opens; only receiver evidence, never sender bytes, is measured", async () => {
+test("HTTP upload lanes start after the feed opens and count only receiver evidence", async () => {
   const h = await http();
   const stage = h.stage(activity("upload"));
   const preparing = stage.prepare();

@@ -399,7 +399,7 @@ test("terminal interruption counts use the same submission cutoff as reply outco
   await ending;
 });
 
-test("abort settles an in-flight drain and prevents its late worker messages reaching a replacement stage", async () => {
+test("abort settles a drain and keeps its late messages from the next stage", async () => {
   const { channel, worker, observations, interruptions } = finalizingChannel();
   const ending = channel.finish();
   channel.teardown();
