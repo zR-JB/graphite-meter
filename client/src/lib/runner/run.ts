@@ -36,9 +36,12 @@ import {
 } from "./measure";
 import {
   buildSegments,
+  failureScope,
+  outcomeOf,
   planned,
   reconfigureTimeline,
   segmentAt,
+  stageLanes,
   STAGES,
   truncateSegmentAt,
   type Segment,
@@ -114,10 +117,6 @@ const noEvidence = (): StageEvidence => ({
   upload: null,
   bidirectional: null,
 });
-const stageLanes = (evidence: StageEvidence, stage: TransportRole) =>
-  stage === "bidirectional"
-    ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
-    : [evidence[stage]];
 /** The run and each server share one rule: every lane, then no failure. */
 const stageStatus = (lanes: unknown[], failed: boolean): StageStatus =>
   !lanes.every(Boolean) ? "failed" : failed ? "partial" : "complete";
@@ -151,7 +150,7 @@ export class Run {
   #endRequested = false;
   /** Invalidates stage continuations after abort, finish or a newer stage. */
   #generation = 0;
-  /** Invalidates in-flight evidence after membership or stage changes. */
+  /** Invalidates in-flight stage outcomes after release or a newer stage; a removal leaves the others' outcomes valid. */
   #epoch = 0;
   #early = { index: -1, at: 0 };
   #completedEarly = new Set<TransportRole>();
@@ -273,14 +272,12 @@ export class Run {
     this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
+    const first = (
+      this.#segments.find(({ activity }) => activity.transfer.length) ??
+      this.#segments[0]
+    )?.activity.stage;
     for (const { server, reason, message } of this.#dropped)
-      this.#record(
-        server.id,
-        "throughput",
-        reason,
-        message,
-        this.#segments[0]?.activity.stage,
-      );
+      this.#record(server.id, "throughput", reason, message, first);
     this.#running = true;
     this.#tick();
     this.#arm();
@@ -301,18 +298,16 @@ export class Run {
   }
 
   /** Ends now with every retained result; each stage left unfinished fails for `reason`. */
-  end(reason: FailureReason, message: string): void {
+  end(
+    reason: FailureReason,
+    message: string,
+    servers: readonly PreparedServer[] = this.#participants(),
+  ): void {
     if (!this.#running) return;
     for (const stage of STAGES)
       if (planned(this.#cfg!, stage) && !this.#settled[stage])
-        for (const { server } of this.#participants())
-          this.#record(
-            server.id,
-            stage === "latency" ? "latency" : "throughput",
-            reason,
-            message,
-            stage,
-          );
+        for (const { server } of servers)
+          this.#record(server.id, failureScope(stage), reason, message, stage);
     this.finish();
   }
 
@@ -339,6 +334,7 @@ export class Run {
       this.#segments,
       this.#elapsed,
       next,
+      this.#ending,
     ).segments;
     const after = segmentAt(this.#segments, this.#elapsed);
     if (
@@ -449,52 +445,58 @@ export class Run {
   /** Adjacent segments always differ in phase; a warmup and its measurement share one stage. */
   #enter(segment: Segment): void {
     const previous = this.#active;
-    const sameStage = previous?.activity.stage === segment.activity.stage;
-    const enter = () => {
-      this.#active = segment;
-      const show = () =>
-        this.#transition(segment.phase, segment.activity.stage, segment.start);
-      this.#cancelEarly();
-      this.#stabilityAt = -Infinity;
-      this.#continuity++;
-      if (sameStage) {
-        show();
-        return this.#measureStage();
-      }
-      const generation = ++this.#generation;
-      this.#clock.hold();
-      // The first stage keeps showing connection checks; later ones show no countdown until ready.
-      if (previous) {
-        show();
-        this.#emit({
-          type: "progress",
-          phase: segment.phase,
-          fraction: 0,
-          phaseElapsedMs: 0,
-          phaseBudgetMs: 0,
-          measuring: true,
-        });
-      }
-      this.#beginStage(segment.activity).then(
-        () => {
-          if (generation !== this.#generation || !this.#running) return;
-          this.#tickAt = this.#clock.resume();
-          if (!previous) show();
-          if (segment.phase !== "warmup") this.#measureStage();
-          this.#tick();
-          this.#arm();
-        },
-        (cause) => {
-          if (generation !== this.#generation) return;
-          this.#fail(
-            classify(cause, "protocol-error"),
-            cause instanceof Error ? cause.message : "Stage preparation failed",
-          );
-        },
-      );
-    };
-    if (previous && !sameStage) void this.#endStage(previous.activity, enter);
-    else enter();
+    if (previous && previous.activity.stage !== segment.activity.stage)
+      // A live change during the stage end may have replaced or removed the next segment.
+      return void this.#endStage(previous.activity, () => {
+        const next = segmentAt(this.#segments, this.#elapsed);
+        if (next) this.#open(next, previous);
+        else this.#complete();
+      });
+    this.#open(segment, previous);
+  }
+
+  #open(segment: Segment, previous: Segment | null): void {
+    this.#active = segment;
+    const show = () =>
+      this.#transition(segment.phase, segment.activity.stage, segment.start);
+    this.#cancelEarly();
+    this.#stabilityAt = -Infinity;
+    this.#continuity++;
+    if (previous?.activity.stage === segment.activity.stage) {
+      show();
+      return this.#measureStage();
+    }
+    const generation = ++this.#generation;
+    this.#clock.hold();
+    // The first stage keeps showing connection checks; later ones show no countdown until ready.
+    if (previous) {
+      show();
+      this.#emit({
+        type: "progress",
+        phase: segment.phase,
+        fraction: 0,
+        phaseElapsedMs: 0,
+        phaseBudgetMs: 0,
+        measuring: true,
+      });
+    }
+    this.#beginStage(segment.activity).then(
+      () => {
+        if (generation !== this.#generation || !this.#running) return;
+        this.#tickAt = this.#clock.resume();
+        if (!previous) show();
+        if (segment.phase !== "warmup") this.#measureStage();
+        this.#tick();
+        this.#arm();
+      },
+      (cause) => {
+        if (generation !== this.#generation) return;
+        this.#fail(
+          classify(cause, "protocol-error"),
+          cause instanceof Error ? cause.message : "Stage preparation failed",
+        );
+      },
+    );
   }
 
   async #beginStage(activity: PhaseActivity): Promise<void> {
@@ -662,18 +664,10 @@ export class Run {
     if (this.#measuring && activity.transfer.length)
       await this.#finalBoundary(end);
     this.#measuring = false;
-    // Evidence that stopped in this stage fails this stage, not the next one.
-    for (const server of this.#participants()) {
+    // A latency channel not back by its stage end fails there; a throughput stall below the silence limit does not.
+    for (const server of this.#participants())
       if (server.latencyStall)
         this.#failLatency(server, activity.stage, server.latencyStall.detail);
-      const info = server.recovery?.info;
-      if (info && this.#recovering(server))
-        this.#remove(
-          server,
-          info.reason,
-          info.detail ?? "Server stopped delivering measured data",
-        );
-    }
     for (const server of this.#stageParticipants(activity)) end(server);
     await Promise.all(ending.values());
     if (generation !== this.#generation) return;
@@ -878,20 +872,21 @@ export class Run {
 
   #stall(server: Participant, info: StallInfo): void {
     const activity = this.#activity;
-    if (server.removed || server.recovery || !activity) return;
+    if (server.removed || !activity) return;
     if (activity.stage === "latency")
       return this.#stallLatency(server, info.detail ?? "Latency interrupted");
     if (!this.#measuring) return;
-    const abort = new AbortController();
-    server.recovery = { abort, info };
-    this.#live.restart(server.server.id, server.down, this.#clock.read());
-    this.#cancelEarly();
-    this.#resetStability();
-    this.#updateStalled();
-    // An unknown upload id grants one replacement receiver per server and run.
+    if (!server.recovery) {
+      server.recovery = { abort: new AbortController(), info };
+      this.#live.restart(server.server.id, server.down, this.#clock.read());
+      this.#cancelEarly();
+      this.#resetStability();
+      this.#updateStalled();
+    }
+    // An unknown upload id grants one replacement receiver per server and run, even mid-recovery.
     if (info.rotate && info.direction === "up" && !server.rotated) {
       server.rotated = true;
-      void server.stage?.replaceUpload?.(abort.signal);
+      void server.stage?.replaceUpload?.(server.recovery.abort.signal);
     }
   }
 
@@ -1057,12 +1052,17 @@ export class Run {
     server.stage = null;
     this.#live.drop(server.server.id);
     this.#failure(server, "throughput", reason, message);
-    this.#epoch++;
     const survivors = this.#ids();
     this.#updateStalled();
     // A sole server skips to its next stage; several that all fail end the run as incomplete.
     if (!survivors.length && this.#hasMeasured)
-      return this.#servers.length === 1 ? this.#skipStage() : this.finish();
+      return this.#servers.length === 1
+        ? this.#skipStage()
+        : this.end(
+            reason,
+            "No server was left to run this stage",
+            this.#servers,
+          );
     if (!survivors.length)
       return this.#fail(
         reason,
@@ -1120,6 +1120,15 @@ export class Run {
       server.buckets.restart(this.#elapsed, this.#continuity);
   }
 
+  #focus(): Participant {
+    const source = this.#latencySource;
+    return source.removed
+      ? (this.#latencyParticipants().find((server) =>
+          server.latency.result(),
+        ) ?? source)
+      : source;
+  }
+
   #latencyParticipants(): Participant[] {
     return this.#participants().filter(
       (server) => server.paths.latency && !server.latency.failed.has("latency"),
@@ -1142,7 +1151,8 @@ export class Run {
 
   #updateStability(): boolean {
     const segment = this.#active;
-    if (!segment || segment.phase === "warmup") return false;
+    if (!segment || segment.phase === "warmup" || !this.#cfg!.adaptive)
+      return false;
     const confidence = this.#confidence(segment.phase);
     if (segment.phase !== "latency")
       this.#aggregate.trackStable(confidence.score);
@@ -1204,7 +1214,7 @@ export class Run {
   }
 
   #failed(stage: TransportRole, serverId?: string): boolean {
-    const scope = stage === "latency" ? "latency" : "throughput";
+    const scope = failureScope(stage);
     return this.#failures.some(
       (failure) =>
         failure.stage === stage &&
@@ -1216,7 +1226,7 @@ export class Run {
   #reduce(stage: TransportRole): void {
     const results = this.#results;
     if (stage === "latency") {
-      results.latency = this.#latencySource.latency.result();
+      results.latency = this.#focus().latency.result();
       if (results.latency)
         this.#emit({ type: "stageResult", stage, result: results.latency });
       return;
@@ -1261,11 +1271,11 @@ export class Run {
     if (entered && !failed && !lanes.every(Boolean)) {
       const ids =
         stage === "latency"
-          ? [this.#latencySource.server.id]
+          ? [this.#focus().server.id]
           : (this.#aggregate.intervals.findLast(
               (interval) => interval.stage === stage,
             )?.participants ?? this.#ids());
-      const scope = stage === "latency" ? "latency" : "throughput";
+      const scope = failureScope(stage);
       for (const id of ids)
         this.#record(
           id,
@@ -1282,7 +1292,7 @@ export class Run {
     this.#running = false;
     this.#completed = true;
     const durationMs = this.#now();
-    const source = this.#latencySource.latency;
+    const source = this.#focus().latency;
     const stages = Object.fromEntries(
       STAGES.map((stage) => [stage, this.#settle(stage)]),
     ) as RunResult["stages"];
@@ -1293,11 +1303,7 @@ export class Run {
       addedLatency: source.addedLatency(),
       latencyByStage: source.summaries(),
       multiServer: this.details(),
-      outcome: statuses.includes("failed")
-        ? "incomplete"
-        : this.#failures.length
-          ? "partial"
-          : "complete",
+      outcome: outcomeOf(statuses, this.#failures.length),
       startedAt: this.#clock.startedAt,
       durationMs,
     };
@@ -1322,7 +1328,7 @@ export class Run {
         ({ server }) => server,
       ),
       participants: this.#ids(),
-      latencyFocus: this.#latencySource.server.id,
+      latencyFocus: this.#focus().server.id,
       intervals: structuredClone(aggregate.intervals),
       omittedIntervals: aggregate.omittedIntervals,
       failures: [...this.#failures],

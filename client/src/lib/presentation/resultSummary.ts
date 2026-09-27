@@ -101,17 +101,17 @@ function wire(
   return {
     value: formatRate(bytesPerSec * model.totalMultiplier, units),
     overhead,
-    tip: `Wire rate ${overhead}\nPayload plus the headers the link also carried\n${compensationTooltip(model)}`,
+    tip: `Wire rate +${((model.totalMultiplier - 1) * 100).toFixed(2)}%\nPayload plus the headers the link also carried\n${compensationTooltip(model)}`,
   };
 }
 
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
-  const { reportedMs, jitterMs } = latency;
+  const { reportedMs, jitterMs, stabilityPct } = latency;
   const added = LOADED.flatMap((stage): SummaryRow[] => {
     const ms = evidence.added?.[stage];
-    return ms == null || evidence.status[stage] === "failed"
+    return ms == null
       ? []
       : [
           {
@@ -123,10 +123,7 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
         ];
   });
   const jitter = formatLatency(jitterMs);
-  const steady =
-    card.status === "complete" && jitterMs != null
-      ? Math.max(0, 100 * (1 - jitterMs / Math.max(reportedMs, 1)))
-      : null;
+  const steady = card.status === "complete" ? (stabilityPct ?? null) : null;
   return {
     ...card,
     num: fmtMs(reportedMs),

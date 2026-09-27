@@ -3,6 +3,7 @@
 import {
   mintWtToken,
   SESSION_REVOKED,
+  SESSION_TIMEOUTS,
   sessionReady,
   spendWtToken,
   withWtToken,
@@ -10,8 +11,9 @@ import {
 } from "./wtToken";
 import { PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
-import { readProgressFeed, type ProgressEvent } from "./progressFeed";
-import type { LaneFailure } from "../contract";
+import { readProgressFeed } from "./progressFeed";
+import type { FailureReason } from "../contract";
+import type { WorkerMsg } from "../transport";
 import {
   progressWindow,
   readBytes,
@@ -48,17 +50,8 @@ type InMsg =
   | { type: "measure"; seq: number }
   | { type: "stop" };
 
-type OutMsg =
-  | { type: "established" }
-  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
-  | { type: "alive" }
-  | ({ type: "error"; detail: string } & LaneFailure)
-  | { type: "upload-progress"; msg: ProgressEvent }
-  | { type: "auth-required" }
-  | { type: "stopped" };
-
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const post = (m: OutMsg): void => ctx.postMessage(m);
+const post = (m: WorkerMsg): void => ctx.postMessage(m);
 
 /* A datagram loop iterates per packet, so an unthrottled alive would jank the thread latency is measured on. */
 const ALIVE_GAP_MS = 250;
@@ -189,7 +182,12 @@ async function run(msg: Extract<InMsg, { type: "start" }>): Promise<void> {
   // `closed` resolves on a graceful close and rejects on an abrupt one: both end this session.
   const closed = (info?: WebTransportCloseInfo): void => {
     if (info?.closeCode !== SESSION_REVOKED)
-      return fail("webtransport session closed");
+      return fail(
+        "webtransport session closed",
+        SESSION_TIMEOUTS.includes(info?.closeCode ?? -1)
+          ? "timeout"
+          : "connection-lost",
+      );
     stopped = true;
     post({ type: "auth-required" });
   };
@@ -335,7 +333,7 @@ function openProgress(
   credentials?: RequestCredentials,
 ): boolean {
   if (!session || !progressUrl) {
-    fail("upload progress route missing", false);
+    fail("upload progress route missing", "protocol-error");
     return false;
   }
   void readProgressStreams(session.incomingUnidirectionalStreams.getReader());
@@ -409,9 +407,8 @@ async function shutdown(): Promise<void> {
 }
 
 /* One session death reaches every lane reader, the accept loop and the session's close promise. */
-function fail(detail: string, retry = true): void {
+function fail(detail: string, reason: FailureReason = "connection-lost"): void {
   if (stopped || failed) return;
   failed = true;
-  const reason = retry ? "connection-lost" : "protocol-error";
-  post({ type: "error", detail, reason, retry });
+  post({ type: "error", detail, reason, retry: reason !== "protocol-error" });
 }

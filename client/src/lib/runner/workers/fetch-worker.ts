@@ -12,7 +12,8 @@ import {
   type ProgressDelta,
 } from "./progressWindow";
 import { incompressibleBlock } from "./payload";
-import { classifyUploadFailure } from "./progressFeed";
+import { classifyUploadFailure, retryAfterMs } from "./progressFeed";
+import type { WorkerMsg } from "../transport";
 import type { FlowDirection, LaneFailure } from "../contract";
 import { MAX_STREAMS, ROUTES } from "../paths";
 import {
@@ -37,12 +38,6 @@ type InMsg =
       headers?: Record<string, string>;
     }
   | { type: "measure"; seq: number };
-/* An upload's local byte/time pair is only a bounded presentation hint; the receiver feed stays authoritative. */
-type OutMsg =
-  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
-  | { type: "alive"; bytes: number; elapsedMs: number }
-  | ({ type: "error"; detail: string } & LaneFailure)
-  | { type: "auth-required" };
 
 /** Pool floor keeps adaptive sizing useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
@@ -57,25 +52,21 @@ const MIN_POST_BYTES = 128 * 1024;
 
 const LOST: LaneFailure = { reason: "connection-lost", retry: true };
 
-/** Every refused download reconnects; an admission refusal names the server busy if the run gives up. */
+/** Only an admission refusal reconnects a download; any other status is an unexpected response, as natively. */
 export const downloadFailure = (status: number): LaneFailure =>
   status === 429 || status === 503
     ? { reason: "server-busy", retry: true }
-    : LOST;
+    : { reason: "protocol-error", retry: false };
 
-/** An HTTP refusal, with the delta-seconds Retry-After a busy server sends. */
-export function refusal(
+export const refusal = (
   res: Response,
   failure: LaneFailure,
-): Extract<OutMsg, { type: "error" }> {
-  const seconds = Number(res.headers.get("Retry-After") || NaN);
-  return {
-    type: "error",
-    detail: `HTTP ${res.status}`,
-    ...failure,
-    retryAfterMs: seconds > 0 ? seconds * 1000 : undefined,
-  };
-}
+): Extract<WorkerMsg, { type: "error" }> => ({
+  type: "error",
+  detail: `HTTP ${res.status}`,
+  ...failure,
+  retryAfterMs: retryAfterMs(res.headers),
+});
 
 export function fetchInit(
   credentials: RequestCredentials,
@@ -126,7 +117,7 @@ export function uploadPoolBytes(
 }
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const post = (m: OutMsg) => ctx.postMessage(m);
+const post = (m: WorkerMsg) => ctx.postMessage(m);
 let init: RequestInit = fetchInit("same-origin");
 let measureSeq = 0;
 let progress = progressWindow(0, REPORT_GAP_MS);

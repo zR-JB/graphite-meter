@@ -13,6 +13,7 @@ import type {
   TransportRole,
 } from "./contract";
 import type { ServerIdentity } from "../servers/catalog";
+import { isCount } from "../api/decode";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { STAGES } from "./schedule";
 
@@ -200,9 +201,10 @@ export function shouldExitPhase(input: {
 
 /** Raw outcomes of one stage; presentation buckets never feed it. */
 export class LatencyPopulation {
-  /** Ascending replies over a buffer with spare capacity; later replies wait in `#fresh`. */
+  #counts = new Map<number, number>();
   #sorted = new Float64Array(0);
   #fresh: number[] = [];
+  #n = 0;
   #sum = 0;
   #final: StageLatencySummary | null | undefined;
   #timeouts = 0;
@@ -232,7 +234,11 @@ export class LatencyPopulation {
     if (sample.timedOut) this.#timeouts++;
     else if (valid) this.#replies++;
     if (!valid || sample.rttEligible === false) return;
-    this.#fresh.push(rttMs);
+    const ns = Math.round(rttMs * 1e6);
+    const seen = this.#counts.get(ns);
+    if (seen === undefined) this.#fresh.push(ns);
+    this.#counts.set(ns, (seen ?? 0) + 1);
+    this.#n++;
     this.#sum += rttMs;
     if (
       handling !== undefined &&
@@ -265,6 +271,7 @@ export class LatencyPopulation {
 
   close(): void {
     this.#final = this.summary();
+    this.#counts.clear();
     this.#sorted = new Float64Array(0);
   }
 
@@ -277,9 +284,23 @@ export class LatencyPopulation {
       this.#complete
     )
       return null;
-    const sorted = this.#merge();
-    const n = sorted.length;
-    const rank = (p: number) => (n ? nearestRank(sorted, p) : null);
+    const keys = this.#merge();
+    const cumulative = new Float64Array(keys.length);
+    let total = 0;
+    keys.forEach((key, i) => (cumulative[i] = total += this.#counts.get(key)!));
+    const n = this.#n;
+    const at = (index: number) => {
+      let [lo, hi] = [0, keys.length - 1];
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cumulative[mid] > index) hi = mid;
+        else lo = mid + 1;
+      }
+      return keys[lo] / 1e6;
+    };
+    const rank = (p: number) =>
+      n ? at(Math.min(n - 1, Math.max(0, Math.ceil(p * n) - 1))) : null;
+    const mid = n >> 1;
     const { count, raw, handling } = this.#timing;
     return {
       ...(count
@@ -297,11 +318,11 @@ export class LatencyPopulation {
       unresolvedCount: this.#unresolved,
       sendFailureCount: this.#sendFailures,
       jitterPairs: this.#deltaCount,
-      minMs: sorted[0] ?? null,
-      maxMs: sorted.at(-1) ?? null,
+      minMs: n ? at(0) : null,
+      maxMs: n ? at(n - 1) : null,
       meanMs: n ? this.#sum / n : null,
       p10Ms: rank(0.1),
-      p50Ms: n ? sortedMedian(sorted) : null,
+      p50Ms: !n ? null : n % 2 ? at(mid) : (at(mid - 1) + at(mid)) / 2,
       p90Ms: rank(0.9),
       p95Ms: rank(0.95),
       jitterMs: this.#deltaCount ? this.#deltaSum / this.#deltaCount : null,
@@ -401,9 +422,14 @@ export class ServerLatency {
   result(): LatencyResult | null {
     const summary = this.summary("latency");
     if (summary?.p50Ms == null) return null;
+    const { p50Ms, jitterMs } = summary;
     return {
-      reportedMs: summary.p50Ms,
-      jitterMs: summary.jitterMs,
+      reportedMs: p50Ms,
+      jitterMs,
+      stabilityPct:
+        jitterMs == null
+          ? null
+          : Math.max(0, 100 * (1 - jitterMs / Math.max(p50Ms, 1))),
     };
   }
 
@@ -732,8 +758,7 @@ export class ThroughputAggregate {
     const dirs = directions(record.stage);
     for (const id of record.participants) {
       const up = boundary.up[id];
-      if (up && Number.isSafeInteger(up.bytes) && up.bytes >= 0)
-        this.#observeUpload(record.stage, id, up);
+      if (up && isCount(up.bytes)) this.#observeUpload(record.stage, id, up);
     }
     const valid =
       record.participants.length > 0 &&
@@ -869,11 +894,11 @@ export class ThroughputAggregate {
         const open = this.#interval(record);
         if (!record.complete || !record.full || !open) continue;
         const window =
-          stable && sufficient(record.headline)
+          stable && sufficient(record.headline, dir)
             ? record.headline!
             : record.full;
         const rate = rateOf(window, dir);
-        if (!rate || !sufficient(window)) continue;
+        if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
         return {
           reportedBytesPerSec: rate,
@@ -893,7 +918,7 @@ export class ThroughputAggregate {
         ({ stage: at, complete, headline }) =>
           at === stage &&
           complete &&
-          sufficient(headline) &&
+          sufficient(headline, dir) &&
           !!rateOf(headline!, dir),
       )?.headline ?? null
     );
@@ -942,14 +967,18 @@ function raise(
   peaks.set(id, peak);
 }
 
-/** A reportable window spans the evidence floor in the client clock and in every receiver clock. */
-export function sufficient(window: AggregateWindow | null): boolean {
+/** A reportable window spans the evidence floor in the client clock and in every receiver clock of `dir`, or of both. */
+export function sufficient(
+  window: AggregateWindow | null,
+  dir?: FlowDirection,
+): boolean {
   return (
     !!window &&
     window.endMs - window.startMs >= MIN_EVIDENCE_MS &&
-    [...(window.down ?? []), ...(window.up ?? [])].every(
-      (c) => c.durationMs >= MIN_EVIDENCE_MS,
-    )
+    [
+      ...(dir === "up" ? [] : (window.down ?? [])),
+      ...(dir === "down" ? [] : (window.up ?? [])),
+    ].every((c) => c.durationMs >= MIN_EVIDENCE_MS)
   );
 }
 

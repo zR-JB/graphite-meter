@@ -4,17 +4,18 @@
   import { Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { MISSING, STAGE } from "../presentation/vocabulary";
-  import { fmtMs, fmtMsTick, formatLatency } from "../format";
+  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
+  import { fmtMs, formatLatency } from "../format";
+  import { fmtGaugeTick } from "./gaugeScale";
   import {
     entries,
-    PARTIAL_ACCOUNTING_HELP,
     probeAccountingDetails,
     hasProbeAccountingNotice,
-    hoverContext,
-    reflectorTimingDescription,
+    probeOutcomes,
+    serverHandling,
     timeoutLabel,
     metricLabel,
+    metricMeaning,
     metricValue,
     nearestMetric,
     pos,
@@ -63,9 +64,13 @@
 
   const CARD_GAP = 12;
   const CARD_PAD = 6;
+  // Markers keep this margin, so one at either end of the scale stays whole.
+  const EDGE = 7;
+  const atPct = (pct: number, width: number) =>
+    EDGE + (pct / 100) * (width - 2 * EDGE);
   const cardLeft = $derived.by(() => {
     if (!hover) return 0;
-    const anchorPx = (hover.anchorPct / 100) * hover.trackWidth;
+    const anchorPx = atPct(hover.anchorPct, hover.trackWidth);
     const desired =
       hover.anchorPct <= 50
         ? anchorPx + CARD_GAP
@@ -94,13 +99,14 @@
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(
       1,
-      Math.max(0, (event.clientX - rect.left) / rect.width),
+      Math.max(0, (event.clientX - rect.left - EDGE) / (rect.width - 2 * EDGE)),
     );
     const metric = nearestMetric(lane, scale.min + ratio * scale.span);
     if (metric) setHover(lane, metric, track);
   }
 
   function onTrackFocus(event: FocusEvent, lane: LatencyProfileViewLane) {
+    if (!(event.currentTarget as HTMLElement).matches(":focus-visible")) return;
     keyboardLane = lane.key;
     const metrics = entries(lane);
     const preferred = metrics.find((entry) => entry.metric === "center");
@@ -112,6 +118,7 @@
     const metrics = entries(lane);
     if (!metrics.length) return;
     if (event.key === "Escape") {
+      if (hover) event.preventDefault();
       hover = null;
       return;
     }
@@ -153,10 +160,6 @@
     return `${lane.label} latency profile${values.length ? `. ${values.join(". ")}` : ". Waiting for measurements"}`;
   }
 
-  const accountingText = (lane: LatencyProfileViewLane) =>
-    (lane.accountingComplete === false
-      ? `Partial accounting. ${PARTIAL_ACCOUNTING_HELP} `
-      : "") + probeAccountingDetails(lane);
   // Markers glide between summaries on the shared frame clock; saved and unseen lanes snap.
   const GLIDED = ["min", "max", "p10", "p90", "center", "current"] as const;
   const glides = new Map<string, Smoothed>();
@@ -194,13 +197,11 @@
   data-latency-profile
   {@attach live && inView((seen) => (motion = seen))}
   data-variant={variant}
+  style:--edge={`${EDGE}px`}
   role="group"
   aria-label={label}
 >
   {#each lanes as lane (lane.key)}
-    {@const accounting = hasProbeAccountingNotice(lane)
-      ? accountingText(lane)
-      : ""}
     {@const metrics = entries(lane)}
     {@const selected =
       hover?.key === lane.key
@@ -212,42 +213,38 @@
           ><Icon name={STAGE[lane.key].icon} /></span
         >
         <span class="caps lane-label">{lane.label}</span>
+        <!-- The focused track's card explains these, so they stay out of the tab order. -->
         <strong
-          >{lane.center == null
-            ? lane.accountingComplete === false || lane.count > 0
-              ? "unavailable"
-              : "waiting"
-            : `median ${formatLatency(lane.center)}`}</strong
+          tabindex="-1"
+          {@attach tooltip(() =>
+            [
+              JARGON.latencyMedian,
+              lane.reflectorTiming && serverHandling(lane.reflectorTiming),
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          )}>median {formatLatency(lane.center)}</strong
         >
-        <em class="jit"
-          >{lane.jitter == null
-            ? `jitter ${MISSING}`
-            : `${formatLatency(lane.jitter)} jitter`}</em
+        <em class="jit" tabindex="-1" {@attach tooltip(() => JARGON.jitter)}
+          >jitter {formatLatency(lane.jitter)}</em
         >
-        <em class="range-label">
-          {lane.min == null || lane.max == null
-            ? `range ${MISSING}`
-            : `${fmtMs(lane.min)} – ${fmtMs(lane.max)}`}
+        <em
+          class="range-label"
+          tabindex="-1"
+          {@attach tooltip(() => JARGON.latencyRange)}
+        >
+          range {lane.min == null || lane.max == null
+            ? MISSING
+            : `${fmtMs(lane.min)} – ${fmtMs(lane.max)} ms`}
         </em>
         <span class="accounting-slot">
-          {#if lane.reflectorTiming || hasProbeAccountingNotice(lane)}
+          {#if hasProbeAccountingNotice(lane)}
             <span
               class="timing-info"
-              class:accounting-warning={hasProbeAccountingNotice(lane)}
               role="note"
-              aria-label={[`${lane.label}: measurement details`, accounting]
-                .filter(Boolean)
-                .join(". ")}
-              {@attach tooltip(() =>
-                [
-                  lane.reflectorTiming
-                    ? reflectorTimingDescription(lane.reflectorTiming)
-                    : "",
-                  accounting,
-                ]
-                  .filter(Boolean)
-                  .join("\n\n"),
-              )}><Icon name="info" /></span
+              aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
+              {@attach tooltip(() => probeOutcomes(lane))}
+              ><Icon name="info" /></span
             >
           {/if}
         </span>
@@ -263,7 +260,7 @@
         aria-valuemax={Math.max(0, metrics.length - 1)}
         aria-valuenow={Math.max(0, selected)}
         aria-valuetext={selected >= 0 && hover && hoverValue != null
-          ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds`
+          ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds, ${metricMeaning(hover.metric)}`
           : undefined}
         onpointermove={(event) => onTrackMove(event, lane)}
         onpointerleave={() => {
@@ -321,27 +318,20 @@
           {/if}
         </span>
         {#if hover?.key === lane.key && hoverValue != null}
-          <span class="guide" style={`left:${pos(hoverValue, scale)}%`}></span>
+          <span
+            class="guide"
+            style:left={`${atPct(pos(hoverValue, scale), hover.trackWidth)}px`}
+          ></span>
           <span
             class="inspect-card hover-card"
             bind:clientWidth={cardWidth}
-            style={`left:${cardLeft}px`}
+            style:left={`${cardLeft}px`}
           >
             <span class="hover-head">
-              <span>{lane.label}</span>
-              <strong
-                >{metricLabel(hover.metric)}
-                {fmtMs(hoverValue)}</strong
-              >
+              <span>{metricLabel(hover.metric)}</span>
+              <strong>{fmtMs(hoverValue)} ms</strong>
             </span>
-            {#if hoverContext(lane, hover.metric)}
-              <span class="hover-context"
-                >{hoverContext(lane, hover.metric)}</span
-              >
-            {/if}
-            {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-              <em>{timeoutLabel(lane.timeoutRatio)}</em>
-            {/if}
+            <span class="hover-meaning">{metricMeaning(hover.metric)}</span>
           </span>
         {/if}
       </div>
@@ -350,7 +340,7 @@
   <div class="ticks" aria-hidden="true">
     {#each ticks as tick, index (index)}
       <span style={`left:${pos(tick, scale)}%`}
-        >{fmtMsTick(tick)}{index === 2 ? " ms" : ""}</span
+        >{fmtGaugeTick(tick)}{index === 2 ? " ms" : ""}</span
       >
     {/each}
   </div>
@@ -423,7 +413,7 @@
     flex: none;
     min-width: 15ch;
     color: var(--text-muted);
-    font: 400 var(--type-2xs) var(--font-mono);
+    font: var(--w-normal) var(--type-2xs) var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;
     white-space: nowrap;
@@ -438,19 +428,16 @@
     place-items: center;
     width: 20px;
     height: 20px;
-    color: var(--text-muted);
+    color: var(--warn);
   }
   .timing-info :global(svg) {
     width: 12px;
     height: 12px;
   }
-  .accounting-warning {
-    color: var(--warn);
-  }
   .ticks {
     position: relative;
     height: 13px;
-    margin-inline: calc(var(--lane-pad) + 2px);
+    margin-inline: calc(var(--lane-pad) + 1px + var(--edge));
   }
   .ticks span {
     position: absolute;
@@ -484,9 +471,9 @@
   }
   .profile-artwork {
     position: absolute;
-    inset: 0;
+    inset: 0 var(--edge);
     overflow: clip;
-    border-radius: inherit;
+    overflow-clip-margin: var(--edge);
     pointer-events: none;
   }
   .range,
@@ -578,11 +565,12 @@
   }
   .hover-card {
     z-index: 10;
-    top: calc(50% - 12px);
+    top: 50%;
     display: grid;
-    gap: var(--space-1);
+    gap: 2px;
     min-width: 156px;
     max-width: min(238px, 76vw);
+    padding-block: var(--space-1);
     translate: 0 -50%;
   }
   .hover-head {
@@ -593,14 +581,16 @@
     min-width: 0;
   }
   .hover-head span,
-  .hover-context,
-  .hover-card > em {
+  .hover-meaning {
     overflow: hidden;
     color: var(--text-muted);
     font: var(--w-heavy) var(--type-2xs) var(--font-mono);
     font-style: normal;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .hover-meaning {
+    font-weight: var(--w-normal);
   }
   .hover-head span {
     letter-spacing: var(--track-caps);
@@ -610,9 +600,6 @@
     font: var(--w-heavy) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-  }
-  .hover-card > em {
-    color: var(--err);
   }
   .lanes[data-variant="compact"] {
     --lane-pad: 10px;

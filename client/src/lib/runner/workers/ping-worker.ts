@@ -175,11 +175,8 @@ ctx.onmessage = (e: MessageEvent<unknown>): void => {
       url = m.url;
       transport = m.transport;
       mint = m.mint;
-      intervalMs = m.intervalMs;
-      replyDriven = m.replyDriven;
-      maxInFlight = m.maxInFlight;
-      deadlineK = m.deadlineK;
-      deadlineFloorMs = m.deadlineFloorMs;
+      ({ intervalMs, replyDriven, maxInFlight, deadlineK, deadlineFloorMs } =
+        m);
       checkAuthentication = m.checkAuthentication ?? false;
       scheduler = createPingScheduler(
         replyDriven
@@ -495,12 +492,11 @@ function recordOutcome(
   observedAt: number,
   handlingMs?: number,
 ): void {
-  const handling = timedOut ? undefined : handlingMs;
-  record({
-    ...pingSample(observedAt - ping.sentAt, timedOut, observedAt),
-    sentAtEpochMs: performance.timeOrigin + ping.sentAt,
-    ...(handling === undefined ? {} : { reflectorHandlingMs: handling }),
-  });
+  const sample = pingSample(observedAt - ping.sentAt, timedOut, observedAt);
+  sample.sentAtEpochMs = performance.timeOrigin + ping.sentAt;
+  if (!timedOut && handlingMs !== undefined)
+    sample.reflectorHandlingMs = handlingMs;
+  record(sample);
 }
 
 function interruptPending(reason: PingInterruptionReason): void {

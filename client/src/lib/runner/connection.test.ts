@@ -12,7 +12,6 @@ import { originLimiter } from "../servers/originLimiter";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import { stubGlobals } from "../test-helpers.testutil";
 import {
-  deferred,
   settle,
   TEST_BUILD_TOKENS,
   testEvidence as evidence,
@@ -115,7 +114,10 @@ test("the view fails throughput without upload checkpoints but keeps its probe e
 });
 
 test("an intent change cancels only its role and discards the late result", async () => {
-  const held = { throughput: deferred<void>(), latency: deferred<void>() };
+  const held = {
+    throughput: Promise.withResolvers<void>(),
+    latency: Promise.withResolvers<void>(),
+  };
   const signals: Partial<Record<string, AbortSignal>> = {};
   let stopped = 0;
   const connection = connect({
@@ -152,7 +154,7 @@ test("an intent change cancels only its role and discards the late result", asyn
 });
 
 test("a new server generation cancels an in-flight role before accepting replacement evidence", async () => {
-  const held = deferred<ConnectionPreparation>();
+  const held = Promise.withResolvers<ConnectionPreparation>();
   let generation = "gen-a";
   let block = false;
   let heldSignal: AbortSignal | undefined;
@@ -372,7 +374,7 @@ test("idle evidence ends when its monitor stops watching and when the connection
 });
 
 test("closing discards a pending check and stops its late monitor", async () => {
-  const held = deferred<ConnectionPreparation>();
+  const held = Promise.withResolvers<ConnectionPreparation>();
   let published = 0;
   let stopped = 0;
   const connection = connect({
@@ -393,7 +395,7 @@ test("closing discards a pending check and stops its late monitor", async () => 
 
 test("background discovery leaves capacity for a selected server", async () => {
   const limiter = originLimiter();
-  const background = deferred<void>();
+  const background = Promise.withResolvers<void>();
   const started: string[] = [];
   const discover: ConnectionHost["discover"] = async (_signal, credentials) => {
     started.push(credentials!.server.id);

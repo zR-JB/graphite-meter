@@ -19,7 +19,13 @@
   import { LiveReadout, liveTargets } from "../presentation/liveReadout.svelte";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
-  import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
+  import {
+    JARGON,
+    MISSING,
+    OUTCOME,
+    PHASE_HINT,
+    STAGE,
+  } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
   import { Smoothed, type Handoff } from "../presentation/motion.svelte";
@@ -150,6 +156,17 @@
       : { value: MISSING, unit: "" });
   const display = $derived(rateDisplay(liveRates));
   const spoken = $derived(rateDisplay(liveTarget));
+  const heroTip = $derived(
+    readout.terminal
+      ? JARGON[readout.terminal.direction]
+      : display.value === MISSING
+        ? ""
+        : phase === "complete"
+          ? JARGON.latency
+          : phase === "latency"
+            ? JARGON.liveLatency
+            : JARGON.liveRate,
+  );
 
   const dialState = $derived.by<GaugeDialState>(() => {
     const p = phase;
@@ -221,34 +238,41 @@
           </div>
         {/if}
         <div class="metric-wrap" style:opacity={view.opacity}>
-          {#if readout.terminal}
-            <div
-              class="terminal-readout"
-              class:partial={readout.terminal.dashed}
-              aria-hidden="true"
-            >
-              <span class="terminal-direction">
-                <span
-                  class="tone-icon terminal-icon"
-                  data-tone={readout.terminal.direction}
-                >
-                  <Icon name={STAGE[readout.terminal.direction].icon} />
+          <div
+            class="hero"
+            class:terminal={!!readout.terminal}
+            {@attach heroTip ? tooltip(() => heroTip) : null}
+          >
+            {#if readout.terminal}
+              <div
+                class="terminal-readout"
+                class:partial={readout.terminal.dashed}
+                aria-hidden="true"
+              >
+                <span class="terminal-direction">
+                  <span
+                    class="tone-icon terminal-icon"
+                    data-tone={readout.terminal.direction}
+                  >
+                    <Icon name={STAGE[readout.terminal.direction].icon} />
+                  </span>
+                  {STAGE[readout.terminal.direction].label}
                 </span>
-                {STAGE[readout.terminal.direction].label}
-              </span>
-              <span class="terminal-number">{readout.terminal.value}</span>
-              <span class="terminal-unit">{gaugeUnit}</span>
-              {#if readout.terminal.dashed}
-                <span class="terminal-partial">{OUTCOME.partial}</span>
-              {/if}
-            </div>
-          {:else}
-            <span class="gauge-value" aria-hidden="true">{display.value}</span>
-            {#if display.unit}<span class="gauge-unit" aria-hidden="true"
-                >{display.unit}</span
-              >{/if}
-          {/if}
-          <span class="sr-only">{spoken.value} {spoken.unit}</span>
+                <span class="terminal-number">{readout.terminal.value}</span>
+                <span class="terminal-unit">{gaugeUnit}</span>
+                {#if readout.terminal.dashed}
+                  <span class="terminal-partial">{OUTCOME.partial}</span>
+                {/if}
+              </div>
+            {:else}
+              <span class="gauge-value" aria-hidden="true">{display.value}</span
+              >
+              {#if display.unit}<span class="gauge-unit" aria-hidden="true"
+                  >{display.unit}</span
+                >{/if}
+            {/if}
+            <span class="sr-only">{spoken.value} {spoken.unit}</span>
+          </div>
         </div>
       </div>
       <div class="gauge-footer" style:opacity={view.opacity}>
@@ -266,8 +290,14 @@
                 {readout.status.headline}
               </span>
               <span class="gauge-hint">{readout.status.action}</span>
-            {:else if readout.hint}<span class="gauge-hint">{readout.hint}</span
-              >{/if}
+            {:else if readout.hint}
+              {@const hint = PHASE_HINT[phase]}
+              <span
+                class="gauge-hint"
+                {@attach hint?.tip ? tooltip(() => hint.tip!) : null}
+                >{hint?.text ?? readout.hint}</span
+              >
+            {/if}
           </div>
         {/if}
       </div>
@@ -482,12 +512,23 @@
     line-height: 0.95;
     text-align: center;
   }
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 100%;
+    border-radius: var(--r-chrome);
+    pointer-events: auto;
+  }
+  .hero.terminal {
+    max-width: 72%;
+  }
   .terminal-readout {
     position: relative;
     display: grid;
     justify-items: center;
     gap: var(--space-1);
-    max-width: 72%;
+    max-width: 100%;
   }
   .terminal-direction {
     position: absolute;

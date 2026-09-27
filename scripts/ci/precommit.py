@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 LEGAL_PREFIXES = ("go/", "client/", "legal/", "container/", "scripts/legal/")
-LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/package-tui.sh", "scripts/tui-targets.txt"}
+LEGAL_FILES = {"LICENSE", "COPYRIGHT", "scripts/tui-targets.txt"}
 
 
 def staged_paths(cwd: Path | None = None) -> tuple[str, ...]:

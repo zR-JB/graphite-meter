@@ -24,7 +24,7 @@
     reasonLabel,
     transportLabel,
   } from "../presentation/vocabulary";
-  import { tooltip } from "../actions/tooltip";
+  import { tipGroup, tooltip } from "../actions/tooltip";
   import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
@@ -200,7 +200,7 @@
     {#each failures as failure}
       <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
     {/each}
-    <dl class="kv">
+    <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row("Name", server?.name ?? "Checking server")}
       {#if selectedServer}{@render row("Address", selectedServer.url)}{/if}
       {#if server?.location}{@render row("Location", server.location)}{/if}
@@ -210,7 +210,7 @@
 
   <div class="group">
     <h3 class="caps">Connection</h3>
-    <dl class="kv">
+    <dl class="kv" data-tip-group {@attach tipGroup}>
       {#each PATH_ROLES as role}
         {@const connection = connections[role]}
         {@const status = endpointPathStatus(connection.validation, pathMode)}
@@ -220,7 +220,7 @@
           data-role={role}
           {@attach tooltip(() => JARGON[`${role}Path`])}
         >
-          <dt>{role === "throughput" ? "Throughput" : "Latency"}</dt>
+          <dt>{role === "throughput" ? "Throughput path" : "Latency path"}</dt>
           <dd>
             {inTest ? connection.summary : "Not selected"}
             <span class="badge" data-tone={inTest ? status.tone : "neutral"}
@@ -250,7 +250,7 @@
           connections.latency.preTestPingMs !== undefined
             ? formatLatency(connections.latency.preTestPingMs)
             : "Pending",
-          JARGON.preflight,
+          JARGON.pretestLatency,
         )}
       {/if}
       {@render row(
@@ -263,7 +263,7 @@
 
   <div class="group">
     <h3 class="caps">Server supports</h3>
-    <dl class="kv">
+    <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row(
         "HTTP",
         httpPaths === null
@@ -277,7 +277,7 @@
 
   <div class="group">
     <h3 class="caps">Build</h3>
-    <dl class="kv">
+    <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row(
         "Client",
         [BUILD.profile, BUILD.version && `v${BUILD.version}`, BUILD.revision]

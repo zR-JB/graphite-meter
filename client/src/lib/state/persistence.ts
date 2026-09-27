@@ -1,3 +1,4 @@
+import { isRecord } from "../api/decode";
 import type { RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/paths";
 import { clampDuration, DEFAULT_CONFIG, DURATION_LIMITS } from "./defaults";
@@ -94,9 +95,7 @@ export function writeStored(key: string, value: unknown): boolean {
 }
 
 const record = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  isRecord(value) ? value : {};
 const choice = <T extends string>(
   value: unknown,
   values: readonly T[],

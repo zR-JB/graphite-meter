@@ -43,11 +43,12 @@ The object form adds named IDs, a default selection and extra measurement hosts:
 | `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none. |
 | `defaultSelection` | One to four existing IDs; omitted means `self`, empty is invalid. |
 
-The raw configuration and the published response are each limited to 64 KiB. The interface derives its browser
+The raw configuration is limited to 64 KiB and the normalized catalogue, which adds this server's own entry, to
+48 KiB. The interface derives its browser
 connection policy from these destinations, so discovery cannot authorize an unrelated host; proxies must keep that
 policy and allow streaming and `Authorization` headers. Protected servers accept measurement grants only on their
-own hostname. For Compose, edit [the example](../container/server-catalog.example.json) and add
-[the catalogue overlay](../container/docker-compose.catalog.yml).
+own hostname. For Compose, edit [the example](../container/server-catalog.example.json), save it as
+`container/server-catalog.json` and add [the catalogue overlay](../container/docker-compose.catalog.yml).
 
 Browsers save a choice as ID plus canonical origin. A removed or changed entry needs the user to apply a new
 selection; an ID never silently redirects to another server. Listing a server does not make it reachable: a catalogue

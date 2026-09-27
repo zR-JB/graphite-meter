@@ -10,32 +10,22 @@ import {
 } from "./router";
 
 describe("hash router", () => {
-  test("round trips friendly routes and composed history surfaces", () => {
-    expect(serializeRoute(parseRoute("#/history"))).toBe("#/history");
-    expect(serializeRoute(parseRoute("#/settings"))).toBe("#/settings");
-    expect(
-      serializeRoute(
-        parseRoute("#/history?panels=settings,endpoint&dialog=legal"),
-      ),
-    ).toBe("#/history?panels=settings,endpoint&dialog=legal");
-  });
-
-  test("friendly routes retain composed panels and dialogs", () => {
-    expect(serializeRoute(parseRoute("#/settings?dialog=legal"))).toBe(
-      "#/?panels=settings&dialog=legal",
-    );
-    expect(serializeRoute(parseRoute("#/endpoint?panels=settings"))).toBe(
-      "#/?panels=endpoint,settings",
-    );
-    expect(
-      serializeRoute(
-        parseRoute(
-          "#/history/00000000-0000-4000-8000-000000000127?panels=settings,settings&dialog=legal",
-        ),
-      ),
-    ).toBe(
-      "#/history/00000000-0000-4000-8000-000000000127?panels=settings&dialog=legal",
-    );
+  test("routes serialize to one canonical hash, keeping composed panels and dialogs", () => {
+    for (const [hash, canonical] of [
+      ["#/history", "#/history"],
+      ["#/settings", "#/settings"],
+      [
+        "#/history?panels=settings,endpoint&dialog=legal",
+        "#/history?panels=settings,endpoint&dialog=legal",
+      ],
+      ["#/settings?dialog=legal", "#/?panels=settings&dialog=legal"],
+      ["#/endpoint?panels=settings", "#/?panels=endpoint,settings"],
+      [
+        "#/history/00000000-0000-4000-8000-000000000127?panels=settings,settings&dialog=legal",
+        "#/history/00000000-0000-4000-8000-000000000127?panels=settings&dialog=legal",
+      ],
+    ])
+      expect(serializeRoute(parseRoute(hash))).toBe(canonical);
   });
 
   test("keeps the base workspace while panels and Legal open and close", () => {

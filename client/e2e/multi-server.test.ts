@@ -3,6 +3,7 @@ import {
   amsterdam,
   baseConfig,
   closeSettings,
+  countSaves,
   frankfurt,
   helsinki,
   home,
@@ -59,8 +60,9 @@ test("four servers share one run and keep separate receiver windows", async (pag
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  await page.getByRole("button", { name: /^Servers & paths/ }).click();
-  const servers = page.locator(".result-detail tbody tr");
+  const servers = page.locator(".result-detail section.group", {
+    hasText: "Address",
+  });
   await expect(servers).toHaveCount(4);
   await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
   expect(await savedResult(page)).toEqual(saved);
@@ -155,13 +157,9 @@ test("switching the latency server after completion keeps the saved record", asy
     config: combined,
   });
   await ready(page);
-  await page.evaluate(() => {
-    Object.assign(window, { saves: 0 });
-    new BroadcastChannel("graphite-meter-history").onmessage = () =>
-      (window as any).saves++;
-  });
+  const saves = await countSaves(page);
   const saved = await run(page);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
   const source = saved.result.multiServer.latencyFocus;
   const other = source === "self" ? "server-1" : "self";
   const focus = page.getByRole("combobox", {
@@ -171,7 +169,7 @@ test("switching the latency server after completion keeps the saved record", asy
   await focus.fill(other);
   await expect(focus).toHaveValue(other);
   expect(await savedResult(page)).toEqual(saved);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();

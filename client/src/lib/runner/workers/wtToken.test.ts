@@ -2,6 +2,7 @@ import { test, expect, jest } from "bun:test";
 import {
   mintWtToken,
   SESSION_REVOKED,
+  SESSION_TIMEOUTS,
   SOCKET_REVOKED,
   spendWtToken,
   withWtToken,
@@ -311,7 +312,7 @@ test("expiry-free mint responses are rejected", async () => {
   }
 });
 
-test("the browser reads the revoked lane ending as pinned for both transports", async () => {
+test("the browser reads the revoked and timeout lane endings as pinned", async () => {
   const pin = await Bun.file(
     `${import.meta.dir}/../../../../../api/laneendings.txt`,
   ).text();
@@ -324,4 +325,9 @@ test("the browser reads the revoked lane ending as pinned for both transports", 
   )!;
   expect(SOCKET_REVOKED).toEqual({ code: Number(socket), reason });
   expect(SESSION_REVOKED).toBe(Number(session));
+  expect(SESSION_TIMEOUTS).toEqual(
+    rows
+      .filter(([name]) => name === "idle" || name === "lifetime")
+      .map(([, , code]) => Number(code)),
+  );
 });
