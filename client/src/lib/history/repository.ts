@@ -99,12 +99,17 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
+/** A permanent write failure: retrying the same record never succeeds. */
+export class HistoryRefusal extends Error {}
+
+type Opened = Promise<{ db: IDBDatabase; drop(): void }>;
+
 export class HistoryRepository {
-  #db: Promise<IDBDatabase> | null = null;
+  #db: Opened | null = null;
 
   #transaction(mode: IDBTransactionMode) {
     // Another version is refused, never upgraded; a hidden page lets go so it never blocks another tab.
-    const opened: Promise<IDBDatabase> = (this.#db ??= open().then(
+    const opened: Opened = (this.#db ??= open().then(
       (db) => {
         const drop = () => {
           db.close();
@@ -113,14 +118,14 @@ export class HistoryRepository {
         };
         db.onversionchange = db.onclose = drop;
         globalThis.addEventListener?.("pagehide", drop);
-        return db;
+        return { db, drop };
       },
       (error) => {
         if (this.#db === opened) this.#db = null;
         throw error;
       },
     ));
-    return opened.then((db) =>
+    return opened.then(({ db }) =>
       db.transaction([HISTORY_DB.resultsStore, HISTORY_DB.metadataStore], mode),
     );
   }
@@ -141,10 +146,16 @@ export class HistoryRepository {
       .objectStore(HISTORY_DB.metadataStore)
       .get(HISTORY_DB.clearsKey);
     let written = false;
+    let refused: unknown;
     current.onsuccess = () => {
       if (clearCount(current.result) > clears) return;
+      try {
+        results.put(record);
+      } catch (error) {
+        refused = error;
+        return tx.abort();
+      }
       written = true;
-      results.put(record);
       const keys = results.index(HISTORY_DB.completedAtIndex).getAllKeys();
       keys.onsuccess = () => {
         for (const key of keys.result.slice(
@@ -154,7 +165,21 @@ export class HistoryRepository {
           results.delete(key);
       };
     };
-    await done(tx);
+    await done(tx).catch((error: unknown) => {
+      const cause = refused ?? error;
+      const name = cause instanceof DOMException ? cause.name : "";
+      if (name === "DataCloneError")
+        throw new HistoryRefusal(
+          "This result could not be saved in browser storage.",
+          { cause },
+        );
+      if (name === "QuotaExceededError")
+        throw new HistoryRefusal(
+          "Browser storage is full. This result was not saved.",
+          { cause },
+        );
+      throw cause;
+    });
     return written;
   }
 
@@ -212,7 +237,7 @@ export class HistoryRepository {
   }
 
   close(): void {
-    void this.#db?.then((db) => db.close()).catch(() => {});
+    void this.#db?.then(({ drop }) => drop()).catch(() => {});
     this.#db = null;
   }
 }

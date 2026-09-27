@@ -133,7 +133,7 @@ function plain(value: unknown, depth = 0): boolean {
 }
 
 type Check = (value: unknown) => boolean;
-const num: Check = (value) => typeof value === "number";
+const num: Check = (value) => Number.isFinite(value);
 const str: Check = (value) => typeof value === "string";
 const maybe =
   (check: Check): Check =>
