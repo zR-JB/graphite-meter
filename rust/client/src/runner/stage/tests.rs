@@ -185,14 +185,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     let (_stop, cancelled) = watch::channel(false);
     let result = tokio::time::timeout(
         Duration::from_secs(3),
-        measure(
-            Stage::Download,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled,
-            false,
-        ),
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled),
     )
     .await??;
     assert!(result.is_empty());
@@ -311,8 +304,7 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
 }
 
 #[tokio::test]
-async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() -> Result<(), Error>
-{
+async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (near, near_failed, near_task) = download_peer().await?;
     let (far, far_failed, far_task) = download_peer().await?;
@@ -344,38 +336,22 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
         ..Snapshot::default()
     });
     let (_stop, cancelled) = watch::channel(false);
+    near_failed.store(3, Ordering::SeqCst);
     let first = measure(
         Stage::Download,
         &config,
         &servers,
         &snapshots,
         cancelled.clone(),
-        false,
     )
     .await?;
-    assert!(first.is_empty());
-    assert!(observed.borrow().results[0].complete);
+    assert_eq!(first, vec!["near"]);
+    assert_eq!(
+        observed.borrow().failures[0].reason,
+        graphite_meter_core::failure::FailureReason::SignInRequired
+    );
     let first_bytes = observed.borrow().results[0].down_bytes();
     assert!(first_bytes > 0);
-    {
-        let snapshot = observed.borrow();
-        let first = &snapshot.results[0];
-        assert_eq!(first.server_results.len(), 2);
-        assert_eq!(
-            first
-                .server_results
-                .iter()
-                .map(|server| server.down_bytes())
-                .sum::<u64>(),
-            first.down_bytes()
-        );
-        assert!(
-            first
-                .server_results
-                .iter()
-                .all(|server| server.down_bps().is_some())
-        );
-    }
 
     // A stalled first peer must not consume the next peer's startup budget.
     near_failed.store(2, Ordering::SeqCst);
@@ -385,13 +361,11 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
         &servers,
         &snapshots,
         cancelled.clone(),
-        true,
     )
     .await?;
     assert_eq!(second, vec!["near"]);
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
-    assert!(snapshot.results[0].complete);
     assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
     assert!(!snapshot.results[1].complete);
     assert!(snapshot.results[1].down_bytes() > 0);
@@ -419,13 +393,11 @@ async fn later_preparation_dropout_preserves_prior_results_and_survivor_bytes() 
         &servers[1..],
         &snapshots,
         cancelled,
-        true,
     )
     .await;
     assert!(third.is_err());
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 3);
-    assert!(snapshot.results[0].complete);
     assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
     assert!(!snapshot.results[2].complete);
     assert!(snapshot.servers[1].error.is_some());
@@ -561,14 +533,7 @@ async fn loaded_latency_failure_keeps_both_http_participants() -> Result<(), Err
         };
         let (snapshots, mut observed) = watch::channel(Snapshot::default());
         let (_stop, cancelled) = watch::channel(false);
-        let run = measure(
-            Stage::Download,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled,
-            true,
-        );
+        let run = measure(Stage::Download, &config, &servers, &snapshots, cancelled);
         let fail = async {
             while observed.borrow().phase != failure_phase {
                 observed.changed().await.unwrap();
@@ -636,14 +601,7 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
         mode.store(3, Ordering::SeqCst);
     };
     let (result, ()) = tokio::join!(
-        measure(
-            Stage::Download,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled,
-            false
-        ),
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled,),
         revoke
     );
     peer.abort();
@@ -691,14 +649,7 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
         mode.store(4, Ordering::SeqCst);
     };
     let (result, ()) = tokio::join!(
-        measure(
-            Stage::Download,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled,
-            false
-        ),
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled,),
         stall
     );
     near_task.abort();

@@ -207,8 +207,12 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
         prepare(&config, &Http::new(false)?, &snapshots),
     )
     .await?;
-    let error = result.err().ok_or("refused preflight was accepted")?;
-    assert!(error.to_string().contains("beta"), "{error}");
+    let Ok(Preparation { servers, failures }) = result else {
+        return Err("one refused preflight failed the whole selection".into());
+    };
+    assert_eq!(servers.len(), 1);
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].to_string().contains("beta"), "{}", failures[0]);
     let snapshot = snapshots.borrow();
     assert!(snapshot.servers.iter().any(|server| {
         server.id == "self" && server.throughput.is_some() && server.error.is_none()
@@ -239,7 +243,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
     let (snapshots, _) = watch::channel(Snapshot::default());
     let prepared = prepare(&config, &http, &snapshots).await?;
     assert_eq!(
-        prepared[0].latency.as_ref().unwrap().transport,
+        prepared.servers[0].latency.as_ref().unwrap().transport,
         LatencyTransport::WebSocket
     );
 
@@ -290,7 +294,7 @@ async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Er
     let (snapshots, _) = watch::channel(Snapshot::default());
     let prepared = prepare(&config, &Http::new(false)?, &snapshots).await?;
     assert_eq!(
-        prepared[0].throughput.as_ref().unwrap().protocol,
+        prepared.servers[0].throughput.as_ref().unwrap().protocol,
         Protocol::Http1
     );
     fixture.abort();

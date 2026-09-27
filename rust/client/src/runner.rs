@@ -52,9 +52,12 @@ pub async fn prepare_run(
     snapshots: &watch::Sender<Snapshot>,
 ) -> Result<PreparedRun, Error> {
     let verified_at = Instant::now();
-    let servers = prepare(config, http, snapshots).await?;
+    let preparation = prepare(config, http, snapshots).await?;
+    if !preparation.failures.is_empty() {
+        return Err(preferred(preparation.failures));
+    }
     Ok(PreparedRun {
-        servers,
+        servers: preparation.servers,
         key: config.preparation_key(),
         verified_at,
     })
@@ -62,8 +65,23 @@ pub async fn prepare_run(
 
 #[derive(Debug)]
 struct PreparationFailure {
+    id: String,
     name: String,
     source: Error,
+}
+
+struct Preparation {
+    servers: Vec<PreparedServer>,
+    failures: Vec<PreparationFailure>,
+}
+
+/// The controller approves one origin per retry, so prefer a sign-in challenge.
+fn preferred(mut failures: Vec<PreparationFailure>) -> Error {
+    let index = failures
+        .iter()
+        .position(|failure| crate::net::authentication_required(failure.source.as_ref()).is_some())
+        .unwrap_or(0);
+    failures.swap_remove(index).into()
 }
 
 impl std::fmt::Display for PreparationFailure {
@@ -83,7 +101,10 @@ pub async fn verify(
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
 ) -> Result<(), Error> {
-    prepare(config, http, snapshots).await?;
+    let preparation = prepare(config, http, snapshots).await?;
+    if !preparation.failures.is_empty() {
+        return Err(preferred(preparation.failures));
+    }
     snapshots.send_modify(|snapshot| {
         snapshot.phase = Phase::Setup;
         snapshot.status = "Selected servers verified".into();
@@ -95,7 +116,7 @@ async fn prepare(
     config: &Config,
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
-) -> Result<Vec<PreparedServer>, Error> {
+) -> Result<Preparation, Error> {
     tokio::time::timeout(
         Duration::from_secs(12),
         prepare_inner(config, http, snapshots),
@@ -112,7 +133,7 @@ async fn prepare_inner(
     config: &Config,
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
-) -> Result<Vec<PreparedServer>, Error> {
+) -> Result<Preparation, Error> {
     config.validate()?;
     snapshots.send_modify(|snapshot| {
         snapshot.phase = Phase::Preparing;
@@ -183,26 +204,22 @@ async fn prepare_inner(
         match result.expect("every selected verification completed") {
             Ok(server) => prepared.push(server),
             Err(source) => failures.push(PreparationFailure {
+                id: entry.id.clone(),
                 name: entry.name.clone(),
                 source,
             }),
         }
     }
-    if !failures.is_empty() {
-        // The controller can approve one origin at a time. Surface an auth
-        // challenge even when an earlier selected peer failed for another reason.
-        let index = failures
-            .iter()
-            .position(|failure| {
-                crate::net::authentication_required(failure.source.as_ref()).is_some()
-            })
-            .unwrap_or(0);
-        return Err(failures.swap_remove(index).into());
+    if prepared.is_empty() {
+        return Err(preferred(failures));
     }
     for stage in &config.stages {
         lane_plan(config, *stage, &prepared)?;
     }
-    Ok(prepared)
+    Ok(Preparation {
+        servers: prepared,
+        failures,
+    })
 }
 
 async fn prepare_server(
@@ -419,10 +436,23 @@ pub async fn run_prepared(
     });
     let mut prepared = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
         Some(prepared) => prepared.servers,
-        None => tokio::select! {
-            result = prepare(&config, &http, &snapshots) => result?,
-            _ = cancel.wait_for(|value| *value) => return Ok(()),
-        },
+        None => {
+            let preparation = tokio::select! {
+                result = prepare(&config, &http, &snapshots) => result?,
+                _ = cancel.wait_for(|value| *value) => return Ok(()),
+            };
+            snapshots.send_modify(|snapshot| {
+                snapshot.stage = config.stages.first().copied();
+                for failure in &preparation.failures {
+                    snapshot.failure(
+                        &failure.id,
+                        crate::model::FailureScope::Throughput,
+                        &failure.source,
+                    );
+                }
+            });
+            preparation.servers
+        }
     };
     let sole = (prepared.len() == 1).then(|| prepared[0].entry.clone());
     let mut retry_sole = false;
@@ -430,11 +460,6 @@ pub async fn run_prepared(
         if *cancel.borrow() {
             break;
         }
-        let completed_stage = snapshots
-            .borrow()
-            .results
-            .iter()
-            .any(|result| result.elapsed > Duration::ZERO);
         if retry_sole {
             snapshots.send_modify(|snapshot| {
                 snapshot.phase = Phase::Preparing;
@@ -510,15 +535,7 @@ pub async fn run_prepared(
                 }
             }
         }
-        let measured = measure(
-            *stage,
-            &config,
-            &prepared,
-            &snapshots,
-            cancel.clone(),
-            completed_stage,
-        )
-        .await;
+        let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone()).await;
         let failed = match measured {
             Ok(failed) => failed,
             Err(_)

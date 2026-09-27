@@ -577,7 +577,6 @@ pub(super) async fn measure(
     servers: &[PreparedServer],
     snapshots: &watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
-    completed_stage: bool,
 ) -> Result<Vec<String>, Error> {
     let plan = lane_plan(config, stage, servers)?;
     let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
@@ -684,13 +683,6 @@ pub(super) async fn measure(
             match result.expect("every selected transfer preparation completed") {
                 Ok(transfer) => resources.transfers.push(transfer),
                 Err(error) => {
-                    if !completed_stage {
-                        last_failure.get_or_insert(ParticipantFailure {
-                            id: server.entry.id.clone(),
-                            source: error,
-                        });
-                        continue;
-                    }
                     resources.preparation_failure(&server.entry.id, &error, snapshots);
                     if last_failure
                         .as_ref()
@@ -706,9 +698,6 @@ pub(super) async fn measure(
                     }
                 }
             }
-        }
-        if !completed_stage && let Some(failure) = last_failure {
-            return Err(failure.source);
         }
         if resources.transfers.is_empty() {
             return Err(AllParticipantsFailed(
@@ -799,12 +788,7 @@ pub(super) async fn measure(
                         },
                         task = resources.latency.join_next() => {
                             let task = task.ok_or("missing latency task")?;
-                            if completed_stage {
-                                resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
-                            } else {
-                                resources.latency_result(task)?;
-                                return Err("latency session ended before readiness".into());
-                            }
+                            resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
                         }
                     }
                 }
@@ -812,7 +796,7 @@ pub(super) async fn measure(
             };
             match tokio::time::timeout(Duration::from_secs(12), readiness).await {
                 Ok(result) => result?,
-                Err(_) if completed_stage => {
+                Err(_) => {
                     let missing: Vec<_> = resources
                         .transfers
                         .iter()
@@ -834,13 +818,7 @@ pub(super) async fn measure(
                             snapshots,
                         );
                     }
-                    if stage == Stage::Latency
-                        && resources.stop_latency.values().all(|stop| *stop.borrow())
-                    {
-                        return Err("all selected latency sessions failed".into());
-                    }
                 }
-                Err(error) => return Err(error.into()),
             }
             if stage == Stage::Latency && resources.stop_latency.values().all(|stop| *stop.borrow())
             {
@@ -860,9 +838,6 @@ pub(super) async fn measure(
         let warmup_end = Instant::now() + warmup;
         loop {
             if let Err(error) = resources.health() {
-                if !completed_stage {
-                    return Err(error);
-                }
                 resources.recover(
                     error,
                     &mut accounting,
@@ -900,7 +875,7 @@ pub(super) async fn measure(
                         initial = Some(boundary);
                         break;
                     }
-                    Err(error) if completed_stage && error.is::<ParticipantFailure>() => {
+                    Err(error) if error.is::<ParticipantFailure>() => {
                         resources.recover(
                             error,
                             &mut accounting,
