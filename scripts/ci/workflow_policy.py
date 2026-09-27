@@ -20,10 +20,12 @@ RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 
 TRIGGERS = {
     "ci.yml": {"pull_request", "push"},
+    "fork-upkeep.yml": {"schedule", "workflow_dispatch"},
     "release-request.yml": {"workflow_dispatch"},
     "release.yml": {"workflow_run"},
 }
 ALLOWED_USES = {
+    "fork-upkeep.yml": {"actions/checkout", "jdx/mise-action", "actions/create-github-app-token"},
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
         "./.github/actions/build-oci", "actions/upload-artifact",
@@ -121,8 +123,8 @@ def check_actions(root: Path) -> None:
     for path in files:
         name = str(path.relative_to(github))
         text = path.read_text(encoding="utf-8")
-        needles = ["ubuntu-latest"]
-        if name != "workflows/release.yml":
+        needles = ["ubuntu-latest", "secrets["]
+        if name not in ("workflows/release.yml", "workflows/fork-upkeep.yml"):
             needles += ["secrets.", "secrets[", "environment:"]
         for needle in needles:
             if needle in text:
@@ -175,6 +177,13 @@ def check_workflows(root: Path) -> None:
             actions = {ref.split("@", 1)[0] for ref in USES.findall(text)}
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
+    upkeep = (workflows / "fork-upkeep.yml").read_text(encoding="utf-8")
+    if set(re.findall(r"secrets\.(\w+)", upkeep)) != {"FORK_UPKEEP_APP_PRIVATE_KEY"}:
+        fail("fork-upkeep.yml: only the fork upkeep App private key is allowed")
+    if "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" not in upkeep:
+        fail("fork-upkeep.yml: upkeep may run only from the default branch")
+    if "repositories: ${{ steps.inventory.outputs.repositories }}" not in upkeep:
+        fail("fork-upkeep.yml: App repositories must come from the fork inventory")
     release = (workflows / "release.yml").read_text(encoding="utf-8")
     publish = "needs.verify.outputs.publish == 'true'"
     for job in JOB.split(release.split("\njobs:\n", 1)[1]):

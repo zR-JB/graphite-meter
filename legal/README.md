@@ -100,3 +100,27 @@ metadata and reviewed component set.
 
 `legal/project.json` is the only place to update Graphite Meter's copyright
 year or year range. The generator never derives it from the wall clock.
+
+## Pinned fork upkeep
+
+After Rust lands on the default branch, enable graphite-meter's daily/manual `Fork upkeep`.
+It reads `rust-forks.json`; keeping the scheduler here leaves fork defaults as pure upstream
+mirrors. Ordinary Git pushes reject divergence, including concurrent changes. Rebases update
+only `<patch-branch>-next`; pending reviews wait, and conflicts or merge-only edits open an
+issue. Canonical branches remain protected. Integrate reviewed changes through a normal
+merge or a new versioned protected patch branch with an updated inventory mapping.
+
+Install a dedicated GitHub App only on graphite-meter and the three forks, with Contents,
+Pull requests, Issues and Workflows write permissions. Workflows permission is needed to
+mirror upstream workflow changes. Set repository variable `FORK_UPKEEP_APP_CLIENT_ID` and
+secret `FORK_UPKEEP_APP_PRIVATE_KEY`. No variable or no landed Rust inventory means no
+publishing; dispatch accepts only the default branch. No fork Actions setup is needed.
+
+Canonical updates get draft Cargo.toml pin PRs on SHA-specific branches. Existing proposals
+and reviewer edits are never overwritten. Lockfiles and reviewed provenance stay unchanged,
+so existing gates block the drafts. Review origins, diffs, package/file scope, licenses and
+budgets; update `rust-forks.json`, Cargo.lock and generated legal outputs; then run
+`scripts/legal/check_git_sources.py --verify` and the Rust/fork gates before approval.
+Upkeep never reviews sources, merges PRs or changes protections.
+
+`python3 scripts/ci/fork_upkeep.py` previews remote changes without publishing.
