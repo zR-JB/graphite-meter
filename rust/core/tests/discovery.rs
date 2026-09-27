@@ -200,8 +200,7 @@ fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
     let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
     let throughput = value["capabilities"]["throughput"].as_array_mut().unwrap();
     let known_count = throughput.len();
-    throughput
-        .push(serde_json::json!({"transport":"future-stream","protocol":"http4","baseUrl":42}));
+    throughput.push(serde_json::json!({"transport":"future-stream","baseUrl":42}));
     throughput
         .push(serde_json::json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
     value["capabilities"]["latency"]

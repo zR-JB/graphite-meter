@@ -91,15 +91,17 @@ fn throughput_targets<'de, D: Deserializer<'de>>(
             .get("transport")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| serde::de::Error::custom("missing throughput transport"))?;
+        if !matches!(
+            transport,
+            "fetch-stream" | "webtransport" | "webtransport-datagram"
+        ) {
+            continue;
+        }
         let protocol = target
             .get("protocol")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| serde::de::Error::custom("missing throughput protocol"))?;
-        if !matches!(
-            transport,
-            "fetch-stream" | "webtransport" | "webtransport-datagram"
-        ) || !matches!(protocol, "http1" | "http2" | "http3" | "negotiated")
-        {
+        if !matches!(protocol, "http1" | "http2" | "http3" | "negotiated") {
             continue;
         }
         known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
