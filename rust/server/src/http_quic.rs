@@ -3,8 +3,9 @@
 use super::*;
 use crate::{webtransport, webtransport_send::ResetQueue};
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use quinn::SharedBudget;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::mpsc;
 use webtransport::{Incoming, ReceiveStream, TransportError};
 
@@ -18,7 +19,12 @@ const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 const INCOMING_BYTES: u64 = 64 * 1024;
 const INCOMING_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
-pub(super) const BUFFER_BYTES: u32 = 120 * 1024 * 1024;
+const UNI_STREAMS: u32 = 23;
+const RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
+// One maximal 64 KiB HTTP/3 frame of credit until admitted work raises it.
+const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
+// h3 copies one maximal 64 KiB frame plus a 16 KiB block per stream outside Noq's pools.
+const STREAM_FLOOR_BYTES: usize = 80 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
@@ -59,10 +65,10 @@ impl HttpServer {
             .ok_or("QUIC endpoint buffer size overflow")?;
         let lease = Arc::new(
             self.memory
-                .acquire(u32::try_from(bytes)?)
+                .lease(bytes)
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
-        if self.memory.bytes.available_permits() < BUFFER_BYTES as usize {
+        if self.memory.available() < connection_floor(&self.config.limits) {
             return Err(
                 "server memory budget must cover QUIC endpoint buffers and one connection".into(),
             );
@@ -90,22 +96,14 @@ impl HttpServer {
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES);
         let mut transport = quinn::TransportConfig::default();
-        transport.max_concurrent_bidi_streams(
-            u32::try_from(
-                self.config.limits.operations_per_client
-                    + self.config.limits.sessions_per_client
-                    + 4,
-            )?
-            .into(),
-        );
-        transport.max_concurrent_uni_streams(23_u32.into());
-        // Noq uses fixed receive credit rather than quic-go's autotuning.
-        // A 1 MiB stream window capped one upload near 80 Mbit/s at 100 ms
-        // RTT. These 8/16 MiB limits bound unconsumed inbound data per
-        // stream/connection; connection admission bounds their aggregate.
+        transport
+            .max_concurrent_bidi_streams(u32::try_from(max_requests(&self.config.limits))?.into());
+        transport.max_concurrent_uni_streams(UNI_STREAMS.into());
+        // A fixed 1 MiB Noq stream window capped one upload near 80 Mbit/s at 100 ms RTT.
         transport.stream_receive_window((8 * 1024 * 1024_u32).into());
-        transport.receive_window((16 * 1024 * 1024_u32).into());
+        transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
         transport.send_window(MIN_SEND_WINDOW);
+        transport.shared_budget(Some(self.memory.clone()));
         transport.datagram_receive_buffer_size(Some(64 * 1024));
         transport.datagram_send_buffer_size(64 * 1024);
         transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
@@ -120,13 +118,11 @@ impl HttpServer {
     ) -> Result<(), ConfigError> {
         tokio::pin!(shutdown);
         let mut connections = JoinSet::new();
-        let mut reclaim = tokio::time::interval(Duration::from_millis(250));
-        reclaim.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let floor = connection_floor(&self.config.limits);
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
                 Some(_) = connections.join_next() => {}
-                _ = reclaim.tick() => self.memory.reclaim(),
                 incoming = endpoint.accept() => {
                     let Some(incoming) = incoming else { break Ok(()); };
                     // Retry spends a round trip to protect admission under load.
@@ -142,19 +138,14 @@ impl HttpServer {
                         incoming.refuse();
                         continue;
                     };
-                    let Some(lease) = self.memory.acquire(BUFFER_BYTES) else {
+                    let Some(lease) = self.memory.lease(floor) else {
                         incoming.refuse();
                         continue;
                     };
                     let Ok(connecting) = incoming.accept() else { continue; };
-                    let Some(weak) = connecting.weak_handle() else { continue; };
-                    let window = Arc::new(Mutex::new(SendWindow::new()));
-                    self.memory.quic.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(QuicReservation {
-                        weak, _lease: lease, window: window.clone(),
-                    });
                     let server = self.clone();
                     connections.spawn(async move {
-                        let _permit = permit;
+                        let (_permit, _lease) = (permit, lease);
                         let quic = tokio::select! {
                             biased;
                             _ = stopped(server.stopping.clone()) => return,
@@ -163,7 +154,7 @@ impl HttpServer {
                             }
                         };
                         let stopping = server.stopping.clone();
-                        if let Err(error) = server.serve_quic_connection(quic, peer, window).await
+                        if let Err(error) = server.serve_quic_connection(quic, peer).await
                             && !*stopping.borrow()
                         {
                             eprintln!("[gm:h3] webtransport connection: {error:?}");
@@ -188,11 +179,11 @@ impl HttpServer {
         self: Arc<Self>,
         quic: quinn::Connection,
         peer: SocketAddr,
-        window: Arc<Mutex<SendWindow>>,
     ) -> Result<(), TransportError> {
-        let max_requests =
-            self.config.limits.operations_per_client + self.config.limits.sessions_per_client + 4;
+        let max_requests = max_requests(&self.config.limits);
         let (resets, mut pending_resets) = ResetQueue::new(max_requests);
+        let credit = self.receive_credit(quic.clone());
+        let mut window = SendWindow::new();
         let mut initializing = CloseOnDrop(Some(quic.clone()));
         let http = tokio::time::timeout(
             HEADER_TIMEOUT,
@@ -227,11 +218,10 @@ impl HttpServer {
                 }
                 _ = expiry.tick() => connection.sessions.expire(),
                 _ = tuning.tick() => {
-                    let mut window = window.lock().expect("send window poisoned");
                     if connection.requests.is_empty() {
                         window.release(&connection.quic);
                     } else {
-                        window.update(&connection.quic, &self.memory.bytes);
+                        window.update(&connection.quic, self.memory.available());
                     }
                 }
                 Some(plain) = connection.requests.next() => {
@@ -274,16 +264,16 @@ impl HttpServer {
                             }
                             let server = self.clone();
                             let sessions = connection.sessions.clone();
-                            let quic = connection.quic.clone();
                             let resets = resets.clone();
+                            let credit = credit.clone();
                             let active_responses = active_responses.clone();
                             connection.requests.push(Box::pin(async move {
                                 let Ok(Ok((request, stream))) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await else { return false };
                                 if request.method() == Method::CONNECT {
-                                    let _ = server.serve_webtransport(request, stream, quic, peer, resets, sessions).await;
+                                    let _ = server.serve_webtransport(request, stream, credit, peer, resets, sessions).await;
                                     false
                                 } else {
-                                    let _ = server.serve_http3_request(request, stream, peer, active_responses).await;
+                                    let _ = server.serve_http3_request(request, stream, peer, credit, active_responses).await;
                                     true
                                 }
                             }));
@@ -300,7 +290,7 @@ impl HttpServer {
 #[derive(Debug)]
 struct BudgetedSocket {
     socket: Box<dyn quinn::AsyncUdpSocket>,
-    lease: Arc<tokio::sync::OwnedSemaphorePermit>,
+    lease: Arc<Lease>,
 }
 
 impl quinn::AsyncUdpSocket for BudgetedSocket {
@@ -336,7 +326,7 @@ impl quinn::AsyncUdpSocket for BudgetedSocket {
 #[derive(Debug)]
 struct BudgetedSender {
     sender: Pin<Box<dyn quinn::UdpSender>>,
-    _lease: Arc<tokio::sync::OwnedSemaphorePermit>,
+    _lease: Arc<Lease>,
 }
 
 impl quinn::UdpSender for BudgetedSender {
@@ -353,57 +343,119 @@ impl quinn::UdpSender for BudgetedSender {
     }
 }
 
-pub(super) struct MemoryBudget {
-    bytes: Arc<tokio::sync::Semaphore>,
-    retry_available: usize,
-    quic: Mutex<Vec<QuicReservation>>,
+pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
+    limits.operations_per_client + limits.sessions_per_client + 4
 }
 
-struct QuicReservation {
-    weak: quinn::WeakConnectionHandle,
-    _lease: tokio::sync::OwnedSemaphorePermit,
-    window: Arc<Mutex<SendWindow>>,
+pub(super) fn connection_floor(limits: &crate::admission::Limits) -> usize {
+    (max_requests(limits) + UNI_STREAMS as usize).saturating_mul(STREAM_FLOOR_BYTES)
+}
+
+#[derive(Debug)]
+pub(super) struct MemoryBudget {
+    limit: usize,
+    used: AtomicUsize,
 }
 
 impl MemoryBudget {
-    pub(super) fn new(bytes: usize) -> Self {
-        Self {
-            bytes: Arc::new(tokio::sync::Semaphore::new(bytes)),
-            retry_available: bytes - bytes / 4,
-            quic: Mutex::new(Vec::new()),
-        }
+    pub(super) fn new(limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            limit,
+            used: AtomicUsize::new(0),
+        })
     }
 
-    pub(super) fn acquire(&self, bytes: u32) -> Option<tokio::sync::OwnedSemaphorePermit> {
-        self.reclaim();
-        self.bytes.clone().try_acquire_many_owned(bytes).ok()
+    pub(super) fn lease(self: &Arc<Self>, bytes: usize) -> Option<Lease> {
+        self.try_charge(bytes).then(|| Lease {
+            budget: self.clone(),
+            bytes,
+        })
+    }
+
+    fn available(&self) -> usize {
+        self.limit - self.used.load(Ordering::Relaxed)
     }
 
     fn under_pressure(&self) -> bool {
-        self.bytes.available_permits() <= self.retry_available
+        self.used.load(Ordering::Relaxed) >= self.limit / 4
+    }
+}
+
+impl SharedBudget for MemoryBudget {
+    fn try_charge(&self, bytes: usize) -> bool {
+        self.used
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
+                used.checked_add(bytes).filter(|&used| used <= self.limit)
+            })
+            .is_ok()
     }
 
-    fn reclaim(&self) {
-        self.quic
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|reservation| {
-                if let Some(connection) = reservation.weak.upgrade() {
-                    reservation
-                        .window
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .refund(&connection);
-                    true
-                } else {
-                    reservation
-                        .window
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .extra = None;
-                    reservation.weak.has_receive_allocations()
-                }
-            });
+    fn refund(&self, bytes: usize) {
+        self.used.fetch_sub(bytes, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Lease {
+    budget: Arc<MemoryBudget>,
+    bytes: usize,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        self.budget.refund(self.bytes);
+    }
+}
+
+#[derive(Clone)]
+pub struct ReceiveCredit(Arc<CreditState>);
+
+struct CreditState {
+    quic: quinn::Connection,
+    memory: Arc<MemoryBudget>,
+    admitted: Mutex<usize>,
+}
+
+impl HttpServer {
+    pub fn receive_credit(&self, quic: quinn::Connection) -> ReceiveCredit {
+        ReceiveCredit(Arc::new(CreditState {
+            quic,
+            memory: self.memory.clone(),
+            admitted: Mutex::new(0),
+        }))
+    }
+}
+
+impl ReceiveCredit {
+    pub(super) fn quic(&self) -> &quinn::Connection {
+        &self.0.quic
+    }
+
+    pub(super) fn admit(&self) -> Admitted {
+        let mut admitted = self.0.admitted.lock().expect("receive credit poisoned");
+        if *admitted == 0 {
+            // Noq's reassembly pool may hold three times the window.
+            let window = (RECEIVE_WINDOW_FLOOR as usize + self.0.memory.available() / 3)
+                .min(RECEIVE_WINDOW as usize);
+            self.0
+                .quic
+                .set_receive_window(u32::try_from(window).expect("bounded window").into());
+        }
+        *admitted += 1;
+        Admitted(self.clone())
+    }
+}
+
+pub(super) struct Admitted(ReceiveCredit);
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        let credit = &self.0.0;
+        let mut admitted = credit.admitted.lock().expect("receive credit poisoned");
+        *admitted -= 1;
+        if *admitted == 0 {
+            credit.quic.set_receive_window(RECEIVE_WINDOW_FLOOR.into());
+        }
     }
 }
 
@@ -411,7 +463,6 @@ struct SendWindow {
     limit: u64,
     last: Option<(tokio::time::Instant, u64)>,
     low_demand_since: Option<tokio::time::Instant>,
-    extra: Option<tokio::sync::OwnedSemaphorePermit>,
 }
 
 impl SendWindow {
@@ -420,35 +471,10 @@ impl SendWindow {
             limit: MIN_SEND_WINDOW,
             last: None,
             low_demand_since: None,
-            extra: None,
         }
     }
 
-    fn current(&self) -> u64 {
-        self.limit
-    }
-
-    fn reserved(&self) -> u64 {
-        MIN_SEND_WINDOW
-            + self
-                .extra
-                .as_ref()
-                .map_or(0, |extra| extra.num_permits() as u64)
-    }
-
-    fn refund(&mut self, connection: &quinn::Connection) {
-        if let Some(extra) = &mut self.extra {
-            let retained = self.limit.max(connection.send_allocated_bytes());
-            let reserved = MIN_SEND_WINDOW + extra.num_permits() as u64;
-            drop(extra.split(reserved.saturating_sub(retained) as usize));
-            if extra.num_permits() == 0 {
-                self.extra = None;
-            }
-        }
-    }
-
-    fn update(&mut self, connection: &quinn::Connection, budget: &Arc<tokio::sync::Semaphore>) {
-        self.refund(connection);
+    fn update(&mut self, connection: &quinn::Connection, available: usize) {
         // Read the aggregate first so a concurrent send on the initial path
         // cannot look like traffic on another path.
         let all_sent = connection.stats().udp_tx.bytes;
@@ -467,20 +493,20 @@ impl SendWindow {
         let sent = path.udp_tx.bytes;
         if let Some((last, previous)) = self.last {
             // Two observed bandwidth-delay products allow a new path to
-            // grow without reserving the full window on fast local links.
+            // grow without a full window on fast local links.
             let target = desired_send_window(
                 sent.saturating_sub(previous),
                 path.rtt,
                 now.duration_since(last),
             );
-            if target == MIN_SEND_WINDOW && self.extra.is_some() {
+            if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
                 let since = self.low_demand_since.get_or_insert(now);
                 if now.duration_since(*since) >= SEND_WINDOW_SHRINK_DELAY {
                     self.release(connection);
                 }
             } else {
                 self.low_demand_since = None;
-                if let Some(window) = self.grow(target, budget) {
+                if let Some(window) = self.grow(target, available) {
                     connection.set_send_window(window);
                 }
             }
@@ -488,35 +514,25 @@ impl SendWindow {
         self.last = Some((now, sent));
     }
 
-    fn grow(&mut self, target: u64, budget: &Arc<tokio::sync::Semaphore>) -> Option<u64> {
-        let target = target.min(MAX_SEND_WINDOW);
-        if target <= self.limit {
+    fn grow(&mut self, target: u64, available: usize) -> Option<u64> {
+        let granted = target
+            .min(MAX_SEND_WINDOW)
+            .saturating_sub(self.limit)
+            .min(available as u64);
+        if granted < SEND_WINDOW_STEP {
             return None;
         }
-        let wanted = target.saturating_sub(self.reserved());
-        let granted = wanted.min(budget.available_permits() as u64);
-        if wanted > 0 && granted < SEND_WINDOW_STEP {
-            return None;
-        }
-        if granted > 0 {
-            let permit = budget.clone().try_acquire_many_owned(granted as u32).ok()?;
-            match &mut self.extra {
-                Some(extra) => extra.merge(permit),
-                None => self.extra = Some(permit),
-            }
-        }
-        self.limit = target.min(self.reserved());
+        self.limit += granted;
         Some(self.limit)
     }
 
     fn release(&mut self, connection: &quinn::Connection) {
         self.last = None;
         self.low_demand_since = None;
-        if self.current() != MIN_SEND_WINDOW {
+        if self.limit != MIN_SEND_WINDOW {
             self.limit = MIN_SEND_WINDOW;
-            connection.set_send_window(self.current());
+            connection.set_send_window(MIN_SEND_WINDOW);
         }
-        self.refund(connection);
     }
 }
 
@@ -728,24 +744,65 @@ fn stop(mut stream: ReceiveStream) {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, SendWindow, Sessions, desired_send_window};
+    use super::{
+        MAX_SEND_WINDOW, MIN_SEND_WINDOW, SEND_WINDOW_STEP, SendWindow, Sessions,
+        desired_send_window,
+    };
     use std::{sync::Arc, time::Duration};
 
-    fn endpoint_tls() -> Arc<rustls::ServerConfig> {
+    fn tls() -> (Arc<rustls::ServerConfig>, quinn::ClientConfig) {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
-        let mut tls =
-            rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .unwrap()
-                .with_no_client_auth()
-                .with_single_cert(
-                    vec![CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap()],
-                    PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap(),
-                )
-                .unwrap();
+        let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+        let provider = Arc::new(crate::crypto::provider());
+        let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![certificate.clone()],
+                PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap(),
+            )
+            .unwrap();
         tls.alpn_protocols = vec![b"h3".to_vec()];
-        Arc::new(tls)
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let mut client = rustls::ClientConfig::builder_with_provider(provider)
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        client.alpn_protocols = vec![b"h3".to_vec()];
+        let client = quinn::ClientConfig::new(Arc::new(
+            quinn::crypto::rustls::QuicClientConfig::try_from(client).unwrap(),
+        ));
+        (Arc::new(tls), client)
+    }
+
+    async fn download(
+        quic: quinn::Connection,
+        bytes: u64,
+    ) -> Result<usize, h3::error::StreamError> {
+        use bytes::Buf;
+        let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic))
+            .await
+            .unwrap();
+        let driving = tokio::spawn(async move { driver.wait_idle().await });
+        let mut stream = h3
+            .send_request(
+                http::Request::get(format!("https://localhost/download?bytes={bytes}"))
+                    .body(())
+                    .unwrap(),
+            )
+            .await?;
+        stream.finish().await?;
+        assert_eq!(stream.recv_response().await?.status(), http::StatusCode::OK);
+        let mut received = 0;
+        while let Some(data) = stream.recv_data().await? {
+            received += data.remaining();
+        }
+        driving.abort();
+        Ok(received)
     }
 
     #[tokio::test]
@@ -756,43 +813,39 @@ mod tests {
             max_connections_per_client: 4,
             ..Config::default()
         });
-        let small =
-            HttpServer::with_memory(config.clone(), BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES)
-                .unwrap();
-        let available = small.memory.bytes.available_permits();
-        let tls = endpoint_tls();
+        let floor = connection_floor(&config.limits);
+        let small = HttpServer::with_memory(config.clone(), floor + DOWNLOAD_BLOCK_BYTES).unwrap();
+        let available = small.memory.available();
+        let (tls, _) = tls();
         assert!(
             small
                 .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
                 .is_err()
         );
-        assert_eq!(small.memory.bytes.available_permits(), available);
+        assert_eq!(small.memory.available(), available);
 
         let server =
-            HttpServer::with_memory(config, 2 * BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES)
+            HttpServer::with_memory(config, 64 * 1024 * 1024 + floor + DOWNLOAD_BLOCK_BYTES)
                 .unwrap();
-        let available = server.memory.bytes.available_permits();
+        let available = server.memory.available();
         let endpoint = server
             .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
             .unwrap();
-        let reserved = available - server.memory.bytes.available_permits();
+        let reserved = available - server.memory.available();
         assert!(reserved > INCOMING_TOTAL_BYTES as usize);
-        assert!(server.memory.bytes.available_permits() >= BUFFER_BYTES as usize);
-        let remaining = server
-            .memory
-            .acquire(server.memory.bytes.available_permits() as u32)
-            .unwrap();
+        assert!(server.memory.available() >= floor);
+        let remaining = server.memory.lease(server.memory.available()).unwrap();
         assert!(
             server
                 .quic_endpoint(tls, "127.0.0.1:0".parse().unwrap())
                 .is_err()
         );
-        assert_eq!(server.memory.bytes.available_permits(), 0);
+        assert_eq!(server.memory.available(), 0);
         drop(remaining);
         let address = endpoint.local_addr().unwrap();
         drop(endpoint);
         tokio::time::timeout(Duration::from_secs(5), async {
-            while server.memory.bytes.available_permits() != available {
+            while server.memory.available() != available {
                 tokio::task::yield_now().await;
             }
         })
@@ -815,12 +868,12 @@ mod tests {
         let memory = MemoryBudget::new(64 * 1024);
         let socket = BudgetedSocket {
             socket,
-            lease: Arc::new(memory.acquire(64 * 1024).unwrap()),
+            lease: Arc::new(memory.lease(64 * 1024).unwrap()),
         };
         let address = socket.local_addr().unwrap();
         let mut sender = socket.create_sender();
         drop(socket);
-        assert_eq!(memory.bytes.available_permits(), 0);
+        assert_eq!(memory.available(), 0);
         let transmit = quinn::udp::Transmit {
             destination: receiver.local_addr().unwrap(),
             ecn: None,
@@ -841,23 +894,8 @@ mod tests {
         .unwrap();
         assert!(std::net::UdpSocket::bind(address).is_err());
         drop(sender);
-        assert_eq!(memory.bytes.available_permits(), 64 * 1024);
+        assert_eq!(memory.available(), 64 * 1024);
         assert!(std::net::UdpSocket::bind(address).is_ok());
-    }
-
-    #[test]
-    fn send_window_growth_shares_one_budget_and_returns_it_on_drop() {
-        let budget = Arc::new(tokio::sync::Semaphore::new(40 << 20));
-        let (mut first, mut second) = (SendWindow::new(), SendWindow::new());
-        assert_eq!(first.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
-        assert_eq!(
-            second.grow(MAX_SEND_WINDOW, &budget),
-            Some(MIN_SEND_WINDOW + (10 << 20))
-        );
-        assert_eq!(second.grow(MAX_SEND_WINDOW, &budget), None);
-        drop(first);
-        assert_eq!(second.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
-        assert_eq!(budget.available_permits(), 10 << 20);
     }
 
     #[test]
@@ -883,59 +921,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_send_window_returns_budget_while_control_stream_stays_open() {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
-
-        let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
-        let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-        let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-        let config = quinn::ServerConfig::with_single_cert(vec![certificate.clone()], key).unwrap();
+    async fn idle_send_window_shrinks_while_control_stream_stays_open() {
+        let (tls, client_config) = tls();
+        let config = quinn::ServerConfig::with_crypto(Arc::new(
+            quinn::crypto::rustls::QuicServerConfig::try_from(tls).unwrap(),
+        ));
         let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse().unwrap()).unwrap();
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add(certificate).unwrap();
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        let mut config = quinn::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
-        let mut transport = quinn::TransportConfig::default();
-        transport.stream_receive_window((8 * 1024 * 1024_u32).into());
-        transport.receive_window((16 * 1024 * 1024_u32).into());
-        config.transport_config(Arc::new(transport));
-        client.set_default_client_config(config);
-        let attempt = client
-            .connect(server.local_addr().unwrap(), "localhost")
-            .unwrap();
-        let connecting = tokio::time::timeout(Duration::from_secs(1), server.accept())
-            .await
-            .unwrap()
-            .unwrap()
-            .accept()
-            .unwrap();
-        let memory = super::MemoryBudget::new(super::BUFFER_BYTES as usize);
-        let lease = memory.acquire(super::BUFFER_BYTES).unwrap();
-        memory.quic.lock().unwrap().push(super::QuicReservation {
-            weak: connecting.weak_handle().unwrap(),
-            _lease: lease,
-            window: Arc::new(std::sync::Mutex::new(SendWindow::new())),
-        });
-        drop(connecting);
-        drop(attempt);
-        assert!(
-            memory.acquire(1).is_none(),
-            "cancelled handshake refunded before transport destruction"
-        );
-        tokio::time::pause();
-        for _ in 0..90 {
-            tokio::time::advance(Duration::from_secs(1)).await;
-            tokio::task::yield_now().await;
-            memory.reclaim();
-            if memory.bytes.available_permits() == super::BUFFER_BYTES as usize {
-                break;
-            }
-        }
-        tokio::time::resume();
-        assert_eq!(
-            memory.bytes.available_permits(),
-            super::BUFFER_BYTES as usize
-        );
+        client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(5), async {
             let (client, server) = tokio::join!(
                 client
@@ -951,13 +944,14 @@ mod tests {
             requests.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"ping");
 
-            let budget = Arc::new(tokio::sync::Semaphore::new(
-                (MAX_SEND_WINDOW - MIN_SEND_WINDOW) as usize,
-            ));
             let mut window = SendWindow::new();
-            server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
-            assert_eq!(budget.available_permits(), 0);
-            window.update(&server, &budget);
+            assert_eq!(
+                window.grow(MAX_SEND_WINDOW, (SEND_WINDOW_STEP - 1) as usize),
+                None,
+                "growth needs free budget"
+            );
+            server.set_send_window(window.grow(MAX_SEND_WINDOW, usize::MAX).unwrap());
+            window.update(&server, usize::MAX);
             for sample in 0..5 {
                 replies.write_all(b"pong").await.unwrap();
                 response.read_exact(&mut ping).await.unwrap();
@@ -965,67 +959,18 @@ mod tests {
                 tokio::time::pause();
                 tokio::time::advance(Duration::from_millis(250)).await;
                 tokio::time::resume();
-                window.update(&server, &budget);
+                window.update(&server, usize::MAX);
                 if sample < 3 {
                     assert_eq!(
-                        budget.available_permits(),
-                        0,
+                        window.limit, MAX_SEND_WINDOW,
                         "one quiet sample must not shrink an active window"
                     );
                 }
             }
-            assert_eq!(window.current(), MIN_SEND_WINDOW);
-            let mut next = SendWindow::new();
-            assert_eq!(next.grow(MAX_SEND_WINDOW, &budget), Some(MAX_SEND_WINDOW));
-            drop(next);
+            assert_eq!(window.limit, MIN_SEND_WINDOW);
             request.write_all(b"live").await.unwrap();
             requests.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"live");
-            server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
-            let mut payload = server.open_uni().await.unwrap();
-            payload.write_all(&vec![1; 4 * 1024 * 1024]).await.unwrap();
-            let outstanding = server.send_allocated_bytes();
-            assert!(outstanding > MIN_SEND_WINDOW);
-            window.release(&server);
-            assert_eq!(window.reserved(), outstanding);
-            let retained = outstanding - MIN_SEND_WINDOW;
-            assert_eq!(
-                budget.available_permits() as u64,
-                MAX_SEND_WINDOW - MIN_SEND_WINDOW - retained
-            );
-            let memory = super::MemoryBudget::new(super::BUFFER_BYTES as usize);
-            let lease = memory.acquire(super::BUFFER_BYTES).unwrap();
-            let held_window = Arc::new(std::sync::Mutex::new(window));
-            memory.quic.lock().unwrap().push(super::QuicReservation {
-                weak: server.weak_handle(),
-                _lease: lease,
-                window: held_window,
-            });
-            server.close(0_u32.into(), b"closed with owned stream");
-            drop(server);
-            memory.reclaim();
-            assert!(
-                memory.acquire(1).is_none(),
-                "closed stream refunded the connection reservation"
-            );
-            drop(payload);
-            drop(replies);
-            drop(requests);
-            client.close(0_u32.into(), b"done");
-            tokio::time::pause();
-            for _ in 0..20 {
-                tokio::time::advance(Duration::from_millis(100)).await;
-                tokio::task::yield_now().await;
-                memory.reclaim();
-                if memory.bytes.available_permits() == super::BUFFER_BYTES as usize {
-                    break;
-                }
-            }
-            tokio::time::resume();
-            assert_eq!(
-                memory.bytes.available_permits(),
-                super::BUFFER_BYTES as usize
-            );
             client.close(0_u32.into(), b"done");
         })
         .await
@@ -1033,16 +978,151 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mixed_transport_exhaustion_preserves_existing_connections() {
-        exercise_memory(false).await;
+    async fn unadmitted_peer_buffers_at_most_the_floor_window() {
+        use super::*;
+        use futures_util::FutureExt;
+        let server = HttpServer::new(Arc::new(Config::default())).unwrap();
+        let (tls, client_config) = tls();
+        let endpoint = quinn::Endpoint::server(
+            server.quic_config(tls).unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(client_config);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (quic, accepted) = tokio::join!(
+                client
+                    .connect(endpoint.local_addr().unwrap(), "localhost")
+                    .unwrap(),
+                async { endpoint.accept().await.unwrap().await.unwrap() },
+            );
+            let quic = quic.unwrap();
+            let idle = server.memory.available();
+            let mut send = quic.open_uni().await.unwrap();
+            let mut written = 0;
+            while let Some(Ok(count)) = send.write(&[7; 16 * 1024]).now_or_never() {
+                written += count;
+            }
+            assert_eq!(written, RECEIVE_WINDOW_FLOOR as usize);
+            while idle - server.memory.available() < written {
+                tokio::task::yield_now().await;
+            }
+            let charged = idle - server.memory.available();
+            eprintln!("unadmitted peer: {written} bytes sent, {charged} bytes charged");
+            assert!(charged <= 3 * RECEIVE_WINDOW_FLOOR as usize);
+
+            let admitted = server.receive_credit(accepted.clone()).admit();
+            send.write_all(&vec![7; 1024 * 1024]).await.unwrap();
+            drop(admitted);
+            assert!(accepted.close_reason().is_none());
+            quic.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
-    async fn sixteen_client_stage_transition_keeps_draining_reservations() {
-        exercise_memory(true).await;
+    async fn exhaustion_closes_only_the_requesting_connection() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, client_config) = tls();
+        let endpoint = quinn::Endpoint::server(
+            server.quic_config(tls).unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
+            let _ = stopped.await;
+        }));
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(client_config);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let requesting = client.connect(address, "localhost").unwrap().await.unwrap();
+            let sibling = client.connect(address, "localhost").unwrap().await.unwrap();
+            let floor = connection_floor(&server.config.limits);
+            let filler = server
+                .memory
+                .lease(server.memory.available() - 4096)
+                .unwrap();
+            assert!(
+                download(requesting.clone(), 64 * 1024 * 1024)
+                    .await
+                    .is_err()
+            );
+            match requesting.closed().await {
+                quinn::ConnectionError::ConnectionClosed(close) => {
+                    assert_eq!(close.error_code, quinn::TransportErrorCode::INTERNAL_ERROR)
+                }
+                error => panic!("unexpected close: {error:?}"),
+            }
+            assert!(sibling.close_reason().is_none());
+            while server.memory.available() < floor {
+                tokio::task::yield_now().await;
+            }
+            assert_eq!(download(sibling.clone(), 13).await.unwrap(), 13);
+            drop(filler);
+            sibling.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
     }
 
-    async fn exercise_memory(topology: bool) {
+    #[tokio::test]
+    async fn silent_connections_from_few_sources_leave_budget_for_new_clients() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, client_config) = tls();
+        let endpoint = quinn::Endpoint::server(
+            server.quic_config(tls).unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
+            let _ = stopped.await;
+        }));
+        tokio::time::timeout(Duration::from_secs(8), async {
+            let idle = server.memory.available();
+            let mut clients = Vec::new();
+            let mut connecting = Vec::new();
+            for source in 2..=11 {
+                let client =
+                    quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                client.set_default_client_config(client_config.clone());
+                if source <= 10 {
+                    for _ in 0..8 {
+                        connecting.push(client.connect(address, "localhost").unwrap());
+                    }
+                }
+                clients.push(client);
+            }
+            let silent = futures_util::future::join_all(connecting).await;
+            assert!(silent.iter().all(Result::is_ok));
+            let charged = idle - server.memory.available();
+            eprintln!("{} silent connections charge {charged} bytes", silent.len());
+            let floor = connection_floor(&server.config.limits);
+            assert!(charged < silent.len() * (floor + 64 * 1024));
+            let fresh = clients[9]
+                .connect(address, "localhost")
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(download(fresh, 13).await.unwrap(), 13);
+        })
+        .await
+        .unwrap();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn mixed_transport_exhaustion_preserves_existing_connections() {
         use super::*;
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
         use tokio::net::TcpStream;
@@ -1060,23 +1140,13 @@ mod tests {
                 .with_single_cert(vec![certificate.clone()], key)
                 .unwrap();
             tls.alpn_protocols = vec![b"h2".to_vec()];
+            let floor = connection_floor(&Config::default().limits);
             let server = HttpServer::with_memory(
                 Arc::new(Config {
                     max_connections_per_client: 128,
-                    trusted_proxies: if topology {
-                        vec!["127.0.0.1/32".parse().unwrap()]
-                    } else {
-                        Vec::new()
-                    },
                     ..Config::default()
                 }),
-                if topology {
-                    8 * 1024 * 1024 * 1024 - 32 * (MAX_SEND_WINDOW - MIN_SEND_WINDOW) as usize
-                } else {
-                    2 * BUFFER_BYTES as usize
-                        + http_h2::BUFFER_BYTES as usize
-                        + DOWNLOAD_BLOCK_BYTES
-                },
+                4 * (http_h2::BUFFER_BYTES as usize + floor),
             )
             .unwrap();
             let server = Arc::new(server);
@@ -1094,24 +1164,22 @@ mod tests {
                     let _ = stopped_h2.await;
                 },
             ));
-            if topology {
-                let available = server.memory.bytes.available_permits();
-                link.inject(crate::test_link::Fault::Stall);
-                let pending = TcpStream::connect(address).await.unwrap();
-                while server.memory.bytes.available_permits() == available {
-                    tokio::task::yield_now().await;
-                }
-                assert_eq!(
-                    server.memory.bytes.available_permits(),
-                    available - http_h2::BUFFER_BYTES as usize
-                );
-                drop(pending);
-                link.inject(crate::test_link::Fault::Reset);
-                while server.memory.bytes.available_permits() != available {
-                    tokio::task::yield_now().await;
-                }
-                link.inject(crate::test_link::Fault::None);
+            let available = server.memory.available();
+            link.inject(crate::test_link::Fault::Stall);
+            let pending = TcpStream::connect(address).await.unwrap();
+            while server.memory.available() == available {
+                tokio::task::yield_now().await;
             }
+            assert_eq!(
+                server.memory.available(),
+                available - http_h2::BUFFER_BYTES as usize
+            );
+            drop(pending);
+            link.inject(crate::test_link::Fault::Reset);
+            while server.memory.available() != available {
+                tokio::task::yield_now().await;
+            }
+            link.inject(crate::test_link::Fault::None);
             tls.alpn_protocols = vec![b"h3".to_vec()];
             let endpoint = quinn::Endpoint::server(
                 server.quic_config(Arc::new(tls)).unwrap(),
@@ -1146,70 +1214,6 @@ mod tests {
             client_endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
                 quinn::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
             )));
-            if topology {
-                let mut h2_clients = Vec::new();
-                let mut h2_drivers = JoinSet::new();
-                for _ in 0..15 {
-                    let stream = connector
-                        .connect(
-                            ServerName::try_from("localhost").unwrap(),
-                            TcpStream::connect(address).await.unwrap(),
-                        )
-                        .await
-                        .unwrap();
-                    let (client, connection) = h2::client::handshake(stream).await.unwrap();
-                    h2_clients.push(client);
-                    h2_drivers.spawn(connection);
-                }
-                let link = crate::test_link::Link::udp(quic_address, Duration::from_millis(150))
-                    .await
-                    .unwrap();
-                let mut clients = Vec::new();
-                let mut opening = FuturesUnordered::new();
-                for _ in 0..48 {
-                    opening.push(client_endpoint.connect(link.address, "localhost").unwrap());
-                }
-                while let Some(connection) = opening.next().await {
-                    clients.push(connection.unwrap());
-                }
-                let held: Vec<_> = {
-                    let registry = server.memory.quic.lock().unwrap();
-                    assert_eq!(registry.len(), 48);
-                    registry
-                        .iter()
-                        .take(16)
-                        .map(|reservation| reservation.weak.upgrade().unwrap())
-                        .collect()
-                };
-                for connection in clients.drain(..16) {
-                    connection.close(0_u32.into(), b"next stage");
-                }
-                for _ in 0..16 {
-                    opening.push(client_endpoint.connect(link.address, "localhost").unwrap());
-                }
-                let mut refused = 0;
-                while let Some(connection) = opening.next().await {
-                    match connection {
-                        Ok(connection) => clients.push(connection),
-                        Err(_) => refused += 1,
-                    }
-                }
-                assert!(refused > 0);
-                assert!(server.memory.quic.lock().unwrap().len() < 64);
-                assert!(server.memory.bytes.available_permits() < BUFFER_BYTES as usize);
-                drop(held);
-                drop(clients);
-                client_endpoint.close(0_u32.into(), b"done");
-                stop_h2.send(()).unwrap();
-                stop_h3.send(()).unwrap();
-                h2_server.await.unwrap().unwrap();
-                h3_server.await.unwrap().unwrap();
-                h2_drivers.shutdown().await;
-                drop(h2_clients);
-                h2_driver.abort();
-                let _ = h2_driver.await;
-                return;
-            }
             let unloaded = crate::test_link::Link::udp(quic_address, Duration::from_millis(50))
                 .await
                 .unwrap();
@@ -1232,7 +1236,10 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
-            assert_eq!(server.memory.bytes.available_permits(), 0);
+            let exhausted = server
+                .memory
+                .lease(server.memory.available() - (floor - 1))
+                .unwrap();
             let pressured = crate::test_link::Link::udp(quic_address, Duration::from_millis(50))
                 .await
                 .unwrap();
@@ -1297,7 +1304,7 @@ mod tests {
             h3_driver.abort();
             let _ = h2_driver.await;
             let _ = h3_driver.await;
-            drop(stream);
+            drop((stream, exhausted));
             drop(second);
             drop(h3);
             drop(h2);

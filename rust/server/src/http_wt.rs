@@ -45,11 +45,12 @@ impl HttpServer {
         self: Arc<Self>,
         request: Request<()>,
         mut stream: H3RequestStream,
-        quic: quinn::Connection,
+        credit: super::http_quic::ReceiveCredit,
         peer: SocketAddr,
         resets: ResetQueue,
         sessions: Sessions,
     ) -> Result<(), TransportError> {
+        let quic = credit.quic().clone();
         if request.method() != Method::CONNECT
             || request.extensions().get::<h3::ext::Protocol>()
                 != Some(&h3::ext::Protocol::WEB_TRANSPORT)
@@ -117,6 +118,7 @@ impl HttpServer {
             Ok(permit) => permit,
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
         };
+        let _admitted = credit.admit();
         let lifetime = if class == Class::Session {
             self.config.max_session_duration
         } else {

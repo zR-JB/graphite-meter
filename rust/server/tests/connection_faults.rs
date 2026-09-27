@@ -221,6 +221,67 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     Ok(())
 }
 
+#[tokio::test]
+async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), TestError> {
+    use bytes::Buf;
+    let tls = Tls::new();
+    let (address, server, stop) = quic_server(
+        &tls,
+        Config {
+            max_operation_duration: Duration::from_secs(10),
+            ..Config::default()
+        },
+    )
+    .await?;
+    let one_way = Duration::from_millis(20);
+    let link = test_link::Link::udp(address, one_way).await?;
+    let quic = quic_client(&tls, true)?
+        .connect(link.address, "localhost")?
+        .await?;
+    let (mut driver, mut sender) = h3::client::new(h3_noq::Connection::new(quic.clone())).await?;
+    let driving = tokio::spawn(async move { driver.wait_idle().await });
+    let mut session = sender
+        .send_request(Request::post("https://localhost/upload/session").body(())?)
+        .await?;
+    session.finish().await?;
+    assert_eq!(session.recv_response().await?.status(), 200);
+    let mut reply = Vec::new();
+    while let Some(mut data) = session.recv_data().await? {
+        reply.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+    }
+    let reply: serde_json::Value = serde_json::from_slice(&reply)?;
+    let id = reply["uploadId"].as_str().ok_or("upload id")?.to_owned();
+
+    let size = 4 * 1024 * 1024;
+    let started = tokio::time::Instant::now();
+    let mut upload = sender
+        .send_request(Request::post(format!("https://localhost/upload?id={id}")).body(())?)
+        .await?;
+    upload.send_data(Bytes::from(vec![7_u8; size])).await?;
+    upload.finish().await?;
+    assert_eq!(upload.recv_response().await?.status(), 200);
+    let mut reply = Vec::new();
+    while let Some(mut data) = upload.recv_data().await? {
+        reply.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+    }
+    let elapsed = started.elapsed();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&reply)?["bytes"],
+        size
+    );
+    let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
+    eprintln!("h3 4 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
+    assert!(
+        round_trips < 20.0,
+        "window-bound upload: {round_trips:.1} RTT"
+    );
+    quic.close(0_u32.into(), b"done");
+    driving.abort();
+    stop.send(()).ok();
+    server.await?;
+    Ok(())
+}
+
 #[derive(Debug)]
 struct Fixed(Arc<CertifiedKey>);
 impl ResolvesServerCert for Fixed {

@@ -9,6 +9,7 @@ mod http_quic;
 #[path = "http_wt.rs"]
 mod http_wt;
 pub use http_h3::{Http3RequestKind, Http3RequestStream};
+pub use http_quic::ReceiveCredit;
 #[path = "http_websocket.rs"]
 mod http_websocket;
 #[path = "http_upload.rs"]
@@ -70,10 +71,10 @@ pub struct HttpServer {
     admission: Admission,
     connections: Connections,
     stopping: tokio::sync::watch::Sender<bool>,
-    memory: http_quic::MemoryBudget,
+    memory: Arc<http_quic::MemoryBudget>,
     download_block: Bytes,
     download_meter: crate::meter::Meter,
-    _download_memory: tokio::sync::OwnedSemaphorePermit,
+    _download_memory: http_quic::Lease,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
@@ -145,7 +146,7 @@ impl HttpServer {
         );
         let memory = http_quic::MemoryBudget::new(bytes);
         let download_memory = memory
-            .acquire(DOWNLOAD_BLOCK_BYTES as u32)
+            .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;
         let mut block = vec![0; DOWNLOAD_BLOCK_BYTES];
         getrandom::fill(&mut block).map_err(|_| "download payload randomness unavailable")?;
@@ -291,7 +292,7 @@ impl HttpServer {
                         let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(64 * 1024);
                     }
                     let memory = if matches!(protocol, HttpProtocol::Http2) {
-                        let Some(lease) = self.memory.acquire(http_h2::BUFFER_BYTES) else { continue; };
+                        let Some(lease) = self.memory.lease(http_h2::BUFFER_BYTES as usize) else { continue; };
                         Some(lease)
                     } else { None };
                     let server = self.clone();
@@ -1185,8 +1186,8 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     }
 }
 
-pub(crate) const fn minimum_buffer_bytes() -> usize {
-    http_quic::BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES
+pub(crate) fn minimum_buffer_bytes(limits: &crate::admission::Limits) -> usize {
+    http_quic::connection_floor(limits).max(http_h2::BUFFER_BYTES as usize) + DOWNLOAD_BLOCK_BYTES
 }
 
 #[cfg(test)]

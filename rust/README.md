@@ -48,30 +48,35 @@ Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,
 including allowed and denied group membership. Other deployments remain untested.
 
-The server shares one reservation budget across QUIC and HTTP/2 listeners,
+The server shares one buffer budget across QUIC and HTTP/2 listeners,
 configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
-It reserves 120 MiB before each QUIC handshake and 36 MiB before each HTTP/2 TLS
-handshake. Once a quarter of either connection capacity or the shared budget is reserved,
-unvalidated QUIC handshakes require Retry. Exhaustion refuses new connections
-while established connections continue. QUIC reserves its 16 MiB receive window for its entire transport
-lifetime, including handshake cancellation, draining, and retained local streams.
-Transmit windows grow from 2 MiB to 32 MiB using the same budget; shrinking them
-retains at least the actual unacknowledged payload until acknowledgements or
-transport destruction release it. HTTP/2 reservations outlive their connection,
-local stream futures, and buffers.
+QUIC charges bytes when they are buffered instead of reserving connection
+windows up front. From accept until its task ends, a QUIC connection holds a
+floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3 frame
+and copy block outside Noq: 67 streams and 5.2 MiB with the default limits.
+HTTP/2 still reserves 36 MiB before each TLS handshake; that reservation
+outlives its connection, local stream futures, and buffers. Once a quarter of
+either connection capacity or the budget is used, unvalidated QUIC handshakes
+require Retry. A connection whose floor or reservation does not fit is refused
+while established connections continue.
 
-The Noq fork shares a 48 MiB allowance across receive metadata, owned payload
-backing and overlapping defragmentation copies. Returned byte slices keep that
-charge until their last owner drops, including after connection destruction;
-application-retained bytes therefore consume this allowance. Endpoint reservations
-cover the configured UDP socket buffers, receive batches and pending incoming
-packets until the socket and its senders drop. Additional incoming packets are
-capped at 64 KiB per handshake and 4 MiB per endpoint. The shared 256 KiB
-download block is charged once.
-Admission refuses a connection or transmit-window increase when the budget
-cannot cover it; connection limits alone do not guarantee admission.
+Noq charges its receive reassembly, send buffers, packet and control metadata,
+datagrams, and queued incoming packets to the same budget as they fill, within
+unchanged per-connection caps. A refused charge closes only that connection with
+`INTERNAL_ERROR`. Returned byte slices keep their charge until their last owner
+drops, including after connection destruction. Until the connection has an
+admitted operation or session, its receive window is 64 KiB, so a silent or
+unauthenticated peer can make Noq hold at most 192 KiB of reassembly. Admitted
+work raises the window to 16 MiB, or less when a third of the free budget is
+smaller, and it returns to 64 KiB after the last admitted operation ends.
+Credit already granted stays usable until it is consumed. Transmit windows grow
+from 2 MiB to 32 MiB only into budget that is free at that moment. Endpoint
+reservations cover the configured UDP socket buffers, receive batches and
+pending incoming packets until the socket and its senders drop. Additional
+incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The
+shared 256 KiB download block is charged once.
 
-These reservations do not establish a resident-memory bound. Payload backing
+This accounting does not establish a resident-memory bound. Payload backing
 allocations, header decoding and metadata, TLS state, and allocator overhead still
 need worst-case accounting and sustained-load measurements before the
 experimental merge. The many-client performance matrix remains unfinished.

@@ -40,6 +40,7 @@ impl HttpServer {
         request: Request<()>,
         stream: Http3RequestStream,
         peer: SocketAddr,
+        credit: super::http_quic::ReceiveCredit,
         active_responses: Arc<AtomicUsize>,
     ) -> io::Result<()> {
         let head = request.method() == Method::HEAD;
@@ -78,13 +79,16 @@ impl HttpServer {
             send.response(response, head, active_responses).await
         };
         let mut exchange = std::pin::pin!(exchange);
+        let mut admitted = None;
         let guarded = std::future::poll_fn(|cx| {
             check_operations(&operations, cx)?;
             let result = exchange.as_mut().poll(cx);
             if result.is_pending() {
                 // Dispatch may install a lease in this poll. Register its wake
                 // even when QUIC flow control blocks the first response write.
-                check_operations(&operations, cx)?;
+                if check_operations(&operations, cx)? && admitted.is_none() {
+                    admitted = Some(credit.admit());
+                }
             }
             result
         });
@@ -94,11 +98,12 @@ impl HttpServer {
     }
 }
 
-fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
-    for operation in operations.lock().expect("operations poisoned").iter() {
+fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<bool> {
+    let operations = operations.lock().expect("operations poisoned");
+    for operation in operations.iter() {
         operation.lock().expect("operation poisoned").check(cx)?;
     }
-    Ok(())
+    Ok(!operations.is_empty())
 }
 
 struct RequestBody {

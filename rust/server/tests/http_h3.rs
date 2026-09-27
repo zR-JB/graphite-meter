@@ -67,6 +67,7 @@ async fn exercise() -> Result<(), TestError> {
         max_operation_duration: Duration::from_millis(250),
         ..Config::default()
     }))?);
+    let credit = server.receive_credit(server_quic.clone());
     let mut connection = h3::server::builder()
         .max_field_section_size(32 * 1024)
         .build(h3_noq::Connection::new(server_quic))
@@ -84,11 +85,11 @@ async fn exercise() -> Result<(), TestError> {
                     let Some(resolver) = accepted? else {break;};
                     assert!(requests.len() < 256);
                     let server = server.clone();
-                    let active_responses = active_responses.clone();
+                    let (credit, active_responses) = (credit.clone(), active_responses.clone());
                     requests.push(async move {
                         let (request, stream) = resolver.resolve_request().await?;
                         // Cancellation is local to this owned request future.
-                        let _ = server.serve_http3_request(request, stream, peer, active_responses).await;
+                        let _ = server.serve_http3_request(request, stream, peer, credit, active_responses).await;
                         Ok::<_,TestError>(())
                     });
                 }
