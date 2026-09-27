@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
-	s.loginSecurityHeaders(w.Header())
+	s.loginCSP(w.Header())
 	csrf := randomToken(32)
 	setCookie(w, loginCookie, csrf, time.Now().Add(10*time.Minute), http.SameSiteStrictMode)
 	password, oidc := authModes(s.cfg.Mode)
@@ -24,12 +24,10 @@ func (s *Service) loginPage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	if password, _ := authModes(s.cfg.Mode); !password {
 		http.NotFound(w, r)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		s.loginRejected(w, r, reasonFormMalformed)
 		return
@@ -79,7 +77,6 @@ func (s *Service) loginRejected(w http.ResponseWriter, r *http.Request, why reas
 }
 
 func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok {
 		forbidden(w)
@@ -94,8 +91,6 @@ func (s *Service) sessionInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) logout(w http.ResponseWriter, r *http.Request) {
-	securityHeaders(w.Header())
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := r.ParseForm(); err != nil {
 		forbidden(w)
 		return

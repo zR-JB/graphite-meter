@@ -12,6 +12,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
@@ -54,8 +55,7 @@ func TestMeasurementRoutesDispatchOnlyTheirMethods(t *testing.T) {
 		{http.MethodHead, "/download?bytes=0", http.StatusOK, ""},
 	} {
 		before, _ := e.admission.stats()
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("not an upload")))
+		rec := testkit.Record(mux.ServeHTTP, httptest.NewRequest(tc.method, tc.path, strings.NewReader("not an upload")))
 		after, _ := e.admission.stats()
 		if rec.Code != tc.want || rec.Header().Get("Allow") != tc.allow ||
 			tc.want == http.StatusMethodNotAllowed && after.peak != before.peak {

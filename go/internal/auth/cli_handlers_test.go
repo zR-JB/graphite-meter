@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 // challengeFor returns the base64url challenge a terminal client derives from a verifier.
@@ -39,9 +41,7 @@ func mountedAuth(s *Service) http.Handler {
 }
 
 func serveMounted(s *Service, r *http.Request) *httptest.ResponseRecorder {
-	w := httptest.NewRecorder()
-	mountedAuth(s).ServeHTTP(w, r)
-	return w
+	return testkit.Record(mountedAuth(s).ServeHTTP, r)
 }
 
 func approvalForm(path, challenge, cookie string, sess *session) *http.Request {
@@ -94,12 +94,36 @@ func TestCliPageRefusals(t *testing.T) {
 		"no session":        {cliPageRequest(challengeFor("verifier-abc"), ""), http.StatusSeeOther},
 		"bearer principal":  {bearer, http.StatusSeeOther},
 	} {
-		rr := httptest.NewRecorder()
-		s.cliPage(rr, tc.r)
+		rr := testkit.Record(s.cliPage, tc.r)
 		if rr.Code != tc.want || tc.want == http.StatusSeeOther &&
 			!strings.HasPrefix(rr.Header().Get("Location"), "/login?challenge=") {
 			t.Errorf("%s: code=%d location=%q, want %d", name, rr.Code, rr.Header().Get("Location"), tc.want)
 		}
+	}
+}
+
+func TestAnonymousApprovalsLeaveRoomForSignedInCallers(t *testing.T) {
+	s := testService(t)
+	raw, _, _ := s.createSession("local-operator", "Local operator", "local")
+	browser := func(verifier, remote, cookie string) {
+		query := url.Values{"challenge": {challengeFor(verifier)}, "client_origin": {requestingUI}}
+		r := requestFrom(http.MethodGet, "/auth/browser?"+query.Encode(), remote)
+		if cookie != "" {
+			withSessionCookie(r, cookie)
+		}
+		s.browserPage(httptest.NewRecorder(), r)
+	}
+	for i := range maxApprovals {
+		browser(fmt.Sprint("anonymous-", i), addressFrom(i), "")
+	}
+	if len(s.approvals) != maxApprovals/2 {
+		t.Fatalf("anonymous callers opened %d approvals, want %d", len(s.approvals), maxApprovals/2)
+	}
+	browser("signed-in-browser", addressFrom(maxApprovals), raw)
+	rr := testkit.Record(s.cliPage, cliPageRequest(challengeFor("signed-in-cli"), raw))
+	if rr.Code != http.StatusOK || s.approvals[challengeFor("signed-in-browser")] == nil {
+		t.Fatalf("signed-in approvals refused: cli %d, browser %v", rr.Code,
+			s.approvals[challengeFor("signed-in-browser")] != nil)
 	}
 }
 
@@ -108,8 +132,7 @@ func TestCliPageRendersApprovalReusesAndCapsIt(t *testing.T) {
 	raw, sess, _ := s.createSession("local-operator", "Local operator", "local")
 	challenge := challengeFor("verifier-render")
 	for range 2 {
-		rr := httptest.NewRecorder()
-		s.cliPage(rr, cliPageRequest(challenge, raw))
+		rr := testkit.Record(s.cliPage, cliPageRequest(challenge, raw))
 		body := rr.Body.String()
 		if rr.Code != http.StatusOK || !strings.Contains(body, verificationCode(challenge)) ||
 			!strings.Contains(body, sess.csrf) {
@@ -120,14 +143,12 @@ func TestCliPageRendersApprovalReusesAndCapsIt(t *testing.T) {
 		t.Fatalf("renders left %d approvals, want one pending approval bound to the session", len(s.approvals))
 	}
 	for i := 1; i < maxSessionApprovals; i++ {
-		rr := httptest.NewRecorder()
-		s.cliPage(rr, cliPageRequest(challengeFor(fmt.Sprint("verifier-cap-", i)), raw))
+		rr := testkit.Record(s.cliPage, cliPageRequest(challengeFor(fmt.Sprint("verifier-cap-", i)), raw))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("approval %d code=%d, want 200", i, rr.Code)
 		}
 	}
-	rr := httptest.NewRecorder()
-	s.cliPage(rr, cliPageRequest(challengeFor("verifier-cap-over"), raw))
+	rr := testkit.Record(s.cliPage, cliPageRequest(challengeFor("verifier-cap-over"), raw))
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("approval over the per-session cap code=%d, want 403", rr.Code)
 	}

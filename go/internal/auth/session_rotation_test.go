@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 func addGrant(s *Service, sess *session, origin string) (string, *grant) {
@@ -36,8 +37,7 @@ func TestPasswordLoginRotatesTheSuppliedSession(t *testing.T) {
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	r.Header.Set("Origin", s.origin)
 	r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
-	rr := httptest.NewRecorder()
-	s.passwordLogin(rr, r)
+	rr := testkit.Record(s.passwordLogin, r)
 	if rr.Code != http.StatusSeeOther {
 		t.Fatalf("login code=%d, want 303", rr.Code)
 	}
@@ -59,8 +59,7 @@ func TestLogoutScope(t *testing.T) {
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			r.Header.Set("Origin", s.origin)
 			p := Principal{Subject: current.subject, session: current}
-			rr := httptest.NewRecorder()
-			s.logout(rr, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
+			rr := testkit.Record(s.logout, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 			if rr.Code != http.StatusSeeOther || s.sessions[current.hash] != nil || s.sessions[other.hash] == nil {
 				t.Fatalf("logout code=%d revoked the wrong sessions", rr.Code)
 			}

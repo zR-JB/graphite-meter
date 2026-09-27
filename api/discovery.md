@@ -47,9 +47,21 @@ Both pages show the same comparison code: the first five SHA-256 bytes of the ve
 
 | Limit | Value |
 | --- | --- |
-| Browser grants per login | 8; a full login answers HTTP 429 without evicting a grant. Explicit renewal revokes the old grants and their connections. |
-| Pending approvals | 8 per login, 8 per client, 256 in total; each expires after 2 minutes. |
+| Grants per login | 8, native and browser together. At capacity a native exchange replaces the login's oldest native grant; a browser exchange, or a native one when all 8 are browser grants, answers HTTP 429 without evicting one. Explicit renewal revokes the old grants and their connections. |
+| Pending approvals | 8 per login, 8 per client, 256 in total of which at most 128 opened before sign-in; each expires after 2 minutes. |
 | Socket tickets | Single use, ≤ 30 s, at most 8 outstanding per login. |
+
+The exchanges and the session read answer JSON; a native `expires` is an RFC 3339 time, a browser one epoch
+milliseconds:
+
+| Request | Answers |
+| --- | --- |
+| `POST /auth/cli/token` `{"verifier": "…"}` (≤ 128 bytes) | `202 {"status":"pending"}` until approved, also for a malformed body; `200 {"token", "expires"}`; `429` at grant capacity. |
+| `POST /auth/browser/token` `{"verifier": "…"}` (32–128 bytes) from an exact HTTPS `Origin` | `202 {"status":"pending"}` until approved; `200 {"token", "expires", "remainingMs", "maximumLifetimeMs"}`; `429` at grant capacity; `403` for a malformed body or origin. |
+| `GET /auth/session` with the session cookie | `200 {"name", "provider", "expires", "csrf", "remainingMs", "maximumLifetimeMs"}`; `403` without a session. |
+
+Auth routes read at most 4 KiB of request body and answer with `Cache-Control: no-store`, `X-Frame-Options: DENY`
+and a `default-src 'none'` policy.
 
 Cross-origin measurement fetches omit cookies and reject redirects. An unreadable or expired grant affects only its
 server. The auth-required marker and token polling permit the bounded CORS flow without exposing protected

@@ -9,16 +9,17 @@ import (
 	"encoding/json/v2"
 	"io"
 	"maps"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
+	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
@@ -34,75 +35,45 @@ type authenticatedStack struct {
 
 func newAuthenticatedStack(t *testing.T) *authenticatedStack {
 	t.Helper()
-	cfg, cm := protocolTestTLS(t)
-	// One already-reserved port for the UDP listener and its TCP Alt-Svc companion.
-	sockets := newTestListenerSockets(t)
-	cfg.Native.H3 = sockets.reserveH3()
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-
-	uiLn, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	h2Ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	origin := "https://" + uiLn.Addr().String()
-	authn := testPasswordAuth(t, origin)
-	e := buildEndpoints(ctx, cfg)
-
-	h1p := &http.Protocols{}
-	h1p.SetHTTP1(true)
-	uiMux := newMux(ctx, e, muxTopology{spa: true, discovery: true, latency: true, transfers: true, requiredProto: 1},
-		http.NotFoundHandler(), authn)
-	ui := baseServer(authn.Enforce(uiMux, auth.Listener{UI: true}), h1p, controlTimeout)
-	go serve(tls.NewListener(uiLn, cm.tlsConfig("http/1.1")), ui)
-	t.Cleanup(func() { _ = ui.Close() })
-
-	h2p := &http.Protocols{}
-	h2p.SetHTTP2(true)
-	h2Mux := newMux(ctx, e, muxTopology{transfers: true, requiredProto: 2}, nil, authn)
-	h2 := baseServer(authn.Enforce(h2Mux, auth.Listener{}), h2p, controlTimeout)
-	go serve(tls.NewListener(h2Ln, cm.tlsConfig("h2")), h2)
-	t.Cleanup(func() { _ = h2.Close() })
-
-	// addH3 builds the HTTP/3 listener, rather than a copy of it here.
-	build := &listenerBuild{ctx: ctx, cfg: cfg, e: e, authn: authn, cm: cm, sockets: sockets,
-		connections: newConnectionAdmission(cfg.MaxConnections, cfg.MaxConnectionsPerClient, cfg.TrustedProxies)}
-	if err := build.addH3(); err != nil {
-		t.Fatal(err)
-	}
-	startServices(t, build.services)
-
-	uiProtocols := &http.Protocols{}
-	uiProtocols.SetHTTP1(true)
-	uiTransport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Protocols: uiProtocols} //nolint:gosec
-	h2Protocols := &http.Protocols{}
-	h2Protocols.SetHTTP2(true)
-	h2Transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		Protocols: h2Protocols} //nolint:gosec
-	h3Transport := &http3.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		QUICConfig: transport.NewQUICConfig()} //nolint:gosec
-	t.Cleanup(func() {
-		uiTransport.CloseIdleConnections()
-		h2Transport.CloseIdleConnections()
-		_ = h3Transport.Close()
-	})
-
-	noRedirect := func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	s := &authenticatedStack{
-		authn: authn, e: e, origin: origin,
-		h2URL:    "https://" + h2Ln.Addr().String(),
-		h3URL:    "https://" + cfg.Native.H3,
-		uiClient: &http.Client{Transport: uiTransport, CheckRedirect: noRedirect},
-		h2Client: &http.Client{Transport: h2Transport, CheckRedirect: noRedirect},
-		h3Client: &http.Client{Transport: h3Transport, CheckRedirect: noRedirect},
-	}
+	cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+		cfg.Native = config.NativeEndpoints{H1: sockets.reserveTCP(), H1TLS: sockets.reserveTCP(),
+			H2: sockets.reserveTCP(), H3: sockets.reserveH3()}
+		cfg.AdvertisedNative = map[string]bool{config.NativeH1TLS: true, config.NativeH2: true, config.NativeH3: true}
+		cfg.Auth = config.AuthConfig{Mode: "password", PublicURL: "https://" + cfg.Native.H1TLS,
+			PasswordHash: secretHash(), OIDCProviderName: "Authelia"}
+	}, nil)
+	s := &authenticatedStack{authn: build.authn, e: build.e, origin: cfg.Auth.PublicURL,
+		h2URL: "https://" + cfg.Native.H2, h3URL: "https://" + cfg.Native.H3,
+		uiClient: insecureClient(t, "http1"), h2Client: insecureClient(t, "http2"), h3Client: insecureClient(t, "http3")}
 	s.signIn(t)
 	return s
+}
+
+var secretHash = sync.OnceValue(func() string {
+	hash, err := auth.HashPassword("secret")
+	if err != nil {
+		panic(err)
+	}
+	return hash
+})
+
+func insecureClient(t *testing.T, protocol string) *http.Client {
+	insecure := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // self-signed test certificate
+	var rt http.RoundTripper
+	if protocol == "http3" {
+		h3 := &http3.Transport{TLSClientConfig: insecure, QUICConfig: transport.NewQUICConfig()}
+		t.Cleanup(func() { _ = h3.Close() })
+		rt = h3
+	} else {
+		protocols := &http.Protocols{}
+		protocols.SetHTTP1(protocol == "http1")
+		protocols.SetHTTP2(protocol == "http2")
+		tcp := &http.Transport{TLSClientConfig: insecure, Protocols: protocols}
+		t.Cleanup(tcp.CloseIdleConnections)
+		rt = tcp
+	}
+	return &http.Client{Transport: rt,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 // signIn performs the real password login over the UI listener and keeps the session and CSRF cookies it issues.

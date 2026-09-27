@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"io/fs"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -35,9 +36,10 @@ func inlineCSPHash(html []byte, tag string) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-// PagePolicy is the client shell's Content-Security-Policy; connect names the peers it reaches beyond 'self'.
+// PagePolicy is the shell's CSP; connect names peers beyond 'self', less IPv6 literals CSP cannot express.
 func PagePolicy(connect []string) string {
-	return pagePolicy(inlineScript, inlineStyle, connect)
+	return pagePolicy(inlineScript, inlineStyle, slices.DeleteFunc(slices.Clone(connect),
+		func(raw string) bool { return strings.Contains(raw, "://[") }))
 }
 
 func pagePolicy(script, style string, connect []string) string {

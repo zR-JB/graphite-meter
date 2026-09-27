@@ -15,11 +15,13 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"golang.org/x/oauth2"
 )
 
@@ -37,14 +39,18 @@ func quietService(t *testing.T) *Service {
 	return s
 }
 
-func serviceWithin(t *testing.T, ctx context.Context) *Service {
-	t.Helper()
+var secretHash = sync.OnceValue(func() string {
 	h, err := HashPassword("secret")
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
+	return h
+})
+
+func serviceWithin(t *testing.T, ctx context.Context) *Service {
+	t.Helper()
 	s, err := New(ctx, config.AuthConfig{
-		Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia",
+		Mode: "password", PublicURL: "https://meter.example", PasswordHash: secretHash(), OIDCProviderName: "Authelia",
 	}, nil, false)
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +90,7 @@ func TestOffModeIsTransparentAndReservesAuthRoutes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rr := httptest.NewRecorder()
-	s.Enforce(statusHandler(299), Listener{}).ServeHTTP(rr, httptest.NewRequest("GET", "http://example/anything", nil))
+	rr := testkit.Record(s.Enforce(statusHandler(299), Listener{}).ServeHTTP, httptest.NewRequest("GET", "http://example/anything", nil))
 	if rr.Code != 299 {
 		t.Fatalf("code=%d, want the wrapped handler's 299", rr.Code)
 	}
@@ -93,8 +98,7 @@ func TestOffModeIsTransparentAndReservesAuthRoutes(t *testing.T) {
 	s.Mount(mux)
 	mux.Handle("/", statusHandler(200))
 	for _, path := range []string{"/login", "/auth/session"} {
-		rr := httptest.NewRecorder()
-		mux.ServeHTTP(rr, httptest.NewRequest("GET", path, nil))
+		rr := testkit.Record(mux.ServeHTTP, httptest.NewRequest("GET", path, nil))
 		if rr.Code != 404 {
 			t.Errorf("%s code=%d, want 404", path, rr.Code)
 		}
@@ -117,8 +121,7 @@ func TestUnauthenticatedRequestsAreRefusedBeforeTheirBody(t *testing.T) {
 			body := &countingReader{r: bytes.NewReader(make([]byte, 1024))}
 			h := s.Enforce(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("called") }),
 				tc.listener)
-			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, secureRequest(tc.method, tc.path, body))
+			rr := testkit.Record(h.ServeHTTP, secureRequest(tc.method, tc.path, body))
 			if rr.Code != tc.want || body.n != 0 || rr.Header().Get("Connection") != "close" {
 				t.Fatalf("code=%d bytes=%d connection=%q, want %d before reading and a closed H1 connection",
 					rr.Code, body.n, rr.Header().Get("Connection"), tc.want)
@@ -221,8 +224,7 @@ func TestRequestEvidencePolicy(t *testing.T) {
 					r.Header.Set(name, value)
 				}
 			}
-			rr := httptest.NewRecorder()
-			s.Enforce(statusHandler(204), Listener{UI: true}).ServeHTTP(rr, r)
+			rr := testkit.Record(s.Enforce(statusHandler(204), Listener{UI: true}).ServeHTTP, r)
 			if rr.Code != tc.want {
 				t.Fatalf("code=%d, want %d", rr.Code, tc.want)
 			}
@@ -242,8 +244,7 @@ func TestAuthenticatedResponseHeaders(t *testing.T) {
 	raw, _, _ := s.createSession("subject", "Name", "local")
 	r := withSessionCookie(secureRequest(http.MethodGet, "/download", nil), raw)
 	r.Header.Set("Origin", "https://meter.example")
-	rr := httptest.NewRecorder()
-	s.Enforce(statusHandler(http.StatusOK), Listener{UI: true}).ServeHTTP(rr, r)
+	rr := testkit.Record(s.Enforce(statusHandler(http.StatusOK), Listener{UI: true}).ServeHTTP, r)
 	if h := rr.Header(); rr.Code != http.StatusOK || h.Get("Strict-Transport-Security") == "" ||
 		h.Get("Referrer-Policy") != "same-origin" || h.Get("Content-Security-Policy") != "" ||
 		h.Get("X-Frame-Options") != "" {
@@ -257,7 +258,7 @@ func TestLoginCSPAllowsOnlyDiscoveredAuthorizationOrigin(t *testing.T) {
 	policy := func(authURL string) string {
 		s.oidc.discovered.Store(&oidcDiscovery{oauth: oauth2.Config{Endpoint: oauth2.Endpoint{AuthURL: authURL}}})
 		h := http.Header{}
-		s.loginSecurityHeaders(h)
+		s.loginCSP(h)
 		return h.Get("Content-Security-Policy")
 	}
 	if p := policy("https://login.example:8443/oauth2/authorize"); !strings.Contains(p,
@@ -349,8 +350,7 @@ func TestOtherOriginsSeeOnlyTheSignInHandshake(t *testing.T) {
 	for _, origin := range []string{s.origin, "https://other.example", "http://other.example", "null", ""} {
 		r := secureRequest("GET", "/download", nil)
 		r.Header.Set("Origin", origin)
-		rr := httptest.NewRecorder()
-		h.ServeHTTP(rr, r)
+		rr := testkit.Record(h.ServeHTTP, r)
 		if rr.Code != http.StatusForbidden {
 			t.Fatalf("origin %q: status %d", origin, rr.Code)
 		}
@@ -409,8 +409,7 @@ func TestLoginOffersOnlyConfiguredMethods(t *testing.T) {
 					t.Fatalf("%s mounted as %q", route.pattern, got)
 				}
 			}
-			rr := httptest.NewRecorder()
-			s.loginPage(rr, secureRequest(http.MethodGet, "/login", nil))
+			rr := testkit.Record(s.loginPage, secureRequest(http.MethodGet, "/login", nil))
 			body := rr.Body.String()
 			if strings.Contains(body, `action="/auth/password"`) != tc.password ||
 				strings.Contains(body, `action="/auth/oidc/start"`) != tc.provider {
@@ -448,8 +447,7 @@ func TestLoginCarriesOnlyAValidChallenge(t *testing.T) {
 		challenge string
 		carried   bool
 	}{{challenge, true}, {"bogus-challenge", false}} {
-		rr := httptest.NewRecorder()
-		s.loginPage(rr, secureRequest(http.MethodGet, "/login?challenge="+tc.challenge, nil))
+		rr := testkit.Record(s.loginPage, secureRequest(http.MethodGet, "/login?challenge="+tc.challenge, nil))
 		if strings.Contains(rr.Body.String(), tc.challenge) != tc.carried {
 			t.Fatalf("login page carried %q = %t", tc.challenge, !tc.carried)
 		}

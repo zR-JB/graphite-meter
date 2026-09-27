@@ -3,6 +3,7 @@
   "engineVersion": "0.1.0-test",
   "generation": "test-generation",
   "capabilities": {
+    "uploadCheckpoint": true,
     "throughput": [
       {
         "baseUrl": "http://speed.example:7246",

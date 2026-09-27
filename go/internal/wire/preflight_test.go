@@ -1,63 +1,28 @@
 package wire
 
 import (
-	"bytes"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"os"
+	"reflect"
 	"testing"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
-
-// loadSchema compiles the cross-language schema used by Go structs and golden documents.
-func loadSchema(t *testing.T, name string) *jsonschema.Schema {
-	t.Helper()
-	raw, err := os.ReadFile("../../../api/" + name + ".schema.json")
-	if err != nil {
-		t.Fatalf("read %s schema: %v", name, err)
-	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatalf("parse %s schema: %v", name, err)
-	}
-	c := jsonschema.NewCompiler()
-	if err := c.AddResource(name+".schema.json", doc); err != nil {
-		t.Fatalf("add %s schema: %v", name, err)
-	}
-	s, err := c.Compile(name + ".schema.json")
-	if err != nil {
-		t.Fatalf("compile %s schema: %v", name, err)
-	}
-	return s
-}
-
-func mustValidate(t *testing.T, s *jsonschema.Schema, data []byte) {
-	t.Helper()
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("parse document: %v\n%s", err, data)
-	}
-	if err := s.Validate(doc); err != nil {
-		t.Fatalf("schema validation: %v\n%s", err, data)
-	}
-}
 
 func TestGoldenDocumentsMatchTheirSchemas(t *testing.T) {
 	for name, value := range map[string]any{"preflight": new(Preflight), "probe": new(Probe)} {
 		t.Run(name, func(t *testing.T) {
-			data, err := os.ReadFile("../../../api/" + name + ".golden.json")
-			if err != nil {
-				t.Fatalf("read %s golden: %v", name, err)
-			}
-			schema := loadSchema(t, name)
-			mustValidate(t, schema, data)
+			data := apipin.Read(t, name+".golden.json")
+			schema := apipin.Schema(t, name)
+			apipin.Validate(t, schema, data)
 			if err := json.Unmarshal(data, value); err != nil {
 				t.Fatalf("unmarshal %s golden: %v", name, err)
 			}
-			if data, err = json.Marshal(value); err != nil {
+			data, err := json.Marshal(value)
+			if err != nil {
 				t.Fatalf("marshal %s: %v", name, err)
 			}
-			mustValidate(t, schema, data)
+			apipin.Validate(t, schema, data)
 		})
 	}
 }
@@ -75,7 +40,7 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 	for _, tc := range []struct {
 		latency  bool
 		document string
-		protocol string // the decoded protocol, or empty when the target must be refused
+		want     string // the decoded protocol, "skipped" for a newer server's target, or "" when refused
 	}{
 		{false, fetch("https://u:p@example.com"), ""},
 		{false, fetch("https://example.com/"), ""},
@@ -88,34 +53,70 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 		{false, fetch("."), "http1"},
 		{false, fetch("https://[::1]:7247"), "http1"},
 		{false, fetch("http://other.example:7246"), "http1"},
-		{false, `{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`, ""},
+		{false, `{"baseUrl":".","protocol":"http4","transport":"fetch-stream"}`, "skipped"},
 		{false, `{"baseUrl":".","protocol":"http2"}`, ""},
 		{false, `{"baseUrl":".","protocol":"http2","transport":null}`, ""},
 		{false, `{"baseUrl":".","protocol":"http2","transport":""}`, ""},
-		{false, `{"baseUrl":".","protocol":"http2","transport":"udp"}`, ""},
+		{false, `{"baseUrl":".","protocol":"http2","transport":"udp"}`, "skipped"},
 		{false, `{"baseUrl":"https://one.example","baseUrl":"https://two.example","protocol":"http1",` +
 			`"transport":"fetch-stream"}`, ""},
 		{true, `{"baseUrl":"."}`, ""},
 		{true, `{"baseUrl":".","transport":null}`, ""},
 		{true, `{"baseUrl":".","transport":""}`, ""},
-		{true, `{"baseUrl":".","transport":"udp"}`, ""},
+		{true, `{"baseUrl":".","transport":"udp"}`, "skipped"},
 		{true, `{"baseUrl":"https://speed.example:7246","transport":"websocket"}`, "http1"},
 		{true, `{"baseUrl":"https://speed.example:7246","transport":"webtransport"}`, "http3"},
 	} {
-		var protocol string
+		var protocol, transport string
 		var err error
 		if tc.latency {
 			var target LatencyTarget
 			err = json.Unmarshal([]byte(tc.document), &target)
-			protocol = target.Protocol
+			protocol, transport = target.Protocol, target.Transport
 		} else {
 			var target ThroughputTarget
 			err = json.Unmarshal([]byte(tc.document), &target)
-			protocol = target.Protocol
+			protocol, transport = target.Protocol, target.Transport
 		}
-		if (err == nil) != (tc.protocol != "") || protocol != tc.protocol {
-			t.Errorf("%s = protocol %q, %v; want %q", tc.document, protocol, err, tc.protocol)
+		got := protocol
+		if err != nil {
+			got = ""
+		} else if transport == "" {
+			got = "skipped"
 		}
+		if got != tc.want {
+			t.Errorf("%s = %q (%v), want %q", tc.document, got, err, tc.want)
+		}
+	}
+}
+
+func TestNewerServersTargetsAreSkipped(t *testing.T) {
+	raw := apipin.Read(t, "preflight.forward.golden.json")
+	var golden struct {
+		Document jsontext.Value `json:"document"`
+		Decoded  jsontext.Value `json:"decoded"`
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	var p Preflight
+	if err := json.Unmarshal(golden.Document, &p); err != nil {
+		t.Fatalf("decode a newer server's preflight: %v", err)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := json.Marshal(struct {
+		Throughput []ThroughputTarget `json:"throughput"`
+		Latency    []LatencyTarget    `json:"latency"`
+	}{p.Capabilities.ThroughputTargets, p.Capabilities.LatencyTargets})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want any
+	if json.Unmarshal(decoded, &got) != nil || json.Unmarshal(golden.Decoded, &want) != nil ||
+		!reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded targets %s, want %s", decoded, golden.Decoded)
 	}
 }
 

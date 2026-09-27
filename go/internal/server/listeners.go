@@ -237,8 +237,8 @@ func (b *listenerBuild) assemble() (err error) {
 			auth.Listener{UI: true}, uiTLS},
 		{"HTTPS HTTP/2: measurement probe, transfers, progress only", cfg.Native.H2, "h2",
 			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}},
-		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", cfg.Native.H3, "http/1.1",
-			auth.Listener{}, muxTopology{bootstrap: true}},
+		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control", cfg.Native.H3, "http/1.1",
+			auth.Listener{}, muxTopology{bootstrap: true, control: true}},
 	} {
 		if l.addr == "" {
 			continue
@@ -297,9 +297,12 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-// quicUse closes a sessions-only connection with its last session; browsers would hold its client slot ~15 s.
+// quicUse closes a handlerless connection: sessions-only at once, else after idle (a stalled stream stops H3's timer).
 type quicUse struct {
 	conn               *quic.Conn
+	carried            *sessionConns
+	idle               time.Duration
+	unused             *time.Timer
 	mu                 sync.Mutex
 	active             int
 	sessions, requests bool
@@ -310,8 +313,12 @@ const wtCloseLinger = time.Second
 
 type quicUseKey struct{}
 
-func withQUICUse(ctx context.Context, conn *quic.Conn) context.Context {
-	return context.WithValue(ctx, quicUseKey{}, &quicUse{conn: conn})
+func withQUICUse(idle time.Duration, carried *sessionConns) func(context.Context, *quic.Conn) context.Context {
+	return func(ctx context.Context, conn *quic.Conn) context.Context {
+		u := &quicUse{conn: conn, carried: carried, idle: idle}
+		u.unused = time.AfterFunc(idle, func() { u.closeIfIdle(true) })
+		return context.WithValue(ctx, quicUseKey{}, u)
+	}
 }
 
 func countQUICUse(next http.Handler) http.Handler {
@@ -323,6 +330,7 @@ func countQUICUse(next http.Handler) http.Handler {
 		}
 		u.mu.Lock()
 		u.active++
+		u.unused.Stop()
 		u.requests = u.requests || r.Method != http.MethodConnect
 		u.mu.Unlock()
 		defer u.leave()
@@ -333,31 +341,37 @@ func countQUICUse(next http.Handler) http.Handler {
 func (u *quicUse) leave() {
 	u.mu.Lock()
 	u.active--
+	if u.active == 0 {
+		u.unused.Reset(u.idle)
+	}
 	linger := u.linger
 	u.mu.Unlock()
 	if linger == 0 {
-		u.closeIfIdle()
+		u.closeIfIdle(false)
 		return
 	}
-	time.AfterFunc(linger, u.closeIfIdle)
+	time.AfterFunc(linger, func() { u.closeIfIdle(false) })
 }
 
-func (u *quicUse) closeIfIdle() {
+func (u *quicUse) closeIfIdle(unused bool) {
 	u.mu.Lock()
-	idle := u.active == 0 && u.sessions && !u.requests
+	idle := u.active == 0 && (unused || u.sessions && !u.requests)
 	u.mu.Unlock()
 	if idle {
 		_ = u.conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeNoError), "")
 	}
 }
 
-// webTransportSession marks r's QUIC connection as carrying a session; its end says who closed it.
-func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
+// webTransportSession marks r's QUIC connection as carrying a session; ended says who closed it, cut closes it.
+func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) {
 	u, ok := r.Context().Value(quicUseKey{}).(*quicUse)
 	if !ok {
-		return func(bool) {}
+		return func(bool) {}, func() {}
 	}
 	u.mu.Lock()
+	if !u.sessions {
+		u.carried.track(u.conn)
+	}
 	u.sessions = true
 	u.mu.Unlock()
 	return func(byPeer bool) {
@@ -367,6 +381,44 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
 			u.linger = wtCloseLinger
 		}
 		u.mu.Unlock()
+	}, func() { _ = u.conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeNoError), "") }
+}
+
+// sessionConns counts open connections that carried a session, so a shutdown lets each end with its cause.
+type sessionConns struct {
+	mu      sync.Mutex
+	open    int
+	drained chan struct{} // closed while open is zero
+}
+
+func newSessionConns() *sessionConns {
+	c := &sessionConns{drained: make(chan struct{})}
+	close(c.drained)
+	return c
+}
+
+func (c *sessionConns) track(conn *quic.Conn) {
+	c.mu.Lock()
+	if c.open++; c.open == 1 {
+		c.drained = make(chan struct{})
+	}
+	c.mu.Unlock()
+	context.AfterFunc(conn.Context(), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.open--; c.open == 0 {
+			close(c.drained)
+		}
+	})
+}
+
+func (c *sessionConns) wait(ctx context.Context) {
+	c.mu.Lock()
+	drained := c.drained
+	c.mu.Unlock()
+	select {
+	case <-drained:
+	case <-ctx.Done():
 	}
 }
 
@@ -383,14 +435,14 @@ func h3QUICConfig(cfg *config.Config) *quic.Config {
 
 func (b *listenerBuild) addH3() error {
 	quicConfig := h3QUICConfig(b.cfg)
-	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig,
-		IdleTimeout: b.e.controlTimeout}
+	h3 := &http3.Server{Addr: b.cfg.Native.H3, TLSConfig: b.cm.tlsConfig(), QUICConfig: quicConfig}
 	// Enforce has already bound a CONNECT's origin to its principal.
 	wt := &webtransport.Server{H3: h3, CheckOrigin: func(*http.Request) bool { return true }}
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = countQUICUse(boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt},
 		nil, b.authn), auth.Listener{WebTransport: true}), b.e.controlTimeout))
-	h3.ConnContext = withQUICUse
+	carried := newSessionConns()
+	h3.ConnContext = withQUICUse(b.e.controlTimeout, carried)
 	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
@@ -411,7 +463,8 @@ func (b *listenerBuild) addH3() error {
 					return nil
 				}
 				return err
-			}, stop: func(context.Context) error {
+			}, stop: func(ctx context.Context) error {
+				carried.wait(ctx)
 				err := wt.Close()
 				_ = quicListener.Close()
 				_ = quicTransport.Close()

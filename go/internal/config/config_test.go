@@ -58,6 +58,8 @@ func TestLoad(t *testing.T) {
 			func(c Config) bool { return c.Auth.Explicit }, true},
 		{"invalid boolean", map[string]string{"GM_RESULT_HISTORY_DEFAULT": "not-a-bool"}, nil, false},
 		{"unknown native endpoint", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": "fictional"}, nil, false},
+		{"empty native endpoints keep the default", map[string]string{"GM_ADVERTISED_NATIVE_ENDPOINTS": " "},
+			func(c Config) bool { return c.AdvertisedNative == nil }, false},
 		{"IPv4 default route", map[string]string{"GM_TRUSTED_PROXIES": "0.0.0.0/0"}, nil, false},
 		{"IPv6 default route", map[string]string{"GM_TRUSTED_PROXIES": "::/0"}, nil, false},
 		{"listed default route", map[string]string{"GM_TRUSTED_PROXIES": "10.0.0.0/8,0.0.0.0/0"}, nil, false},
@@ -67,7 +69,8 @@ func TestLoad(t *testing.T) {
 			for key, value := range tc.env {
 				t.Setenv(key, value)
 			}
-			c, err := Load()
+			c := Default()
+			err := c.LoadEnv()
 			if tc.check == nil {
 				if err == nil {
 					t.Fatal("invalid environment loaded")
