@@ -298,13 +298,23 @@ impl Upload {
                 Ok(Err(error)) if self.control.retryable_transfer_error(&error) => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
-                        return Err("upload receiver checkpoint did not recover".into());
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "upload receiver checkpoint did not recover",
+                        )
+                        .into());
                     }
                     tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
                     continue;
                 }
                 Ok(Err(error)) => return Err(error),
-                Err(_) => return Err("upload receiver checkpoint timed out".into()),
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "upload receiver checkpoint timed out",
+                    )
+                    .into());
+                }
             };
             let received_at_nanos = elapsed(self.epoch)?;
             if count.bytes > MAX_UPLOAD_COUNTER

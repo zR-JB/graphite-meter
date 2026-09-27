@@ -120,7 +120,7 @@ async fn serve_selected(
     origin: String,
     catalog: String,
     barrier: Arc<Barrier>,
-    refuse_preflight: bool,
+    no_throughput: bool,
 ) -> Result<(), Error> {
     let mut request = [0_u8; 2048];
     let path = loop {
@@ -139,11 +139,8 @@ async fn serve_selected(
     };
     if path == "/preflight" {
         barrier.wait().await;
-        if refuse_preflight {
-            stream
-                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .await?;
-            return Ok(());
+        if no_throughput {
+            return serve(stream, origin, FixtureMode::Latency).await;
         }
     }
     if path == "/servers" {
@@ -178,7 +175,7 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
     })
     .to_string();
     let barrier = Arc::new(Barrier::new(2));
-    let serve_listener = |listener: TcpListener, origin: String, refuse_preflight| {
+    let serve_listener = |listener: TcpListener, origin: String, no_throughput| {
         let catalog = catalog.clone();
         let barrier = barrier.clone();
         tokio::spawn(async move {
@@ -187,8 +184,7 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
                 let catalog = catalog.clone();
                 let barrier = barrier.clone();
                 tokio::spawn(async move {
-                    let _ =
-                        serve_selected(stream, origin, catalog, barrier, refuse_preflight).await;
+                    let _ = serve_selected(stream, origin, catalog, barrier, no_throughput).await;
                 });
             }
         })
@@ -208,11 +204,15 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
     )
     .await?;
     let Ok(Preparation { servers, failures }) = result else {
-        return Err("one refused preflight failed the whole selection".into());
+        return Err("one unusable server failed the whole selection".into());
     };
     assert_eq!(servers.len(), 1);
     assert_eq!(failures.len(), 1);
     assert!(failures[0].to_string().contains("beta"), "{}", failures[0]);
+    assert_eq!(
+        crate::failure::reason(failures[0].source.as_ref(), true),
+        graphite_meter_core::failure::FailureReason::PreparationFailed
+    );
     let snapshot = snapshots.borrow();
     assert!(snapshot.servers.iter().any(|server| {
         server.id == "self" && server.throughput.is_some() && server.error.is_none()
@@ -222,7 +222,7 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
             && server
                 .error
                 .as_deref()
-                .is_some_and(|error| error.contains("503"))
+                .is_some_and(|error| error.contains("not advertised"))
     }));
     first_server.abort();
     second_server.abort();

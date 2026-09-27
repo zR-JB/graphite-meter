@@ -364,7 +364,7 @@ async fn verify_throughput_webtransport(
             }
             Err(error) => error,
         };
-        if crate::failure::reason(error.as_ref())
+        if crate::failure::reason(error.as_ref(), false)
             != graphite_meter_core::failure::FailureReason::ServerBusy
             || Instant::now() >= deadline
         {

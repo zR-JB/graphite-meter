@@ -15,7 +15,6 @@ impl HttpFailure {
     }
     pub fn reason(&self) -> FailureReason {
         match self.refusal {
-            Some(UploadRefusal::Invalid) => FailureReason::ConnectionLost,
             Some(UploadRefusal::Revoked) => FailureReason::SignInRequired,
             _ if matches!(self.status, 429 | 503) => FailureReason::ServerBusy,
             Some(UploadRefusal::Idle) => FailureReason::Timeout,
@@ -43,7 +42,7 @@ impl std::fmt::Display for LaneFailure {
 }
 impl std::error::Error for LaneFailure {}
 
-pub fn reason(mut error: &(dyn std::error::Error + 'static)) -> FailureReason {
+pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) -> FailureReason {
     loop {
         if let Some(failure) = error.downcast_ref::<MeasurementFailure>() {
             return failure.0;
@@ -61,15 +60,25 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static)) -> FailureReason {
                 _ => FailureReason::Timeout,
             };
         }
-        if error.is::<tokio::time::error::Elapsed>()
-            || error
-                .downcast_ref::<std::io::Error>()
-                .is_some_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
-        {
+        if error.is::<tokio::time::error::Elapsed>() {
             return FailureReason::Timeout;
         }
+        if let Some(io) = error.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                std::io::ErrorKind::TimedOut => return FailureReason::Timeout,
+                std::io::ErrorKind::InvalidData => {}
+                _ => return FailureReason::ConnectionLost,
+            }
+        }
+        if error.is::<serde_json::Error>() || error.is::<graphite_meter_core::wire::WireError>() {
+            return FailureReason::ProtocolError;
+        }
         let Some(source) = error.source() else {
-            return FailureReason::ConnectionLost;
+            return if preparing {
+                FailureReason::PreparationFailed
+            } else {
+                FailureReason::ConnectionLost
+            };
         };
         error = source;
     }

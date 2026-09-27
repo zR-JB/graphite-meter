@@ -814,7 +814,11 @@ pub(super) async fn measure(
                         resources.record_latency_failure(
                             &LatencyFailure {
                                 id,
-                                source: "latency session was not ready within 12 seconds".into(),
+                                source: std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "latency session was not ready within 12 seconds",
+                                )
+                                .into(),
                             },
                             snapshots,
                         );
@@ -864,7 +868,10 @@ pub(super) async fn measure(
                         tokio::select! {
                             biased;
                             _ = tokio::time::sleep_until(baseline_deadline) => {
-                                break Err("initial receiver checkpoint exceeded preparation deadline".into());
+                                break Err(std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "initial receiver checkpoint exceeded preparation deadline",
+                                ).into());
                             }
                             _ = events.next(), if !events.is_empty() => {},
                             boundary = &mut checkpoint => break boundary,

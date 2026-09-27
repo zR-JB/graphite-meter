@@ -297,7 +297,7 @@ impl Snapshot {
             server_id: id.into(),
             stage,
             scope,
-            reason: crate::failure::reason(error.as_ref()),
+            reason: crate::failure::reason(error.as_ref(), self.phase != Phase::Measuring),
             message: error.to_string(),
             at: self
                 .results

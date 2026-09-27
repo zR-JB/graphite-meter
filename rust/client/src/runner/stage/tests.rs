@@ -797,7 +797,7 @@ async fn stalled_lane_expires_while_its_sibling_keeps_receiving() -> Result<(), 
     download.stop().await;
     peer.abort();
     assert_eq!(
-        crate::failure::reason(failure?.as_ref()),
+        crate::failure::reason(failure?.as_ref(), false),
         graphite_meter_core::failure::FailureReason::Timeout
     );
     Ok(())
