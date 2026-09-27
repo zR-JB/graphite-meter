@@ -21,8 +21,9 @@ REPO = Path(__file__).resolve().parents[1]
 def release_directory(requested: Path) -> Path:
     # Release output stays inside this checkout or a temporary staging directory.
     output = os.path.realpath(requested)
-    if not output.startswith((str(REPO) + os.sep, os.path.realpath(tempfile.gettempdir()) + os.sep)):
-        raise ValueError(f"release output must be inside {REPO} or the temporary directory")
+    roots = (REPO, Path(tempfile.gettempdir()), Path(os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()))
+    if not output.startswith(tuple(os.path.realpath(root) + os.sep for root in roots)):
+        raise ValueError("release output must be inside the checkout or temporary directories")
     os.makedirs(output, exist_ok=True)
     return Path(output)
 
