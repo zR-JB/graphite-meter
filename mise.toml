@@ -442,9 +442,30 @@ run = [
   "python3 ../scripts/legal/check_git_sources.py",
   "python3 ../scripts/ci/rust_crate_budget.py",
   "cargo deny --locked check",
+  "cargo deny --manifest-path http3/fuzz/Cargo.toml --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo nextest run --workspace --all-targets --locked",
 ]
+
+[tasks.rust-fuzz]
+description = "Fuzz one HTTP/3 codec target with libFuzzer on the pinned stable toolchain"
+dir = "rust/http3/fuzz"
+usage = '''
+arg "<target>"
+arg "[seconds]" default="60"
+'''
+run = '''
+#!/usr/bin/env sh
+set -eu
+# Stable sancov flags; the explicit target keeps them off build scripts.
+RUSTFLAGS="--cfg fuzzing -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-level=4 \
+-Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-pc-table \
+-Cllvm-args=-sanitizer-coverage-trace-compares -Cdebug-assertions -Coverflow-checks" \
+  cargo build --locked --release --target x86_64-unknown-linux-gnu --bin "$usage_target"
+mkdir -p "corpus/$usage_target" "artifacts/$usage_target"
+"target/x86_64-unknown-linux-gnu/release/$usage_target" -max_total_time="$usage_seconds" -rss_limit_mb=512 \
+  -artifact_prefix="artifacts/$usage_target/" "corpus/$usage_target"
+'''
 
 [tasks.rust-client-package]
 description = "Package the experimental native Linux x86_64 Rust TUI with reviewed source and notices"

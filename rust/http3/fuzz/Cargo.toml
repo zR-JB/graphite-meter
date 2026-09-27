@@ -1,0 +1,20 @@
+# Development-only libFuzzer harness; it has its own lock and never ships.
+[package]
+name = "graphite-meter-http3-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+graphite-meter-http3 = { path = ".." }
+libfuzzer-sys = "=0.4.13"
+
+[[bin]]
+name = "frame"
+path = "fuzz_targets/frame.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

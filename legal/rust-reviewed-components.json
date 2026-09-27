@@ -52,6 +52,29 @@
   },
   {
     "ecosystem": "cargo",
+    "name": "arbitrary",
+    "reviewedVersion": "1.4.2",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "MIT OR Apache-2.0",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT",
+        "sha256": "15656cc11a8331f28c0986b8ab97220d3e76f98e60ed388b5ffad37dfac4710c",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/rust-fuzz/arbitrary; revision dc22fdefd5456a0f4d2f190c6d3e017e3c7ddd8e. Cargo archive SHA-256 c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1. Reviewed packaged MIT copyright/permission/disclaimer text and the alternative Apache-2.0 text; retain both. Unmodified pure-Rust input-structuring dependency of libfuzzer-sys, used only by the development-only fuzz harness in rust/http3/fuzz, which is never compiled into a shipped artifact."
+  },
+  {
+    "ecosystem": "cargo",
     "name": "argon2",
     "reviewedVersion": "0.6.0",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2450,6 +2473,29 @@
   },
   {
     "ecosystem": "cargo",
+    "name": "jobserver",
+    "reviewedVersion": "0.1.35",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "MIT OR Apache-2.0",
+    "selectedLicenseExpression": "MIT",
+    "legalFiles": [
+      {
+        "name": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT",
+        "sha256": "378f5840b258e2779c39418f3f2d7b2ba96f1c7917dd6be0713f88305dbda397",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/rust-lang/jobserver-rs; revision 85ba04e3cf89e5c10e7b82de69f6be6dff9d3ec3. Cargo archive SHA-256 1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3. Reviewed packaged MIT copyright/permission/disclaimer text and the alternative Apache-2.0 text; retain both. Unmodified build-time dependency of cc's parallel feature, reached only through libfuzzer-sys in the development-only fuzz harness rust/http3/fuzz; never compiled into a shipped artifact."
+  },
+  {
+    "ecosystem": "cargo",
     "name": "kasuari",
     "reviewedVersion": "0.4.12",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -2516,6 +2562,29 @@
     "modified": false,
     "reviewDecision": "approved",
     "reviewNotes": "Source: https://github.com/rust-lang/libc; revision ef0906e20828777175f65caa7e681a0ce33c559a. Cargo archive SHA-256 3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "libfuzzer-sys",
+    "reviewedVersion": "0.4.13",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "declaredLicenseExpression": "(MIT OR Apache-2.0) AND NCSA",
+    "selectedLicenseExpression": "MIT AND NCSA",
+    "legalFiles": [
+      {
+        "name": "LICENSE-APACHE",
+        "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+        "kind": "license"
+      },
+      {
+        "name": "LICENSE-MIT",
+        "sha256": "0621878e61f0d0fda054bcbe02df75192c28bde1ecc8289cbd86aeba2dd72720",
+        "kind": "license"
+      }
+    ],
+    "modified": false,
+    "reviewDecision": "approved",
+    "reviewNotes": "Source: https://github.com/rust-fuzz/libfuzzer; revision 719e4efb9b8857ebaa782ae59376c8cbb78fed0f. Cargo archive SHA-256 a9fd2f41a1cba099f79a0b6b6c35656cf7c03351a7bae8ff0f28f25270f929d2. Reviewed packaged MIT copyright/permission/disclaimer text and the alternative Apache-2.0 text for the Rust wrapper. The vendored libFuzzer C++ runtime is declared NCSA; its files carry LLVM's SPDX Apache-2.0 WITH LLVM-exception headers and the package ships no separate LLVM license text. Used only by the development-only fuzz harness in rust/http3/fuzz, built locally with stable sancov flags; never compiled into or distributed with a shipped artifact."
   },
   {
     "ecosystem": "cargo",

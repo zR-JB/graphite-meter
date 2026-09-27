@@ -578,6 +578,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "graphite-meter-http3"
+version = "0.8.6"
+dependencies = [
+ "bytes",
+ "http",
+]
+
+[[package]]
 name = "graphite-meter-net"
 version = "0.8.6"
 dependencies = [
