@@ -145,6 +145,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
             server.respond(request("/download?bytes=1"), peer).status(),
             StatusCode::TOO_MANY_REQUESTS
         );
+        advance_http1_clock(Duration::from_millis(550)).await;
         loop {
             let probe = fetch(address, "/probe").await;
             let boundary = probe
@@ -156,7 +157,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
             if document["load"]["active"] == 0 {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(10)).await;
+            tokio::task::yield_now().await;
         }
         assert_eq!(
             server.respond(request("/download?bytes=1"), peer).status(),
@@ -308,13 +309,14 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             if serde_json::from_slice::<serde_json::Value>(&checkpoint).is_ok_and(|value| value["bytes"] == 3) {
                 break;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::task::yield_now().await;
         }
+        advance_http1_clock(Duration::from_millis(250)).await;
         loop {
             let (_, probe) = upload_request(address, "GET", "/probe", "", b"").await;
             let probe: serde_json::Value = serde_json::from_slice(&probe).unwrap();
             if probe["load"]["active"] == 0 { break; }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            tokio::task::yield_now().await;
         }
         let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"], 3);
@@ -503,42 +505,6 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
     );
     let reply = fetch(address, "/probe").await;
     assert!(reply.starts_with(b"HTTP/1.1 200"));
-    stop.send(()).unwrap();
-    serving.await.unwrap().unwrap();
-}
-
-#[tokio::test]
-async fn partial_headers_keep_the_fifteen_second_bound_after_keepalive_idle() {
-    let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let (stop, stopped) = oneshot::channel();
-    let serving = tokio::spawn(server.serve_http1(listener, async {
-        let _ = stopped.await;
-    }));
-    let mut socket = TcpStream::connect(address).await.unwrap();
-    socket
-        .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\n")
-        .await
-        .unwrap();
-    let mut socket = tokio::io::BufReader::new(socket);
-    read_headers(&mut socket).await;
-    advance_http1_clock(Duration::from_secs(20)).await;
-    socket
-        .get_mut()
-        .write_all(b"GET /probe HTTP/1.1\r\nHost:")
-        .await
-        .unwrap();
-    // Let the actual socket read establish the partial-header deadline.
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    advance_http1_clock(Duration::from_secs(16)).await;
-    assert_eq!(
-        tokio::time::timeout(Duration::from_secs(1), socket.read(&mut [0; 1]))
-            .await
-            .unwrap()
-            .unwrap(),
-        0
-    );
     stop.send(()).unwrap();
     serving.await.unwrap().unwrap();
 }

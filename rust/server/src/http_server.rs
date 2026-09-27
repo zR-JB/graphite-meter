@@ -1166,7 +1166,7 @@ pub(crate) const fn minimum_buffer_bytes() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     struct UnreadBody;
 
@@ -1301,6 +1301,35 @@ mod tests {
         assert_eq!(server.admission.load().0, 1);
         drop(io);
         assert_eq!(server.admission.load().0, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn partial_headers_receive_a_fresh_fifteen_second_deadline() {
+        let (reader, mut peer) = tokio::io::duplex(64);
+        let mut reader = DeadlineIo {
+            inner: reader,
+            operations: Arc::new(Mutex::new(Vec::new())),
+            lifecycle: Some(Arc::new(Mutex::new(Http1Lifecycle::Idle(Box::pin(
+                tokio::time::sleep(Duration::from_secs(15)),
+            ))))),
+        };
+        tokio::time::advance(Duration::from_secs(14)).await;
+        let partial = b"GET /probe HTTP/1.1\r\nHost:";
+        peer.write_all(partial).await.unwrap();
+        let mut received = vec![0; partial.len()];
+        reader.read_exact(&mut received).await.unwrap();
+        assert_eq!(received, partial);
+        tokio::time::advance(Duration::from_secs(14)).await;
+        let mut byte = [0];
+        let read = reader.read(&mut byte);
+        tokio::pin!(read);
+        std::future::poll_fn(|cx| {
+            assert!(read.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(read.await.unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
 
     #[tokio::test(start_paused = true)]

@@ -143,7 +143,9 @@ async fn exercise() -> Result<(), TestError> {
         .await?;
     stalled.finish().await?;
     assert_eq!(stalled.recv_response().await?.status(), 200);
-    tokio::time::sleep(Duration::from_millis(350)).await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_millis(350)).await;
+    tokio::time::resume();
     loop {
         match stalled.recv_data().await {
             Ok(Some(_)) => continue,

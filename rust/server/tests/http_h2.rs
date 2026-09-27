@@ -222,7 +222,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
         assert_eq!(stalled.status(), 200);
         let mut stalled = stalled.into_body();
         // Withhold stream window updates while the connection stays writable.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        advance_clock(Duration::from_millis(200)).await;
         std::future::poll_fn(|cx| harness.client.poll_ready(cx))
             .await
             .unwrap();
@@ -233,6 +233,17 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
         healthy_upload
             .send_data(Bytes::from_static(b"abc"), false)
             .unwrap();
+        let checkpoint = response(
+            &mut harness.client,
+            "POST",
+            &format!("/upload/checkpoint?id={id}"),
+            Bytes::new(),
+        )
+        .await;
+        let checkpoint: serde_json::Value =
+            serde_json::from_slice(&collect(checkpoint.into_body()).await).unwrap();
+        assert_eq!(checkpoint["bytes"], 3);
+        advance_clock(Duration::from_millis(250)).await;
         loop {
             match stalled.data().await {
                 Some(Ok(_)) => {} // Intentionally do not release this stream's capacity.
