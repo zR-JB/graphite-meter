@@ -589,6 +589,7 @@
   .switch-row > :global(.switch) {
     flex: 1;
     flex-direction: row-reverse;
+    justify-content: space-between;
     min-height: var(--control-h);
   }
   .value {
