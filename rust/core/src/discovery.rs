@@ -72,8 +72,60 @@ pub struct Capabilities {
         skip_serializing_if = "is_false"
     )]
     pub upload_checkpoint: bool,
+    #[serde(deserialize_with = "throughput_targets")]
     pub throughput: Vec<ThroughputTarget>,
+    #[serde(deserialize_with = "latency_targets")]
     pub latency: Vec<LatencyTarget>,
+}
+
+fn throughput_targets<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ThroughputTarget>, D::Error> {
+    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    if targets.len() > 32 {
+        return Err(serde::de::Error::custom("too many throughput targets"));
+    }
+    let mut known = Vec::with_capacity(targets.len());
+    for target in targets {
+        let transport = target
+            .get("transport")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("missing throughput transport"))?;
+        let protocol = target
+            .get("protocol")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("missing throughput protocol"))?;
+        if !matches!(
+            transport,
+            "fetch-stream" | "webtransport" | "webtransport-datagram"
+        ) || !matches!(protocol, "http1" | "http2" | "http3" | "negotiated")
+        {
+            continue;
+        }
+        known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
+    }
+    Ok(known)
+}
+
+fn latency_targets<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<LatencyTarget>, D::Error> {
+    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    if targets.len() > 32 {
+        return Err(serde::de::Error::custom("too many latency targets"));
+    }
+    let mut known = Vec::with_capacity(targets.len());
+    for target in targets {
+        let transport = target
+            .get("transport")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| serde::de::Error::custom("missing latency transport"))?;
+        if !matches!(transport, "websocket" | "webtransport") {
+            continue;
+        }
+        known.push(serde_json::from_value(target).map_err(serde::de::Error::custom)?);
+    }
+    Ok(known)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

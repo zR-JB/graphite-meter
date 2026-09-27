@@ -119,7 +119,16 @@ fn validates_origins_and_transport_strings() {
     ] {
         let mut value = base.clone();
         value["capabilities"][list][0][field] = json!(text);
-        assert!(decode_preflight_value(&value).is_err());
+        let decoded = decode_preflight_value(&value).unwrap();
+        let count = if list == "throughput" {
+            decoded.capabilities.throughput.len()
+        } else {
+            decoded.capabilities.latency.len()
+        };
+        assert_eq!(
+            count,
+            base["capabilities"][list].as_array().unwrap().len() - 1
+        );
     }
     let mut direct = Preflight::decode(PREFLIGHT).unwrap();
     direct.capabilities.latency[0].base_url = "https://host/path".into();
@@ -184,4 +193,23 @@ fn catalogue_checks_all_discovery_lanes() {
         allowed.validate_discovery(&preflight),
         Err(DiscoveryError::InvalidMetadata)
     );
+}
+
+#[test]
+fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
+    let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
+    let throughput = value["capabilities"]["throughput"].as_array_mut().unwrap();
+    let known_count = throughput.len();
+    throughput
+        .push(serde_json::json!({"transport":"future-stream","protocol":"http4","baseUrl":42}));
+    throughput
+        .push(serde_json::json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
+    value["capabilities"]["latency"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"transport":"future-ping","baseUrl":42}));
+    let decoded = decode_preflight_value(&value).unwrap();
+    assert_eq!(decoded.capabilities.throughput.len(), known_count);
+    value["capabilities"]["throughput"][0]["baseUrl"] = serde_json::json!(42);
+    assert!(decode_preflight_value(&value).is_err());
 }
