@@ -1,6 +1,5 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Docked column on wide layouts; elsewhere a flyout or sheet over a scrim below the topbar.
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
@@ -295,7 +294,6 @@
     border-radius: var(--r-full);
     background: var(--border-strong);
   }
-  /* Only portrait phones use a bottom sheet; landscape stays a side flyout. */
   @media (max-width: 759px) and (orientation: portrait) {
     .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
       --closed: translateY(100%);

@@ -59,10 +59,8 @@ const ALIVE_GAP_MS = 250;
 /* A datagram loop settled within one microtask checkpoint would outrun the queue carrying its own `stop`. */
 const YIELD_GAP_MS = 4;
 
-/** Bytes per WebTransport stream write. */
 const WRITE_CHUNK_BYTES = 4 * 1024 * 1024;
 
-/** Session congestion control hint. */
 const CONGESTION_CONTROL: WebTransportCongestionControl = "throughput";
 
 /* Measured as a wash on throughput — the transport buffers absorb the park — so this buys responsiveness, not rate. */
