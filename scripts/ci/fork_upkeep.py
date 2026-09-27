@@ -13,13 +13,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(*args: str, cwd: Path | None = None) -> str:
-    return subprocess.run(args, cwd=cwd, check=True, text=True, stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, timeout=600).stdout.strip()
-
-
 def git(directory: Path, *args: str) -> str:
-    return run('git', '-C', str(directory), *args)
+    return subprocess.run(['git', '-C', str(directory), *args], check=True, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=600).stdout.strip()
+
+
+def gh(*args: str) -> str:
+    return subprocess.run(['gh', *args], check=True, text=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, timeout=600).stdout.strip()
 
 
 def ancestor(directory: Path, older: str, newer: str) -> bool:
@@ -31,7 +32,7 @@ def ancestor(directory: Path, older: str, newer: str) -> bool:
 
 
 def default_branch(url: str) -> str:
-    refs = run('git', 'ls-remote', '--symref', url, 'HEAD')
+    refs = git(ROOT, 'ls-remote', '--symref', url, 'HEAD')
     for line in refs.splitlines():
         if line.startswith('ref: refs/heads/') and line.endswith('\tHEAD'):
             return line.split('\t')[0].removeprefix('ref: refs/heads/')
@@ -78,7 +79,7 @@ def carry(fork: dict, directory: Path, publish: bool) -> dict:
     candidate = git(directory, 'rev-parse', 'HEAD')
     if candidate == fresh:
         return result | {'status': 'upstreamed'}
-    existing = run('git', 'ls-remote', fork['fork'], f'refs/heads/{next_branch}')
+    existing = git(ROOT, 'ls-remote', fork['fork'], f'refs/heads/{next_branch}')
     expected = existing.split()[0] if existing else ''
     if expected and expected != candidate:
         git(directory, 'fetch', '-q', fork['fork'], f'{expected}:refs/remotes/fork/next')
@@ -98,7 +99,7 @@ def github_repo(url: str) -> str:
 
 
 def issue(repo: str, title: str, body: str) -> None:
-    existing = json.loads(run('gh', 'issue', 'list', '--repo', repo, '--state', 'all',
+    existing = json.loads(gh('issue', 'list', '--repo', repo, '--state', 'all',
                               '--search', title + ' in:title', '--json', 'number,title,body,state'))
     for item in existing:
         if item['title'] == title:
@@ -107,21 +108,21 @@ def issue(repo: str, title: str, body: str) -> None:
             if item['state'] != 'OPEN':
                 continue
             if item['body'] != body:
-                run('gh', 'issue', 'edit', str(item['number']), '--repo', repo, '--body', body)
+                gh('issue', 'edit', str(item['number']), '--repo', repo, '--body', body)
             return
-    run('gh', 'issue', 'create', '--repo', repo, '--title', title, '--body', body)
+    gh('issue', 'create', '--repo', repo, '--title', title, '--body', body)
 
 
 def pull_request(repo: str, branch: str, base: str, title: str, body: str, draft: bool = False) -> None:
-    existing = json.loads(run('gh', 'pr', 'list', '--repo', repo, '--state', 'all' if draft else 'open',
+    existing = json.loads(gh('pr', 'list', '--repo', repo, '--state', 'all' if draft else 'open',
                               '--head', branch, '--base', base, '--json', 'number,title,body'))
     if existing:
         return
-    args = ['gh', 'pr', 'create', '--repo', repo, '--head', branch, '--base', base,
+    args = ['pr', 'create', '--repo', repo, '--head', branch, '--base', base,
             '--title', title, '--body', body]
     if draft:
         args.append('--draft')
-    run(*args)
+    gh(*args)
 
 
 def pin_proposal(fork: dict, current: str, directory: Path, repository: str) -> None:
@@ -130,7 +131,7 @@ def pin_proposal(fork: dict, current: str, directory: Path, repository: str) -> 
     branch = 'fork-upkeep/' + github_repo(fork['fork']).split('/')[1] + '-pin-' + current
     url = 'https://github.com/' + repository
     base = default_branch(url)
-    if not run('git', 'ls-remote', url, f'refs/heads/{branch}'):
+    if not git(ROOT, 'ls-remote', url, f'refs/heads/{branch}'):
         git(directory.parent, 'clone', '-q', '--no-checkout', '--single-branch', '--branch', base,
             url, str(directory))
         git(directory, 'checkout', '-q', '-b', branch)
