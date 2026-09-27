@@ -4,7 +4,7 @@
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { term, tooltip } from "../actions/tooltip";
-  import { restDetector, warmUp } from "../actions/intent";
+  import { warmUp } from "../actions/intent";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtAddedMs, fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
@@ -109,15 +109,12 @@
     };
   }
 
-  // A card answers a pointer resting near a marker, or a press; it then follows the pointer along the lane.
-  let tracking = false;
-  let pending: { x: number; lane: LatencyProfileViewLane; track: HTMLElement };
-  const rest = restDetector(() => {
-    tracking = true;
-    inspect(pending);
-  }, 8);
-  $effect(() => rest.cancel);
-  function inspect({ x, lane, track }: typeof pending) {
+  // A card answers the pointer near a marker at once and follows it along the lane.
+  function inspect(
+    x: number,
+    lane: LatencyProfileViewLane,
+    track: HTMLElement,
+  ) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(
       1,
@@ -132,28 +129,14 @@
   }
   function onTrackMove(event: PointerEvent, lane: LatencyProfileViewLane) {
     if (event.pointerType !== "mouse") return;
-    pending = {
-      x: event.clientX,
-      lane,
-      track: event.currentTarget as HTMLElement,
-    };
-    if (tracking) inspect(pending);
-    else rest.move(event, 150);
+    inspect(event.clientX, lane, event.currentTarget as HTMLElement);
   }
   function onTrackDown(event: PointerEvent, lane: LatencyProfileViewLane) {
-    rest.cancel();
-    tracking = true;
-    inspect({
-      x: event.clientX,
-      lane,
-      track: event.currentTarget as HTMLElement,
-    });
+    inspect(event.clientX, lane, event.currentTarget as HTMLElement);
   }
   function onTrackLeave(event: PointerEvent, lane: LatencyProfileViewLane) {
     if (event.pointerType !== "mouse") return;
-    rest.cancel();
-    if (tracking) warmUp();
-    tracking = false;
+    if (hover) warmUp();
     if (keyboardLane !== lane.key) hover = null;
   }
 

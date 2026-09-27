@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { restDetector, warmUp } from "../actions/intent";
+  import { warmUp } from "../actions/intent";
   import { fmtDuration, formatLatency } from "../format";
   import {
     nearestAt,
@@ -81,13 +81,7 @@
     };
   });
 
-  let tracking = false;
   let pointerX = 0;
-  const rest = restDetector(() => {
-    tracking = true;
-    track();
-  }, 8);
-  $effect(() => rest.cancel);
   let box: HTMLElement | undefined = $state();
   function track() {
     if (!box) return;
@@ -95,22 +89,18 @@
     const ratio = Math.min(1, Math.max(0, (pointerX - rect.left) / rect.width));
     hoverT = start + ratio * span;
   }
+  // A readout answers the pointer at once; only explainers wait for a resting pointer.
   function onMove(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
     pointerX = event.clientX;
-    if (tracking) track();
-    else rest.move(event, 150);
+    track();
   }
   function onDown(event: PointerEvent) {
-    rest.cancel();
-    tracking = true;
     pointerX = event.clientX;
     track();
   }
   function onLeave() {
-    rest.cancel();
-    if (tracking) warmUp();
-    tracking = false;
+    if (hoverT !== null) warmUp();
     if (!keyboard) hoverT = null;
   }
   // Arrow keys walk the bins; the readout reads out where it stops.

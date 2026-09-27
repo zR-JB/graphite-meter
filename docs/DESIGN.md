@@ -148,7 +148,7 @@ hue, never by a boxed icon.
   Peak, Stability, Combined, Transferred, wrapping to the card's width. A saved result has no graph row.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
-  over the idle median (dashed baseline). A pointer at rest, a press, or arrow keys show a readout: time into the
+  over the idle median (dashed baseline). The pointer, a press or arrow keys show a readout at once: time into the
   stage, the rate, and the latency replies measured then.
 - **Latency card** (`LatencyProfileView`): the idle median as the headline with Jitter, Range, Stability and Timeouts;
   then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
