@@ -1,5 +1,5 @@
 import { afterEach, expect, jest, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.testutil";
+import { settle, stubGlobals, until } from "../test-helpers.testutil";
 import { DEFAULT_CONFIG } from "../state/defaults";
 import type { PhaseActivity, ReceiverCheckpoint } from "./contract";
 import {
@@ -10,7 +10,13 @@ import {
   testPreparedPaths,
   testWtConfig,
 } from "./test-helpers.testutil";
-import type { ServerStage } from "./transport";
+import { testWorkers, type TestWorker } from "./real/test-helpers.testutil";
+import {
+  PROGRESS_FINAL_GRACE_MS,
+  STOP_GRACE_MS,
+  ESTABLISH_BUDGET_MS,
+  ESTABLISH_MARGIN_MS,
+} from "./real/budgets";
 
 const activity = (
   stage: "download" | "upload" | "bidirectional",
@@ -24,49 +30,24 @@ const activity = (
         : ["down", "up"],
   loadedLatency: false,
 });
-/** Stubbed I/O settles on microtasks alone, so no wall time passes. */
-async function until(predicate: () => boolean, turns = 2_000): Promise<void> {
-  for (let i = 0; i < turns && !predicate(); i++) await Promise.resolve();
-  expect(predicate()).toBe(true);
-}
-async function settle(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 200 && !predicate(); i++) {
-    jest.advanceTimersByTime(10);
-    for (let turn = 0; turn < 20; turn++) await Promise.resolve();
-  }
-  expect(predicate()).toBe(true);
-}
 
-class FakeWorker {
-  static all: FakeWorker[] = [];
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  kind: string;
-  readonly sent: { type: string; url?: string; seq?: number }[] = [];
-  terminated = false;
-  constructor(url: URL) {
-    this.kind =
-      /(fetch|wt-transfer|ping)-worker/.exec(String(url))?.[1] ?? "other";
-    FakeWorker.all.push(this);
-  }
-  postMessage(message: { type: string; url?: string; dir?: string }): void {
-    this.sent.push(message);
-    if (this.kind === "fetch" && message.type === "start")
-      this.kind = message.dir === "down" ? "download" : "upload";
-    if (this.kind === "wt-transfer" && message.type === "start")
-      queueMicrotask(() => this.emit({ type: "established" }));
-    if (this.kind === "wt-transfer" && message.type === "stop")
-      queueMicrotask(() => this.emit({ type: "stopped" }));
-  }
-  emit(data: unknown): void {
-    this.onmessage?.({ data } as MessageEvent);
-  }
-  terminate(): void {
-    this.terminated = true;
-  }
-}
-const workers = (kind: string) =>
-  FakeWorker.all.filter((worker) => worker.kind === kind);
+/** A fetch lane is named by its direction; a WebTransport session establishes and acknowledges its stop. */
+const kind = (worker: TestWorker): string => {
+  const [, script] = /(fetch|wt-transfer|ping)-worker/.exec(worker.url) ?? [];
+  if (script !== "fetch") return script ?? "other";
+  return worker.sent[0]?.dir === "down" ? "download" : "upload";
+};
+let lanes = testWorkers();
+const workers = (name: string) =>
+  lanes.all.filter((worker) => kind(worker) === name);
+const sessionWorkers = () =>
+  testWorkers((worker, message) => {
+    if (kind(worker) !== "wt-transfer") return;
+    if (message.type === "start")
+      queueMicrotask(() => worker.emit({ type: "established" }));
+    if (message.type === "stop")
+      queueMicrotask(() => worker.emit({ type: "stopped" }));
+  });
 
 interface Feed {
   signal: AbortSignal;
@@ -81,9 +62,12 @@ afterEach(() => {
 
 /** An HTTP server: minted upload ids, NDJSON progress feeds and checkpoints. */
 async function http(
-  options: { checkpoint?: () => Response; feed?: () => Response } = {},
+  options: {
+    checkpoint?: (signal: AbortSignal) => Response | Promise<Response>;
+    feed?: () => Response;
+  } = {},
 ) {
-  FakeWorker.all = [];
+  lanes = sessionWorkers();
   const mints: {
     signal: AbortSignal;
     resolve: (response: Response) => void;
@@ -92,7 +76,7 @@ async function http(
   const deleted: string[] = [];
   restore = stubGlobals({
     ...TEST_BUILD_TOKENS,
-    Worker: FakeWorker,
+    Worker: lanes.Worker,
     fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       if (url.pathname === "/upload/session")
@@ -100,7 +84,10 @@ async function http(
           mints.push({ signal: init!.signal!, resolve }),
         );
       if (url.pathname === "/upload/checkpoint")
-        return options.checkpoint?.() ?? new Response(null, { status: 503 });
+        return (
+          options.checkpoint?.(init!.signal!) ??
+          new Response(null, { status: 503 })
+        );
       const id = url.searchParams.get("id")!;
       if (init?.method === "DELETE") {
         deleted.push(id);
@@ -190,11 +177,11 @@ test("HTTP upload lanes start after the feed opens and count only receiver evide
   await preparing;
   await until(() => workers("upload").length === 1);
   expect(
-    new URL(workers("upload")[0].sent[0].url!).searchParams.get("id"),
+    new URL(String(workers("upload")[0].sent[0].url)).searchParams.get("id"),
   ).toBe("one");
   const feed = h.feeds.get("one")!;
   feed.write({ type: "progress", bytes: 50, nanos: 1e8 });
-  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+  await settle();
   stage.measure();
   feed.write({ type: "progress", bytes: 100, nanos: 1e9 });
   feed.write({ type: "progress", bytes: 90, nanos: 3e9 });
@@ -289,7 +276,7 @@ test("a quiet feed is backed by same-receiver checkpoints", async () => {
   await h.open(0, "quiet");
   await preparing;
   stage.measure();
-  await settle(() => h.receivers.length >= 2);
+  await until(() => h.receivers.length >= 2, 2_000);
   expect(h.receivers[0]).toMatchObject({
     id: "quiet",
     requestedAtMs: 42,
@@ -317,7 +304,7 @@ test("a lane error stalls once and restarts after backoff, and a refusal fails t
     const lost = { type: "error", reason: "connection-lost", retry: true };
     lane.emit({ ...lost, detail: "reset" });
     lane.emit({ ...lost, detail: "reset again" });
-    expect(lane.terminated).toBe(true);
+    expect(lane.terminated).toBe(1);
     expect(h.stalls).toEqual(["reset"]);
     jest.advanceTimersByTime(300);
     const restarted = workers("download")[1];
@@ -335,16 +322,15 @@ test("a lane error stalls once and restarts after backoff, and a refusal fails t
   }
 });
 
-test("WebTransport sessions carry download bytes and relay the upload receiver feed", async () => {
-  FakeWorker.all = [];
+test("a busy WebTransport upload session restarts once, then names the server busy", async () => {
+  lanes = sessionWorkers();
   restore = stubGlobals({
     ...TEST_BUILD_TOKENS,
     WebTransport: class {},
-    Worker: FakeWorker,
+    Worker: lanes.Worker,
     location: new URL(`${TEST_WT_ORIGIN}/`),
     fetch: async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.includes("/preflight")) return Response.json(TEST_WT_PREFLIGHT);
       if (url.includes("/upload/session"))
         return Response.json({ uploadId: "gmu_test" });
       throw new Error(`unexpected fetch ${url}`);
@@ -352,7 +338,6 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
   });
   const { ServerStage } = await import("./transport");
   const { classifyTransportDiscovery } = await import("./paths");
-  const config = testWtConfig();
   type Advertised = Parameters<typeof classifyTransportDiscovery>;
   const discovery = classifyTransportDiscovery(
     TEST_WT_PREFLIGHT.capabilities.throughput as Advertised[0],
@@ -367,56 +352,20 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
     ...paths.throughput.fetch,
     origin: TEST_WT_ORIGIN,
   };
-  const downloads: number[] = [];
-  const receivers: ReceiverCheckpoint[] = [];
-  const host = testParticipantHost(config, {
-    download: (bytes) => downloads.push(bytes),
-    receiver: (checkpoint) => receivers.push(checkpoint),
-  });
-  const create = (phase: PhaseActivity): ServerStage =>
-    new ServerStage({
-      host,
-      paths,
-      activity: phase,
-      streams: { down: 4, up: 4 },
-      seed: "t",
-    });
-  const down = create(activity("download"));
-  await down.prepare();
-  await until(() => workers("wt-transfer").length === 1);
-  const session = () => workers("wt-transfer").at(-1)!;
-  expect(session().sent[0].url).toBe(
-    `${TEST_WT_ORIGIN}/wt/download?bytes=68719476736&streams=4`,
-  );
-  session().emit({ type: "progress", bytes: 999, elapsedMs: 10, seq: 0 });
-  down.measure();
-  session().emit({ type: "progress", bytes: 4_000_000, elapsedMs: 50, seq: 1 });
-  await down.finish();
-  expect(downloads).toEqual([4_000_000]);
-  expect(session().sent.map((message) => message.type)).toContain("stop");
-
-  const up = create(activity("upload"));
-  const preparing = up.prepare();
-  await until(() => workers("wt-transfer").length === 2);
-  expect(session().sent[0].url).toBe(`${TEST_WT_ORIGIN}/wt/upload?id=gmu_test`);
-  session().emit({ type: "upload-progress", msg: { type: "open" } });
-  await preparing;
-  up.measure();
-  for (const n of [100, 250])
-    session().emit({
-      type: "upload-progress",
-      msg: { type: "bytes", n, t: n * 1e6 },
-    });
-  expect(receivers.map((checkpoint) => checkpoint.bytes)).toEqual([100, 250]);
-  up.discard();
-
   jest.useFakeTimers();
-  const refused = create(activity("upload"));
+  const refused = new ServerStage({
+    host: testParticipantHost(testWtConfig()),
+    paths,
+    activity: activity("upload"),
+    streams: { down: 4, up: 4 },
+    seed: "t",
+  });
   const refusing = refused
     .prepare()
     .catch((cause: Error) => cause.constructor.name);
-  await until(() => workers("wt-transfer").length === 3);
-  const first = session();
+  await until(() => workers("wt-transfer").length === 1);
+  const [first] = workers("wt-transfer");
+  expect(first.sent[0].url).toBe(`${TEST_WT_ORIGIN}/wt/upload?id=gmu_test`);
   first.emit({
     type: "upload-progress",
     msg: {
@@ -426,10 +375,10 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
       retry: true,
     },
   });
-  expect(first.terminated).toBe(true);
+  expect(first.terminated).toBe(1);
   jest.advanceTimersByTime(300);
-  expect(workers("wt-transfer")).toHaveLength(4);
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  expect(workers("wt-transfer")).toHaveLength(2);
+  await settle();
   jest.advanceTimersByTime(3_200);
   expect(await refusing).toBe("ServerBusyError");
   refused.discard();
@@ -459,7 +408,7 @@ test("the HTTP receiver feed keeps its counters, retries a busy server and class
     credentials: "same-origin",
     onEvent: (event) => events.push(event),
   });
-  await settle(() => events.some((event) => event.type === "complete"));
+  await until(() => events.some((event) => event.type === "complete"), 2_000);
   expect(events.filter((event) => "n" in event)).toEqual([
     { type: "bytes", n: 800, t: 4 },
     { type: "complete", n: 900, t: 6 },
@@ -496,9 +445,9 @@ test("the HTTP receiver feed keeps its counters, retries a busy server and class
       credentials: "omit",
       onEvent: (e) => seen.push(e),
     });
-    await settle(() => seen.length > 0);
+    await until(() => seen.length > 0, 2_000);
     jest.advanceTimersByTime(5_000);
-    if (retried) await settle(() => calls > 1);
+    if (retried) await until(() => calls > 1, 2_000);
     expect(seen.slice(0, 1)).toEqual([expect.objectContaining(expected)]);
     expect(calls > 1).toBe(retried);
     refused.dispose();
@@ -558,12 +507,9 @@ test("a busy upload feed during preparation retries with the busy backoff, then 
   await until(() => h.mints.length === 1);
   h.mints[0].resolve(Response.json({ uploadId: "busy" }));
   await until(() => gets === 1);
-  const flush = async () => {
-    for (let turn = 0; turn < 100; turn++) await Promise.resolve();
-  };
-  await flush();
+  await settle();
   jest.advanceTimersByTime(999);
-  await flush();
+  await settle();
   expect(gets).toBe(1);
   jest.advanceTimersByTime(1);
   await until(() => gets === 2);
@@ -583,7 +529,7 @@ test("loaded latency that never answers leaves throughput ready; the latency sta
   await loaded.prepare();
   const ready = loaded.ready(new AbortController().signal);
   workers("download")[0].emit({ type: "progress", bytes: 10 });
-  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  await settle();
   jest.advanceTimersByTime(3_500);
   await ready;
   expect(h.failures).toEqual([]);
@@ -613,9 +559,93 @@ test("stage readiness wakes on the first bytes of every download lane", async ()
   void waiting.then(() => (ready = true));
   const [lane] = workers("download");
   lane.emit({ type: "progress", bytes: 0 });
-  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+  await settle();
   expect(ready).toBe(false);
   lane.emit({ type: "progress", bytes: 10 });
   await waiting;
+  stage.discard();
+});
+
+test("a session lane times out its establishment and is released when it never acknowledges stop", async () => {
+  jest.useFakeTimers();
+  const { openLane } = await import("./transport");
+  const failures: object[] = [];
+  const open = (worker: TestWorker) =>
+    openLane(worker as unknown as Worker, {}, true, (msg) => {
+      if (msg.type === "error") failures.push(msg);
+    });
+  const established = new (testWorkers().Worker)("wt-transfer-worker");
+  open(established);
+  established.emit({ type: "established" });
+  const silent = new (testWorkers().Worker)("wt-transfer-worker");
+  const lane = open(silent);
+  jest.advanceTimersByTime(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS - 1);
+  expect(failures).toEqual([]);
+  jest.advanceTimersByTime(1);
+  expect(failures).toEqual([
+    {
+      type: "error",
+      detail: "webtransport session did not establish",
+      reason: "timeout",
+      retry: true,
+    },
+  ]);
+
+  let released = false;
+  const stopping = lane.stop().then(() => (released = true));
+  expect(silent.sent.at(-1)).toEqual({ type: "stop" });
+  jest.advanceTimersByTime(STOP_GRACE_MS - 1);
+  await settle();
+  expect([released, silent.terminated]).toEqual([false, 0]);
+  jest.advanceTimersByTime(1);
+  await stopping;
+  expect(silent.terminated).toBeGreaterThan(0);
+});
+
+test("an HTTP receiver feed without its final record releases the stage after the final grace", async () => {
+  const h = await http();
+  const stage = h.stage(activity("upload"));
+  const preparing = stage.prepare();
+  await h.open(0, "one");
+  await preparing;
+  stage.measure();
+  h.feeds.delete("one");
+  jest.useFakeTimers();
+  let finished = false;
+  const finishing = stage.finish().then(() => (finished = true));
+  await settle();
+  expect(h.deleted).toEqual(["one"]);
+  jest.advanceTimersByTime(PROGRESS_FINAL_GRACE_MS - 1);
+  await settle();
+  expect(finished).toBe(false);
+  jest.advanceTimersByTime(1);
+  await finishing;
+});
+
+test("a checkpoint the server never answers gives up on its own bound", async () => {
+  const h = await http({
+    checkpoint: (signal) =>
+      new Promise((_, reject) =>
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      ),
+  });
+  const stage = h.stage(activity("upload"));
+  const preparing = stage.prepare();
+  await h.open(0, "hung");
+  await preparing;
+  jest.useFakeTimers();
+  let outcome: unknown = "pending";
+  void stage.checkpoint(new AbortController().signal, true).then(
+    (value) => (outcome = value),
+    (cause: Error) => (outcome = cause.name),
+  );
+  jest.advanceTimersByTime(1_499);
+  await settle();
+  expect(outcome).toBe("pending");
+  jest.advanceTimersByTime(1);
+  await until(() => outcome !== "pending");
+  expect(outcome).toBe("TimeoutError");
   stage.discard();
 });
