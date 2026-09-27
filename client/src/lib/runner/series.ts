@@ -281,13 +281,10 @@ function compact<T extends { t: number }>(
   );
   let reduced: T[];
   do {
-    const bins = new Map<string, T[]>();
-    for (const value of history) {
-      const key = `${series(value)}:${Math.floor(value.t / width)}`;
-      const bin = bins.get(key);
-      if (bin) bin.push(value);
-      else bins.set(key, [value]);
-    }
+    const bins = Map.groupBy(
+      history,
+      (value) => `${series(value)}:${Math.floor(value.t / width)}`,
+    );
     reduced = [...bins.values()].flatMap(merge).sort((a, b) => a.t - b.t);
     width *= 2;
   } while (reduced.length > limit && width / 2 < span);

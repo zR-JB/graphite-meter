@@ -167,10 +167,7 @@ export class LatencyChannel {
     const worker = this.#worker;
     this.#clearEstablishTimer();
     this.#cutoffEpochMs = this.#timeOriginMs + pageMs();
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => {
-      resolve = done;
-    });
+    const { promise, resolve } = Promise.withResolvers<void>();
     const timer = setTimeout(() => {
       if (this.#worker !== worker) return;
       this.#deps.host.latencyIncomplete();

@@ -29,10 +29,16 @@ export async function readJSONResponse(response: Response): Promise<unknown> {
   }
 }
 
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** A counter: a safe non-negative integer. */
+export const isCount = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("expected control response object");
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new Error("expected control response object");
+  return value;
 }
 
 function string(value: unknown, max: number, allowEmpty = false): string {
@@ -155,14 +161,9 @@ export function parseProbe(value: unknown): Probe {
   let load: Probe["load"];
   if (input.load !== undefined) {
     const raw = record(input.load);
-    if (
-      !Number.isSafeInteger(raw.active) ||
-      !Number.isSafeInteger(raw.max) ||
-      (raw.active as number) < 0 ||
-      (raw.max as number) < 1
-    )
+    if (!isCount(raw.active) || !isCount(raw.max) || raw.max < 1)
       throw new Error("invalid probe load");
-    load = { active: raw.active as number, max: raw.max as number };
+    load = { active: raw.active, max: raw.max };
   }
   return {
     clientIp: string(input.clientIp, 64),
@@ -226,11 +227,6 @@ export function parseWtToken(value: unknown): {
   const input = record(value);
   const token = string(input.token, 8192, true);
   const { expires } = input;
-  if (
-    typeof expires !== "number" ||
-    !Number.isSafeInteger(expires) ||
-    expires < 0
-  )
-    throw new Error("invalid WebTransport token expiry");
+  if (!isCount(expires)) throw new Error("invalid WebTransport token expiry");
   return { token, expires };
 }

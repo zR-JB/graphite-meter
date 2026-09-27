@@ -13,6 +13,7 @@ import type {
   TransportRole,
 } from "./contract";
 import type { ServerIdentity } from "../servers/catalog";
+import { isCount } from "../api/decode";
 import { fixedPingIntervalMs } from "./pingCadence";
 import { STAGES } from "./schedule";
 
@@ -760,8 +761,7 @@ export class ThroughputAggregate {
     const dirs = directions(record.stage);
     for (const id of record.participants) {
       const up = boundary.up[id];
-      if (up && Number.isSafeInteger(up.bytes) && up.bytes >= 0)
-        this.#observeUpload(record.stage, id, up);
+      if (up && isCount(up.bytes)) this.#observeUpload(record.stage, id, up);
     }
     const valid =
       record.participants.length > 0 &&

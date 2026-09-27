@@ -11,7 +11,7 @@ import type {
   RunnerConfig,
   StallInfo,
 } from "./contract";
-import { readJSONResponse, parseResponseToken } from "../api/decode";
+import { isCount, parseResponseToken, readJSONResponse } from "../api/decode";
 import {
   classifyServerAuthentication,
   measurementFetch,
@@ -591,18 +591,12 @@ export class ServerStage implements StageTransport {
       string,
       unknown
     >;
-    if (
-      !Number.isSafeInteger(bytes) ||
-      !Number.isSafeInteger(nanos) ||
-      (bytes as number) < 0 ||
-      (nanos as number) < 0
-    )
-      return null;
+    if (!isCount(bytes) || !isCount(nanos)) return null;
     if (this.#abort.signal.aborted || receiver !== this.receiver) return null;
     const checkpoint = {
       id: receiver.id,
-      bytes: bytes as number,
-      nanos: nanos as number,
+      bytes,
+      nanos,
       requestedAtMs,
       receivedAtMs: this.host.now(),
     };
@@ -649,8 +643,9 @@ type FeedEvent =
 
 /** One upload id's receiver counters; replacing the id creates a new receiver. */
 class UploadReceiver {
-  readonly opened: Promise<boolean>;
-  #open!: (ready: boolean) => void;
+  readonly #opened = Promise.withResolvers<boolean>();
+  readonly opened = this.#opened.promise;
+  #timer: ReturnType<typeof setTimeout>;
   #bytes = 0;
   #nanos = 0;
   #closed = false;
@@ -668,16 +663,10 @@ class UploadReceiver {
     readonly credentials: ServerCredentials,
     readonly session: boolean,
   ) {
-    const timer = setTimeout(
+    this.#timer = setTimeout(
       () => this.#open(false),
       ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
     );
-    this.opened = new Promise((resolve) => {
-      this.#open = (ready) => {
-        clearTimeout(timer);
-        resolve(ready);
-      };
-    });
     if (session) return;
     const { headers } = requestOptions(credentials, url, "POST");
     const { credentials: mode } = requestOptions(credentials, url);
@@ -700,6 +689,11 @@ class UploadReceiver {
       }
       await this.stage.checkpoint(this.#poll.signal).catch(() => {});
     }
+  }
+
+  #open(ready: boolean): void {
+    clearTimeout(this.#timer);
+    this.#opened.resolve(ready);
   }
 
   observe(checkpoint: ReceiverCheckpoint): void {
@@ -825,14 +819,6 @@ export function uploadFeed(options: {
     const required = await sessionAuthenticationRequired(
       location.origin,
       signal,
-      (input, init) =>
-        fetch(input, {
-          ...init,
-          signal: AbortSignal.any([
-            signal,
-            ...(init?.signal ? [init.signal] : []),
-          ]),
-        }),
     );
     if (required && !signal.aborted) emit({ type: "auth-required" });
     return required && !signal.aborted;

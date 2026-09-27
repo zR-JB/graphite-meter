@@ -1,4 +1,5 @@
 // The server-authoritative upload feed, read the same way whichever transport carries it.
+import { isCount, isRecord } from "../../api/decode";
 import type { LaneFailure } from "../contract";
 
 /** What one feed reports, normalised from the wire records. */
@@ -54,8 +55,6 @@ export function retryAfterMs(headers: Headers): number | undefined {
 
 const oversized = () =>
   new Error("upload progress record exceeds 64 Ki characters");
-const counter = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
 const optionalText = (value: unknown) =>
   value === undefined || typeof value === "string";
 
@@ -63,9 +62,8 @@ const optionalText = (value: unknown) =>
 export function decodeUploadProgress(
   value: unknown,
 ): UploadProgressRecord | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return null;
-  const raw = value as Record<string, unknown>;
+  if (!isRecord(value)) return null;
+  const raw = value;
   if (raw.type === "ready") return { type: "ready" };
   if (raw.type === "error")
     return optionalText(raw.message) && optionalText(raw.code)
@@ -76,7 +74,7 @@ export function decodeUploadProgress(
         }
       : null;
   if (raw.type !== "progress" && raw.type !== "complete") return null;
-  return counter(raw.bytes) && counter(raw.nanos)
+  return isCount(raw.bytes) && isCount(raw.nanos)
     ? { type: raw.type, bytes: raw.bytes, nanos: raw.nanos }
     : null;
 }

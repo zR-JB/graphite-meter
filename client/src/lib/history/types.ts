@@ -10,6 +10,7 @@ import {
   type TransportRole,
 } from "../runner/contract";
 import type { CompensationBreakdown } from "../compensation";
+import { isRecord } from "../api/decode";
 import { createUuid } from "../uuid";
 import { planned, STAGES } from "../runner/schedule";
 import {
@@ -123,9 +124,6 @@ export function incoherence(
   return problems;
 }
 
-type Plain = Record<string, unknown>;
-const object = (value: unknown): value is Plain =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
 const time = (value: unknown) =>
   typeof value === "number" && !Number.isNaN(new Date(value).getTime());
 
@@ -155,7 +153,7 @@ const list =
 const shape =
   (fields: Record<string, Check>): Check =>
   (value) =>
-    object(value) &&
+    isRecord(value) &&
     Object.entries(fields).every(([key, check]) => check(value[key]));
 const each = (check: Check) =>
   shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
@@ -202,7 +200,7 @@ const readable = shape({
     ...measured,
     outcome: (value) =>
       ["complete", "partial", "incomplete"].includes(`${value}`),
-    stages: object,
+    stages: isRecord,
     durationMs: num,
     multiServer: shape({
       latencyFocus: str,
@@ -214,7 +212,7 @@ const readable = shape({
           throughput: shape({ transport: str }),
           latencyTarget: maybe(shape({ transport: str })),
           totalBytes: shape({ down: num, up: num }),
-          stages: object,
+          stages: isRecord,
         }),
       ),
       failures: list(
@@ -230,7 +228,7 @@ const readable = shape({
 
 /** A saved record, with schema 4 lifted into a result, or null when a view could not read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  if (!object(value) || !plain(value)) return null;
+  if (!isRecord(value) || !plain(value)) return null;
   const record =
     value.schemaVersion === 4 && liftable(value) ? fromSchema4(value) : value;
   return readable(record) ? (record as HistoryRecord) : null;
@@ -278,16 +276,16 @@ interface Schema4 {
 const liftable = shape({
   id: str,
   stages: shape({
-    latency: shape({ lanes: each(maybe(object)) }),
-    download: object,
-    upload: object,
-    bidirectional: object,
+    latency: shape({ lanes: each(maybe(isRecord)) }),
+    download: isRecord,
+    upload: isRecord,
+    bidirectional: isRecord,
   }),
-  server: object,
-  client: object,
-  transport: shape({ throughput: object, latency: object }),
-  wireEstimates: maybe(shape({ breakdown: object })),
-  multiServer: maybe(shape({ servers: list(object) })),
+  server: isRecord,
+  client: isRecord,
+  transport: shape({ throughput: isRecord, latency: isRecord }),
+  wireEstimates: maybe(shape({ breakdown: isRecord })),
+  multiServer: maybe(shape({ servers: list(isRecord) })),
 }) as (value: unknown) => value is Schema4;
 
 const summary = (
