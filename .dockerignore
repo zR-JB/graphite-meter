@@ -1,5 +1,6 @@
 # Build context is the repo root (docker build -f container/Dockerfile .). Keep it lean.
 .git
+.scratch
 **/node_modules
 client/dist
 client/.e2e-dist

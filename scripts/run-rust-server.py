@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--profile", choices=("dev", "release"), required=True)
     parser.add_argument("--version", default="development")
     parser.add_argument("--build-only", action="store_true")
+    parser.add_argument("--supplement", type=Path, default=REPO / "legal/rust-platform-linux-gnu.json")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", args.version):
         parser.error("invalid version")
@@ -31,9 +32,10 @@ def main() -> None:
     environment["GM_RUST_ASSET_DIR"] = str(REPO / "client/dist")
     environment["CARGO_TARGET_DIR"] = str(target_dir)
 
-    with tempfile.TemporaryDirectory(prefix=".rust-reviewed-", dir=target_dir) as temporary:
+    with tempfile.TemporaryDirectory(prefix=".rust-reviewed-", dir=target_dir) as temporary, \
+            tempfile.TemporaryDirectory(prefix="gm-rust-browser-") as browser_temporary:
         stage = Path(temporary)
-        scan = stage / "browser-modules.json"
+        scan = Path(browser_temporary) / "browser-modules.json"
         browser_environment = dict(environment, GM_LEGAL_SCAN_OUT=str(scan))
         subprocess.run(
             ["mise", "run", "client-build-prod" if args.profile == "release" else "client-build-dev"],
@@ -51,7 +53,7 @@ def main() -> None:
                 "--profile", args.profile,
                 "--out", str(stage / "legal"),
                 "--reviews", "legal/rust-reviewed-components.json",
-                "--supplement", "legal/rust-platform-linux-gnu.json",
+                "--supplement", str(args.supplement.resolve()),
                 "--browser-scan", str(scan),
             ],
             cwd=REPO,
