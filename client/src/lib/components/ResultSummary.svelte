@@ -56,36 +56,36 @@
   <div class="result-cards">
     {#each cards as card (card.key)}
       <article class="surface result-card enter {card.status}">
-        <span
-          class="head"
-          data-tone={card.key}
-          {@attach tooltip(() => card.tip)}
-        >
-          <span class="tone-icon" aria-hidden="true"
-            ><Icon name={card.icon} /></span
-          >
-          <span class="label">{card.label}</span>
-          {#if card.status === "partial" || card.status === "failed"}
-            <span class="badge" data-tone={STATUS_TONE[card.status]}
-              >{STATUS[card.status]}</span
+        <span class="headline" {@attach tooltip(() => card.tip)}>
+          <span class="head" data-tone={card.key}>
+            <span class="tone-icon" aria-hidden="true"
+              ><Icon name={card.icon} /></span
             >
-          {/if}
-        </span>
-        {#key scope}
-          <span class="readout enter">
+            <span class="label">{card.label}</span>
+            {#if card.status === "partial" || card.status === "failed" || card.status === "stopped"}
+              <span class="badge" data-tone={STATUS_TONE[card.status]}
+                >{STATUS[card.status]}</span
+              >
+            {/if}
+          </span>
+          {#key scope}
             <span
-              class="val"
+              class="val enter"
               aria-hidden={card.accessible ? "true" : undefined}
             >
               <span class="num">{card.num}</span>
               {#if card.unit}<span class="unit">{card.unit}</span>{/if}
             </span>
-            {#if card.accessible}<span class="sr-only">{card.accessible}</span
-              >{/if}
+          {/key}
+        </span>
+        {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
+        {#key scope}
+          <span class="readout enter">
             {#if card.wire}
               {@const wire = card.wire}
               <span class="wire" {@attach tooltip(() => wire.tip)}
-                >{wire.value}<span class="wire-tag">wire {wire.overhead}</span
+                ><span>{wire.value}</span><span class="wire-tag"
+                  >wire {wire.overhead}</span
                 ></span
               >
             {/if}
@@ -153,7 +153,7 @@
   .result-card {
     display: grid;
     align-content: start;
-    gap: var(--space-2);
+    gap: var(--space-1);
     min-width: 0;
     padding: var(--space-3);
     transition: var(--transition-control);
@@ -161,12 +161,17 @@
   .result-card.active {
     border-color: var(--brand-line);
   }
+  .headline {
+    display: grid;
+    gap: var(--space-2);
+    justify-self: start;
+    min-width: 0;
+  }
   .head {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
-    justify-self: start;
   }
   .head .badge {
     margin-left: var(--space-1);
@@ -194,14 +199,19 @@
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
+  /* Value and overhead wrap as whole units, never mid-unit. */
   .wire {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
-    gap: var(--space-2);
+    gap: 0 var(--space-2);
     justify-self: start;
     color: var(--text-muted);
     font: var(--w-strong) var(--type-xs) var(--font-mono);
     font-variant-numeric: tabular-nums;
+  }
+  .wire > span {
+    white-space: nowrap;
   }
   .wire-tag {
     color: var(--text-soft);
@@ -229,7 +239,7 @@
   }
   @media (hover: hover) {
     .line:hover .line-label,
-    .head:hover .label,
+    .headline:hover .unit,
     .wire:hover .wire-tag {
       color: var(--text);
     }

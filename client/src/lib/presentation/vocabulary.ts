@@ -85,6 +85,7 @@ export const STATUS = {
   recovering: "Recovering",
   upcoming: "Upcoming",
   next: "Next run",
+  stopped: PHASE.aborted,
 } as const satisfies Record<StageStatus, string> & Record<string, string>;
 
 /** One tone per status and outcome on every surface; the rest stay neutral. */
@@ -93,6 +94,7 @@ export const STATUS_TONE = {
   incomplete: "warn",
   failed: "err",
   recovering: "warn",
+  stopped: "neutral",
 } as const satisfies Partial<Record<keyof typeof STATUS | Outcome, Tone>>;
 
 /** A stalled run is "Recovering" wherever it shows: footer, toast, stage and topbar. */

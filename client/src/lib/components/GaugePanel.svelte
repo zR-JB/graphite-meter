@@ -50,7 +50,12 @@
   const resultsHeight = new Smoothed();
   $effect(() => {
     const height = resultsBody;
-    untrack(() => resultsHeight.set(height, { over: 240 }));
+    untrack(() =>
+      resultsHeight.set(height, {
+        over: 240,
+        snap: resultsHeight.current === 0,
+      }),
+    );
   });
   const activeStagePresentation = $derived(
     store.phaseStage ? store.stagePresentation[store.phaseStage] : null,
@@ -285,17 +290,17 @@
       <div class="stage-head"><StageTrack /></div>
     </div>
 
+    <div class="results-slot" style:height={`${resultsHeight.current}px`}>
+      <div class="results-body" bind:clientHeight={resultsBody}>
+        <ResultCards live={liveReadout} />
+      </div>
+    </div>
+
     {#if store.latencyEnabled}
       <div class="well latency-panel">
         <LatencyProfile />
       </div>
     {/if}
-  </div>
-
-  <div class="results-slot" style:height={`${resultsHeight.current}px`}>
-    <div class="results-body" bind:clientHeight={resultsBody}>
-      {#if phase !== "idle"}<ResultCards live={liveReadout} />{/if}
-    </div>
   </div>
 </section>
 
@@ -313,9 +318,11 @@
     --gauge-well-height: clamp(280px, 35svh, 360px);
     display: grid;
     gap: var(--space-3) var(--space-2);
+    /* Narrow: the results follow the gauge, before the latency detail. */
     grid-template:
       "gauge" var(--gauge-well-height)
       "controls" auto
+      "results" auto
       "latency" auto
       / 1fr;
   }
@@ -323,6 +330,7 @@
     grid-template:
       "gauge" var(--gauge-well-height)
       "controls" auto
+      "results" auto
       / 1fr;
   }
   /* Wide instruments pair the two readings above their controls. */
@@ -331,6 +339,7 @@
       grid-template:
         "gauge latency" minmax(var(--gauge-well-height), auto)
         "controls controls" auto
+        "results results" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
     /* The gauge keeps its size when latency is disabled. */
@@ -338,7 +347,26 @@
       grid-template:
         "gauge gauge" var(--gauge-well-height)
         "controls controls" auto
+        "results results" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
+    }
+  }
+  /* Controls under the gauge, results under the latency panel: one band on the panel grid. */
+  @container viz (min-width: 1100px) {
+    .instrument,
+    .instrument:not(:has(.latency-panel)) {
+      grid-template-areas:
+        "gauge latency"
+        "controls results";
+      grid-template-rows: minmax(var(--gauge-well-height), auto) auto;
+    }
+    .instrument:not(:has(.latency-panel)) {
+      grid-template-areas:
+        "gauge gauge"
+        "controls results";
+    }
+    .results-slot :global(.result-summary) {
+      max-width: none;
     }
   }
   @media (min-width: 1800px) and (min-height: 1000px) {
@@ -399,6 +427,7 @@
     --stage-controls-width: 540px;
     grid-area: controls;
     display: grid;
+    align-content: center;
     align-items: center;
     justify-self: center;
     gap: var(--space-3);
@@ -411,14 +440,6 @@
   @media (max-height: 800px) {
     .instrument-controls {
       padding-block: var(--space-1);
-    }
-    @container viz (min-width: 1000px) {
-      .instrument-controls {
-        grid-template-columns: 280px minmax(0, 1fr);
-        align-items: end;
-        column-gap: var(--space-5);
-        max-width: calc(280px + var(--space-5) + var(--stage-controls-width));
-      }
     }
   }
   .run-slot {
@@ -569,14 +590,12 @@
   }
   /* Padding, not overflow-clip-margin, keeps shadows in: Chrome hides anchored tips inside a clip margin. */
   .results-slot {
-    flex: none;
+    grid-area: results;
+    align-self: start;
     margin: calc(-1 * var(--space-1));
     overflow: clip;
   }
   .results-body {
     padding: var(--space-1);
-  }
-  .results-slot:has(> .results-body:empty) {
-    display: none;
   }
 </style>

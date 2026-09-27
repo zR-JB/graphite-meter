@@ -7,10 +7,12 @@
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
     CARD_ORDER,
+    pendingRows,
     summaryCards,
     serverIssues,
     summaryEvidence,
     type SummaryCard,
+    type SummaryRow,
   } from "../presentation/resultSummary";
 
   type Stage = (typeof CARD_ORDER)[number];
@@ -48,14 +50,38 @@
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
-  // Every stage holds its card from the start; a settled stage fills in its values.
+  // Until a run completes, every planned stage holds a card with all its rows; values fill in, nothing moves.
+  const planned = $derived(
+    CARD_ORDER.filter((key) => status(key) !== "disabled"),
+  );
+  const multiple = $derived(
+    ((details ?? store.serverDetails)?.selection.length ??
+      store.selectedServers.length) > 1,
+  );
+  const skeleton = (key: Stage) =>
+    pendingRows(
+      key,
+      planned.filter((stage) => stage !== "latency"),
+      multiple,
+    );
+  const same = (a: SummaryRow, b: SummaryRow) =>
+    a.label === b.label && a.stage === b.stage;
+  function held(card: SummaryCard): SummaryCard {
+    const rows = skeleton(card.key);
+    return {
+      ...card,
+      rows: [
+        ...rows.map((row) => card.rows.find((got) => same(row, got)) ?? row),
+        ...card.rows.filter((got) => !rows.some((row) => same(row, got))),
+      ],
+    };
+  }
   const cards = $derived(
-    store.isRunning
-      ? CARD_ORDER.flatMap((key) =>
-          status(key) === "disabled"
-            ? []
-            : [settled.find((card) => card.key === key) ?? liveCard(key)],
-        )
+    store.phase !== "complete" && store.phase !== "error"
+      ? planned.map((key) => {
+          const card = settled.find((card) => card.key === key);
+          return card ? held(card) : liveCard(key);
+        })
       : settled,
   );
 
@@ -85,11 +111,15 @@
       key,
       label: STAGE[key].short,
       icon: STAGE[key].icon,
-      status: active ? "active" : "pending",
+      status: active
+        ? "active"
+        : store.phase === "aborted"
+          ? "stopped"
+          : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
-      rows: [],
+      rows: skeleton(key),
       accessible: active
         ? timeout
           ? "probe timeout"

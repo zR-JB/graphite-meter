@@ -20,7 +20,7 @@ import { serverName } from "./serverAppearance";
 import { JARGON, MISSING, STAGE, reasonLabel } from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
-type LiveStatus = "active" | "pending";
+type LiveStatus = "active" | "pending" | "stopped";
 interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
@@ -238,6 +238,36 @@ export function summaryCards(
       },
     ];
   });
+}
+
+/** Every row a stage's card will hold, still MISSING, so settling moves nothing. */
+export function pendingRows(
+  key: TransportRole,
+  loaded: TransportRole[],
+  multiple: boolean,
+): SummaryRow[] {
+  const row = (label: string, tip?: string, stage?: TransportRole) => ({
+    label,
+    value: MISSING,
+    tip,
+    stage,
+  });
+  if (key === "latency")
+    return [
+      row("Jitter", JARGON.jitter),
+      ...loaded.map((stage) => row("Added", JARGON.addedLatency, stage)),
+      row("Stability", JARGON.latencyStability),
+      ...(multiple ? [row("Server")] : []),
+    ];
+  return [
+    ...(key === "bidirectional"
+      ? [
+          row(STAGE.download.short, undefined, "download"),
+          row(STAGE.upload.short, undefined, "upload"),
+        ]
+      : [row("Transferred", JARGON.transferred), row("Peak", JARGON.peak)]),
+    row("Stability", JARGON.rateStability),
+  ];
 }
 
 /** Each failed server stage, live or saved: who, which stage, why; `scope` narrows to one server. */
