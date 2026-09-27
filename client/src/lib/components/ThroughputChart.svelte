@@ -410,7 +410,8 @@
         <div class="marks">
           {#each presentation.phaseLabels as label (label.phase)}
             <span
-              class="phase-label caps"
+              class="phase-label"
+              data-tone={label.phase}
               style:left={`${label.x}px`}
               style:top={`${label.y}px`}
               >{label.phase === "bidirectional"
@@ -551,7 +552,8 @@
   }
   .phase-label {
     translate: 0 -100%;
-    opacity: 0.62;
+    color: var(--tone-ink);
+    font: var(--w-strong) var(--type-xs) var(--font-sans);
   }
   .phase-label,
   .stat-label {

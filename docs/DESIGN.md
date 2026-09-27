@@ -84,7 +84,7 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Panel and dialog title | Plex Sans | `--type-lg` (16–18 px) | 600 |
 | Body, grouped lists, settings rows | Plex Sans | `--type-body` 13 px | `--w-normal` 450 values, 400 labels |
 | Secondary text, hints | Plex Sans | `--type-sm` 12 px, `--type-xs` 11 px | 450 |
-| Instrument chrome: axes, units, lane stats, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
+| Instrument chrome: axes, units, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
 | Axis names and unit captions (`.caps`) | Plex Mono | `--type-2xs` 10 px, `--track-caps` | `--w-heavy` |
 
 - 10 px is the floor for any text. Only headings scale with the viewport.
@@ -151,8 +151,13 @@ ping are the phase marks.
 - **Button** (`.btn`): `--surface-2`, a hairline inset edge, and a lit top. Variants: `-accent`, `-quiet`, `-danger`,
   `-icon`. The run control is the one solid brand button.
 - **Badge and status dot**: tone wash with tone ink. A dot shows only when its tone is not neutral.
-- **Tooltip and hover card** (`.tooltip`, `.inspect-card`): glass. A multi-line tip's first line is its title. A tip
-  opens on hover intent, keyboard focus or long press, never after a click on a control.
+- **Tooltip and hover card** (`.tooltip`, `.inspect-card`): glass. A multi-line tip's first line is its title; a line
+  with a tab is a label/value pair (`.inspect-row`). A tip opens on hover intent, keyboard focus or long press, never
+  after a click on a control.
+- **Result chip**: one per stage, under its stage tile, at a fixed height in every state. The stage name is in phase
+  ink, then the value and unit, then one quiet line: the wire rate, else added latency per loaded stage (the phase
+  glyph, whole ms from 10 ms), jitter, each bidirectional lane, or bytes so far. Status is a dot and a word. The hover
+  lists every fact as pairs. Latency lanes and chart stage labels use the same name treatment.
 - **Tile or selectable row** (`.tile`): `--hover-wash` on hover. Selected tiles take `--brand-line`, `--brand-soft`
   and `--brand-strong`.
 

@@ -255,7 +255,7 @@
         <span class="tone-icon lane-icon" aria-hidden="true"
           ><Icon name={STAGE[lane.key].icon} /></span
         >
-        <span class="caps lane-label">{lane.label}</span>
+        <span class="lane-label">{lane.label}</span>
         <!-- The focused track's card explains these, so they stay out of the tab order. -->
         <strong
           tabindex="-1"
@@ -266,7 +266,7 @@
             ]
               .filter(Boolean)
               .join("\n"),
-          )}>median {formatLatency(lane.center)}</strong
+          )}><span>median</span> {formatLatency(lane.center)}</strong
         >
         <em class="jit"
           ><span tabindex="-1" {@attach term(() => JARGON.jitter)}>jitter</span>
@@ -277,7 +277,8 @@
           tabindex="-1"
           {@attach tooltip(() => JARGON.latencyRange)}
         >
-          range {lane.min == null || lane.max == null
+          <span>range</span>
+          {lane.min == null || lane.max == null
             ? MISSING
             : `${fmtMs(lane.min)} – ${fmtMs(lane.max)} ms`}
         </em>
@@ -410,9 +411,7 @@
       padding-block: var(--space-1);
     }
   }
-  .lane[data-active="true"] .lane-label {
-    color: var(--text);
-  }
+
   .lane-meta {
     display: flex;
     align-items: baseline;
@@ -430,28 +429,32 @@
   }
   .lane-label {
     flex: 1 0 auto;
-    color: var(--text-muted);
+    color: var(--tone-ink);
+    font: var(--w-strong) var(--type-sm) / 1 var(--font-sans);
     white-space: nowrap;
   }
   .lane-meta strong {
     flex: none;
-    min-width: 15ch;
-    font: var(--w-heavy) var(--type-sm) / 1 var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    min-width: 14ch;
+    font: var(--w-strong) var(--type-sm) / 1 var(--font-sans);
     white-space: nowrap;
+  }
+  .lane-meta :is(strong, em) > span {
+    color: var(--text-soft);
+    font-weight: var(--w-normal);
   }
   /* Fixed widths keep changing numbers from moving the median; a narrow lane drops facts, never truncates them. */
   .lane-meta em {
     flex: none;
-    min-width: 15ch;
+    min-width: 13ch;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-2xs) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    font: var(--w-normal) var(--type-xs) var(--font-sans);
+    font-style: normal;
     text-align: end;
     white-space: nowrap;
   }
   .lane-meta .range-label {
-    min-width: 21ch;
+    min-width: 19ch;
   }
   .accounting-slot {
     display: inline-flex;
@@ -624,18 +627,9 @@
   .hover-head span,
   .hover-meaning {
     overflow: hidden;
-    color: var(--text-muted);
-    font: var(--w-heavy) var(--type-2xs) var(--font-mono);
-    font-style: normal;
+    color: var(--text-soft);
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .hover-meaning {
-    font-weight: var(--w-normal);
-  }
-  .hover-head span {
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
   }
   .hover-head strong {
     font: var(--w-heavy) var(--type-sm) var(--font-mono);
