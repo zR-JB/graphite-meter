@@ -196,7 +196,7 @@ impl HttpServer {
         let mut initializing = CloseOnDrop(Some(quic.clone()));
         let http = tokio::time::timeout(
             HEADER_TIMEOUT,
-            webtransport::Connection::new(quic.clone(), (1 << 62) - 1),
+            webtransport::Connection::new(quic.clone(), 1),
         )
         .await??;
         let mut connection = OwnedConnection {
@@ -205,6 +205,7 @@ impl HttpServer {
             requests: FuturesUnordered::new(),
             cleanup: FuturesUnordered::new(),
             sessions: Sessions::default(),
+            served_requests: false,
         };
         let active_responses = Arc::new(AtomicUsize::new(0));
         initializing.0.take();
@@ -222,7 +223,7 @@ impl HttpServer {
                 _ = &mut stopping, if !draining => {
                     draining = true;
                     connection.http.shutdown().await?;
-                    if connection.requests.is_empty() && connection.cleanup.is_empty() { return Ok(()); }
+                    if connection.finished(draining) { return Ok(()); }
                 }
                 _ = expiry.tick() => connection.sessions.expire(),
                 _ = tuning.tick() => {
@@ -233,10 +234,11 @@ impl HttpServer {
                         window.update(&connection.quic, &self.memory.bytes);
                     }
                 }
-                Some(_) = connection.requests.next() => {
+                Some(plain) = connection.requests.next() => {
+                    connection.served_requests |= plain;
+                    if connection.finished(draining) { return Ok(()); }
                     if connection.requests.is_empty() {
                         idle.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(15));
-                        if draining && connection.cleanup.is_empty() { return Ok(()); }
                     }
                 },
                 _ = &mut idle, if connection.requests.is_empty() => {
@@ -244,7 +246,7 @@ impl HttpServer {
                     return Ok(());
                 },
                 Some(_) = connection.cleanup.next() => {
-                    if draining && connection.requests.is_empty() && connection.cleanup.is_empty() { return Ok(()); }
+                    if connection.finished(draining) { return Ok(()); }
                 },
                 Some(reset) = pending_resets.recv() => {
                     let quic = connection.quic.clone();
@@ -276,11 +278,13 @@ impl HttpServer {
                             let resets = resets.clone();
                             let active_responses = active_responses.clone();
                             connection.requests.push(Box::pin(async move {
-                                let (request, stream) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await??;
+                                let Ok(Ok((request, stream))) = tokio::time::timeout(HEADER_TIMEOUT, request.resolve_request()).await else { return false };
                                 if request.method() == Method::CONNECT {
-                                    server.serve_webtransport(request, stream, quic, peer, resets, sessions).await
+                                    let _ = server.serve_webtransport(request, stream, quic, peer, resets, sessions).await;
+                                    false
                                 } else {
-                                    server.serve_http3_request(request, stream, peer, active_responses).await.map_err(Into::into)
+                                    let _ = server.serve_http3_request(request, stream, peer, active_responses).await;
+                                    true
                                 }
                             }));
                         }
@@ -530,9 +534,19 @@ fn desired_send_window(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
 struct OwnedConnection {
     http: webtransport::Connection,
     quic: quinn::Connection,
-    requests: FuturesUnordered<Work>,
+    requests: FuturesUnordered<Pin<Box<dyn Future<Output = bool> + Send>>>,
     cleanup: FuturesUnordered<Work>,
     sessions: Sessions,
+    served_requests: bool,
+}
+
+impl OwnedConnection {
+    // Browsers would hold a sessions-only connection's client slot ~15 s.
+    fn finished(&self, draining: bool) -> bool {
+        self.requests.is_empty()
+            && self.cleanup.is_empty()
+            && (draining || !self.served_requests && self.sessions.carried())
+    }
 }
 
 struct CloseOnDrop(Option<quinn::Connection>);
@@ -549,7 +563,10 @@ impl Drop for OwnedConnection {
     fn drop(&mut self) {
         // End the reliable-prefix obligation before dropping cleanup futures,
         // including when the parent server task is cancelled or panics.
-        self.quic.close(0_u32.into(), b"connection ended");
+        self.quic.close(
+            quinn::VarInt::from_u64(h3::error::Code::H3_NO_ERROR.value()).expect("H3 code"),
+            b"connection ended",
+        );
     }
 }
 
@@ -572,6 +589,7 @@ pub(super) struct SessionReceivers {
 struct Registry {
     active: HashMap<u64, SessionSenders>,
     pending: VecDeque<(tokio::time::Instant, u64, ReceiveStream)>,
+    carried: bool,
 }
 
 #[derive(Clone)]
@@ -599,6 +617,7 @@ impl Sessions {
         if !registry.active.is_empty() {
             return None;
         }
+        registry.carried = true;
         registry.active.insert(
             id,
             SessionSenders {
@@ -625,6 +644,13 @@ impl Sessions {
                 datagrams: datagram_receiver,
             },
         ))
+    }
+
+    fn carried(&self) -> bool {
+        self.registry
+            .lock()
+            .expect("session registry poisoned")
+            .carried
     }
 
     fn datagram(&self, id: u64, payload: Bytes) {

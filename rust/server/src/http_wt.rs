@@ -22,6 +22,7 @@ const MAX_LANES: usize = 16;
 // still get executor time without paying a scheduler round-trip per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
 const IDLE: Duration = Duration::from_secs(30);
+const REFUSAL_LINGER: Duration = Duration::from_secs(2);
 const MAX_CONNECT_DATA: u64 = 1024 * 1024;
 const MAX_CONNECT_FRAMES: u64 = 1024;
 const RESET: u64 = 0x52e4a40fa8db;
@@ -152,6 +153,7 @@ impl HttpServer {
         let mut controls: FuturesUnordered<Lane> = FuturesUnordered::new();
         let upload_id = value("id").unwrap_or("").to_owned();
         let mut datagram_lane = None;
+        let mut refused = false;
         if route == SessionRoute::Download && !verify {
             if datagrams {
                 let quic = quic.clone();
@@ -198,6 +200,7 @@ impl HttpServer {
             }
         } else if route == SessionRoute::Upload {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
+            refused = subscription.is_err();
             controls.push(Box::pin(progress(
                 quic.clone(),
                 resets.clone(),
@@ -217,7 +220,12 @@ impl HttpServer {
         let mut connect_bytes = 0_u64;
         let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let verify_deadline = Instant::now() + Duration::from_secs(5);
+        let settle = Instant::now()
+            + if verify {
+                Duration::from_secs(5)
+            } else {
+                REFUSAL_LINGER
+            };
         let mut ending = LaneEnding::Finished;
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
@@ -235,7 +243,7 @@ impl HttpServer {
                         }
                     }
                     _ = tokio::time::sleep_until(deadline) => { ending = LaneEnding::Lifetime; break; },
-                    _ = tokio::time::sleep_until(verify_deadline), if verify => break,
+                    _ = tokio::time::sleep_until(settle), if verify || refused => break,
                     _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
                     data = stream.recv_data() => {
                         let Some(mut data) = data? else { decoder.finish()?; break; };
@@ -250,11 +258,8 @@ impl HttpServer {
                         }
                     }
                     Some(_) = lanes.next(), if !lanes.is_empty() => {
-                        // Download lanes run until their stream can no longer
-                        // make progress. Once every lane has ended, the
-                        // CONNECT has no remaining payload producer.
-                        // Upload lanes may finish normally and be replaced by
-                        // later client-opened streams.
+                        // A download ends with its last lane; later client
+                        // streams may replace finished upload lanes.
                         if route == SessionRoute::Download && lanes.is_empty() {
                             break;
                         }
@@ -302,7 +307,7 @@ impl HttpServer {
         drop(lanes);
         drop(controls);
         drop(datagram_lane);
-        // Close is bounded even when the peer stops reading the CONNECT stream.
+        // The peer's FIN shows the close capsule arrived before the connection may close.
         let _ = tokio::time::timeout(Duration::from_secs(1), async {
             stream
                 .send_data(Bytes::from(capsule::encode_close(
@@ -311,6 +316,7 @@ impl HttpServer {
                 )))
                 .await?;
             stream.finish().await?;
+            while stream.recv_data().await?.is_some() {}
             Ok::<_, TransportError>(())
         })
         .await;
