@@ -212,8 +212,7 @@ func (c *Config) settings() []setting {
 			"public `origin` of the native HTTP/2 listener", &c.NativePublic.H2),
 		text("GM_H3_PUBLIC_ORIGIN", "h3-public-origin",
 			"public `origin` of the native HTTP/3 listener", &c.NativePublic.H3),
-		field("GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints",
-			"all, none, or comma-separated native endpoint `names`", &c.AdvertisedNative, parseAdvertisedNative, true),
+		c.advertisedNative(),
 		list("GM_PUBLIC_ORIGINS", "public-origins",
 			"comma-separated negotiated `origins` providing throughput and latency", &c.Public.Both),
 		list("GM_PUBLIC_THROUGHPUT_ORIGINS", "public-throughput-origins",
@@ -267,20 +266,18 @@ func (c *Config) apply(s setting, value string) error {
 	return s.set(value)
 }
 
-func Load() (Config, error) {
-	c := Default()
+// LoadEnv overlays the environment's settings and server catalogue on c.
+func (c *Config) LoadEnv() error {
 	for _, s := range c.settings() {
 		if v, ok := os.LookupEnv(s.env); ok {
 			if err := c.apply(s, v); err != nil {
-				return Config{}, fmt.Errorf("%s: %w", s.env, err)
+				return fmt.Errorf("%s: %w", s.env, err)
 			}
 		}
 	}
 	var err error
-	if c.ServerCatalog, err = loadServerCatalog(); err != nil {
-		return Config{}, err
-	}
-	return c, nil
+	c.ServerCatalog, err = loadServerCatalog()
+	return err
 }
 
 func RegisterFlags(fs *flag.FlagSet, c *Config) {
@@ -332,12 +329,27 @@ func splitList(raw string) []string {
 	return out
 }
 
-// parseAdvertisedNative maps "all" to nil (every endpoint) and "none" or "" to an empty set.
+// advertisedNative maps "all" to nil (every endpoint) and "none" to an empty set; empty keeps the default, all.
+func (c *Config) advertisedNative() setting {
+	s := field("GM_ADVERTISED_NATIVE_ENDPOINTS", "advertised-native-endpoints",
+		"all, none, or comma-separated native endpoint `names`", &c.AdvertisedNative, parseAdvertisedNative, false)
+	s.show = func() string {
+		switch {
+		case c.AdvertisedNative == nil:
+			return "all"
+		case len(c.AdvertisedNative) == 0:
+			return "none"
+		}
+		return strings.Join(slices.Sorted(maps.Keys(c.AdvertisedNative)), ",")
+	}
+	return s
+}
+
 func parseAdvertisedNative(raw string) (map[string]bool, error) {
-	switch strings.TrimSpace(raw) {
+	switch raw {
 	case "all":
 		return nil, nil
-	case "", "none":
+	case "none":
 		return map[string]bool{}, nil
 	}
 	set := map[string]bool{}
