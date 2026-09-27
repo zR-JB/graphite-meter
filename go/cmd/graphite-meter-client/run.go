@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"math"
@@ -161,6 +162,7 @@ type runState struct {
 	timeouts map[string]int
 	marks    []mark
 	focus    string
+	pick     string
 	outcome  goclient.Outcome
 	err      error
 }
@@ -185,7 +187,7 @@ type stageProgress struct {
 	since    time.Time
 }
 
-func newRunState(cfg goclient.Config, focus string, started time.Time) *runState {
+func newRunState(cfg goclient.Config, started time.Time) *runState {
 	r := &runState{
 		plan:     cfg.Plan(),
 		started:  started,
@@ -195,7 +197,6 @@ func newRunState(cfg goclient.Config, focus string, started time.Time) *runState
 		rtt:      map[string]trace{},
 		latest:   map[string]goclient.LatencySample{},
 		timeouts: map[string]int{},
-		focus:    focus,
 		outcome:  goclient.OutcomeRunning,
 	}
 	for _, stage := range r.plan {
@@ -235,14 +236,10 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.invalidatePreparation()
-	focus := ""
-	if slices.Contains(m.cfg.ServerIDs, m.cfg.LatencyServer) {
-		focus = m.cfg.LatencyServer
-	}
 	m.runSeq++
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
-	m.next = newRunState(m.cfg, focus, m.now)
+	m.next = newRunState(m.cfg, m.now)
 	m.stopPrompt, m.popup, m.waiting, m.edit = false, popupNone, true, nil
 	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
@@ -401,14 +398,24 @@ func (r *runState) adopt(details *goclient.RunDetails) {
 		return
 	}
 	r.details = details
-	if !slices.ContainsFunc(details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus }) {
-		r.focus = details.LatencyFocus
+	r.focus = cmp.Or(details.LatencyFocus, r.focus)
+	if !slices.Contains(details.Participants, r.pick) {
+		r.pick = ""
 	}
 }
 
+func (r *runState) latencyServer() string { return cmp.Or(r.pick, r.focus) }
+
 func (r *runState) nextFocus() {
-	i := slices.IndexFunc(r.details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus })
-	r.focus = r.details.Servers[(i+1)%len(r.details.Servers)].Server.ID
+	ids := r.details.Participants
+	if len(ids) == 0 {
+		return
+	}
+	next := ids[(slices.Index(ids, r.latencyServer())+1)%len(ids)]
+	r.pick = next
+	if next == r.focus {
+		r.pick = ""
+	}
 }
 
 func (r *runState) meanRates(stage goclient.Stage) string {
@@ -431,7 +438,7 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 		return out
 	}
 	for _, server := range r.details.Servers {
-		if server.Server.ID != r.focus {
+		if server.Server.ID != r.latencyServer() {
 			continue
 		}
 		for _, result := range server.Results {

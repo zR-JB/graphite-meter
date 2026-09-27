@@ -481,7 +481,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	m.prepareSeq = 1
 	failed, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, err: remote}))
 	partial, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, run: preparedFixture(nil, remote), err: remote}))
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	m.run.err, m.run.outcome = remote, goclient.OutcomeFailed
 	multi := runModel(t, "a", "b")
 	failure := goclient.ServerFailure{ServerID: "b", Scope: "throughput", Err: remote}

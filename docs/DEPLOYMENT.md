@@ -258,7 +258,8 @@ terminal and `NO_COLOR` is unset.
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
 group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
 current screen. **Latency server** chooses whose latency is the run's result (Automatic: the lowest preparation
-round trip); every selected server is still probed, and `l` switches the server shown.
+round trip); if that server leaves the test, a surviving one takes over. Every selected server is still probed, and
+`l` switches the server shown; the printed report keeps the result's.
 
 | Key | Where | Action |
 | --- | --- | --- |

@@ -366,9 +366,6 @@ func (m model) runView(w, h int) string {
 		return m.stageView(w, h)
 	}
 	title := "Results"
-	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
-	}
 	bottom := m.st.panel(title, results, w, 0)
 	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
 		fields := strings.Join(m.testFields(w-1-rw-4), "\n")
@@ -442,7 +439,7 @@ func (m model) testFields(w int) []string {
 			t := server.Throughput
 			throughputs = appendUnique(throughputs, connectionSummary(t.Transport, t.Protocol, t.TLS(), false))
 			streams = streamsLabel(m.cfg.TransferStreams, t.Protocol, t.Transport)
-			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
+			if l := server.LatencyTarget; server.Server.ID == r.latencyServer() && l != nil {
 				latency = connectionSummary(l.Transport, l.Protocol, l.TLS(), true)
 			}
 		}
@@ -538,11 +535,11 @@ func (m model) liveView(w, h int) string {
 		out = append(out, m.readings(stage))
 	}
 	if m.multipleRunServers() {
-		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
+		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.latencyServer())+" · l switches server"))
 	}
 	chartH := h - len(out)
 	span := m.now.Sub(r.started).Seconds()
-	rtt := []series{{m.st.rtt, r.rtt[r.focus].points}}
+	rtt := []series{{m.st.rtt, r.rtt[r.latencyServer()].points}}
 	switch {
 	case chartH < 5:
 	case len(lines) == 0:
@@ -577,10 +574,10 @@ func (m model) readings(stage goclient.StagePlan) string {
 			label = "Idle latency "
 		}
 		value := m.st.muted.Render(missing)
-		if sample, ok := r.latest[r.focus]; ok {
+		if sample, ok := r.latest[r.latencyServer()]; ok {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 {
+		if streak := r.timeouts[r.latencyServer()]; streak > 0 {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -692,11 +689,15 @@ func (m model) resultsView(w int) results {
 	if out.added {
 		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
+	combined, latencyHeader := "", "Latency"
+	if m.multipleRunServers() {
+		combined, latencyHeader = "Combined", "Latency to "+m.serverName(r.latencyServer())
+	}
 	if len(throughput) > 0 {
-		out.throughput = m.st.grid([]string{"Throughput", ""}, throughput, w)
+		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
-		headers := []string{"Latency", "Median", "Added", "P95", "Jitter", "Probe timeouts"}
+		headers := []string{latencyHeader, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
 		for i, row := range latencyRows {
 			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
 		}
@@ -709,6 +710,9 @@ func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
 	}
+	run := *m.run
+	run.pick = ""
+	m.run = &run
 	w, _ := m.size()
 	blocks := []string{m.reportHeader()}
 	if results := m.resultsView(w); results.view() != "" {

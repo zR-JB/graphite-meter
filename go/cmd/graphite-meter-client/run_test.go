@@ -178,7 +178,7 @@ func finishFrom(t *testing.T, m model) model {
 func TestRunKeys(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	m, _ = modelAndCmd(m.Update(press("x")))
 	if m, _ = modelAndCmd(m.Update(press("esc"))); !m.stopPrompt {
 		t.Fatal("esc did not ask before stopping")
@@ -225,7 +225,7 @@ func runModel(t *testing.T, servers ...string) model {
 	t.Helper()
 	m := testModel(t)
 	m.cfg.Stages.Bidirectional = true
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	details := &goclient.RunDetails{LatencyFocus: servers[0], Participants: servers, Outcome: goclient.OutcomeRunning}
 	for _, id := range servers {
 		origin := "https://" + id
@@ -531,14 +531,18 @@ func TestMultiServerRunViews(t *testing.T) {
 		t.Fatalf("failure notice = %q, want the server's name", m.notice)
 	}
 	m.run.outcome = goclient.OutcomeComplete
-	if screen := view(m); !strings.Contains(screen, "latency to A") || !strings.Contains(screen, "10.0 ms") {
+	if screen := view(m); !strings.Contains(screen, "Latency to A") || !strings.Contains(screen, "10.0 ms") {
 		t.Fatalf("focus A: %q", screen)
 	}
 	m, _ = modelAndCmd(m.Update(press("l")))
-	if screen := view(m); m.run.focus != "b" ||
-		!strings.Contains(screen, "latency to B") ||
+	if screen := view(m); m.run.latencyServer() != "b" ||
+		!strings.Contains(screen, "Latency to B") ||
 		!strings.Contains(screen, "90.0 ms") {
 		t.Fatalf("focus did not move to B")
+	}
+	if report := ansi.Strip(m.finalReport()); !strings.Contains(report, "Latency to A") ||
+		!strings.Contains(report, "10.0 ms") {
+		t.Fatalf("the report followed the viewer's pick instead of the run's focus: %s", report)
 	}
 	m, _ = modelAndCmd(m.Update(press("d")))
 	details := ansi.Strip(view(m))
@@ -548,6 +552,33 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 	if m, _ = modelAndCmd(m.Update(press("esc"))); m.popup != popupNone {
 		t.Fatal("esc did not close details")
+	}
+}
+
+func TestLatencyFollowsTheRunFocus(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a", "b")
+	publish := func(focus string, participants ...string) {
+		details := *m.run.details
+		details.LatencyFocus, details.Participants = focus, participants
+		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{
+			{Kind: goclient.EventServers, Servers: &details},
+		}}))
+	}
+	m, _ = modelAndCmd(m.Update(press("l")))
+	for _, c := range []struct {
+		focus        string
+		participants []string
+		want         string
+	}{
+		{"a", []string{"a", "b"}, "b"},
+		{"a", []string{"a"}, "a"},
+		{"b", []string{"b"}, "b"},
+		{"", nil, "b"},
+	} {
+		if publish(c.focus, c.participants...); m.run.latencyServer() != c.want {
+			t.Errorf("focus %q with %v shows %q, want %q", c.focus, c.participants, m.run.latencyServer(), c.want)
+		}
 	}
 }
 
@@ -719,7 +750,7 @@ func TestEventsBeforeTheServersLeaveThePreviousRunAlone(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
 	previous := m.run
-	m.next = newRunState(m.cfg, "", time.Now())
+	m.next = newRunState(m.cfg, time.Now())
 	stage := goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{stage}}))
 	if m.run != previous || m.next == nil || previous.stage != "" {
@@ -730,7 +761,7 @@ func TestEventsBeforeTheServersLeaveThePreviousRunAlone(t *testing.T) {
 func TestFailedRunShowsNoActivity(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	done := goclient.Event{Kind: goclient.EventDone, Err: errors.New("refused")}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{done}}))
 	screen, report := view(m), ansi.Strip(m.finalReport())
