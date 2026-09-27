@@ -92,8 +92,9 @@ func TestListenerTopologies(t *testing.T) {
 		{"h2 over h1", muxTopology{transfers: true, requiredProto: 2}, 1, nil,
 			[]string{"/download?bytes=1", "/ws/ping"}},
 		{"h3", muxTopology{transfers: true}, 3, []string{"/upload/progress?id=unknown"}, nil},
-		{"h3 bootstrap", muxTopology{bootstrap: true}, 1, []string{"/probe"},
-			[]string{"/download", "/upload", "/upload/session", "/upload/progress", "/ws/ping", "/wt/upload"}},
+		{"h3 bootstrap", muxTopology{bootstrap: true, control: true}, 1,
+			[]string{"/probe", "/upload/session", "/upload/checkpoint", "/upload/progress?id=unknown", "/wt/session"},
+			[]string{"/download", "/upload", "/preflight", "/ws/ping", "/wt/upload"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var spa http.Handler

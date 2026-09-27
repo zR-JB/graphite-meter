@@ -15,6 +15,8 @@ import (
 
 type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
+	// control mounts the upload and ticket routes alone, as browsers may fetch them over an H3 origin's TCP side.
+	control bool
 	// requiredProto confines transfer routes to one HTTP major version; 0 accepts any.
 	requiredProto int
 	wt            *webtransport.Server
@@ -39,10 +41,12 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	} else {
 		m.http(route.Probe, e.probe, 0)
 	}
+	proto := topo.requiredProto
 	if topo.transfers {
-		proto := topo.requiredProto
 		m.http(route.Download, e.download.Handler(e.idleBound), proto)
 		m.http(route.Upload, e.upload.Handler(e.idleBound), proto)
+	}
+	if topo.transfers || topo.control {
 		m.http(route.UploadSession, http.HandlerFunc(e.upload.ServeSession), proto)
 		m.http(route.UploadCheckpoint, http.HandlerFunc(e.upload.ServeCheckpoint), proto)
 		m.http(route.UploadProgress, http.HandlerFunc(e.upload.ServeProgress), proto)

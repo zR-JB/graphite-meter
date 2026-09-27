@@ -237,8 +237,8 @@ func (b *listenerBuild) assemble() (err error) {
 			auth.Listener{UI: true}, uiTLS},
 		{"HTTPS HTTP/2: measurement probe, transfers, progress only", cfg.Native.H2, "h2",
 			auth.Listener{}, muxTopology{transfers: true, requiredProto: 2}},
-		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe only", cfg.Native.H3, "http/1.1",
-			auth.Listener{}, muxTopology{bootstrap: true}},
+		{"HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control", cfg.Native.H3, "http/1.1",
+			auth.Listener{}, muxTopology{bootstrap: true, control: true}},
 	} {
 		if l.addr == "" {
 			continue
