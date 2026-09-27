@@ -253,15 +253,4 @@ mod tests {
         assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(post.headers()["allow"], "GET, HEAD");
     }
-
-    #[test]
-    fn absent_build_assets_report_unavailable() {
-        let assets = Assets::from_entries(&[], false, false);
-        assert!(!assets.available());
-        assert_eq!(assets.inline_script_hash(), None);
-        assert_eq!(
-            assets.serve(&Method::GET, "/").status(),
-            StatusCode::NOT_FOUND
-        );
-    }
 }

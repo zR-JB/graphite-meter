@@ -147,6 +147,16 @@ async fn validated_h2_reuses_discovery_and_receiver_owned_upload() {
             assert_eq!(response.status(), 200);
             assert_eq!(response.version(), Version::HTTP_2);
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
+            assert_eq!(response.headers()["timing-allow-origin"], "*");
+            assert_eq!(response.headers()["access-control-allow-headers"], "*");
+            assert!(
+                !response
+                    .headers()
+                    .contains_key("access-control-allow-credentials")
+            );
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            assert!(!response.headers().contains_key("alt-svc"));
+            assert!(!response.headers().contains_key("connection"));
             let value: serde_json::Value =
                 serde_json::from_slice(&collect(response.into_body()).await).unwrap();
             if path == "/probe" {

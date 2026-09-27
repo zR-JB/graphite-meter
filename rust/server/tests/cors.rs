@@ -1,5 +1,5 @@
 use graphite_meter_core::route::Route;
-use graphite_meter_server::cors::{Access, authenticated_preflight};
+use graphite_meter_server::cors::authenticated_preflight;
 use http::{HeaderMap, HeaderValue, header};
 
 fn request(origin: &str, method: &str, headers: &str) -> HeaderMap {
@@ -128,14 +128,4 @@ fn repeated_preflight_fields_cannot_choose_a_more_privileged_interpretation() {
             "repeated preflight field was accepted"
         );
     }
-}
-
-#[test]
-fn public_measurements_expose_timing_without_cookies() {
-    let mut headers = HeaderMap::new();
-    Access::Public.apply_measurement(&mut headers);
-    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-    assert_eq!(headers["timing-allow-origin"], "*");
-    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_HEADERS], "*");
-    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
 }

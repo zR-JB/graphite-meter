@@ -111,6 +111,21 @@ async fn exercise() -> Result<(), TestError> {
         stream.finish().await?;
         assert_eq!(stream.recv_response().await?.status(), 404, "{path}");
     }
+    let mut probe = sender.send_request(request("GET", "/probe")).await?;
+    probe.finish().await?;
+    let response = probe.recv_response().await?;
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    assert!(!response.headers().contains_key("alt-svc"));
+    assert!(!response.headers().contains_key("connection"));
+    let mut body = Vec::new();
+    while let Some(mut data) = probe.recv_data().await? {
+        body.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+    }
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body)?["protocolNegotiated"],
+        "h3"
+    );
     let mut mint = sender
         .send_request(request("POST", "/upload/session"))
         .await?;

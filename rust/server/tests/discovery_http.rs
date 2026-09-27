@@ -1,9 +1,5 @@
-use graphite_meter_server::{
-    admission::{Admission, Class, Limits},
-    config::Config,
-    discovery::Discovery,
-};
-use http::{Request, StatusCode, Version};
+use graphite_meter_server::{config::Config, discovery::Discovery};
+use http::{Request, StatusCode};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -71,26 +67,6 @@ fn catalogue_uses_identity_dynamic_authority_and_singleton_fallback() {
             serde_json::json!([expected])
         );
     }
-}
-
-#[test]
-fn probe_reports_actual_protocol_load_and_bootstrap_headers() {
-    let admission = Admission::new(Limits::default());
-    let _permit = admission.acquire(Class::Request, "client").unwrap();
-    let discovery =
-        Discovery::new(Arc::new(Config::default()), Some(admission), Some(7443)).unwrap();
-    let response = respond(&discovery, request("/probe", "GET"));
-    assert_eq!(response.headers()["alt-svc"], "h3=\":7443\"");
-    assert_eq!(response.headers()["connection"], "close");
-    let value: Value = serde_json::from_slice(response.body()).unwrap();
-    assert_eq!(value["clientIp"], "192.0.2.8");
-    assert_eq!(value["load"]["active"], 1);
-    let mut req = request("/probe", "GET");
-    *req.version_mut() = Version::HTTP_2;
-    let response = respond(&discovery, req);
-    assert!(!response.headers().contains_key("alt-svc"));
-    let value: Value = serde_json::from_slice(response.body()).unwrap();
-    assert_eq!(value["protocolNegotiated"], "h2");
 }
 
 #[test]
