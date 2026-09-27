@@ -169,3 +169,50 @@ async fn exercise() -> Result<(), TestError> {
     server_endpoint.close(0_u32.into(), b"done");
     Ok(())
 }
+#[tokio::test]
+async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(), TestError> {
+    let identity = support::Identity::generate();
+    let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
+    let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
+    let provider = Arc::new(graphite_meter_server::crypto::provider());
+    let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate.clone()], key)?;
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let server = Arc::new(HttpServer::new(Arc::new(Config::default()))?);
+    let endpoint =
+        quinn::Endpoint::server(server.quic_config(Arc::new(tls))?, "127.0.0.1:0".parse()?)?;
+    let address = endpoint.local_addr()?;
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.serve_quic(endpoint, async {
+        let _ = stopped.await;
+    }));
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(certificate)?;
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    tls.alpn_protocols = vec![b"h3".to_vec()];
+    let client = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
+    client.set_default_client_config(quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(tls)?,
+    )));
+    let connection = client.connect(address, "localhost")?.await?;
+    let (mut driver, mut sender) = h3::client::new(h3_noq::Connection::new(connection)).await?;
+    let driving = tokio::spawn(async move { driver.wait_idle().await });
+    let mut request = sender
+        .send_request(Request::get("https://localhost/download?bytes=1").body(())?)
+        .await?;
+    request.finish().await?;
+    assert_eq!(
+        request.recv_response().await?.status(),
+        http::StatusCode::OK
+    );
+    while request.recv_data().await?.is_some() {}
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), task).await???;
+    driving.abort();
+    Ok(())
+}

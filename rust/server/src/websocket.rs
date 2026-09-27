@@ -97,8 +97,11 @@ fn refusal(status: StatusCode) -> Response<()> {
 /// `stream` must already have completed an authorized HTTP upgrade. The caller
 /// keeps its capacity permits until this future returns. Cancellation covers
 /// both receiving and sending, including a peer that stops reading replies.
-pub async fn serve_ping<S>(stream: S, stopped: impl Future<Output = CloseReason>)
-where
+pub async fn serve_ping<S>(
+    stream: S,
+    deadline: tokio::time::Instant,
+    stopped: impl Future<Output = CloseReason>,
+) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let config = WebSocketConfig::default()
@@ -111,7 +114,7 @@ where
     let close = tokio::select! {
         biased;
         reason = stopped => (CloseCode::from(reason.websocket_code()), reason.reason()),
-        result = exchange(&mut socket) => match result {
+        result = exchange(&mut socket, deadline) => match result {
             Ok(reason) => (CloseCode::from(reason.websocket_code()), reason.reason()),
             Err(Error::ConnectionClosed | Error::AlreadyClosed) => return,
             Err(Error::Capacity(_)) => (CloseCode::Size, "message too big"),
@@ -131,27 +134,44 @@ where
     .await;
 }
 
-async fn exchange<S>(socket: &mut WebSocketStream<S>) -> Result<CloseReason, Error>
+async fn exchange<S>(
+    socket: &mut WebSocketStream<S>,
+    deadline: tokio::time::Instant,
+) -> Result<CloseReason, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     loop {
-        let message = match tokio::time::timeout(Duration::from_secs(30), socket.next()).await {
+        let idle = tokio::time::Instant::now() + Duration::from_secs(30);
+        let message = match tokio::time::timeout_at(idle.min(deadline), socket.next()).await {
             Ok(Some(message)) => message,
             Ok(None) => return Ok(CloseReason::Finished),
-            Err(_) => return Ok(CloseReason::Idle),
+            Err(_) => {
+                return Ok(if idle <= deadline {
+                    CloseReason::Idle
+                } else {
+                    CloseReason::Lifetime
+                });
+            }
         };
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
-                    match tokio::time::timeout(
-                        Duration::from_secs(30),
+                    let idle = tokio::time::Instant::now() + Duration::from_secs(30);
+                    match tokio::time::timeout_at(
+                        idle.min(deadline),
                         socket.send(Message::Text(reply.into())),
                     )
                     .await
                     {
                         Ok(result) => result?,
-                        Err(_) => return Ok(CloseReason::Idle),
+                        Err(_) => {
+                            return Ok(if idle <= deadline {
+                                CloseReason::Idle
+                            } else {
+                                CloseReason::Lifetime
+                            });
+                        }
                     }
                 }
             }

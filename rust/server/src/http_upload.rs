@@ -41,22 +41,12 @@ impl HttpServer {
                     Err(error) => refusal(error),
                 }
             }
-            "/upload" | "/upload/progress" => {
+            "/upload/progress" => {
                 let operation = match self.upload_operation(owner) {
                     Ok(operation) => operation,
                     Err(error) => return admission_refusal(error),
                 };
-                let mut response = if request.uri().path() == "/upload" {
-                    if request.method() != Method::POST {
-                        method_not_allowed("POST")
-                    } else {
-                        // The synchronous API represents an empty request body.
-                        match self.uploads.begin(&id, owner) {
-                            Ok(_lane) => json_response(&serde_json::json!({"bytes": 0})),
-                            Err(error) => refusal(error),
-                        }
-                    }
-                } else if request.method() == Method::DELETE {
+                let mut response = if request.method() == Method::DELETE {
                     match self.uploads.finish(&id, owner) {
                         Ok(()) => empty_response(StatusCode::NO_CONTENT),
                         Err(error) => refusal(error),

@@ -425,6 +425,9 @@ impl HttpServer {
     }
 
     pub fn respond(&self, request: Request<()>, peer: SocketAddr) -> Response<ResponseBody> {
+        if let Some(response) = self.validate_request(&request) {
+            return response;
+        }
         if self.auth.is_some() {
             return text_response(StatusCode::FORBIDDEN);
         }
@@ -441,9 +444,6 @@ impl HttpServer {
         peer: SocketAddr,
         owner: &Owner,
     ) -> Response<ResponseBody> {
-        if let Some(response) = self.validate_request(&request) {
-            return response;
-        }
         let path = request.uri().path();
         let mut response = if request.method() == Method::OPTIONS {
             Response::builder()
@@ -603,11 +603,13 @@ impl HttpServer {
             || self.upload_owner(&request, connection.peer),
             AuthLease::owner,
         );
-        let measurement = graphite_meter_core::route::lookup(request.uri().path()).is_some();
-        let upload = request.uri().path() == "/upload" && request.method() == Method::POST;
+        let route = graphite_meter_core::route::lookup(request.uri().path());
+        let measurement = route.is_some();
+        let upload = route == Some(graphite_meter_core::route::Route::Upload)
+            && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
-            if graphite_meter_core::route::lookup(request.uri().path()).is_none() {
+            if route.is_none() {
                 if !connection.listener.ui {
                     return Ok(text_response(StatusCode::NOT_FOUND));
                 }
@@ -632,7 +634,9 @@ impl HttpServer {
                 }
                 return Ok(response);
             }
-            if request.uri().path() == "/ws/ping" && request.method() != Method::OPTIONS {
+            if route == Some(graphite_meter_core::route::Route::Ping)
+                && request.method() != Method::OPTIONS
+            {
                 return Ok(match upgrade {
                     Some(pending) => {
                         self.upgrade_websocket(request, &owner, lease.clone(), pending)
@@ -640,7 +644,9 @@ impl HttpServer {
                     None => text_response(StatusCode::NOT_IMPLEMENTED),
                 });
             }
-            if request.uri().path() == "/upload" && request.method() != Method::OPTIONS {
+            if route == Some(graphite_meter_core::route::Route::Upload)
+                && request.method() != Method::OPTIONS
+            {
                 self.receive_upload(request, &owner, operations).await
             } else {
                 Ok(self.respond_authorized(request.map(|_| ()), connection.peer, &owner))
@@ -1205,16 +1211,6 @@ mod tests {
         assert!(head.body().is_end_stream());
 
         let uri = format!("/upload?id={id}");
-        let direct = server.respond(
-            Request::builder()
-                .method(Method::GET)
-                .uri(&uri)
-                .body(())
-                .unwrap(),
-            peer,
-        );
-        assert_eq!(direct.status(), StatusCode::METHOD_NOT_ALLOWED);
-        assert_eq!(direct.headers()[header::ALLOW], "POST");
         let request = Request::builder()
             .method(Method::GET)
             .uri(uri)

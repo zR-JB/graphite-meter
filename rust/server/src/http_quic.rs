@@ -157,6 +157,7 @@ impl HttpServer {
                 _ = &mut stopping, if !draining => {
                     draining = true;
                     connection.http.shutdown().await?;
+                    if connection.requests.is_empty() && connection.cleanup.is_empty() { return Ok(()); }
                 }
                 _ = expiry.tick() => connection.sessions.expire(),
                 _ = tuning.tick() => {
@@ -177,7 +178,9 @@ impl HttpServer {
                     connection.http.shutdown().await?;
                     return Ok(());
                 },
-                Some(_) = connection.cleanup.next() => {},
+                Some(_) = connection.cleanup.next() => {
+                    if draining && connection.requests.is_empty() && connection.cleanup.is_empty() { return Ok(()); }
+                },
                 Some(reset) = pending_resets.recv() => {
                     let quic = connection.quic.clone();
                     connection.cleanup.push(Box::pin(async move {

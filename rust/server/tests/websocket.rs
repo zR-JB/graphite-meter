@@ -79,9 +79,11 @@ async fn session() -> (
 ) {
     let (client, server) = tokio::io::duplex(8192);
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve_ping(server, async {
-        stopped.await.unwrap_or(CloseReason::Finished)
-    }));
+    let task = tokio::spawn(serve_ping(
+        server,
+        tokio::time::Instant::now() + Duration::from_secs(120),
+        async { stopped.await.unwrap_or(CloseReason::Finished) },
+    ));
     (
         WebSocketStream::from_raw_socket(client, Role::Client, None).await,
         stop,
@@ -164,7 +166,11 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
     // reading. The deadline must interrupt the send as well as the read loop.
     let (client, server) = tokio::io::duplex(1);
     let (stop, stopped) = oneshot::channel();
-    let task = tokio::spawn(serve_ping(server, async { stopped.await.unwrap() }));
+    let task = tokio::spawn(serve_ping(
+        server,
+        tokio::time::Instant::now() + Duration::from_secs(120),
+        async { stopped.await.unwrap() },
+    ));
     let mut socket = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
     socket.send(Message::Text("PING,1".into())).await?;
     tokio::task::yield_now().await;
@@ -324,5 +330,21 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     assert_eq!(close.reason, "idle");
     stop.send(()).unwrap();
     task.await??;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn lifetime_caps_a_quiet_websocket_before_its_idle_bound() -> Result<(), TestError> {
+    let (client, server) = tokio::io::duplex(8192);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let task = tokio::spawn(serve_ping(server, deadline, std::future::pending()));
+    let mut socket = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
+        panic!("expected lifetime close");
+    };
+    assert_eq!(u16::from(frame.code), 4002);
+    assert_eq!(frame.reason, "lifetime");
+    task.await?;
     Ok(())
 }

@@ -23,12 +23,11 @@ impl Upgrade {
                 }
             },
         };
-        websocket::serve_ping(TokioIo::new(stream), async {
+        websocket::serve_ping(TokioIo::new(stream), self.deadline, async {
             tokio::select! {
                 biased;
                 _ = stopped(self.stopping) => CloseReason::Shutdown,
                 _ = lease_ended(self.lease) => CloseReason::Revoked,
-                _ = tokio::time::sleep_until(self.deadline) => CloseReason::Lifetime,
             }
         })
         .await;
@@ -43,9 +42,6 @@ impl HttpServer {
         lease: Option<AuthLease>,
         pending: &Mutex<Option<Upgrade>>,
     ) -> Response<ResponseBody> {
-        if let Some(response) = self.validate_request(&request) {
-            return response;
-        }
         let permit = match self
             .admission
             .acquire_keys(Class::Request, owner.client_keys())
