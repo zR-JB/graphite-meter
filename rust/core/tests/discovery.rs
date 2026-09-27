@@ -199,7 +199,7 @@ fn catalogue_checks_all_discovery_lanes() {
 fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
     let mut value: Value = serde_json::from_slice(PREFLIGHT).unwrap();
     let known = value["capabilities"]["throughput"][0].clone();
-    let mut throughput = vec![known.clone(); 32];
+    let mut throughput = vec![known.clone(); 30];
     throughput.push(json!({"transport":"future-stream","protocol":"http1","baseUrl":42}));
     throughput.push(json!({"transport":"fetch-stream","protocol":"http4","baseUrl":42}));
     value["capabilities"]["throughput"] = json!(throughput);
@@ -208,14 +208,20 @@ fn newer_preflight_targets_preserve_known_paths_and_strict_validation() {
         .unwrap()
         .push(json!({"transport":"future-ping","baseUrl":42}));
     let decoded = decode_preflight_value(&value).unwrap();
-    assert_eq!(decoded.capabilities.throughput.len(), 32);
+    assert_eq!(decoded.capabilities.throughput.len(), 30);
+    let mut oversized = value.clone();
+    oversized["capabilities"]["throughput"]
+        .as_array_mut()
+        .unwrap()
+        .push(known.clone());
+    assert!(decode_preflight_value(&oversized).is_err());
     for target in [
         json!({"transport":"future-stream","baseUrl":"."}),
         json!({"transport":"","protocol":"http1","baseUrl":"."}),
         json!({"transport":"fetch-stream","protocol":"","baseUrl":"."}),
     ] {
         let mut invalid = value.clone();
-        invalid["capabilities"]["throughput"][32] = target;
+        invalid["capabilities"]["throughput"][30] = target;
         assert!(decode_preflight_value(&invalid).is_err());
     }
     value["capabilities"]["throughput"][0]["baseUrl"] = json!(42);

@@ -104,8 +104,12 @@ fn known_targets<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
     deserializer: D,
     fields: &[(&str, &[&str])],
 ) -> Result<Vec<T>, D::Error> {
+    let targets = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    if targets.len() > 32 {
+        return Err(serde::de::Error::custom("too many targets"));
+    }
     let mut known = Vec::new();
-    for target in Vec::<serde_json::Value>::deserialize(deserializer)? {
+    for target in targets {
         let mut supported = true;
         for (field, values) in fields {
             let value = target
