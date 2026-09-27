@@ -28,6 +28,7 @@
     MIN_DOCK_WIDTH,
     MAX_DOCK_WIDTH,
     MIN_STAGE_WIDTH,
+    TWO_DOCKS_WIDTH,
   } from "./dockWidths";
   import {
     DEFAULT_DOCK_WIDTH,
@@ -148,7 +149,8 @@
     typeof window === "undefined" ? 0 : window.innerWidth,
   );
   const dockQuery = new MediaQuery("(min-width: 1200px)");
-  const allowMultiplePanels = $derived(dockQuery.current);
+  const twoDocksQuery = new MediaQuery(`(min-width: ${TWO_DOCKS_WIDTH}px)`);
+  const allowMultiplePanels = $derived(twoDocksQuery.current);
   $effect(() => {
     const next = panelsForLayout(currentRoute);
     if (next !== currentRoute) routeTo(next, true);
@@ -644,6 +646,7 @@
   <SidePanel
     open={settingsOpen}
     docked={dockQuery.current}
+    preferredWidth={store.dockWidth.left}
     dockWidth={docks.left}
     dockMaxWidth={dockMaxLeft}
     onResize={(px) => setDockWidth("left", px)}
@@ -713,6 +716,7 @@
   <SidePanel
     open={telemetryOpen}
     docked={dockQuery.current}
+    preferredWidth={store.dockWidth.right}
     dockWidth={docks.right}
     dockMaxWidth={dockMaxRight}
     onResize={(px) => setDockWidth("right", px)}

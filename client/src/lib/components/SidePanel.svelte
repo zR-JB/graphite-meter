@@ -12,6 +12,7 @@
     side?: "left" | "right";
     title: string;
     docked?: boolean;
+    preferredWidth: number;
     dockWidth?: number;
     dockMaxWidth?: number;
     onResize?: (px: number) => void;
@@ -24,6 +25,7 @@
     side = "right",
     title,
     docked = false,
+    preferredWidth,
     dockWidth,
     dockMaxWidth = MAX_DOCK_WIDTH,
     onResize,
@@ -33,6 +35,9 @@
   }: Props = $props();
 
   let panelEl: HTMLElement | undefined;
+  const flyoutWidth = $derived(
+    Math.max(MIN_DOCK_WIDTH, Math.min(MAX_DOCK_WIDTH, preferredWidth)),
+  );
 
   function setWidth(px: number) {
     onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
@@ -101,7 +106,7 @@
   }
 </script>
 
-<div class="panel-layer" class:docked>
+<div class="panel-layer" class:docked style:--panel-w="{flyoutWidth}px">
   {#if !docked}<button
       class="scrim"
       class:open
@@ -141,7 +146,7 @@
       <!-- svelte-ignore a11y_autofocus -->
       <h2 tabindex="-1" autofocus>{title}</h2>
       <button
-        class="btn btn-icon btn-inset"
+        class="btn btn-icon btn-quiet"
         aria-label={`Close ${title}`}
         {@attach tooltip(() => "Close (Esc)")}
         onclick={onClose}
@@ -181,15 +186,14 @@
     max-height: none;
     margin: 0;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4);
-    border-left: var(--hairline) solid var(--border);
-    background: var(--surface-1);
+    border: 0 solid var(--border);
+    border-inline-start-width: var(--hairline);
+    background: var(--bg);
     color: var(--text);
+    timeline-scope: --panel-scroll;
   }
   .panel-layer > :global(dialog.panel.left) {
-    border-left: 0;
-    border-right: var(--hairline) solid var(--border);
+    border-inline-width: 0 var(--hairline);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
@@ -199,6 +203,7 @@
     position: relative;
     width: auto;
     height: 100%;
+    background: transparent;
   }
   .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
@@ -208,7 +213,7 @@
     position: fixed;
     z-index: var(--z-panel);
     inset: var(--topbar-h) 0 var(--statusbar-h) auto;
-    width: min(440px, 92vw);
+    width: min(var(--panel-w), 100vw - var(--space-6));
     height: auto;
     box-shadow: var(--elev-float);
     transform: var(--closed);
@@ -220,7 +225,6 @@
   .panel-layer:not(.docked) > :global(dialog.panel.left) {
     --closed: translateX(-100%);
     inset: var(--topbar-h) auto var(--statusbar-h) 0;
-    width: min(560px, 94vw);
   }
   .panel-layer:not(.docked) > :global(dialog.panel[open]) {
     transform: none;
@@ -280,12 +284,11 @@
     display: none;
     flex: none;
     justify-content: center;
-    height: 8px;
+    padding-top: 6px;
   }
   .sheet-grip {
     width: 36px;
     height: 4px;
-    margin-top: -6px;
     border-radius: var(--r-full);
     background: var(--border-strong);
   }
@@ -295,7 +298,8 @@
       inset: auto 0 0;
       width: 100%;
       height: 88dvh;
-      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
+      padding-bottom: env(safe-area-inset-bottom);
+      border-width: var(--hairline) 0 0;
       border-radius: var(--r-surface) var(--r-surface) 0 0;
     }
     .panel-layer:not(.docked) .sheet-handle {
@@ -312,10 +316,8 @@
     .panel-layer:not(.docked) .panel-head {
       position: sticky;
       z-index: 1;
-      top: calc(-1 * var(--space-4));
-      margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0;
-      padding: var(--space-4);
-      background: var(--surface-1);
+      top: 0;
+      background: var(--canvas);
     }
     .panel-layer:not(.docked) .panel-body {
       flex: none;
@@ -323,6 +325,7 @@
     }
   }
 
+  /* The head reserves the body's scrollbar gutter, so the close mark ends on the lists' edge. */
   .panel-head {
     display: flex;
     flex: none;
@@ -330,26 +333,42 @@
     justify-content: space-between;
     gap: var(--space-3);
     min-width: 0;
+    min-height: 56px;
+    padding: var(--space-2) calc(var(--panel-pad) - 12px) var(--space-2)
+      var(--panel-text);
+    overflow: hidden;
+    scrollbar-gutter: stable;
+    border-bottom: var(--hairline) solid transparent;
   }
   h2 {
     min-width: 0;
-    font: var(--w-strong) var(--type-lg) var(--font-display);
+    font: var(--role-panel-title);
     letter-spacing: var(--track-tight);
     overflow-wrap: anywhere;
   }
   .panel-body {
-    display: flex;
     flex: 1 1 auto;
-    flex-direction: column;
-    gap: var(--space-4);
     min-width: 0;
     min-height: 0;
+    padding: var(--space-1) var(--panel-pad) var(--space-6);
     overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    /* The scrollbar rides the panel edge, outside the content's even inset. */
-    margin-inline: calc(-1 * var(--space-4));
-    padding-inline: var(--space-4);
     scrollbar-gutter: stable;
+  }
+  @supports (animation-timeline: scroll()) {
+    .panel-body {
+      scroll-timeline: --panel-scroll block;
+    }
+    .panel-head {
+      animation: rule-in linear both;
+      animation-timeline: --panel-scroll;
+      animation-range: 0 var(--space-3);
+    }
+  }
+  @keyframes rule-in {
+    to {
+      border-bottom-color: var(--border);
+    }
   }
 </style>

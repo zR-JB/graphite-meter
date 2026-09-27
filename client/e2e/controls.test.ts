@@ -77,7 +77,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
 });
 
 test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
-  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.setViewportSize({ width: 1600, height: 900 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
   });

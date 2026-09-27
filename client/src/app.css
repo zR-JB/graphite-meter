@@ -156,8 +156,10 @@
   --w-heavy: 700;
   --role-row: var(--w-normal) var(--type-body) / 1.4 var(--font-sans);
   --role-control: var(--w-strong) var(--type-sm) / 1.2 var(--font-sans);
-  --role-title: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
+  --role-title: var(--w-strong) var(--type-body) / 1.3 var(--font-sans);
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
+  --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
+  --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
   --track-tight: -0.02em;
   --track-caps: 0.08em;
   --track-wide: 0.1em;
@@ -169,6 +171,10 @@
   --control-h: 32px;
   --row-h: 36px;
   --kv-label: 6.75rem;
+  --panel-pad: var(--space-4);
+  --row-inset: var(--space-3);
+  --panel-text: calc(var(--panel-pad) + var(--row-inset));
+  --check: 14px;
   --hit: 44px;
   --icon: 16px;
   --icon-sm: 13px;
@@ -731,14 +737,14 @@
     height: var(--icon-sm);
   }
 
-  /* A recessed well whose only inner lines separate rows; a control sets its row's height. */
+  /* A plate whose direct children are rows; a control sets its row's height. */
   .kv {
     display: grid;
-    padding-inline: var(--space-3);
-    border: var(--hairline) solid var(--border);
+    padding-inline: var(--row-inset);
+    border: var(--hairline) solid var(--border-subtle);
     border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
+    background: var(--surface-1);
+    box-shadow: var(--elev-tile);
     font: var(--role-row);
   }
   .kv > * {
@@ -746,6 +752,7 @@
     flex-wrap: wrap;
     align-items: baseline;
     align-content: center;
+    justify-content: space-between;
     gap: 2px var(--space-3);
     min-width: 0;
     min-height: var(--row-h);
@@ -755,7 +762,10 @@
     align-items: center;
     padding-block: 2px;
   }
-  .kv > * + * {
+  .kv > :is(label, .link-row) {
+    flex-wrap: nowrap;
+  }
+  .kv:not(.choices) > * + * {
     border-top: var(--hairline) solid var(--border-subtle);
   }
   .kv dt {
@@ -768,13 +778,102 @@
     overflow-wrap: anywhere;
   }
 
+  .kv.choices,
+  .kv > .choices {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding-block: 2px;
+  }
+  .choices > :is(label, button) {
+    display: grid;
+    grid-template-columns: var(--check) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2) 10px;
+    min-width: 0;
+    min-height: var(--control-h);
+    margin-inline: calc(2px - var(--row-inset));
+    padding: 0 calc(var(--row-inset) - 2px);
+    border-radius: calc(var(--r-chrome) - 2px);
+    text-align: start;
+    transition: var(--transition-control);
+  }
+  @media (pointer: coarse) {
+    .choices > :is(label, button) {
+      min-height: var(--hit);
+    }
+  }
+  .choices > button {
+    display: flex;
+  }
+  @media (hover: hover) {
+    :is(.choices > :is(label, button), .link-row):hover:not(
+        :has(> :disabled),
+        :disabled
+      ) {
+      background-image: linear-gradient(var(--hover-wash) 0 0);
+    }
+  }
+  .choices > label:has(> [type="radio"]:checked) {
+    background-color: var(--selected-wash);
+    box-shadow: var(--elev-tile);
+    color: var(--brand-strong);
+  }
+  .link-row {
+    align-items: center;
+    margin-inline: calc(2px - var(--row-inset));
+    padding-inline: calc(var(--row-inset) - 2px);
+    border-radius: calc(var(--r-chrome) - 2px);
+    color: var(--text);
+    transition: var(--transition-control);
+  }
+  .link-row :where(svg) {
+    width: var(--icon);
+    height: var(--icon);
+    color: var(--text-soft);
+  }
+
+  input.check {
+    appearance: none;
+    display: grid;
+    flex: none;
+    place-content: center;
+    width: var(--check);
+    height: var(--check);
+    border: 1px solid var(--field-edge);
+    border-radius: 3px;
+    background: var(--surface-1);
+    color: var(--brand-strong);
+    cursor: inherit;
+    transition: var(--transition-control);
+  }
+  input.check[type="radio"] {
+    border-radius: var(--r-full);
+  }
+  input.check[type="checkbox"]:checked {
+    border-color: var(--brand-line);
+    background: var(--brand-soft);
+  }
+  input.check[type="checkbox"]:checked::after {
+    content: "";
+    width: 7px;
+    height: 4px;
+    border-left: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateY(-1px) rotate(-45deg);
+  }
+  input.check[type="radio"]:checked {
+    border: 4px solid var(--brand-strong);
+  }
+
   .group {
     display: grid;
     gap: 6px;
     min-width: 0;
   }
-  .group > :is(h3, .group-head) {
-    padding-inline: var(--space-3);
+  .group > :is(h3, .group-head),
+  .list-label {
+    padding-inline: var(--row-inset);
   }
   .group-head {
     display: flex;
@@ -789,8 +888,12 @@
   .group > h3,
   .group-head > h3,
   .float > h3 {
-    color: var(--text-muted);
+    color: var(--text);
     font: var(--role-title);
+  }
+  .list-label {
+    color: var(--text-muted);
+    font: var(--role-label);
   }
 
   .segmented {

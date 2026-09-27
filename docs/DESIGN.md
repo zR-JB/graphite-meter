@@ -91,10 +91,11 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Role | Family | Size | Weight |
 | --- | --- | --- | --- |
 | Readout (gauge, card headline) | Plex Sans (`--font-display`) | fluid, per component | `--w-strong` 600, `--track-tight` |
-| Panel and dialog title | Plex Sans | `--type-lg` (16–18 px) | 600 |
+| Panel and dialog title (`--role-panel-title`) | Plex Sans | `--type-lg` (16–18 px) / 1.25 | 600 |
+| Group title (`--role-title`) | Plex Sans | `--type-body` 13 px / 1.3 | `--w-strong` 600, `--text` |
 | Row (`--role-row`): grouped lists, settings rows, fields, menu items | Plex Sans | `--type-body` 13 px / 1.4 | `--w-normal` 450 |
+| List label (`--role-label`): names a list inside a group | Plex Sans | `--type-sm` 12 px / 1.3 | 450, `--text-muted` |
 | Control (`--role-control`): buttons, segmented controls | Plex Sans | `--type-sm` 12 px / 1.2 | `--w-strong` 600 |
-| Group title (`--role-title`) | Plex Sans | `--type-sm` 12 px / 1.3 | `--w-strong` 600, `--text-muted` |
 | Caption (`--role-caption`): hints, notices, menu item details | Plex Sans | `--type-xs` 11 px / 1.5 | 450 |
 | Badge | Plex Sans, sentence case | `--type-xs` 11 px | `--w-strong` 600 |
 | Instrument chrome: axes, units, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
@@ -113,6 +114,14 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
   sits 6 px above its plate.
 - One row rhythm: every control is `--control-h` (32 px), and a list row is `--row-h` (36 px), so a row holding a
   control keeps 2 px above and below it. Coarse pointers grow targets to `--hit` (44 px) in place.
+- **Panels.** A panel is 420 px wide by default, 360 px at least and 720 px at most, and the user can resize it.
+  Panels dock from 1200 px; two dock side by side only from 1520 px (2 × 360 px beside the 800 px stage), and
+  below that the last one opened stays. Below 1200 px a panel is a flyout of the same width, and on a portrait
+  phone a bottom sheet.
+- **One text edge per panel.** Containers (grouped lists, buttons, fields) sit on `--panel-pad` (16 px). Text sits
+  `--row-inset` (12 px) inside a container, and every free line (the panel title, group titles, list labels,
+  captions, status lines) starts on that same edge, `--panel-text` (28 px). Check and radio marks sit on the text
+  edge, and their names 24 px in. The close mark ends on the lists' outer edge.
 - Radii rise with elevation and are concentric (inner = outer − padding): `--r-well` 6 px for inner parts and chips,
   `--r-chrome` 8 px for controls and grouped lists, `--r-surface` 12 px for cards, housings, panels and floats,
   `--r-full` for dots and switches. `--r-pill` (12 px) is only for the run control.
@@ -122,10 +131,12 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Level | Primitive | Material |
 | --- | --- | --- |
 | Base | app shell (`--bg`) | Matte grain (a cached 160 px SVG tile at about 3.5 % alpha), with a soft light from the top. |
-| Recessed | `.well`, `.kv`, plot | `--surface-inset`, an inner shadow (`--elev-inset` or `--elev-recess`), and a hairline. |
+| Recessed | `.well`, plot | `--surface-inset`, an inner shadow (`--elev-inset` or `--elev-recess`), and a hairline. |
 | Raised | `.surface`, `.btn` | `--surface-1` or `--surface-2`, a lit top edge (`--edge-light`), and `--elev-raised`. |
+| Plate | `.kv` grouped list | `--surface-1`, a `--border-subtle` hairline and the lit top edge, no drop shadow: a group reads by its fill, so a panel of eight groups is not a card kit. |
 | Floating | `.float`, `.popover`, `.tooltip`, `.inspect-card` | Glass: `--glass` with `--glass-blur`, a hairline `--border-strong`, and `--elev-float` or `--elev-tooltip`. |
 | Dialog | `dialog.float` | Opaque `--surface-1` over `--scrim`. A dialog holds reading text. |
+| Panel | side panel, sheet | The canvas (`--bg`): docked, the shell's canvas runs on beneath it; as a flyout or sheet it floats with `--elev-float`. Its grouped lists are the plates. The head's rule appears only once content scrolls beneath it. |
 
 - **Hairlines.** `--hairline` is 1 px, and 0.5 px (one device pixel) from 2 dppx. A hairline marks structure only:
   the edge of a plate, well or float (`--border`), the rule under a header that content scrolls beneath (`--border`),
@@ -162,11 +173,20 @@ ping are the phase marks.
   `dt`/`dd` pairs with one label column (`--kv-label`); labels are `--text-soft`, values `--text`. A row that holds an
   input, select, button or segmented control lets the control set its height. The title sits on the row text edge in
   every group; a `.group-head` puts a badge or a quiet button on the trailing edge without growing the head.
-- **Setting rows** put the name on the leading edge and the control on the trailing edge.
+- **Setting rows** put the name on the leading edge and the control on the trailing edge. A number field carries
+  its unit inside (`800 ms`), so every control ends on the same trailing edge.
+- **Choice list** (`.kv.choices`, or `.choices` inside a list): a segmented control stood on end. Rows are 32 px on
+  a 2 px track, with no separators; the chosen radio row takes the selected wash, and hover adds the hover wash. A
+  row shows one line, its name; the technical detail (endpoint, availability) is in its tip. Unavailable choices
+  fold into one quiet row.
+- **Link row** (`.link-row`): a row that opens another surface, with a trailing chevron and the hover wash.
+- **Check and radio marks** (`input.check`): the native inputs, 14 px, drawn with the field edge; checked takes the
+  brand line and wash.
 
 | Primitive | Height | Radius | Inset | Type role | States |
 | --- | --- | --- | --- | --- | --- |
-| `.kv` row | `--row-h` 36 | well `--r-chrome` 8 | 12 inline, 7 block (2 with a control) | row | separators `--border-subtle` |
+| `.kv` row | `--row-h` 36 | plate `--r-chrome` 8 | 12 inline, 7 block (2 with a control) | row | separators `--border-subtle` |
+| Choice row | `--control-h` 32 | 6, on a 2 px track | 10 inline | row | hover `--hover-wash`; chosen `--selected-wash`, lit top, `--brand-strong` |
 | `.btn` | `--control-h` 32 | `--r-chrome` 8 | 12 inline | control | hover and pressed: `--border-strong` ring, `--text`; disabled 0.5 |
 | `.btn-icon` | 32 × 32 | `--r-chrome` 8 | 0 | icon 16 | as `.btn` |
 | `.segmented` | 32 | 8 track, 6 segment | 2 track, 8 segment | control | `--track`; hover adds `--hover-wash`; selected `--selected-wash`, lit top, `--brand-strong` ink |
@@ -177,7 +197,7 @@ ping are the phase marks.
 | `.menu` item | `--control-h` 32 | `--r-well` 6 | 4 menu, 8 item | row; `small` caption | hover `--hover-wash`; current `--selected-wash`; checklist shows a check |
 | `.tooltip`, `.inspect-card` | content | `--r-chrome` 8 | 8 × 12 | 12 px / 1.4, title line 600 | glass, `--border-strong` hairline, `--elev-tooltip` |
 | `.float` popover | content | `--r-surface` 12 | menu 4 | row | glass, `--border-strong` hairline, `--elev-float` |
-| `dialog.float`, side panel | content | `--r-surface` 12 (sheet top corners) | 16 | panel title `--type-lg` | opaque `--surface-1`, `--scrim` behind |
+| `dialog.float`, side panel | content | `--r-surface` 12 (sheet top corners) | 16 containers, 28 text | panel title `--type-lg` | opaque `--surface-1`, `--scrim` behind |
 | `.notice` | content | `--r-chrome` 8 | 8 × 12 | caption | tone wash, tone hairline |
 
 - **Button** variants: `-accent`, `-quiet` (no ring; hover wash), `-danger`, `-icon`. The run control is the one solid
@@ -199,7 +219,7 @@ ping are the phase marks.
 | --- | --- | --- |
 | Control height | 32 px | 44 px hit area; buttons keep their visual size, fields and segments grow |
 | List rows | 36 px (`--row-h`), 13 px text | Same, with 48 px rows where a row holds a 44 px control |
-| Panels | Docked from 1200 px | Sheets over the stage below 1200 px |
+| Panels | Docked from 1200 px, two from 1520 px | Flyouts below 1200 px, sheets on portrait phones |
 | Tooltips | Hover intent (0.5 s, 1 s for explainers) | Long press (0.5 s), closing after 4 s |
 
 ## Do and don't
