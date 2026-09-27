@@ -80,12 +80,13 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
 
         let mut generation = None;
         for (method, path, status) in [
-            ("GET", "/preflight", 200), ("POST", "/preflight", 200), ("HEAD", "/preflight", 200),
+            ("GET", "/preflight", 200), ("POST", "/preflight", 405), ("HEAD", "/preflight", 200),
             ("GET", "http://other.example/preflight", 200),
             ("GET", "/servers", 200), ("GET", "http://[2001:db8::1]/servers", 200),
-            ("POST", "/servers", 405), ("HEAD", "/servers", 405), ("OPTIONS", "/servers", 204),
-            ("GET", "/probe", 200), ("POST", "/probe", 200), ("HEAD", "/probe", 200),
-            ("GET", "/unknown", 404), ("GET", "/download?bytes=300000", 200),
+            ("POST", "/servers", 405), ("HEAD", "/servers", 200), ("OPTIONS", "/servers", 204),
+            ("GET", "/probe", 200), ("DELETE", "/probe", 405), ("HEAD", "/probe", 200),
+            ("GET", "/unknown", 404), ("POST", "/login", 404), ("GET", "/auth/session", 404),
+            ("GET", "/download?bytes=300000", 200),
         ] {
             let mut socket = TcpStream::connect(address).await.unwrap();
             socket
@@ -105,9 +106,7 @@ async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutd
             assert!(headers.starts_with(&format!("HTTP/1.1 {status}")), "{method} {path}: {headers}");
             let body = &response[boundary + 4..];
             if status == 405 {
-                assert!(headers.contains("allow: GET\r\n"), "{headers}");
-                assert!(body.is_empty());
-                assert!(!headers.contains("content-type:"));
+                assert!(headers.contains("allow: GET, HEAD\r\n"), "{headers}");
             } else if status != 200 || method == "HEAD" {
                 if status == 204 || method == "HEAD" { assert!(body.is_empty()); }
             } else if path.starts_with("/download") {

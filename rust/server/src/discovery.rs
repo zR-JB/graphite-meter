@@ -6,7 +6,7 @@ use crate::{
     probe::Probe,
 };
 use bytes::Bytes;
-use http::{Method, Request, Response, StatusCode, header, uri::Authority};
+use http::{Request, Response, header, uri::Authority};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -44,17 +44,7 @@ impl Discovery {
         let response = match request.uri().path() {
             "/probe" => self.probe.respond(peer, request.version(), request.headers())?,
             "/preflight" => json_response(self.for_host(authority(request)?)?.preflight)?,
-            "/servers" => {
-                if request.method() != Method::GET {
-                    return Ok(Some(
-                        Response::builder()
-                            .status(StatusCode::METHOD_NOT_ALLOWED)
-                            .header(header::ALLOW, "GET")
-                            .body(Bytes::new())?,
-                    ));
-                }
-                json_response(self.for_host(authority(request)?)?.catalog)?
-            }
+            "/servers" => json_response(self.for_host(authority(request)?)?.catalog)?,
             _ => return Ok(None),
         };
         Ok(Some(response))

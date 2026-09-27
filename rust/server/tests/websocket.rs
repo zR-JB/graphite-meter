@@ -177,7 +177,10 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     use graphite_meter_server::{config::Config, http_server::HttpServer};
     use http::{Request, StatusCode};
     use std::sync::Arc;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::{TcpListener, TcpStream},
+    };
 
     let mut config = Config::default();
     config.limits.operations_per_client = 1;
@@ -200,6 +203,16 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     assert_eq!(decode_pong(pong.to_text()?)?.id, 23);
     let response = server.respond(Request::builder().uri("/download?bytes=1").body(())?, address);
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    let mut wrong = TcpStream::connect(address).await?;
+    wrong
+        .write_all(b"POST /ws/ping HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        .await?;
+    let mut answer = String::new();
+    wrong.read_to_string(&mut answer).await?;
+    assert!(
+        answer.starts_with("HTTP/1.1 405") && answer.contains("allow: GET, HEAD"),
+        "{answer}"
+    );
 
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), task).await???;

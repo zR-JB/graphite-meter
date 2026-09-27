@@ -482,6 +482,10 @@ impl HttpServer {
             self.download(&request, owner)
         } else if path.starts_with("/upload") {
             self.upload_control(&request, owner)
+        } else if matches!(path, "/probe" | "/preflight" | "/servers")
+            && !matches!(*request.method(), Method::GET | Method::HEAD)
+        {
+            method_not_allowed("GET, HEAD")
         } else {
             match self.discovery.respond(&request, peer) {
                 Ok(Some(response)) => response.map(ResponseBody::bytes),
@@ -611,7 +615,8 @@ impl HttpServer {
         let guard = lease.clone();
         let dispatch = async {
             if route.is_none() {
-                if !connection.listener.ui {
+                let path = request.uri().path();
+                if !connection.listener.ui || path == "/login" || path.starts_with("/auth/") {
                     return Ok(text_response(StatusCode::NOT_FOUND));
                 }
                 let authority = request
@@ -756,6 +761,9 @@ impl HttpServer {
     }
 
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
+        if request.method() != Method::GET && request.method() != Method::HEAD {
+            return method_not_allowed("GET, HEAD");
+        }
         let permit = match self.admission.acquire_keys(Class::Request, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {
@@ -766,9 +774,6 @@ impl HttpServer {
                 return response;
             }
         };
-        if request.method() != Method::GET && request.method() != Method::HEAD {
-            return method_not_allowed("GET, HEAD");
-        }
         let count = download_bytes(request.uri().query().unwrap_or_default());
         let mut body = ResponseBody {
             block: self.download_block.clone(),
@@ -1156,6 +1161,10 @@ mod tests {
         drop(head);
         let _admitted = server.respond(Request::get("/download?bytes=1").body(()).unwrap(), peer);
         for (method, path, allow) in [
+            (Method::POST, "/download?bytes=1", "GET, HEAD"),
+            (Method::POST, "/probe", "GET, HEAD"),
+            (Method::DELETE, "/preflight", "GET, HEAD"),
+            (Method::POST, "/servers", "GET, HEAD"),
             (Method::GET, "/upload/session", "POST"),
             (Method::GET, "/upload/checkpoint", "POST"),
             (Method::POST, "/upload/progress", "GET, DELETE"),
