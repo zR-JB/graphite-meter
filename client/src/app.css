@@ -199,12 +199,13 @@
   --icon: 16px;
   --icon-sm: 13px;
 
-  /* This file is the source of truth for two hand-kept copies:
+  /* This file is the source of truth for three hand-kept copies:
      - client/index.html pre-paint <style>: --canvas and --text literals,
        because this sheet loads with the bundle, too late for the first frame.
      - go/internal/auth/assets/auth.css: the token subset the server-rendered auth
-       pages need. A Go test pins its colours, --focus-ring and
-       --edge-highlight against this file. */
+       pages need. A Go test pins every token it declares against this file.
+     - go/cmd/graphite-meter-client/theme.go: text, ink, stage and status in sRGB
+       for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
   --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));

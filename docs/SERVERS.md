@@ -1,8 +1,8 @@
 # Selecting and testing servers
 
 A test runs against one to four selected servers on one stage schedule; the default is the server serving the
-interface. Combined throughput is what those paths achieve while sharing the client's connection, not independent
-server capacity or the physical link's maximum.
+interface. All-servers throughput is what those paths achieve together while sharing the client's connection, not
+independent server capacity or the physical link's maximum.
 
 ## Operator catalogue
 
