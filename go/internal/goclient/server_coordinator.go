@@ -50,7 +50,7 @@ type coordinator struct {
 }
 
 var (
-	errNoSurvivors  = errors.New("all selected servers failed")
+	ErrNoSurvivors  = errors.New("all selected servers failed")
 	errStageSkipped = errors.New("stage skipped")
 )
 
@@ -235,9 +235,9 @@ func (c *coordinator) departure(id string, stage Stage) error {
 
 func (c *coordinator) noSurvivors() error {
 	if len(c.failures) == 0 {
-		return errNoSurvivors
+		return ErrNoSurvivors
 	}
-	return fmt.Errorf("%w: %w", errNoSurvivors, c.failures[len(c.failures)-1].Err)
+	return fmt.Errorf("%w: %w", ErrNoSurvivors, c.failures[len(c.failures)-1].Err)
 }
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time,

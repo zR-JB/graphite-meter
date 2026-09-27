@@ -261,7 +261,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 				log.emit(e)
 			})
 			result, details := log.results()[0], log.details()
-			if scenario.all && !errors.Is(err, errNoSurvivors) || !scenario.all && err != nil {
+			if scenario.all && !errors.Is(err, ErrNoSurvivors) || !scenario.all && err != nil {
 				t.Fatalf("outcome=%v", err)
 			}
 			if result.Unavailable == scenario.available {
