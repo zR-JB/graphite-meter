@@ -239,6 +239,8 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 		StartMs, EndMs                 int64
 		DownBytesPerSec, UpBytesPerSec *float64
 	}
+	type reported struct{ BytesPerSec, PeakBytesPerSec float64 }
+	type results struct{ Down, Up *reported }
 	var cases []struct {
 		Name         string
 		Stage        Stage
@@ -258,8 +260,7 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			Complete bool
 			Window   *window
 		}
-		Peak     struct{ DownBytesPerSec, UpBytesPerSec any }
-		Headline *struct{ Down, Up any }
+		Result results
 	}
 	if err := json.Unmarshal(data, &cases, json.MatchCaseInsensitiveNames(true)); err != nil {
 		t.Fatal(err)
@@ -283,27 +284,15 @@ func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 			}
 			a.observe(boundary)
 		}
-		peak := func(dir Direction) any {
-			if dir == Up && c.Stage == StageDownload || dir == Down && c.Stage == StageUpload {
-				return nil
-			}
-			return a.current().combined.peak.of(dir)
-		}
-		if peak(Down) != c.Peak.DownBytesPerSec || peak(Up) != c.Peak.UpBytesPerSec {
-			t.Errorf("%s: peak down=%v up=%v, want %+v", c.Name, peak(Down), peak(Up), c.Peak)
-		}
-		headline := func(dir Direction) any {
+		reported := func(dir Direction) *reported {
 			if result := a.result(dir); !result.Unavailable {
-				return result.MeanBps
+				return &reported{result.MeanBps, result.PeakBps}
 			}
 			return nil
 		}
-		want := struct{ Down, Up any }{}
-		if c.Headline != nil {
-			want = *c.Headline
-		}
-		if headline(Down) != want.Down || headline(Up) != want.Up {
-			t.Errorf("%s: headline down=%v up=%v, want %+v", c.Name, headline(Down), headline(Up), c.Headline)
+		if got := (results{reported(Down), reported(Up)}); !reflect.DeepEqual(got, c.Result) {
+			t.Errorf("%s: result down=%+v up=%+v, want down=%+v up=%+v", c.Name, got.Down, got.Up,
+				c.Result.Down, c.Result.Up)
 		}
 		if len(a.intervals) != len(c.Intervals) {
 			t.Errorf("%s: %d intervals, want %d", c.Name, len(a.intervals), len(c.Intervals))

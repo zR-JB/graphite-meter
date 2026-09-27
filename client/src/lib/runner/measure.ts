@@ -899,13 +899,6 @@ export class ThroughputAggregate {
     );
   }
 
-  peak(stage: TransferStage, dir: FlowDirection): number | null {
-    const record = this.intervals.findLast((i) => i.stage === stage);
-    return (
-      (record && this.#interval(record)?.peaks.get(COMBINED)?.[dir]) ?? null
-    );
-  }
-
   /** One server's share from the latest whole interval where its own component has enough evidence. */
   serverResult(
     stage: TransferStage,

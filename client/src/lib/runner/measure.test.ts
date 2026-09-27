@@ -12,6 +12,7 @@ import {
   type Boundary,
 } from "./measure";
 import { DURATION_PRESETS } from "../state/defaults";
+import type { ThroughputResult } from "./contract";
 import { fixedPingIntervalMs } from "./pingCadence";
 import {
   INITIAL_RTT_ESTIMATE,
@@ -548,8 +549,10 @@ type Vector = {
       upBytesPerSec: number | null;
     } | null;
   }[];
-  peak: { downBytesPerSec: number | null; upBytesPerSec: number | null };
-  headline: { down: number | null; up: number | null } | null;
+  result: Record<
+    "down" | "up",
+    { bytesPerSec: number; peakBytesPerSec: number } | null
+  >;
 };
 const vectors: Vector[] = await Bun.file(
   new URL("../../../../api/aggregation.testvectors.json", import.meta.url),
@@ -590,19 +593,13 @@ for (const vector of vectors)
       },
     }));
     expect(intervals).toEqual(vector.intervals);
-    expect({
-      downBytesPerSec: m.peak(vector.stage, "down"),
-      upBytesPerSec: m.peak(vector.stage, "up"),
-    }).toEqual(vector.peak);
+    const reported = (r: ThroughputResult | null) =>
+      r && {
+        bytesPerSec: r.reportedBytesPerSec,
+        peakBytesPerSec: r.peakBytesPerSec,
+      };
     const { down, up } = m.result(vector.stage, false);
-    expect(
-      down || up
-        ? {
-            down: down?.reportedBytesPerSec ?? null,
-            up: up?.reportedBytesPerSec ?? null,
-          }
-        : null,
-    ).toEqual(vector.headline);
+    expect({ down: reported(down), up: reported(up) }).toEqual(vector.result);
   });
 
 const latencyVectors: {
