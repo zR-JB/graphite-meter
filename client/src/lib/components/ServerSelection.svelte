@@ -138,28 +138,25 @@
       >
     </div>
     {#if selected.length > 1 && store.latencyEnabled}
-      <div>
-        <label class="latency-policy">
-          <span {@attach tooltip(() => JARGON.latencyServer)}
-            >Latency server</span
-          >
-          <ServerScope
-            servers={selected}
-            value={store.latencySelection.mode === "all"
-              ? ""
-              : store.primaryLatencyServer}
-            label="Latency measurement servers"
-            aggregate="Combined"
-            hint="Measure latency to every server"
-            disabled={locked}
-            onchange={(id) =>
-              controller.configureLatency(
-                id ? "primary" : "all",
-                id || store.primaryLatencyServer,
-              )}
-          />
-        </label>
-      </div>
+      <label class="latency-policy">
+        <span {@attach tooltip(() => JARGON.latencyServer)}>Latency server</span
+        >
+        <ServerScope
+          servers={selected}
+          value={store.latencySelection.mode === "all"
+            ? ""
+            : store.primaryLatencyServer}
+          label="Latency measurement servers"
+          aggregate="Combined"
+          hint="Measure latency to every server"
+          disabled={locked}
+          onchange={(id) =>
+            controller.configureLatency(
+              id ? "primary" : "all",
+              id || store.primaryLatencyServer,
+            )}
+        />
+      </label>
     {/if}
   </div>
 {/if}
@@ -277,10 +274,8 @@
     gap: 2px;
     padding-block: 2px 6px;
   }
-  .server-heading,
-  .latency-policy {
+  .server-heading {
     display: flex;
-    flex: 1;
     flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
@@ -293,6 +288,7 @@
   }
   .latency-policy {
     --scope-width: auto;
+    justify-content: space-between;
   }
   .server-choices {
     display: grid;

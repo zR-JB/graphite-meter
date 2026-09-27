@@ -287,9 +287,7 @@
   onToggle: (next: boolean) => void,
   disabled = false,
 )}
-  <div>
-    <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
-  </div>
+  <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
 {/snippet}
 
 <div class="settings">
@@ -457,20 +455,18 @@
         setVizAuto,
       )}
       {#if !vizAuto}
-        <div>
-          <label class="row">
-            <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
-            <span class="measure">
-              <input
-                type="number"
-                min="1"
-                value={vizDisplay}
-                onchange={setVizMax}
-              />
-              <span>{vizUnit}</span>
-            </span>
-          </label>
-        </div>
+        <label class="row">
+          <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
+          <span class="measure">
+            <input
+              type="number"
+              min="1"
+              value={vizDisplay}
+              onchange={setVizMax}
+            />
+            <span>{vizUnit}</span>
+          </span>
+        </label>
       {/if}
     </div>
     {@render rejectedHint("gauge")}
@@ -505,23 +501,21 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <div>
-          <label class="row">
-            <span {@attach tooltip(() => tip)}>{label}</span>
-            <select
-              value={store.config[key]}
-              onchange={(event) =>
-                controller.configureRun({
-                  [key]: event.currentTarget.value as PingCadence,
-                })}
-              disabled={running || store.preparing}
-            >
-              {#each Object.entries(PING_CADENCE) as [value, name] (value)}
-                <option {value}>{name}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
+        <label class="row">
+          <span {@attach tooltip(() => tip)}>{label}</span>
+          <select
+            value={store.config[key]}
+            onchange={(event) =>
+              controller.configureRun({
+                [key]: event.currentTarget.value as PingCadence,
+              })}
+            disabled={running || store.preparing}
+          >
+            {#each Object.entries(PING_CADENCE) as [value, name] (value)}
+              <option {value}>{name}</option>
+            {/each}
+          </select>
+        </label>
       {/each}
       {@render toggle(
         "Skip loaded latency when latency is off",
@@ -544,34 +538,32 @@
         (on) => streams({ mode: on ? "forced" : "auto" }),
         running || store.preparing,
       )}
-      <div>
-        <label class="row">
-          <span
-            {@attach term(() =>
-              forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+      <label class="row">
+        <span
+          {@attach term(() =>
+            forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+          )}
+          >{forced
+            ? "Streams per server and direction"
+            : "Maximum H1 streams per direction"}</span
+        >
+        <input
+          type="number"
+          min="1"
+          max="128"
+          step="1"
+          disabled={running || store.preparing}
+          value={store.config.transferStreams.count}
+          onchange={(event) =>
+            commitNumber(
+              event,
+              "streams",
+              store.config.transferStreams.count,
+              normalizeStreamCount,
+              (count) => streams({ count }),
             )}
-            >{forced
-              ? "Streams per server and direction"
-              : "Maximum H1 streams per direction"}</span
-          >
-          <input
-            type="number"
-            min="1"
-            max="128"
-            step="1"
-            disabled={running || store.preparing}
-            value={store.config.transferStreams.count}
-            onchange={(event) =>
-              commitNumber(
-                event,
-                "streams",
-                store.config.transferStreams.count,
-                normalizeStreamCount,
-                (count) => streams({ count }),
-              )}
-          />
-        </label>
-      </div>
+        />
+      </label>
       {@render toggle(
         "Datagram throughput (experimental)",
         JARGON.datagramThroughput,
@@ -631,14 +623,7 @@
     container: settings / inline-size;
   }
   .row {
-    display: flex;
-    flex: 1;
-    flex-wrap: wrap;
-    align-items: center;
     justify-content: space-between;
-    gap: var(--space-1) var(--space-3);
-    min-width: 0;
-    min-height: var(--control-h);
   }
   .row input {
     width: 6rem;
@@ -717,9 +702,6 @@
     gap: var(--space-2);
     color: var(--text-soft);
     font-size: var(--type-xs);
-  }
-  .kv > div > :global(.switch) {
-    flex: 1;
   }
   .segmented > button {
     flex: 1 0 auto;
