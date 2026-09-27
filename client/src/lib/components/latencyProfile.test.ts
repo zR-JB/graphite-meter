@@ -31,12 +31,9 @@ function lane(over: Partial<LatencyLane> = {}): LatencyLane {
   };
 }
 
-test("profileDomain is shared by live and finalized lane profiles", () => {
-  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toEqual({
-    min: 0,
-    max: 200,
-    span: 200,
-  });
+test("lanes share the gauge's latency ladder from zero", () => {
+  expect(profileDomain([lane(), lane({ min: 30, max: 60 })])).toBe(100);
+  expect(profileDomain([lane({ min: 0.05, max: 0.4 })])).toBe(1);
 });
 
 test("entries: present metrics in label order, nulls dropped", () => {

@@ -1,6 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
 import { fmtCount, fmtMs } from "../format";
-import { niceDomain, type NiceDomain } from "../presentation/scales";
+import { latencyCeiling, latencyScale } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION } from "../presentation/vocabulary";
 import { STAGES } from "../runner/schedule";
@@ -57,20 +57,20 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   active?: boolean;
 }
 
-/** Shared value-domain policy for live and finalized latency profiles. */
+/** The lanes' axis runs from zero to the latency ceiling above their slowest reply, like the gauge's. */
 export function profileDomain(
   lanes: readonly LatencyProfileLaneLike[],
-): NiceDomain {
-  const values = lanes.flatMap((lane) =>
-    [lane.min, lane.max].filter((value): value is number => value != null),
-  );
-  return niceDomain(values, 1);
+): number {
+  const slowest = lanes.flatMap((lane) => lane.max ?? lane.min ?? []);
+  return slowest.length
+    ? latencyCeiling(Math.max(...slowest))
+    : latencyScale([]);
 }
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(value: number | null, domain: NiceDomain): number {
+export function pos(value: number | null, maxMs: number): number {
   if (value == null) return 0;
-  return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
+  return Math.min(100, Math.max(0, (value / maxMs) * 100));
 }
 
 // Sub-1% timeouts keeps a second decimal so a rare drop is still legible.

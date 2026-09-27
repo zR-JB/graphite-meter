@@ -444,6 +444,10 @@ class AppStore {
   readonly runClock = new Smoothed();
 
   isRunning = $derived(!TERMINAL_PHASES.includes(this.phase));
+  /** A new start failed, so what the stage still shows is the previous run. */
+  previousRun = $derived(
+    this.preparation.status === "failed" && this.phase !== "idle",
+  );
 
   /** The running plan; otherwise the next run's, adapted to the verified RTT. */
   totalEtaMs = $derived(
@@ -565,6 +569,8 @@ class AppStore {
       this.run?.servers.find(
         ({ server }) => server.id === result.multiServer.latencyFocus,
       ) ?? this.run?.servers[0];
+    // A finished run has no current stage, whichever one ran or failed last.
+    this.phaseStage = null;
     this.historyCandidate = this.savingResults
       ? buildHistoryRecord(
           result,
@@ -625,7 +631,9 @@ class AppStore {
         }
         this.phase = to;
         this.phaseStartedAtMs = t;
-        this.phaseElapsedMs = this.liveStageBytes = 0;
+        this.phaseElapsedMs = 0;
+        // A stopped stage keeps the bytes it moved; they are measured, not a result.
+        if (!stopped) this.liveStageBytes = 0;
         this.phaseClock.set(0, { snap: true });
         this.live = null;
         if (to === "connecting") {

@@ -118,6 +118,7 @@ export const STATUS_TONE = {
   failed: "err",
   recovering: "warn",
   stopped: "neutral",
+  "not-run": "neutral",
 } as const satisfies Partial<Record<keyof typeof STATUS | Outcome, Tone>>;
 
 /** A stalled run is "Recovering" wherever it shows: footer, toast, stage and topbar. */

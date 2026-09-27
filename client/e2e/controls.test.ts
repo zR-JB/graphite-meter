@@ -111,6 +111,25 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
 
+test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
+  await open(page, undefined, {
+    config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
+  });
+  await ready(page);
+  // As after a fresh load: focus left the Settings button that ready() used.
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await page.raw.press(" ");
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  await page.raw.press("r");
+  await expect(phase(page, "aborted")).toHaveCount(1);
+  await page
+    .getByRole("switch", { name: /^Upload stage/ })
+    .evaluate((el: HTMLElement) => el.focus());
+  await page.raw.press(" ");
+  await expect(runButton(page, "Run again")).toBeVisible();
+  await expect(phase(page, "aborted")).toHaveCount(1);
+});
+
 test("legal notices recover through Retry and keep focus in the dialog", async (page) => {
   await open(page);
   await page.blockRequests(["*legal/about.json*"]);

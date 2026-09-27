@@ -306,7 +306,8 @@ test("long history is cached across camera, hover, and glyph frames", () => {
   }
 });
 
-test("equal simultaneous result labels retain distinct lane identities", () => {
+test("equal simultaneous result labels keep their lanes without covering each other", () => {
+  const { canvas, restore } = canvasEnvironment();
   let current = data({
     phase: "complete",
     timelineAt: () => 2_000,
@@ -325,14 +326,15 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
   let published!: ChartPresentation;
   const engine = new ChartEngine(current, (next) => (published = next));
   try {
+    engine.attach(canvas);
     engine.render(100);
     expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
       "bidiDown",
       "bidiUp",
     ]);
     const [down, up] = published.phaseStats;
-    expect(down!.x).toBe(up!.x);
     expect(down!.y).toBe(up!.y);
+    expect(up!.x - down!.x).toBeGreaterThanOrEqual(90);
     expect(down!.bytesPerSec).toBe(up!.bytesPerSec);
 
     current = {
@@ -347,6 +349,7 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
     ]);
   } finally {
     engine.destroy();
+    restore();
   }
 });
 
