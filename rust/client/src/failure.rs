@@ -169,6 +169,25 @@ impl std::fmt::Display for MeasurementFailure {
 }
 impl std::error::Error for MeasurementFailure {}
 
+#[derive(Debug)]
+pub(crate) struct NotReplaced(pub &'static str, pub Option<Error>);
+impl std::fmt::Display for NotReplaced {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} lost and not replaced within 2s", self.0)?;
+        match &self.1 {
+            Some(cause) => write!(formatter, ": {cause}"),
+            None => Ok(()),
+        }
+    }
+}
+impl std::error::Error for NotReplaced {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.1
+            .as_deref()
+            .map(|cause| cause as &(dyn std::error::Error + 'static))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

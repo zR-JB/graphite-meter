@@ -415,10 +415,10 @@ async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<St
         match result {
             Ok(()) => return Ok(()),
             Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
-            Err(_) => {
+            Err(error) => {
                 let deadline = *recovery.get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
                 if Instant::now() >= deadline {
-                    return Err("upload progress did not recover within two seconds".into());
+                    return Err(crate::failure::NotReplaced("upload progress", Some(error)).into());
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }

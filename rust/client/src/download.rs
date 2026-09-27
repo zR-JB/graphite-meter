@@ -1,12 +1,14 @@
 //! Owned download lanes. Only received bytes contribute to measurement.
 use crate::{
     Error,
+    failure::MeasurementFailure,
     net::Http,
     transport::{Retrying, TransferRetry, Transport},
     webtransport::{ConnectRejected, Session, SessionSlot},
 };
 use graphite_meter_core::{
     discovery::{ThroughputTarget, ThroughputTransport},
+    failure::FailureReason,
     origin::canonical_origin,
     route::Route,
 };
@@ -186,7 +188,7 @@ impl Download {
     pub fn health(&mut self) -> Result<(), Error> {
         if let Some(task) = self.tasks.try_join_next() {
             task??;
-            return Err("download lane ended before stage boundary".into());
+            return Err(Box::new(MeasurementFailure(FailureReason::ConnectionLost)));
         }
         Ok(())
     }

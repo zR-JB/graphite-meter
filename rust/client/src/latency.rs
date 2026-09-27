@@ -1,6 +1,6 @@
 //! An owned WebSocket session measures raw RTT on Tokio's monotonic clock.
 //! Native CLI grants authenticate the handshake directly: they cannot mint browser tickets.
-use crate::{Error, net::Http};
+use crate::{Error, failure::NotReplaced, net::Http};
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport},
@@ -104,6 +104,7 @@ pub(crate) async fn run_kind(
             return Err(error);
         }
         let reconnect_until = (Instant::now() + Duration::from_secs(2)).min(end);
+        let mut cause = None;
         socket = loop {
             if Instant::now() >= end {
                 return Ok(());
@@ -114,18 +115,23 @@ pub(crate) async fn run_kind(
                 Ok(Ok(Some(socket))) => break socket,
                 Ok(Ok(None)) => return Ok(()),
                 Ok(Err(error)) if error.is::<crate::net::AuthRequired>() => return Err(error),
-                _ if Instant::now() >= end => return Ok(()),
-                _ if Instant::now() >= reconnect_until => {
-                    return Err("latency channel did not reconnect within two seconds".into());
+                Ok(Err(error)) => cause = Some(error),
+                Err(elapsed) => {
+                    cause.get_or_insert_with(|| elapsed.into());
                 }
-                _ => {}
+            }
+            if Instant::now() >= end {
+                return Ok(());
+            }
+            if Instant::now() >= reconnect_until {
+                return Err(NotReplaced("latency channel", cause).into());
             }
             tokio::select! {
                 biased;
                 () = cancelled(&mut cancel) => return Ok(()),
                 () = tokio::time::sleep_until(reconnect_until) => {
                     if reconnect_until == end { return Ok(()); }
-                    return Err("latency channel did not reconnect within two seconds".into());
+                    return Err(NotReplaced("latency channel", cause).into());
                 },
                 () = tokio::time::sleep(Duration::from_millis(100)) => {},
             }
