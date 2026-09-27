@@ -98,11 +98,6 @@ impl HttpServer {
         facts: Connection,
     ) {
         let head = request.method() == Method::HEAD;
-        let metered = request.method() != Method::OPTIONS
-            && matches!(
-                request.uri().path(),
-                "/download" | "/upload" | "/upload/progress"
-            );
         // This registry belongs only to this stream. Upload can register its
         // permit before body reception, without placing a timer on shared IO.
         let operations = Arc::new(Mutex::new(Vec::new()));
@@ -138,13 +133,9 @@ impl HttpServer {
                 }
                 result
             });
-            if metered {
-                tokio::time::timeout(self.config.max_operation_duration, guarded)
-                    .await
-                    .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
-            } else {
-                guarded.await
-            }
+            tokio::time::timeout(self.config.max_operation_duration, guarded)
+                .await
+                .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
         };
         if result.is_err() {
             // Reset only this stream, including when peer flow control stopped
