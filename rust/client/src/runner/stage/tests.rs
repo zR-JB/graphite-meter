@@ -53,6 +53,18 @@ async fn download_peer_with_gate(
                         let mut request = [0_u8; 4096];
                         let Ok(length) = stream.read(&mut request).await else { return; };
                         let request = &request[..length];
+                        if request.starts_with(b"GET /preflight ") || request.starts_with(b"GET /probe ") {
+                            let body = if request.starts_with(b"GET /preflight ") {
+                                serde_json::json!({"generation":"fixture","capabilities":{"uploadCheckpoint":true,"throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"latency":[]}})
+                            } else { serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}) }.to_string();
+                            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            return;
+                        }
+                        if flag.load(Ordering::SeqCst) == 1 && request.starts_with(b"POST /upload/session") {
+                            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                            return;
+                        }
                         if request.starts_with(b"POST /upload/session") {
                             let body = br#"{"uploadId":"test-session"}"#;
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
@@ -866,5 +878,69 @@ async fn stalled_lane_expires_while_its_sibling_keeps_receiving() -> Result<(), 
         crate::failure::reason(failure?.as_ref()),
         graphite_meter_core::failure::FailureReason::Timeout
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() -> Result<(), Error>
+{
+    let _ = crate::crypto::provider().install_default();
+    let (origin, fault, peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let server = prepared_download("self", &origin, &http).await?;
+    let config = Config {
+        url: origin,
+        stages: vec![Stage::Download, Stage::Upload, Stage::Download],
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(1),
+        upload_duration: Duration::from_secs(1),
+        loaded_latency: false,
+        streams: 1,
+        insecure: true,
+        ..Config::default()
+    };
+    let prepared = super::super::PreparedRun {
+        servers: vec![server],
+        key: config.preparation_key(),
+        verified_at: Instant::now(),
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot {
+        servers: vec![ServerSummary {
+            id: "self".into(),
+            name: "fixture".into(),
+            ..ServerSummary::default()
+        }],
+        ..Snapshot::default()
+    });
+    let drive_fault = tokio::spawn(async move {
+        loop {
+            if observed.borrow().stage == Some(Stage::Upload) {
+                fault.store(1, Ordering::SeqCst);
+            }
+            if observed.borrow().results.len() >= 2 {
+                fault.store(0, Ordering::SeqCst);
+                return;
+            }
+            if observed.changed().await.is_err() {
+                return;
+            }
+        }
+    });
+    let (_stop, cancelled) = watch::channel(false);
+    super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    drive_fault.await?;
+    let snapshot = snapshots.borrow();
+    assert_eq!(snapshot.phase, Phase::Incomplete);
+    assert_eq!(snapshot.results.len(), 3);
+    assert!(snapshot.results[0].complete);
+    assert!(snapshot.results[0].down_bytes() > 0);
+    assert!(!snapshot.results[1].complete);
+    assert!(snapshot.results[2].complete);
+    assert!(snapshot.results[2].down_bytes() > 0);
+    assert_eq!(
+        snapshot.failures[0].reason,
+        graphite_meter_core::failure::FailureReason::ServerBusy
+    );
+    peer.abort();
     Ok(())
 }

@@ -275,6 +275,38 @@ async fn connect(
     cancel: &mut watch::Receiver<bool>,
     kind: Kind,
 ) -> Result<Option<Bus>, Error> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut backoff = crate::transport::RetryBackoff::default();
+    loop {
+        let error = match connect_once(http, origin, insecure, cancel, kind).await {
+            Ok(bus) => return Ok(bus),
+            Err(error) => error,
+        };
+        if crate::failure::reason(error.as_ref())
+            != graphite_meter_core::failure::FailureReason::ServerBusy
+            || Instant::now() >= deadline
+        {
+            return Err(error);
+        }
+        let wake = (Instant::now() + backoff.delay(error.as_ref())).min(deadline);
+        tokio::select! {
+            biased;
+            () = cancelled(cancel) => return Ok(None),
+            () = tokio::time::sleep_until(wake) => {},
+        }
+        if Instant::now() >= deadline {
+            return Err(error);
+        }
+    }
+}
+
+async fn connect_once(
+    http: &Http,
+    origin: &str,
+    insecure: bool,
+    cancel: &mut watch::Receiver<bool>,
+    kind: Kind,
+) -> Result<Option<Bus>, Error> {
     match kind {
         Kind::WebSocket => Ok(connect_ws(http, origin, insecure, cancel)
             .await?
@@ -521,6 +553,62 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn busy_upgrade_waits_for_backoff_and_retry_after_before_redial() -> Result<(), Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let http = Http::new(false)?;
+        let date =
+            httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_millis(900));
+        let refusal = format!(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        );
+        let peer = tokio::spawn(async move {
+            let mut attempts = Vec::new();
+            let mut minimum = Duration::ZERO;
+            for response in [
+                Some(refusal.as_str()),
+                Some(
+                    "HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                ),
+                None,
+            ] {
+                let (mut stream, _) = listener.accept().await?;
+                attempts.push(Instant::now());
+                if let Some(response) = response {
+                    let mut request = Vec::new();
+                    loop {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).await?;
+                        request.push(byte[0]);
+                        if request.ends_with(b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    if attempts.len() == 1 {
+                        minimum = httpdate::parse_http_date(&date)?
+                            .duration_since(std::time::SystemTime::now())
+                            .unwrap_or_default()
+                            .max(Duration::from_millis(300));
+                    }
+                    stream.write_all(response.as_bytes()).await?;
+                } else {
+                    let _socket = tokio_tungstenite::accept_async(stream).await?;
+                }
+            }
+            Ok::<_, Error>((attempts, minimum))
+        });
+        let (_stop, mut cancel) = watch::channel(false);
+        let bus = connect(&http, &origin, false, &mut cancel, Kind::WebSocket).await?;
+        assert!(bus.is_some());
+        let (attempts, minimum) = peer.await??;
+        assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
+        assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
+        Ok(())
+    }
 
     #[tokio::test(start_paused = true)]
     async fn stage_boundary_drains_replies_until_each_fixed_deadline() -> Result<(), Error> {

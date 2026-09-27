@@ -648,6 +648,7 @@ fn apply_event(
             let refusal = graphite_meter_core::failure::UploadRefusal::from_name(&code);
             return Err(Box::new(crate::failure::HttpFailure {
                 status: refusal.map_or(400, |refusal| refusal.status()),
+                retry_after: Duration::ZERO,
                 refusal,
             }));
         }

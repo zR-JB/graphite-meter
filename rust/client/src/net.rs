@@ -392,6 +392,21 @@ impl Http {
         if !status.is_success() {
             return Err(Box::new(crate::failure::HttpFailure {
                 status: status.as_u16(),
+                retry_after: headers
+                    .get(http::header::RETRY_AFTER)
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|value| {
+                        value
+                            .parse::<u64>()
+                            .ok()
+                            .map(Duration::from_secs)
+                            .or_else(|| {
+                                httpdate::parse_http_date(value).ok().and_then(|date| {
+                                    date.duration_since(std::time::SystemTime::now()).ok()
+                                })
+                            })
+                    })
+                    .unwrap_or_default(),
                 refusal: headers
                     .get("x-graphite-upload-refusal")
                     .and_then(|value| value.to_str().ok())

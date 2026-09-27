@@ -348,11 +348,33 @@ async fn verify_throughput_webtransport(
 ) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
-    crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3))
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut backoff = crate::transport::RetryBackoff::default();
+    loop {
+        let error = match tokio::time::timeout_at(
+            deadline,
+            crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3)),
+        )
         .await?
-        .close()
-        .await;
-    Ok(())
+        {
+            Ok(session) => {
+                session.close().await;
+                return Ok(());
+            }
+            Err(error) => error,
+        };
+        if crate::failure::reason(error.as_ref())
+            != graphite_meter_core::failure::FailureReason::ServerBusy
+            || Instant::now() >= deadline
+        {
+            return Err(error);
+        }
+        tokio::time::sleep_until((Instant::now() + backoff.delay(error.as_ref())).min(deadline))
+            .await;
+        if Instant::now() >= deadline {
+            return Err(error);
+        }
+    }
 }
 
 fn lane_plan(
@@ -402,6 +424,8 @@ pub async fn run_prepared(
             _ = cancel.wait_for(|value| *value) => return Ok(()),
         },
     };
+    let sole = (prepared.len() == 1).then(|| prepared[0].entry.clone());
+    let mut retry_sole = false;
     for stage in &config.stages {
         if *cancel.borrow() {
             break;
@@ -410,8 +434,76 @@ pub async fn run_prepared(
             .borrow()
             .results
             .iter()
-            .any(|result| result.complete);
-        let failed = measure(
+            .any(|result| result.elapsed > Duration::ZERO);
+        if retry_sole {
+            let entry = sole.as_ref().expect("sole-server retry");
+            let transfer = stage.downloads() || stage.uploads();
+            let latency = *stage == Stage::Latency || config.loaded_latency;
+            let replacement = tokio::select! {
+                result = tokio::time::timeout(Duration::from_secs(12), prepare_server(&config, &http, entry, transfer, latency)) => result.map_err(Error::from).and_then(|result| result),
+                _ = cancel.wait_for(|value| *value) => break,
+            };
+            match replacement {
+                Ok(server) => {
+                    snapshots.send_modify(|snapshot| {
+                        if let Some(summary) = snapshot
+                            .servers
+                            .iter_mut()
+                            .find(|summary| summary.id == entry.id)
+                        {
+                            summary.error = None;
+                            summary.throughput.clone_from(&server.throughput);
+                            summary.latency.clone_from(&server.latency);
+                        }
+                    });
+                    prepared = vec![server];
+                    retry_sole = false;
+                }
+                Err(error) => {
+                    snapshots.send_modify(|snapshot| {
+                        snapshot.stage = Some(*stage);
+                        snapshot.failure(
+                            &entry.id,
+                            if transfer {
+                                crate::model::FailureScope::Throughput
+                            } else {
+                                crate::model::FailureScope::Latency
+                            },
+                            &error,
+                        );
+                        if let Some(summary) = snapshot
+                            .servers
+                            .iter_mut()
+                            .find(|summary| summary.id == entry.id)
+                        {
+                            summary.error = Some(error.to_string());
+                        }
+                        snapshot.results.push(crate::model::StageResult {
+                            stage: *stage,
+                            elapsed: Duration::ZERO,
+                            down: None,
+                            up: None,
+                            intervals: Default::default(),
+                            omitted_intervals: 0,
+                            complete: false,
+                            server_results: vec![crate::model::ServerContribution {
+                                id: entry.id.clone(),
+                                down: None,
+                                up: None,
+                                error: Some(error.to_string()),
+                            }],
+                            server_latencies: vec![crate::model::ServerLatencyResult {
+                                id: entry.id.clone(),
+                                summary: Default::default(),
+                                error: Some(error.to_string()),
+                            }],
+                        });
+                    });
+                    continue;
+                }
+            }
+        }
+        let measured = measure(
             *stage,
             &config,
             &prepared,
@@ -419,7 +511,22 @@ pub async fn run_prepared(
             cancel.clone(),
             completed_stage,
         )
-        .await?;
+        .await;
+        let failed = match measured {
+            Ok(failed) => failed,
+            Err(_)
+                if sole.is_some()
+                    && snapshots
+                        .borrow()
+                        .results
+                        .iter()
+                        .any(|result| result.elapsed > Duration::ZERO) =>
+            {
+                retry_sole = true;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if *stage == Stage::Latency {
             let snapshot = snapshots.borrow();
             if let Some(result) = snapshot.results.last() {
@@ -434,7 +541,11 @@ pub async fn run_prepared(
                 }
             }
         }
-        prepared.retain(|server| !failed.contains(&server.entry.id));
+        if sole.is_some() && !failed.is_empty() {
+            retry_sole = true;
+        } else {
+            prepared.retain(|server| !failed.contains(&server.entry.id));
+        }
     }
     snapshots.send_modify(|snapshot| {
         let partial = snapshot.servers.iter().any(|server| server.error.is_some())

@@ -597,6 +597,7 @@ dependencies = [
  "h3-noq",
  "http",
  "http-body-util",
+ "httpdate",
  "hyper",
  "hyper-util",
  "miniz_oxide",

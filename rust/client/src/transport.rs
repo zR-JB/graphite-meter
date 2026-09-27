@@ -29,6 +29,35 @@ use tokio::{
 pub(crate) const TRANSFER_PROGRESS_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
+#[derive(Default)]
+pub(crate) struct RetryBackoff {
+    busy: Duration,
+}
+
+impl RetryBackoff {
+    pub(crate) fn delay(&mut self, mut error: &(dyn std::error::Error + 'static)) -> Duration {
+        loop {
+            if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
+                && matches!(http.status, 429 | 503)
+            {
+                self.busy = (self.busy * 2)
+                    .max(Duration::from_millis(300))
+                    .min(Duration::from_millis(1200));
+                return self
+                    .busy
+                    .max(http.retry_after)
+                    .min(Duration::from_millis(1200));
+            }
+            let Some(source) = error.source() else {
+                break;
+            };
+            error = source;
+        }
+        self.busy = Duration::ZERO;
+        TRANSFER_RETRY_BACKOFF
+    }
+}
+
 pub(crate) struct TransferProgress {
     epoch: Instant,
     nanos: AtomicU64,
@@ -49,6 +78,7 @@ pub(crate) struct TransferRetry {
     pub(crate) progress: Arc<TransferProgress>,
     last_error: Option<Error>,
     recovery: Option<Instant>,
+    backoff: RetryBackoff,
     deadline: Pin<Box<tokio::time::Sleep>>,
 }
 
@@ -61,6 +91,7 @@ impl TransferRetry {
             }),
             last_error: None,
             recovery: None,
+            backoff: RetryBackoff::default(),
             deadline: Box::pin(tokio::time::sleep(TRANSFER_PROGRESS_TIMEOUT)),
         }
     }
@@ -112,8 +143,9 @@ impl TransferRetry {
         {
             return Err(error);
         }
+        let delay = self.backoff.delay(error.as_ref());
         self.last_error = Some(error);
-        tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
+        tokio::time::sleep_until((Instant::now() + delay).min(deadline)).await;
         Ok(())
     }
 }

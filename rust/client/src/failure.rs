@@ -4,6 +4,7 @@ use graphite_meter_core::failure::{FailureReason, LaneEnding, UploadRefusal};
 #[derive(Debug)]
 pub struct HttpFailure {
     pub status: u16,
+    pub retry_after: std::time::Duration,
     pub refusal: Option<UploadRefusal>,
 }
 
