@@ -2,7 +2,7 @@
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
-  import { tooltip } from "../../actions/tooltip";
+  import { tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -258,7 +258,7 @@
       {#if accounting.length}
         <section class="group">
           <h3 class="caps">Probes</h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#each accounting as lane (lane.key)}
               {@const counts = probeAccountingSummary(lane)}
               <div
@@ -291,7 +291,7 @@
           <h3 class="caps">
             Server{#if multiple}<span class="name"> · {row.name}</span>{/if}
           </h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#if !multiple}<div>
                 <dt>Name</dt>
                 <dd>{row.name}</dd>
@@ -329,7 +329,7 @@
       {#if issues.length}
         <section class="group">
           <h3 class="caps">Issues</h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#each issues as issue, index (index)}
               <div>
                 <dt>{issue.server}</dt>
@@ -342,7 +342,7 @@
 
       <section class="group">
         <h3 class="caps">Build</h3>
-        <dl class="kv">
+        <dl class="kv" data-tip-group {@attach tipGroup}>
           {#each environment as [label, value] (label)}
             <div>
               <dt>{label}</dt>
