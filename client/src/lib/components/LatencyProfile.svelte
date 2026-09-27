@@ -74,7 +74,7 @@
 
 <style>
   .live-profile {
-    --profile-track-height: clamp(32px, 3.5svh, 42px);
+    --profile-track-height: clamp(24px, 3.5svh, 42px);
     --profile-lane-gap: 8px;
   }
   .notice {

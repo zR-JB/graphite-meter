@@ -892,20 +892,17 @@
   .stage > :global(.gauge-panel) {
     flex: none;
   }
-  /* The timeline uses spare height while the gauge remains stable. */
+  /* The timeline uses spare height while the gauge remains stable; a short viewport shortens it first. */
   .stage > :global(.chart) {
-    flex: 1 0 160px;
-    min-height: 160px;
+    --chart-min: clamp(120px, 100svh - 680px, 160px);
+    flex: 1 0 var(--chart-min);
+    min-height: var(--chart-min);
     max-height: 360px;
   }
   @media (max-height: 800px) {
     .measurement-stage {
       gap: var(--space-2);
       padding-block: var(--space-1);
-    }
-    .stage > :global(.chart) {
-      flex-basis: 120px;
-      min-height: 120px;
     }
   }
   .status {

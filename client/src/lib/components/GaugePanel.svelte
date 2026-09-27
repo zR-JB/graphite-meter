@@ -92,15 +92,16 @@
     });
   });
 
-  $effect(() => {
-    const ms = gaugeLatency.rttMs;
-    untrack(() => liveReadout.rtt.set(ms));
-  });
-
   const msTicksActive = $derived(
     phase === "latency" ||
       (phase === "complete" && completedKind === "latency"),
   );
+  // An RTT the gauge does not show snaps, so the next one it shows starts from the truth.
+  $effect(() => {
+    const ms = gaugeLatency.rttMs;
+    const shown = msTicksActive;
+    untrack(() => liveReadout.rtt.set(ms, { snap: !shown }));
+  });
   const gaugeScaleBytesPerSec = $derived(store.scales.gaugeBytesPerSec);
   const gaugeUnit = $derived(store.unitLabel);
   const gaugeRate = (bytesPerSec: number) => store.toUnit(bytesPerSec);
@@ -124,6 +125,7 @@
     () =>
       !unusableStage &&
       (phase === "latency" ||
+        phase === "warmup" ||
         phase === "download" ||
         phase === "upload" ||
         phase === "bidirectional" ||
@@ -338,8 +340,14 @@
     /* Here, not on .instrument: a container query only styles descendants. */
     container: viz / inline-size;
   }
+  /* The dial yields to the rest of the stage (chrome, controls, cards, chart) before the page would scroll. */
   .instrument {
-    --gauge-well-height: clamp(280px, 35svh, 360px);
+    --rest-height: 575px;
+    --gauge-well-height: clamp(
+      200px,
+      min(35svh, 100svh - var(--rest-height)),
+      360px
+    );
     display: grid;
     gap: var(--space-3) var(--space-2);
     grid-template:
@@ -392,7 +400,7 @@
     display: flex;
     flex-direction: column;
     min-width: 240px;
-    min-height: 220px;
+    min-height: 200px;
     overflow: hidden;
   }
   .latency-panel {
@@ -401,7 +409,7 @@
     flex-direction: column;
     justify-content: center;
     min-width: 240px;
-    min-height: 220px;
+    min-height: 200px;
     padding: var(--space-2);
   }
   .server-indicator {
@@ -440,7 +448,15 @@
     --stage-controls-width: 700px;
   }
   @media (max-height: 800px) {
+    .instrument {
+      --rest-height: 505px;
+      row-gap: var(--space-2);
+    }
     .instrument-controls {
+      gap: var(--space-2);
+      padding-block: var(--space-1);
+    }
+    .latency-panel {
       padding-block: var(--space-1);
     }
   }
@@ -540,6 +556,12 @@
     font-weight: var(--w-strong);
     line-height: 1;
     white-space: nowrap;
+  }
+  /* A small dial has no room above its number; the arc's colour and the cards name the stage. */
+  @container (max-height: 180px) {
+    .terminal-direction {
+      display: none;
+    }
   }
   .terminal-icon {
     width: 20px;

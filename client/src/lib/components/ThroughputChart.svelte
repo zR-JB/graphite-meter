@@ -455,13 +455,11 @@
   .chart {
     display: flex;
     flex-direction: column;
-    min-height: 142px;
   }
   /* Secondary to the gauge hero: a shallow recess filling the granted height. */
   .plot {
     position: relative;
     flex: 1 1 auto;
-    min-height: 140px;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
