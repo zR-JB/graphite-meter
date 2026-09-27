@@ -39,7 +39,6 @@ func quietService(t *testing.T) *Service {
 	return s
 }
 
-// secretHash is hashed once per package: Argon2id is deliberately slow.
 var secretHash = sync.OnceValue(func() string {
 	h, err := HashPassword("secret")
 	if err != nil {

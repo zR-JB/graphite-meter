@@ -12,7 +12,6 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// Read returns api/name, failing t when it is missing.
 func Read(t testing.TB, name string) []byte {
 	t.Helper()
 	_, self, _, _ := runtime.Caller(0)
@@ -23,7 +22,6 @@ func Read(t testing.TB, name string) []byte {
 	return data
 }
 
-// Rows returns a pipe-separated pin's rows as trimmed fields, failing t on a row without exactly n of them.
 func Rows(t testing.TB, name string, n int) [][]string {
 	t.Helper()
 	var rows [][]string
@@ -43,7 +41,6 @@ func Rows(t testing.TB, name string, n int) [][]string {
 	return rows
 }
 
-// Schema compiles api/name.schema.json.
 func Schema(t testing.TB, name string) *jsonschema.Schema {
 	t.Helper()
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(Read(t, name+".schema.json")))
@@ -61,7 +58,6 @@ func Schema(t testing.TB, name string) *jsonschema.Schema {
 	return s
 }
 
-// Validate fails t unless data is JSON that s accepts.
 func Validate(t testing.TB, s *jsonschema.Schema, data []byte) {
 	t.Helper()
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))

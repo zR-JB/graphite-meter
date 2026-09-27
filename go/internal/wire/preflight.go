@@ -62,8 +62,7 @@ func (t ThroughputTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https
 
 func (t LatencyTarget) TLS() bool { return strings.HasPrefix(t.Origin, "https://") }
 
-// UnmarshalJSON leaves a target a newer server names by an unknown transport or protocol zero, which Capabilities
-// then drops; a missing transport or protocol, or an invalid origin, still refuses the document.
+// UnmarshalJSON zeroes a newer server's target of unknown transport or protocol, which Capabilities drops.
 func (t *ThroughputTarget) UnmarshalJSON(data []byte) error {
 	type plain ThroughputTarget
 	var p plain

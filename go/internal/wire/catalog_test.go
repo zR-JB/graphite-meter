@@ -64,7 +64,6 @@ func TestOriginKey(t *testing.T) {
 	}
 }
 
-// Served catalogues match servers.schema.json, and a decoder accepts the one trailing slash the schema allows.
 func TestCatalogsMatchTheSchema(t *testing.T) {
 	schema := apipin.Schema(t, "servers")
 	c := SingletonCatalog()

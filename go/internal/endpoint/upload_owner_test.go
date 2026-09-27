@@ -11,8 +11,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// Lane endings in the pin are checked against the server's real answers in server/lanes_test.go and
-// server/revocation_test.go; every other row is an access refusal.
 func TestUploadRefusalsMatchPin(t *testing.T) {
 	pinned := 0
 	for _, row := range apipin.Rows(t, "uploadrefusals.txt", 3) {

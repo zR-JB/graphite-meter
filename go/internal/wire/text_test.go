@@ -39,7 +39,6 @@ func TestUploadRefusalDetailIsCleanedAtDecode(t *testing.T) {
 	}
 }
 
-// A C1 control split across fields is valid UTF-8 only when concatenated; each field renders on its own.
 func TestServerTextIsValidatedPerField(t *testing.T) {
 	t.Parallel()
 	name, location := "A\xe2", "\x9b\x80B"

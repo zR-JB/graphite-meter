@@ -110,7 +110,6 @@ func serveBuild(t *testing.T, cfg *config.Config, sockets listenerSockets, shape
 	return build
 }
 
-// startServices serves until the test ends, then cuts every connection at once; runServices pins the drain.
 func startServices(t *testing.T, services []service) {
 	cut, cancel := context.WithCancel(context.Background())
 	cancel()

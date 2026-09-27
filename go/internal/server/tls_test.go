@@ -89,7 +89,6 @@ func TestCertificateValidation(t *testing.T) {
 	}
 }
 
-// Renewal polls the files: an incomplete pair keeps the last valid certificate, a complete one replaces it.
 func TestCertificateRenewal(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		now := time.Now()

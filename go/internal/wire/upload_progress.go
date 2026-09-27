@@ -19,7 +19,6 @@ type UploadProgress struct {
 // maxUploadCounter keeps JSON counters exact in both supported clients.
 const maxUploadCounter = 1<<53 - 1
 
-// UploadSession is POST /upload/session's answer.
 type UploadSession struct {
 	UploadID string `json:"uploadId"`
 }
@@ -31,7 +30,6 @@ func (s UploadSession) Validate() error {
 	return nil
 }
 
-// UploadCheckpoint is POST /upload/checkpoint's answer: the receiver's counters, as in a progress record.
 type UploadCheckpoint struct {
 	Bytes uint64 `json:"bytes"`
 	Nanos uint64 `json:"nanos"`

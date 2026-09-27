@@ -102,7 +102,6 @@ func TestCliPageRefusals(t *testing.T) {
 	}
 }
 
-// Approvals opened before sign-in can fill only half the table, so signed-in delegation still finds room.
 func TestAnonymousApprovalsLeaveRoomForSignedInCallers(t *testing.T) {
 	s := testService(t)
 	raw, _, _ := s.createSession("local-operator", "Local operator", "local")

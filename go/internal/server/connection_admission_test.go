@@ -291,7 +291,6 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 		testkit.Eventually(t, released, "an idle HTTP/3 connection gives its slot back",
 			func() bool { return build.connections.stats().active == 0 })
 	})
-	// A request stream's first frame type stops HTTP/3's idle timer before any handler runs.
 	t.Run("h3 stalled headers", func(t *testing.T) {
 		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
 			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()

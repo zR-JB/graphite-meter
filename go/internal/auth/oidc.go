@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	// Far past any client's share, so filling the table takes hundreds of allocations.
 	maxOIDCTransactions       = 16384
 	maxClientOIDCTransactions = 8
 	oidcTransactionLifetime   = 10 * time.Minute

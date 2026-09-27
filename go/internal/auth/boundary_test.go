@@ -116,7 +116,6 @@ func TestCookieAttributesSatisfyTheHostPrefix(t *testing.T) {
 	}
 }
 
-// Every auth route answers with the page headers, and a form past 4 KiB fails even with the right password.
 func TestAuthRoutesShareThePageBoundary(t *testing.T) {
 	s := testService(t)
 	mux := http.NewServeMux()

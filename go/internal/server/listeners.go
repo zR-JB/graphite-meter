@@ -297,8 +297,7 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-// quicUse closes a connection without handlers: a sessions-only one with its last session, as browsers would hold
-// its client slot ~15 s, any other after idle, as a stream stalled before its headers stops HTTP/3's own timer.
+// quicUse closes a handlerless connection: sessions-only at once, else after idle (a stalled stream stops H3's timer).
 type quicUse struct {
 	conn               *quic.Conn
 	carried            *sessionConns
@@ -354,7 +353,6 @@ func (u *quicUse) leave() {
 	time.AfterFunc(linger, func() { u.closeIfIdle(false) })
 }
 
-// closeIfIdle closes a connection without handlers; before it has been unused for idle, only a sessions-only one.
 func (u *quicUse) closeIfIdle(unused bool) {
 	u.mu.Lock()
 	idle := u.active == 0 && (unused || u.sessions && !u.requests)
@@ -364,8 +362,7 @@ func (u *quicUse) closeIfIdle(unused bool) {
 	}
 }
 
-// webTransportSession marks r's QUIC connection as carrying a session; its end says who closed it, and cut
-// closes the connection under a handler that outlived its session.
+// webTransportSession marks r's QUIC connection as carrying a session; ended says who closed it, cut closes it.
 func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) {
 	u, ok := r.Context().Value(quicUseKey{}).(*quicUse)
 	if !ok {
@@ -467,7 +464,6 @@ func (b *listenerBuild) addH3() error {
 				}
 				return err
 			}, stop: func(ctx context.Context) error {
-				// Sessions end with the shutdown cause; their connections close a linger later.
 				carried.wait(ctx)
 				err := wt.Close()
 				_ = quicListener.Close()

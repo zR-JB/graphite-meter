@@ -284,7 +284,6 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	}
 }
 
-// A server-ended session names its cause, then its sessions-only QUIC connection closes a linger later.
 func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -509,7 +508,6 @@ func TestIdleWebTransportSessionsFreeTheirSlots(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			// The bound outlasts a loaded machine's dial, so the admitted session is seen before its reaping.
 			base, httpBase, tr := wtTestServer(t, nil, idleBound(time.Second))
 			open(t, base, httpBase, tr)
 			waitForLoad(t, httpBase, 1)

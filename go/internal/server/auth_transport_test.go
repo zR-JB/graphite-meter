@@ -57,7 +57,6 @@ var secretHash = sync.OnceValue(func() string {
 	return hash
 })
 
-// insecureClient speaks one protocol to a test listener's self-signed certificate and follows no redirect.
 func insecureClient(t *testing.T, protocol string) *http.Client {
 	insecure := &tls.Config{InsecureSkipVerify: true} //nolint:gosec // self-signed test certificate
 	var rt http.RoundTripper

@@ -68,7 +68,6 @@ func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
 	})
 }
 
-// pinnedRefusal checks and closes an HTTP lane refusal against api/uploadrefusals.txt.
 func pinnedRefusal(t *testing.T, res *http.Response, name string) {
 	t.Helper()
 	defer res.Body.Close()

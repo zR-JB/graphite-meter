@@ -73,7 +73,6 @@ func TestParseConfig(t *testing.T) {
 			}
 		})
 	}
-	// Help shows the built-in defaults, whatever the environment holds, and never fails on it.
 	t.Setenv("GM_H1_ADDR", "127.0.0.1:9999")
 	t.Setenv("GM_MAX_CONNECTIONS", "many")
 	var help strings.Builder

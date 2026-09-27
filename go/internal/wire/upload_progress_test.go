@@ -23,7 +23,6 @@ func TestUploadProgressConformance(t *testing.T) {
 			if (err == nil) != tc.Valid {
 				t.Fatalf("decode %s = %+v, %v; valid=%t", tc.Record, event, err, tc.Valid)
 			}
-			// A checkpoint's counters obey the same contract as a counter record's.
 			var kind struct {
 				Type string `json:"type"`
 			}

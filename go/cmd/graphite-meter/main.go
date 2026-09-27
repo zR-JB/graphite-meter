@@ -42,7 +42,6 @@ func main() {
 	}
 }
 
-// parseConfig registers flags over the defaults, so help shows them and never fails on the environment.
 func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
 	cfg := config.Default()
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)

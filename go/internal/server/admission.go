@@ -226,8 +226,7 @@ func (a *connectionAdmission) stats() budget {
 	return a.connections.snapshot()
 }
 
-// verifySourceAddress requires Retry under load or past a client's first QUIC connection, so spoofed Initials
-// hold neither the pool nor a victim's share.
+// verifySourceAddress requires Retry under load or past a client's first QUIC connection, against spoofed Initials.
 func (a *connectionAdmission) verifySourceAddress(addr net.Addr) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -44,7 +44,6 @@ type fakeOIDC struct {
 	mistypedMeta  bool
 }
 
-// Signing keys are generated once per package; each takes a noticeable fraction of a second.
 var providerKey, strangerKey = sync.OnceValue(newRSAKey), sync.OnceValue(newRSAKey)
 
 func newRSAKey() *rsa.PrivateKey {

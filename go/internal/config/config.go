@@ -82,7 +82,6 @@ func Default() Config {
 		ServerName:    "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
 		MaxActiveSessions: 64, MaxSessionsPerClient: 8,
-		// Connections cost only descriptors; a small pool would let a few prefixes shut out every client.
 		MaxConnections: 4096, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
 		MaxSessionDuration:   2 * time.Hour,
@@ -266,7 +265,6 @@ func (c *Config) apply(s setting, value string) error {
 	return s.set(value)
 }
 
-// LoadEnv overlays the environment's settings and server catalogue on c.
 func (c *Config) LoadEnv() error {
 	for _, s := range c.settings() {
 		if v, ok := os.LookupEnv(s.env); ok {

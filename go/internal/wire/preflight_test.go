@@ -90,7 +90,6 @@ func TestTargetOriginsAndCapabilitiesAreValidated(t *testing.T) {
 	}
 }
 
-// A newer server's targets are skipped by the rule both clients load from api/preflight.forward.golden.json.
 func TestNewerServersTargetsAreSkipped(t *testing.T) {
 	raw := apipin.Read(t, "preflight.forward.golden.json")
 	var golden struct {
