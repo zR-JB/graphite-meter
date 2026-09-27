@@ -535,9 +535,16 @@ test("a server that cannot prepare is dropped; the run fails only when none surv
     reason: "preparation-failed",
     message: expect.stringMatching(/^All selected servers failed/),
   });
+  const { ServerBusyError } = await import("./transport");
   for (const [cause, reason] of [
     [new TypeError("Failed to fetch"), "connection-lost"],
     [new DOMException("late", "TimeoutError"), "timeout"],
+    [
+      new ServerBusyError("busy", {
+        cause: new DOMException("late", "TimeoutError"),
+      }),
+      "server-busy",
+    ],
   ] as const) {
     const reject = {
       prepare: () => Promise.reject(new Error("no", { cause })),

@@ -241,7 +241,7 @@ test("upload refusals fail the stage, an unknown id stalls, and one replacement 
   h.feeds.get("second")!.write({ type: "progress", bytes: 10, nanos: 1e9 });
   await until(() => h.receivers.length === 1);
   expect(h.receivers[0].id).toBe("second");
-  h.feeds.get("second")!.write({ type: "error", code: "globalFull" });
+  h.feeds.get("second")!.write({ type: "error", code: "ownerMismatch" });
   await until(() => h.failures.length === 1);
   expect(h.failures).toEqual(["upload progress error"]);
   stage.discard();
@@ -311,11 +311,11 @@ test("a lane error stalls once and restarts after backoff, and a refusal fails t
     expect(restarted.sent.at(-1)).toEqual({ type: "measure", seq: 1 });
     restarted.emit({
       type: "error",
-      reason: "server-busy",
+      reason: "protocol-error",
       retry: false,
-      detail: "HTTP 429",
+      detail: "HTTP 400",
     });
-    expect(h.failures).toEqual(["down stream 0 failed: HTTP 429"]);
+    expect(h.failures).toEqual(["down stream 0 failed: HTTP 400"]);
     stage.discard();
   } finally {
     jest.useRealTimers();
@@ -398,7 +398,7 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
   up.discard();
 });
 
-test("the HTTP receiver feed reconnects without regressing counters and classifies refusals once", async () => {
+test("the HTTP receiver feed reconnects without regressing counters, retries a busy server and classifies refusals once", async () => {
   jest.useFakeTimers();
   const { uploadFeed } = await import("./transport");
   const events: Parameters<Parameters<typeof uploadFeed>[0]["onEvent"]>[0][] =
@@ -430,14 +430,20 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
   feed.dispose();
   restore();
 
-  for (const [status, headers, expected] of [
-    [403, { "Graphite-Meter-Auth": "required" }, { type: "auth-required" }],
+  for (const [status, headers, expected, retried] of [
+    [
+      403,
+      { "Graphite-Meter-Auth": "required" },
+      { type: "auth-required" },
+      false,
+    ],
     [
       409,
       { "X-Graphite-Upload-Refusal": "ownerMismatch" },
       { type: "fatal", reason: "protocol-error" },
+      false,
     ],
-    [503, {}, { type: "fatal", reason: "server-busy" }],
+    [503, {}, { type: "stall", reason: "server-busy" }, true],
   ] as const) {
     let calls = 0;
     const seen: object[] = [];
@@ -455,10 +461,36 @@ test("the HTTP receiver feed reconnects without regressing counters and classifi
     });
     await settle(() => seen.length > 0);
     jest.advanceTimersByTime(5_000);
-    expect(seen).toEqual([expect.objectContaining(expected)]);
-    expect(calls).toBe(1);
+    if (retried) await settle(() => calls > 1);
+    expect(seen.slice(0, 1)).toEqual([expect.objectContaining(expected)]);
+    expect(calls > 1).toBe(retried);
     refused.dispose();
     restore();
+  }
+});
+
+test("a busy lane reconnects, and readiness that lapses while busy names the server busy", async () => {
+  const h = await http();
+  jest.useFakeTimers();
+  try {
+    const stage = h.stage(activity("download"));
+    await stage.prepare();
+    const owner = new AbortController();
+    const waiting = stage.ready(owner.signal).catch((cause) => cause);
+    workers("download")[0].emit({
+      type: "error",
+      reason: "server-busy",
+      retry: true,
+      detail: "HTTP 429",
+    });
+    jest.advanceTimersByTime(300);
+    expect(workers("download")).toHaveLength(2);
+    expect(h.failures).toEqual([]);
+    owner.abort();
+    expect((await waiting).constructor.name).toBe("ServerBusyError");
+    stage.discard();
+  } finally {
+    jest.useRealTimers();
   }
 });
 

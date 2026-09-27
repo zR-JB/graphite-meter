@@ -139,8 +139,8 @@ test("a complete record ends the feed with receiver totals", async () => {
 
 const DISPOSITION: Record<string, LaneFailure> = {
   invalid: { reason: "connection-lost", retry: false, rotate: true },
-  globalFull: { reason: "server-busy", retry: false },
-  clientFull: { reason: "server-busy", retry: false },
+  globalFull: { reason: "server-busy", retry: true },
+  clientFull: { reason: "server-busy", retry: true },
   ownerMismatch: { reason: "protocol-error", retry: false },
   idle: { reason: "connection-lost", retry: true },
   revoked: { reason: "sign-in-required", retry: false },

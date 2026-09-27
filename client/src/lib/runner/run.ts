@@ -55,6 +55,7 @@ import {
   LANE_RESTART_BACKOFF_MS,
 } from "./real/budgets";
 import {
+  ServerBusyError,
   ServerStage,
   type ParticipantHost,
   type StageOptions,
@@ -122,11 +123,13 @@ const stageStatus = (lanes: unknown[], failed: boolean): StageStatus =>
   !lanes.every(Boolean) ? "failed" : failed ? "partial" : "complete";
 
 const classify = <T>(cause: unknown, fallback: T) =>
-  navigator.onLine === false || isNetworkFailure(cause)
-    ? "connection-lost"
-    : findCause(cause, DOMException)?.name === "TimeoutError"
-      ? "timeout"
-      : fallback;
+  findCause(cause, ServerBusyError)
+    ? "server-busy"
+    : navigator.onLine === false || isNetworkFailure(cause)
+      ? "connection-lost"
+      : findCause(cause, DOMException)?.name === "TimeoutError"
+        ? "timeout"
+        : fallback;
 
 export class Run {
   readonly #servers: Participant[];

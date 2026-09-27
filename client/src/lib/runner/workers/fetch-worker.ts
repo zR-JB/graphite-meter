@@ -57,10 +57,10 @@ const MIN_POST_BYTES = 128 * 1024;
 
 const LOST: LaneFailure = { reason: "connection-lost", retry: true };
 
-/** Admission refusals end a download lane; any other status reconnects it. */
+/** Every refused download reconnects; an admission refusal names the server busy if the run gives up. */
 export const downloadFailure = (status: number): LaneFailure =>
   status === 429 || status === 503
-    ? { reason: "server-busy", retry: false }
+    ? { reason: "server-busy", retry: true }
     : LOST;
 
 export function fetchInit(

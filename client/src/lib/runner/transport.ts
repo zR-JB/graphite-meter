@@ -180,6 +180,7 @@ export const laneWorker = (kind: "fetch" | "wt"): Worker =>
 class LaneSet {
   measuring = false;
   stalled = false;
+  busy = false;
   #lanes: (Lane | null)[] = [];
   #timers: ReturnType<typeof setTimeout>[] = [];
   #ready = new Set<number>();
@@ -276,7 +277,8 @@ class LaneSet {
         error.reason,
         `${this.dir} stream ${index} failed: ${error.detail}`,
       );
-    if (this.measuring) this.setStalled(true, error.detail);
+    this.busy = error.reason === "server-busy";
+    if (this.measuring) this.setStalled(true, error.detail, error.reason);
     this.#lanes[index]?.discard();
     this.#lanes[index] = null;
     this.#schedule(index, LANE_RESTART_BACKOFF_MS);
@@ -299,6 +301,8 @@ class LaneSet {
     for (const timer of this.#timers) clearTimeout(timer);
   }
 }
+
+export class ServerBusyError extends Error {}
 
 /** A disposable stage; no continuation can reach a later stage's resources. */
 export class ServerStage implements StageTransport {
@@ -367,6 +371,8 @@ export class ServerStage implements StageTransport {
         await abortableDelay(50, signal);
       }
     } catch {
+      if (Object.values(this.#lanes).some((lanes) => lanes.busy))
+        throw new ServerBusyError("Server refused the connections as busy");
       throw new Error("Primed measurement connections did not become ready", {
         cause: signal.reason,
       });
@@ -610,7 +616,9 @@ export class ServerStage implements StageTransport {
 }
 
 type FeedEvent =
-  ProgressEvent | { type: "stall"; detail: string } | { type: "auth-required" };
+  | ProgressEvent
+  | { type: "stall"; detail: string; reason?: FailureReason }
+  | { type: "auth-required" };
 
 /** One upload id's receiver counters; replacing the id creates a new receiver. */
 class UploadReceiver {
@@ -686,7 +694,7 @@ class UploadReceiver {
         lanes!.setStalled(true, event.detail, event.reason, event.rotate);
       else this.stage.failed(event.reason, event.detail);
     } else if (event.type === "stall") {
-      if (measuring) lanes!.setStalled(true, event.detail);
+      if (measuring) lanes!.setStalled(true, event.detail, event.reason);
     } else {
       this.#advance(event.n, event.t);
       if (event.type === "complete") {
@@ -803,6 +811,7 @@ export function uploadFeed(options: {
   const read = async () => {
     while (!signal.aborted) {
       let detail = "progress stream closed";
+      let reason: FailureReason | undefined;
       try {
         const response = await fetch(url, {
           priority: "high",
@@ -831,6 +840,7 @@ export function uploadFeed(options: {
             );
         if (refusal && !refusal.retry)
           return emit({ type: "fatal", detail, ...refusal });
+        reason = refusal?.reason;
         if (!response.ok || !response.body) throw new Error(detail);
         await readProgressFeed(response.body, counters, (event) => {
           if (event.type === "open") backoff = 0;
@@ -841,7 +851,7 @@ export function uploadFeed(options: {
         detail = String(error);
       }
       if (signal.aborted) return;
-      emit({ type: "stall", detail });
+      emit({ type: "stall", detail, reason });
       backoff = backoff ? Math.min(backoff * 2, 2000) : 100;
       await new Promise<void>((resolve) => {
         const timer = setTimeout((wake = resolve), backoff);

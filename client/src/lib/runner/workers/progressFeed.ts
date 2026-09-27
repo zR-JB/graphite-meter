@@ -23,7 +23,7 @@ type UploadProgressRecord =
 // UTF-16 code units: bound retained text and JSON parsing for tiny control records.
 const MAX_RECORD_LENGTH = 64 * 1024;
 const lost: LaneFailure = { reason: "connection-lost", retry: true };
-const busy: LaneFailure = { reason: "server-busy", retry: false };
+const busy: LaneFailure = { reason: "server-busy", retry: true };
 const signIn: LaneFailure = { reason: "sign-in-required", retry: false };
 const REFUSALS: Record<string, LaneFailure> = {
   invalid: { reason: "connection-lost", retry: false, rotate: true },

@@ -6,14 +6,14 @@ import {
   uploadPoolBytes,
 } from "./fetch-worker";
 
-test("admission rejections are terminal for a download lane", () => {
-  for (const [status, retry] of [
-    [429, false],
-    [503, false],
-    [500, true],
-    [403, true], // A bare proxy refusal remains recoverable.
+test("a refused download lane reconnects; an admission refusal names the server busy", () => {
+  for (const [status, reason] of [
+    [429, "server-busy"],
+    [503, "server-busy"],
+    [500, "connection-lost"],
+    [403, "connection-lost"],
   ] as const)
-    expect(downloadFailure(status).retry).toBe(retry);
+    expect(downloadFailure(status)).toEqual({ reason, retry: true });
 });
 
 test("download requests retain bearer credentials", () => {
