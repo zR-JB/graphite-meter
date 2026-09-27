@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image=${1:?usage: scripts/verify-container.sh IMAGE}
-version=${GM_VERIFY_VERSION:-0.0.0-ci}
-label=${GM_VERIFY_LABEL:-prod}
-revision=${GM_VERIFY_REVISION:-local}
+image=${1:?usage: VERSION=... GM_CLIENT_REVISION=... scripts/verify-container.sh IMAGE}
+version=${VERSION:?}
+revision=${GM_CLIENT_REVISION:?}
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || true)}
 if ! command -v "$engine" >/dev/null 2>&1; then
     echo "container verification requires Docker or Podman" >&2
@@ -46,8 +45,8 @@ curl -fsS "$base/preflight" | jq -e --arg origin "$origin" --arg version "$versi
 curl -fsS "$base/probe" | jq -e '
   (.clientIp | type == "string" and length > 0) and (.clientIpVersion == 4 or .clientIpVersion == 6)
   and (.clientIpSource | type == "string" and length > 0) and .protocolNegotiated == "http/1.1"'
-curl -fsS "$base/version.json" | jq -e --arg version "$version" --arg label "$label" \
-    --arg revision "$revision" '.version == $version and .label == $label and .revision == $revision'
+curl -fsS "$base/version.json" | jq -e --arg version "$version" --arg revision "$revision" \
+    '.version == $version and .label == "prod" and .revision == $revision'
 
 "$engine" export "$container" -o "$tmp/rootfs.tar"
 while read -r path marker; do

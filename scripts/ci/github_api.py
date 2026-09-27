@@ -8,9 +8,10 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
-from typing import NoReturn, Protocol, TypeAlias, cast
+from typing import NoReturn, TypeAlias, cast
 from urllib.parse import urlencode
 
 JsonScalar: TypeAlias = str | int | float | bool | None
@@ -31,11 +32,6 @@ class ControlPlaneError(RuntimeError):
 
 def fail(message: str) -> NoReturn:
     raise ControlPlaneError(message)
-
-
-class APICall(Protocol):
-    def __call__(self, path: str, *, paginate: bool = False) -> JsonValue:
-        """Return the decoded JSON at `path`, every page of it when `paginate` is set."""
 
 
 def api(path: str, *, paginate: bool = False, method: str = "GET", body: JsonValue = None,
@@ -100,12 +96,17 @@ def int_field(value: Mapping[str, JsonValue], key: str, context: str) -> int:
     return item
 
 
-def confined_path(value: str, *roots: str) -> Path:
+def confined_path(value: str | Path, *roots: str | Path) -> Path:
     """Resolve `value`, following links, and require it to lie strictly inside one of `roots`."""
     path = os.path.realpath(value)
     if path.startswith(tuple(os.path.join(os.path.realpath(root), "") for root in roots)):
         return Path(path)
-    raise ControlPlaneError(f"{value} is outside {', '.join(roots) or 'every allowed root'}")
+    raise ControlPlaneError(f"{value} is outside {', '.join(map(str, roots)) or 'every allowed root'}")
+
+
+def local_path(value: str | Path, base: str | Path) -> Path:
+    """Resolve `value`, which must lie inside `base`, the temporary directory or RUNNER_TEMP."""
+    return confined_path(value, base, tempfile.gettempdir(), os.environ.get("RUNNER_TEMP") or base)
 
 
 def runner_path(name: str) -> Path:

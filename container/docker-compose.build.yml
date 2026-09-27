@@ -1,38 +1,13 @@
-# Graphite Meter - build-from-source compose (developers / custom builds).
-# For a normal deployment use the sibling docker-compose.yml, which pulls the
-# published image instead of building.
-#   docker compose -f container/docker-compose.build.yml up --build
+# Build-from-source overlay (developers / custom builds). Stack it on the
+# default compose, and on any other overlay, from the repository root:
+#   docker compose -f container/docker-compose.yml -f container/docker-compose.build.yml up --build -d
 services:
   graphite-meter:
+    # A local tag, so the build never shadows the published image.
+    image: localhost/graphite-meter:source
     build:
       context: ..
       dockerfile: container/Dockerfile
       args:
         VERSION: "0.0.0-dev"
         GM_CLIENT_REVISION: "source"
-        # GM_CLIENT_REVISION: "abc1234"  # source revision (default "source")
-    ports:
-      - "7246:7246" # HTTP/1.1 (default)
-      # - "7247:7247/tcp"  # dedicated HTTPS HTTP/1.1 throughput + WSS latency
-      # - "7248:7248/tcp"  # HTTP/2-only measurement probe, transfers, and progress
-      # - "7249:7249/tcp"  # HTTP/3 Alt-Svc bootstrap probe only
-      # - "7249:7249/udp"  # HTTP/3 probe, transfers, progress, WebTransport
-    environment:
-      # All optional; sensible defaults baked in. Set the PUBLIC_* origins when
-      # running behind a reverse proxy so /preflight advertises reachable URLs.
-      GM_SERVER_NAME: "graphite-meter"
-      # GM_SERVER_LOCATION: "fra"
-      # GM_TRUSTED_PROXIES: "172.30.0.0/24" # CIDR of your reverse proxy network
-      # GM_H1_PUBLIC_ORIGIN: "http://speed.example:7246"
-      # GM_H1_TLS_ADDR: ":7247"
-      # GM_H2_ADDR: ":7248"
-      # GM_H3_ADDR: ":7249"
-      # GM_TLS_CERT: "/etc/letsencrypt/live/graphite-meter/fullchain.pem"
-      # GM_TLS_KEY: "/etc/letsencrypt/live/graphite-meter/privkey.pem"
-      # GM_H1_TLS_PUBLIC_ORIGIN: "https://speed.example:7247"
-      # GM_H2_PUBLIC_ORIGIN: "https://speed.example:7248"
-      # GM_H3_PUBLIC_ORIGIN: "https://speed.example:7249"
-    # Mount the complete Let's Encrypt tree when enabling the TLS settings above:
-    # volumes:
-    #   - /etc/letsencrypt:/etc/letsencrypt:ro
-    restart: unless-stopped

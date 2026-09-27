@@ -6,9 +6,10 @@ import os
 import sys
 from pathlib import Path
 
+from ..ci.github_api import ControlPlaneError, local_path
 from .artifacts import render, review_audit, review_template, third_party_source_bundle
 from .discovery import discover_browser, discover_go
-from .model import LegalError, Project, Provenance, Review, array, local_path, marshal, read_json
+from .model import LegalError, Project, Provenance, Review, array, marshal, read_json
 from .review import add_provenance, prepare_scopes, refresh_reviewed_versions
 
 
@@ -63,5 +64,5 @@ def main() -> None:
 if __name__ == "__main__":
     try:
         main()
-    except (LegalError, OSError, ValueError) as error:
+    except (ControlPlaneError, LegalError, OSError, ValueError) as error:
         sys.exit(str(error))

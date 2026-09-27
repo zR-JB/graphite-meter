@@ -80,10 +80,8 @@ jobs:
         uses: ./.github/actions/setup-project
         with:
           go: 'true'
-          go-cache: 'false'
           bun: 'true'
           client-deps: 'true'
-          bun-cache: 'false'
           cache: 'false'
 
       - name: Build and verify stable native artifacts and third-party source
@@ -99,14 +97,68 @@ jobs:
 
       # A prerelease never checks PR files out here: BuildKit fetches that exact
       # commit remotely and receives no GitHub credential.
-      - name: Build linux/amd64 + linux/arm64 OCI archive
-        uses: ./.github/actions/build-oci
+      - id: source
+        name: Resolve the OCI build context
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}
+        run: |
+          if [[ -z "$SOURCE_SHA" ]]; then
+            context='.'
+          else
+            [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "remote OCI source SHA must be exactly 40 lowercase hexadecimal characters" >&2
+              exit 2
+            }
+            context="https://github.com/${REPOSITORY}.git#${SOURCE_SHA}"
+          fi
+          echo "context=$context" >>"$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
-          version: ${{ steps.request.outputs.version }}
-          revision: ${{ steps.request.outputs.sha }}
-          output: ${{ runner.temp }}/release-request/graphite-meter.oci.tar
-          source-sha: ${{ steps.request.outputs.remote_sha }}
-          client-validate: ${{ steps.request.outputs.client_validate }}
+          # setup-qemu runs this image privileged to register binfmt. Pin the
+          # secondary image as tightly as the Action that launches it.
+          image: docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+          cache-image: 'false'
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.37.1
+          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          cache-binary: 'false'
+          # Supplying any explicit flags resets setup-buildx's default
+          # security.insecure/network.host entitlements. This build needs neither.
+          buildkitd-flags: --log-level=info
+
+      - name: Build linux/amd64 + linux/arm64 OCI archive
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          # Avoid an extra build-record artifact from this untrusted build.
+          DOCKER_BUILD_RECORD_UPLOAD: 'false'
+        with:
+          context: ${{ steps.source.outputs.context }}
+          file: container/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=${{ runner.temp }}/release-request/graphite-meter.oci.tar
+          no-cache: true
+          provenance: mode=max
+          # Public exact-commit Git contexts do not need a repository credential.
+          # Keeping this empty prevents the default github.token from entering BuildKit.
+          github-token: ''
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.request.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.request.outputs.version }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+          build-args: |
+            VERSION=${{ steps.request.outputs.version }}
+            CLIENT_VERSION=${{ steps.request.outputs.version }}
+            GM_CLIENT_BUILD_PROFILE=prod
+            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
+            GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
 
       - name: Record the OCI checksum
         working-directory: ${{ runner.temp }}/release-request

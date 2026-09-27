@@ -106,8 +106,6 @@ export interface Summary {
   p75: number;
   min: number;
   max: number;
-  /** Spread within one run, over its rate buckets. High means it oscillated. */
-  cv: number;
   maxTickMs: number;
   /** Runs whose page stalled; they measure the engine giving up, not the link. */
   stalled: number;
@@ -118,17 +116,6 @@ export const STALL_TICK_MS = 600;
 
 export function summarise(runs: CellResult[]): Summary {
   const rates = runs.map(gbps).sort((a, b) => a - b);
-  const cvs = runs.map((r) => {
-    const bucketRates = r.buckets
-      .filter((b) => b.ms > 0)
-      .map((b) => (b.bytes * 8) / (b.ms / 1000) / 1e9);
-    if (bucketRates.length < 2) return 0;
-    const mean = bucketRates.reduce((a, b) => a + b, 0) / bucketRates.length;
-    if (mean <= 0) return 0;
-    const varr =
-      bucketRates.reduce((a, b) => a + (b - mean) ** 2, 0) / bucketRates.length;
-    return Math.sqrt(varr) / mean;
-  });
   return {
     n: runs.length,
     median: pct(rates, 50),
@@ -136,7 +123,6 @@ export function summarise(runs: CellResult[]): Summary {
     p75: pct(rates, 75),
     min: rates[0] ?? 0,
     max: rates[rates.length - 1] ?? 0,
-    cv: cvs.sort((a, b) => a - b)[Math.floor(cvs.length / 2)] ?? 0,
     maxTickMs: Math.max(...runs.map((r) => r.maxTickMs), 0),
     stalled: runs.filter((r) => r.maxTickMs > STALL_TICK_MS).length,
   };

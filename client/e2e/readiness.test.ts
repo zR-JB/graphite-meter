@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   closeSettings,
   home,
   open,
@@ -10,14 +11,7 @@ import {
   runButton,
   spawnPeer,
 } from "./fleet";
-import type { Server } from "./servers";
 import { expect, test, type Page } from "./webview";
-
-const catalog = (...servers: Server[]) => ({
-  GM_SERVER_CATALOG: JSON.stringify({
-    servers: servers.map(({ id, name, url }) => ({ id, name, url })),
-  }),
-});
 
 const footer = (page: Page) => page.locator("footer.status .label");
 

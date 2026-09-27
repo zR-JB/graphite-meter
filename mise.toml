@@ -286,10 +286,13 @@ run = [
 
 [tasks.bench-throughput]
 shell = "bash -e -o pipefail -c"
-description = "Run selected throughput benchmark cells (manual)"
+description = "Measure throughput cells against the local server fleet (manual)"
 dir = "client"
 usage = 'arg "[filter]" default=""'
-run = 'GM_BENCH_FILTER="${usage_filter?}" bun run test:bench'
+run = [
+  { task = "_e2e-build" },
+  'GM_BENCH_FILTER="${usage_filter?}" bun run scripts/e2e.ts bun test ./bench/throughput.bench.ts --no-orphans --timeout=1800000',
+]
 
 [tasks.codeql]
 description = "Reproduce the CodeQL scan offline with the pinned CLI and count results per rule (manual)"

@@ -12,8 +12,8 @@ import {
   ESTABLISH_MARGIN_MS,
 } from "../src/lib/runner/real/budgets";
 
-/** Resolution of the within-cell rate series, which yields the stability figure. */
-const BUCKET_MS = 200;
+/** Tick interval; a longer gap between ticks shows the page stalled. */
+const TICK_MS = 200;
 
 export interface CellSpec {
   origin: string;
@@ -32,9 +32,7 @@ export interface CellResult {
   elapsedMs: number;
   /** Per-lane split, so an idle lane is visible rather than averaged away. */
   laneBytes: number[];
-  /** Rate samples carry actual spans so late ticks do not report an unattained rate. */
-  buckets: { bytes: number; ms: number }[];
-  /** Longest tick gap; a value above BUCKET_MS indicates a page-stalled run. */
+  /** Longest tick gap; a value above TICK_MS indicates a page-stalled run. */
   maxTickMs: number;
   errors: string[];
 }
@@ -182,7 +180,6 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
       bytes: 0,
       elapsedMs: 0,
       laneBytes,
-      buckets: [],
       maxTickMs: 0,
       errors,
     };
@@ -249,21 +246,14 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
   total.beginMeasure();
   for (const lane of lanes) lane.measure(1);
 
-  const buckets: { bytes: number; ms: number }[] = [];
-  const readTotal = (): number =>
-    spec.dir === "up" ? total.bytes : clientBytes;
-  let last = readTotal();
   const startedAt = performance.now();
   let lastAt = startedAt;
   let maxTickMs = 0;
   const ticker = setInterval(() => {
     const at = performance.now();
-    const n = readTotal();
-    buckets.push({ bytes: n - last, ms: at - lastAt });
     maxTickMs = Math.max(maxTickMs, at - lastAt);
-    last = n;
     lastAt = at;
-  }, BUCKET_MS);
+  }, TICK_MS);
 
   await sleep(spec.measureMs);
   clearInterval(ticker);
@@ -280,10 +270,9 @@ export async function runCell(spec: CellSpec): Promise<CellResult> {
     ).catch(() => {});
 
   return {
-    bytes: readTotal(),
+    bytes: spec.dir === "up" ? total.bytes : clientBytes,
     elapsedMs,
     laneBytes,
-    buckets,
     maxTickMs,
     errors,
   };
