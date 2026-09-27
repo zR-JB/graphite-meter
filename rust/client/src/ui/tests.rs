@@ -277,14 +277,12 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
 fn download_measurement() -> graphite_meter_core::measurement::MeasurementResult {
     use graphite_meter_core::measurement::*;
     MeasurementResult {
-        stage: Stage::Download,
         direction: Direction::Down,
         total_bytes: 1_500_000,
         mean_bytes_per_sec: Some(1_500_000.0),
         peak_bytes_per_sec: Some(1_500_000.0),
         samples: 4,
         elapsed_nanos: Some(1_000_000_000),
-        unavailable_reason: None,
     }
 }
 

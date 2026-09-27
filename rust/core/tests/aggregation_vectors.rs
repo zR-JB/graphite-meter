@@ -25,12 +25,12 @@ fn shared_aggregation_contract() {
             .map(|id| id.as_str().unwrap().into())
             .collect();
         let mut engine = AggregateMeasurements::default();
-        engine.begin(stage, participants.clone(), 0, IntervalReason::StageStart);
+        engine.begin_stage(stage, participants.clone(), 0);
         for value in case["boundaries"].as_array().unwrap() {
             let at_nanos = value["atMs"].as_u64().unwrap() * 1_000_000;
             if let Some(dropout) = value["dropout"].as_array() {
                 participants.retain(|id| !dropout.iter().any(|removed| removed.as_str() == Some(id)));
-                engine.begin(stage, participants.clone(), at_nanos, IntervalReason::Dropout);
+                engine.dropout(&participants, at_nanos);
             }
             let mut boundary = Boundary {
                 at_nanos,
@@ -57,7 +57,7 @@ fn shared_aggregation_contract() {
             engine.observe(boundary);
         }
         for (name, direction) in [("down", Direction::Down), ("up", Direction::Up)] {
-            let result = engine.result(stage, direction);
+            let result = engine.result(direction);
             close(result.mean_bytes_per_sec, &case["result"][name]["bytesPerSec"]);
             close(result.peak_bytes_per_sec, &case["result"][name]["peakBytesPerSec"]);
         }

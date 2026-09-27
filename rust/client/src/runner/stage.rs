@@ -19,7 +19,7 @@ use graphite_meter_core::{
     latency::LatencyAccumulator,
     measurement::{
         AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction, FINAL_CHECKPOINT_BUDGET,
-        IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
+        SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
 use std::{
@@ -278,7 +278,6 @@ impl StageResources {
         let Some(index) = self.transfers.iter().position(|transfer| transfer.id == failure.id) else {
             return Err(failure);
         };
-        accounting.observe(self.local_boundary(epoch));
         let transfer = self.transfers.remove(index);
         snapshots.send_modify(|snapshot| {
             if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == failure.id) {
@@ -300,17 +299,12 @@ impl StageResources {
         });
         self.failed.push(failure.id.clone());
         self.retired.spawn(transfer.close(false));
+        if measuring {
+            let survivors: Vec<_> = self.transfers.iter().map(|transfer| transfer.id.clone()).collect();
+            accounting.dropout(&survivors, nanos(epoch.elapsed()));
+        }
         if self.transfers.is_empty() {
             return Err(AllParticipantsFailed(*failure).into());
-        }
-        if measuring && let Some(stage) = stage {
-            accounting.begin(
-                stage,
-                self.transfers.iter().map(|transfer| transfer.id.clone()).collect(),
-                nanos(epoch.elapsed()),
-                IntervalReason::Dropout,
-            );
-            accounting.observe(self.local_boundary(epoch));
         }
         Ok(())
     }
@@ -397,10 +391,8 @@ fn server_contributions(
                 id: id.clone(),
                 down: stage
                     .needs_down()
-                    .then(|| accounting.server_result(stage, Direction::Down, id)),
-                up: stage
-                    .needs_up()
-                    .then(|| accounting.server_result(stage, Direction::Up, id)),
+                    .then(|| accounting.server_result(id, Direction::Down)),
+                up: stage.needs_up().then(|| accounting.server_result(id, Direction::Up)),
                 error: snapshot
                     .servers
                     .iter()
@@ -783,11 +775,10 @@ pub(super) async fn measure(
             boundary.at_nanos = local.at_nanos;
             boundary.down = local.down;
             boundary.observed_up = local.observed_up;
-            accounting.begin(
+            accounting.begin_stage(
                 stage,
                 resources.transfers.iter().map(|transfer| transfer.id.clone()).collect(),
                 boundary.at_nanos,
-                IntervalReason::StageStart,
             );
             accounting.observe(boundary);
         }
@@ -939,10 +930,10 @@ pub(super) async fn measure(
         }
         let down = transfer_stage
             .filter(|stage| stage.needs_down())
-            .map(|stage| accounting.result(stage, Direction::Down));
+            .map(|_| accounting.result(Direction::Down));
         let up = transfer_stage
             .filter(|stage| stage.needs_up())
-            .map(|stage| accounting.result(stage, Direction::Up));
+            .map(|_| accounting.result(Direction::Up));
         snapshots.send_modify(|snapshot| {
             latency.sample(snapshot, ended.duration_since(started));
             let missing = (stage.downloads() && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
