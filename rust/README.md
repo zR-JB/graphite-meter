@@ -125,7 +125,7 @@ python3 rust/tests/interop.py
 ```
 
 Ring is the TLS/QUIC crypto provider. `rust-check` enforces dependency policy with
-`cargo deny --locked check` (cargo-deny 0.20.2); a daily workflow rechecks advisories.
+`cargo deny --locked check` (cargo-deny pinned in `mise.toml`); a daily workflow rechecks advisories.
 It also limits the Linux production graph to 135 server crates and
 164 client crates, including each binary’s root crate.
 The first-party Rust crates forbid unsafe code. This does not make the full

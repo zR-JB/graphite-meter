@@ -17,12 +17,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
+      - name: Set up pinned cargo-deny
+        uses: ./.github/actions/setup-project
+        with: {cargo-deny: 'true'}
       - name: Install pinned experimental Rust toolchain
         run: |
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal
       - name: Check Rust dependencies against the live advisory database
         working-directory: rust
-        run: |
-          cargo install cargo-deny --version 0.20.2 --locked
-          cargo deny --locked check advisories
+        run: cargo deny --locked check advisories

@@ -214,28 +214,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Python tools
+      - name: Set up Python tools and pinned cargo-deny
         uses: ./.github/actions/setup-project
+        with: {cargo-deny: 'true'}
       - name: Install pinned experimental Rust toolchain
         run: |
           version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
           rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
       - id: cargo-cache
-        name: Cache Cargo downloads, dependency policy tool and build output
+        name: Cache Cargo downloads and build output
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/bin/cargo-deny
-            ~/.cargo/.crates.toml
-            ~/.cargo/.crates2.json
             rust/target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
-      - name: Install pinned cargo-deny
-        working-directory: rust
-        run: cargo install cargo-deny --version 0.20.2 --locked
       - name: Check experimental Rust implementation and dependency policy
         run: mise run rust-check
       - name: Keep only dependency builds in a new cache

@@ -18,6 +18,7 @@ TOOL_KEYS = {
     "ty": "aqua:astral-sh/ty",
     "actionlint": "aqua:rhysd/actionlint",
     "zizmor": "aqua:zizmorcore/zizmor",
+    "cargo-deny": "aqua:EmbarkStudios/cargo-deny",
 }
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},
