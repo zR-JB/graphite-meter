@@ -339,7 +339,6 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 			continue
 		}
 		stats := interval.combined
-		// The headline window is a peak candidate too, so a fast tail never leaves the peak below it.
 		result.MeanBps, result.PeakBps, result.Samples = *rate, max(stats.peak.of(dir), *rate), stats.samples
 		result.Elapsed = interval.End - interval.Start
 		if dir == Up {

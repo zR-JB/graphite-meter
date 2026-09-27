@@ -405,7 +405,6 @@ func (m model) runView(w, h int) string {
 		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
 	}
 	bottom := m.st.panel(title, results, w, 0)
-	// Results carry every stage's headline, so the paths sit beside them only when there is room.
 	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
 		fields := strings.Join(m.testFields(w-1-rw-4), "\n")
 		bottomH := max(lipgloss.Height(results), lipgloss.Height(fields)) + 2

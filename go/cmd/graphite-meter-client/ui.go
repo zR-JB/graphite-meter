@@ -212,7 +212,6 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		}
 	}
 	for i, l := range lines {
-		// One mean per dot column, joined to the previous column unless a missing sample lies between.
 		col, sum, n, px, py, drawn := -1, 0.0, 0, 0, 0, false
 		plot := func() {
 			if n == 0 {

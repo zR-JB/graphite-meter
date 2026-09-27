@@ -217,7 +217,6 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		}
 		server.latencyFailed = true
 		server.cancelLatency(err)
-		// An unreachable server would hold each later stage's preparation until it timed out.
 		lost := reason == FailureConnectionLost || reason == FailureTimeout
 		server.removed = len(stage.Directions) == 0 && lost && len(c.ids()) > 1
 	} else {

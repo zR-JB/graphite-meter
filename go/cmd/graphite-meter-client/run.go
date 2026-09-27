@@ -366,7 +366,6 @@ func (m *model) apply(e goclient.Event) {
 		case e.Throughput.Unavailable:
 			r.shown[e.Direction], v = 0, math.NaN()
 		case !sampled || last.Unavailable:
-			// First evidence snaps like the browser; easing from zero would show a rate nobody measured.
 			r.shown[e.Direction] = v
 		}
 		r.history[e.Direction] = r.history[e.Direction].add(at, v)
