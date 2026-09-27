@@ -13,11 +13,18 @@ quiet() { "$@" >"$out/log" 2>&1 || { cat "$out/log" >&2; return 1; }; }
 # Like the hosted scan, analyze tracked files only, not local build output.
 mkdir "$out/src"
 git ls-files -z | tar --null -T - -cf - | tar -xf - -C "$out/src"
+cat >"$out/build-go.sh" <<'BUILD'
+#!/usr/bin/env bash
+set -euo pipefail
+go build ./...
+go build -o /dev/null ../rust/tests/server_client.go
+go build -o /dev/null ../rust/tests/h3_client.go
+BUILD
 for language in go javascript-typescript python actions rust; do
     echo "CodeQL $language" >&2
     pack=${language%-typescript}
     build=(--build-mode=none)
-    [ "$language" != go ] || build=(--command="bash -c 'go build ./... && go build -o /dev/null ../rust/tests/server_client.go && go build -o /dev/null ../rust/tests/h3_client.go'" --working-dir="$out/src/go")
+    [ "$language" != go ] || build=(--command="bash $out/build-go.sh" --working-dir="$out/src/go")
     quiet "$cli" database create "$out/db-$language" --language="$language" \
         --source-root="$out/src" "${build[@]}" --overwrite --threads=4
     quiet "$cli" database analyze "$out/db-$language" --threat-model=local --format=sarif-latest \
