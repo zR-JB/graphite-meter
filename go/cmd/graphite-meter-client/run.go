@@ -318,7 +318,7 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
 	case goclient.EventServerFailure:
-		m.notice = m.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
+		m.notice = m.serverName(e.ServerID) + ": " + failureLabels[e.Failure.Reason]
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
 		if e.Phase == goclient.PhasePreparing {

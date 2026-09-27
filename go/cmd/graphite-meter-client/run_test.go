@@ -391,8 +391,8 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 			t.Errorf("report lost %q:\n%s", want, text)
 		}
 	}
-	m.run.stages[3].state = stageStopped
-	if text := ansi.Strip(m.finalReport()); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
+	m.run.stages[3].state, m.run.outcome = stageStopped, goclient.OutcomeStopped
+	if text = ansi.Strip(m.finalReport()); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
 		t.Errorf("a stage stopped before measuring is not named: %s", text)
 	}
 	if strings.Contains(strings.ToLower(text), "loss") || !strings.Contains(text, "Upload stopped") ||
@@ -523,12 +523,13 @@ func TestMultiServerRunViews(t *testing.T) {
 			{
 				Kind:     goclient.EventServerFailure,
 				ServerID: "b",
-				Failure:  &goclient.ServerFailure{ServerID: "b", Err: errors.New("connection lost")},
+				Failure: &goclient.ServerFailure{ServerID: "b", Reason: goclient.FailureConnectionLost,
+					Err: errors.New(`Get "http://b/download": EOF`)},
 			},
 		},
 	}))
-	if m.notice != "B: connection lost" {
-		t.Fatalf("failure notice = %q, want the server's name", m.notice)
+	if m.notice != "B: Connection lost" {
+		t.Fatalf("failure notice = %q, want the server's name and reason", m.notice)
 	}
 	m.run.outcome = goclient.OutcomeComplete
 	if screen := view(m); !strings.Contains(screen, "Latency to A") || !strings.Contains(screen, "10.0 ms") {
@@ -903,5 +904,27 @@ func TestFinishedRunGivesTheRoomToTheTimeline(t *testing.T) {
 			strings.Contains(screen, "✓") {
 			t.Errorf("%dx%d finished screen:\n%s", size[0], size[1], screen)
 		}
+	}
+}
+
+func TestMissingEvidenceIsNeverShownAsMeasured(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	m.cfg.Stages = goclient.StageSet{Latency: true, Upload: true}
+	m.run.plan = m.cfg.Plan()
+	m.run.outcome = goclient.OutcomeIncomplete
+	m.run.results = []goclient.Result{{Stage: goclient.StageUpload, Direction: goclient.Up, Unavailable: true}}
+	m.run.details.Outcome = goclient.OutcomeIncomplete
+	m.run.details.Intervals = []goclient.AggregationInterval{{Stage: goclient.StageUpload}}
+	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency,
+		Latency: goclient.LatencyStats{Count: 3, P50: time.Millisecond}})
+	details, report := ansi.Strip(m.detailsView(120, true)), ansi.Strip(m.finalReport())
+	for _, wrong := range []string{"0 B", "·  ·", "Added"} {
+		if strings.Contains(details+report, wrong) {
+			t.Errorf("unmeasured evidence reads %q:\n%s\n%s", wrong, details, report)
+		}
+	}
+	if chart := ansi.Strip(m.st.chart(nil, nil, rateAxis, 1, 40, 6)); strings.Contains(chart, "bit/s") {
+		t.Errorf("an empty chart claims a scale:\n%s", chart)
 	}
 }

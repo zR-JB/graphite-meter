@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -437,8 +439,9 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 			t.Fatal("footer offered enter to a row while sign-in owns it")
 		}
 	}
-	if screen := view(m); !strings.Contains(screen, "ABCD") {
-		t.Fatalf("sign-in popup: %q", screen)
+	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "ABCD") ||
+		!slices.Contains(strings.Split(screen, "\n"), pad(" "+pending.BrowserURL, 120)) {
+		t.Fatalf("sign-in link sits inside a frame: %q", screen)
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
@@ -490,8 +493,8 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
 	}}))
 	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120, true)}
-	for _, view := range views {
-		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
+	for i, view := range views {
+		if i < 4 && !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
 			strings.Contains(view, "\x1b]") {
 			t.Fatalf("remote error reached the terminal unfiltered: %q", view)
 		}
@@ -522,5 +525,18 @@ func TestCertificateErrorsNameTheSkipSetting(t *testing.T) {
 	}
 	if got := errorText(errors.New("refused")); strings.Contains(got, "Skip TLS") {
 		t.Fatalf("an unrelated failure suggests skipping verification: %q", got)
+	}
+}
+
+func TestTransportErrorsReadAsReasons(t *testing.T) {
+	t.Parallel()
+	refused := &url.Error{Op: "Get", URL: "http://127.0.0.1:7246/servers?cb=1", Err: &net.OpError{Op: "dial",
+		Net: "tcp", Err: syscall.ECONNREFUSED}}
+	lost := fmt.Errorf("latency channel failed: %w", &url.Error{Op: "Post", URL: "http://127.0.0.1:7246/upload",
+		Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}})
+	for err, want := range map[error]string{refused: "Server could not be reached", lost: "Connection lost"} {
+		if got := errorText(err); got != want {
+			t.Errorf("errorText(%v) = %q, want %q", err, got, want)
+		}
 	}
 }
