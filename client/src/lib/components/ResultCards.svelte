@@ -77,11 +77,12 @@
             live.rates ? live.rates.down + live.rates.up : null,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
           ];
+    // A value's unit arrives with it, so a pending card never shifts its unit.
     const readout = (n: number | null) =>
-      key === "latency"
-        ? { num: n === null ? MISSING : fmtMs(n), unit: "ms" }
-        : n === null
-          ? { num: MISSING, unit: store.unitLabel }
+      n === null
+        ? { num: MISSING, unit: "" }
+        : key === "latency"
+          ? { num: fmtMs(n), unit: "ms" }
           : rate(n);
     const shown = readout(value);
     const spoken = readout(accessible);
@@ -103,4 +104,11 @@
   }
 </script>
 
-<ResultSummary {cards} {details} scope={shown} onscope={selectScope} />
+<!-- A running test holds the scope row locked, so results arriving never move the cards. -->
+<ResultSummary
+  {cards}
+  details={details ?? store.serverDetails}
+  locked={!details}
+  scope={details ? shown : ""}
+  onscope={selectScope}
+/>

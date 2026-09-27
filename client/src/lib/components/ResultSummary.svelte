@@ -11,11 +11,13 @@
     details,
     scope = "",
     onscope,
+    locked = false,
   }: {
     cards: SummaryCard[];
     details?: MultiServerResult | null;
     scope?: string;
     onscope?: (id: string) => void;
+    locked?: boolean;
   } = $props();
   // One state for every card, so the row of cards opens and closes together.
   let open = $state(false);
@@ -46,6 +48,7 @@
         servers={details.selection}
         value={scope}
         onchange={onscope}
+        disabled={locked}
         aggregate="Combined"
         label="Result measurements"
       />
@@ -71,7 +74,7 @@
                 aria-hidden={card.accessible ? "true" : undefined}
               >
                 <span class="num">{card.num}</span>
-                <span class="unit">{card.unit}</span>
+                {#if card.unit}<span class="unit">{card.unit}</span>{/if}
               </span>
               {#if card.accessible}<span class="sr-only">{card.accessible}</span
                 >{/if}
