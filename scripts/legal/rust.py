@@ -21,7 +21,7 @@ from pathlib import Path
 
 from .artifacts import add_bytes, add_tree, notices
 from .discovery import discover_browser
-from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
+from .model import Component, LegalError, Project, Provenance, Review, array, local_path, marshal, obj, read_json, sha256, strings, text
 from .review import add_provenance, component_legal_files, validate_review
 from .rust_platform import notice as platform_notice, verify_dynamic_runtime
 
@@ -192,8 +192,11 @@ def main() -> None:
     parser.add_argument('--review-template', action='store_true')
     args = parser.parse_args()
     repo = args.repo.resolve()
+    args.reviews = local_path(args.reviews, repo) if args.reviews else None
+    args.supplement = local_path(args.supplement, repo) if args.supplement else None
+    args.browser_scan = local_path(args.browser_scan, repo) if args.browser_scan else None
     reviews = ([Review.parse(item) for item in array(read_json(args.reviews))] if args.reviews else [])
-    output = args.out.resolve()
+    output = local_path(args.out, repo)
     output.mkdir(parents=True, exist_ok=True)
     # Invalidate before the build too: a failed compilation must not retain an old report.
     (output / 'LEGAL.txt').unlink(missing_ok=True)
