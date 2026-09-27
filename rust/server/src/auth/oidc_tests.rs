@@ -36,6 +36,7 @@ struct Twist {
     claims: Option<Value>,
     header: Option<Value>,
     signed_userinfo: Option<Value>,
+    name: Option<String>,
 }
 
 struct Keys {
@@ -259,7 +260,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                         }
                         "/userinfo" => {
                             assert!(headers.contains("authorization: Bearer access\r\n"), "{headers}");
-                            let info = json!({"sub": if claims.wrong_subject { "other" } else { "operator" }, "name": "Example Operator", "groups": if claims.denied_group { vec!["outsiders"] } else { vec!["operators"] }});
+                            let info = json!({"sub": if claims.wrong_subject { "other" } else { "operator" }, "name": twist.name.as_deref().unwrap_or("Example Operator"), "groups": if claims.denied_group { vec!["outsiders"] } else { vec!["operators"] }});
                             match &twist.signed_userinfo {
                                 Some(extra) => {
                                     let mut info = info;
@@ -326,6 +327,11 @@ impl ProviderDouble {
 #[tokio::test]
 async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    let display_name = format!(" {}", "é".repeat(127));
+    provider.twist.lock().unwrap().name = Some(format!(
+        "\u{009b}{display_name}\u{202e}🙂{}",
+        "x".repeat(256 * 1024)
+    ));
     for scenario in 0..5 {
         let result = provider
             .login(Claims {
@@ -338,7 +344,8 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
         if scenario == 0 {
             let identity = result.unwrap();
             assert_eq!(identity.subject, "oidc:operator");
-            assert_eq!(identity.name, "Example Operator");
+            assert_eq!(identity.name, display_name);
+            assert!(identity.name.capacity() <= 256);
             assert_eq!(identity.challenge, "challenge");
         } else if scenario == 3 {
             assert!(matches!(result, Err(OidcFailure::GroupDenial)));

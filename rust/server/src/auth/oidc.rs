@@ -393,17 +393,22 @@ impl Oidc {
         .flatten()
         .find(|name| !name.is_empty())
         .unwrap_or("OIDC user");
-        let mut name: String = name
+        let mut display_name = String::with_capacity(256);
+        for character in name
             .chars()
             .filter(|character| graphite_meter_core::text::display_character(*character))
-            .collect();
-        name.truncate(name.floor_char_boundary(256));
-        if name.is_empty() {
-            name.push_str("OIDC user");
+        {
+            if display_name.len() + character.len_utf8() > 256 {
+                break;
+            }
+            display_name.push(character);
+        }
+        if display_name.is_empty() {
+            display_name.push_str("OIDC user");
         }
         Ok(Identity {
             subject: format!("oidc:{subject}"),
-            name,
+            name: display_name,
             challenge: tx.challenge,
             prior: tx.prior,
         })
