@@ -12,6 +12,7 @@ pub enum WireError {
     MalformedProbe,
     InvalidUploadProgress,
     UploadCounterOutOfRange,
+    InvalidReceiverCheckpoint,
 }
 
 impl fmt::Display for WireError {
@@ -20,6 +21,7 @@ impl fmt::Display for WireError {
             Self::MalformedProbe => "malformed ping protocol message",
             Self::InvalidUploadProgress => "invalid upload progress record",
             Self::UploadCounterOutOfRange => "upload progress counter exceeds exact JSON range",
+            Self::InvalidReceiverCheckpoint => "invalid receiver checkpoint counters",
         };
         formatter.write_str(message)
     }

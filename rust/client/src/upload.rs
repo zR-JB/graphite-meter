@@ -322,7 +322,7 @@ impl Upload {
                 || count.nanos == 0
                 || count.nanos > MAX_UPLOAD_COUNTER
             {
-                return Err("invalid receiver checkpoint counters".into());
+                return Err(wire::WireError::InvalidReceiverCheckpoint.into());
             }
             self.health()?;
             return Ok(ReceiverSnapshot {
