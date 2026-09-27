@@ -33,7 +33,6 @@
     probeAccountingSummary,
     hasProbeAccountingNotice,
   } from "../latencyProfile";
-  import MoreMenu from "../MoreMenu.svelte";
   import ResultSummary from "../ResultSummary.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
@@ -212,19 +211,15 @@
         )} transferred
       </p>
     </div>
-    <MoreMenu label="Result actions" danger>
-      {#snippet children(select)}
-        <button
-          type="button"
-          role="menuitem"
-          tabindex="-1"
-          onclick={() => select(onDelete)}
-        >
-          <span><Icon name="trash" /></span>
-          <span><strong>Delete this result</strong></span>
-        </button>
-      {/snippet}
-    </MoreMenu>
+    <button
+      class="btn btn-icon btn-inset"
+      type="button"
+      aria-label="Delete this result"
+      {@attach tooltip(() => "Delete this result")}
+      onclick={(event) => onDelete(event.currentTarget)}
+    >
+      <Icon name="trash" />
+    </button>
     <button
       class="btn btn-icon btn-inset close-detail"
       type="button"
