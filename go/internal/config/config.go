@@ -368,7 +368,7 @@ func validOrigin(value, scheme string) bool {
 
 func (c Config) Validate() error {
 	if err := c.PublishedCatalog().Validate(); err != nil {
-		return fmt.Errorf("server catalogue with GM_SERVER_NAME and GM_SERVER_LOCATION: %w", err)
+		return fmt.Errorf("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalogue: %w", err)
 	}
 	checks := []func() error{c.validateAuth, c.validateLimits, c.validateListeners, c.validatePublicOrigins}
 	for _, check := range checks {
