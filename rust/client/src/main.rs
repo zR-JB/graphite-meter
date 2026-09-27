@@ -11,17 +11,20 @@ use graphite_meter_client::{
 
 #[tokio::main]
 async fn main() {
-    match run().await {
-        Ok(0) => {}
-        Ok(code) => std::process::exit(code),
-        Err(error) => {
-            eprintln!("graphite-meter Rust client: {}", safe(&error.to_string()));
-            std::process::exit(1);
-        }
+    let code = match cli::parse(std::env::args_os().skip(1)) {
+        Ok(action) => run(action).await.unwrap_or_else(|error| fail(&error, 1)),
+        Err(error) => fail(&error, 2),
+    };
+    if code != 0 {
+        std::process::exit(code);
     }
 }
-async fn run() -> Result<i32, Error> {
-    let (config, report_only) = match cli::parse(std::env::args_os().skip(1))? {
+fn fail(error: &Error, code: i32) -> i32 {
+    eprintln!("graphite-meter Rust client: {}", safe(&error.to_string()));
+    code
+}
+async fn run(action: Action) -> Result<i32, Error> {
+    let (config, report_only) = match action {
         Action::Help => {
             print!("{}", cli::HELP);
             return Ok(0);
@@ -72,26 +75,23 @@ async fn run() -> Result<i32, Error> {
         let _ = tokio::signal::ctrl_c().await;
         signal.store(130, Ordering::Relaxed);
     };
-    let snapshot = if report_only || !std::io::stdout().is_terminal() {
-        controller::run_once(config, shutdown).await?
+    let finished = if report_only || !std::io::stdout().is_terminal() {
+        Some(controller::run_once(config, shutdown).await?)
     } else {
-        let (snapshot, exit) = controller::run(config, shutdown).await?;
+        let (finished, exit) = controller::run(config, shutdown).await?;
         if exit == graphite_meter_client::ui::Exit::Interrupted {
             caught.store(130, Ordering::Relaxed);
         }
-        snapshot
+        finished
     };
-    report(&snapshot);
+    if let Some(snapshot) = &finished {
+        report(snapshot);
+    }
     let signal = caught.load(Ordering::Relaxed);
-    Ok(if signal != 0 {
-        i32::from(signal)
-    } else {
-        match snapshot.phase {
-            graphite_meter_client::model::Phase::Complete
-            | graphite_meter_client::model::Phase::Setup => 0,
-            graphite_meter_client::model::Phase::Cancelled => 1,
-            _ => 1,
-        }
+    Ok(match finished.map(|snapshot| snapshot.phase) {
+        _ if signal != 0 => i32::from(signal),
+        None | Some(graphite_meter_client::model::Phase::Complete) => 0,
+        Some(_) => 1,
     })
 }
 

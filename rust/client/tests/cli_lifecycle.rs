@@ -42,11 +42,17 @@ fn client(origin: &str) -> Command {
     command
 }
 
-async fn latency_peer() -> Result<(String, tokio::task::JoinHandle<()>), Error> {
+async fn latency_peer(
+    revoked_download: bool,
+) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let twin = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
+    let twin_origin = format!("http://{}", twin.local_addr()?);
     let peer = tokio::spawn(async move {
-        while let Ok((mut stream, _)) = listener.accept().await {
+        while let Ok((mut stream, _)) = tokio::select! { accepted = listener.accept() => accepted, accepted = twin.accept() => accepted }
+        {
+            let twin_origin = twin_origin.clone();
             tokio::spawn(async move {
                 let mut request = [0; 4096];
                 let path = loop {
@@ -78,9 +84,19 @@ async fn latency_peer() -> Result<(String, tokio::task::JoinHandle<()>), Error> 
                     return Ok(());
                 }
                 read_header(&mut stream).await?;
+                if path.starts_with("/download") {
+                    stream.write_all(b"HTTP/1.1 403 authentication required\r\nX-Graphite-Upload-Refusal: revoked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await?;
+                    return Ok(());
+                }
+                let throughput = if revoked_download {
+                    serde_json::json!([{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}])
+                } else {
+                    serde_json::json!([])
+                };
                 let body = match path.as_str() {
+                    "/servers" if revoked_download => serde_json::json!({"defaultSelection":["self","twin"],"servers":[{"id":"self","url":".","name":"local peer"},{"id":"twin","url":twin_origin,"name":"twin peer"}]}),
                     "/servers" => serde_json::json!({"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"local peer"}]}),
-                    "/preflight" => serde_json::json!({"generation":"cli-fixture","capabilities":{"throughput":[],"latency":[{"baseUrl":".","transport":"websocket"}]}}),
+                    "/preflight" => serde_json::json!({"generation":"cli-fixture","capabilities":{"throughput":throughput,"latency":[{"baseUrl":".","transport":"websocket"}]}}),
                     "/probe" => serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}),
                     _ => return Err("unexpected route".into()),
                 }.to_string();
@@ -94,7 +110,7 @@ async fn latency_peer() -> Result<(String, tokio::task::JoinHandle<()>), Error> 
 
 #[tokio::test]
 async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Error> {
-    let (origin, peer) = latency_peer().await?;
+    let (origin, peer) = latency_peer(false).await?;
     let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
     peer.abort();
     assert_eq!(
@@ -109,6 +125,26 @@ async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Erro
     assert!(report.contains("Probe timeouts 0/") && report.contains("(0.0%)"));
     assert!(report.contains("replies · 1.0 s"));
     assert!(report.contains("Server timing (") && report.contains("paired replies, means): raw"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> {
+    let (origin, peer) = latency_peer(true).await?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(8),
+        client(&origin)
+            .args(["-stages", "latency,download", "-download-duration", "1s"])
+            .output(),
+    )
+    .await??;
+    peer.abort();
+    let report = String::from_utf8(output.stdout)?;
+    assert_eq!(output.status.code(), Some(1), "{report}");
+    assert!(
+        report.starts_with("Graphite Meter · Incomplete"),
+        "{report}"
+    );
     Ok(())
 }
 
@@ -152,7 +188,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn tui_stop_and_raw_interrupt_preserve_exit_reason() -> Result<(), Error> {
-    let (origin, peer) = latency_peer().await?;
+    let (origin, peer) = latency_peer(false).await?;
     let script = r#"
 import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
 master, slave = pty.openpty()
@@ -175,7 +211,10 @@ try:
             except OSError:
                 break
             output += data
-            if step == 0 and b'WebSocket' in output:
+            if step == 0 and mode == 'check-quit' and b'Checking paths' in output:
+                os.write(master, b'q')
+                step = 1
+            elif step == 0 and b'WebSocket' in output:
                 os.write(master, b'\x03' if mode == 'setup-interrupt' else b'r')
                 step = 1
             elif step == 1 and b'Running' in output:
@@ -205,7 +244,10 @@ finally:
         p.wait()
     os.close(master)
 "#;
+    let silent = TcpListener::bind("127.0.0.1:0").await?;
+    let silent_origin = format!("http://{}", silent.local_addr()?);
     for (mode, step, code) in [
+        ("check-quit", 1, 0),
         ("setup-interrupt", 1, 130),
         ("run-interrupt", 2, 130),
         ("confirmed-stop", 4, 1),
@@ -215,7 +257,11 @@ finally:
                 "-c",
                 script,
                 env!("CARGO_BIN_EXE_graphite-meter-client"),
-                &origin,
+                if mode == "check-quit" {
+                    &silent_origin
+                } else {
+                    &origin
+                },
                 mode,
             ])
             .output()
@@ -231,15 +277,12 @@ finally:
         let text = result["text"].as_str().unwrap();
         assert!(text.contains("\x1b[?1049l"));
         assert!(text.contains("\x1b[?25h"));
-        if mode != "setup-interrupt" {
-            assert!(
-                result["text"]
-                    .as_str()
-                    .unwrap()
-                    .contains("Graphite Meter · Stopped"),
-                "{mode}: {text:?}"
-            );
-        }
+        let stopped = !matches!(mode, "setup-interrupt" | "check-quit");
+        assert_eq!(
+            text.contains("Graphite Meter · Stopped"),
+            stopped,
+            "{mode}: {text:?}"
+        );
     }
     peer.abort();
     Ok(())
@@ -265,7 +308,7 @@ async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error
                 .output(),
         )
         .await??;
-        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
         assert!(!output.stderr.is_empty(), "{args:?}");
         assert!(output.stdout.is_empty(), "{args:?}");
     }

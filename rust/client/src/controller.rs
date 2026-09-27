@@ -32,7 +32,7 @@ impl Work {
 pub async fn run(
     config: Config,
     shutdown: impl Future<Output = ()>,
-) -> Result<(Snapshot, ui::Exit), Error> {
+) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
     let mut controller = Controller::with_snapshots(&config, snapshots)?;
@@ -77,9 +77,7 @@ pub async fn run(
         }
     }; // Drop the UI and restore the terminal before shutdown/reporting.
     controller.stop().await;
-    let exit = result?;
-    let final_snapshot = controller.snapshots.borrow().clone();
-    Ok((final_snapshot, exit))
+    Ok((controller.finished, result?))
 }
 
 pub async fn run_once(
@@ -126,6 +124,8 @@ pub struct Controller {
     prepared: Option<runner::PreparedRun>,
     cancel: Option<watch::Sender<bool>>,
     pending: Option<Work>,
+    running: bool,
+    finished: Option<Snapshot>,
     cancelling: bool,
     cancel_deadline: Option<Instant>,
     http: Http,
@@ -203,6 +203,8 @@ impl Controller {
             prepared: None,
             cancel: None,
             pending: None,
+            running: false,
+            finished: None,
             cancelling: false,
             cancel_deadline: None,
             http: Http::new(config.insecure)?,
@@ -217,7 +219,8 @@ impl Controller {
             self.http = Http::new(work.config().insecure)?;
             self.insecure = work.config().insecure;
         }
-        if matches!(work, Work::Verify(_)) {
+        self.running = matches!(work, Work::Run(_));
+        if !self.running {
             self.prepared = None;
         }
         let servers = if self
@@ -290,10 +293,15 @@ impl Controller {
         self.cancel_deadline = None;
         if self.cancelling {
             self.snapshots.send_modify(|snapshot| {
-                snapshot.phase = Phase::Cancelled;
-                snapshot.status = "Stopped".into();
+                if matches!(
+                    snapshot.phase,
+                    Phase::Preparing | Phase::Warmup | Phase::Measuring
+                ) {
+                    snapshot.phase = Phase::Cancelled;
+                    snapshot.status = "Stopped".into();
+                    snapshot.error = None;
+                }
                 snapshot.auth = None;
-                snapshot.error = None;
             });
         } else {
             let result = result
@@ -325,6 +333,9 @@ impl Controller {
             }
         }
         self.cancelling = false;
+        if self.running {
+            self.finished = Some(self.snapshots.borrow().clone());
+        }
         if let Some(work) = self.pending.take() {
             self.launch(work)?;
         }
@@ -358,35 +369,14 @@ impl Controller {
         }
     }
     async fn stop(&mut self) {
-        self.pending = None;
-        self.request_cancel();
-        if tokio::time::timeout(CANCEL_GRACE, async {
-            while self.operations.join_next().await.is_some() {}
-        })
-        .await
-        .is_err()
-        {
-            self.operations.abort_all();
-            while self.operations.join_next().await.is_some() {}
-        }
+        self.cancel();
+        let _ = self.wait().await;
         self.close_browser().await;
-        if self.cancelling {
-            self.snapshots.send_modify(|snapshot| {
-                if matches!(
-                    snapshot.phase,
-                    Phase::Preparing | Phase::Warmup | Phase::Measuring | Phase::Cancelled
-                ) {
-                    snapshot.phase = Phase::Cancelled;
-                    snapshot.status = "Stopped".into();
-                }
-                snapshot.auth = None;
-            });
-        }
     }
 }
 
 async fn execute(
-    mut work: Work,
+    work: Work,
     http: Http,
     snapshots: watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
@@ -420,20 +410,13 @@ async fn execute(
             Ok(prepared) => return Ok(prepared),
             Err(error) => error,
         };
-        if crate::failure::reason(error.as_ref())
-            == graphite_meter_core::failure::FailureReason::SignInRequired
-            && snapshots
-                .borrow()
-                .results
-                .iter()
-                .any(|result| result.elapsed > Duration::ZERO)
-            && matches!(work, Work::Run(_))
-        {
-            work = Work::Verify(work.config().clone());
-            snapshots.send_modify(|snapshot| {
-                snapshot.status = "Sign-in expired. Checking the selected servers…".into();
-            });
-            continue;
+        let measured = snapshots
+            .borrow()
+            .results
+            .iter()
+            .any(|result| result.elapsed > Duration::ZERO);
+        if measured && matches!(work, Work::Run(_)) {
+            return Err(error);
         }
         let Some(required) = authentication_required(error.as_ref()) else {
             return Err(error);
