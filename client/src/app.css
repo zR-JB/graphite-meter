@@ -141,7 +141,7 @@
   --bg: light-dark(#f5f6f7, #17191c);
   --surface-1: light-dark(#ffffff, #1c1f23);
   --surface-2: light-dark(#f0f3f4, #23262b);
-  --surface-inset: light-dark(#eef1f2, #16191d);
+  --surface-inset: light-dark(#f3f5f6, #16191d);
   /* Surface sheen: the lit top of a tile, layered over its surface colour. */
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
@@ -164,7 +164,7 @@
   --phase-warmup: light-dark(#70767d, #858c94);
   --phase-latency: light-dark(#4b6076, #8ba3ba);
   --phase-download: light-dark(#2f717a, #6db0b8);
-  --phase-upload: light-dark(#7a5f34, #bda36c);
+  --phase-upload: light-dark(#8f6425, #bda36c);
   --phase-bidirectional: light-dark(#6d5e94, #a695c8);
   --phase-complete: light-dark(#445f79, #7590a5);
   /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
@@ -331,12 +331,28 @@
     overflow: clip;
     overscroll-behavior: none;
   }
-  /* One thin scrollbar for every scroll area. */
-  :root {
-    scrollbar-color: var(--border-strong) transparent;
+  /* One thin scrollbar for every scroll area. Chromium draws step buttons for the
+     standard properties on Linux, so engines with the pseudo-elements use those. */
+  @supports not selector(::-webkit-scrollbar) {
+    :root {
+      scrollbar-color: var(--border-strong) transparent;
+    }
+    * {
+      scrollbar-width: thin;
+    }
   }
-  * {
-    scrollbar-width: thin;
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: var(--r-full);
+    background: var(--border-strong) padding-box;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
   }
   body {
     background: var(--canvas);
@@ -767,15 +783,42 @@
     box-shadow: var(--elev-float);
   }
 
-  /* A readout that follows the pointer over a plot; it never takes the pointer. */
+  /* Hover card: one shell for explainer tooltips and plot readouts. A sans title
+     line, then label/value rows; it never takes the pointer. */
+  .tooltip,
   .inspect-card {
-    position: absolute;
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
+    color: var(--text);
     box-shadow: var(--elev-tooltip);
+    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
+    letter-spacing: 0;
+    text-transform: none;
     pointer-events: none;
+  }
+  /* A plot readout positioned by its plot. */
+  .inspect-card {
+    position: absolute;
+    display: grid;
+    gap: 2px;
+  }
+  .inspect-title {
+    font-weight: var(--w-heavy);
+  }
+  .inspect-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+  .inspect-row > :first-child {
+    color: var(--text-soft);
+  }
+  .inspect-row > :last-child {
+    font-family: var(--font-mono);
+    font-weight: var(--w-strong);
+    font-variant-numeric: tabular-nums;
   }
 
   /* Popovers anchor to their invoker; the fallbacks flip them on-screen. */
@@ -864,18 +907,8 @@
     position-area: block-start;
     position-try-fallbacks: flip-block;
     position-visibility: anchors-visible;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-2);
-    color: var(--text);
-    box-shadow: var(--elev-tooltip);
-    font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
-    letter-spacing: 0;
-    text-transform: none;
     white-space: pre-line;
     overflow-wrap: anywhere;
-    pointer-events: none;
     opacity: 0;
     translate: 0 2px;
     transition:
