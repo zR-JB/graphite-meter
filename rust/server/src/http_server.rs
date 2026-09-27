@@ -62,6 +62,7 @@ enum HttpProtocol {
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
@@ -348,10 +349,7 @@ impl HttpServer {
             }
         };
         self.stopping.send_replace(true);
-        let _ = tokio::time::timeout(Duration::from_secs(5), async {
-            while tasks.join_next().await.is_some() {}
-        })
-        .await;
+        let _ = tokio::time::timeout(SHUTDOWN_GRACE, async { while tasks.join_next().await.is_some() {} }).await;
         tasks.shutdown().await;
         result
     }

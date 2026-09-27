@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::{webtransport, webtransport_send::ResetQueue};
-use futures_util::{StreamExt, stream::FuturesUnordered};
+use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
 use quinn::SharedBudget;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -12,6 +12,7 @@ use webtransport::{Incoming, ReceiveStream, TransportError};
 const MAX_PENDING_STREAMS: usize = 64;
 const SESSION_QUEUE: usize = 32;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const WT_SESSION_GONE: u64 = 0x170d7b68;
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
@@ -168,7 +169,7 @@ impl HttpServer {
             }
         };
         self.stopping.send_replace(true);
-        let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let drain_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
         let _ = tokio::time::timeout_at(drain_deadline, async {
             while connections.join_next().await.is_some() {}
         })
@@ -202,8 +203,10 @@ impl HttpServer {
         initializing.0.take();
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
-        let mut draining = false;
-        let idle = tokio::time::sleep(Duration::from_secs(15));
+        let mut closing = false;
+        let close = tokio::time::sleep(Duration::ZERO);
+        tokio::pin!(close);
+        let idle = tokio::time::sleep(IDLE_TIMEOUT);
         tokio::pin!(idle);
         let mut leftover = None;
         let stale = tokio::time::sleep(Duration::ZERO);
@@ -217,20 +220,23 @@ impl HttpServer {
             if since != leftover {
                 leftover = since;
                 if let Some(since) = since {
-                    stale.as_mut().reset(since + Duration::from_secs(15));
+                    stale.as_mut().reset(since + IDLE_TIMEOUT);
                 }
             }
             tokio::select! {
-                _ = &mut stale, if leftover.is_some() && !draining => {
-                    draining = true;
-                    connection.http.shutdown().await?;
-                    if connection.finished(draining) { return Ok(()); }
+                _ = &mut stale, if leftover.is_some() && !closing => {
+                    closing = true;
+                    connection.goaway();
+                    close.as_mut().reset(tokio::time::Instant::now() + SHUTDOWN_GRACE);
+                    if connection.finished(closing) { return Ok(()); }
                 }
-                _ = &mut stopping, if !draining => {
-                    draining = true;
-                    connection.http.shutdown().await?;
-                    if connection.finished(draining) { return Ok(()); }
+                _ = &mut stopping, if !closing => {
+                    closing = true;
+                    connection.goaway();
+                    close.as_mut().reset(tokio::time::Instant::now() + SHUTDOWN_GRACE);
+                    if connection.finished(closing) { return Ok(()); }
                 }
+                _ = &mut close, if closing => return Ok(()),
                 _ = expiry.tick() => connection.sessions.expire(),
                 _ = tuning.tick() => {
                     if connection.requests.is_empty() {
@@ -241,17 +247,17 @@ impl HttpServer {
                 }
                 Some(plain) = connection.requests.next() => {
                     connection.served_requests |= plain;
-                    if connection.finished(draining) { return Ok(()); }
+                    if connection.finished(closing) { return Ok(()); }
                     if connection.requests.is_empty() {
-                        idle.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(15));
+                        idle.as_mut().reset(tokio::time::Instant::now() + IDLE_TIMEOUT);
                     }
                 },
                 _ = &mut idle, if connection.requests.is_empty() => {
-                    connection.http.shutdown().await?;
+                    connection.goaway();
                     return Ok(());
                 },
                 Some(_) = connection.cleanup.next() => {
-                    if connection.finished(draining) { return Ok(()); }
+                    if connection.finished(closing) { return Ok(()); }
                 },
                 Some(reset) = pending_resets.recv() => {
                     let quic = connection.quic.clone();
@@ -606,10 +612,14 @@ struct OwnedConnection {
 
 impl OwnedConnection {
     // Browsers would hold a sessions-only connection's client slot ~15 s.
-    fn finished(&self, draining: bool) -> bool {
+    fn finished(&self, closing: bool) -> bool {
         self.requests.is_empty()
             && self.cleanup.is_empty()
-            && (draining || !self.served_requests && self.sessions.carried())
+            && (closing || !self.served_requests && self.sessions.carried())
+    }
+
+    fn goaway(&mut self) {
+        let _ = self.http.shutdown().now_or_never();
     }
 }
 
@@ -876,6 +886,59 @@ mod tests {
         Ok(received)
     }
 
+    type Sender = h3::client::SendRequest<h3_noq::OpenStreams, bytes::Bytes>;
+
+    fn serve(
+        server: &Arc<super::HttpServer>,
+        tls: Arc<rustls::ServerConfig>,
+    ) -> (
+        std::net::SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<Result<(), super::ConfigError>>,
+    ) {
+        let endpoint =
+            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
+            let _ = stopped.await;
+        }));
+        (address, stop, serving)
+    }
+
+    async fn h3_client(
+        client: &quinn::Endpoint,
+        config: quinn::ClientConfig,
+        address: std::net::SocketAddr,
+    ) -> (quinn::Connection, Sender) {
+        let quic = client
+            .connect_with(config, address, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        let (mut driver, sender) = h3::client::new(h3_noq::Connection::new(quic.clone())).await.unwrap();
+        tokio::spawn(async move { driver.wait_idle().await });
+        (quic, sender)
+    }
+
+    async fn upload_id(sender: &mut Sender) -> String {
+        use bytes::Buf;
+        let request = http::Request::post("https://localhost/upload/session")
+            .body(())
+            .unwrap();
+        let mut session = sender.send_request(request).await.unwrap();
+        session.finish().await.unwrap();
+        assert_eq!(session.recv_response().await.unwrap().status(), http::StatusCode::OK);
+        let mut body = Vec::new();
+        while let Some(mut data) = session.recv_data().await.unwrap() {
+            body.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+        }
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["uploadId"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
     #[tokio::test]
     async fn endpoint_buffers_refuse_without_connection_capacity_and_refund_on_drop() {
         use super::*;
@@ -1107,6 +1170,52 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn leftover_credit_closes_a_peer_that_blocks_goaway() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, mut blocking) = tls();
+        let (address, stop, serving) = serve(&server, tls);
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let mut transport = quinn::TransportConfig::default();
+        transport.receive_window((256 * 1024_u32).into());
+        blocking.transport_config(Arc::new(transport));
+        let post = |path: String| {
+            http::Request::post(format!("https://localhost{path}"))
+                .body(())
+                .unwrap()
+        };
+        let (quic, _sender, _unread) = tokio::time::timeout(Duration::from_secs(10), async {
+            let (quic, mut sender) = h3_client(&client, blocking, address).await;
+            let id = upload_id(&mut sender).await;
+            let mut upload = sender.send_request(post(format!("/upload?id={id}"))).await.unwrap();
+            upload.send_data(Bytes::from(vec![7; 256 * 1024])).await.unwrap();
+            upload.finish().await.unwrap();
+            assert_eq!(upload.recv_response().await.unwrap().status(), StatusCode::OK);
+            while upload.recv_data().await.unwrap().is_some() {}
+            let request = http::Request::get("https://localhost/download?bytes=1073741824")
+                .body(())
+                .unwrap();
+            let mut unread = sender.send_request(request).await.unwrap();
+            unread.finish().await.unwrap();
+            assert_eq!(unread.recv_response().await.unwrap().status(), StatusCode::OK);
+            (quic, sender, unread)
+        })
+        .await
+        .unwrap();
+        tokio::time::pause();
+        tokio::time::sleep(IDLE_TIMEOUT + SHUTDOWN_GRACE).await;
+        tokio::time::resume();
+        match tokio::time::timeout(Duration::from_secs(2), quic.closed()).await {
+            Ok(quinn::ConnectionError::ApplicationClosed(close)) => {
+                assert_eq!(close.error_code.into_inner(), h3::error::Code::H3_NO_ERROR.value())
+            }
+            outcome => panic!("leftover credit kept the connection: {outcome:?}"),
+        }
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
     }
 
     #[tokio::test]

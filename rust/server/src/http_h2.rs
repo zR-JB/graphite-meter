@@ -13,7 +13,6 @@ const WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 16 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 type StreamFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl HttpServer {
