@@ -45,6 +45,23 @@ impl Service {
         let sessions = sessions.unwrap_or_default();
         let log = Arc::new(SecurityLog::default());
         let attempts = Arc::new(AttemptLimiter::with_log(log.clone()));
+        let service = Self {
+            policy: Policy::new(&config.public_url, config.mode, trusted, sessions.clone())?,
+            password: config
+                .mode
+                .password()
+                .then(|| PasswordLogin::new(config, sessions.clone(), attempts.clone()))
+                .transpose()?,
+            oidc: config
+                .mode
+                .oidc()
+                .then(|| super::oidc::Oidc::new(config, log.clone()))
+                .transpose()?,
+            mode: config.mode,
+            sessions,
+            attempts,
+            log,
+        };
         let mode = match config.mode {
             AuthMode::Off => "off",
             AuthMode::Password => "password",
@@ -62,23 +79,7 @@ impl Service {
             lifetime / 60 % 60,
             lifetime % 60
         );
-        Ok(Self {
-            policy: Policy::new(&config.public_url, config.mode, trusted, sessions.clone())?,
-            password: config
-                .mode
-                .password()
-                .then(|| PasswordLogin::new(config, sessions.clone(), attempts.clone()))
-                .transpose()?,
-            oidc: config
-                .mode
-                .oidc()
-                .then(|| super::oidc::Oidc::new(config, log.clone()))
-                .transpose()?,
-            mode: config.mode,
-            sessions,
-            attempts,
-            log,
-        })
+        Ok(service)
     }
     pub fn configure_logging(&self, verbose: bool) {
         self.log.configure(verbose);
@@ -107,11 +108,10 @@ impl Service {
         tokio::join!(aggregate, provider);
     }
     pub async fn initialize(&self) -> Result<(), ConfigError> {
-        if let Some(oidc) = &self.oidc {
-            let result = oidc.provider().await;
-            if self.mode == AuthMode::Oidc {
-                result?;
-            }
+        if self.mode == AuthMode::Oidc
+            && let Some(oidc) = &self.oidc
+        {
+            oidc.provider().await?;
         }
         Ok(())
     }
@@ -167,7 +167,7 @@ impl Service {
 
     async fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
         let provider = if let Some(oidc) = &self.oidc {
-            oidc.provider().await.ok()
+            oidc.ready()
         } else {
             None
         };
@@ -1024,6 +1024,82 @@ mod tests {
         form_urlencoded::Serializer::new(String::new())
             .extend_pairs(values.iter().copied())
             .finish()
+    }
+
+    #[tokio::test]
+    async fn hybrid_initialization_and_local_login_do_not_wait_for_stalled_provider() {
+        use tokio::io::AsyncReadExt;
+        const PUBLIC: &str = "https://meter.example";
+        let provider = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let service = Arc::new(Service::new(&AuthConfig {
+            mode: AuthMode::Hybrid,
+            public_url: PUBLIC.into(),
+            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into(),
+            oidc_issuer: format!("https://localhost:{}", provider.local_addr().unwrap().port()),
+            oidc_client_id: "meter".into(),
+            oidc_client_secret: "provider-secret".into(),
+            oidc_allowed_groups: vec!["operators".into()],
+            ..AuthConfig::default()
+        }, vec![], None).unwrap());
+        tokio::time::pause();
+        tokio::time::timeout(Duration::from_secs(1), service.initialize())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::resume();
+        let logging = {
+            let service = service.clone();
+            tokio::spawn(async move { service.security_log().await })
+        };
+        let (mut stalled, _) = provider.accept().await.unwrap();
+        let mut hello = [0; 1];
+        stalled.read_exact(&mut hello).await.unwrap();
+        tokio::time::pause();
+        let login = tokio::time::timeout(
+            Duration::from_secs(1),
+            call(&service, Method::GET, "/login", &[], String::new()),
+        )
+        .await
+        .unwrap();
+        tokio::time::resume();
+        assert_eq!(login.status(), StatusCode::OK);
+        let nonce = set_cookie_value(&login, "__Host-gm_login");
+        let cookie = format!("__Host-gm_login={nonce}");
+        let signed_in = call(
+            &service,
+            Method::POST,
+            "/auth/password",
+            &[
+                ("cookie", &cookie),
+                ("origin", PUBLIC),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ],
+            encoded(&[
+                ("csrf", &nonce),
+                ("password", "correct horse battery staple"),
+            ]),
+        )
+        .await;
+        assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
+        assert!(
+            service
+                .sessions()
+                .lookup(&set_cookie_value(&signed_in, "__Host-gm_session"))
+                .is_some()
+        );
+        logging.abort();
+        assert!(logging.await.unwrap_err().is_cancelled());
+        let closed =
+            tokio::time::timeout(Duration::from_secs(1), stalled.read_to_end(&mut Vec::new()))
+                .await
+                .unwrap();
+        assert!(
+            closed.is_ok()
+                || closed.is_err_and(|error| matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof
+                ))
+        );
     }
 
     #[tokio::test]

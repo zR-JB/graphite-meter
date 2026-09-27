@@ -177,6 +177,9 @@ impl Oidc {
     pub fn name(&self) -> &str {
         &self.config.oidc_provider_name
     }
+    pub fn ready(&self) -> Option<Arc<Provider>> {
+        self.discovery.try_lock().ok()?.provider.clone()
+    }
     pub async fn provider(&self) -> Result<Arc<Provider>, ConfigError> {
         let mut discovery = self
             .discovery
