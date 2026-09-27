@@ -40,6 +40,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
         {
             return Err("GM_ENGINE_VERSION must be a nonempty release identifier".into());
         }
+        let version: String = version.bytes().map(char::from).collect();
         println!("cargo:rustc-env=GM_ENGINE_VERSION={version}");
     }
 
