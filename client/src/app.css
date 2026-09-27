@@ -2,50 +2,138 @@
    are unlayered, so a component refines a primitive without specificity work. */
 @layer reset, base, components;
 
-/* Fonts are self-hosted so the meter still renders correctly offline. */
+/* Unmodified upstream IBM Plex subsets and ranges, self-hosted so the meter renders offline. */
 @font-face {
-  font-family: "Instrument Sans";
+  font-family: "IBM Plex Sans";
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 100 700;
+  font-stretch: 85% 100%;
   font-display: swap;
-  src: url("/fonts/instrument-sans-latin.woff2") format("woff2");
+  src: url("/fonts/ibm-plex-sans-var-latin1.woff2") format("woff2");
   unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
-    U+2215, U+FEFF, U+FFFD;
+    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
+    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
+    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
 }
 @font-face {
-  font-family: "Instrument Sans";
+  font-family: "IBM Plex Sans";
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 100 700;
+  font-stretch: 85% 100%;
   font-display: swap;
-  src: url("/fonts/instrument-sans-latin-ext.woff2") format("woff2");
+  src: url("/fonts/ibm-plex-sans-var-latin2.woff2") format("woff2");
   unicode-range:
-    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
-    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
-    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
+    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
+    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
+    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 @font-face {
-  font-family: "Spline Sans Mono";
+  font-family: "IBM Plex Sans";
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 100 700;
+  font-stretch: 85% 100%;
   font-display: swap;
-  src: url("/fonts/spline-sans-mono-latin.woff2") format("woff2");
+  src: url("/fonts/ibm-plex-sans-var-pi.woff2") format("woff2");
   unicode-range:
-    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
-    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212,
-    U+2215, U+FEFF, U+FFFD;
+    U+0E3F, U+2000-200D, U+2015, U+2028-2029, U+202F, U+2032-2033, U+2070,
+    U+2074-2079, U+2080-2089, U+2113, U+2116, U+2126, U+212E, U+2150-2151,
+    U+2153-215E, U+2190-2199, U+21A9-21AA, U+21B0-21B3, U+21B6-21B7,
+    U+21BA-21BB, U+21C4, U+21C6, U+2202, U+2206, U+220F, U+2211, U+2215, U+221A,
+    U+221E, U+222B, U+2248, U+2260, U+2264-2265, U+25CA, U+2713, U+274C,
+    U+2B0E-2B11, U+FEFF, U+FFFD;
 }
 @font-face {
-  font-family: "Spline Sans Mono";
+  font-family: "IBM Plex Mono";
   font-style: normal;
-  font-weight: 400 700;
+  font-weight: 400;
   font-display: swap;
-  src: url("/fonts/spline-sans-mono-latin-ext.woff2") format("woff2");
+  src: url("/fonts/ibm-plex-mono-400-latin1.woff2") format("woff2");
   unicode-range:
-    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304,
-    U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
-    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
+    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
+    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-400-latin2.woff2") format("woff2");
+  unicode-range:
+    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
+    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
+    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
+    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-500-latin1.woff2") format("woff2");
+  unicode-range:
+    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
+    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
+    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-500-latin2.woff2") format("woff2");
+  unicode-range:
+    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
+    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
+    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
+    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-600-latin1.woff2") format("woff2");
+  unicode-range:
+    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
+    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
+    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-600-latin2.woff2") format("woff2");
+  unicode-range:
+    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
+    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
+    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
+    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-700-latin1.woff2") format("woff2");
+  unicode-range:
+    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
+    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
+    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-700-latin2.woff2") format("woff2");
+  unicode-range:
+    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
+    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
+    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
+    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
 /* Theme: the stored preference stamps data-theme (store, index.html, and the
@@ -65,11 +153,10 @@
    properties: 760px (phone → tablet) and 1200px (docked panels, mirrored by
    Console's MediaQuery). Everything else responds to its container. */
 :root {
-  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
-  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
   --font-mono:
-    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
+    "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --topbar-h: 60px;
   --statusbar-h: 28px;
@@ -349,8 +436,6 @@
     background: var(--canvas);
     color: var(--text);
     font-family: var(--font-sans);
-    /* Instrument Sans' 0.2em space crowds " · " joins. */
-    word-spacing: 0.05em;
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;

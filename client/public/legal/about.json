@@ -14,19 +14,19 @@
   "noticesURL": "legal/THIRD_PARTY_NOTICES.txt",
   "components": [
     {
-      "name": "Instrument Sans",
-      "version": "2022 webfont",
+      "name": "IBM Plex Mono",
+      "version": "@ibm/plex-mono 2.5.0",
       "ecosystem": "font",
-      "source": "https://github.com/Instrument/instrument-sans",
+      "source": "https://github.com/IBM/plex",
       "declaredLicenseExpression": "OFL-1.1",
       "selectedLicenseExpression": "OFL-1.1",
       "modified": false
     },
     {
-      "name": "Spline Sans Mono",
-      "version": "1.002 webfont",
+      "name": "IBM Plex Sans",
+      "version": "@ibm/plex-sans-variable 0.2.0",
       "ecosystem": "font",
-      "source": "https://github.com/SorkinType/SplineSansMono",
+      "source": "https://github.com/IBM/plex",
       "declaredLicenseExpression": "OFL-1.1",
       "selectedLicenseExpression": "OFL-1.1",
       "modified": false

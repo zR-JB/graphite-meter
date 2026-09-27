@@ -734,15 +734,15 @@
   },
   {
     "ecosystem": "font",
-    "name": "Instrument Sans",
-    "reviewedVersion": "2022 webfont",
-    "upstream": "https://github.com/Instrument/instrument-sans",
+    "name": "IBM Plex Sans",
+    "reviewedVersion": "@ibm/plex-sans-variable 0.2.0",
+    "upstream": "https://github.com/IBM/plex",
     "declaredLicenseExpression": "OFL-1.1",
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
       {
-        "name": "INSTRUMENT-OFL-1.1.txt",
-        "sha256": "9e27a72ed30eb49a08678f6a5d6ed98ec7ba5368f541637ee0683ec9134ef966"
+        "name": "IBM-PLEX-OFL-1.1.txt",
+        "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"
       }
     ],
     "modified": false,
@@ -751,19 +751,19 @@
       "container"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "The self-hosted webfont is the upstream Instrument Sans family, distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+    "reviewNotes": "The self-hosted webfonts are IBM's own split WOFF2 subsets from the official npm release of the IBM Plex family, distributed under SIL OFL 1.1 with the Reserved Font Name \"Plex\"; the files ship unmodified under their family name. The package LICENSE.txt and copyright attribution were checked on 2026-09-27; local font file hashes are recorded in provenance."
   },
   {
     "ecosystem": "font",
-    "name": "Spline Sans Mono",
-    "reviewedVersion": "1.002 webfont",
-    "upstream": "https://github.com/SorkinType/SplineSansMono",
+    "name": "IBM Plex Mono",
+    "reviewedVersion": "@ibm/plex-mono 2.5.0",
+    "upstream": "https://github.com/IBM/plex",
     "declaredLicenseExpression": "OFL-1.1",
     "selectedLicenseExpression": "OFL-1.1",
     "legalFiles": [
       {
-        "name": "OFL-1.1.txt",
-        "sha256": "4abb88162e4c0c5f9fc6c2f15d7085f7b7e27fd89f541a13488e1bcb829bde3f"
+        "name": "IBM-PLEX-OFL-1.1.txt",
+        "sha256": "d741e57d5f865e294df801f96b7b5161a88b211df65887e4358d271c9fc5fb4f"
       }
     ],
     "modified": false,
@@ -772,7 +772,7 @@
       "container"
     ],
     "reviewDecision": "approved",
-    "reviewNotes": "The self-hosted webfont identifies Spline Sans Mono version 1.002 and is distributed under SIL OFL 1.1. The upstream OFL and copyright attribution were checked on 2026-08-14; local font file hashes are recorded in provenance."
+    "reviewNotes": "The self-hosted webfonts are IBM's own split WOFF2 subsets from the official npm release of the IBM Plex family, distributed under SIL OFL 1.1 with the Reserved Font Name \"Plex\"; the files ship unmodified under their family name. The package LICENSE.txt and copyright attribution were checked on 2026-09-27; local font file hashes are recorded in provenance."
   },
   {
     "ecosystem": "container",

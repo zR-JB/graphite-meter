@@ -7,11 +7,10 @@
 :root {
   color-scheme: light dark;
 
-  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
-  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
   --font-mono:
-    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
+    "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --r-well: 6px;
   --r-chrome: 8px;
