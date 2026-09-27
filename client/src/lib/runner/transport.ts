@@ -71,7 +71,6 @@ export interface ParticipantHost {
 }
 
 export interface StageTransport {
-  /** Opens and primes every connection the activity names. */
   prepare(): Promise<void>;
   /** Every primed channel works, including fresh upload receiver evidence. */
   ready(signal: AbortSignal): Promise<void>;

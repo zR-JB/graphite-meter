@@ -99,7 +99,6 @@ export const READINESS_TIP: Record<Exclude<Readiness, "blocked">, string> = {
 
 export const START_FAILED = "Test could not start";
 
-/** Stage statuses, saved and live; the stage track adds its lock reasons. */
 export const STATUS = {
   complete: "Complete",
   partial: "Partial",
@@ -134,7 +133,6 @@ export const CONNECTIVITY: Record<
   recovering: { label: STATUS.recovering, tone: STATUS_TONE.recovering },
 };
 
-/** A stage without a value shows its status; a complete one shows "—". */
 export const stageStatusLabel = (status: StageStatus) =>
   status === "complete" ? MISSING : STATUS[status];
 
@@ -314,7 +312,6 @@ export const STATUS_LABEL_CH = Math.max(
   ].map((label) => label.length),
 );
 
-/** The footer and the gauge name one state: a refused start, preparation, else the phase. */
 export function statusLabel(
   preparation: PreparationState["status"],
   phase: Phase,

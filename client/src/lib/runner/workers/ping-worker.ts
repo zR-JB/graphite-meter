@@ -38,7 +38,6 @@ import {
   type PingInterruptionReason,
 } from "./pingSample";
 
-/* Main → worker. */
 type InMsg =
   | {
       type: "start";
@@ -60,10 +59,8 @@ const post = (m: PingWorkerEvent): void => ctx.postMessage(m);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** Batch flush cadence (ms). */
 const FLUSH_MS = 50;
 const MAX_BATCH_SAMPLES = 128;
-/** Reconnect backoff bounds (ms). */
 const RECONNECT_MIN_MS = 100;
 const RECONNECT_MAX_MS = 2_000;
 /** Recently-evicted ids kept for late-pong learning (bounded, FIFO). */
@@ -102,7 +99,6 @@ interface PendingPing {
   measured: boolean;
 }
 
-// Send/pending state.
 const pending = new Map<number, PendingPing>();
 const graveyard = new Map<number, number>(); // evicted id → sendTime (late-pong learning)
 let nextId = 0; // client-owned monotonic uint32
@@ -112,7 +108,6 @@ let outbox: PingSample[] = [];
 // Adaptive RTT estimator (RFC 6298, ms). See rttEstimator.ts.
 let rttEstimate: RttEstimate = INITIAL_RTT_ESTIMATE;
 
-// Connection state.
 let backoff = 0;
 let receivedReply = false;
 let stalledOut = false; // true between a `stall` and its matching `resume`
@@ -235,7 +230,6 @@ async function connect(): Promise<void> {
   }
 }
 
-/* Announces an open bus and starts the chain. */
 function onConnected(): void {
   if (stopped || stopCutoff !== null) return;
   backoff = 0;
@@ -572,7 +566,6 @@ function finishStop(): void {
   link = null;
 }
 
-/* Stashes an evicted id so a late pong can still teach the estimator. */
 function rememberEvicted(id: number, sent: number): void {
   graveyard.set(id, sent);
   if (graveyard.size > GRAVEYARD_MAX) {

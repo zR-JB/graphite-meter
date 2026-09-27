@@ -9,7 +9,6 @@ import type {
   WebTransportThroughputTarget,
 } from "../api/endpoints";
 
-/* Phase sequence, all stages on. */
 export type Phase =
   | "idle"
   | "connecting"
@@ -22,7 +21,6 @@ export type Phase =
   | "aborted"
   | "error";
 
-/* Which way bytes flow for a throughput sample. */
 export type FlowDirection = "down" | "up";
 export type ProtocolTarget = "http1" | "http2" | "http3" | "negotiated";
 export type ConnectionRole = "throughput" | "latency";
@@ -30,7 +28,6 @@ export type PingCadence = "reply-driven" | "fast" | "medium" | "slow";
 
 /* Warmup and measurement share one activity object, so preparation primes the connections measurement reuses. */
 export interface PhaseActivity {
-  /** The measured stage this activity belongs to. */
   stage: Extract<Phase, "latency" | "download" | "upload" | "bidirectional">;
   /** Byte lanes to open: `[]` (latency-only), `["down"]`, `["up"]`, or both. */
   transfer: FlowDirection[];
@@ -58,7 +55,6 @@ export interface TransferStreamPolicy {
 }
 
 export interface RunnerConfig {
-  /** Enabled measured stages. */
   stages: {
     latency: boolean;
     download: boolean;
@@ -233,7 +229,6 @@ export type AddedLatency = Record<
   number | null
 >;
 
-/* The connection method a backend may negotiate for a phase's I/O. */
 export type TransportKind =
   "webtransport" | "webtransport-datagram" | "websocket" | "fetch-stream";
 
@@ -349,7 +344,6 @@ export type RunnerEvent =
   | { type: "serverDetails"; details: import("./measure").MultiServerResult }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "live"; sample: LiveSample }
-  // Progress within the active wall-time budget.
   | {
       type: "progress";
       phase: Phase;

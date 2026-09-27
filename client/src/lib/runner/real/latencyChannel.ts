@@ -212,7 +212,6 @@ export class LatencyChannel {
     }
   }
 
-  /* Handle a message from the ping worker. */
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
@@ -309,7 +308,6 @@ export class IdleKeepalive {
   #probeReady: { finish: (error?: Error) => void } | null = null;
   /** Readiness alone is not liveness; only a pong or stall establishes connectivity. */
   #connectivity: "connected" | "offline" | null = null;
-  /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -322,7 +320,6 @@ export class IdleKeepalive {
     this.#timeOriginMs = timeOriginMs;
   }
 
-  /* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     if (this.#active) return;
     this.#active = true;
@@ -410,7 +407,6 @@ export class IdleKeepalive {
     });
   }
 
-  /* Re-spawn an idle worker that dies at load time. */
   #scheduleRespawn(intervalMs?: number): void {
     if (!this.#active || this.#respawnTimer) return;
     this.#respawnTimer = setTimeout(() => {
@@ -421,7 +417,6 @@ export class IdleKeepalive {
     }, IDLE_RESPAWN_MS);
   }
 
-  /* Handle a message from the idle ping worker. */
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {
