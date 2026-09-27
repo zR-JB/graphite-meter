@@ -191,9 +191,11 @@ try:
                 except OSError:
                     break
             break
-    if p.poll() is None:
+    try:
+        code = p.wait(timeout=max(0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
         raise RuntimeError(f'TUI stop did not finish at step {step}: {output[-1000:]!r}')
-    print(json.dumps({'code':p.wait(), 'step':step, 'text':output.decode('utf-8', 'replace')}))
+    print(json.dumps({'code':code, 'step':step, 'text':output.decode('utf-8', 'replace')}))
 finally:
     if p.poll() is None:
         p.kill()
