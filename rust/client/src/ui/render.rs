@@ -544,31 +544,7 @@ impl Ui {
                 .iter()
                 .find(|result| result.stage == *stage);
             let value = if let Some(result) = result {
-                if result.has_results() {
-                    let headline = if *stage == Stage::Latency {
-                        milliseconds(
-                            self.result_latency(result)
-                                .and_then(|host| host.median())
-                                .map(|median| median as f64 / 1e6),
-                        )
-                    } else {
-                        [
-                            stage.downloads().then(|| rate(result.down_bps())),
-                            stage.uploads().then(|| rate(result.up_bps())),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" / ")
-                    };
-                    format!(
-                        "{} {headline}{}",
-                        if result.complete { "✓" } else { "!" },
-                        if result.complete { "" } else { " Partial" }
-                    )
-                } else {
-                    "✗ Failed".into()
-                }
+                self.outcome(result)
             } else if self.active() && self.snapshot.stage == Some(*stage) {
                 match self.snapshot.phase {
                     Phase::Preparing => "checking paths".into(),
@@ -641,27 +617,7 @@ impl Ui {
             ));
         }
         for result in self.snapshot.results.iter().rev().take(4) {
-            let headline = if result.stage == Stage::Latency {
-                milliseconds(
-                    self.result_latency(result)
-                        .and_then(|host| host.median())
-                        .map(|median| median as f64 / 1e6),
-                )
-            } else {
-                [
-                    result.stage.downloads().then(|| rate(result.down_bps())),
-                    result.stage.uploads().then(|| rate(result.up_bps())),
-                ]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" / ")
-            };
-            lines.push(format!(
-                "{} {}: {headline}",
-                if result.complete { "✓" } else { "!" },
-                result.stage.name()
-            ));
+            lines.push(format!("{}: {}", result.stage.name(), self.outcome(result)));
         }
         frame.render_widget(
             Paragraph::new(
@@ -672,6 +628,32 @@ impl Ui {
             ),
             area,
         );
+    }
+
+    fn outcome(&self, result: &crate::model::StageResult) -> String {
+        let headline = if result.stage == Stage::Latency {
+            milliseconds(
+                self.result_latency(result)
+                    .and_then(|host| host.median())
+                    .map(|median| median as f64 / 1e6),
+            )
+        } else {
+            [
+                result.stage.downloads().then(|| rate(result.down_bps())),
+                result.stage.uploads().then(|| rate(result.up_bps())),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" / ")
+        };
+        match result.status() {
+            crate::model::StageStatus::Complete => format!("✓ {headline}"),
+            status @ crate::model::StageStatus::Partial => {
+                format!("! {headline} {}", status.label())
+            }
+            status => format!("✗ {}", status.label()),
+        }
     }
 
     fn result_latency<'a>(

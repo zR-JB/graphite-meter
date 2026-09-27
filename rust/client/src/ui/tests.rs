@@ -258,7 +258,7 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
     assert!(rendered.contains("Upload · 3.0 s"));
     assert!(rendered.contains("Upload 12.00 Mbit/s"));
     assert!(rendered.contains("Latency 25.0 ms"));
-    assert!(rendered.contains("Download: 12.00 Mbit/s"));
+    assert!(rendered.contains("Download: ✓ 12.00 Mbit/s"));
     assert!(rendered.contains("d Details"));
 
     ui.help = true;

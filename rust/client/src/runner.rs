@@ -560,7 +560,11 @@ pub async fn run_prepared(
             || snapshot.results.iter().any(|result| !result.complete);
         (snapshot.phase, snapshot.status) = if *cancel.borrow() {
             (Phase::Cancelled, "Stopped".into())
-        } else if snapshot.results.iter().any(|result| !result.has_results()) {
+        } else if snapshot
+            .results
+            .iter()
+            .any(|result| result.status() == crate::model::StageStatus::Failed)
+        {
             (Phase::Incomplete, "Incomplete".into())
         } else if partial {
             (Phase::Partial, "Partial".into())

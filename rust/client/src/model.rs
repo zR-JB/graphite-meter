@@ -79,14 +79,36 @@ impl StageResult {
     pub fn up_bytes(&self) -> u64 {
         self.up.as_ref().map_or(0, |result| result.total_bytes)
     }
-    pub fn has_results(&self) -> bool {
-        (!self.stage.downloads() || self.down_bps().is_some())
+    pub fn status(&self) -> StageStatus {
+        let measured = (!self.stage.downloads() || self.down_bps().is_some())
             && (!self.stage.uploads() || self.up_bps().is_some())
             && (self.stage != Stage::Latency
                 || self
                     .server_latencies
                     .iter()
-                    .any(|host| host.median().is_some()))
+                    .any(|host| host.median().is_some()));
+        match (measured, self.complete) {
+            (false, _) => StageStatus::Failed,
+            (true, false) => StageStatus::Partial,
+            (true, true) => StageStatus::Complete,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StageStatus {
+    Complete,
+    Partial,
+    Failed,
+}
+
+impl StageStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Complete => "Complete",
+            Self::Partial => "Partial",
+            Self::Failed => "Failed",
+        }
     }
 }
 

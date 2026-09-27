@@ -117,12 +117,9 @@ fn report(snapshot: &Snapshot) {
         }
     }
     for result in &snapshot.results {
-        let ending = if result.complete {
-            ""
-        } else if result.elapsed.is_zero() {
-            " · Failed"
-        } else {
-            " · Partial"
+        let ending = match result.status() {
+            graphite_meter_client::model::StageStatus::Complete => String::new(),
+            status => format!(" · {}", status.label()),
         };
         if result.stage == graphite_meter_client::model::Stage::Latency {
             println!("{}{ending}", result.stage.name());
