@@ -122,6 +122,7 @@ mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py
 python3 rust/tests/interop.py
+python3 rust/tests/browser_transports.py --server rust/target/debug/graphite-meter-server
 ```
 
 Ring is the TLS/QUIC crypto provider. `rust-check` enforces dependency policy with
@@ -149,6 +150,12 @@ behavior against both unchanged quic-go and a disposable build that offers
 only the current reliable-reset transport parameter. The latter checks QUIC
 negotiation, WebTransport transfers, and immediate reset without modifying the
 shipped Go implementation.
+
+`browser_transports.py` drives Chromium 153 and Playwright's Firefox 153 build
+through HTTP/3 downloads and uploads and WebTransport datagrams, streams and a
+server-ended session's close code; WebKitGTK, which has neither, is the negative
+control. It binds fixed loopback ports, so run it in a private network namespace.
+Against the Go server, both browsers report that close as a failure instead.
 
 `client_interop.py` starts an unchanged Go product server and runs the Rust
 measurement engine through all four stages with WebTransport streams and datagram latency,
