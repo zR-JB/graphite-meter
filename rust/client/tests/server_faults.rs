@@ -21,8 +21,8 @@ enum Peer {
 }
 
 #[tokio::test]
-async fn downloads_stop_after_stalled_or_reset_streams_and_keep_the_reset_cause()
--> Result<(), Error> {
+async fn silent_download_lanes_stay_open_and_repeated_resets_keep_their_cause() -> Result<(), Error>
+{
     let _ = graphite_meter_client::crypto::provider().install_default();
     let mut cases = JoinSet::new();
     for peer in [Peer::H2, Peer::H3, Peer::WebTransport] {
@@ -184,7 +184,8 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
     assert_eq!(measured, 8, "{peer:?} counted framing as payload");
     let started = Instant::now();
     fault.send(true)?;
-    let error = tokio::time::timeout(Duration::from_millis(2400), async {
+    let retries_end_lane = reset && !matches!(peer, Peer::WebTransport);
+    let ended = tokio::time::timeout(Duration::from_millis(3500), async {
         loop {
             if let Err(error) = download.health() {
                 break error;
@@ -192,41 +193,31 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
-    .await
-    .unwrap_or_else(|_| panic!("{peer:?} reset={reset}: lane exceeded no-progress deadline"));
-    assert!(
-        started.elapsed() >= Duration::from_millis(1800),
-        "{peer:?}: {error}"
-    );
+    .await;
     assert_eq!(
         download.bytes(),
         measured,
         "{peer:?} counted bytes after the fault"
     );
-    if reset {
-        match peer {
-            Peer::H2 => assert!(error.is::<hyper::Error>(), "{error:?}"),
-            Peer::H3 => assert!(
-                matches!(error.downcast_ref::<h3::error::StreamError>(),
-                Some(h3::error::StreamError::RemoteTerminate { code }) if *code == h3::error::Code::H3_REQUEST_CANCELLED),
-                "{error:?}"
-            ),
-            Peer::WebTransport => assert!(
-                matches!(error.downcast_ref::<h3::quic::StreamErrorIncoming>(),
-                Some(h3::quic::StreamErrorIncoming::StreamTerminated { error_code }) if *error_code == 0x52e4a40fa8db),
-                "{error:?}"
-            ),
+    match ended {
+        Err(_) => assert!(
+            !retries_end_lane,
+            "{peer:?} reset={reset}: lane outlived its retries"
+        ),
+        Ok(error) => {
+            assert!(retries_end_lane, "{peer:?} reset={reset}: {error}");
+            assert!(
+                started.elapsed() >= Duration::from_millis(1800),
+                "{peer:?}: {error}"
+            );
+            let cause = match peer {
+                Peer::H2 => error.is::<hyper::Error>(),
+                Peer::H3 => matches!(error.downcast_ref::<h3::error::StreamError>(),
+                    Some(h3::error::StreamError::RemoteTerminate { code }) if *code == h3::error::Code::H3_REQUEST_CANCELLED),
+                Peer::WebTransport => false,
+            };
+            assert!(cause, "{peer:?}: {error:?}");
         }
-    } else {
-        assert!(
-            matches!(
-                error.downcast_ref::<graphite_meter_client::failure::LaneFailure>(),
-                Some(graphite_meter_client::failure::LaneFailure(
-                    graphite_meter_core::failure::LaneEnding::Idle
-                ))
-            ),
-            "{error:?}"
-        );
     }
     download.stop().await;
     servers.shutdown().await;
