@@ -63,7 +63,7 @@ impl PasswordLogin {
         if !config.mode.password() {
             return Err("password authentication is disabled".into());
         }
-        let encoded = read_secret(&config.password_hash, &config.password_hash_file, 4096)?;
+        let encoded = read_secret("password hash", &config.password_hash, &config.password_hash_file, 4096)?;
         Ok(Self {
             public_origin: config.public_url.clone(),
             hash: Hash::parse(&encoded)?,
@@ -114,18 +114,22 @@ impl PasswordLogin {
     }
 }
 
-pub(super) fn read_secret(inline: &str, path: &str, limit: u64) -> Result<Zeroizing<String>, ConfigError> {
+pub(super) fn read_secret(name: &str, inline: &str, path: &str, limit: u64) -> Result<Zeroizing<String>, ConfigError> {
     if !inline.is_empty() {
         return Ok(Zeroizing::new(inline.trim().to_owned()));
     }
     let mut bytes = Zeroizing::new(Vec::new());
-    File::open(path)?.take(limit + 1).read_to_end(&mut bytes)?;
+    File::open(path)
+        .and_then(|file| file.take(limit + 1).read_to_end(&mut bytes))
+        .map_err(|error| format!("{name}: {path}: {error}"))?;
     if bytes.len() as u64 > limit {
-        return Err("secret file exceeds size limit".into());
+        return Err(format!("{name}: secret file exceeds {limit} bytes").into());
     }
-    let value = std::str::from_utf8(&bytes)?.trim();
+    let value = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("{name}: secret file is not UTF-8"))?
+        .trim();
     if value.is_empty() {
-        return Err("secret is empty".into());
+        return Err(format!("{name}: secret is empty").into());
     }
     Ok(Zeroizing::new(value.to_owned()))
 }

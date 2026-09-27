@@ -5,48 +5,51 @@ include!(concat!(env!("OUT_DIR"), "/legal.rs"));
 mod password_command;
 
 use graphite_meter_server::{
-    cli::{self, Arguments},
-    config::{Config, ConfigError},
+    config::{self, Config, ConfigError},
     runtime,
 };
 
 #[tokio::main]
 async fn main() {
-    if let Err(error) = run().await {
-        eprintln!("graphite-meter Rust: {error}");
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    // Go's fatal log lines, which alerting keys on.
+    let failure = match args.as_slice() {
+        [only] if only == "version" || only == "--version" => {
+            println!("{}", config::ENGINE_VERSION);
+            None
+        }
+        [only] if only == "--legal" || only == "-legal" => legal().err().map(|error| format!("legal: {error}")),
+        [only] if only == "hash-password" => password_command::run()
+            .err()
+            .map(|error| format!("hash-password: {error}")),
+        _ => match config::load(|name| std::env::var_os(name), &args, &mut std::io::stderr()) {
+            Ok(None) => None,
+            Ok(Some(config)) => serve(config)
+                .await
+                .err()
+                .map(|error| format!("server error: {:?}", error.to_string())),
+            Err(error) => Some(format!("configuration error: {:?}", error.to_string())),
+        },
+    };
+    if let Some(failure) = failure {
+        eprintln!("{failure}");
         std::process::exit(1);
     }
 }
 
-async fn run() -> Result<(), ConfigError> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() == 1 && (args[0] == "version" || args[0] == "--version") {
-        println!("{}", graphite_meter_server::config::ENGINE_VERSION);
-        return Ok(());
+fn legal() -> Result<(), ConfigError> {
+    use std::io::Write;
+    let report = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
+    let mut output = std::io::stdout().lock();
+    output.write_all(report.as_bytes())?;
+    if LEGAL_USES_BROWSER_NOTICES {
+        let notices = graphite_meter_server::assets::legal_notices().ok_or("reviewed browser notices are missing")?;
+        output.write_all(notices)?;
     }
-    if args.len() == 1 && (args[0] == "--legal" || args[0] == "-legal") {
-        let report = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle")?;
-        use std::io::Write;
-        let mut output = std::io::stdout().lock();
-        output.write_all(report.as_bytes())?;
-        if LEGAL_USES_BROWSER_NOTICES {
-            let notices =
-                graphite_meter_server::assets::legal_notices().ok_or("reviewed browser notices are missing")?;
-            output.write_all(notices)?;
-        }
-        return Ok(());
-    }
-    if args.len() == 1 && args[0] == "hash-password" {
-        password_command::run()?;
-        return Ok(());
-    }
-    let config = match cli::parse(&args)? {
-        Arguments::Help => {
-            print!("{}", cli::help());
-            return Ok(());
-        }
-        Arguments::Overrides(overrides) => Config::load_with_overrides(&overrides)?,
-    };
+    Ok(())
+}
+
+async fn serve(config: Config) -> Result<(), ConfigError> {
     // Register handlers before binding sockets, so a signal during startup is
     // retained and causes shutdown as soon as startup completes.
     #[cfg(unix)]

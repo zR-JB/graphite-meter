@@ -6,7 +6,7 @@ use graphite_meter_core::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::{error::Error, fs::File, io::Read};
+use std::{error::Error, fs::File, io::Read, path::Path};
 
 const MAX_INPUT_BYTES: usize = 64 << 10;
 const MAX_NORMALIZED_BYTES: usize = 48 << 10;
@@ -36,10 +36,13 @@ pub fn load(inline: Option<&str>, file: Option<&str>) -> Result<ServerCatalog> {
         (None, None) => Ok(ServerCatalog::singleton()),
         (Some(raw), None) => parse(raw.as_bytes()),
         (None, Some(path)) => {
+            if !Path::new(path).is_absolute() || path.contains("..") {
+                return Err("GM_SERVER_CATALOG_FILE must be an absolute path without '..'".into());
+            }
             let mut data = Vec::new();
-            File::open(path)?
-                .take((MAX_INPUT_BYTES + 1) as u64)
-                .read_to_end(&mut data)?;
+            File::open(path)
+                .and_then(|file| file.take((MAX_INPUT_BYTES + 1) as u64).read_to_end(&mut data))
+                .map_err(|error| format!("GM_SERVER_CATALOG_FILE: {path}: {error}"))?;
             parse(&data)
         }
     }
@@ -55,9 +58,11 @@ pub fn parse(data: &[u8]) -> Result<ServerCatalog> {
     }
     let mut catalog = ServerCatalog::singleton();
     if data.iter().find(|b| !b.is_ascii_whitespace()) == Some(&b'[') {
-        let origins: Vec<Option<String>> = serde_json::from_slice(data)?;
+        let origins: Vec<Option<String>> =
+            serde_json::from_slice(data).map_err(|error| format!("server catalogue origins: {error}"))?;
         for raw in origins {
-            let url = canonical(&raw.unwrap_or_default())?;
+            let raw = raw.unwrap_or_default();
+            let url = canonical(&raw).map_err(|error| format!("server catalogue origin {raw:?}: {error}"))?;
             let origin = target_origin(&url)?.ok_or("expected absolute origin")?;
             let digest = Sha256::digest(url.as_bytes());
             let mut id = String::from("server-");
@@ -74,7 +79,8 @@ pub fn parse(data: &[u8]) -> Result<ServerCatalog> {
         }
     } else {
         // Go accepts a root null as an empty catalogue, then inserts self.
-        let raw: Option<RawCatalog> = serde_json::from_slice(data)?;
+        let raw: Option<RawCatalog> =
+            serde_json::from_slice(data).map_err(|error| format!("server catalogue: {error}"))?;
         let raw = raw.unwrap_or_default();
         if let Some(selected) = raw.default_selection {
             catalog.default_selection = selected.into_iter().map(Option::unwrap_or_default).collect();
@@ -85,7 +91,7 @@ pub fn parse(data: &[u8]) -> Result<ServerCatalog> {
             if id == "self" {
                 return Err("self is added automatically; omit it from servers".into());
             }
-            let url = canonical(&entry.url.unwrap_or_default())?;
+            let url = canonical(&entry.url.unwrap_or_default()).map_err(|error| format!("server {id:?}: {error}"))?;
             let additional_origins = entry
                 .additional_origins
                 .unwrap_or_default()

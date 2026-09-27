@@ -64,16 +64,13 @@ impl Service {
             AuthMode::Oidc => "oidc",
             AuthMode::Hybrid => "hybrid",
         };
-        let lifetime = SESSION_LIFETIME.as_secs();
         eprintln!(
-            "[gm:auth] mode={mode} origin={:?} provider={:?} issuer={:?} allowed-groups={} session-lifetime={}h{}m{}s",
+            "[gm:auth] mode={mode} origin={:?} provider={:?} issuer={:?} allowed-groups={} session-lifetime={}",
             config.public_url,
             config.oidc_provider_name,
             config.oidc_issuer,
             config.oidc_allowed_groups.len(),
-            lifetime / 3600,
-            lifetime / 60 % 60,
-            lifetime % 60
+            crate::config::go_duration(SESSION_LIFETIME),
         );
         Ok(service)
     }
@@ -107,7 +104,9 @@ impl Service {
         if self.mode == AuthMode::Oidc
             && let Some(oidc) = &self.oidc
         {
-            oidc.discover().await?;
+            oidc.discover()
+                .await
+                .map_err(|error| format!("OIDC discovery: {error}"))?;
         }
         Ok(())
     }

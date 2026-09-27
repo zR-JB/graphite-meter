@@ -6,7 +6,6 @@ use crate::{
     probe::Probe,
 };
 use bytes::Bytes;
-use graphite_meter_core::catalog::ServerCatalog;
 use http::{Method, Request, Response, StatusCode, header, uri::Authority};
 use std::{
     collections::HashMap,
@@ -33,14 +32,6 @@ impl Discovery {
         admission: Option<Admission>,
         bootstrap_port: Option<u16>,
     ) -> Result<Self, ConfigError> {
-        // Match the Go endpoint's fallback for an unset catalogue.
-        let config = if config.server_catalog.servers.is_empty() {
-            let mut config = (*config).clone();
-            config.server_catalog = ServerCatalog::singleton();
-            Arc::new(config)
-        } else {
-            config
-        };
         Ok(Self {
             preflight: Preflight::new(config.clone())?,
             probe: Probe::new(config.clone(), bootstrap_port, admission),
@@ -80,10 +71,8 @@ impl Discovery {
         if let Some(responses) = hosts.get(host) {
             return Ok(responses.clone());
         }
-        let mut catalog = self.config.server_catalog.clone();
+        let mut catalog = self.config.published_catalog();
         let local = &mut catalog.servers[0];
-        local.name.clone_from(&self.config.server_name);
-        local.location.clone_from(&self.config.server_location);
         local.additional_origins.extend(
             self.preflight
                 .connect_origins(host)?

@@ -3,7 +3,9 @@ use graphite_meter_core::origin::{Origin, key, split_url, target_origin};
 
 impl Config {
     pub fn validate(&self) -> Result<(), ConfigError> {
-        self.server_catalog.validate()?;
+        self.published_catalog()
+            .validate()
+            .map_err(|error| format!("GM_SERVER_NAME, GM_SERVER_LOCATION or the server catalogue: {error}"))?;
         self.validate_auth()?;
         self.validate_limits()?;
         self.validate_listeners()?;

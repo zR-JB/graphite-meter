@@ -2,6 +2,9 @@
 mod load;
 mod validate;
 
+pub(crate) use load::go_duration;
+pub use load::load;
+
 use crate::admission::Limits;
 use graphite_meter_core::catalog::ServerCatalog;
 use std::{collections::BTreeSet, error::Error, time::Duration};
@@ -182,6 +185,16 @@ impl Default for Config {
     }
 }
 impl Config {
+    pub fn published_catalog(&self) -> ServerCatalog {
+        let mut catalog = if self.server_catalog.servers.is_empty() {
+            ServerCatalog::singleton()
+        } else {
+            self.server_catalog.clone()
+        };
+        catalog.servers[0].name.clone_from(&self.server_name);
+        catalog.servers[0].location.clone_from(&self.server_location);
+        catalog
+    }
     pub fn listener(&self, kind: NativeKind) -> &NativeListener {
         &self.native[kind as usize]
     }

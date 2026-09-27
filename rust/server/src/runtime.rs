@@ -23,7 +23,10 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         .into_iter()
         .any(|kind| !config.listener(kind).address.is_empty())
     {
-        Some(Certificates::load(&config, SystemTime::now())?)
+        Some(
+            Certificates::load(&config, SystemTime::now())
+                .map_err(|error| format!("TLS certificate {} or key {}: {error}", config.tls_cert, config.tls_key))?,
+        )
     } else {
         None
     };
@@ -110,7 +113,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         services.push(Box::pin(async move {
             tls.watch(cancelled(stopped), |result| {
                 if let Err(error) = result {
-                    eprintln!("[gm:tls] renewal rejected; keeping last valid certificate: {error:?}");
+                    eprintln!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
                 }
             })
             .await

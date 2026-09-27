@@ -145,7 +145,12 @@ pub(super) struct Oidc {
 }
 impl Oidc {
     pub fn new(config: &AuthConfig, log: Arc<super::logging::SecurityLog>) -> Result<Self, ConfigError> {
-        let secret = read_secret(&config.oidc_client_secret, &config.oidc_secret_file, 4096)?;
+        let secret = read_secret(
+            "OIDC client secret",
+            &config.oidc_client_secret,
+            &config.oidc_secret_file,
+            16 * 1024,
+        )?;
         let mut config = config.clone();
         config.oidc_client_secret.zeroize();
         config.password_hash.zeroize();
