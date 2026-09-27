@@ -92,11 +92,15 @@ impl Http3Client {
         let mut last_error: Option<Error> = None;
         for address in addresses {
             let bind: SocketAddr = if address.is_ipv6() {
-                "[::]:0"
+                "[::]:0".parse()?
+            } else if std::env::var_os("GM_BENCH_SPREAD_SOURCES").is_some() {
+                // Measurement only: one loopback source per connection avoids per-client caps.
+                static NEXT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+                let host = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 250 + 2;
+                SocketAddr::from(([127, 0, 0, host], 0))
             } else {
-                "0.0.0.0:0"
-            }
-            .parse()?;
+                "0.0.0.0:0".parse()?
+            };
             let endpoint = EndpointOwner(quinn::Endpoint::new(
                 quinn::EndpointConfig::default(),
                 None,
