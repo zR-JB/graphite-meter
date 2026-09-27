@@ -275,7 +275,7 @@ def ms(text):
 
 def go_report(lines, direction):
     stage, population = STAGE_LABELS[direction]
-    result = {"outcome": lines[0].split()[2]}
+    result = {}
     for line in lines:
         if match := re.match(rf"([↓↑]) {stage} +(\S+ \S*bit/s)", line):
             result["downMbps" if match[1] == "↓" else "upMbps"] = mbps(match[2])
@@ -293,7 +293,7 @@ def rust_report(lines, direction):
     rates = re.match(r".*?: Download (.+?), Upload (.+)$", lines[at])
     latency = next(match for line in lines[at + 1:] if (match := re.match(r"  .+: Median (.+?), Added .+?, p95 (.+?), Jitter .+?, Probe timeouts ([\d,]+)/([\d,]+)", line)))
     timeouts, resolved = int(latency[3].replace(",", "")), int(latency[4].replace(",", ""))
-    return {"outcome": lines[0].split(" · ")[1], "downMbps": mbps(rates[1]), "upMbps": mbps(rates[2]),
+    return {"downMbps": mbps(rates[1]), "upMbps": mbps(rates[2]),
             "latencyP50Ms": ms(latency[1]), "latencyP95Ms": ms(latency[2]), "replies": resolved - timeouts, "timeouts": timeouts}
 
 
@@ -306,6 +306,7 @@ def client_result(cell, text, status):
             result |= end["stages"][direction] | {"path": end["paths"][0], "browser": end["browser"]}
         else:
             lines = text.splitlines()
+            result["outcome"] = re.match(r"Graphite Meter(?: · | {2,})(\S+)", lines[0])[1]
             result |= (rust_report if lines[0].startswith("Graphite Meter · ") else go_report)(lines, direction)
     except (StopIteration, IndexError, KeyError, TypeError, ValueError) as error:
         result["parseError"] = repr(error)
