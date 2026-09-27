@@ -257,7 +257,12 @@ impl Snapshot {
             scope,
             reason: crate::failure::reason(error.as_ref()),
             message: error.to_string(),
-            at: self.latest.elapsed,
+            at: self
+                .results
+                .iter()
+                .map(|result| result.elapsed)
+                .sum::<Duration>()
+                + self.latest.elapsed,
         });
     }
 

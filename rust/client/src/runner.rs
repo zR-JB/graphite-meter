@@ -436,6 +436,12 @@ pub async fn run_prepared(
             .iter()
             .any(|result| result.elapsed > Duration::ZERO);
         if retry_sole {
+            snapshots.send_modify(|snapshot| {
+                snapshot.phase = Phase::Preparing;
+                snapshot.stage = Some(*stage);
+                snapshot.latest = Point::default();
+                snapshot.status = format!("Preparing {}", stage.name());
+            });
             let entry = sole.as_ref().expect("sole-server retry");
             let transfer = stage.downloads() || stage.uploads();
             let latency = *stage == Stage::Latency || config.loaded_latency;

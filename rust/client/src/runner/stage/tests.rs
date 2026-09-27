@@ -937,6 +937,7 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
     assert!(!snapshot.results[1].complete);
     assert!(snapshot.results[2].complete);
     assert!(snapshot.results[2].down_bytes() > 0);
+    assert!(snapshot.failures[0].at >= snapshot.results[0].elapsed);
     assert_eq!(
         snapshot.failures[0].reason,
         graphite_meter_core::failure::FailureReason::ServerBusy
