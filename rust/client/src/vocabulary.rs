@@ -201,16 +201,12 @@ pub fn latency_transport(value: Option<graphite_meter_core::discovery::LatencyTr
 pub fn throughput_facts(
     measurement: &graphite_meter_core::measurement::MeasurementResult,
 ) -> String {
-    let mut facts = vec![
-        format!(
-            "{} {}",
-            PEAK.label,
-            measurement
-                .peak_bytes_per_sec
-                .map_or_else(|| MISSING.into(), graphite_meter_core::format::rate)
-        ),
-        graphite_meter_core::format::bytes(measurement.total_bytes),
-    ];
+    let mut facts: Vec<_> = measurement
+        .peak_bytes_per_sec
+        .map(|peak| format!("{} {}", PEAK.label, graphite_meter_core::format::rate(peak)))
+        .into_iter()
+        .collect();
+    facts.push(graphite_meter_core::format::bytes(measurement.total_bytes));
     if let Some(elapsed) = measurement.elapsed_nanos {
         facts.push(format!("{:.1} s", elapsed as f64 / 1e9));
     }
