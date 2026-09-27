@@ -101,7 +101,7 @@ function wire(
   return {
     value: formatRate(bytesPerSec * model.totalMultiplier, units),
     overhead,
-    tip: `Wire rate ${overhead}\nPayload plus the headers the link also carried\n${compensationTooltip(model)}`,
+    tip: `Wire rate +${((model.totalMultiplier - 1) * 100).toFixed(2)}%\nPayload plus the headers the link also carried\n${compensationTooltip(model)}`,
   };
 }
 
