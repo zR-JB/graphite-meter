@@ -20,6 +20,7 @@ pub struct Config {
     pub auto_streams: usize,
     pub streams: usize,
     pub ping_interval: Duration,
+    pub loaded_ping_interval: Duration,
     pub loaded_latency: bool,
     pub insecure: bool,
 }
@@ -43,6 +44,7 @@ impl Default for Config {
             auto_streams: 6,
             streams: 0,
             ping_interval: Duration::ZERO,
+            loaded_ping_interval: Duration::from_millis(250),
             loaded_latency: true,
             insecure: false,
         }
@@ -113,11 +115,15 @@ impl Config {
                 "stream counts must be within 1..=14 (0 means automatic for --streams)".into(),
             );
         }
-        if !self.ping_interval.is_zero() && self.ping_interval < Duration::from_millis(80)
-            || self.ping_interval > Duration::from_secs(15)
+        if [self.ping_interval, self.loaded_ping_interval]
+            .iter()
+            .any(|interval| {
+                !interval.is_zero() && *interval < Duration::from_millis(80)
+                    || *interval > Duration::from_secs(15)
+            })
         {
             return Err(
-                "ping interval must be reply-driven or from 80 milliseconds to 15 seconds".into(),
+                "latency cadence must be reply-driven or from 80 milliseconds to 15 seconds".into(),
             );
         }
         if self.warmup > Duration::from_secs(4) {

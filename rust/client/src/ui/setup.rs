@@ -24,10 +24,11 @@ pub(super) enum Field {
     Streams,
     AutoStreams,
     PingInterval,
+    LoadedPingInterval,
     LoadedLatency,
     Insecure,
 }
-const FIELDS: [Field; 19] = [
+const FIELDS: [Field; 20] = [
     Field::Start,
     Field::Servers,
     Field::Protocol,
@@ -45,6 +46,7 @@ const FIELDS: [Field; 19] = [
     Field::Streams,
     Field::AutoStreams,
     Field::PingInterval,
+    Field::LoadedPingInterval,
     Field::LoadedLatency,
     Field::Insecure,
 ];
@@ -86,7 +88,7 @@ impl Ui {
                 match field {
                     Field::Protocol => 4,
                     Field::ThroughputTransport | Field::LatencyTransport => 2,
-                    Field::PingInterval => 3,
+                    Field::PingInterval | Field::LoadedPingInterval => 3,
                     _ => 1,
                 }
             };
@@ -117,6 +119,7 @@ impl Field {
             Self::Streams => crate::vocabulary::STREAMS,
             Self::AutoStreams => crate::vocabulary::AUTO_STREAMS,
             Self::PingInterval => crate::vocabulary::PING_INTERVAL,
+            Self::LoadedPingInterval => crate::vocabulary::LOADED_PING_INTERVAL,
             Self::LoadedLatency => crate::vocabulary::LOADED_LATENCY,
             Self::Insecure => crate::vocabulary::INSECURE,
         }
@@ -175,17 +178,21 @@ impl Field {
             Self::Warmup => seconds(config.warmup),
             Self::Streams => config.streams.to_string(),
             Self::AutoStreams => config.auto_streams.to_string(),
-            Self::PingInterval => match config.ping_interval.as_millis() {
-                0 => "Reply-driven".into(),
-                80 => "Fast (80 ms)".into(),
-                250 => "Medium (250 ms)".into(),
-                600 => "Slow (600 ms)".into(),
-                _ => format!("Custom ({} ms)", config.ping_interval.as_millis()),
-            },
+            Self::PingInterval => cadence(config.ping_interval),
+            Self::LoadedPingInterval => cadence(config.loaded_ping_interval),
             Self::LoadedLatency => on_off(config.loaded_latency).into(),
             Self::Insecure => on_off(config.insecure).into(),
             _ => unreachable!("stage field handled above"),
         }
+    }
+}
+fn cadence(interval: Duration) -> String {
+    match interval.as_millis() {
+        0 => "Reply-driven".into(),
+        80 => "Fast (80 ms)".into(),
+        250 => "Medium (250 ms)".into(),
+        600 => "Slow (600 ms)".into(),
+        custom => format!("Custom ({custom} ms)"),
     }
 }
 pub(super) fn on_off(value: bool) -> &'static str {
@@ -307,8 +314,13 @@ impl Ui {
             return;
         }
         match field {
-            Field::PingInterval => {
-                self.config.ping_interval = match self.config.ping_interval.as_millis() {
+            Field::PingInterval | Field::LoadedPingInterval => {
+                let cadence = if field == Field::PingInterval {
+                    &mut self.config.ping_interval
+                } else {
+                    &mut self.config.loaded_ping_interval
+                };
+                *cadence = match cadence.as_millis() {
                     0 => Duration::from_millis(80),
                     80 => Duration::from_millis(250),
                     250 => Duration::from_millis(600),
@@ -413,15 +425,9 @@ impl Ui {
                         "enter a positive duration up to 86400 (warmup also permits zero)".into(),
                     );
                 }
-                let duration =
-                    Duration::try_from_secs_f64(if matches!(field, Field::PingInterval) {
-                        number / 1000.0
-                    } else {
-                        number
-                    })?;
+                let duration = Duration::try_from_secs_f64(number)?;
                 match field {
                     Field::Warmup => self.config.warmup = duration,
-                    Field::PingInterval => self.config.ping_interval = duration,
                     _ => return Err("this field is not editable text".into()),
                 }
             }

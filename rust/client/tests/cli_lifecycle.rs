@@ -299,6 +299,7 @@ async fn invalid_measurement_inputs_fail_before_connecting() -> Result<(), Error
         vec!["--throughput-transport=webtransport-datagram"],
         vec!["--stages=typo"],
         vec!["--ping=typo"],
+        vec!["--loaded-ping=40ms"],
         vec!["--warmup=-1s"],
         vec!["--download-duration=0"],
         vec!["--server=a", "--server=a"],

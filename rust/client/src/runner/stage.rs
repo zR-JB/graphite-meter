@@ -738,7 +738,7 @@ pub(super) async fn measure(
                 let interval = if stage == Stage::Latency {
                     config.ping_interval
                 } else {
-                    Duration::from_millis(250)
+                    config.loaded_ping_interval
                 };
                 let window = if stage != Stage::Latency {
                     2

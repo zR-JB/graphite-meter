@@ -71,8 +71,12 @@ pub const AUTO_STREAMS: Term = Term {
     explanation: "The maximum automatically chosen HTTP/1.1 lanes per direction.",
 };
 pub const PING_INTERVAL: Term = Term {
-    label: "Latency cadence",
-    explanation: "Send probes after replies or at the selected fixed interval.",
+    label: "Idle latency cadence",
+    explanation: "Send idle probes after replies or at the selected fixed interval.",
+};
+pub const LOADED_PING_INTERVAL: Term = Term {
+    label: "Loaded latency cadence",
+    explanation: "Send probes during transfers after replies or at the selected fixed interval.",
 };
 pub const LOADED_LATENCY: Term = Term {
     label: "Loaded latency",

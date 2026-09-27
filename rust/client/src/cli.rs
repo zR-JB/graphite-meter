@@ -103,15 +103,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             "bidirectional-duration" => config.bidirectional_duration = duration(&value)?,
             "auto-streams" => config.auto_streams = value.parse()?,
             "streams" => config.streams = value.parse()?,
-            "ping" => {
-                config.ping_interval = match value.trim().to_ascii_lowercase().as_str() {
-                    "reply-driven" => Duration::ZERO,
-                    "fast" => Duration::from_millis(80),
-                    "medium" => Duration::from_millis(250),
-                    "slow" => Duration::from_millis(600),
-                    _ => duration(&value)?,
-                }
-            }
+            "ping" => config.ping_interval = cadence(&value)?,
+            "loaded-ping" => config.loaded_ping_interval = cadence(&value)?,
             _ => return Err(format!("unknown flag: -{name}").into()),
         }
     }
@@ -131,6 +124,16 @@ fn boolean(value: &str) -> Result<bool, Error> {
         "1" | "t" | "T" | "true" | "TRUE" | "True" => Ok(true),
         "0" | "f" | "F" | "false" | "FALSE" | "False" => Ok(false),
         _ => Err("invalid boolean value".into()),
+    }
+}
+
+fn cadence(value: &str) -> Result<Duration, Error> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "reply-driven" => Ok(Duration::ZERO),
+        "fast" => Ok(Duration::from_millis(80)),
+        "medium" => Ok(Duration::from_millis(250)),
+        "slow" => Ok(Duration::from_millis(600)),
+        _ => duration(value),
     }
 }
 
@@ -174,7 +177,8 @@ pub const HELP: &str = "Graphite Meter experimental Rust client
   -bidirectional-duration DURATION  Bidirectional measurement (10s)
   -auto-streams COUNT           Automatic HTTP/1 stream limit (6)
   -streams COUNT                Streams per server and direction (0 = automatic)
-  -ping CADENCE                 reply-driven, fast, medium, slow, or duration (reply-driven)
+  -ping CADENCE                 Idle: reply-driven, fast, medium, slow, or duration (reply-driven)
+  -loaded-ping CADENCE          Loaded: same choices (medium)
   -loaded-latency=BOOL           Measure latency under load (true)
   -insecure                     Skip TLS certificate verification
   -report                       Run once and print the final report
