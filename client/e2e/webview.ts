@@ -282,7 +282,8 @@ function removeProfiles() {
         .split(" ")
         .filter(Boolean)) {
         const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:\0|$)/.exec(
+        // Chrome rewrites its argv into one space-separated title.
+        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:[\0\s]|$)/.exec(
           cmdline,
         );
         if (dir) profiles.push(dir[1]);
