@@ -4,6 +4,7 @@
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
   import { tooltip } from "../actions/tooltip";
+  import { restDetector, warmUp } from "../actions/intent";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
@@ -96,15 +97,52 @@
     };
   }
 
-  function onTrackMove(event: PointerEvent, lane: LatencyProfileViewLane) {
-    const track = event.currentTarget as HTMLElement;
+  // A card answers a pointer resting near a marker, or a press; it then follows the pointer along the lane.
+  let tracking = false;
+  let pending: { x: number; lane: LatencyProfileViewLane; track: HTMLElement };
+  const rest = restDetector(() => {
+    tracking = true;
+    inspect(pending);
+  }, 8);
+  $effect(() => rest.cancel);
+  function inspect({ x, lane, track }: typeof pending) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(
       1,
-      Math.max(0, (event.clientX - rect.left - EDGE) / (rect.width - 2 * EDGE)),
+      Math.max(0, (x - rect.left - EDGE) / (rect.width - 2 * EDGE)),
     );
     const metric = nearestMetric(lane, scale.min + ratio * scale.span);
-    if (metric) setHover(lane, metric, track);
+    const px =
+      metric && atPct(pos(metricValue(lane, metric), scale), rect.width);
+    if (metric && Math.abs(px! - (x - rect.left)) <= 12)
+      setHover(lane, metric, track);
+    else if (keyboardLane !== lane.key) hover = null;
+  }
+  function onTrackMove(event: PointerEvent, lane: LatencyProfileViewLane) {
+    if (event.pointerType !== "mouse") return;
+    pending = {
+      x: event.clientX,
+      lane,
+      track: event.currentTarget as HTMLElement,
+    };
+    if (tracking) inspect(pending);
+    else rest.move(event, 150);
+  }
+  function onTrackDown(event: PointerEvent, lane: LatencyProfileViewLane) {
+    rest.cancel();
+    tracking = true;
+    inspect({
+      x: event.clientX,
+      lane,
+      track: event.currentTarget as HTMLElement,
+    });
+  }
+  function onTrackLeave(event: PointerEvent, lane: LatencyProfileViewLane) {
+    if (event.pointerType !== "mouse") return;
+    rest.cancel();
+    if (tracking) warmUp();
+    tracking = false;
+    if (keyboardLane !== lane.key) hover = null;
   }
 
   function onTrackFocus(event: FocusEvent, lane: LatencyProfileViewLane) {
@@ -267,9 +305,8 @@
           ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds, ${metricMeaning(hover.metric)}`
           : undefined}
         onpointermove={(event) => onTrackMove(event, lane)}
-        onpointerleave={() => {
-          if (keyboardLane !== lane.key) hover = null;
-        }}
+        onpointerdown={(event) => onTrackDown(event, lane)}
+        onpointerleave={(event) => onTrackLeave(event, lane)}
         onfocus={(event) => onTrackFocus(event, lane)}
         onblur={() => {
           keyboardLane = null;

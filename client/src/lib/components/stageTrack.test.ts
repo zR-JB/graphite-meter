@@ -104,10 +104,9 @@ test("a retained bidirectional run stays on the track after Settings drops it", 
   expect(stageShown("upload", false, off)).toBe(true);
 });
 
-test("a stage tip names its result and what a toggle does, locked or not", () => {
+test("a stage tip names its result, or why it is locked or skipped", () => {
   const tip = (overrides: Partial<Parameters<typeof stageTip>[0]>) =>
     stageTip({
-      stage: "download",
       selected: true,
       locked: false,
       state: "complete",
@@ -115,20 +114,16 @@ test("a stage tip names its result and what a toggle does, locked or not", () =>
       failure: null,
       value: "940 Mbit/s",
       ...overrides,
-    }).split("\n");
-  expect(tip({ locked: true })).toEqual([
-    "Download",
-    "Complete · 940 Mbit/s",
-    "Locked until the run ends",
-  ]);
-  expect(tip({})[2]).toBe("Toggle to skip next run");
+    });
+  expect(tip({ locked: true })).toBe("Complete · 940 Mbit/s");
   expect(
-    tip({ state: "partial", reason: "Partial", failure: "connection-lost" })[1],
+    tip({ state: "partial", reason: "Partial", failure: "connection-lost" }),
   ).toBe("Partial · 940 Mbit/s · Connection lost");
   expect(
     tip({ state: "active", locked: true, reason: "Running", value: null }),
-  ).toEqual(["Download", "Running", "Locked while it runs"]);
+  ).toBe("Locked while it runs");
   expect(
     tip({ state: "disabled", selected: false, reason: "Skipped", value: null }),
-  ).toEqual(["Download", "Skipped", "Toggle to include"]);
+  ).toBe("Skipped");
+  expect(tip({ state: "pending", value: null })).toBe("");
 });

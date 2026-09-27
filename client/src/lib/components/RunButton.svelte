@@ -7,15 +7,10 @@
   import { tooltip } from "../actions/tooltip";
   import { fmtDuration } from "../format";
   import { handoff } from "../presentation/motion.svelte";
-  import {
-    BLOCKED,
-    resolvedPhase,
-    runActionLabel,
-  } from "../presentation/vocabulary";
+  import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
 
   const pending = $derived(store.preparing);
   const idle = $derived(!store.isRunning && !pending);
-  const resolved = $derived(resolvedPhase(store.phase));
   const eta = $derived(fmtDuration(store.totalEtaMs, 0));
   const action = handoff(
     () => ({
@@ -45,17 +40,7 @@
   aria-describedby={idle ? "run-duration" : undefined}
   style:--stop={stop}
   onclick={controller.toggleRun}
-  {@attach tooltip(
-    () =>
-      blocker ||
-      (pending
-        ? "Cancel starting the test (Space / Esc)"
-        : store.isRunning
-          ? "Stop the test (Space / Esc)"
-          : resolved
-            ? "Run the test again (Space / R)"
-            : "Start the test (Space)"),
-  )}
+  {@attach tooltip(() => blocker)}
 >
   <span class="skin" aria-hidden="true"></span>
   <span class="skin stop" aria-hidden="true"></span>

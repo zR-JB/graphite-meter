@@ -57,7 +57,6 @@
         icon: STAGE[key].icon,
         reason,
         tip: stageTip({
-          stage: key,
           selected,
           locked,
           state: model.state,

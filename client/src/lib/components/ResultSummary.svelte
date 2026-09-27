@@ -281,12 +281,5 @@
   }
   .fact-term {
     color: var(--text-soft);
-    transition: color var(--dur-hover) var(--ease-out);
-  }
-  @media (hover: hover) {
-    .fact-term:hover,
-    .label:hover {
-      color: var(--text);
-    }
   }
 </style>

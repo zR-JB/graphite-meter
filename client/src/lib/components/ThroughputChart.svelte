@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { inView } from "../actions/inView";
+  import { restDetector, warmUp } from "../actions/intent";
   import { handoff, nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
@@ -200,10 +201,26 @@
   );
   $effect(() => engine.update(chartData()));
 
+  // The readout opens once the pointer rests or presses, then follows it until it leaves.
+  let tracking = false;
+  const rest = restDetector(() => {
+    tracking = true;
+    track();
+  }, 8);
   function onMove(e: PointerEvent) {
     if (e.pointerType !== "mouse") return;
     pointerClientX = e.clientX;
     pointerClientY = e.clientY;
+    if (tracking) track();
+    else rest.move(e, 150);
+  }
+  function onPointerDown(e: PointerEvent) {
+    if (e.pointerType !== "mouse") return;
+    rest.cancel();
+    tracking = true;
+    onMove(e);
+  }
+  function track() {
     // Coalesce pointer events into one small DOM update. The cached chart stays parked.
     stopPointerFrame ??= nextFrame(() => {
       stopPointerFrame = null;
@@ -282,6 +299,9 @@
     plotEl?.style.setProperty("--t-max", String(tMax));
   }
   function onLeave() {
+    rest.cancel();
+    if (tracking) warmUp();
+    tracking = false;
     if (!retainSelection) clearSelection();
   }
   function onBlur() {
@@ -305,6 +325,7 @@
 
     return () => {
       engine.destroy();
+      rest.cancel();
       stopPointerFrame?.();
       themeObserver.disconnect();
       resizeObserver.disconnect();
@@ -330,6 +351,7 @@
     )}
     aria-valuetext={selectionText}
     onpointermove={onMove}
+    onpointerdown={onPointerDown}
     onpointerleave={onLeave}
     onpointerup={onPointerUp}
     onkeydown={onKeyDown}

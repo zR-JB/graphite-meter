@@ -5,7 +5,7 @@ import type {
   StagePresentationStatus,
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
-import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
+import { STATUS, reasonLabel } from "../presentation/vocabulary";
 
 type SegState = StagePresentationStatus | "warmup";
 
@@ -85,9 +85,8 @@ const RESULT_STATES: Partial<Record<SegState, string>> = {
   failed: STATUS.failed,
 };
 
-/** Title, then what the stage holds (its result, failure or status), then what a toggle does. */
+/** One line the chip does not already show: its result, or why it is locked or skipped. */
 export function stageTip(input: {
-  stage: StageKey;
   selected: boolean;
   locked: boolean;
   state: SegState;
@@ -95,25 +94,17 @@ export function stageTip(input: {
   failure: FailureReason | null;
   value: string | null;
 }): string {
-  const { stage, selected, locked, state, reason, failure, value } = input;
+  const { selected, locked, state, reason, failure, value } = input;
   const settled = RESULT_STATES[state];
-  const status = settled
-    ? [settled, value, failure && reasonLabel(failure)]
-        .filter(Boolean)
-        .join(" · ")
-    : (reason ?? STAGE[stage].about);
-  const action = locked
-    ? ["active", "recovering", "warmup"].includes(state)
+  if (settled)
+    return [settled, value, failure && reasonLabel(failure)]
+      .filter(Boolean)
+      .join(" · ");
+  if (locked)
+    return ["active", "recovering", "warmup"].includes(state)
       ? "Locked while it runs"
       : state === "pending"
         ? "Locked while the test starts"
-        : "Locked until the run ends"
-    : !selected
-      ? "Toggle to include"
-      : stage === "bidirectional"
-        ? "Toggle to skip; Settings brings it back"
-        : settled
-          ? "Toggle to skip next run"
-          : "Toggle to skip";
-  return `${STAGE[stage].label}\n${status}\n${action}`;
+        : "Locked until the run ends";
+  return selected ? "" : (reason ?? "");
 }
