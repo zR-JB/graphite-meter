@@ -48,3 +48,34 @@ async fn trusted_proxy_exemption_keeps_global_limit_and_cancellation_releases_it
     assert_eq!(capacity.stats().active, 0);
     assert_eq!(capacity.stats().rejected_global, 1);
 }
+
+#[test]
+fn buffered_connections_share_wider_ipv6_budgets_and_release_them() {
+    let capacity = Connections::new(128, 64, Vec::new());
+    let mut permits = Vec::new();
+    for subnet in 0..2 {
+        for port in 1..=8 {
+            let peer = format!("[2001:db8:1:{subnet:x}::1]:{port}")
+                .parse()
+                .unwrap();
+            permits.push(capacity.acquire_buffered(peer, true).unwrap());
+        }
+    }
+    assert_eq!(
+        capacity
+            .acquire_buffered("[2001:db8:1:2::1]:9".parse().unwrap(), true)
+            .err(),
+        Some(Refusal::ClientFull)
+    );
+    assert!(
+        capacity
+            .acquire_buffered("[2001:db8:2::1]:9".parse().unwrap(), true)
+            .is_ok()
+    );
+    drop(permits);
+    assert!(
+        capacity
+            .acquire_buffered("[2001:db8:1:2::1]:9".parse().unwrap(), true)
+            .is_ok()
+    );
+}

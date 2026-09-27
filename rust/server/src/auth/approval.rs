@@ -3,7 +3,6 @@ use super::{
     grant::{AuthLease, GrantError, MAX_SESSION_GRANTS, secure_browser_origin},
     session::{SessionLease, SessionStore, State},
 };
-use crate::connections::subnet;
 use base64::{
     Engine as _, alphabet,
     engine::{
@@ -62,7 +61,7 @@ pub enum Exchange {
 }
 
 pub(super) struct Approval {
-    client: ipnet::IpNet,
+    client_keys: Vec<String>,
     session: Option<SessionLease>,
     browser_origin: Option<String>,
     code: String,
@@ -95,12 +94,16 @@ impl Approval {
 impl State {
     fn approval_capacity(&self, client: IpAddr) -> bool {
         self.approvals.len() >= MAX_APPROVALS
-            || self
-                .approvals
-                .values()
-                .filter(|approval| approval.client == subnet(client))
-                .count()
-                >= MAX_CLIENT_APPROVALS
+            || crate::client_address::share_full(
+                &crate::client_address::client_keys(client),
+                MAX_CLIENT_APPROVALS,
+                |key| {
+                    self.approvals
+                        .values()
+                        .filter(|approval| approval.client_keys.iter().any(|held| held == key))
+                        .count()
+                },
+            )
     }
 }
 
@@ -136,7 +139,7 @@ impl SessionStore {
             return Err(ApprovalError::Capacity);
         }
         let approval = Approval {
-            client: subnet(client),
+            client_keys: crate::client_address::client_keys(client),
             session: Some(session.clone()),
             browser_origin: None,
             code,
@@ -176,7 +179,7 @@ impl SessionStore {
             state.approvals.insert(
                 challenge.into(),
                 Approval {
-                    client: subnet(client),
+                    client_keys: crate::client_address::client_keys(client),
                     session: None,
                     browser_origin: Some(origin.into()),
                     code,

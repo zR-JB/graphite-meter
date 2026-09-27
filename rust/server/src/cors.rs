@@ -26,7 +26,12 @@ impl Access<'_> {
         headers.remove(header::ACCESS_CONTROL_ALLOW_CREDENTIALS);
         headers.remove(header::ACCESS_CONTROL_EXPOSE_HEADERS);
         match self {
-            Self::Public => {}
+            Self::Public => {
+                headers.insert(
+                    header::ACCESS_CONTROL_EXPOSE_HEADERS,
+                    HeaderValue::from_static("X-Graphite-Upload-Refusal, Retry-After"),
+                );
+            }
             Self::Cookie(_) => {
                 headers.insert(
                     header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -34,14 +39,14 @@ impl Access<'_> {
                 );
                 headers.insert(
                     header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                    HeaderValue::from_static("Graphite-Meter-Auth, Graphite-Meter-Auth-URL"),
+                    HeaderValue::from_static("X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL"),
                 );
             }
             Self::Bearer(_) => {
                 headers.insert(
                     header::ACCESS_CONTROL_EXPOSE_HEADERS,
                     HeaderValue::from_static(
-                        "Graphite-Meter-Auth, Graphite-Meter-Auth-URL, Graphite-Meter-Browser-Auth",
+                        "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL, Graphite-Meter-Browser-Auth",
                     ),
                 );
             }
@@ -53,6 +58,10 @@ impl Access<'_> {
 
     pub fn apply_measurement(self, headers: &mut HeaderMap) {
         self.apply_response(headers);
+        headers.insert(
+            header::ACCESS_CONTROL_MAX_AGE,
+            HeaderValue::from_static("7200"),
+        );
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
             HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),

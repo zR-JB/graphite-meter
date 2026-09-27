@@ -1,7 +1,7 @@
 //! Bounded rolling-window budgets for authentication attempts.
 use std::{
     collections::{HashMap, VecDeque},
-    net::{IpAddr, Ipv6Addr},
+    net::IpAddr,
     sync::Mutex,
     time::Duration,
 };
@@ -16,7 +16,7 @@ const EXCHANGE_ADDRESS_LIMIT: usize = 10;
 const APPROVAL_ADDRESS_LIMIT: usize = 10;
 
 type Attempts = VecDeque<Instant>;
-type AddressAttempts = HashMap<IpAddr, Attempts>;
+type AddressAttempts = HashMap<String, Attempts>;
 
 #[derive(Clone, Copy)]
 pub enum Budget {
@@ -46,33 +46,51 @@ impl AttemptLimiter {
     }
 
     pub fn allow(&self, budget: Budget, address: IpAddr) -> bool {
-        let key = address_key(address);
+        let keys = crate::client_address::client_keys(address);
         let mut state = self.state.lock().expect("auth attempt mutex poisoned");
         // Sample after acquiring the lock to keep stored timestamps ordered.
         let now = Instant::now();
         match budget {
             Budget::Password => {
-                if !address_has_room(&mut state.password, key, PASSWORD_ADDRESS_LIMIT, now) {
+                if !address_has_room(&mut state.password, &keys, PASSWORD_ADDRESS_LIMIT, now) {
                     return false;
                 }
                 expire(&mut state.global_password, now);
                 if state.global_password.len() >= PASSWORD_GLOBAL_LIMIT {
                     return false;
                 }
-                state.password.entry(key).or_default().push_back(now);
+                for key in &keys {
+                    state
+                        .password
+                        .entry(key.clone())
+                        .or_default()
+                        .push_back(now);
+                }
                 state.global_password.push_back(now);
             }
             Budget::OidcExchange => {
-                if !address_has_room(&mut state.exchanges, key, EXCHANGE_ADDRESS_LIMIT, now) {
+                if !address_has_room(&mut state.exchanges, &keys, EXCHANGE_ADDRESS_LIMIT, now) {
                     return false;
                 }
-                state.exchanges.entry(key).or_default().push_back(now);
+                for key in &keys {
+                    state
+                        .exchanges
+                        .entry(key.clone())
+                        .or_default()
+                        .push_back(now);
+                }
             }
             Budget::BrowserApproval => {
-                if !address_has_room(&mut state.approvals, key, APPROVAL_ADDRESS_LIMIT, now) {
+                if !address_has_room(&mut state.approvals, &keys, APPROVAL_ADDRESS_LIMIT, now) {
                     return false;
                 }
-                state.approvals.entry(key).or_default().push_back(now);
+                for key in &keys {
+                    state
+                        .approvals
+                        .entry(key.clone())
+                        .or_default()
+                        .push_back(now);
+                }
             }
         }
         true
@@ -81,21 +99,22 @@ impl AttemptLimiter {
 
 fn address_has_room(
     addresses: &mut AddressAttempts,
-    key: IpAddr,
+    keys: &[String],
     limit: usize,
     now: Instant,
 ) -> bool {
-    if let Some(attempts) = addresses.get_mut(&key) {
+    addresses.retain(|_, attempts| {
         expire(attempts, now);
-        return attempts.len() < limit;
-    }
-    if addresses.len() >= MAX_KEYS {
-        addresses.retain(|_, attempts| {
-            expire(attempts, now);
-            !attempts.is_empty()
-        });
-    }
-    addresses.len() < MAX_KEYS
+        !attempts.is_empty()
+    });
+    let missing = keys
+        .iter()
+        .filter(|key| !addresses.contains_key(*key))
+        .count();
+    addresses.len() + missing <= MAX_KEYS
+        && !crate::client_address::share_full(keys, limit, |key| {
+            addresses.get(key).map_or(0, Attempts::len)
+        })
 }
 
 fn expire(attempts: &mut Attempts, now: Instant) {
@@ -104,19 +123,5 @@ fn expire(attempts: &mut Attempts, now: Instant) {
         .is_some_and(|&time| now.duration_since(time) >= WINDOW)
     {
         attempts.pop_front();
-    }
-}
-
-fn address_key(address: IpAddr) -> IpAddr {
-    match address {
-        IpAddr::V4(_) => address,
-        IpAddr::V6(address) => {
-            if let Some(mapped) = address.to_ipv4_mapped() {
-                return mapped.into();
-            }
-            let mut prefix = address.octets();
-            prefix[8..].fill(0);
-            Ipv6Addr::from(prefix).into()
-        }
     }
 }

@@ -248,7 +248,7 @@ impl HttpServer {
                         }
                     };
                     accept_delay = Duration::ZERO;
-                    let Ok(permit) = self.connections.acquire(peer) else {
+                    let Ok(permit) = self.connections.acquire_buffered(peer, matches!(protocol, HttpProtocol::Http2)) else {
                         continue;
                     };
                     // Small control replies must not wait for Nagle buffering.
@@ -402,6 +402,9 @@ impl HttpServer {
         if self.auth.is_some() {
             return text_response(StatusCode::FORBIDDEN);
         }
+        if !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
+            return text_response(StatusCode::BAD_REQUEST);
+        }
         let owner = self.upload_owner(&request, peer);
         self.respond_authorized(request, peer, &owner)
     }
@@ -480,6 +483,15 @@ impl HttpServer {
     {
         if let Some(response) = self.validate_request(&request) {
             return Ok(response);
+        }
+        if !client_address::resolve(
+            connection.peer,
+            request.headers(),
+            &self.config.trusted_proxies,
+        )
+        .usable
+        {
+            return Ok(text_response(StatusCode::BAD_REQUEST));
         }
         if !connection.listener.ui
             && matches!(
@@ -717,7 +729,10 @@ impl HttpServer {
     }
 
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        let permit = match self.admission.acquire(Class::Request, owner.budget_key()) {
+        let permit = match self
+            .admission
+            .acquire_keys(Class::Request, owner.client_keys())
+        {
             Ok(permit) => permit,
             Err(refusal) => {
                 let mut response =

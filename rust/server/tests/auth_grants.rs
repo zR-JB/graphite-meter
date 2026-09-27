@@ -18,9 +18,16 @@ fn grant_identity_preserves_parent_budget_but_isolates_browser_uploads() {
     assert_eq!(cookie.provider(), "local");
     assert!(cli.is_bearer() && first.is_bearer());
     assert!(!cookie.is_bearer());
-    assert_eq!(cli.owner(), cookie.owner());
+    assert_ne!(cli.owner(), cookie.owner());
+    assert_eq!(
+        cli.owner().client_keys()[1],
+        cookie.owner().client_keys()[1]
+    );
     assert_ne!(first.owner(), second.owner());
-    assert_eq!(first.owner().budget_key(), cookie.owner().budget_key());
+    assert_eq!(
+        first.owner().client_keys()[1],
+        cookie.owner().client_keys()[1]
+    );
     assert_eq!(first.session().id(), second.session().id());
     assert_eq!(
         store.lookup_bearer(&first_token).unwrap().browser_origin(),

@@ -22,41 +22,49 @@ pub const UPLOAD_RETENTION: Duration = TOKEN_TTL;
 /// A browser grant narrows access without creating another subject budget.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Owner {
-    client_budget: String,
+    client_keys: Vec<String>,
     browser_grant: Option<String>,
 }
 
 impl Owner {
     pub fn anonymous(address: std::net::IpAddr) -> Self {
-        let client_budget = match address.to_canonical() {
-            std::net::IpAddr::V4(address) => address.to_string(),
-            std::net::IpAddr::V6(address) => ipnet::Ipv6Net::new(address, 64)
-                .expect("fixed valid IPv6 prefix")
-                .trunc()
-                .to_string(),
-        };
         Self {
-            client_budget,
+            client_keys: crate::client_address::client_keys(address),
+            browser_grant: None,
+        }
+    }
+
+    pub fn login(subject: &str, session: &str) -> Self {
+        Self {
+            client_keys: vec![format!("login:{session}"), format!("principal:{subject}")],
             browser_grant: None,
         }
     }
 
     pub fn principal(subject: impl Into<String>) -> Self {
         Self {
-            client_budget: format!("principal:{}", subject.into()),
+            client_keys: vec![format!("principal:{}", subject.into())],
             browser_grant: None,
         }
     }
 
     pub fn delegated(subject: impl Into<String>, grant_id: impl Into<String>) -> Self {
+        let grant_id = grant_id.into();
         Self {
-            client_budget: format!("principal:{}", subject.into()),
-            browser_grant: Some(grant_id.into()),
+            client_keys: vec![
+                format!("grant:{grant_id}"),
+                format!("principal:{}", subject.into()),
+            ],
+            browser_grant: Some(grant_id),
         }
     }
 
     pub fn budget_key(&self) -> &str {
-        &self.client_budget
+        &self.client_keys[0]
+    }
+
+    pub fn client_keys(&self) -> &[String] {
+        &self.client_keys
     }
 }
 
@@ -212,15 +220,15 @@ impl UploadStore {
             if !create || !self.valid(id) {
                 return Err(UploadError::Invalid);
             }
+            if crate::client_address::share_full(
+                owner.client_keys(),
+                MAX_UPLOADS_PER_CLIENT,
+                |key| entries.by_client.get(key).copied().unwrap_or_default(),
+            ) {
+                return Err(UploadError::ClientFull);
+            }
             if entries.by_id.len() >= MAX_LIVE_UPLOADS {
                 return Err(UploadError::GlobalFull);
-            }
-            if entries
-                .by_client
-                .get(owner.budget_key())
-                .is_some_and(|count| *count >= MAX_UPLOADS_PER_CLIENT)
-            {
-                return Err(UploadError::ClientFull);
             }
             let aggregate = Arc::new(Mutex::new(Aggregate {
                 owner: owner.clone(),
@@ -234,10 +242,9 @@ impl UploadStore {
                 changed: Arc::new(tokio::sync::Notify::new()),
             }));
             entries.by_id.insert(id.to_owned(), aggregate.clone());
-            *entries
-                .by_client
-                .entry(owner.budget_key().to_owned())
-                .or_default() += 1;
+            for key in owner.client_keys() {
+                *entries.by_client.entry(key.clone()).or_default() += 1;
+            }
             aggregate
         };
         {
@@ -314,11 +321,12 @@ impl UploadStore {
         by_id.retain(|_, aggregate| {
             let mut state = aggregate.lock().expect("upload aggregate lock");
             if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
-                let key = state.owner.budget_key();
-                let count = by_client.get_mut(key).expect("indexed upload owner");
-                *count -= 1;
-                if *count == 0 {
-                    by_client.remove(key);
+                for key in state.owner.client_keys() {
+                    let count = by_client.get_mut(key).expect("indexed upload owner");
+                    *count -= 1;
+                    if *count == 0 {
+                        by_client.remove(key);
+                    }
                 }
                 state.expired = true;
                 state.changed.notify_waiters();

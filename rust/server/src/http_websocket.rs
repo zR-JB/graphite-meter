@@ -44,7 +44,10 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request) {
             return response;
         }
-        let permit = match self.admission.acquire(Class::Request, owner.budget_key()) {
+        let permit = match self
+            .admission
+            .acquire_keys(Class::Request, owner.client_keys())
+        {
             Ok(permit) => permit,
             Err(refusal) => {
                 let mut response =

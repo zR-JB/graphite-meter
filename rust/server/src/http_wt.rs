@@ -57,6 +57,9 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request) {
             return refuse(&mut stream, response.status()).await;
         }
+        if !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
+            return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
+        }
         let connection = Connection {
             peer,
             tls: true,
@@ -105,15 +108,7 @@ impl HttpServer {
         } else {
             Class::Session
         };
-        let key = if class == Class::Session {
-            lease
-                .as_ref()
-                .map(|lease| format!("login:{}", lease.session().id()))
-                .unwrap_or_else(|| owner.budget_key().to_owned())
-        } else {
-            owner.budget_key().to_owned()
-        };
-        let _permit = match self.admission.acquire(class, &key) {
+        let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
             Ok(permit) => permit,
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
         };

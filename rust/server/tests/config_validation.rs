@@ -21,7 +21,7 @@ fn password() -> Config {
 #[test]
 fn authentication_constrains_advertised_origins_and_secret_sources() {
     password().validate().unwrap();
-    let invalid_cases: [InvalidConfigCase; 9] = [
+    let invalid_cases: [InvalidConfigCase; 10] = [
         ("insecure auth origin", |config| {
             config.auth.public_url = "http://meter.example".into()
         }),
@@ -45,6 +45,9 @@ fn authentication_constrains_advertised_origins_and_secret_sources() {
         }),
         ("provider name with control character", |config| {
             config.auth.oidc_provider_name = "invalid\nprovider".into()
+        }),
+        ("provider name with bidi control", |config| {
+            config.auth.oidc_provider_name = "invalid\u{202e}provider".into()
         }),
         ("credentials with auth disabled", |config| {
             config.auth.mode = AuthMode::Off

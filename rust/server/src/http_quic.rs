@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicUsize;
 use tokio::sync::mpsc;
 use webtransport::{Incoming, ReceiveStream, TransportError};
 
-const MAX_REQUESTS: usize = 256;
+const MAX_REQUESTS: usize = 44;
 const MAX_PENDING_STREAMS: usize = 64;
 const SESSION_QUEUE: usize = 32;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,8 +31,15 @@ impl HttpServer {
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         let mut transport = quinn::TransportConfig::default();
-        transport.max_concurrent_bidi_streams((MAX_REQUESTS as u32).into());
-        transport.max_concurrent_uni_streams(260_u32.into());
+        transport.max_concurrent_bidi_streams(
+            u32::try_from(
+                self.config.limits.operations_per_client
+                    + self.config.limits.sessions_per_client
+                    + 4,
+            )?
+            .into(),
+        );
+        transport.max_concurrent_uni_streams(23_u32.into());
         // Noq uses fixed receive credit rather than quic-go's autotuning.
         // A 1 MiB stream window capped one upload near 80 Mbit/s at 100 ms
         // RTT. These 8/16 MiB limits bound unconsumed inbound data per
@@ -42,7 +49,7 @@ impl HttpServer {
         transport.send_window(MIN_SEND_WINDOW);
         transport.datagram_receive_buffer_size(Some(64 * 1024));
         transport.datagram_send_buffer_size(64 * 1024);
-        transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
+        transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
         config.transport_config(Arc::new(transport));
         Ok(config)
     }
@@ -72,7 +79,7 @@ impl HttpServer {
                         continue;
                     }
                     let peer = incoming.remote_address();
-                    let Ok(permit) = self.connections.acquire(peer) else {
+                    let Ok(permit) = self.connections.acquire_buffered(peer, true) else {
                         incoming.refuse();
                         continue;
                     };
@@ -89,7 +96,7 @@ impl HttpServer {
                     let server = self.clone();
                     connections.spawn(async move {
                         let _permit = permit;
-                        if let Ok(Ok(quic)) = tokio::time::timeout(HEADER_TIMEOUT, connecting).await {
+                        if let Ok(Ok(quic)) = tokio::time::timeout(Duration::from_secs(5), connecting).await {
                             let _ = server.serve_quic_connection(quic, peer, window).await;
                         }
                     });
@@ -758,6 +765,11 @@ mod tests {
             let server = HttpServer::with_memory(
                 Arc::new(Config {
                     max_connections_per_client: 128,
+                    trusted_proxies: if topology {
+                        vec!["127.0.0.1/32".parse().unwrap()]
+                    } else {
+                        Vec::new()
+                    },
                     ..Config::default()
                 }),
                 if topology {

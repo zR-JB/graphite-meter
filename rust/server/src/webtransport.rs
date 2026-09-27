@@ -44,7 +44,7 @@ struct PendingHeader {
 impl Connection {
     pub async fn new(quic: quinn::Connection, max_sessions: u64) -> Result<Self, TransportError> {
         let http = h3::server::builder()
-            .max_field_section_size(32 * 1024)
+            .max_field_section_size(4 * 1024)
             .enable_extended_connect(true)
             .enable_datagram(true)
             .enable_webtransport(true)

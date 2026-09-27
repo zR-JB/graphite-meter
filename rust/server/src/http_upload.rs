@@ -94,7 +94,7 @@ impl HttpServer {
         owner: &Owner,
     ) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
         self.admission
-            .acquire(Class::Request, owner.budget_key())
+            .acquire_keys(Class::Request, owner.client_keys())
             .map(|permit| {
                 Arc::new(Mutex::new(Operation {
                     permit: Some(permit),

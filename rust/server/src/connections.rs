@@ -23,7 +23,8 @@ pub enum Refusal {
 #[derive(Default)]
 struct Counts {
     stats: Stats,
-    clients: HashMap<IpNet, usize>,
+    clients: HashMap<String, usize>,
+    buffered: HashMap<String, usize>,
 }
 struct Inner {
     global_max: usize,
@@ -38,7 +39,8 @@ pub struct Connections(Arc<Inner>);
 #[must_use]
 pub struct Permit {
     owner: Connections,
-    key: Option<IpNet>,
+    keys: Vec<String>,
+    buffered: bool,
 }
 
 impl Connections {
@@ -52,30 +54,43 @@ impl Connections {
     }
 
     pub fn acquire(&self, peer: SocketAddr) -> Result<Permit, Refusal> {
+        self.acquire_buffered(peer, false)
+    }
+
+    pub fn acquire_buffered(&self, peer: SocketAddr, buffered: bool) -> Result<Permit, Refusal> {
         let addr = peer.ip().to_canonical();
-        // A trusted proxy shares its socket pool across clients. Its connections
-        // still consume global capacity; request policy later attributes clients.
-        let key =
-            (!self.0.trusted.iter().any(|prefix| prefix.contains(&addr))).then(|| subnet(addr));
+        let keys = if self.0.trusted.iter().any(|prefix| prefix.contains(&addr)) {
+            Vec::new()
+        } else {
+            crate::client_address::client_keys(addr)
+        };
         let mut counts = self.0.counts.lock().expect("connection counts poisoned");
+        if crate::client_address::share_full(&keys, self.0.client_max, |key| {
+            counts.clients.get(key).copied().unwrap_or_default()
+        }) || buffered
+            && crate::client_address::share_full(&keys, self.0.client_max.min(8), |key| {
+                counts.buffered.get(key).copied().unwrap_or_default()
+            })
+        {
+            counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
+            return Err(Refusal::ClientFull);
+        }
         if counts.stats.active >= self.0.global_max {
             counts.stats.rejected_global = counts.stats.rejected_global.saturating_add(1);
             return Err(Refusal::GlobalFull);
         }
-        if key.is_some_and(|key| {
-            counts.clients.get(&key).copied().unwrap_or_default() >= self.0.client_max
-        }) {
-            counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
-            return Err(Refusal::ClientFull);
-        }
         counts.stats.active += 1;
         counts.stats.peak = counts.stats.peak.max(counts.stats.active);
-        if let Some(key) = key {
-            *counts.clients.entry(key).or_default() += 1;
+        for key in &keys {
+            *counts.clients.entry(key.clone()).or_default() += 1;
+            if buffered {
+                *counts.buffered.entry(key.clone()).or_default() += 1;
+            }
         }
         Ok(Permit {
             owner: self.clone(),
-            key,
+            keys,
+            buffered,
         })
     }
 
@@ -97,14 +112,24 @@ impl Drop for Permit {
             .lock()
             .expect("connection counts poisoned");
         counts.stats.active -= 1;
-        if let Some(key) = self.key {
+        for key in &self.keys {
             let count = counts
                 .clients
-                .get_mut(&key)
+                .get_mut(key)
                 .expect("permit owns client capacity");
             *count -= 1;
             if *count == 0 {
-                counts.clients.remove(&key);
+                counts.clients.remove(key);
+            }
+            if self.buffered {
+                let count = counts
+                    .buffered
+                    .get_mut(key)
+                    .expect("permit owns buffer share");
+                *count -= 1;
+                if *count == 0 {
+                    counts.buffered.remove(key);
+                }
             }
         }
     }

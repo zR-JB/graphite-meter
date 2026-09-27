@@ -18,7 +18,7 @@ impl Default for Limits {
             operations: 256,
             operations_per_client: 32,
             sessions: 64,
-            sessions_per_client: 16,
+            sessions_per_client: 8,
         }
     }
 }
@@ -66,7 +66,7 @@ pub struct Admission(Arc<Inner>);
 pub struct Permit {
     admission: Admission,
     class: Class,
-    client: String,
+    clients: Vec<String>,
 }
 
 impl Admission {
@@ -80,6 +80,10 @@ impl Admission {
     /// Call after resolving the request or session client key. Unmetered routes
     /// and CORS preflight do not acquire a permit.
     pub fn acquire(&self, class: Class, client: &str) -> Result<Permit, Refusal> {
+        self.acquire_keys(class, &[client.to_owned()])
+    }
+
+    pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = self.0.counts.lock().expect("admission mutex poisoned");
         let (clients, limit) = match class {
             Class::Request => (
@@ -92,7 +96,9 @@ impl Admission {
             ),
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
-        if clients.get(client).copied().unwrap_or(0) >= limit {
+        if crate::client_address::share_full(keys, limit, |key| {
+            clients.get(key).copied().unwrap_or(0)
+        }) {
             return Err(Refusal::ClientFull);
         }
         if counts.active >= self.0.limits.operations {
@@ -101,19 +107,22 @@ impl Admission {
         if class == Class::Session && counts.sessions >= self.0.limits.sessions {
             return Err(Refusal::SessionsFull);
         }
-        let client = client.to_owned();
+        let clients = keys.to_vec();
         counts.active += 1;
-        match class {
-            Class::Request => *counts.requests_by_client.entry(client.clone()).or_default() += 1,
-            Class::Session => {
-                counts.sessions += 1;
-                *counts.sessions_by_client.entry(client.clone()).or_default() += 1;
-            }
+        if class == Class::Session {
+            counts.sessions += 1;
+        }
+        let held = match class {
+            Class::Request => &mut counts.requests_by_client,
+            Class::Session => &mut counts.sessions_by_client,
+        };
+        for client in &clients {
+            *held.entry(client.clone()).or_default() += 1;
         }
         Ok(Permit {
             admission: self.clone(),
             class,
-            client,
+            clients,
         })
     }
 
@@ -145,12 +154,12 @@ impl Drop for Permit {
                 &mut counts.sessions_by_client
             }
         };
-        let count = clients
-            .get_mut(&self.client)
-            .expect("permit owns a client slot");
-        *count -= 1;
-        if *count == 0 {
-            clients.remove(&self.client);
+        for client in &self.clients {
+            let count = clients.get_mut(client).expect("permit owns a client slot");
+            *count -= 1;
+            if *count == 0 {
+                clients.remove(client);
+            }
         }
     }
 }

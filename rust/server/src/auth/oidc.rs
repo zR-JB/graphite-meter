@@ -102,7 +102,7 @@ struct Transaction {
     nonce: Zeroizing<String>,
     verifier: Zeroizing<String>,
     deadline: Instant,
-    address: IpAddr,
+    client_keys: Vec<String>,
     pub challenge: String,
     prior: Option<SessionLease>,
 }
@@ -223,12 +223,14 @@ impl Oidc {
             .expect("OIDC transactions poisoned");
         let now = Instant::now();
         transactions.retain(|_, transaction| transaction.deadline > now);
+        let client_keys = crate::client_address::client_keys(address);
         if transactions.len() >= 256
-            || transactions
-                .values()
-                .filter(|tx| tx.address == address)
-                .count()
-                >= 8
+            || crate::client_address::share_full(&client_keys, 8, |key| {
+                transactions
+                    .values()
+                    .filter(|tx| tx.client_keys.iter().any(|held| held == key))
+                    .count()
+            })
         {
             return Err("OIDC transaction capacity reached".into());
         }
@@ -240,7 +242,7 @@ impl Oidc {
                 nonce,
                 verifier,
                 deadline: now + Duration::from_secs(600),
-                address,
+                client_keys,
                 challenge,
                 prior,
             },

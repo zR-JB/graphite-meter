@@ -367,7 +367,7 @@ fn owner_fields_cannot_collide_through_delimiters() {
         Err(UploadError::OwnerMismatch)
     );
     let principal = Owner::principal("a");
-    assert_eq!(principal.budget_key(), delegated.budget_key());
+    assert_eq!(principal.client_keys()[0], delegated.client_keys()[1]);
     let id = store.mint().unwrap();
     drop(store.begin(&id, &principal).unwrap());
     assert_eq!(

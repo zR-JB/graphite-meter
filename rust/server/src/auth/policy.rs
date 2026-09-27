@@ -207,22 +207,9 @@ impl Policy {
         }
     }
 
-    /// Login throttling deliberately accepts less proxy metadata than public
-    /// probe reporting: a trusted peer must supply exactly one X-Real-IP.
     pub fn client_address(&self, headers: &HeaderMap, peer: SocketAddr) -> Option<IpAddr> {
-        let peer = peer.ip().to_canonical();
-        if !self.trusted_peer(peer) {
-            return Some(peer);
-        }
-        for name in ["forwarded", "x-forwarded-for"] {
-            if headers.get(name).is_some_and(|value| !value.is_empty()) {
-                return None;
-            }
-        }
-        single_header(headers, "x-real-ip")?
-            .parse::<IpAddr>()
-            .ok()
-            .map(|address| address.to_canonical())
+        let client = crate::client_address::resolve(peer, headers, &self.trusted);
+        client.usable.then_some(client.addr)
     }
 
     pub fn authorize<B>(

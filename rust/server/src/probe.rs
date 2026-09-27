@@ -36,6 +36,11 @@ impl Probe {
         headers: &HeaderMap,
     ) -> Result<Response<Bytes>, ConfigError> {
         let client = client_address::resolve(peer, headers, &self.config.trusted_proxies);
+        if !client.usable {
+            return Ok(Response::builder()
+                .status(400)
+                .body(Bytes::from_static(b"ambiguous client address"))?);
+        }
         let protocol = match version {
             Version::HTTP_3 => ProtocolNegotiated::Http3,
             Version::HTTP_2 => ProtocolNegotiated::Http2,

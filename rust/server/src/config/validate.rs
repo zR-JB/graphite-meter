@@ -11,6 +11,13 @@ impl Config {
     }
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
+        if self
+            .trusted_proxies
+            .iter()
+            .any(|prefix| prefix.prefix_len() == 0)
+        {
+            return Err("trusted proxy prefix must not cover every address".into());
+        }
         for (name, value) in [
             ("GM_MAX_ACTIVE_MEASUREMENTS", self.limits.operations),
             (
@@ -290,7 +297,10 @@ impl AuthConfig {
             }
         }
         if self.oidc_provider_name.len() > 64
-            || self.oidc_provider_name.chars().any(char::is_control)
+            || self
+                .oidc_provider_name
+                .chars()
+                .any(|c| !graphite_meter_core::text::display_character(c))
         {
             return Err(
                 "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters"
