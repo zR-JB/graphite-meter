@@ -110,7 +110,6 @@ func main() {
 	os.Exit(exitStatus(m, caught.Load()))
 }
 
-// onSignal reacts to the first signal only, so a second one ends the process at once.
 func onSignal(signals chan os.Signal, caught *atomic.Value, react func()) {
 	go func() {
 		caught.Store(<-signals)
@@ -119,7 +118,6 @@ func onSignal(signals chan os.Signal, caught *atomic.Value, react func()) {
 	}()
 }
 
-// exitStatus reports the run's outcome, or the signal convention when a key or signal interrupted a run.
 func exitStatus(m model, caught any) int {
 	interrupted := m.interrupted || caught != nil && (m.running() || m.last == goclient.OutcomeStopped)
 	switch {

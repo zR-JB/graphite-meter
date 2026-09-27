@@ -216,7 +216,6 @@ type stageEvent struct {
 	sample *sampledBoundary
 }
 
-// await serves every phase: outcomes are handled here, and step decides when the phase is over.
 func (s *stageRun) await(timer <-chan time.Time, step func(stageEvent) (bool, error)) error {
 	for {
 		var e stageEvent

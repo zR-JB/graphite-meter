@@ -23,7 +23,6 @@ func nativeBoundary(ms int, down map[string]uint64, up map[string]*ReceiverSnaps
 	return measurementBoundary{at: time.Duration(ms) * time.Millisecond, down: down, up: up}
 }
 
-// testStage is a one-server stage whose aggregate has begun.
 func testStage(p *participant, plan StagePlan, emit func(Event)) *stageRun {
 	c := &coordinator{servers: []*participant{p}, started: time.Now(), emit: emit}
 	c.aggregate.beginStage(plan.Name, []string{p.id()}, 0)

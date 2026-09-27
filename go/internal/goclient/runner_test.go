@@ -92,7 +92,6 @@ func (s StageSet) name() string {
 	return strings.Join(names, "+")
 }
 
-// An HTTP/2 proxy in front of an HTTP/1.1 backend: the client's own hop decides its protocol and lanes.
 func TestRunThroughAnHTTP2ProxyToAnHTTP1Backend(t *testing.T) {
 	t.Parallel()
 	for _, advertised := range []string{"http2", "negotiated"} {

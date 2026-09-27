@@ -129,7 +129,6 @@ func refuseInRecord(wt *webtransport.Server, w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// testOrigin serves handler over protocol; HTTP/3 also accepts WebTransport sessions.
 func testOrigin(t *testing.T, protocol string, handler func(*webtransport.Server) http.Handler) string {
 	t.Helper()
 	if protocol != "http3" {

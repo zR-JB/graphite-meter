@@ -17,7 +17,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-// setupRow is one line of the list; help explains the focused row in the footer.
 type setupRow struct {
 	label, value, help string
 	inert              bool
@@ -186,7 +185,6 @@ var (
 		}}
 )
 
-// streamCount is the count the streams row edits: the forced one when forcing, else the HTTP/1.1 maximum.
 func streamCount(c *goclient.Config) *int {
 	if c.TransferStreams.Forced > 0 {
 		return &c.TransferStreams.Forced

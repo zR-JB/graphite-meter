@@ -203,7 +203,6 @@ func newRunState(cfg goclient.Config, focus string, started time.Time) *runState
 	return r
 }
 
-// waitEvents gathers one frame of events: a reply-driven stage emits thousands per second.
 func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-events
@@ -385,7 +384,6 @@ func (m *model) apply(e goclient.Event) {
 
 func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
 
-// measuredLatency reports whether the server that owns the latency result has an idle median.
 func (r *runState) measuredLatency() bool {
 	for _, server := range r.details.Servers {
 		if server.Server.ID == r.details.LatencyFocus {

@@ -34,7 +34,6 @@ type serverFixture struct {
 	upload               atomic.Pointer[endpoint.Upload]
 }
 
-// restart replaces the receiver store and drops every connection, as a restarted server does.
 func (f *serverFixture) restart() {
 	f.upload.Store(endpoint.NewUpload(nil, nil))
 	f.server.CloseClientConnections()

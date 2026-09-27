@@ -170,7 +170,6 @@ func mountDiscovery(mux *http.ServeMux) {
 	mux.HandleFunc("/probe", writeProbe)
 }
 
-// pacedDownload lets virtual time pass between writes over a pipe.
 func pacedDownload(w http.ResponseWriter, _ *http.Request) {
 	time.Sleep(time.Millisecond)
 	_, _ = w.Write(make([]byte, 32*1024))
@@ -181,8 +180,6 @@ func writeDownload(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(make([]byte, 64*1024))
 }
 
-// mountUploadReceiver serves the server's own receiver; paced bodies let virtual time advance, and a fault
-// refuses new lanes and drops running ones.
 func mountUploadReceiver(mux *http.ServeMux, fault func() bool) {
 	upload := endpoint.NewUpload(nil, nil)
 	mux.HandleFunc(route.UploadSession, upload.ServeSession)
@@ -219,7 +216,6 @@ func (b pacedBody) Read(p []byte) (int, error) {
 	return b.ReadCloser.Read(p[:min(len(p), 8192)])
 }
 
-// mountSilentReceiver accepts upload bytes but reports none, while receiver time advances.
 func mountSilentReceiver(mux *http.ServeMux) {
 	mux.HandleFunc(route.UploadSession, func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.UploadSession{UploadID: "silent"})
@@ -379,7 +375,6 @@ func (l *eventLog) phases() (phases []Phase) {
 	return phases
 }
 
-// results are the aggregate results, without any server's own.
 func (l *eventLog) results() (results []Result) {
 	for _, e := range l.all() {
 		if e.Kind == EventResult && e.ServerID == "" {

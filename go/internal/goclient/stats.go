@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// latencyStats counts each distinct RTT: a fast reply-driven stage repeats values, so memory stays bounded.
 type latencyStats struct {
 	counts                             map[time.Duration]int
 	count                              int

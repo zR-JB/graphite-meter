@@ -102,7 +102,6 @@ func TestNativeReflectorTimingValidationAndReconnect(t *testing.T) {
 						}
 						pong := []byte(fmt.Sprintf("PONG,%d,%s", frame, value))
 						time.Sleep(time.Millisecond)
-						// A duplicate echo cannot add another raw or paired observation.
 						for range 2 {
 							if err := conn.Write(request.Context(), websocket.MessageText, pong); err != nil {
 								return

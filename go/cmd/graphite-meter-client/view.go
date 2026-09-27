@@ -160,7 +160,6 @@ func (m model) footer(w int, overflow bool) string {
 		bindings = slices.Insert(bindings, 1, keys.page)
 	}
 	line := m.help.ShortHelpView(bindings)
-	// Hints are in priority order: keep the first and quit, drop from the right of the rest.
 	for lipgloss.Width(line) > w && len(bindings) > 2 {
 		bindings = slices.Delete(bindings, len(bindings)-2, len(bindings)-1)
 		line = m.help.ShortHelpView(bindings)

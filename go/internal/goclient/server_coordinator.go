@@ -176,7 +176,6 @@ func (c *coordinator) outcome(ctx context.Context, err error) Outcome {
 	return OutcomeFailed
 }
 
-// focus owns the run's latency result; when it leaves, a survivor that measured idle latency takes over.
 func (c *coordinator) focus() *participant {
 	var chosen, prepared, fallback *participant
 	for _, p := range c.active() {
@@ -214,7 +213,6 @@ func (c *coordinator) failed(stage Stage, scope FailureScope, id string) bool {
 	})
 }
 
-// insufficient names why a population has no result when no failure already does.
 func (c *coordinator) insufficient(stage Stage, scope FailureScope, id string) {
 	if !c.failed(stage, scope, id) {
 		c.failures = append(c.failures, ServerFailure{ServerID: id, Stage: stage, Scope: scope,
