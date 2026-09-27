@@ -1155,7 +1155,9 @@ fn check_buffer_budget(
     handshake_bytes: usize,
     endpoint_bytes: usize,
 ) -> Result<(), ConfigError> {
-    let floor = http_quic::connection_floor(&config.limits, handshake_bytes).max(http_h2::BUFFER_BYTES as usize);
+    let floor = http_quic::connection_floor(&config.limits, handshake_bytes)
+        .saturating_add(quinn::CONNECTION_FLOOR_BYTES)
+        .max(http_h2::BUFFER_BYTES as usize);
     let minimum =
         floor as u128 * config.max_connections as u128 + endpoint_bytes as u128 + DOWNLOAD_BLOCK_BYTES as u128;
     if minimum > limit as u128 {

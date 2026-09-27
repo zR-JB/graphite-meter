@@ -1058,8 +1058,9 @@ mod tests {
             max_connections_per_client: 4,
             ..Config::default()
         });
-        let floors = 4 * connection_floor(&config.limits, 0);
-        let (tls, _) = tls();
+        let floor = connection_floor(&config.limits, 0);
+        let floors = 4 * (floor + quinn::CONNECTION_FLOOR_BYTES);
+        let (tls, client_config) = tls();
         let address = "127.0.0.1:0".parse().unwrap();
         let measured = HttpServer::with_memory(config.clone(), 1 << 30).unwrap();
         let idle = measured.memory.available();
@@ -1085,10 +1086,23 @@ mod tests {
             error.to_string().contains(&format!("at least {}", minimum + 4)),
             "{error}"
         );
-        let remaining = server.memory.lease(floors).unwrap();
-        assert!(server.quic_endpoint(tls, address).is_err());
+        let client = quinn::Endpoint::client(address).unwrap();
+        client.set_default_client_config(client_config);
+        let mut connections = Vec::new();
+        for _ in 0..4 {
+            let (peer, accepted) = tokio::join!(
+                client.connect(endpoint.local_addr().unwrap(), "localhost").unwrap(),
+                async {
+                    let incoming = endpoint.endpoint.accept().await.unwrap();
+                    let (connecting, budget) = endpoint.accept(incoming, server.memory.lease(floor).unwrap()).unwrap();
+                    (connecting.await.unwrap(), budget)
+                }
+            );
+            connections.push((peer.unwrap(), accepted));
+        }
         assert_eq!(server.memory.available(), 0);
-        drop(remaining);
+        assert!(server.quic_endpoint(tls, address).is_err());
+        drop(connections);
         let address = endpoint.local_addr().unwrap();
         let socket = held_udp_socket(address).unwrap();
         drop(endpoint);
@@ -1497,7 +1511,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn exhaustion_closes_only_the_requesting_connection() {
+    async fn transfers_complete_from_their_floors_when_the_budget_is_exhausted() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
@@ -1512,25 +1526,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async {
             let requesting = client.connect(address, "localhost").unwrap().await.unwrap();
             let sibling = client.connect(address, "localhost").unwrap().await.unwrap();
-            let floor = connection_floor(&server.config.limits, 0);
             let filler = server
                 .memory
-                .lease(settled(&server.memory, &[&requesting, &sibling]).await - 4096)
+                .lease(settled(&server.memory, &[&requesting, &sibling]).await)
                 .unwrap();
-            assert!(download(requesting.clone(), 64 * 1024 * 1024).await.is_err());
-            match requesting.closed().await {
-                quinn::ConnectionError::ConnectionClosed(close) => {
-                    assert_eq!(close.error_code, quinn::TransportErrorCode::INTERNAL_ERROR)
-                }
-                error => panic!("unexpected close: {error:?}"),
-            }
-            assert!(sibling.close_reason().is_none());
-            while server.memory.available() < floor {
-                tokio::task::yield_now().await;
-            }
-            assert_eq!(download(sibling.clone(), 13).await.unwrap(), 13);
+            let bytes = 64 * 1024 * 1024;
+            assert_eq!(download(requesting, bytes).await.unwrap(), bytes as usize);
+            assert_eq!(download(sibling, 13).await.unwrap(), 13);
             drop(filler);
-            sibling.close(0_u32.into(), b"done");
         })
         .await
         .unwrap();
@@ -1567,8 +1570,8 @@ mod tests {
             assert!(silent.iter().all(Result::is_ok));
             let charged = idle - server.memory.available();
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
-            let floor = connection_floor(&server.config.limits, 0);
-            assert!(charged < silent.len() * (floor + 64 * 1024));
+            let floor = connection_floor(&server.config.limits, 0) + quinn::CONNECTION_FLOOR_BYTES;
+            assert!(charged <= silent.len() * floor);
             let fresh = clients[9].connect(address, "localhost").unwrap().await.unwrap();
             assert_eq!(download(fresh, 13).await.unwrap(), 13);
         })

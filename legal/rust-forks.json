@@ -91,11 +91,11 @@
   {
     "fork": "https://github.com/zR-JB/noq",
     "branch": "graphite-meter/noq-v1.3.0",
-    "rev": "17cd99748fb80a65753ffffddde77b896e3f6f75",
+    "rev": "5d05e0b508930a45258edd32dfc9f0bb180bda28",
     "upstream": "https://github.com/n0-computer/noq",
     "baseTag": "noq-v1.3.0",
     "base": "c1f411562e6078852749b8bcf1190523096a107f",
-    "diffSha256": "82444f2cccd6b1e56c7b7a2fb5af16db4dd26af47c0c8bd897c9f9c5c3565e60",
+    "diffSha256": "c3bf50bdc32dfbf879688fc681315d15aa5f71c9aa3cb6fa12266dfe32dbdd03",
     "modifiedPackages": [
       "noq",
       "noq-proto"
@@ -264,6 +264,61 @@
       {
         "subject": "Lint all features in the fork workflow",
         "purpose": "Fixes the bench module import and lints all features in fork CI, matching upstream.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Own reset and stop frames with their stream state",
+        "purpose": "Keeps RESET_STREAM(_AT) and STOP_SENDING as latest-wins stream state precharged per stream, so application stop and reset never fail the connection under packet pressure.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Send due ACKs while the congestion window is full",
+        "purpose": "Sends an untracked ACK-only packet when congestion-blocked with ACKs due (RFC 9002 §7, RFC 9000 §13.2.1); the hold also exists upstream.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Sample RTT only when the largest acknowledged packet is tracked",
+        "purpose": "Stops untracked probes from inflating RTT with a stale send time.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Pay receive window shrink debt before growing credit",
+        "purpose": "Grows peer credit only after paying earlier shrink debt, so shrink and grow cycles cannot stack MAX_DATA.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Drop the reset control entry once RESET_STREAM_AT is acknowledged",
+        "purpose": "Removes a stale reset entry at acknowledgement so no empty packet is built.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Send congestion-blocked ACKs alone",
+        "purpose": "Keeps PING and other frames off the untracked ACK-only path and ends the batch after it.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Restart PTO backoff from untracked probes",
+        "purpose": "Re-arms loss detection and backoff from untracked probes (RFC 9002 doubling); probes are not counted in flight.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Keep send times of recent untracked packets",
+        "purpose": "Keeps a fixed ring of recent untracked send times so ECN and RTT use real send times.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Assert the mechanism each metadata pressure test covers",
+        "purpose": "Test-only: pressure tests assert the mechanism they cover.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Precharge a per-connection buffer floor",
+        "purpose": "Charges a per-pool reserve at connection creation; shared-budget refusals degrade instead of closing healthy connections.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Precharge the state of every stream the peer may open",
+        "purpose": "Precharges stream state for every stream the peer may open, exposed as TransportConfig::connection_floor_bytes().",
         "origin": "graphite-meter"
       }
     ],

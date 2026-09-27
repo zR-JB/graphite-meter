@@ -61,8 +61,8 @@ QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until Noq drops the connection, a QUIC connection
 holds a floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3
 frame and copy block outside Noq, plus the TLS handshake: five server flights of
-the loaded certificate chain and a copy of it. With the default 67 streams and a
-two-certificate chain that is 5.3 MiB.
+the loaded certificate chain and a copy of it, and Noq's own 320 KiB. With the
+default 67 streams and a two-certificate chain that is 5.6 MiB.
 An HTTP/2 connection holds a 1.5 MiB floor from accept until its task ends:
 512 KiB of TLS and codec buffers and a 1 MiB allowance for decoded headers,
 buffered DATA frames and queued response metadata, charged as they fill. A
@@ -79,11 +79,14 @@ Once a quarter of either connection capacity or the budget is used, unvalidated
 QUIC handshakes require Retry. A connection whose floor does not fit is refused
 while established connections continue.
 
-Noq charges its receive reassembly, send buffers, packet and control metadata,
-datagrams, and queued incoming packets to the same budget as they fill, within
-unchanged per-connection caps. A refused charge closes only that connection with
-`INTERNAL_ERROR`. Returned byte slices keep their charge until their last owner
-drops, including after connection destruction. Until an admitted upload reads
+Noq precharges 64 KiB for each of its five buffer pools, then charges its
+receive reassembly, send buffers, packet and control metadata, datagrams,
+handshake data and queued incoming packets to the same budget as they fill,
+within unchanged per-connection caps. A refused data charge slows that
+connection; refused stream or control metadata beyond the floor, or a floor that
+does not fit, closes only that connection with `INTERNAL_ERROR`. Returned byte
+slices keep their charge until their last owner drops, including after
+connection destruction. Until an admitted upload reads
 on the connection, its receive window is 64 KiB, so a silent or unauthenticated
 peer can make Noq hold at most 192 KiB of reassembly. The first grant reserves
 the rest of Go's 48 MiB connection window until Noq drops the connection, and
