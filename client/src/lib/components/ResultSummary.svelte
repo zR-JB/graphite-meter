@@ -135,7 +135,12 @@
       </article>
     {/each}
   </div>
-  {#if issues.length}
+  <!-- One shown server needs no attribution: its reasons sit as quiet lines under the cards. -->
+  {#if issues.length && ((details?.selection.length ?? 1) <= 1 || scope)}
+    <ul class="issue-lines enter" aria-label="Issues">
+      {#each issues as issue, index (index)}<li>{issue.text}</li>{/each}
+    </ul>
+  {:else if issues.length}
     <section class="group enter" aria-label="Issues">
       <h3>Issues</h3>
       <dl class="kv">
@@ -272,6 +277,13 @@
     left: calc(var(--space-3) / 2);
     translate: -50%;
     color: var(--text-soft);
+  }
+  .issue-lines {
+    display: grid;
+    justify-items: center;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
+    text-align: center;
   }
   .fact-icon {
     display: inline-grid;
