@@ -1,32 +1,38 @@
 import type { ConnectivityState, LatencyBucket } from "../runner/contract";
-import { median } from "../runner/stats";
+import { median } from "../runner/measure";
 
 type HealthBucket = Pick<
   LatencyBucket,
-  "startT" | "endT" | "pingCount" | "lossCount" | "medianRttMs"
+  "startT" | "endT" | "pingCount" | "timeoutCount" | "medianRttMs"
 >;
 
-/** A live indicator, not the run's loss or jitter statistic. */
+const STALE_MS = 3_000;
+const WINDOW_MS = 4_000;
+
+/** A live indicator, not the run's timeout or jitter statistic; evidence older than 3 s at `nowT` is stale. */
 export function connectionQuality(
   buckets: readonly HealthBucket[],
-): ConnectivityState {
+  nowT = -Infinity,
+): ConnectivityState | "checking" {
   const latest = buckets.at(-1);
-  if (!latest) return "connected";
-  const recent = buckets.filter(
-    (bucket) => bucket.endT >= latest.endT - 4000 && bucket.pingCount > 0,
-  );
+  if (!latest || nowT - latest.endT > STALE_MS) return "checking";
+  const recent = buckets
+    .slice(
+      buckets.findLastIndex((bucket) => bucket.endT < latest.endT - WINDOW_MS) +
+        1,
+    )
+    .filter((bucket) => bucket.pingCount > 0);
   const replies = recent.flatMap((bucket) =>
     bucket.medianRttMs === null ? [] : [bucket.medianRttMs],
   );
   const variationThreshold = Math.max(20, median(replies) * 0.3);
 
-  // A sustained clean tail supersedes an old spike or loss burst. Requiring
-  // elapsed evidence as well as replies makes recovery independent of cadence.
+  // A clean tail of replies and elapsed time supersedes an old spike at any cadence.
   let cleanReplies = 0;
   for (let i = recent.length - 1; i >= 0; i--) {
     const bucket = recent[i];
     if (
-      bucket.lossCount ||
+      bucket.timeoutCount ||
       bucket.medianRttMs === null ||
       latest.medianRttMs === null ||
       Math.abs(bucket.medianRttMs - latest.medianRttMs) > variationThreshold
@@ -41,12 +47,11 @@ export function connectionQuality(
       return "connected";
   }
 
-  const losses = recent.reduce((sum, bucket) => sum + bucket.lossCount, 0);
+  const timeouts = recent.reduce((sum, bucket) => sum + bucket.timeoutCount, 0);
   const count = recent.reduce((sum, bucket) => sum + bucket.pingCount, 0);
-  // One timeout is insufficient evidence for a quality warning, especially
-  // on the sparse idle cadence where it otherwise means 25–100% loss.
-  if (losses >= 2 && losses / count >= 0.2) return "unstable";
-  if (losses >= 2 && losses / count >= 0.02) return "degraded";
+  // One timeout is too little evidence, above all at the sparse idle cadence.
+  if (timeouts >= 2 && timeouts / count >= 0.2) return "unstable";
+  if (timeouts >= 2 && timeouts / count >= 0.02) return "degraded";
   const changes = replies.slice(1).map((rtt, i) => Math.abs(rtt - replies[i]));
   // An isolated spike produces two large changes; require repeated variation.
   if (

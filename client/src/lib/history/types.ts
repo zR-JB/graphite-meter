@@ -1,687 +1,413 @@
-import { isWireEstimates, type WireEstimates } from "./wire";
-import { isMultiServerResult } from "../servers/serialization";
 import {
-  hasLatencyMeasurements,
-  hasThroughputMeasurements,
-  isReflectorTimingSummary,
-} from "./measurementValidation";
-import type { MultiServerResult } from "../servers/measurement";
-import type {
-  PreparedPaths,
-  ReflectorTimingSummary,
-  RunResult,
-  StageFailure,
-  ThroughputResult,
-  LatencyResult,
-  TransportKind,
-  TerminationReason,
+  FAILURE_REASONS,
+  type AddedLatency,
+  type LatencyResult,
+  type RunResult,
+  type RunnerConfig,
+  type StageLatencySummary,
+  type StageStatus,
+  type ThroughputResult,
+  type TransportRole,
 } from "../runner/contract";
-import { createUuid, isUuid } from "../uuid";
+import type { CompensationBreakdown } from "../compensation";
+import { createUuid } from "../uuid";
+import { planned, STAGES } from "../runner/schedule";
+import {
+  EARLY_FINISH,
+  sufficient,
+  type LatencyLaneSnapshot,
+  type MultiServerResult,
+  type TransferStage,
+} from "../runner/measure";
 
-const HISTORY_SCHEMA_VERSION = 4 as const;
+export type { StageStatus };
+
+const HISTORY_SCHEMA_VERSION = 5 as const;
 export const HISTORY_LIMIT = 2_000 as const;
-const HISTORY_FAILURE_STAGES = [
-  "latency",
-  "download",
-  "upload",
-  "bidirectional",
-] as const;
-const MAX_HISTORY_TEXT_LENGTH = 256;
 
-export type StageStatus = "complete" | "partial" | "failed" | "not-run";
-interface FailureSnapshot {
-  stage: "latency" | "download" | "upload" | "bidirectional";
-  direction: "down" | "up" | null;
-  reason: Exclude<TerminationReason, "user-abort">;
-}
-export interface ThroughputSnapshot {
-  reportedBytesPerSec: number;
-  peakBytesPerSec: number;
-  fullAverageBytesPerSec: number;
-  method: "stable-window" | "full-average";
-  totalBytes: number;
-  stabilityPct: number;
-  probeTimeoutPct: number | null;
-  stabilityScore: number;
-  band: "low" | "medium" | "high";
-  serverAuthoritative: boolean;
-}
-interface LatencySnapshot {
-  reportedMs: number;
-  minMs: number | null;
-  p50Ms: number | null;
-  p95Ms: number | null;
-  jitterMs: number | null;
-  probeTimeoutPct: number | null;
-  method: "stable-window" | "full-average";
-  stabilityScore: number;
-  band: "low" | "medium" | "high";
-}
-export interface LatencyLaneSnapshot {
-  reflectorTiming?: ReflectorTimingSummary;
-  min: number | null;
-  max: number | null;
-  p10: number | null;
-  p90: number | null;
-  center: number | null;
-  jitter: number | null;
-  timeoutRatio: number | null;
-  accountingComplete: boolean;
-  timeoutCount: number;
-  unresolvedCount: number;
-  sendFailureCount: number;
-  count: number;
-}
-type ThroughputTransportKind = Extract<
-  TransportKind,
-  "fetch-stream" | "webtransport" | "webtransport-datagram"
->;
-type LatencyTransportKind = Extract<
-  TransportKind,
-  "websocket" | "webtransport"
->;
 export interface HistoryRecord {
   schemaVersion: typeof HISTORY_SCHEMA_VERSION;
-  multiServer?: MultiServerResult;
-  outcome?: RunResult["outcome"];
   id: string;
-  startedAt: number;
   completedAt: number;
-  durationMs: number;
-  stages: {
-    latency: {
-      status: StageStatus;
-      result: LatencySnapshot | null;
-      lanes: Record<
-        "latency" | "download" | "upload" | "bidirectional",
-        LatencyLaneSnapshot | null
-      >;
-    };
-    download: { status: StageStatus; result: ThroughputSnapshot | null };
-    upload: { status: StageStatus; result: ThroughputSnapshot | null };
-    bidirectional: {
-      status: StageStatus;
-      down: ThroughputSnapshot | null;
-      up: ThroughputSnapshot | null;
-    };
-  };
-  bufferbloat: {
-    idleMs: number;
-    loadedMs: number;
-    increaseMs: number;
-    grade: string;
-  } | null;
-  totalBytes: number;
-  server: { name: string; location: string | null; engine: string };
-  transport: {
-    throughput: {
-      protocol: string | null;
-      kind: ThroughputTransportKind | null;
-    };
-    latency: { protocol: string | null; kind: LatencyTransportKind | null };
-  };
-  ipVersion: 4 | 6 | null;
-  client: { build: string };
-  failures: FailureSnapshot[];
-  wireEstimates: WireEstimates | null;
-}
-
-function throughputTransportKind(
-  value: TransportKind | undefined,
-): ThroughputTransportKind | null {
-  return value === "fetch-stream" ||
-    value === "webtransport" ||
-    value === "webtransport-datagram"
-    ? value
-    : null;
-}
-
-function latencyTransportKind(
-  value: TransportKind | undefined,
-): LatencyTransportKind | null {
-  return value === "websocket" || value === "webtransport" ? value : null;
-}
-
-function throughput(value: ThroughputResult | null): ThroughputSnapshot | null {
-  return (
-    value && {
-      reportedBytesPerSec: value.reportedBytesPerSec,
-      peakBytesPerSec: value.peakBytesPerSec,
-      fullAverageBytesPerSec: value.fullAverageBytesPerSec,
-      method: value.method,
-      totalBytes: value.totalBytes,
-      stabilityPct: value.stabilityPct,
-      probeTimeoutPct: value.probeTimeoutPct,
-      stabilityScore: value.stabilityScore,
-      band: value.band,
-      serverAuthoritative: value.serverAuthoritative === true,
-    }
-  );
-}
-function latency(value: LatencyResult | null): LatencySnapshot | null {
-  return (
-    value && {
-      reportedMs: value.reportedMs,
-      minMs: value.minMs,
-      p50Ms: value.p50Ms,
-      p95Ms: value.p95Ms,
-      jitterMs: value.jitterMs,
-      probeTimeoutPct: value.probeTimeoutPct,
-      method: value.method,
-      stabilityScore: value.stabilityScore,
-      band: value.band,
-    }
-  );
-}
-function status(
-  result: unknown,
-  failure: StageFailure | undefined,
-): StageStatus {
-  return result
-    ? failure
-      ? "partial"
-      : "complete"
-    : failure
-      ? "failed"
-      : "not-run";
-}
-function bidirectionalStatus(
-  result: RunResult["bidirectional"],
-  failure: StageFailure | undefined,
-): StageStatus {
-  const lanes = result ? [result.down, result.up].filter(Boolean).length : 0;
-  if (lanes === 2 && !failure) return "complete";
-  if (lanes > 0) return "partial";
-  return failure ? "failed" : "not-run";
-}
-function failureSnapshots(
-  failures: Partial<Record<string, StageFailure>>,
-): FailureSnapshot[] {
-  return HISTORY_FAILURE_STAGES.flatMap((stage) => {
-    const failure = failures[stage];
-    return failure
-      ? [
-          {
-            stage: failure.stage,
-            direction: failure.direction ?? null,
-            reason: failure.reason,
-          },
-        ]
-      : [];
-  });
-}
-function historyText(value: string): string {
-  return value.slice(0, MAX_HISTORY_TEXT_LENGTH);
-}
-function historyProtocol(value: string | undefined): string | null {
-  return value && !value.includes("://") ? historyText(value) : null;
-}
-
-interface HistoryBuildContext {
-  paths: PreparedPaths | null;
-  clientBuild: string;
-  wireEstimates?: WireEstimates | null;
-}
-export function historyLatencyLanes(
-  result: LatencyResult | null,
-  summaries: RunResult["latencyByStage"],
-): HistoryRecord["stages"]["latency"]["lanes"] {
-  return Object.fromEntries(
-    HISTORY_FAILURE_STAGES.map((stage) => {
-      const summary = summaries[stage];
-      return [
-        stage,
-        summary && {
-          min: summary.minMs,
-          max: summary.maxMs,
-          p10: summary.p10Ms,
-          p90: summary.p90Ms,
-          center:
-            stage === "latency"
-              ? (result?.reportedMs ?? summary.meanMs)
-              : summary.meanMs,
-          jitter: summary.jitterMs,
-          ...(summary.reflectorTiming
-            ? { reflectorTiming: { ...summary.reflectorTiming } }
-            : {}),
-          timeoutRatio: summary.probeCount
-            ? summary.timeoutCount / summary.probeCount
-            : null,
-          accountingComplete: summary.accountingComplete,
-          timeoutCount: summary.timeoutCount,
-          unresolvedCount: summary.unresolvedCount,
-          sendFailureCount: summary.sendFailureCount,
-          count: summary.probeCount,
-        },
-      ];
-    }),
-  ) as HistoryRecord["stages"]["latency"]["lanes"];
+  build: string;
+  engine: string;
+  result: RunResult;
 }
 
 export function buildHistoryRecord(
   result: RunResult,
-  context: HistoryBuildContext,
+  meta: Pick<HistoryRecord, "build" | "engine">,
+  config?: Parameters<typeof incoherence>[1],
   completedAt = Date.now(),
 ): HistoryRecord {
-  const failures = result.stageFailures;
-  const bidi = result.bidirectional;
-  const down = throughput(result.download);
-  const upload = throughput(result.upload);
-  const bidiDown = throughput(bidi?.down ?? null);
-  const bidiUp = throughput(bidi?.up ?? null);
-  return {
+  const record: HistoryRecord = {
     schemaVersion: HISTORY_SCHEMA_VERSION,
-    ...(result.multiServer
-      ? {
-          multiServer: structuredClone(result.multiServer),
-          outcome: result.outcome ?? "complete",
-        }
-      : {}),
     id: createUuid(),
-    startedAt: Math.trunc(result.startedAt),
     completedAt: Math.trunc(completedAt),
-    durationMs: result.durationMs,
-    stages: {
-      latency: {
-        status: status(result.latency, failures.latency),
-        result: latency(result.latency),
-        lanes: historyLatencyLanes(result.latency, result.latencyByStage),
-      },
-      download: {
-        status: status(result.download, failures.download),
-        result: down,
-      },
-      upload: {
-        status: status(result.upload, failures.upload),
-        result: upload,
-      },
-      bidirectional: {
-        status: bidirectionalStatus(bidi, failures.bidirectional),
-        down: bidiDown,
-        up: bidiUp,
-      },
-    },
-    bufferbloat: result.bufferbloat && { ...result.bufferbloat },
-    totalBytes: result.multiServer
-      ? result.multiServer.servers.reduce(
-          (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
-          0,
-        )
-      : (result.download?.totalBytes ?? 0) +
-        (result.upload?.totalBytes ?? 0) +
-        (bidi?.down?.totalBytes ?? 0) +
-        (bidi?.up?.totalBytes ?? 0),
-    server: {
-      name: historyText(
-        result.multiServer?.selection
-          .map((server) => server.name)
-          .join(" + ") ??
-          context.paths?.discovery.server.name ??
-          "Unknown",
+    ...meta,
+    result: structuredClone(result),
+  };
+  const problems = incoherence(record.result, config);
+  if (problems.length && record.result.outcome !== "incomplete") {
+    console.error("Incoherent result saved as incomplete:", problems);
+    record.result.outcome = "incomplete";
+  }
+  return record;
+}
+
+const lanesOf = (result: RunResult, stage: TransportRole) =>
+  stage === "bidirectional"
+    ? [result.bidirectional?.down, result.bidirectional?.up]
+    : [result[stage]];
+
+/** Invariants a saved result must hold; with the run's config, planned stages must also be covered. */
+export function incoherence(
+  result: RunResult,
+  config?: Pick<RunnerConfig, "stages" | "duration" | "adaptive">,
+): string[] {
+  const problems: string[] = [];
+  const { failures, intervals } = result.multiServer;
+  for (const failure of failures)
+    if (!FAILURE_REASONS.includes(failure.reason))
+      problems.push(`unknown failure reason ${failure.reason}`);
+  for (const name of STAGES) {
+    const status = result.stages[name];
+    const lanes = lanesOf(result, name);
+    const scope = name === "latency" ? "latency" : "throughput";
+    const explained = failures.some(
+      (f) => f.stage === name && f.scope === scope,
+    );
+    const spans = intervals.filter((i) => i.stage === name);
+    const wanted = !!config && planned(config, name);
+    if (config && wanted === (status === "not-run"))
+      problems.push(`${name} is ${status} but planned ${wanted}`);
+    if ((status === "failed" || status === "partial") && !explained)
+      problems.push(`${name} is ${status} without a stated reason`);
+    if (status === "complete" && (explained || !lanes.every(Boolean)))
+      problems.push(
+        `${name} is complete without every result or with a failure`,
+      );
+    if (status === "not-run" && (lanes.some(Boolean) || spans.length))
+      problems.push(`${name} is not-run but has evidence`);
+    if (name !== "latency" && status === "complete") {
+      if (!spans.some(({ headline }) => sufficient(headline)))
+        problems.push(`${name} is complete without 800 ms of evidence`);
+      const plannedMs = config?.duration[`${name}Ms`] ?? 0;
+      const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);
+      const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
+      if (config && covered < plannedMs * floor)
+        problems.push(
+          `${name} covers ${Math.round(covered)} of ${plannedMs} ms`,
+        );
+    }
+  }
+  const statuses = Object.values(result.stages);
+  if (statuses.every((status) => status === "not-run"))
+    problems.push("no stage ran");
+  const expected = statuses.includes("failed")
+    ? "incomplete"
+    : failures.length
+      ? "partial"
+      : "complete";
+  if (result.outcome !== expected)
+    problems.push(`outcome ${result.outcome} should be ${expected}`);
+  return problems;
+}
+
+type Plain = Record<string, unknown>;
+const object = (value: unknown): value is Plain =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const time = (value: unknown) =>
+  typeof value === "number" && !Number.isNaN(new Date(value).getTime());
+
+/** Saved leaves are finite numbers, bounded text, booleans, null or omitted. */
+function plain(value: unknown, depth = 0): boolean {
+  if (value == null || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value === "string") return value.length <= 2048;
+  if (typeof value !== "object" || depth > 8) return false;
+  const entries = Array.isArray(value) ? value : Object.values(value);
+  return (
+    entries.length <= 512 && entries.every((entry) => plain(entry, depth + 1))
+  );
+}
+
+type Check = (value: unknown) => boolean;
+const num: Check = (value) => typeof value === "number";
+const str: Check = (value) => typeof value === "string";
+const maybe =
+  (check: Check): Check =>
+  (value) =>
+    value == null || check(value);
+const list =
+  (check: Check): Check =>
+  (value) =>
+    Array.isArray(value) && value.every(check);
+const shape =
+  (fields: Record<string, Check>): Check =>
+  (value) =>
+    object(value) &&
+    Object.entries(fields).every(([key, check]) => check(value[key]));
+const each = (check: Check) =>
+  shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
+
+const rate = maybe(
+  shape({
+    reportedBytesPerSec: num,
+    totalBytes: num,
+    stabilityPct: num,
+    wire: maybe(
+      shape({
+        totalMultiplier: num,
+        mtuBytes: num,
+        factors: list(shape({ label: str, contributionPct: num })),
+      }),
+    ),
+  }),
+);
+const lanes = maybe(shape({ down: rate, up: rate }));
+const populations = each(maybe(shape({ p50Ms: maybe(num), probeCount: num })));
+const measured = {
+  addedLatency: maybe(
+    shape({
+      download: maybe(num),
+      upload: maybe(num),
+      bidirectional: maybe(num),
+    }),
+  ),
+  latency: maybe(shape({ reportedMs: num })),
+  latencyByStage: populations,
+  download: rate,
+  upload: rate,
+  bidirectional: lanes,
+};
+
+/** What History's rows, sort and detail dereference; a leaf of another type meets the views' boundaries. */
+const readable = shape({
+  schemaVersion: (value) => value === HISTORY_SCHEMA_VERSION,
+  id: str,
+  completedAt: time,
+  build: str,
+  engine: str,
+  result: shape({
+    ...measured,
+    outcome: (value) =>
+      ["complete", "partial", "incomplete"].includes(`${value}`),
+    stages: object,
+    durationMs: num,
+    multiServer: shape({
+      latencyFocus: str,
+      selection: list(shape({ id: str, name: str, url: str })),
+      servers: list(
+        shape({
+          ...measured,
+          server: shape({ id: str }),
+          throughput: shape({ transport: str }),
+          latencyTarget: maybe(shape({ transport: str })),
+          totalBytes: shape({ down: num, up: num }),
+          stages: object,
+        }),
       ),
-      location: context.paths?.discovery.server.location
-        ? historyText(context.paths.discovery.server.location)
-        : null,
-      engine: historyText(context.paths?.discovery.engineVersion ?? "unknown"),
-    },
-    transport: {
-      throughput: {
-        protocol: historyProtocol(
-          context.paths?.throughput.probe.protocolNegotiated,
-        ),
-        kind: throughputTransportKind(
-          context.paths?.throughput.target.transport,
-        ),
-      },
-      latency: {
-        protocol: historyProtocol(
-          context.paths?.latency?.probe.protocolNegotiated,
-        ),
-        kind: latencyTransportKind(context.paths?.latency?.target.transport),
-      },
-    },
-    ipVersion: context.paths?.throughput.probe.clientIpVersion ?? null,
-    client: { build: historyText(context.clientBuild) },
-    failures: failureSnapshots(failures),
-    wireEstimates: context.wireEstimates
-      ? structuredClone(context.wireEstimates)
+      failures: list(
+        shape({
+          serverId: str,
+          stage: (value) => STAGES.some((stage) => stage === value),
+          reason: str,
+        }),
+      ),
+    }),
+  }),
+});
+
+/** A saved record, with schema 4 lifted into a result, or null when a view could not read it. */
+export function readHistoryRecord(value: unknown): HistoryRecord | null {
+  if (!object(value) || !plain(value)) return null;
+  const record =
+    value.schemaVersion === 4 && liftable(value) ? fromSchema4(value) : value;
+  return readable(record) ? (record as HistoryRecord) : null;
+}
+
+/** Schema 4 as main saved it: flat per-stage fields for one server, or a result per server. */
+interface Schema4 {
+  id: string;
+  completedAt: number;
+  startedAt: number;
+  durationMs: number;
+  outcome?: RunResult["outcome"];
+  multiServer?: MultiServerResult;
+  stages: {
+    latency: {
+      status: StageStatus;
+      result: LatencyResult | null;
+      lanes: Record<TransportRole, LatencyLaneSnapshot | null>;
+    };
+    download: { status: StageStatus; result: ThroughputResult | null };
+    upload: { status: StageStatus; result: ThroughputResult | null };
+    bidirectional: {
+      status: StageStatus;
+      down: ThroughputResult | null;
+      up: ThroughputResult | null;
+    };
+  };
+  bufferbloat: { addedMs?: Partial<AddedLatency> } | null;
+  totalBytes: number;
+  server: { name: string; location: string | null; engine: string };
+  transport: Record<
+    "throughput" | "latency",
+    { protocol: string | null; kind: string | null }
+  >;
+  ipVersion: 4 | 6 | null;
+  client: { build: string };
+  wireEstimates: {
+    breakdown: Record<TransferStage, CompensationBreakdown | null>;
+    downloadBytesPerSec: number | null;
+    uploadBytesPerSec: number | null;
+    bidirectionalBytesPerSec: number | null;
+  } | null;
+}
+
+const liftable = shape({
+  id: str,
+  stages: shape({
+    latency: shape({ lanes: each(maybe(object)) }),
+    download: object,
+    upload: object,
+    bidirectional: object,
+  }),
+  server: object,
+  client: object,
+  transport: shape({ throughput: object, latency: object }),
+  wireEstimates: maybe(shape({ breakdown: object })),
+  multiServer: maybe(shape({ servers: list(object) })),
+}) as (value: unknown) => value is Schema4;
+
+const summary = (
+  lane: LatencyLaneSnapshot | null,
+): StageLatencySummary | null =>
+  lane && {
+    ...(lane.reflectorTiming ? { reflectorTiming: lane.reflectorTiming } : {}),
+    accountingComplete: lane.accountingComplete,
+    probeCount: lane.count,
+    timeoutCount: lane.timeoutCount,
+    unresolvedCount: lane.unresolvedCount,
+    sendFailureCount: lane.sendFailureCount,
+    jitterPairs: 0,
+    minMs: lane.min,
+    maxMs: lane.max,
+    meanMs: null,
+    p10Ms: lane.p10,
+    p50Ms: lane.center,
+    p90Ms: lane.p90,
+    p95Ms: lane.p95 ?? null,
+    jitterMs: lane.jitter,
+  };
+
+function fromSchema4(saved: Schema4): HistoryRecord {
+  const { stages, wireEstimates } = saved;
+  const wire = (stage: TransferStage, measured: number) => {
+    const breakdown = wireEstimates?.breakdown[stage];
+    const estimated = wireEstimates?.[`${stage}BytesPerSec`];
+    return breakdown && estimated && measured
+      ? { ...breakdown, totalMultiplier: estimated / measured }
+      : null;
+  };
+  const lane = (stage: "download" | "upload") => {
+    const result = stages[stage].result;
+    return (
+      result && { ...result, wire: wire(stage, result.reportedBytesPerSec) }
+    );
+  };
+  const { down, up, status } = stages.bidirectional;
+  const results = {
+    latency: stages.latency.result,
+    download: lane("download"),
+    upload: lane("upload"),
+    bidirectional:
+      status === "not-run"
+        ? null
+        : {
+            down,
+            up,
+            wire:
+              down && up
+                ? wire(
+                    "bidirectional",
+                    down.reportedBytesPerSec + up.reportedBytesPerSec,
+                  )
+                : null,
+          },
+    latencyByStage: Object.fromEntries(
+      STAGES.map((stage) => [stage, summary(stages.latency.lanes[stage])]),
+    ) as RunResult["latencyByStage"],
+    addedLatency: saved.bufferbloat?.addedMs
+      ? {
+          download: null,
+          upload: null,
+          bidirectional: null,
+          ...saved.bufferbloat.addedMs,
+        }
       : null,
   };
-}
-
-export function isHistoryRecord(value: unknown): value is HistoryRecord {
-  if (!isObject(value) || value.schemaVersion !== HISTORY_SCHEMA_VERSION)
-    return false;
-  if (
-    value.multiServer !== undefined &&
-    (!isMultiServerResult(value.multiServer) ||
-      !["complete", "partial", "incomplete"].includes(String(value.outcome)))
-  )
-    return false;
-  const record = value as Record<string, unknown>;
-  const stage = (candidate: unknown): candidate is StageStatus =>
-    candidate === "complete" ||
-    candidate === "partial" ||
-    candidate === "failed" ||
-    candidate === "not-run";
-  const finite = (candidate: unknown): candidate is number =>
-    typeof candidate === "number" && Number.isFinite(candidate);
-  const nonnegative = (candidate: unknown): candidate is number =>
-    finite(candidate) && candidate >= 0;
-  const epoch = (candidate: unknown): candidate is number =>
-    Number.isInteger(candidate) &&
-    nonnegative(candidate) &&
-    !Number.isNaN(new Date(candidate).getTime());
-  const nonnegativeOrNull = (candidate: unknown): candidate is number | null =>
-    candidate === null || nonnegative(candidate);
-  const text = (candidate: unknown): candidate is string =>
-    typeof candidate === "string" &&
-    candidate.length <= MAX_HISTORY_TEXT_LENGTH;
-  const hasOnly = (
-    candidate: Record<string, unknown>,
-    allowed: readonly string[],
-  ) => Object.keys(candidate).every((key) => allowed.includes(key));
-  if (
-    !hasOnly(record, [
-      "schemaVersion",
-      "multiServer",
-      "outcome",
-      "id",
-      "startedAt",
-      "completedAt",
-      "durationMs",
-      "stages",
-      "bufferbloat",
-      "totalBytes",
-      "server",
-      "transport",
-      "ipVersion",
-      "client",
-      "failures",
-      "wireEstimates",
-    ])
-  )
-    return false;
-  const protocol = (candidate: unknown): candidate is string | null =>
-    candidate === null || (text(candidate) && !candidate.includes("://"));
-  const failureStage = (
-    candidate: unknown,
-  ): candidate is FailureSnapshot["stage"] =>
-    HISTORY_FAILURE_STAGES.includes(
-      candidate as (typeof HISTORY_FAILURE_STAGES)[number],
-    );
-  const failureReason = (
-    candidate: unknown,
-  ): candidate is FailureSnapshot["reason"] =>
-    candidate === "preflight-failed" ||
-    candidate === "connection-lost" ||
-    candidate === "timeout" ||
-    candidate === "protocol-error" ||
-    candidate === "internal-error" ||
-    candidate === "transport-unavailable";
-  const throughputSnapshot = (
-    candidate: unknown,
-  ): candidate is ThroughputSnapshot => {
-    if (!isObject(candidate)) return false;
-    return (
-      hasOnly(candidate, [
-        "reportedBytesPerSec",
-        "peakBytesPerSec",
-        "fullAverageBytesPerSec",
-        "method",
-        "totalBytes",
-        "stabilityPct",
-        "probeTimeoutPct",
-        "stabilityScore",
-        "band",
-        "serverAuthoritative",
-      ]) &&
-      hasThroughputMeasurements(candidate) &&
-      typeof candidate.serverAuthoritative === "boolean"
-    );
+  const statuses = Object.fromEntries(
+    STAGES.map((stage) => [stage, stages[stage].status]),
+  ) as RunResult["stages"];
+  const server = {
+    id: "self",
+    url: "",
+    name: saved.server.name,
+    ...(saved.server.location ? { location: saved.server.location } : {}),
   };
-  const latencySnapshot = (
-    candidate: unknown,
-  ): candidate is LatencySnapshot => {
-    if (!isObject(candidate)) return false;
-    return (
-      hasOnly(candidate, [
-        "reportedMs",
-        "minMs",
-        "p50Ms",
-        "p95Ms",
-        "jitterMs",
-        "probeTimeoutPct",
-        "method",
-        "stabilityScore",
-        "band",
-      ]) && hasLatencyMeasurements(candidate)
-    );
+  const { throughput, latency } = saved.transport;
+  const multiServer: MultiServerResult = saved.multiServer
+    ? {
+        ...saved.multiServer,
+        servers: saved.multiServer.servers.map((entry) => ({
+          ...entry,
+          stages: statuses,
+        })),
+      }
+    : {
+        selection: [server],
+        participants: [server.id],
+        latencyFocus: server.id,
+        intervals: [],
+        omittedIntervals: 0,
+        failures: [],
+        servers: [
+          {
+            server,
+            throughput: {
+              origin: "",
+              transport: throughput.kind ?? "",
+              protocol: throughput.protocol ?? "",
+              ...(saved.ipVersion ? { clientIpVersion: saved.ipVersion } : {}),
+            },
+            latencyTarget: latency.kind
+              ? { origin: "", transport: latency.kind }
+              : null,
+            ...results,
+            totalBytes: { down: saved.totalBytes, up: 0 },
+            stages: statuses,
+          },
+        ],
+      };
+  return {
+    schemaVersion: HISTORY_SCHEMA_VERSION,
+    id: saved.id,
+    completedAt: saved.completedAt,
+    build: saved.client.build,
+    engine: saved.server.engine,
+    result: {
+      ...results,
+      multiServer,
+      stages: statuses,
+      outcome:
+        saved.outcome ??
+        (Object.values(statuses).some((s) => s === "partial" || s === "failed")
+          ? "partial"
+          : "complete"),
+      startedAt: saved.startedAt,
+      durationMs: saved.durationMs,
+    },
   };
-  const lane = (candidate: unknown): candidate is LatencyLaneSnapshot => {
-    if (!isObject(candidate)) return false;
-    return (
-      hasOnly(candidate, [
-        "min",
-        "max",
-        "p10",
-        "p90",
-        "center",
-        "jitter",
-        "timeoutRatio",
-        "reflectorTiming",
-        "unresolvedCount",
-        "sendFailureCount",
-        "accountingComplete",
-        "timeoutCount",
-        "count",
-      ]) &&
-      nonnegativeOrNull(candidate.min) &&
-      nonnegativeOrNull(candidate.max) &&
-      nonnegativeOrNull(candidate.p10) &&
-      nonnegativeOrNull(candidate.p90) &&
-      nonnegativeOrNull(candidate.center) &&
-      nonnegativeOrNull(candidate.jitter) &&
-      typeof candidate.accountingComplete === "boolean" &&
-      Number.isSafeInteger(candidate.count) &&
-      nonnegative(candidate.count) &&
-      Number.isSafeInteger(candidate.timeoutCount) &&
-      nonnegative(candidate.timeoutCount) &&
-      candidate.timeoutCount <= candidate.count &&
-      candidate.timeoutRatio ===
-        (candidate.count ? candidate.timeoutCount / candidate.count : null) &&
-      Number.isSafeInteger(candidate.unresolvedCount) &&
-      nonnegative(candidate.unresolvedCount) &&
-      Number.isSafeInteger(candidate.sendFailureCount) &&
-      nonnegative(candidate.sendFailureCount) &&
-      (candidate.reflectorTiming === undefined ||
-        isReflectorTimingSummary(
-          candidate.reflectorTiming,
-          candidate.count - candidate.timeoutCount,
-        ))
-    );
-  };
-  const throughputStage = (
-    candidate: unknown,
-  ): candidate is {
-    status: StageStatus;
-    result: ThroughputSnapshot | null;
-  } => {
-    if (
-      !isObject(candidate) ||
-      !hasOnly(candidate, ["status", "result"]) ||
-      !stage(candidate.status)
-    )
-      return false;
-    if (candidate.result === null)
-      return candidate.status === "failed" || candidate.status === "not-run";
-    return (
-      (candidate.status === "complete" || candidate.status === "partial") &&
-      throughputSnapshot(candidate.result)
-    );
-  };
-  const stages = record.stages;
-  if (
-    !isObject(stages) ||
-    !hasOnly(stages, ["latency", "download", "upload", "bidirectional"])
-  )
-    return false;
-  const latencyStage = stages.latency;
-  const downStage = stages.download;
-  const uploadStage = stages.upload;
-  const bidiStage = stages.bidirectional;
-  if (!throughputStage(downStage) || !throughputStage(uploadStage))
-    return false;
-  if (
-    !isObject(bidiStage) ||
-    !hasOnly(bidiStage, ["status", "down", "up"]) ||
-    !stage(bidiStage.status) ||
-    (bidiStage.down !== null && !throughputSnapshot(bidiStage.down)) ||
-    (bidiStage.up !== null && !throughputSnapshot(bidiStage.up))
-  )
-    return false;
-  const bidiLaneCount = [bidiStage.down, bidiStage.up].filter(
-    (candidate) => candidate !== null,
-  ).length;
-  if (
-    (bidiLaneCount === 2 &&
-      bidiStage.status !== "complete" &&
-      bidiStage.status !== "partial") ||
-    (bidiLaneCount === 1 && bidiStage.status !== "partial") ||
-    (bidiLaneCount === 0 &&
-      bidiStage.status !== "failed" &&
-      bidiStage.status !== "not-run")
-  )
-    return false;
-  if (
-    !isObject(latencyStage) ||
-    !hasOnly(latencyStage, ["status", "result", "lanes"]) ||
-    !stage(latencyStage.status) ||
-    (latencyStage.result !== null && !latencySnapshot(latencyStage.result)) ||
-    !isObject(latencyStage.lanes) ||
-    !hasOnly(latencyStage.lanes, [
-      "latency",
-      "download",
-      "upload",
-      "bidirectional",
-    ])
-  )
-    return false;
-  if (
-    (latencyStage.result === null &&
-      latencyStage.status !== "failed" &&
-      latencyStage.status !== "not-run") ||
-    (latencyStage.result !== null &&
-      latencyStage.status !== "complete" &&
-      latencyStage.status !== "partial")
-  )
-    return false;
-  for (const key of [
-    "latency",
-    "download",
-    "upload",
-    "bidirectional",
-  ] as const) {
-    const candidate = latencyStage.lanes[key];
-    if (candidate !== null && !lane(candidate)) return false;
-  }
-  if (
-    !epoch(record.startedAt) ||
-    !epoch(record.completedAt) ||
-    record.completedAt < record.startedAt ||
-    !nonnegative(record.durationMs) ||
-    !nonnegative(record.totalBytes) ||
-    !isUuid(record.id)
-  )
-    return false;
-  const measuredBytes = record.multiServer
-    ? (record.multiServer as MultiServerResult).servers.reduce(
-        (sum, server) => sum + server.totalBytes.down + server.totalBytes.up,
-        0,
-      )
-    : (downStage.result?.totalBytes ?? 0) +
-      (uploadStage.result?.totalBytes ?? 0) +
-      (bidiStage.down?.totalBytes ?? 0) +
-      (bidiStage.up?.totalBytes ?? 0);
-  if (record.totalBytes !== measuredBytes) return false;
-  const server = record.server;
-  if (
-    !isObject(server) ||
-    !hasOnly(server, ["name", "location", "engine"]) ||
-    !text(server.name) ||
-    (server.location !== null && !text(server.location)) ||
-    !text(server.engine)
-  )
-    return false;
-  const transport = record.transport;
-  const transportEntry = (
-    candidate: unknown,
-    kind: (candidate: unknown) => boolean,
-  ): boolean =>
-    isObject(candidate) &&
-    hasOnly(candidate, ["protocol", "kind"]) &&
-    protocol(candidate.protocol) &&
-    (candidate.kind === null || kind(candidate.kind));
-  if (
-    !isObject(transport) ||
-    !hasOnly(transport, ["throughput", "latency"]) ||
-    !transportEntry(
-      transport.throughput,
-      (kind) =>
-        kind === "fetch-stream" ||
-        kind === "webtransport" ||
-        kind === "webtransport-datagram",
-    ) ||
-    !transportEntry(
-      transport.latency,
-      (kind) => kind === "websocket" || kind === "webtransport",
-    )
-  )
-    return false;
-  if (
-    record.ipVersion !== null &&
-    record.ipVersion !== 4 &&
-    record.ipVersion !== 6
-  )
-    return false;
-  const client = record.client;
-  if (!isObject(client) || !hasOnly(client, ["build"]) || !text(client.build))
-    return false;
-  if (
-    !Array.isArray(record.failures) ||
-    record.failures.length > HISTORY_FAILURE_STAGES.length
-  )
-    return false;
-  const failedStages = new Set<FailureSnapshot["stage"]>();
-  for (const failure of record.failures) {
-    if (
-      !isObject(failure) ||
-      !hasOnly(failure, ["stage", "direction", "reason"]) ||
-      !failureStage(failure.stage) ||
-      !failureReason(failure.reason) ||
-      (failure.direction !== null &&
-        failure.direction !== "down" &&
-        failure.direction !== "up") ||
-      failedStages.has(failure.stage)
-    )
-      return false;
-    failedStages.add(failure.stage);
-  }
-  const bufferbloat = record.bufferbloat;
-  if (
-    bufferbloat !== null &&
-    (!isObject(bufferbloat) ||
-      !hasOnly(bufferbloat, ["idleMs", "loadedMs", "increaseMs", "grade"]) ||
-      !nonnegative(bufferbloat.idleMs) ||
-      !nonnegative(bufferbloat.loadedMs) ||
-      !nonnegative(bufferbloat.increaseMs) ||
-      typeof bufferbloat.grade !== "string" ||
-      !["A", "B", "C", "D", "F"].includes(bufferbloat.grade))
-  )
-    return false;
-  return isWireEstimates(record.wireEstimates);
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }

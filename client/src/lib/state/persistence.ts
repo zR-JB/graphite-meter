@@ -1,6 +1,8 @@
-import type { PingCadence, RunnerConfig } from "../runner/contract";
-import { normalizeStreamCount } from "../runner/real/streamPolicy";
-import { canonicalAdaptiveConfig, DEFAULT_CONFIG } from "./defaults";
+import type { RunnerConfig } from "../runner/contract";
+import { normalizeStreamCount } from "../runner/paths";
+import { clampDuration, DEFAULT_CONFIG, DURATION_LIMITS } from "./defaults";
+
+type DurationKey = keyof RunnerConfig["duration"];
 
 const STORAGE_VERSION = 1;
 export const STORAGE_KEY = `graphite-meter:v${STORAGE_VERSION}`;
@@ -73,122 +75,141 @@ export function defaultPersisted(): PersistedState {
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function deepMergeOverDefaults<T>(base: T, source: unknown): T {
-  if (!isPlainObject(base)) {
-    if (Array.isArray(base))
-      return (Array.isArray(source) ? source : base) as T;
-    return source !== undefined && typeof source === typeof base
-      ? (source as T)
-      : base;
-  }
-  if (!isPlainObject(source)) return base;
-  return Object.fromEntries(
-    Object.keys(base).map((key) => [
-      key,
-      deepMergeOverDefaults(base[key], source[key]),
-    ]),
-  ) as T;
-}
-
-function safeParse(raw: string | null): unknown {
-  if (raw == null) return null;
+/** Storage can be absent, blocked or full; a preference then lasts for this page only. */
+export function readStored(key: string): unknown {
   try {
-    return JSON.parse(raw);
+    return JSON.parse(window.localStorage.getItem(key) ?? "null");
   } catch {
     return null;
   }
 }
 
-function coercePingCadence(value: unknown, fallback: PingCadence): PingCadence {
-  return oneOf(value, ["reply-driven", "fast", "medium", "slow"])
-    ? value
-    : fallback;
+export function writeStored(key: string, value: unknown): boolean {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function object(value: unknown): Record<string, unknown> | null {
-  return isPlainObject(value) ? value : null;
-}
-
-function oneOf<T extends string>(
+const record = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+const choice = <T extends string>(
   value: unknown,
   values: readonly T[],
-): value is T {
-  return typeof value === "string" && values.includes(value as T);
-}
+  fallback: T,
+): T =>
+  typeof value === "string" && values.includes(value as T)
+    ? (value as T)
+    : fallback;
+const flag = (value: unknown, fallback: boolean) =>
+  typeof value === "boolean" ? value : fallback;
+const text = (value: unknown, fallback: string, max = 256) =>
+  typeof value === "string" && value.length <= max ? value : fallback;
+const positive = <T>(value: unknown, fallback: T): number | T =>
+  typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? value
+    : fallback;
+const CADENCES = ["reply-driven", "fast", "medium", "slow"] as const;
 
 export function loadPersisted(): PersistedState {
   const defaults = defaultPersisted();
-  if (typeof window === "undefined") return defaults;
-  let raw: string | null = null;
-  try {
-    raw = window.localStorage.getItem(STORAGE_KEY);
-  } catch {
-    return defaults;
-  }
-  const parsed = safeParse(raw);
-  if (!isPlainObject(parsed)) return defaults;
-  const merged = deepMergeOverDefaults(defaults, parsed);
-  if (
-    !oneOf(parsed.resultHistoryPreference, ["default", "enabled", "disabled"])
-  )
-    merged.resultHistoryPreference = "default";
-  const historyColumns = Array.isArray(parsed.historyColumns)
+  const base = defaults.config;
+  const saved = record(readStored(STORAGE_KEY));
+  const config = record(saved.config);
+  const stages = record(config.stages);
+  const duration = record(config.duration);
+  const streams = record(config.transferStreams);
+  const transports = record(config.transports);
+  const latency = record(saved.latencySelection);
+  const dock = record(saved.dockWidth);
+  const gaugeMax = record(config.visualization).throughputMaxBytesPerSec;
+  const columns = Array.isArray(saved.historyColumns)
     ? [
         ...new Set(
-          parsed.historyColumns.filter((column): column is HistoryColumn =>
-            oneOf(column, HISTORY_COLUMNS),
+          saved.historyColumns.filter((column): column is HistoryColumn =>
+            HISTORY_COLUMNS.includes(column),
           ),
         ),
       ]
     : [];
-  merged.historyColumns = historyColumns.length
-    ? historyColumns
-    : [...DEFAULT_HISTORY_COLUMNS];
-
-  if (!oneOf(merged.latencySelection.mode, ["primary", "all"]))
-    merged.latencySelection.mode = "primary";
-  if (
-    typeof merged.latencySelection.serverId !== "string" ||
-    merged.latencySelection.serverId.length > 128
-  )
-    merged.latencySelection.serverId = "";
-
-  const parsedConfig = object(parsed.config);
-  const parsedAdaptive = object(parsedConfig?.adaptive);
-  // Adaptive tuning is internal policy; preserve only its enable preference.
-  merged.config.adaptive = canonicalAdaptiveConfig(parsedAdaptive);
-  merged.config.pingCadence = coercePingCadence(
-    parsedConfig?.pingCadence,
-    defaults.config.pingCadence,
-  );
-  merged.config.loadedPingCadence = coercePingCadence(
-    parsedConfig?.loadedPingCadence,
-    defaults.config.loadedPingCadence,
-  );
-  if (!oneOf(merged.config.transferStreams.mode, ["auto", "forced"]))
-    merged.config.transferStreams.mode = "auto";
-  merged.config.transferStreams.count = normalizeStreamCount(
-    merged.config.transferStreams.count,
-  );
-  return merged;
-}
-
-export function savePersisted(snapshot: PersistedState): void {
-  if (typeof window === "undefined") return;
-  try {
-    const safe = structuredClone(snapshot);
-    const adaptive = canonicalAdaptiveConfig(snapshot.config.adaptive);
-    const serialized = {
-      ...safe,
-      config: {
-        ...safe.config,
-        adaptive: { enabled: adaptive.enabled },
+  return {
+    latencySelection: {
+      mode: choice(latency.mode, ["primary", "all"], "primary"),
+      serverId: text(latency.serverId, "", 128),
+    },
+    config: {
+      stages: {
+        latency: flag(stages.latency, base.stages.latency),
+        download: flag(stages.download, base.stages.download),
+        upload: flag(stages.upload, base.stages.upload),
+        bidirectional: flag(stages.bidirectional, base.stages.bidirectional),
       },
-    };
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(serialized));
-  } catch {}
+      skipLoadedLatencyWhenStageOff: flag(
+        config.skipLoadedLatencyWhenStageOff,
+        base.skipLoadedLatencyWhenStageOff,
+      ),
+      duration: Object.fromEntries(
+        (Object.keys(DURATION_LIMITS) as DurationKey[]).map((key) => [
+          key,
+          clampDuration(key, duration[key]),
+        ]),
+      ) as RunnerConfig["duration"],
+      pingCadence: choice(config.pingCadence, CADENCES, base.pingCadence),
+      loadedPingCadence: choice(
+        config.loadedPingCadence,
+        CADENCES,
+        base.loadedPingCadence,
+      ),
+      transferStreams: {
+        mode: choice(streams.mode, ["auto", "forced"], "auto"),
+        count:
+          typeof streams.count === "number"
+            ? normalizeStreamCount(streams.count)
+            : base.transferStreams.count,
+      },
+      experimentalDatagramThroughput: flag(
+        config.experimentalDatagramThroughput,
+        base.experimentalDatagramThroughput,
+      ),
+      transports: {
+        throughputTarget: text(
+          transports.throughputTarget,
+          base.transports.throughputTarget,
+        ),
+        latencyTarget: text(
+          transports.latencyTarget,
+          base.transports.latencyTarget,
+        ),
+      },
+      // Earlier versions saved { enabled }.
+      adaptive: flag(
+        record(config.adaptive).enabled ?? config.adaptive,
+        base.adaptive,
+      ),
+      visualization: {
+        throughputMaxBytesPerSec: positive(gaugeMax, "auto" as const),
+      },
+    },
+    unitBase: choice(saved.unitBase, ["base10", "base2"], defaults.unitBase),
+    unitKind: choice(saved.unitKind, ["bits", "bytes"], defaults.unitKind),
+    theme: choice(saved.theme, ["dark", "light", "auto"], defaults.theme),
+    showWireEstimates: flag(saved.showWireEstimates, true),
+    resultHistoryPreference: choice(
+      saved.resultHistoryPreference,
+      ["default", "enabled", "disabled"],
+      "default",
+    ),
+    historyColumns: columns.length ? columns : [...DEFAULT_HISTORY_COLUMNS],
+    dockWidth: {
+      left: positive(dock.left, DEFAULT_DOCK_WIDTH.left),
+      right: positive(dock.right, DEFAULT_DOCK_WIDTH.right),
+    },
+  };
 }
+
+export const savePersisted = (snapshot: PersistedState): boolean =>
+  writeStored(STORAGE_KEY, snapshot);

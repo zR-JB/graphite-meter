@@ -8,103 +8,95 @@ import (
 	"encoding/base64"
 	"io/fs"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed all:dist
 var distFS embed.FS
 
-// AppScriptCSPHash is the CSP 'sha256-...' digest of the single inline pre-paint <script> in the embedded index.html.
-func AppScriptCSPHash() string {
-	b, err := fs.ReadFile(distFS, "dist/index.html")
-	if err != nil {
-		return ""
-	}
-	return scriptCSPHash(b)
+// The CSP digests of index.html's inline pre-paint <script> and <style>; both are empty without a build.
+var inlineScript, inlineStyle = inlineHash("script"), inlineHash("style")
+
+func inlineHash(tag string) string {
+	b, _ := fs.ReadFile(distFS, "dist/index.html")
+	return inlineCSPHash(b, tag)
 }
 
-// scriptCSPHash returns the base64 sha256 of the one attribute-less inline <script>'s exact text.
-func scriptCSPHash(html []byte) string {
-	_, afterOpen, found := bytes.Cut(html, []byte("<script>"))
-	if !found {
-		return ""
-	}
-	content, _, found := bytes.Cut(afterOpen, []byte("</script>"))
-	if !found {
+// inlineCSPHash returns the base64 sha256 of the first attribute-less inline tag's exact text.
+func inlineCSPHash(html []byte, tag string) string {
+	_, afterOpen, opened := bytes.Cut(html, []byte("<"+tag+">"))
+	content, _, closed := bytes.Cut(afterOpen, []byte("</"+tag+">"))
+	if !opened || !closed {
 		return ""
 	}
 	sum := sha256.Sum256(content)
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-// distRoot returns the embedded build rooted at dist/. fs.Sub rejects only a malformed path.
-func distRoot() fs.FS {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic(err)
+// PagePolicy is the client shell's Content-Security-Policy; connect names the peers it reaches beyond 'self'.
+func PagePolicy(connect []string) string {
+	return pagePolicy(inlineScript, inlineStyle, connect)
+}
+
+func pagePolicy(script, style string, connect []string) string {
+	sources := func(directive, hash string) string {
+		if hash == "" {
+			return directive + " 'self'"
+		}
+		return directive + " 'self' 'sha256-" + hash + "'"
 	}
-	return sub
+	return strings.Join([]string{
+		"default-src 'self'",
+		sources("script-src", script),
+		sources("style-src", style),
+		"img-src 'self' data:",
+		"font-src 'self'",
+		"worker-src 'self'",
+		"object-src 'none'",
+		"base-uri 'none'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+		strings.Join(append([]string{"connect-src 'self'"}, connect...), " "),
+	}, "; ")
 }
 
-// Handler serves the public client while the browser owns all hash routes.
-func Handler() http.Handler {
-	return HandlerWithResultHistoryDefault(false)
+// Handler serves the client shell at / and otherwise only embedded files. The shell carries the
+// authentication marker and the operator's result-history default.
+func Handler(authenticated, resultHistoryDefault bool) http.Handler {
+	dist, _ := fs.Sub(distFS, "dist")
+	return handler(dist, authenticated, resultHistoryDefault)
 }
 
-// HandlerWithResultHistoryDefault adds the operator's local-history default to the public client metadata.
-func HandlerWithResultHistoryDefault(resultHistoryDefault bool) http.Handler {
-	return handlerForWithMarker(distRoot(), resultHistoryMarker(resultHistoryDefault))
-}
-
-// AuthenticatedHandlerWithResultHistoryDefault adds auth and local-history metadata to the client.
-func AuthenticatedHandlerWithResultHistoryDefault(resultHistoryDefault bool) http.Handler {
-	return handlerForWithMarker(distRoot(), slices.Concat(
-		[]byte(`<meta name="graphite-meter-auth" content="enabled">`),
-		resultHistoryMarker(resultHistoryDefault),
-	))
-}
-
-func resultHistoryMarker(enabled bool) []byte {
-	return []byte(`<meta name="graphite-meter-result-history-default" content="` + strconv.FormatBool(enabled) + `">`)
-}
-
-// handlerForWithMarker serves the shell only at / and otherwise requires an embedded file.
-func handlerForWithMarker(fsys fs.FS, marker []byte) http.Handler {
-	fileServer := http.FileServer(http.FS(fsys))
+func handler(fsys fs.FS, authenticated, resultHistoryDefault bool) http.Handler {
+	meta := `<meta name="graphite-meter-result-history-default" content="` +
+		strconv.FormatBool(resultHistoryDefault) + `">`
+	if authenticated {
+		meta = `<meta name="graphite-meter-auth" content="enabled">` + meta
+	}
+	fileServer := http.FileServerFS(fsys)
 	index, indexErr := fs.ReadFile(fsys, "index.html")
-	if len(marker) != 0 {
-		index = bytes.Replace(index, []byte("</head>"), slices.Concat(marker, []byte("</head>")), 1)
-	}
-	indexLength := strconv.Itoa(len(index))
+	index = bytes.Replace(index, []byte("</head>"), []byte(meta+"</head>"), 1)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if r.URL.Path == "/" {
-			if indexErr != nil {
-				http.NotFound(w, r)
-				return
-			}
+		if r.URL.Path == "/" && indexErr == nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			w.Header().Set("Content-Length", indexLength)
-			if r.Method != http.MethodHead {
-				_, _ = w.Write(index)
-			}
+			http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(index))
 			return
 		}
 		name := strings.TrimPrefix(r.URL.Path, "/")
-		if !fs.ValidPath(name) || name == "." {
-			http.NotFound(w, r)
-			return
-		}
-		if name != "index.html" {
-			if f, err := fsys.Open(name); err == nil {
-				_ = f.Close()
+		if fs.ValidPath(name) && name != "." && name != "index.html" {
+			if info, err := fs.Stat(fsys, name); err == nil && !info.IsDir() {
+				if strings.HasPrefix(name, "assets/") {
+					// The bundler names every file under assets/ by its content hash.
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				fileServer.ServeHTTP(w, r)
 				return
 			}

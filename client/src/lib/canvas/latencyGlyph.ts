@@ -21,7 +21,7 @@ export function latencyOverflowGlyph(plotTop: number): LatencyOverflowGlyph {
     dot: { y: baseY + 2 + radius, radius },
   };
 }
-/* Selects only a real latency or loss glyph near the pointer. */
+/* Selects only a real latency or timeout glyph near the pointer. */
 export function nearestLatencyGlyph(
   lanes: Iterable<readonly LatencyBucket[]>,
   pointerX: number,
@@ -38,8 +38,7 @@ export function nearestLatencyGlyph(
       if (xForTime(lane[mid].t) < pointerX) lo = mid + 1;
       else hi = mid;
     }
-    // Only the closest visible glyph on either side can win. Empty buckets
-    // carry no invented RTT, and looking up a long run does not scan its history.
+    // Only the closest visible glyph on each side can win; an empty bucket carries no RTT.
     for (const direction of [-1, 1]) {
       for (
         let index = direction < 0 ? lo - 1 : lo;
@@ -50,7 +49,7 @@ export function nearestLatencyGlyph(
         const x = xForTime(bucket.t);
         const distance = Math.abs(x - pointerX);
         if (distance > radiusPx || distance >= nearestDistance) break;
-        if (bucket.medianRttMs == null && bucket.lossCount === 0) continue;
+        if (bucket.medianRttMs == null && bucket.timeoutCount === 0) continue;
         nearest = { bucket, x };
         nearestDistance = distance;
         break;

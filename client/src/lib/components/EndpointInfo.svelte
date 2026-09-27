@@ -1,13 +1,15 @@
 <script lang="ts">
+  import { announce } from "../presentation/announcer.svelte";
+  import { catalogSelection } from "../presentation/serverAppearance";
   import {
-    presentConnections,
+    describeTransferStreams,
     emptyConnectionValidation,
     latencyPathNeeded,
-  } from "../runner/connectionModel";
+  } from "../runner/paths";
+  import { presentConnections } from "../presentation/paths";
   import { store } from "../state/store.svelte";
-  import { fmtMs } from "../format";
+  import { formatLatency } from "../format";
   import { BUILD } from "../buildenv";
-  import { describeTransferStreams } from "../runner/real/streamPolicy";
   import { buildSegments } from "../runner/schedule";
   import {
     advertisedServerCapabilities,
@@ -16,41 +18,41 @@
     serverLoadSummary,
     endpointPathStatus,
   } from "./endpointInfo";
-  import type { TransportKind } from "../runner/contract";
+  import {
+    MISSING,
+    reasonLabel,
+    transportLabel,
+  } from "../presentation/vocabulary";
+  import Disclosure from "./Disclosure.svelte";
+  import ServerScope from "./ServerScope.svelte";
 
   type PathRole = "throughput" | "latency";
   const PATH_ROLES = ["throughput", "latency"] as const;
-
+  let { onOpenLegal }: { onOpenLegal: () => void } = $props();
   let inspectedServer = $state("");
   const availableServers = $derived(
-    store.activeServers.length
-      ? store.activeServers.map((entry) => entry.server)
-      : (store.serverCatalog?.servers.filter((server) =>
-          store.selectedServers.includes(server.id),
-        ) ?? []),
+    store.run?.servers.map((entry) => entry.server) ??
+      catalogSelection(store.serverCatalog, store.selectedServers),
   );
   const selectedServer = $derived(
     availableServers.find((server) => server.id === inspectedServer) ??
       availableServers.find((server) => server.id === store.latencyFocus) ??
       availableServers[0],
   );
-  const captured = $derived(
-    store.activeServers.find((entry) => entry.server.id === selectedServer?.id),
-  );
-  // Inspection never changes run selection or the latency chart's focus.
-  // Completed runs retain every server's prepared paths, even after settings change.
+  // Inspection never changes selection; completed runs keep their prepared paths.
   const activePaths = $derived(
-    captured?.paths ?? (store.activeServers.length ? null : store.activePaths),
+    store.run?.servers.find((entry) => entry.server.id === selectedServer?.id)
+      ?.paths ?? null,
   );
   const discovery = $derived(
     activePaths?.discovery ??
       (selectedServer
-        ? (store.serverDiscoveries.get(selectedServer.id) ?? null)
+        ? (store.servers.get(selectedServer.id)?.discovery ?? null)
         : store.transportDiscovery),
   );
   const validation = $derived(
     selectedServer
-      ? (store.serverValidation.get(selectedServer.id) ??
+      ? (store.servers.get(selectedServer.id)?.validation ??
           emptyConnectionValidation())
       : store.connectionValidation,
   );
@@ -70,7 +72,6 @@
       (failure) => failure.serverId === selectedServer?.id,
     ) ?? [],
   );
-  const engine = $derived(store.engineInfo);
   let copied = $state(false);
 
   const pathMode = $derived(
@@ -87,27 +88,11 @@
     return `${connection.clientIp} · IPv${connection.clientIpVersion} · ${source}`;
   }
 
-  // One vocabulary throughout: TransportKind. Bare "webtransport" names the
-  // session, whose throughput half is streams and whose latency half is the
-  // datagram bus.
-  function capability(value: TransportKind, role: PathRole) {
-    const labels: Record<TransportKind, string> = {
-      "fetch-stream": "Fetch streams",
-      websocket: "WebSocket",
-      "webtransport-datagram": "WebTransport datagrams",
-      webtransport:
-        role === "throughput"
-          ? "WebTransport streams"
-          : "WebTransport datagrams",
-    };
-    return labels[value] ?? value;
-  }
-
   function capabilities(role: PathRole) {
     const advertised = advertisedServerCapabilities(discovery, role);
     if (!advertised) return "Checking server";
     const values = advertised.transports.map((value) =>
-      capability(value, role),
+      transportLabel(value, role),
     );
     if (!values.length) return "None advertised";
     return `${values.join(" · ")}${
@@ -117,25 +102,13 @@
     }`;
   }
 
-  // The feed rides the session that carries the bytes, or its own fetch when
-  // the lanes are fetches.
+  // The feed rides the session carrying the bytes, or its own fetch.
   const uploadProgressPath = $derived.by(() => {
     const target = connections.throughput.target;
     if (!target) return "Pending";
     const carrier =
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
-    // The summary opens with its own mechanism, so naming the carrier again
-    // would stutter: what is left is the path it runs over.
-    const over = connections.throughput.summary
-      .split(" · ")
-      .slice(1)
-      .join(" · ");
-    return `${carrier} over ${over}`;
-  });
-  const serverInstance = $derived.by(() => {
-    const value = discovery?.generation;
-    if (!value) return "—";
-    return `${value.slice(0, 8)}…`;
+    return `${carrier} over ${connections.throughput.carrier}`;
   });
   const serverLoad = $derived(
     serverLoadSummary(
@@ -143,17 +116,12 @@
     ),
   );
   const httpPaths = $derived(advertisedServerHttpPaths(discovery));
-  let copyError = $state(false);
 
-  // Every row here reads the same presentation the path cards do. verified path evidence
-  // is the last probe's evidence, which outlives the selection that produced it
-  // and is never cleared: reading it directly makes the drawer contradict the
-  // card four lines above whenever a role is failed, checking, or moved.
+  // Rows read the path cards' presentation, never stale verified evidence.
   const throughputTransport = $derived(
     connections.throughput.target?.transport,
   );
-  // The lanes a stage opens depend on what it carries, so the run's own
-  // timeline supplies the stages the count is resolved from.
+  // The run's own timeline decides which stages resolve the stream count.
   const transferStreams = $derived(
     describeTransferStreams(
       store.runConfig.transferStreams,
@@ -189,147 +157,128 @@
     );
   }
 
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => () => clearTimeout(copiedTimer));
   async function copyReport() {
-    copyError = false;
+    clearTimeout(copiedTimer);
     try {
       await navigator.clipboard.writeText(diagnosticReport());
       copied = true;
-      window.setTimeout(() => (copied = false), 1500);
+      // Not motion: the copy confirmation lingers briefly.
+      copiedTimer = setTimeout(() => (copied = false), 1500);
+      announce("Diagnostic report copied");
     } catch {
       copied = false;
-      copyError = true;
+      announce("Unable to copy diagnostic report");
     }
   }
 </script>
 
 <section class="infra">
-  <div class="grid">
-    <article class="card server-card">
-      <header>
-        <h3>
-          {pathMode === "live" ? "Selected endpoints" : "Tested endpoints"}
-        </h3>
-        <span class="scope-label"
-          >{availableServers.length > 1
-            ? `${availableServers.length} servers`
-            : "Single server"}</span
-        >
-      </header>
-      {#if availableServers.length > 1}
-        <label class="server-picker">
-          <span>Inspect server</span>
-          <select
-            value={selectedServer?.id}
-            onchange={(event) => (inspectedServer = event.currentTarget.value)}
-          >
-            {#each availableServers as entry (entry.id)}
-              <option value={entry.id}>{entry.name}</option>
-            {/each}
-          </select>
-        </label>
+  {#if availableServers.length > 1}
+    <ServerScope
+      servers={availableServers}
+      value={selectedServer?.id ?? ""}
+      label="Inspect server"
+      onchange={(id) => (inspectedServer = id)}
+    />
+  {/if}
+  {#each failures as failure}
+    <p class="notice" data-tone="err">{reasonLabel(failure.reason)}</p>
+  {/each}
+  <Disclosure
+    class="surface-inset server-card"
+    title={pathMode === "live" ? "Selected server" : "Tested server"}
+    facts={[server?.name ?? "Checking server", server?.location]
+      .filter(Boolean)
+      .join(" · ")}
+  >
+    <dl class="kv">
+      {#if selectedServer}
+        <div>
+          <dt>Address</dt>
+          <dd>{selectedServer.url}</dd>
+        </div>
       {/if}
-      <dl>
+      <div>
+        <dt>Location</dt>
+        <dd>{server?.location ?? "Unavailable"}</dd>
+      </div>
+    </dl>
+    <p class="hint">
+      {pathMode === "live"
+        ? "Current selection and verified connections."
+        : pathMode === "running"
+          ? "Connections used by this test."
+          : "Connections captured for the displayed result."}
+    </p>
+  </Disclosure>
+
+  {#each PATH_ROLES as role}
+    {@const connection = connections[role]}
+    {@const status = endpointPathStatus(connection.validation, pathMode)}
+    {@const inTest = role === "throughput" || latencyRequested}
+    <Disclosure
+      class="surface-inset path"
+      title={`${role} path`}
+      facts={inTest
+        ? connection.summary
+        : "Not selected for latency measurement"}
+    >
+      {#snippet aside()}
+        <span class="badge" data-tone={inTest ? status.tone : "neutral"}
+          >{inTest
+            ? status.label
+            : pathMode === "live"
+              ? "Not selected"
+              : "Not in test"}</span
+        >
+      {/snippet}
+      <dl class="kv">
         <div>
-          <dt>Node</dt>
-          <dd>{server?.name ?? "Checking server"}</dd>
+          <dt>Path evidence</dt>
+          <dd>
+            {pathEvidence(
+              role,
+              connection.browserProtocol,
+              connection.serverProtocol,
+            )}
+          </dd>
         </div>
-        <div>
-          <dt>Location</dt>
-          <dd>{server?.location ?? "Unavailable"}</dd>
-        </div>
-        {#if selectedServer}
+        {#if role === "throughput"}
           <div>
-            <dt>Address</dt>
-            <dd>{selectedServer.url}</dd>
+            <dt>Upload progress</dt>
+            <dd>{uploadProgressPath}</dd>
+          </div>
+        {:else}
+          <div>
+            <dt>Pre-test latency</dt>
+            <dd>
+              {connection.preTestPingMs !== undefined
+                ? formatLatency(connection.preTestPingMs)
+                : latencyRequested
+                  ? "Pending"
+                  : MISSING}
+            </dd>
           </div>
         {/if}
       </dl>
-      <p class="scope-note">
-        {pathMode === "live"
-          ? "Current selection and verified connections."
-          : pathMode === "running"
-            ? "Connections used by this test."
-            : "Connections captured for the displayed result."}
-      </p>
-      {#each failures as failure}
-        <p class="endpoint-failure">{failure.message}</p>
-      {/each}
-    </article>
+    </Disclosure>
+  {/each}
 
-    {#each PATH_ROLES as role}
-      {@const connection = connections[role]}
-      {@const status = endpointPathStatus(connection.validation, pathMode)}
-      <article class="card path">
-        <header>
-          <h3>{role} path</h3>
-          <mark
-            data-state={role === "latency" && !latencyRequested
-              ? "used"
-              : status.tone}
-            >{role === "latency" && !latencyRequested
-              ? pathMode === "live"
-                ? "Not selected"
-                : "Not in test"
-              : status.label}</mark
-          >
-        </header>
-        <dl>
-          <div>
-            <dt>Selected</dt>
-            <dd>
-              {role === "latency" && !latencyRequested
-                ? "Not selected for latency measurement"
-                : connection.summary}
-            </dd>
-          </div>
-          <div>
-            <dt>Path evidence</dt>
-            <dd>
-              {pathEvidence(
-                role,
-                connection.browserProtocol,
-                connection.serverProtocol,
-              )}
-            </dd>
-          </div>
-          {#if role === "throughput"}
-            <div>
-              <dt>Upload progress</dt>
-              <dd>{uploadProgressPath}</dd>
-            </div>
-          {:else}
-            <div>
-              <dt>Pre-test RTT</dt>
-              <dd>
-                {connection.preTestPingMs !== undefined
-                  ? `${fmtMs(connection.preTestPingMs)} ms`
-                  : latencyRequested
-                    ? "Pending"
-                    : "—"}
-              </dd>
-            </div>
-          {/if}
-        </dl>
-      </article>
-    {/each}
-  </div>
-
-  <details class="card capabilities-card">
-    <summary>Server capabilities</summary>
-    <dl>
+  <Disclosure
+    class="surface-inset"
+    title="Server capabilities"
+    facts={capabilities("throughput")}
+  >
+    <dl class="kv">
       <div>
         <dt>HTTP versions</dt>
-        {#if httpPaths === null}
-          <dd>Checking server</dd>
-        {:else if !httpPaths.length}
-          <dd>None advertised</dd>
-        {:else}
-          <dd class="protocols" aria-label={httpPaths.join(" · ")}>
-            {#each httpPaths as path}
-              <span class="protocol">{path}</span>
-            {/each}
-          </dd>
-        {/if}
+        <dd>
+          {httpPaths === null
+            ? "Checking server"
+            : httpPaths.join(", ") || "None advertised"}
+        </dd>
       </div>
       <div>
         <dt>Throughput</dt>
@@ -340,337 +289,91 @@
         <dd>{capabilities("latency")}</dd>
       </div>
     </dl>
-  </details>
+  </Disclosure>
 
-  <details class="diagnostics-card">
-    <summary>Diagnostics</summary>
-    <div class="diagnostics">
-      <dl>
+  <Disclosure
+    class="surface-inset"
+    title="Diagnostics"
+    facts={`Client ${BUILD.identity} · server ${discovery?.engineVersion ?? MISSING}`}
+  >
+    <dl class="kv">
+      <div>
+        <dt>Server instance</dt>
+        <dd>{discovery?.generation || MISSING}</dd>
+      </div>
+      <div>
+        <dt>Client version</dt>
+        <dd>{BUILD.version ? `v${BUILD.version}` : MISSING}</dd>
+      </div>
+      <div>
+        <dt>Build profile</dt>
+        <dd>{BUILD.profile}</dd>
+      </div>
+      <div>
+        <dt>Source revision</dt>
+        <dd>{BUILD.revision}</dd>
+      </div>
+      <div>
+        <dt>Throughput origin</dt>
+        <dd>{connections.throughput.target?.origin ?? MISSING}</dd>
+      </div>
+      <div>
+        <dt>Throughput client</dt>
+        <dd>{clientEvidence("throughput")}</dd>
+      </div>
+      {#if serverLoad}
         <div>
-          <dt>Server instance</dt>
-          <dd title={discovery?.generation ?? undefined}>
-            {serverInstance}
-          </dd>
+          <dt>Server load</dt>
+          <dd>{serverLoad}</dd>
         </div>
-        <div>
-          <dt>Server version</dt>
-          <dd>{discovery?.engineVersion ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Server implementation</dt>
-          <dd>
-            {discovery?.implementation === "rust"
-              ? "Rust"
-              : discovery?.implementation === "go"
-                ? "Go"
-                : "—"}
-          </dd>
-        </div>
-        <div>
-          <dt>Runner</dt>
-          <dd>{engine?.name ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Client version</dt>
-          <dd>{BUILD.version ? `v${BUILD.version}` : "—"}</dd>
-        </div>
-        <div>
-          <dt>Build profile</dt>
-          <dd>{BUILD.profile}</dd>
-        </div>
-        <div>
-          <dt>Source revision</dt>
-          <dd>{BUILD.revision}</dd>
-        </div>
-        <div>
-          <dt>Throughput origin</dt>
-          <dd>{connections.throughput.target?.origin ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Throughput client</dt>
-          <dd>{clientEvidence("throughput")}</dd>
-        </div>
-        {#if serverLoad}
-          <div>
-            <dt>Server load</dt>
-            <dd>{serverLoad}</dd>
-          </div>
-        {/if}
-        <div>
-          <dt>Latency origin</dt>
-          <dd>{connections.latency.target?.origin ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Latency client</dt>
-          <dd>{clientEvidence("latency")}</dd>
-        </div>
-        <div>
-          <dt>Streams</dt>
-          <dd>{transferStreams}</dd>
-        </div>
-      </dl>
-      <p class="diagnostic-note">
-        Server instance changes when the backend restarts. Path evidence names
-        browser and server observations only when that path exposes them.
-      </p>
-      <button type="button" onclick={copyReport}
-        >{copied ? "Copied" : "Copy diagnostic report"}</button
-      >
-      <span class="sr-status" aria-live="polite"
-        >{copied
-          ? "Diagnostic report copied"
-          : copyError
-            ? "Unable to copy diagnostic report"
-            : ""}</span
-      >
-    </div>
-  </details>
+      {/if}
+      <div>
+        <dt>Latency origin</dt>
+        <dd>{connections.latency.target?.origin ?? MISSING}</dd>
+      </div>
+      <div>
+        <dt>Latency client</dt>
+        <dd>{clientEvidence("latency")}</dd>
+      </div>
+      <div>
+        <dt>Streams</dt>
+        <dd>{transferStreams}</dd>
+      </div>
+    </dl>
+    <p class="hint">
+      Server instance changes when the backend restarts. Path evidence names
+      browser and server observations only when that path exposes them.
+    </p>
+    <button class="btn" type="button" onclick={copyReport}
+      >{copied ? "Copied" : "Copy diagnostic report"}</button
+    >
+  </Disclosure>
+  <p class="license">
+    <span>Legal</span>
+    <button class="btn btn-quiet" type="button" onclick={onOpenLegal}
+      >About &amp; legal</button
+    >
+  </p>
 </section>
 
 <style>
-  .server-card {
-    grid-column: 1 / -1;
-  }
-  .scope-label {
-    font-size: 11px;
-    color: var(--text-soft);
-  }
-  .scope-note {
-    margin: 10px 0 0;
-    color: var(--text-soft);
-    font-size: 11px;
-    line-height: 1.45;
-  }
-  .endpoint-failure {
-    color: var(--err);
-    font-size: 12px;
-    line-height: 1.45;
-  }
-  .server-picker {
-    display: grid;
-    gap: 5px;
-    margin-bottom: 12px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-  .server-picker select {
-    width: 100%;
-    min-width: 0;
-    min-height: 34px;
-    padding: 6px 9px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-2);
-    color: var(--text);
-    font: inherit;
-    font-size: 12px;
-  }
-  .server-picker select:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .capabilities-card summary {
-    cursor: pointer;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-  .capabilities-card[open] summary {
-    margin-bottom: 12px;
-  }
   .infra {
     display: grid;
-    gap: 14px;
-  }
-  .grid {
-    display: grid;
-    --endpoint-card-min: 240px;
-    grid-template-columns: repeat(
-      auto-fit,
-      minmax(min(100%, var(--endpoint-card-min)), 1fr)
-    );
-    gap: var(--space-3);
-  }
-  .card,
-  .diagnostics-card {
-    position: relative;
-    display: grid;
-    align-content: start;
-    gap: 10px;
-    min-width: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(180deg, var(--surface-2), transparent),
-      var(--surface-inset);
-    padding: var(--space-3);
-    box-shadow: var(--elev-recess);
-    overflow: clip;
-    container-type: inline-size;
-    container-name: endpoint-card;
-  }
-  .card > * {
-    position: relative;
-    z-index: 1;
-  }
-  h3 {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-  }
-  header {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    align-items: flex-start;
     gap: var(--space-2);
-    min-width: 0;
   }
-  header h3 {
-    min-width: 0;
+  .kv {
+    --kv-label: 6.5rem;
   }
-  mark {
-    flex: none;
-    align-self: start;
-    padding: 3px 6px;
-    border-radius: var(--r-full);
-    background: var(--warn-soft);
-    color: var(--warn);
-    font-size: 9px;
-    font-weight: 700;
-  }
-  mark[data-state="verified"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  mark[data-state="ready"] {
-    background: var(--ok-soft);
-    color: var(--ok);
-  }
-  mark[data-state="active"] {
-    background: var(--brand-soft);
-    color: var(--brand-strong);
-  }
-  mark[data-state="used"] {
-    background: var(--surface-2);
-    color: var(--text-soft);
-  }
-  dl {
-    display: grid;
-    gap: 7px;
-    margin: 0;
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: minmax(90px, max-content) minmax(0, 1fr);
-    gap: var(--space-3);
-    align-items: baseline;
-    min-width: 0;
-  }
-  dt {
-    color: var(--text-soft);
-    font-size: 11px;
-    font-weight: 700;
-  }
-  dd {
-    min-width: 0;
-    margin: 0;
-    color: var(--text);
-    font-family: var(--font-sans);
-    font-size: 12px;
-    overflow-wrap: anywhere;
-    word-break: normal;
-    line-height: 1.43;
-  }
-  .protocols {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    font-family: var(--font-sans);
-    line-height: 1.2;
-  }
-  .protocol {
-    border: 1px solid color-mix(in srgb, var(--brand) 30%, var(--border));
-    border-radius: var(--r-full);
-    background: color-mix(in srgb, var(--brand-soft) 72%, var(--surface-inset));
-    color: var(--text);
-    padding: 3px 6px;
-    font-size: 9px;
-    font-weight: 700;
-    white-space: nowrap;
-  }
-  .diagnostics-card {
-    padding: 0;
-  }
-  .diagnostics-card summary {
-    cursor: pointer;
-    padding: var(--space-3);
-    color: var(--text-soft);
-    font-size: 10px;
-    font-weight: 850;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-  }
-  .diagnostics-card[open] summary {
-    border-bottom: 1px solid var(--border);
-  }
-  .diagnostics-card summary:hover {
-    color: var(--text);
-  }
-  /* Full-bleed against a clipping card, so the ring goes inside the edge. */
-  .diagnostics-card summary:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: -2px;
-  }
-  .diagnostics {
-    display: grid;
-    gap: var(--space-3);
-    padding: var(--space-3);
-  }
-  .diagnostic-note {
-    margin: 0;
-    color: var(--text-soft);
-    font-size: 10px;
-    line-height: 1.5;
-  }
-  button {
+  .btn {
     justify-self: start;
-    min-height: 34px;
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    color: var(--text);
-    padding: 6px 10px;
-    font-family: var(--font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    transition:
-      border-color var(--dur-hover) var(--ease-out),
-      color var(--dur-hover) var(--ease-out);
   }
-  button:hover {
-    border-color: color-mix(in srgb, var(--brand) 45%, var(--border-strong));
-    color: var(--brand-strong);
-  }
-  button:focus-visible {
-    outline: var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .sr-status {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-  }
-  @container endpoint-card (max-width: 300px) {
-    dl div {
-      grid-template-columns: 1fr;
-      gap: 2px;
-    }
+  .license {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 0 var(--space-1);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
   }
 </style>

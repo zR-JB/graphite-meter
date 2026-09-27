@@ -10,9 +10,6 @@ services:
       args:
         VERSION: "0.0.0-dev"
         GM_CLIENT_REVISION: "source"
-        # Client build knob (default = prod: real-only).
-        # Uncomment to build a configurable multi-engine image:
-        # GM_CLIENT_ALLOW_DUMMY: "1"
         # GM_CLIENT_REVISION: "abc1234"  # source revision (default "source")
     ports:
       - "7246:7246" # HTTP/1.1 (default)

@@ -7,11 +7,12 @@ from pathlib import Path
 
 from .model import Component, LegalError, LegalFile, Provenance, Review, sha256
 
-CANDIDATE_PREFIXES = ('LICENSE', 'LICENCE', 'COPYING', 'NOTICE', 'COPYRIGHT', 'PATENTS', 'THIRD_PARTY')
+CANDIDATE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "COPYRIGHT", "PATENTS", "THIRD_PARTY")
 
 
 def file_kind(name: str) -> str:
-    return 'notice' if Path(name).name.upper().startswith(('NOTICE', 'COPYRIGHT', 'PATENTS', 'THIRD_PARTY')) else 'license'
+    notices = ("NOTICE", "COPYRIGHT", "PATENTS", "THIRD_PARTY")
+    return "notice" if Path(name).name.upper().startswith(notices) else "license"
 
 
 def read_legal_files(root: Path, *, recursive: bool = True) -> list[LegalFile]:
@@ -26,13 +27,13 @@ def read_legal_files(root: Path, *, recursive: bool = True) -> list[LegalFile]:
     files: list[LegalFile] = []
     for path in candidates:
         upper = path.name.upper()
-        if not any(upper == prefix or upper.startswith(tuple(prefix + c for c in '.-_'))
+        if not any(upper == prefix or upper.startswith(tuple(prefix + c for c in ".-_"))
                    for prefix in CANDIDATE_PREFIXES):
             continue
         data = path.read_bytes()
         files.append(LegalFile(path.relative_to(root).as_posix(), sha256(data), data.decode(), file_kind(path.name)))
     if not files:
-        raise LegalError(f'no legal candidate file in {root}')
+        raise LegalError(f"no legal candidate file in {root}")
     return sorted(files, key=lambda item: item.name.lower())
 
 
@@ -42,18 +43,18 @@ def find_review(ecosystem: str, name: str, reviews: list[Review]) -> Review | No
 
 def validate_review(component: Component, reviews: list[Review]) -> None:
     expression = component.declaredLicenseExpression.upper()
-    if not expression or 'UNKNOWN' in expression or 'NOASSERTION' in expression or expression == 'UNLICENSED':
-        raise LegalError(f'component {component.name} has missing or unknown licensing information')
+    if not expression or "UNKNOWN" in expression or "NOASSERTION" in expression or expression == "UNLICENSED":
+        raise LegalError(f"component {component.name} has missing or unknown licensing information")
     # Match the original approval lookup: the last record for an identity wins.
     review = {(item.ecosystem, item.name): item for item in reviews}.get((component.ecosystem, component.name))
     if review is None:
-        raise LegalError(f'LEGAL REVIEW REQUIRED: new component has no review record: {component.name}')
-    if review.reviewDecision != 'approved':
-        raise LegalError(f'LEGAL REVIEW REQUIRED: review for {component.name} is unresolved')
+        raise LegalError(f"LEGAL REVIEW REQUIRED: new component has no review record: {component.name}")
+    if review.reviewDecision != "approved":
+        raise LegalError(f"LEGAL REVIEW REQUIRED: review for {component.name} is unresolved")
     if review.declaredLicenseExpression != component.declaredLicenseExpression or not review.selectedLicenseExpression:
-        raise LegalError(f'LEGAL REVIEW REQUIRED: declared license changed for {component.name}')
+        raise LegalError(f"LEGAL REVIEW REQUIRED: declared license changed for {component.name}")
     if component.modified != review.modified:
-        raise LegalError(f'LEGAL REVIEW REQUIRED: modification status changed for {component.name}')
+        raise LegalError(f"LEGAL REVIEW REQUIRED: modification status changed for {component.name}")
     current_files = component.legalTexts + component.notices
     current = {item.name.lower(): item.sha256 for item in current_files}
     reviewed = {item.name.lower(): item.sha256 for item in review.legalFiles}
@@ -61,7 +62,7 @@ def validate_review(component: Component, reviews: list[Review]) -> None:
     for item in current_files + review.legalFiles:
         names.setdefault(item.name.lower(), item.name)
     for name in sorted(current.keys() | reviewed.keys()):
-        expected, actual = reviewed.get(name, '<missing>'), current.get(name, '<missing>')
+        expected, actual = reviewed.get(name, "<missing>"), current.get(name, "<missing>")
         if expected != actual:
             raise LegalError(f'LEGAL REVIEW REQUIRED: legal fingerprint changed for {component.name}:\n'
                              f'  {names[name]}\n  expected: {expected}\n  actual:   {actual}')
@@ -70,17 +71,17 @@ def validate_review(component: Component, reviews: list[Review]) -> None:
 def reviewed_legal_files(root: Path, ecosystem: str, name: str, reviews: list[Review]) -> list[LegalFile]:
     review = find_review(ecosystem, name, reviews)
     if review is None or not review.legalFiles:
-        raise LegalError('no explicit reviewed legal-file override')
+        raise LegalError("no explicit reviewed legal-file override")
     files: list[LegalFile] = []
     for item in review.legalFiles:
         relative = Path(os.path.normpath(item.name))
-        if relative.is_absolute() or str(relative) == '.' or '..' in relative.parts:
-            raise LegalError(f'reviewed legal path must stay inside component: {item.name}')
+        if relative.is_absolute() or str(relative) == "." or ".." in relative.parts:
+            raise LegalError(f"reviewed legal path must stay inside component: {item.name}")
         try:
             data = (root / relative).read_bytes()
         except FileNotFoundError:
             # Bun's isolated linker keeps dependencies beside the package root.
-            if relative.parts[0] != 'node_modules':
+            if relative.parts[0] != "node_modules":
                 raise
             data = (root.parent / Path(*relative.parts[1:])).read_bytes()
         files.append(replace(item, sha256=sha256(data), text=data.decode(), kind=item.kind or file_kind(item.name)))
@@ -101,7 +102,7 @@ def component_legal_files(root: Path, ecosystem: str, name: str, reviews: list[R
     reviewed_names = {item.name.lower() for item in review.legalFiles}
     for item in discovered:
         if item.name.lower() not in reviewed_names:
-            raise LegalError(f'LEGAL REVIEW REQUIRED: new legal file for {name}: {item.name}')
+            raise LegalError(f"LEGAL REVIEW REQUIRED: new legal file for {name}: {item.name}")
     return files
 
 
@@ -109,22 +110,22 @@ def infer_license(files: list[LegalFile]) -> str:
     for item in files:
         upper = item.text.upper()
         for expression, phrases in (
-            ('Apache-2.0', ('APACHE LICENSE',)),
-            ('MIT', ('MIT LICENSE', 'PERMISSION IS HEREBY GRANTED, FREE OF CHARGE')),
-            ('ISC', ('PERMISSION TO USE, COPY, MODIFY, AND DISTRIBUTE', 'ISC LICENSE')),
-            ('BSD-3-Clause', ('BSD 3-CLAUSE', 'REDISTRIBUTION AND USE IN SOURCE AND BINARY FORMS')),
-            ('BSD-2-Clause', ('BSD 2-CLAUSE',)),
+            ("Apache-2.0", ("APACHE LICENSE",)),
+            ("MIT", ("MIT LICENSE", "PERMISSION IS HEREBY GRANTED, FREE OF CHARGE")),
+            ("ISC", ("PERMISSION TO USE, COPY, MODIFY, AND DISTRIBUTE", "ISC LICENSE")),
+            ("BSD-3-Clause", ("BSD 3-CLAUSE", "REDISTRIBUTION AND USE IN SOURCE AND BINARY FORMS")),
+            ("BSD-2-Clause", ("BSD 2-CLAUSE",)),
         ):
             if any(phrase in upper for phrase in phrases):
                 return expression
-    return 'UNKNOWN'
+    return "UNKNOWN"
 
 
 def component_from_files(ecosystem: str, name: str, version: str, source: str, files: list[LegalFile]) -> Component:
     expression = infer_license(files)
     return Component(name, version, ecosystem, source, expression, expression,
-                     legalTexts=[item for item in files if item.kind != 'notice'],
-                     notices=[item for item in files if item.kind == 'notice'])
+                     legalTexts=[item for item in files if item.kind != "notice"],
+                     notices=[item for item in files if item.kind == "notice"])
 
 
 def component_key(component: Component) -> tuple[str, str, str]:
@@ -139,28 +140,28 @@ def sort_components(components: list[Component]) -> list[Component]:
 def add_provenance(repo: Path, components: list[Component], entries: list[Provenance], scope: str) -> list[Component]:
     result = list(components)
     for entry in entries:
-        if scope not in entry.artifactScopes and not (scope == 'server/browser' and 'server' in entry.artifactScopes):
+        if scope not in entry.artifactScopes and not (scope == "server/browser" and "server" in entry.artifactScopes):
             continue
         if (not entry.name or not entry.version or not entry.licenseExpression
-                or 'UNKNOWN' in entry.licenseExpression.upper() or not entry.reviewNotes):
-            raise LegalError(f'provenance entry {entry.name!r} is incomplete or unresolved')
+                or "UNKNOWN" in entry.licenseExpression.upper() or not entry.reviewNotes):
+            raise LegalError(f"provenance entry {entry.name!r} is incomplete or unresolved")
 
         def read(path: Path, display: str, expected: str, label: str) -> bytes:
             try:
                 data = path.read_bytes()
             except OSError as error:
-                raise LegalError(f'provenance {entry.name} {label} {display}: {error}') from error
+                raise LegalError(f"provenance {entry.name} {label} {display}: {error}") from error
             if expected != sha256(data):
-                raise LegalError(f'provenance {entry.name} {label} hash changed: {display}')
+                raise LegalError(f"provenance {entry.name} {label} hash changed: {display}")
             return data
 
         for artifact in entry.localArtifacts:
             if not artifact.path or not artifact.sha256:
-                raise LegalError(f'provenance {entry.name} has an incomplete local artifact')
-            read(repo / artifact.path, artifact.path, artifact.sha256, 'local artifact')
+                raise LegalError(f"provenance {entry.name} has an incomplete local artifact")
+            read(repo / artifact.path, artifact.path, artifact.sha256, "local artifact")
         files = [replace(item, name=Path(item.name).name,
-                         text=read(repo / item.name, item.name, item.sha256, 'legal file').decode(),
-                         kind=item.kind or 'license') for item in entry.localLegalFiles]
+                         text=read(repo / item.name, item.name, item.sha256, "legal file").decode(),
+                         kind=item.kind or "license") for item in entry.localLegalFiles]
         component = component_from_files(entry.ecosystem, entry.name, entry.version, entry.upstream, files)
         component.declaredLicenseExpression = component.selectedLicenseExpression = entry.licenseExpression
         component.modified = entry.modified
@@ -174,11 +175,13 @@ def prepare_scopes(scopes: dict[str, list[Component]], reviews: list[Review], mo
             try:
                 validate_review(component, reviews)
             except LegalError as error:
-                if mode not in ('review-template', 'review-audit'):
-                    raise LegalError(f'{scope}: {error}') from error
-        scopes[scope] = [replace(component, selectedLicenseExpression=review.selectedLicenseExpression)
-                         if (review := find_review(component.ecosystem, component.name, reviews)) else replace(component)
-                         for component in components]
+                if mode not in ("review-template", "review-audit"):
+                    raise LegalError(f"{scope}: {error}") from error
+        scopes[scope] = []
+        for component in components:
+            review = find_review(component.ecosystem, component.name, reviews)
+            selected = review.selectedLicenseExpression if review else component.selectedLicenseExpression
+            scopes[scope].append(replace(component, selectedLicenseExpression=selected))
 
 
 def refresh_reviewed_versions(scopes: dict[str, list[Component]], reviews: list[Review]) -> None:

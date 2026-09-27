@@ -29,7 +29,8 @@ func newCertificateManager(cfg *config.Config) (*certificateManager, error) {
 		return nil, err
 	}
 	if info, err := os.Stat(cfg.TLSKey); err == nil && info.Mode().Perm()&0077 != 0 {
-		log.Printf("[gm:tls] warning: private key %s permissions are %04o; remove group/other access", cfg.TLSKey, info.Mode().Perm())
+		log.Printf("[gm:tls] warning: private key %s permissions are %04o; remove group/other access", cfg.TLSKey,
+			info.Mode().Perm())
 	}
 	return m, nil
 }
@@ -52,15 +53,11 @@ func (m *certificateManager) reload(now time.Time) error {
 	if !now.Before(leaf.NotAfter) {
 		return fmt.Errorf("TLS certificate expired at %s", leaf.NotAfter.Format(time.RFC3339))
 	}
-	for _, public := range []struct {
-		enabled bool
-		origin  string
-	}{{m.cfg.Native.H1TLS != "", m.cfg.NativePublic.H1TLS}, {m.cfg.Native.H2 != "", m.cfg.NativePublic.H2}, {m.cfg.Native.H3 != "", m.cfg.NativePublic.H3}} {
-		if !public.enabled || public.origin == "" {
+	for _, n := range m.cfg.Natives() {
+		if n.Scheme != "https" || n.Addr == "" || n.Public == "" {
 			continue
 		}
-		// Config validation guarantees every public origin parses.
-		u, _ := url.Parse(public.origin)
+		u, _ := url.Parse(n.Public)
 		if err := leaf.VerifyHostname(u.Hostname()); err != nil {
 			return fmt.Errorf("TLS certificate incompatible with %s: %w", u.Hostname(), err)
 		}

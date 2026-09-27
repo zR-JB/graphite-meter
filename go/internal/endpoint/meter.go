@@ -10,11 +10,10 @@ import (
 // Meter logs one transfer endpoint's aggregate throughput once per second under verbose mode.
 type Meter struct {
 	name  string
-	bytes atomic.Int64 // cumulative bytes moved, ever
-	conns atomic.Int64 // currently-open requests
+	bytes atomic.Int64
+	conns atomic.Int64
 }
 
-// NewMeter builds a meter tagged with name (e.g. "server:download").
 func NewMeter(name string) *Meter { return &Meter{name: name} }
 
 func (m *Meter) Add(n int) {
@@ -35,7 +34,6 @@ func (m *Meter) Close() {
 	}
 }
 
-// Run logs the per-second byte rate and live connection count until ctx is cancelled.
 func (m *Meter) Run(ctx context.Context) {
 	if m == nil {
 		return

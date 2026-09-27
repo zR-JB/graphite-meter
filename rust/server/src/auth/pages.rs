@@ -1,4 +1,4 @@
-//! Native auth templates share the browser client's compile-time CSS and scripts.
+//! Native auth templates share the Go server's compile-time CSS and scripts.
 use std::{fmt, sync::LazyLock};
 
 use askama::Template;
@@ -6,9 +6,9 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use http::{HeaderMap, HeaderValue};
 use sha2::{Digest, Sha256};
 
-pub const STYLES: &str = include_str!("../../../../client/src/auth/auth.css");
-pub const THEME_SCRIPT: &str = include_str!("../../../../client/src/auth/theme.js");
-pub const PENDING_SCRIPT: &str = include_str!("../../../../client/src/auth/pending.js");
+pub const STYLES: &str = include_str!("../../../../go/internal/auth/assets/auth.css");
+pub const THEME_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets/theme.js");
+pub const PENDING_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
 
 #[derive(Template)]
 #[template(path = "auth-login.html")]

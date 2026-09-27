@@ -1,53 +1,35 @@
 #!/bin/sh
+# Scan staged content for secrets, then run the planned checks on exactly the staged tree.
 set -eu
 
-# With no staged changes, skip runtime bootstrap and component checks.
 if git diff --cached --quiet; then
     exit 0
 fi
+if [ "$(git symbolic-ref --short -q HEAD)" = main ]; then
+    echo "pre-commit: refusing to commit directly to main; create a branch first" >&2
+    exit 1
+fi
+git diff --cached --check
+mise exec -- gitleaks git --staged --redact --no-banner --verbose
+checks=$(mise exec -- python3 scripts/ci/precommit.py)
+if [ -z "$checks" ]; then
+    exit 0
+fi
 
+root=$(git rev-parse --show-toplevel)
+tree=$(git write-tree)
 scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT HUP INT TERM
-bootstrap="$scratch/bootstrap"
-mkdir "$bootstrap"
-
-# Both the implementation and its runtime contract come from the index.
-if ! git show :scripts/ci/precommit.py >"$bootstrap/precommit.py" ||
-   ! git show :mise.toml >"$bootstrap/mise.toml" ||
-   ! git show :mise.lock >"$bootstrap/mise.lock"; then
-    echo "pre-commit: staged hook implementation, mise.toml and mise.lock are required" >&2
-    exit 1
-fi
-
-# Share installed tools and downloads, never shell/global mise configuration.
-mise_data=${MISE_DATA_DIR-}
-mise_cache=${MISE_CACHE_DIR-}
-for name in $(env | sed -n -e 's/^\(MISE_[A-Za-z0-9_]*\)=.*/\1/p' -e 's/^\(__MISE_[A-Za-z0-9_]*\)=.*/\1/p'); do
-    unset "$name"
+staged="$scratch/staged"
+trap 'git -C "$root" worktree remove --force "$staged" 2>/dev/null || true; rm -rf "$scratch"' EXIT
+trap 'exit 1' HUP INT TERM
+git worktree add --quiet --detach --no-checkout "$staged" HEAD
+# The hook's Git environment names the commit's index; the snapshot must use its own.
+unset $(git rev-parse --local-env-vars)
+cd "$staged"
+git read-tree "$tree"
+git checkout-index --all --force
+export MISE_TRUSTED_CONFIG_PATHS="$staged"
+(cd client && mise exec -- bun install --frozen-lockfile --prefer-offline)
+for check in $checks; do
+    mise run "$check"
 done
-if [ -n "$mise_data" ]; then export MISE_DATA_DIR="$mise_data"; fi
-if [ -n "$mise_cache" ]; then export MISE_CACHE_DIR="$mise_cache"; fi
-export MISE_CONFIG_DIR="$scratch/config" MISE_SYSTEM_CONFIG_DIR="$scratch/system"
-export MISE_CEILING_PATHS="$scratch" MISE_TRUSTED_CONFIG_PATHS="$bootstrap"
-export MISE_OVERRIDE_CONFIG_FILENAMES=mise.toml MISE_OVERRIDE_TOOL_VERSIONS_FILENAMES=none
-export MISE_ENV= MISE_AUTO_ENV=false MISE_ENV_CACHE=false MISE_LOCKED=true
-
-# Tool backends may invoke Git in their own repositories while installing Python.
-# Keep the hook's staged index for validation, but never pass it into that bootstrap.
-git_local_vars=$(git rev-parse --local-env-vars)
-bootstrap_mise() (
-    for git_name in $git_local_vars; do
-        unset "$git_name"
-    done
-    mise "$@"
-)
-
-python_version=$(bootstrap_mise --cd "$bootstrap" config get --file "$bootstrap/mise.toml" tools.python)
-if ! printf '%s\n' "$python_version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-    echo "pre-commit: staged mise.toml must pin Python to an exact version" >&2
-    exit 1
-fi
-# Resolving one configured tool avoids installing every checker for a docs commit.
-bootstrap_mise --cd "$bootstrap" install python
-python=$(bootstrap_mise --cd "$bootstrap" which python3 --tool "python@$python_version")
-"$python" -I "$bootstrap/precommit.py"

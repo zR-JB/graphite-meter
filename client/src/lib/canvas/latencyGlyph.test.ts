@@ -5,7 +5,7 @@ import { latencyOverflowGlyph, nearestLatencyGlyph } from "./latencyGlyph";
 function bucket(
   t: number,
   medianRttMs: number | null,
-  lossCount = 0,
+  timeoutCount = 0,
 ): LatencyBucket {
   return {
     t,
@@ -17,12 +17,8 @@ function bucket(
     medianRttMs,
     p95RttMs: medianRttMs,
     maxRttMs: medianRttMs,
-    firstRttMs: medianRttMs,
-    lastRttMs: medianRttMs,
-    pingCount: medianRttMs == null ? lossCount : 1 + lossCount,
-    lossCount,
-    rttDeltaSumMs: 0,
-    rttDeltaCount: 0,
+    pingCount: medianRttMs == null ? timeoutCount : 1 + timeoutCount,
+    timeoutCount,
   };
 }
 

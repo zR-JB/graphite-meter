@@ -1,15 +1,11 @@
 import { defineConfig, type Plugin } from "vite";
 import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve, sep } from "node:path";
 import { execFileSync } from "node:child_process";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
-import tailwindcss from "@tailwindcss/vite";
 
-// Build-time GM_CLIENT_* literals enable tree-shaking for optional browser fixtures.
 const env = process.env;
-
-// Boolean knobs default ON; only an explicit "0"/"false" turns them off.
-const off = (v: string | undefined) => v === "0" || v === "false";
-const allowDummy = !off(env.GM_CLIENT_ALLOW_DUMMY);
 
 const buildProfile = env.GM_CLIENT_BUILD_PROFILE ?? "dev";
 const releaseVersion = env.VERSION || null;
@@ -47,8 +43,12 @@ const versionFile = (): Plugin => ({
 const legalScan = (): Plugin => ({
   name: "gm-legal-scan",
   generateBundle(_options, bundle) {
-    const output = env.GM_LEGAL_SCAN_OUT;
-    if (!output) return;
+    if (!env.GM_LEGAL_SCAN_OUT) return;
+    const output = resolve(env.GM_LEGAL_SCAN_OUT);
+    if (!output.startsWith(resolve(tmpdir()) + sep))
+      throw new Error(
+        "GM_LEGAL_SCAN_OUT must name a file in the temporary directory",
+      );
     const modules = new Set<string>();
     for (const artifact of Object.values(bundle)) {
       if (artifact.type !== "chunk") continue;
@@ -152,12 +152,11 @@ const minifyHtml = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [svelte(), tailwindcss(), versionFile(), minifyHtml(), legalScan()],
+  plugins: [svelte(), versionFile(), minifyHtml(), legalScan()],
   build: {
     outDir: env.GM_LEGAL_SCAN_DIR ?? "dist",
   },
   define: {
-    __GM_ALLOW_DUMMY__: JSON.stringify(allowDummy),
     __GM_BUILD_PROFILE__: JSON.stringify(buildProfile),
     __GM_RELEASE_VERSION__: JSON.stringify(releaseVersion),
     __GM_SOURCE_REVISION__: JSON.stringify(sourceRevision),

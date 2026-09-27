@@ -19,11 +19,6 @@ func parseStatus(raw string) string {
 	return ""
 }
 
-func renderLogin(w http.ResponseWriter, tmpl *template.Template, data loginView) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = tmpl.Execute(w, data)
-}
-
 func PreviewHandler(mode string, oidcReady bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/login" {
@@ -31,10 +26,11 @@ func PreviewHandler(mode string, oidcReady bool) http.Handler {
 			return
 		}
 		password, oidc := authModes(mode)
-		renderLogin(w, loginTemplate, loginView{
+		render(w, loginTemplate, loginView{
 			Styles: authStyles, CSRF: "preview", Provider: "Authelia",
 			Password: password, OIDC: oidc, OIDCReady: oidcReady,
-			Notice: string(parseNotice(r.URL.Query().Get("error"))), Status: parseStatus(r.URL.Query().Get("reason")),
+			Notice: string(parseNotice(r.URL.Query().Get("error"))),
+			Status: parseStatus(r.URL.Query().Get("reason")),
 		})
 	})
 }

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { stubGlobals } from "../test-helpers.test";
-import { TEST_BUILD_TOKENS } from "../runner/test-helpers.test";
+import { stubGlobals } from "../test-helpers.testutil";
+import { TEST_BUILD_TOKENS } from "../runner/test-helpers.testutil";
 
 test("remote preflight requires an explicit auth marker and preserves public HTTPS access from HTTP", async () => {
   let marked = true;
@@ -61,7 +61,12 @@ test("remote requests omit cookies, reject redirects, and bind the bearer to app
     const { measurementFetch, requestOptions, socketMint } =
       await import("./credentials");
     const context = {
-      server: { id: "a", name: "A", url: "https://a.example" },
+      server: {
+        id: "a",
+        name: "A",
+        url: "https://a.example",
+        additionalOrigins: ["https://edge.example"],
+      },
       kind: "grant" as const,
       token: "private-grant",
       expiresAt: Date.now() + 60000,
@@ -78,6 +83,19 @@ test("remote requests omit cookies, reject redirects, and bind the bearer to app
     expect(() => requestOptions(context, "http://a.example/probe")).toThrow(
       "HTTPS",
     );
+    expect(() => requestOptions(context, "https://edge.example/probe")).toThrow(
+      "hostname",
+    );
+    expect(() =>
+      socketMint(context, "https://edge.example", "/ping", "ws"),
+    ).toThrow("hostname");
+    expect(
+      requestOptions(
+        { server: context.server, kind: "public" },
+        "https://edge.example/probe",
+      ),
+    ).toEqual({ headers: {}, credentials: "omit" });
+    expect(requests).toHaveLength(1);
     const mint = socketMint(context, "https://a.example", "/ping", "ws")!;
     expect(mint.url).not.toContain("private-grant");
     expect(new URL(mint.url).searchParams.get("target")).toBe(
@@ -233,6 +251,49 @@ test("approval popup reserves an isolated window synchronously and survives brow
   }
 });
 
+test("only the page's own server is a cookie session; every other entry is public and cookie-free", async () => {
+  const restore = stubGlobals({
+    location: new URL("https://home.example/"),
+    document: {
+      querySelector: () => ({ getAttribute: () => "enabled" }),
+      cookie: "__Host-gm_csrf=page-csrf",
+    },
+  });
+  try {
+    const { requestOptions, serverCredentials, socketMint } =
+      await import("./credentials");
+    const home = { id: "self", name: "Home", url: "https://home.example" };
+    expect(serverCredentials(home).kind).toBe("session");
+    for (const server of [
+      { ...home, url: "https://elsewhere.example" },
+      { ...home, id: "peer" },
+    ]) {
+      const context = serverCredentials(server);
+      expect(context.kind).toBe("public");
+      expect(requestOptions(context, server.url + "/upload", "POST")).toEqual({
+        headers: {},
+        credentials: "omit",
+      });
+      expect(socketMint(context, server.url, "/ping", "wt")).toBeUndefined();
+    }
+    expect(
+      requestOptions(serverCredentials(home), home.url + "/upload", "POST"),
+    ).toEqual({
+      headers: { "X-CSRF-Token": "page-csrf" },
+      credentials: "include",
+    });
+    // A same-origin WebSocket carries the cookie itself; only WebTransport needs a ticket.
+    expect(
+      socketMint(serverCredentials(home), home.url, "/ping", "ws"),
+    ).toBeUndefined();
+    expect(
+      socketMint(serverCredentials(home), home.url, "/ping", "wt")?.credentials,
+    ).toBe("include");
+  } finally {
+    restore();
+  }
+});
+
 test("session fetches enforce the same selected-server boundary as grants", async () => {
   const requests: string[] = [];
   const restore = stubGlobals({
@@ -245,12 +306,24 @@ test("session fetches enforce the same selected-server boundary as grants", asyn
   try {
     const { measurementFetch } = await import("./credentials");
     const session = {
-      server: { id: "self", name: "Home", url: "https://home.example" },
+      server: {
+        id: "self",
+        name: "Home",
+        url: "https://home.example",
+        additionalOrigins: ["https://cdn.example"],
+      },
       kind: "session" as const,
     };
     await expect(
       measurementFetch(session, "https://unrelated.example/probe"),
     ).rejects.toThrow("outside the selected server");
+    for (const url of [
+      "https://cdn.example/upload",
+      "http://home.example:8080/upload",
+    ])
+      await expect(
+        measurementFetch(session, url, { method: "POST" }),
+      ).rejects.toThrow("this page's secure hostname");
     expect(requests).toHaveLength(0);
     await measurementFetch(session, "https://home.example:8443/probe");
     expect(requests).toEqual(["https://home.example:8443/probe"]);

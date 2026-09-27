@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,12 +35,19 @@ func TestRustServerNativeApproval(t *testing.T) {
 	cfg.UploadDuration = time.Second
 	cfg.BidirectionalDuration = time.Second
 
-	_, err := Prepare(ctx, cfg)
+	controller := NewController(ctx)
+	defer controller.Close()
+	preparation := controller.NewPreparation(cfg, nil)
+	prepared, err := preparation.PrepareRun()
 	auth, ok := errors.AsType[*AuthRequiredError](err)
 	if !ok {
 		t.Fatalf("unapproved native preparation = %v, want authentication challenge", err)
 	}
-	pending, err := BeginAuthorization(cfg, auth.URL)
+	origin, err := wire.CanonicalOrigin(public)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := preparation.BeginAuthorization(origin, auth.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,33 +118,31 @@ func TestRustServerNativeApproval(t *testing.T) {
 	if approved.StatusCode != http.StatusOK {
 		t.Fatalf("approval status = %d", approved.StatusCode)
 	}
-	token, err := pending.Poll(ctx)
+	token, err := preparation.PollAuthorization(pending)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.AuthOrigin, err = CanonicalServerOrigin(public)
-	if err != nil {
+	if err := controller.AcceptAuthorization(pending.Origin, token); err != nil {
 		t.Fatal(err)
 	}
-	cfg.AuthToken = token
-	prepared, err := Prepare(ctx, cfg)
-	if err != nil {
+	prepared, err = controller.NewPreparation(cfg, prepared).PrepareRun()
+	if err != nil || !prepared.Ready() {
 		t.Fatalf("approved native preparation: %v", err)
 	}
-	if prepared.ThroughputTarget.Transport != wire.TransportWebTransport || prepared.LatencyTarget == nil || prepared.LatencyTarget.Transport != wire.TransportWebTransport {
-		t.Fatalf("native preparation did not select WebTransport: throughput=%s latency=%v", prepared.ThroughputTarget.Transport, prepared.LatencyTarget)
+	connection := prepared.Servers[0].Connection
+	if connection.ThroughputTarget.Transport != wire.TransportWebTransport || connection.LatencyTarget == nil ||
+		connection.LatencyTarget.Transport != wire.TransportWebTransport {
+		t.Fatalf("native preparation did not select WebTransport: throughput=%s latency=%v",
+			connection.ThroughputTarget.Transport, connection.LatencyTarget)
 	}
 	var resultCount, downloadBytes, uploadBytes int
-	var terminal bool
-	var events sync.Mutex
-	err = RunPrepared(ctx, cfg, prepared, func(event Event) {
-		events.Lock()
-		defer events.Unlock()
+	var done *Event
+	for event := range controller.Start(cfg, prepared) {
 		switch event.Kind {
 		case EventResult:
-			if event.Result == nil || event.Result.Unavailable || event.Result.Err != nil {
-				t.Errorf("%s result unavailable: %v", event.Stage, event.Result)
-				return
+			if event.Result.Unavailable || event.Result.Err != nil {
+				t.Errorf("%s result unavailable: %+v", event.Stage, event.Result)
+				continue
 			}
 			resultCount++
 			switch event.Direction {
@@ -147,17 +151,15 @@ func TestRustServerNativeApproval(t *testing.T) {
 			case Up:
 				uploadBytes += int(event.Result.TotalBytes)
 			}
+		case EventServerFailure:
+			t.Errorf("%s left the %s stage: %v", event.ServerID, event.Stage, event.Failure.Err)
 		case EventDone:
-			terminal = true
-			if event.Err != nil {
-				t.Errorf("native run ended with error: %v", event.Err)
-			}
+			done = &event
 		}
-	})
-	events.Lock()
-	defer events.Unlock()
-	if err != nil || !terminal || resultCount < 4 || downloadBytes == 0 || uploadBytes == 0 {
-		t.Fatalf("native run: err=%v terminal=%t results=%d down=%d up=%d", err, terminal, resultCount, downloadBytes, uploadBytes)
+	}
+	if done == nil || done.Err != nil || done.Outcome() != OutcomeComplete || resultCount < 4 ||
+		downloadBytes == 0 || uploadBytes == 0 {
+		t.Fatalf("native run: done=%+v results=%d down=%d up=%d", done, resultCount, downloadBytes, uploadBytes)
 	}
 	t.Logf("Native Go client approved against Rust: %d results with transfer in both directions", resultCount)
 }

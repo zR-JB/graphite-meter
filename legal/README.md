@@ -50,11 +50,9 @@ review is reusable; generation refreshes its reviewed version and all shipped
 legal metadata. A changed license expression, notice, or legal-file byte still
 requires maintainer review.
 
-CI refreshes reviewed legal metadata before the core and release-package checks,
-so dependency version updates with unchanged legal facts pass without a separate
-metadata commit. Generation still rejects new components, changed legal files,
-and changed license terms before writing outputs; the subsequent legal check
-continues to verify the generated artifacts. CI does not commit these updates.
+CI and stable release builds run `legal-check` and fail on stale outputs, so a
+dependency update, including a Dependabot PR, needs the regenerated files
+committed. Stable builds then only stamp the release version into them.
 
 ## New dependency or changed legal facts
 

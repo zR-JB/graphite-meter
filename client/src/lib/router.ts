@@ -1,12 +1,12 @@
 import { isUuid } from "./uuid";
 
 export type PanelSurface = "settings" | "endpoint";
-export type DialogSurface = "legal";
+type DialogSurface = "legal";
 
-export type Workspace =
+type Workspace =
   { kind: "measurement" } | { kind: "history"; selectedId: string | null };
 
-export type AppRoute = {
+type AppRoute = {
   kind: "app";
   workspace: Workspace;
   panels: PanelSurface[];

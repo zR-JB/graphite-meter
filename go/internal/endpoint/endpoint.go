@@ -1,30 +1,28 @@
-// Package endpoint implements HTTP routes and shared measurement operations.
+// Package endpoint implements the measurement operations behind each route.
 package endpoint
 
 import (
-	"context"
-	"io"
 	"net/http"
+	"net/netip"
 
-	"github.com/zR-JB/graphite-meter/go/internal/transport"
+	"github.com/zR-JB/graphite-meter/go/internal/auth"
 )
 
-// HTTPHandler handles one request; the registry supplies common response headers and error reporting.
-type HTTPHandler interface {
-	HandleHTTP(http.ResponseWriter, *http.Request) error
+type uploadClient struct {
+	owner string
+	keys  []string
 }
 
-// MessageHandler processes a transport-owned message channel until it closes.
-type MessageHandler interface {
-	HandleMessages(context.Context, transport.MessageBus) error
+// uploadClientOf owns by browser grant, principal or IPv6 /64; ambiguous proxy evidence owns nothing.
+func uploadClientOf(r *http.Request, trusted []netip.Prefix) uploadClient {
+	keys, ok := auth.ClientKeys(r, trusted)
+	if !ok {
+		return uploadClient{}
+	}
+	return uploadClient{owner: keys[0], keys: keys}
 }
 
-// DownloadHandler produces a bounded byte stream. The adapter owns stream cancellation and closure.
-type DownloadHandler interface {
-	HandleDownload(context.Context, int64, io.Writer) error
-}
-
-// UploadHandler counts received bytes for an explicitly identified owner. The adapter owns I/O cancellation.
-type UploadHandler interface {
-	HandleUpload(context.Context, string, string, io.Reader) (int64, error)
+func noStoreJSON(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 }

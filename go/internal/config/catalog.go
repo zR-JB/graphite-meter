@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
@@ -26,6 +27,9 @@ func loadServerCatalog() (wire.ServerCatalog, error) {
 	}
 	data := []byte(raw)
 	if file {
+		if !filepath.IsAbs(path) || strings.Contains(path, "..") {
+			return wire.ServerCatalog{}, fmt.Errorf("GM_SERVER_CATALOG_FILE must be an absolute path without '..'")
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			return wire.ServerCatalog{}, fmt.Errorf("GM_SERVER_CATALOG_FILE: %w", err)

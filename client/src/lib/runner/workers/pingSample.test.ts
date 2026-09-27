@@ -10,7 +10,7 @@ test("ping outcome time translates across different performance origins", () => 
 
   expect(sample).toEqual({
     rtt: 12,
-    lost: false,
+    timedOut: false,
     observedAtEpochMs: 10_350,
   });
   expect(pingSampleContextTime(sample, 9_500)).toBe(850);

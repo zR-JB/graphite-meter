@@ -1,36 +1,48 @@
-// Formatting and scale helpers for speeds, bytes, latency, and chart domains.
-import type { TerminationReason } from "./runner/contract";
+// Formatting and unit helpers for speeds, bytes, and latency.
+import { MISSING } from "./presentation/vocabulary";
 
-export function reasonLabel(reason: TerminationReason): string {
-  switch (reason) {
-    case "preflight-failed":
-      return "Couldn't reach the server";
-    case "connection-lost":
-      return "Connection lost";
-    case "timeout":
-      return "Connection timed out";
-    case "protocol-error":
-      return "Unexpected server response";
-    case "transport-unavailable":
-      return "Couldn't establish a connection";
-    case "user-abort":
-      return "Stopped";
-    case "internal-error":
-      return "Runner needs attention";
-  }
-}
+/** Every readout shows "—" for a value that is not a finite number, never "NaN" or "Infinity". */
+const finite =
+  <Rest extends unknown[]>(format: (value: number, ...rest: Rest) => string) =>
+  (value: number, ...rest: Rest): string =>
+    Number.isFinite(value) ? format(value, ...rest) : MISSING;
 
-export function fmtSpeed(value: number): string {
-  if (value >= 1000) return value.toFixed(0);
-  if (value >= 100) return value.toFixed(1);
-  return value.toFixed(2);
-}
+export const fmtSpeed = finite((value) => {
+  if (Math.abs(Math.round(value * 100) / 100) < 100) return value.toFixed(2);
+  return Math.abs(Math.round(value * 10) / 10) < 1000
+    ? value.toFixed(1)
+    : value.toFixed(0);
+});
 
-export function fmtMs(ms: number): string {
-  return ms < 100 ? ms.toFixed(1) : ms.toFixed(0);
-}
+/** One decimal below 100 ms, decided after rounding so 99.96 reads 100. */
+export const fixedMs = finite((ms) =>
+  Math.abs(Math.round(ms * 10) / 10) < 100 ? ms.toFixed(1) : ms.toFixed(0),
+);
 
-export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
+/** Signed added latency; the sign follows the rounded value, so a tiny negative reads +0.0. */
+export const fmtAddedMs = finite(
+  (ms) => `${Number(fixedMs(ms)) < 0 ? "−" : "+"}${fixedMs(Math.abs(ms))}`,
+);
+
+/** Browser timers resolve 0.1 ms, so a smaller measured value is shown as below it. */
+export const fmtMs = finite((ms) =>
+  ms >= 0 && ms < 0.1 ? "< 0.1" : fixedMs(ms),
+);
+
+export const fmtMsTick = finite((ms) => (ms <= 0 ? "0" : fmtMs(ms)));
+
+export const fmtDuration = finite((ms, fractionDigits: number = 1) => {
+  const seconds = Math.max(0, ms) / 1000;
+  if (seconds < 59.95) return `${seconds.toFixed(fractionDigits)} s`;
+  const whole = Math.round(seconds);
+  const [large, small, unit, rest] =
+    whole < 3600
+      ? [Math.floor(whole / 60), whole % 60, "min", "s"]
+      : [Math.floor(whole / 3600), Math.round((whole % 3600) / 60), "h", "min"];
+  return `${large} ${unit}${small ? ` ${small} ${rest}` : ""}`;
+});
+
+export const fmtBytes = finite((bytes, base: "base10" | "base2") => {
   const step = base === "base10" ? 1000 : 1024;
   const units =
     base === "base10"
@@ -38,15 +50,15 @@ export function fmtBytes(bytes: number, base: "base10" | "base2"): string {
       : ["B", "KiB", "MiB", "GiB", "TiB"];
   let tier = 0;
   let value = bytes;
-  while (value >= step && tier < units.length - 1) {
+  while (+value.toFixed(tier ? 1 : 0) >= step && tier < units.length - 1) {
     value /= step;
     tier++;
   }
   return `${value.toFixed(tier ? 1 : 0)} ${units[tier]}`;
-}
+});
 
-type UnitBase = "base10" | "base2";
-type UnitKind = "bits" | "bytes";
+export type UnitBase = "base10" | "base2";
+export type UnitKind = "bits" | "bytes";
 
 const SI_PREFIX = ["", "k", "M", "G", "T"];
 const IEC_PREFIX = ["", "Ki", "Mi", "Gi", "Ti"];
@@ -107,63 +119,29 @@ export function rawRateFrom(
   return kind === "bytes" ? baseUnits : baseUnits / 8;
 }
 
-/** The 100 Mbit/s reference used before automatic measurement has data. */
-export const DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC = 12_500_000;
+export type RateUnits = { base: UnitBase; kind: UnitKind };
 
-/** Select the linear chart's 1/2/5 ceiling. */
-export function chartThroughputScale(peakBytesPerSec: number): number {
-  // The scale is chosen in bit/s, then converted back to bytes/s. Bits and bytes displays share one visual ceiling.
-  if (peakBytesPerSec <= 0) return DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC;
-  return ceil125(peakBytesPerSec * 8) / 8;
+/** A rate in its own unit tier by the live rule unless a chart gives its tier. */
+export function resultRate(
+  bytesPerSec: number,
+  units: RateUnits,
+  tier = throughputUnitIndex(bytesPerSec, units.base, units.kind),
+) {
+  return {
+    num: fmtSpeed(rateValueAt(bytesPerSec, units.base, units.kind, tier)),
+    unit: rateUnit(units.base, units.kind, tier),
+  };
 }
 
-export function niceStep(span: number): number {
-  if (span <= 0) return 1;
-  const base = 10 ** Math.floor(Math.log10(span));
-  const mantissa = span / base; // [1, 10)
-  return (mantissa >= 5 ? 5 : mantissa >= 2 ? 2 : 1) * base;
+export function formatRate(
+  bytesPerSec: number | null | undefined,
+  units: RateUnits,
+  tier?: number,
+): string {
+  if (bytesPerSec == null) return MISSING;
+  const { num, unit } = resultRate(bytesPerSec, units, tier);
+  return `${num} ${unit}`;
 }
 
-interface NiceDomain {
-  min: number;
-  max: number;
-  span: number;
-}
-
-export function niceDomain(
-  values: number[],
-  opts: {
-    widen?: number;
-    minSpanRatio?: number;
-    floor?: number;
-    clampMinZero?: boolean;
-  } = {},
-): NiceDomain {
-  // Widens around the observed range. The minimum span keeps a flat series off the chart edge.
-  const {
-    widen = 1.35,
-    minSpanRatio = 0.16,
-    floor = 12,
-    clampMinZero = true,
-  } = opts;
-  if (!values.length) return { min: 0, max: floor, span: floor };
-  const rawMin = Math.min(...values);
-  const rawMax = Math.max(...values);
-  const rawSpan = Math.max(0, rawMax - rawMin);
-  const weighted = Math.max(rawSpan * widen, rawMax * minSpanRatio, floor);
-  const center = (rawMin + rawMax) / 2;
-  const step = niceStep(weighted);
-  let min = Math.floor((center - weighted / 2) / step) * step;
-  if (clampMinZero) min = Math.max(0, min);
-  const max = Math.ceil((center + weighted / 2) / step) * step;
-  const span = Math.max(step, max - min);
-  return { min, max: min + span, span };
-}
-
-function ceil125(value: number): number {
-  const base = 10 ** Math.floor(Math.log10(value));
-  const mantissa = value / base;
-  return (
-    (mantissa <= 1 ? 1 : mantissa <= 2 ? 2 : mantissa <= 5 ? 5 : 10) * base
-  );
-}
+export const formatLatency = (ms: number | null | undefined): string =>
+  ms == null ? MISSING : `${fmtMs(ms)} ms`;

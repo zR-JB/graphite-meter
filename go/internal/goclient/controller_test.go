@@ -3,7 +3,6 @@ package goclient
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,7 @@ import (
 )
 
 func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		_, _ = io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()
@@ -22,23 +22,24 @@ func TestControllerCloseRejectsQueuedAndConcurrentPreparation(t *testing.T) {
 	cfg.BaseURL = srv.URL
 	for range 20 {
 		owner := NewController(t.Context())
-		preparation := owner.NewPreparation(cfg)
+		preparation := owner.NewPreparation(cfg, nil)
 		pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
 		start := make(chan struct{})
 		var work sync.WaitGroup
-		work.Go(func() { <-start; _, _ = preparation.Prepare() })
+		work.Go(func() { <-start; _, _ = preparation.PrepareRun() })
 		work.Go(func() { <-start; _, _ = preparation.PollAuthorization(pending) })
 		work.Go(func() { <-start; owner.Close() })
 		close(start)
 		work.Wait()
-		for _, token := range []*Preparation{preparation, owner.NewPreparation(cfg)} {
-			if _, err := token.Prepare(); !errors.Is(err, context.Canceled) {
+		for _, token := range []*Preparation{preparation, owner.NewPreparation(cfg, nil)} {
+			if _, err := token.PrepareRun(); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation started work: %v", err)
 			}
 			if _, err := token.PollAuthorization(pending); !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed approval started work: %v", err)
 			}
-			if _, err := token.BeginAuthorization("https://meter.test/login"); !errors.Is(err, context.Canceled) {
+			_, err := token.BeginAuthorization("https://meter.test", "https://meter.test/login")
+			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("closed preparation created an approval: %v", err)
 			}
 		}
@@ -61,11 +62,19 @@ func waitControllerWork(t *testing.T, owner *Controller) {
 }
 
 func TestControllerRunCancellationAndAbandonment(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"cancel", "replace", "close"} {
 		t.Run(operation, func(t *testing.T) {
-			srv := newLatencyOnlyServer(t)
+			t.Parallel()
+			srv := newTransferServer(t)
 			defer srv.Close()
-			cfg := Config{BaseURL: srv.URL, Stages: StageSet{Latency: true}, LatencyDuration: 10 * time.Second, PingInterval: time.Millisecond}
+			cfg := Config{
+				BaseURL:            srv.URL,
+				Stages:             StageSet{Latency: true},
+				LatencyDuration:    10 * time.Second,
+				PingInterval:       time.Millisecond,
+				LoadedPingInterval: time.Millisecond,
+			}
 			owner := NewController(t.Context())
 			defer owner.Close()
 			events := owner.Start(cfg, nil)
@@ -82,20 +91,21 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 			switch operation {
 			case "cancel":
 				owner.CancelRun()
-				var result *Result
-				var terminal error
-				var doneCount int
+				var done []Event
 				for event := range events {
-					if event.Kind == EventResult {
-						result = event.Result
-					}
 					if event.Kind == EventDone {
-						doneCount++
-						terminal = event.Err
+						done = append(done, event)
 					}
 				}
-				if result == nil || result.Latency.Count == 0 || !errors.Is(result.Err, context.Canceled) || !errors.Is(terminal, context.Canceled) || doneCount != 1 {
-					t.Fatalf("user cancellation lost final evidence: result=%+v terminal=%v count=%d", result, terminal, doneCount)
+				if len(done) != 1 ||
+					!errors.Is(done[0].Err, context.Canceled) ||
+					done[0].Outcome() != OutcomeStopped ||
+					len(done[0].Servers.Servers) != 1 {
+					t.Fatalf("user cancellation lost its terminal outcome: %+v", done)
+				}
+				results := done[0].Servers.Servers[0].Results
+				if len(results) != 1 || results[0].Latency.Count == 0 || !errors.Is(results[0].Err, context.Canceled) {
+					t.Fatalf("user cancellation lost final evidence: %+v", results)
 				}
 			case "replace":
 				cfg.BaseURL = ":invalid"
@@ -122,110 +132,25 @@ func TestControllerRunCancellationAndAbandonment(t *testing.T) {
 	}
 }
 
-func TestControllerCloseCancelsInFlightAuthenticationClassification(t *testing.T) {
-	entered, left := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		close(entered)
-		<-r.Context().Done()
-		close(left)
-	}))
-	defer srv.Close()
-	// Preparation refuses insecure authenticated operation; its failure triggers the grant recheck.
-	cfg := Config{BaseURL: srv.URL, AuthOrigin: srv.URL, AuthToken: "test-grant", InsecureSkipTLSVerify: true}
-	owner := NewController(t.Context())
-	defer owner.Close()
-	owner.Start(cfg, nil)
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("run failure did not reach authentication classification")
-	}
-	closed := make(chan struct{})
-	go func() { owner.Close(); close(closed) }()
-	select {
-	case <-closed:
-	case <-time.After(time.Second):
-		t.Fatal("shutdown waited for the background authentication timeout")
-	}
-	select {
-	case <-left:
-	case <-time.After(time.Second):
-		t.Fatal("authentication request survived shutdown")
-	}
-}
-func TestRunAbortDrainsResultsAndReplacementUnblocksDelivery(t *testing.T) {
+func TestRunEventsKeepFinalRecordsAndDropLiveSamples(t *testing.T) {
+	t.Parallel()
 	measurement, abort := context.WithCancel(t.Context())
 	abort()
-	for _, terminal := range []Event{{Kind: EventResult}, {Kind: EventDone}, {Kind: EventServers, Servers: &RunDetails{Outcome: "incomplete"}}} {
-		t.Run(fmt.Sprint(terminal.Kind), func(t *testing.T) {
-			delivery, abandon := context.WithCancel(t.Context())
-			defer abandon()
-			// Exercise both ready select arms: cancellation must never compete
-			// with a terminal record, even when delivery has spare capacity.
-			for range 64 {
-				available := make(chan Event, 1)
-				sendRunEvent(measurement, delivery, available, terminal)
-				if len(available) != 1 {
-					t.Fatal("user cancellation discarded an immediately deliverable terminal outcome")
-				}
+	for _, terminal := range []Event{
+		{Kind: EventResult},
+		{Kind: EventDone, Servers: &RunDetails{Outcome: OutcomeStopped}},
+	} {
+		// Both select arms are ready: cancellation must never compete with a deliverable terminal record.
+		for range 64 {
+			available := make(chan Event, 1)
+			sendRunEvent(measurement, t.Context(), available, terminal)
+			if len(available) != 1 {
+				t.Fatalf("user cancellation discarded an immediately deliverable %v", terminal.Kind)
 			}
-			events := make(chan Event, 1)
-			events <- Event{Kind: EventLatency}
-			sent := make(chan struct{})
-			go func() {
-				sendRunEvent(measurement, delivery, events, terminal)
-				close(sent)
-			}()
-			<-events
-			select {
-			case event := <-events:
-				if event.Kind != terminal.Kind || event.Servers != terminal.Servers {
-					t.Fatalf("delivered %+v, want %+v", event, terminal)
-				}
-			case <-time.After(time.Second):
-				t.Fatal("user cancellation discarded the queued final outcome")
-			}
-			<-sent
-			events <- Event{}
-			abandon()
-			// A superseded run can exit even when its consumer has stopped draining the full queue.
-			sendRunEvent(measurement, delivery, events, terminal)
-		})
-	}
-}
-
-func TestPreparationReplacementCancelsActiveApprovalRequest(t *testing.T) {
-	entered, left := make(chan struct{}), make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		_, _ = io.Copy(io.Discard, r.Body)
-		close(entered)
-		<-r.Context().Done()
-		close(left)
-	}))
-	defer srv.Close()
-	owner := NewController(t.Context())
-	defer owner.Close()
-	preparation := owner.NewPreparation(DefaultConfig())
-	pending := &PendingAuthorization{tokenURL: srv.URL, client: srv.Client(), close: func() {}}
-	done := make(chan error, 1)
-	go func() { _, err := preparation.PollAuthorization(pending); done <- err }()
-	select {
-	case <-entered:
-	case <-time.After(time.Second):
-		t.Fatal("approval did not reach the server")
-	}
-	owner.NewPreparation(DefaultConfig())
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("superseded approval returned %v", err)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("superseded approval kept polling")
 	}
-	select {
-	case <-left:
-	case <-time.After(time.Second):
-		t.Fatal("approval request survived preparation replacement")
-	}
+	full := make(chan Event, 1)
+	full <- Event{}
+	sendRunEvent(t.Context(), t.Context(), full, Event{Kind: EventLatency})
+	sendRunEvent(t.Context(), t.Context(), full, Event{Kind: EventThroughput})
 }

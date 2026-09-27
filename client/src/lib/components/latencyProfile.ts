@@ -1,21 +1,24 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs, niceDomain } from "../format";
+import { fmtMs } from "../format";
+import { niceDomain, type NiceDomain } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
+import { LATENCY_POPULATION } from "../presentation/vocabulary";
+import { STAGES } from "../runner/schedule";
 
-export const LATENCY_LANES = [
-  { key: "latency", label: "Idle" },
-  { key: "download", label: "Loaded Down" },
-  { key: "upload", label: "Loaded Up" },
-  { key: "bidirectional", label: "Loaded Bi-dir" },
-] as const;
+export const LATENCY_LANES = STAGES.map((key) => ({
+  key,
+  label: LATENCY_POPULATION[key].short,
+}));
 
-export type MetricKey = "min" | "p10" | "center" | "p90" | "max" | "current";
+export type MetricKey =
+  "min" | "p10" | "center" | "p90" | "p95" | "max" | "current";
 
 const METRIC_ORDER: readonly MetricKey[] = [
   "min",
   "p10",
   "center",
   "p90",
+  "p95",
   "max",
   "current",
 ];
@@ -24,35 +27,25 @@ const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
   min: "Min",
   p10: "P10",
   p90: "P90",
+  p95: "P95",
   max: "Max",
   current: "Latest",
 };
-
-// The chart's value range; min is the left edge, span its width in the metric's own units (niceDomain's {min, span}).
-export interface LatencyProfileDomain {
-  min: number;
-  max: number;
-  span: number;
-}
 
 type LatencyProfileLaneLike = {
   min: number | null;
   max: number | null;
   p10: number | null;
   p90: number | null;
+  p95?: number | null;
   center: number | null;
   current?: number | null;
-  centerKind?: "average" | "result";
 };
-
-export type LatencyProfileTone =
-  "latency" | "download" | "upload" | "bidirectional";
 
 export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   reflectorTiming?: ReflectorTimingSummary;
   key: TransportRole;
   label: string;
-  tone: LatencyProfileTone;
   jitter: number | null;
   timeoutRatio: number | null;
   accountingComplete: boolean | null;
@@ -66,34 +59,17 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
 /** Shared value-domain policy for live and finalized latency profiles. */
 export function profileDomain(
   lanes: readonly LatencyProfileLaneLike[],
-): LatencyProfileDomain {
+): NiceDomain {
   const values = lanes.flatMap((lane) =>
     [lane.min, lane.max].filter((value): value is number => value != null),
   );
-  return niceDomain(values, { floor: 1 });
+  return niceDomain(values, 1);
 }
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(
-  value: number | null,
-  domain: LatencyProfileDomain,
-): number {
+export function pos(value: number | null, domain: NiceDomain): number {
   if (value == null) return 0;
   return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
-}
-
-// Exact interval width as a percentage. Fixed caps keep a flat range visible.
-export function rangeWidth(
-  min: number | null,
-  max: number | null,
-  domain: LatencyProfileDomain,
-): number {
-  if (min == null || max == null) return 0;
-  return Math.max(0, pos(max, domain) - pos(min, domain));
-}
-
-export function tickLabel(v: number): string {
-  return v <= 0 ? "0" : fmtMs(v);
 }
 
 // Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
@@ -114,19 +90,14 @@ export function metricValue(
   return lane[metric] ?? null;
 }
 
-export function metricLabel(
-  lane: LatencyProfileLaneLike,
-  metric: MetricKey,
-): string {
-  if (metric === "center")
-    return lane.centerKind === "result" ? "Median" : "Mean";
-  return METRIC_LABELS[metric];
+export function metricLabel(metric: MetricKey): string {
+  return metric === "center" ? "Median" : METRIC_LABELS[metric];
 }
 
 function centerLabel(lane: LatencyProfileLaneLike): string {
   return lane.center == null
     ? ""
-    : `${metricLabel(lane, "center")} ${fmtMs(lane.center)}`;
+    : `${metricLabel("center")} ${fmtMs(lane.center)}`;
 }
 
 // The present metrics in label order, dropping any the lane has not measured.
@@ -249,5 +220,5 @@ export function reflectorTimingDescription(
   timing: ReflectorTimingSummary,
 ): string {
   return `Server timing · ${timing.sampleCount} paired replies
-Mean RTT: ${fmtMs(timing.meanRawRttMs)} ms raw − ${fmtMs(timing.meanHandlingMs)} ms server handling = ${fmtMs(timing.meanAdjustedRttMs)} ms adjusted.`;
+Mean server handling ${fmtMs(timing.meanHandlingMs)} ms within a mean RTT of ${fmtMs(timing.meanRawRttMs)} ms.`;
 }

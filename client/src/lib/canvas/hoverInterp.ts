@@ -1,7 +1,6 @@
 import { monotoneCurve } from "./smoothPath";
 
-// Hover lookup assumes the runner supplies samples sorted by ascending `t`.
-/** Follow the plotted curve without crossing an intentional series break. */
+/** Follows the plotted curve of samples sorted by `t`, never across a series break. */
 export function interpolateConnectedAt<T extends { t: number }>(
   samples: T[],
   t: number,

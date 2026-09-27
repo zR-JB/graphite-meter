@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { encodePing } from "../real/wire";
 import { createPingScheduler, type PingSchedulerClock } from "./pingScheduler";
-import { testClock } from "./test-helpers.test";
+import { testClock } from "./test-helpers.testutil";
 
 class FakeWebSocket {
   sent: { at: number; frame: string }[] = [];

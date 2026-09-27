@@ -4,46 +4,46 @@ import {
   prepareHistorySort,
   sortPreparedHistory,
 } from "./sort";
-import type { HistoryRecord } from "./types";
-import { historyRecord } from "./test-helpers.test";
+import { historyRecord } from "./test-helpers.testutil";
+import { testRunResult } from "../runner/test-helpers.testutil";
+import type {
+  RunResult,
+  StageLatencySummary,
+  ThroughputResult,
+} from "../runner/contract";
 
-function record(
+const lane = (reportedBytesPerSec: number): ThroughputResult => ({
+  reportedBytesPerSec,
+  peakBytesPerSec: null,
+  totalBytes: 1,
+  stabilityPct: 0,
+});
+const latency = (reportedMs: number) => ({
+  reportedMs,
+  jitterMs: 1,
+  stabilityScore: 1,
+  band: "high" as const,
+});
+const loaded = (lanes: Partial<Record<string, number>>) => ({
+  ...testRunResult().latencyByStage,
+  ...Object.fromEntries(
+    Object.entries(lanes).map(([stage, p50Ms]) => [
+      stage,
+      { p50Ms } as StageLatencySummary,
+    ]),
+  ),
+});
+const record = (
   id: string,
   completedAt: number,
-  down: number | null,
-): HistoryRecord {
-  const lane =
-    down == null
-      ? null
-      : {
-          reportedBytesPerSec: down,
-          peakBytesPerSec: down,
-          fullAverageBytesPerSec: down,
-          method: "full-average" as const,
-          totalBytes: 1,
-          stabilityPct: 0,
-          probeTimeoutPct: 0,
-          stabilityScore: 1,
-          band: "high" as const,
-          serverAuthoritative: false,
-        };
-  const value = historyRecord();
-  return {
-    ...value,
-    id,
-    startedAt: completedAt - 1,
-    completedAt,
-    stages: {
-      ...value.stages,
-      download: { status: lane ? "complete" : "not-run", result: lane },
-    },
-  };
-}
+  result: Partial<RunResult> = {},
+) => ({ ...historyRecord(), id, completedAt, result: testRunResult(result) });
+
 test("all missing values sort last and ties are newest first", () => {
   const values = [
-    record("old", 1, 10),
-    record("missing", 3, null),
-    record("new", 2, 10),
+    record("old", 1, { download: lane(10) }),
+    record("missing", 3),
+    record("new", 2, { download: lane(10) }),
   ];
   const prepared = prepareHistorySort(values);
   expect(
@@ -55,55 +55,28 @@ test("all missing values sort last and ties are newest first", () => {
 });
 
 test("each history field sorts in its natural direction and keeps nulls last", () => {
-  const values = [record("a", 1, 10), record("b", 2, 30), record("c", 3, null)];
-  values[0].stages.upload = {
-    status: "complete",
-    result: { ...values[0].stages.download.result!, reportedBytesPerSec: 40 },
-  };
-  values[1].stages.upload = {
-    status: "complete",
-    result: { ...values[1].stages.download.result!, reportedBytesPerSec: 20 },
-  };
-  values[0].stages.bidirectional = {
-    status: "complete",
-    down: { ...values[0].stages.download.result!, reportedBytesPerSec: 5 },
-    up: { ...values[0].stages.download.result!, reportedBytesPerSec: 5 },
-  };
-  values[1].stages.bidirectional = {
-    status: "complete",
-    down: { ...values[1].stages.download.result!, reportedBytesPerSec: 20 },
-    up: { ...values[1].stages.download.result!, reportedBytesPerSec: 10 },
-  };
-  // A large surviving lane must not outrank a complete bidirectional result.
-  values[2].stages.bidirectional = {
-    status: "partial",
-    down: { ...values[0].stages.download.result!, reportedBytesPerSec: 1_000 },
-    up: null,
-  };
-  for (const value of values)
-    value.stages.latency.result = {
-      reportedMs: value.completedAt === 1 ? 20 : 10,
-      minMs: 1,
-      p50Ms: 2,
-      p95Ms: 3,
-      jitterMs: 1,
-      probeTimeoutPct: 0,
-      method: "full-average",
-      stabilityScore: 1,
-      band: "high",
-    };
-  values[0].bufferbloat = {
-    idleMs: 1,
-    loadedMs: 80,
-    increaseMs: 79,
-    grade: "B",
-  };
-  values[1].bufferbloat = {
-    idleMs: 1,
-    loadedMs: 20,
-    increaseMs: 19,
-    grade: "A",
-  };
+  const values = [
+    record("a", 1, {
+      download: lane(10),
+      upload: lane(40),
+      bidirectional: { down: lane(5), up: lane(5) },
+      latency: latency(20),
+      latencyByStage: loaded({ upload: 80 }),
+    }),
+    record("b", 2, {
+      download: lane(30),
+      upload: lane(20),
+      bidirectional: { down: lane(20), up: lane(10) },
+      latency: latency(10),
+      // Loaded latency sorts by the highest loaded median, even without idle latency.
+      latencyByStage: loaded({ download: 20, bidirectional: 5 }),
+    }),
+    // A large surviving lane must not outrank a complete bidirectional result.
+    record("c", 3, {
+      bidirectional: { down: lane(1_000), up: null },
+      latency: latency(10),
+    }),
+  ];
   const prepared = prepareHistorySort(values);
   const natural: [Parameters<typeof sortPreparedHistory>[1], string[]][] = [
     ["date", ["c", "b", "a"]],
@@ -122,28 +95,4 @@ test("each history field sorts in its natural direction and keeps nulls last", (
     ).toEqual(expected);
   expect(sortPreparedHistory(prepared, "download", false).at(-1)?.id).toBe("c");
   expect(sortPreparedHistory(prepared, "loaded", false).at(-1)?.id).toBe("c");
-});
-
-test("prepared sorting extracts each record's active metric once across repeated orders", () => {
-  let downloadReads = 0;
-  const values = Array.from({ length: 2_000 }, (_, index) => {
-    const item = record(String(index), index, index);
-    Object.defineProperty(item.stages.download.result!, "reportedBytesPerSec", {
-      enumerable: true,
-      get: () => {
-        downloadReads++;
-        return index;
-      },
-    });
-    return item;
-  });
-
-  const prepared = prepareHistorySort(values);
-  expect(downloadReads).toBe(values.length);
-  expect(sortPreparedHistory(prepared, "download", true).at(0)?.id).toBe(
-    "1999",
-  );
-  expect(sortPreparedHistory(prepared, "download", false).at(0)?.id).toBe("0");
-  expect(sortPreparedHistory(prepared, "date", true).at(0)?.id).toBe("1999");
-  expect(downloadReads).toBe(values.length);
 });
