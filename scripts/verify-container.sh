@@ -61,6 +61,7 @@ usr/share/licenses/graphite-meter/SOURCE.txt https://github.com/zR-JB/graphite-m
 EOF
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
+test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532
 
 curl -fsS "$base/" -o "$tmp/index.html"
 grep -qi '<script[^>]*type="module"' "$tmp/index.html"

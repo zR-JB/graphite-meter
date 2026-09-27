@@ -1,5 +1,6 @@
 # Native TLS overlay from the repository root. Provide an existing Let's
-# Encrypt-style certificate tree, public hostname, and certificate name:
+# Encrypt-style certificate tree readable by the image user 65532 (see
+# docs/DEPLOYMENT.md#container-user), public hostname, and certificate name:
 # GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIFICATE_TREE=/etc/letsencrypt docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 services:
   graphite-meter:
