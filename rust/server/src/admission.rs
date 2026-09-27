@@ -1,7 +1,7 @@
 //! Shared operation budgets. A permit lives until the operation has fully stopped.
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +45,14 @@ impl Refusal {
     }
 }
 
+pub(crate) fn recover<'a, T>(counts: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
+    counts.lock().unwrap_or_else(|poisoned| {
+        crate::log!("[gm:admission] {name} counts recovered after a panic and may be inaccurate");
+        counts.clear_poison();
+        poisoned.into_inner()
+    })
+}
+
 #[derive(Default)]
 struct Counts {
     active: usize,
@@ -84,7 +92,7 @@ impl Admission {
     }
 
     pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
-        let mut counts = self.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut counts = recover(&self.0.counts, "operation");
         let (clients, limit) = match class {
             Class::Request => (&counts.requests_by_client, self.0.limits.operations_per_client),
             Class::Session => (&counts.sessions_by_client, self.0.limits.sessions_per_client),
@@ -119,16 +127,13 @@ impl Admission {
     }
 
     pub fn load(&self) -> (usize, usize) {
-        (
-            self.0.counts.lock().unwrap_or_else(PoisonError::into_inner).active,
-            self.0.limits.operations,
-        )
+        (recover(&self.0.counts, "operation").active, self.0.limits.operations)
     }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = self.admission.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut counts = recover(&self.admission.0.counts, "operation");
         counts.active -= 1;
         let clients = match self.class {
             Class::Request => &mut counts.requests_by_client,

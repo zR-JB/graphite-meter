@@ -3,7 +3,7 @@ use ipnet::IpNet;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{Arc, Mutex},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl Connections {
         } else {
             crate::client_address::client_keys(addr)
         };
-        let mut counts = self.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut counts = crate::admission::recover(&self.0.counts, "connection");
         if crate::client_address::share_full(&keys, self.0.client_max, |key| {
             counts.clients.get(key).copied().unwrap_or_default()
         }) || buffered
@@ -95,13 +95,13 @@ impl Connections {
     }
 
     pub fn stats(&self) -> Stats {
-        self.0.counts.lock().unwrap_or_else(PoisonError::into_inner).stats
+        crate::admission::recover(&self.0.counts, "connection").stats
     }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = self.owner.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut counts = crate::admission::recover(&self.owner.0.counts, "connection");
         counts.stats.active -= 1;
         for key in &self.keys {
             let count = counts.clients.get_mut(key).expect("permit owns client capacity");
@@ -142,5 +142,6 @@ mod tests {
         .unwrap_err();
         drop(connections.acquire("192.0.2.1:1".parse().unwrap()).unwrap());
         assert_eq!(connections.stats().active, 0);
+        assert!(!connections.0.counts.is_poisoned(), "recovery must be reported once");
     }
 }
