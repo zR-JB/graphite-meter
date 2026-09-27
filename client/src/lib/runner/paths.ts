@@ -53,7 +53,8 @@ export const ROUTES = {
 export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
-const BROWSER_CONNECTION_BUDGET = 6;
+/** Concurrent HTTP/1.1 requests a browser runs per origin by default; more wait for a free connection. */
+export const BROWSER_CONNECTION_BUDGET = 6;
 export const MAX_STREAMS = 128;
 
 export function normalizeHttpProtocol(

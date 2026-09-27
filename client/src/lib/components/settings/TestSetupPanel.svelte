@@ -10,7 +10,10 @@
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
   import { pathOptions } from "../../presentation/paths";
-  import { normalizeStreamCount } from "../../runner/paths";
+  import {
+    BROWSER_CONNECTION_BUDGET,
+    normalizeStreamCount,
+  } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
@@ -187,6 +190,17 @@
   }
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
+  const queuedStreams = $derived(
+    forced &&
+      store.config.transferStreams.count > BROWSER_CONNECTION_BUDGET &&
+      store.selectedServers.some((id) => {
+        const path = store.servers.get(id)?.paths?.throughput;
+        return (
+          path?.target.transport === "fetch-stream" &&
+          path.fetch.protocol === "http1"
+        );
+      }),
+  );
   const streams = (patch: Partial<RunnerConfig["transferStreams"]>) =>
     controller.configureRun({
       transferStreams: { ...store.config.transferStreams, ...patch },
@@ -528,6 +542,12 @@
       )}
     </div>
     {@render rejectedHint("streams")}
+    {#if queuedStreams}
+      <p class="hint">
+        Browsers run {BROWSER_CONNECTION_BUDGET} HTTP/1.1 requests per server at once.
+        Streams past that wait for a free connection.
+      </p>
+    {/if}
     {#if store.streamPlanError}
       <p class="notice" data-tone="warn" role="status">
         {store.streamPlanError}
