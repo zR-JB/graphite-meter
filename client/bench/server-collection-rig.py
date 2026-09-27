@@ -485,9 +485,10 @@ def main():
     for i, node in enumerate(nodes, 1):
         link(f"gm{i}", router, f"10.81.{i}.1/24", node, f"10.81.{i}.2/24")
         command("ip", "route", "add", "default", "via", f"10.81.{i}.1", namespace=node)
-    # The browser gets its own configuration directory, never the desktop profile or its launcher flags.
-    browser_config = tempfile.TemporaryDirectory()
-    env = dict(os.environ, XDG_CONFIG_HOME=browser_config.name)
+    # The browser gets its own configuration and temporary files, never the desktop profile or its launcher flags;
+    # /dev/shm keeps its socket paths within the 108-byte limit.
+    scratch = tempfile.TemporaryDirectory(dir="/dev/shm")
+    env = dict(os.environ, XDG_CONFIG_HOME=scratch.name, TMPDIR=scratch.name)
     env["BUN_CHROME_ARGS"] = f"--no-sandbox --no-proxy-server --ignore-certificate-errors-spki-list={env['GM_E2E_SPKI']} --origin-to-force-quic-on={HOST}:7249"
     repeats = int(env.get("GM_MULTI_BENCH_REPEATS", "2"))
     selected = env.get("GM_MULTI_BENCH_PROFILES", ",".join(PROFILES)).split(",")
