@@ -580,28 +580,6 @@ impl UploadProgress {
     }
 }
 
-/// Uses the same loss accounting and reconnect boundaries as WebSocket latency.
-pub async fn run_latency(
-    http: &crate::net::Http,
-    origin: &str,
-    insecure: bool,
-    interval: Duration,
-    duration: Duration,
-    observations: mpsc::Sender<crate::latency::Observation>,
-    cancel: tokio::sync::watch::Receiver<bool>,
-) -> Result<(), Error> {
-    crate::latency::run_kind(
-        http,
-        origin,
-        insecure,
-        (interval, duration, if interval.is_zero() { 4 } else { 16 }),
-        observations,
-        cancel,
-        crate::latency::Kind::WebTransport,
-    )
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

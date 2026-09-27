@@ -47,27 +47,13 @@ impl Observation {
     }
 }
 
-/// The caller must validate this selected origin against its catalogue/preflight.
-/// Backpressure is a measurement error, never silently dropped observations.
-pub async fn run(
-    http: &Http,
-    origin: &str,
-    insecure: bool,
-    interval: Duration,
-    duration: Duration,
-    observations: mpsc::Sender<Observation>,
-    cancel: watch::Receiver<bool>,
-) -> Result<(), Error> {
-    run_kind(
-        http,
-        origin,
-        insecure,
-        (interval, duration, if interval.is_zero() { 4 } else { 16 }),
-        observations,
-        cancel,
-        Kind::WebSocket,
-    )
-    .await
+/// How a session ends: at the stage end in-window probes drain to their deadlines; a stop ends it at once.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum Stop {
+    #[default]
+    Running,
+    Drain,
+    Now,
 }
 
 #[derive(Clone, Copy)]
@@ -76,13 +62,15 @@ pub(crate) enum Kind {
     WebTransport,
 }
 
+/// The caller must validate this selected origin against its catalogue/preflight.
+/// Backpressure is a measurement error, never silently dropped observations.
 pub(crate) async fn run_kind(
     http: &Http,
     origin: &str,
     insecure: bool,
     timing: (Duration, Duration, usize),
     observations: mpsc::Sender<Observation>,
-    mut cancel: watch::Receiver<bool>,
+    mut cancel: watch::Receiver<Stop>,
     kind: Kind,
 ) -> Result<(), Error> {
     let (interval, duration, window) = timing;
@@ -211,7 +199,7 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
         LatencyTransport::WebTransport => Kind::WebTransport,
     };
     let attempt = async {
-        let (_stop, mut cancel) = watch::channel(false);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
         let bus = connect(http, &target.base_url, insecure, &mut cancel, kind)
             .await?
             .ok_or("latency verification cancelled")?;
@@ -267,7 +255,7 @@ async fn connect(
     http: &Http,
     origin: &str,
     insecure: bool,
-    cancel: &mut watch::Receiver<bool>,
+    cancel: &mut watch::Receiver<Stop>,
     kind: Kind,
 ) -> Result<Option<Bus>, Error> {
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -299,7 +287,7 @@ async fn connect_once(
     http: &Http,
     origin: &str,
     insecure: bool,
-    cancel: &mut watch::Receiver<bool>,
+    cancel: &mut watch::Receiver<Stop>,
     kind: Kind,
 ) -> Result<Option<Bus>, Error> {
     match kind {
@@ -320,7 +308,7 @@ async fn connect_ws(
     http: &Http,
     origin: &str,
     insecure: bool,
-    cancel: &mut watch::Receiver<bool>,
+    cancel: &mut watch::Receiver<Stop>,
 ) -> Result<Option<Socket>, Error> {
     let origin = canonical_origin(origin)?;
     let target = format!("{origin}/ws/ping");
@@ -427,7 +415,7 @@ async fn measure(
     end: Instant,
     estimator: &mut DeadlineEstimator,
     observations: &mpsc::Sender<Observation>,
-    cancel: &mut watch::Receiver<bool>,
+    cancel: &mut watch::Receiver<Stop>,
 ) -> Result<(), Error> {
     let (mut writer, mut reader) = socket.split();
     let mut pending = BTreeMap::<u32, (Instant, Instant)>::new();
@@ -442,7 +430,10 @@ async fn measure(
         }
         tokio::select! {
             biased;
-            () = cancelled(cancel), if sending => {
+            stop = stopped(cancel, if sending { Stop::Drain } else { Stop::Now }) => {
+                if stop == Stop::Now {
+                    break Ok(());
+                }
                 sending = false;
             }
             _ = expiry.tick() => {
@@ -530,12 +521,20 @@ fn emit(observations: &mpsc::Sender<Observation>, observation: Observation) -> R
         .try_send(observation)
         .map_err(|_| "latency observation consumer closed or fell behind".into())
 }
-async fn cancelled(cancel: &mut watch::Receiver<bool>) {
-    while !*cancel.borrow_and_update() {
+async fn stopped(cancel: &mut watch::Receiver<Stop>, at_least: Stop) -> Stop {
+    loop {
+        let stop = *cancel.borrow_and_update();
+        if stop >= at_least {
+            return stop;
+        }
         if cancel.changed().await.is_err() {
-            break;
+            return Stop::Now;
         }
     }
+}
+
+async fn cancelled(cancel: &mut watch::Receiver<Stop>) {
+    stopped(cancel, Stop::Drain).await;
 }
 
 #[cfg(test)]
@@ -592,7 +591,7 @@ mod tests {
             }
             Ok::<_, Error>((attempts, minimum))
         });
-        let (_stop, mut cancel) = watch::channel(false);
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
         let bus = connect(&http, &origin, false, &mut cancel, Kind::WebSocket).await?;
         assert!(bus.is_some());
         let (attempts, minimum) = peer.await??;
@@ -633,7 +632,7 @@ mod tests {
                 }
             });
             let (observations, mut receiver) = mpsc::channel(16);
-            let (_stop, mut cancelled) = watch::channel(false);
+            let (_stop, mut cancelled) = watch::channel(Stop::Running);
             measure(
                 Bus::WebSocket(Box::new(socket)),
                 Duration::from_millis(interval),
@@ -659,6 +658,61 @@ mod tests {
             assert_eq!((replies, timeouts), expected, "{delay} ms echo");
             peer.abort();
         }
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stop_settles_pending_probes_without_waiting_for_their_deadlines() -> Result<(), Error> {
+        let (client, server) = tokio::io::duplex(4096);
+        let socket = Socket::from_raw_socket(
+            Box::new(client),
+            tokio_tungstenite::tungstenite::protocol::Role::Client,
+            None,
+        )
+        .await;
+        let peer = tokio::spawn(async move {
+            let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                server,
+                tokio_tungstenite::tungstenite::protocol::Role::Server,
+                None,
+            )
+            .await;
+            while let Some(Ok(_)) = socket.next().await {}
+        });
+        let (observations, mut receiver) = mpsc::channel(64);
+        let (stop, mut cancel) = watch::channel(Stop::Running);
+        let mut estimator = DeadlineEstimator::default();
+        estimator.observe(9_000_000_000);
+        let started = Instant::now();
+        let session = measure(
+            Bus::WebSocket(Box::new(socket)),
+            Duration::from_millis(100),
+            16,
+            started + Duration::from_secs(60),
+            &mut estimator,
+            &observations,
+            &mut cancel,
+        );
+        let stop_later = async {
+            tokio::time::sleep(Duration::from_millis(350)).await;
+            stop.send_replace(Stop::Now);
+        };
+        let (result, ()) = tokio::join!(session, stop_later);
+        result?;
+        assert!(started.elapsed() < Duration::from_secs(1), "{:?}", started.elapsed());
+        let mut unresolved = 0;
+        while let Ok(event) = receiver.try_recv() {
+            assert!(matches!(
+                event,
+                Observation::Lost {
+                    outcome: ProbeOutcome::Unresolved,
+                    ..
+                }
+            ));
+            unresolved += 1;
+        }
+        assert_eq!(unresolved, 4);
+        peer.abort();
         Ok(())
     }
 
@@ -705,7 +759,7 @@ mod tests {
                 "",
                 "",
             ));
-            let (_cancel, mut cancel) = watch::channel(false);
+            let (_cancel, mut cancel) = watch::channel(Stop::Running);
             tokio::time::timeout(Duration::from_secs(5), async {
                 let result = connect_ws(&http, "http://meter.test", false, &mut cancel).await;
                 if valid {

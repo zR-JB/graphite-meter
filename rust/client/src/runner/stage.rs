@@ -5,7 +5,7 @@ use crate::{
     config::Config,
     download::Download,
     failure::MeasurementFailure,
-    latency::Observation,
+    latency::{Observation, Stop},
     model::{
         FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
         StageResult,
@@ -66,7 +66,7 @@ impl Lanes {
 struct Member {
     id: String,
     stop: watch::Sender<bool>,
-    latency: Option<watch::Sender<bool>>,
+    latency: Option<watch::Sender<Stop>>,
     starting: bool,
     dialled: bool,
     latency_failed: bool,
@@ -80,9 +80,13 @@ impl Member {
         self.latency.is_some() && !self.dialled && !self.latency_failed
     }
 
-    fn stop_latency(&self) {
-        if let Some(stop) = &self.latency {
-            stop.send_replace(true);
+    fn stop_latency(&self, stop: Stop) {
+        if let Some(latency) = &self.latency {
+            latency.send_if_modified(|current| {
+                let raised = *current < stop;
+                *current = (*current).max(stop);
+                raised
+            });
         }
     }
 
@@ -289,11 +293,11 @@ impl<'a> StageRun<'a> {
         &mut self,
         server: &PreparedServer,
         operation_limit: Duration,
-    ) -> Result<watch::Sender<bool>, Error> {
+    ) -> Result<watch::Sender<Stop>, Error> {
         let target = server.latency.clone().ok_or("missing selected latency target")?;
         let id = server.entry.id.clone();
         let http = server.client.clone();
-        let (stop, stopped) = watch::channel(false);
+        let (stop, stopped) = watch::channel(Stop::Running);
         // Each transport can settle up to 256 unresolved probes at once.
         // Keep headroom for observations queued during receiver checkpoints.
         let (observations, receiver) = mpsc::channel(1024);
@@ -335,7 +339,7 @@ impl<'a> StageRun<'a> {
             .await;
             LatencyCompletion {
                 at: Instant::now(),
-                stopped: *stopped.borrow(),
+                stopped: *stopped.borrow() != Stop::Running,
                 result,
                 id,
             }
@@ -497,7 +501,7 @@ impl<'a> StageRun<'a> {
 
     async fn finish_window(&mut self) -> Result<(), Error> {
         for member in &self.members {
-            member.stop_latency();
+            member.stop_latency(Stop::Drain);
         }
         if self.transfer.is_some() {
             let (mut boundary, misses) = self.collect(BoundaryKind::Final, None).await.expect("no stage end");
@@ -537,7 +541,7 @@ impl<'a> StageRun<'a> {
             FailureScope::Latency if member.latency_failed => return false,
             FailureScope::Latency => {
                 member.latency_failed = true;
-                member.stop_latency();
+                member.stop_latency(Stop::Now);
                 self.stage == Stage::Latency
                     && matches!(reason, FailureReason::ConnectionLost | FailureReason::Timeout)
                     && remaining > 1
@@ -558,7 +562,7 @@ impl<'a> StageRun<'a> {
         if removed {
             let member = self.members.remove(index);
             member.stop.send_replace(true);
-            member.stop_latency();
+            member.stop_latency(Stop::Now);
             self.retire(member.lanes);
             self.removed.push(id.to_owned());
             self.lost = Some(ParticipantFailure {
@@ -725,11 +729,11 @@ impl<'a> StageRun<'a> {
         });
     }
 
-    /// Stops and joins every resource before recording the stage.
+    /// Stops and joins every resource before recording the stage; a stop never waits for probe deadlines.
     async fn close(mut self, result: Result<(), Error>, stopped: bool) -> Result<Vec<String>, Error> {
         for member in &self.members {
             member.stop.send_replace(true);
-            member.stop_latency();
+            member.stop_latency(if stopped { Stop::Now } else { Stop::Drain });
         }
         while let Some((id, started)) = self.starts.next().await {
             match (started, self.members.iter_mut().find(|member| member.id == id)) {
