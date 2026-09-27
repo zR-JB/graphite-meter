@@ -27,23 +27,37 @@ test("a clock keeps moving between samples, stops at its limit and absorbs corre
   expect(clock.at(1_000)).toBe(950);
 });
 
-test("a correction too small to show publishes nothing, and a glide still lands exactly", () => {
-  const frames: FrameRequestCallback[] = [];
+/** Drives the shared frame clock by hand, then hands back its owed frame so later tests can schedule. */
+function withFrames(body: (frame: (now: number) => void) => void): void {
+  const owed: FrameRequestCallback[] = [];
   const raf = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (task) => frames.push(task);
-  const value = new Smoothed();
-  value.set(20, { snap: true, now: 0 });
-  value.set(20 + 1e-9, { now: 100 });
-  for (const task of frames.splice(0)) task(150);
-  expect(value.current).toBe(20);
-  value.set(0, { over: 100, now: 200 });
-  for (let now = 216; frames.length && now < 5_000; now += 16)
-    for (const task of frames.splice(0)) task(now);
-  globalThis.requestAnimationFrame = raf;
-  // Frames still owed to other tests' clocks go back to the real scheduler.
-  for (const task of frames.splice(0)) task(5_000);
-  expect(value.current).toBe(0);
-});
+  globalThis.requestAnimationFrame = (task) => owed.push(task);
+  let last = 0;
+  const clock = spyOn(performance, "now").mockImplementation(() => last);
+  const frame = (now: number) => {
+    last = now;
+    for (const task of owed.splice(0)) task(now);
+  };
+  try {
+    body(frame);
+  } finally {
+    globalThis.requestAnimationFrame = raf;
+    clock.mockRestore();
+    frame(last);
+  }
+}
+
+test("a correction too small to show publishes nothing, and a glide still lands exactly", () =>
+  withFrames((frame) => {
+    const value = new Smoothed();
+    value.set(20, { snap: true, now: 0 });
+    value.set(20 + 1e-9, { now: 100 });
+    frame(150);
+    expect(value.current).toBe(20);
+    value.set(0, { over: 100, now: 200 });
+    for (let now = 216; now <= 320; now += 16) frame(now);
+    expect(value.current).toBe(0);
+  }));
 
 test("a fixed glide overrides the sample interval", () => {
   const value = new Smoothed();
@@ -74,29 +88,21 @@ test("a morph keeps its pace while samples retarget it, and snaps once landed", 
   expect(sweep.at(600)).toBe(50);
 });
 
-test("a handoff never shows a key shorter than its fade-out and follows a held key live", () => {
-  const frames: FrameRequestCallback[] = [];
-  const raf = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (task) => frames.push(task);
-  let clock = 0;
-  const now = spyOn(performance, "now").mockImplementation(() => clock);
-  const tick = (ms: number) => {
-    clock += ms;
-    for (const task of frames.splice(0)) task(clock);
-  };
-  const view = new Handoff({ phase: "latency", ms: 1 }, (v) => v.phase);
-  const shown = new Set<string>();
-  view.set({ phase: "warmup", ms: 1 });
-  tick(16);
-  view.set({ phase: "download", ms: 1 });
-  for (let frame = 0; frame < 30; frame++) {
-    tick(16);
-    shown.add(view.shown.phase);
-  }
-  expect([...shown]).toEqual(["latency", "download"]);
-  expect(view.opacity).toBe(1);
-  view.set({ phase: "download", ms: 2 });
-  expect(view.shown.ms).toBe(2);
-  now.mockRestore();
-  globalThis.requestAnimationFrame = raf;
-});
+test("a handoff never shows a key shorter than its fade-out and follows a held key live", () =>
+  withFrames((frame) => {
+    let now = 0;
+    const tick = () => frame((now += 16));
+    const view = new Handoff({ phase: "latency", ms: 1 }, (v) => v.phase);
+    const shown = new Set<string>();
+    view.set({ phase: "warmup", ms: 1 });
+    tick();
+    view.set({ phase: "download", ms: 1 });
+    for (let frame = 0; frame < 30; frame++) {
+      tick();
+      shown.add(view.shown.phase);
+    }
+    expect([...shown]).toEqual(["latency", "download"]);
+    expect(view.opacity).toBe(1);
+    view.set({ phase: "download", ms: 2 });
+    expect(view.shown.ms).toBe(2);
+  }));
