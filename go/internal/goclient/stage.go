@@ -586,7 +586,6 @@ func (s *stageServer) measure(ctx context.Context, stage StagePlan, role string,
 	default:
 		outcome.err = s.transport.measureUpload(ctx, gate)
 	}
-	// Only a user stop reads as stopped; a cancellation a failure caused carries that failure.
 	if errors.Is(outcome.err, context.Canceled) && ctx.Err() != nil {
 		outcome.err = context.Cause(ctx)
 	}
