@@ -314,8 +314,8 @@ env = { GM_MULTI_BENCH_PROFILES = "matrix", GM_MULTI_BENCH_REPEATS = "{{ get_env
 run = [
   { task = "server-build-prod" },
   { task = "goclient-build" },
-  { task = "rust-client-build" },
-  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" cargo build --release --locked -p graphite-meter-server',
+  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" cargo build --release --locked --target-dir target -p graphite-meter-server',
+  "cd rust && cargo build --release --locked --target-dir target -p graphite-meter-client",
   "bash client/bench/server-collection.sh",
 ]
 

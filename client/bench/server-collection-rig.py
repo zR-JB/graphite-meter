@@ -145,6 +145,13 @@ def run_cell(environment, output, profile, count, repeat):
                 process.wait(timeout=5)
 
 
+PROFILES = {  # name: (client link Mbit/s, delay ms and capacity Mbit/s per server)
+    "server-cap": (0, [1, 1, 1, 1], [40, 60, 80, 100]),
+    "differing-rtt": (0, [2.5, 10, 25, 50], [80, 80, 80, 80]),
+    "shared-cap": (100, [1, 1, 1, 1], [200, 200, 200, 200]),
+}
+
+
 def collection(env, output, router, nodes, profiles, repeats):
     servers = [{"id": "self" if i == 1 else f"server-{i}", "url": f"https://10.81.{i}.2:7247", "name": f"Path {i}"} for i in range(1, 5)]
     env = {key: value for key, value in env.items() if not key.startswith("GM_AUTH_") and not key.startswith("GM_SERVER_CATALOG")}
@@ -160,10 +167,9 @@ def collection(env, output, router, nodes, profiles, repeats):
     if any(server.poll() is not None for server in backends):
         raise RuntimeError("a measurement server failed to start")
     for profile in profiles:
-        shape(router, "gmclientp", 0.2, 100 if profile == "shared-cap" else 0)
-        for i, node in enumerate(nodes, 1):
-            delay = [2.5, 10, 25, 50][i - 1] if profile == "differing-rtt" else 1
-            capacity = [40, 60, 80, 100][i - 1] if profile == "server-cap" else 80 if profile == "differing-rtt" else 200
+        client, delays, capacities = PROFILES[profile]
+        shape(router, "gmclientp", 0.2, client)
+        for i, (node, delay, capacity) in enumerate(zip(nodes, delays, capacities), 1):
             shape(node, f"gm{i}p", delay, capacity)
             shape(router, f"gm{i}", delay, 0)
         for repeat in range(1, repeats + 1):
@@ -213,7 +219,7 @@ def output_of(*args, cwd=ROOT):
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True).stdout.strip()
 
 
-def build_identity(paths, browser):
+def build_identity(paths):
     profile = re.search(r"^\[profile\.release\]\n(?:[^\[\n].*\n)*", (ROOT / "rust/Cargo.toml").read_text(), re.M)
     return {
         "commit": output_of("git", "rev-parse", "HEAD"),
@@ -224,7 +230,6 @@ def build_identity(paths, browser):
         "binaries": {name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()} for name, path in paths.items()},
         "goBuild": {name: [line.strip() for line in output_of("go", "version", "-m", str(path)).splitlines() if not line.startswith(("\tdep", "\tmod", "\t=>"))]
                     for name, path in paths.items() if name.startswith("go-")},
-        "chrome": output_of(os.environ["BUN_CHROME_PATH"], "--version") if browser else None,
         "kernel": os.uname().release,
         "cpu": next(line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines() if line.startswith("model name")),
         "cpus": os.cpu_count(),
@@ -298,7 +303,7 @@ def client_result(cell, text, status):
     try:
         if cell["client"] == "browser":
             end = json.loads(next(line for line in text.splitlines() if line.startswith("GM_BENCH_END ")).removeprefix("GM_BENCH_END "))
-            result |= end["stages"][direction] | {"path": end["paths"][0]}
+            result |= end["stages"][direction] | {"path": end["paths"][0], "browser": end["browser"]}
         else:
             lines = text.splitlines()
             result |= (rust_report if lines[0].startswith("Graphite Meter · ") else go_report)(lines, direction)
@@ -399,14 +404,13 @@ def stop(processes):
 
 def matrix(env, output, router, node, repeats):
     cells = matrix_cells(env.get("GM_MULTI_BENCH_MATRIX", ""))
-    rust = ROOT / "rust" / env.get("CARGO_TARGET_DIR", "target") / "release"
-    builds = {"go-server": ROOT / "go/graphite-meter", "rust-server": rust / "graphite-meter-server",
-              "go-client": ROOT / "go/graphite-meter-client", "rust-client": rust / "graphite-meter-client"}
+    builds = {"go-server": ROOT / "go/graphite-meter", "rust-server": ROOT / "rust/target/release/graphite-meter-server",
+              "go-client": ROOT / "go/graphite-meter-client", "rust-client": ROOT / "rust/target/release/graphite-meter-client"}
     paths = {name: path for name, path in builds.items() if any(name in (cell["server"] + "-server", cell["client"] + "-client") for cell in cells)}
     if missing := [str(path) for path in paths.values() if not path.is_file()]:
         raise RuntimeError(f"missing builds {missing}; mise run bench-matrix builds them")
     seed = int(env.get("GM_MULTI_BENCH_SEED", "1"))
-    identity = build_identity(paths, any(cell["client"] == "browser" for cell in cells))
+    identity = build_identity(paths)
     # Each client has its own address behind one bridge, so the router's egress to it is the shared bottleneck.
     lan = namespace()
     command("ip", "link", "add", "br0", "type", "bridge", namespace=lan)
@@ -426,7 +430,7 @@ def matrix(env, output, router, node, repeats):
             random.Random(f"{seed}/{repeat}").shuffle(ordered)
             for cell in ordered:
                 order += 1
-                run = f"{order:05d}-" + "-".join(cell.values())
+                run = f"{order:05d}"
                 loadavg = [float(value) for value in Path("/proc/loadavg").read_text().split()[:3]]
                 row = {"schema": 1, "session": session, "seed": seed, "repeat": repeat, "order": order, "loadavg": loadavg,
                        **matrix_run(env, output, router, node, hosts, paths, cell, run, f"{seed}/{repeat}"), "identity": identity}
@@ -434,9 +438,10 @@ def matrix(env, output, router, node, repeats):
                 rows.flush()
                 facts = (f"{row['throughputMbps']:.1f} Mbit/s, CPU {row['cpuSecPerGbit'] or 0:.2f} s/Gbit, "
                          f"peak RSS {row['serverPeakRssBytes'] / 2**20:.1f} MiB, p50 {row['latencyP50Ms']} ms") if "wallSec" in row else ""
-                print(f"{order}/{total} {run}: {'valid' if row['valid'] else 'INVALID ' + str(row['error'] or 'client report')} {facts}", flush=True)
-    summary = subprocess.run([sys.executable, str(Path(__file__).with_name("server-matrix-summary.py")), str(output / "matrix.ndjson")],
-                             check=True, capture_output=True, text=True).stdout
+                print(f"{order}/{total} {'-'.join(cell.values())}: {'valid' if row['valid'] else 'INVALID ' + str(row['error'] or 'client report')} {facts}", flush=True)
+    with (output / "matrix.ndjson").open() as rows:
+        summary = subprocess.run([sys.executable, str(Path(__file__).with_name("server-matrix-summary.py"))],
+                                 stdin=rows, check=True, capture_output=True, text=True).stdout
     (output / "matrix-summary.txt").write_text(summary)
     print(summary, end="")
 
@@ -469,10 +474,12 @@ def main():
     env = dict(os.environ, XDG_CONFIG_HOME=browser_config.name)
     env["BUN_CHROME_ARGS"] = f"--no-sandbox --no-proxy-server --ignore-certificate-errors-spki-list={env['GM_E2E_SPKI']} --origin-to-force-quic-on={HOST}:7249"
     repeats = int(env.get("GM_MULTI_BENCH_REPEATS", "2"))
-    profiles = env.get("GM_MULTI_BENCH_PROFILES", "server-cap,differing-rtt,shared-cap").split(",")
-    if browser := [profile for profile in profiles if profile != "matrix"]:
+    selected = env.get("GM_MULTI_BENCH_PROFILES", ",".join(PROFILES)).split(",")
+    if unknown := set(selected) - {*PROFILES, "matrix"}:
+        raise RuntimeError(f"GM_MULTI_BENCH_PROFILES names unknown profiles {sorted(unknown)}")
+    if browser := [profile for profile in PROFILES if profile in selected]:
         collection(env, output, router, nodes, browser, repeats)
-    if "matrix" in profiles:
+    if "matrix" in selected:
         matrix(env, output, router, nodes[0], repeats)
 
 

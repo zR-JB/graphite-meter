@@ -75,7 +75,7 @@ per Gbit/s is compared only when both delivered the same load within 5 %.
 ```sh
 BUN_CHROME_PATH=/path/to/chrome GM_MULTI_BENCH_OUTPUT=/tmp/graphite-meter-matrix mise run bench-matrix
 GM_MULTI_BENCH_MATRIX='rtt=0,100 loss=0,1 count=1 transport=h2,h3 client=go,rust' mise run bench-matrix  # a subset
-python3 client/bench/server-matrix-summary.py /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson  # sessions together
+cat /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson | python3 client/bench/server-matrix-summary.py  # sessions together
 ```
 
 The full matrix (1,440 cells, 3 repeats) takes about 16 hours.

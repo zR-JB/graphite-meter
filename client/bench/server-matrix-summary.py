@@ -1,4 +1,4 @@
-"""Go against Rust per matrix cell from the rig's matrix.ndjson rows: medians, ranges and flags.
+"""Go against Rust per matrix cell from the rig's matrix.ndjson rows on stdin: medians, ranges and flags.
 
 A metric reads WORSE when Rust is worse in a one-sided exact Mann-Whitney test (p <= 0.05) and its
 median is more than 2 % worse than Go's, so a flag needs at least three valid runs on each side.
@@ -50,8 +50,8 @@ def spread(values):
     return f"{statistics.median(values):.4g} [{min(values):.4g}-{max(values):.4g}]"
 
 
-def main(paths):
-    rows = [json.loads(line) for path in paths for line in open(path) if line.strip()]
+def main():
+    rows = [json.loads(line) for line in sys.stdin if line.strip()]
     groups = collections.defaultdict(list)
     for row in rows:
         groups[row["server"], row["client"], *(row[axis] for axis in CELL)].append(row)
@@ -99,4 +99,4 @@ def main(paths):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    main()

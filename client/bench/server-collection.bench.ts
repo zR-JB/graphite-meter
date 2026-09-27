@@ -136,6 +136,7 @@ test("coordinated server collection cell", async () => {
           })),
           frames,
           durationMs: result.durationMs,
+          browser: (await page.cdp("Browser.getVersion")).product,
           paths: details.servers.map((server) => server.throughput),
           stages: {
             download: stage("download", result.download, null),
