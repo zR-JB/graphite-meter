@@ -339,7 +339,8 @@ func (a *aggregateMeasurements) result(dir Direction) Result {
 			continue
 		}
 		stats := interval.combined
-		result.MeanBps, result.PeakBps, result.Samples = *rate, stats.peak.of(dir), stats.samples
+		// The headline window is a peak candidate too, so a fast tail never leaves the peak below it.
+		result.MeanBps, result.PeakBps, result.Samples = *rate, max(stats.peak.of(dir), *rate), stats.samples
 		result.Elapsed = interval.End - interval.Start
 		if dir == Up {
 			result.Elapsed = slices.MaxFunc(components, func(x, y ComponentWindow) int {
@@ -369,7 +370,7 @@ func (a *aggregateMeasurements) serverResult(id string, dir Direction) Result {
 		}
 		stats := interval.servers[id]
 		own.MeanBps, own.Elapsed = components[j].BytesPerSec, components[j].Duration
-		own.PeakBps, own.Samples = stats.peak.of(dir), stats.samples
+		own.PeakBps, own.Samples = max(stats.peak.of(dir), own.MeanBps), stats.samples
 		own.Unavailable, own.Err = false, nil
 		return own
 	}

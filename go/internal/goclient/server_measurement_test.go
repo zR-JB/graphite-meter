@@ -68,6 +68,20 @@ func TestPeaksNeedAMinimumWindow(t *testing.T) {
 		t.Fatalf("per-server peaks or samples = %+v %+v", own["a"], own["b"])
 	}
 }
+func TestAFastTailCannotLeaveThePeakBelowTheHeadline(t *testing.T) {
+	t.Parallel()
+	a := aggregateMeasurements{}
+	a.beginStage("download", []string{"a"}, 0)
+	for i, bytes := range []uint64{0, 500, 1000} {
+		a.observe(nativeBoundary(i*500, map[string]uint64{"a": bytes}, nil))
+	}
+	a.observe(nativeBoundary(1400, map[string]uint64{"a": 3000}, nil))
+	result, own := a.result(Down), a.serverResult("a", Down)
+	if math.Abs(result.MeanBps-3000/1.4) > 1e-6 || result.PeakBps != result.MeanBps || own.PeakBps != own.MeanBps {
+		t.Fatalf("peak below its headline: combined %+v, own %+v", result, own)
+	}
+}
+
 func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}

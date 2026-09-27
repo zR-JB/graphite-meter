@@ -9,7 +9,7 @@ in both clients unless [client differences](#client-differences) says otherwise.
 | Result | Unit and population | Missing evidence |
 | --- | --- | --- |
 | Download / upload | Payload bytes per second over the headline interval, in the chosen rate unit. | No sufficient interval: no rate. |
-| Peak | Highest mean over consecutive windows of the headline interval, each at least 500 ms on every clock. | Shorter evidence: no peak. |
+| Peak | Highest mean over consecutive windows of the headline interval, each at least 500 ms on every clock, and over the headline window itself, so never below the headline. | No headline: no peak. |
 | Latency | Median (P50) RTT of in-window replies, per server and stage; P95 secondary. | No reply, or a failed stage with fewer than three replies and timeouts: "—". |
 | Added latency | Loaded median − idle median, per loaded stage and server, in ms; negative values are kept. | Either median missing: no value. |
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
