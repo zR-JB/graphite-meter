@@ -303,20 +303,31 @@ export class ChartEngine {
     this.#latencyAnimating.clear();
   }
   invalidateTheme(): void {
+    this.#resolveColors();
+    this.resize(true);
+  }
+  resize(force = false): void {
     if (!this.#canvas || !this.#ctx) return;
     this.#dpr = canvasPixelRatio();
     // Entry transforms leave the layout box alone, so the bitmap and DOM axes share its size.
     this.#w = Math.max(1, this.#canvas.clientWidth);
     this.#h = Math.max(1, this.#canvas.clientHeight);
-    this.#canvas.width = Math.round(this.#w * this.#dpr);
-    this.#canvas.height = Math.round(this.#h * this.#dpr);
+    const width = Math.round(this.#w * this.#dpr);
+    const height = Math.round(this.#h * this.#dpr);
+    if (
+      !force &&
+      width === this.#canvas.width &&
+      height === this.#canvas.height
+    )
+      return;
+    this.#canvas.width = width;
+    this.#canvas.height = height;
     this.#ctx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     if (this.#scene && this.#sceneCtx) {
-      this.#scene.width = this.#canvas.width;
-      this.#scene.height = this.#canvas.height;
+      this.#scene.width = width;
+      this.#scene.height = height;
       this.#sceneCtx.setTransform(this.#dpr, 0, 0, this.#dpr, 0, 0);
     }
-    this.#resolveColors();
     this.#wake();
     // Resizing clears the bitmap; drawing now keeps a gliding layout from flashing an empty chart.
     if (this.#visible) this.render(frameTime());

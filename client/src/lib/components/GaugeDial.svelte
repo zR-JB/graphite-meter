@@ -89,8 +89,6 @@
     untrack(() => sweep.set(next, { snap, ...glide }));
   });
   // Each half ring turns through its own 180°, so both clips meet at the crossing.
-  const halfAngle = (half: number) =>
-    half ? Math.max(0, sweep.current - 180) : Math.min(180, sweep.current);
   const halfRing = (sweep: number) => {
     const r = layout.radius;
     return `M ${extent} ${extent - r} A ${r} ${r} 0 0 ${sweep} ${extent} ${extent + r}`;
@@ -261,6 +259,7 @@
   <div
     class="live"
     class:visible={input.showValue && !completed}
+    style:--sweep={`${sweep.current}deg`}
     aria-hidden="true"
   >
     <div
@@ -276,7 +275,6 @@
             class="rotor"
             style:width={`${diameter}px`}
             style:height={`${diameter}px`}
-            style:transform={`rotate(${halfAngle(half)}deg)`}
           >
             <svg
               width={diameter}
@@ -311,7 +309,6 @@
       class="live-head"
       style:left={`${layout.center.x}px`}
       style:top={`${layout.center.y}px`}
-      style:transform={`rotate(${sweep.current + 135}deg)`}
     >
       <svg
         style:left={`${layout.radius - headExtent}px`}
@@ -380,14 +377,17 @@
     right: auto;
     left: 0;
   }
+  /* One --sweep write per frame turns both halves and the head. */
   .rotor {
     position: absolute;
     top: 0;
     right: 0;
+    transform: rotate(min(180deg, var(--sweep)));
   }
   .second .rotor {
     right: auto;
     left: 0;
+    transform: rotate(max(0deg, var(--sweep) - 180deg));
   }
   .start-cap {
     position: absolute;
@@ -397,6 +397,7 @@
     position: absolute;
     width: 0;
     height: 0;
+    transform: rotate(calc(var(--sweep) + 135deg));
   }
   .live-head svg {
     position: absolute;

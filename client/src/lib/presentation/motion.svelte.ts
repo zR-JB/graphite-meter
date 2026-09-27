@@ -42,6 +42,10 @@ export const nextFrame = (task: (now: number) => void): (() => void) =>
     return false;
   });
 
+/** Below a millionth, a change cannot show: CSS serializes six significant digits. */
+const unseen = (a: number, b: number) =>
+  Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
+
 const GLIDE_MIN_MS = 50;
 const GLIDE_MAX_MS = 600;
 const SAMPLE_GAP_MS = 2_000;
@@ -105,8 +109,16 @@ export class Smoothed {
     this.#rate = rate;
     this.#max = max;
     this.#at = now;
-    this.current = this.at(now);
-    if (this.#from !== value || rate) this.#stop ??= animate(this.#frame);
+    this.#publish(this.at(now));
+    if (!unseen(this.#from, value) || rate) this.#stop ??= animate(this.#frame);
+  }
+
+  /** Subscribers write the DOM on every change, so an unseen one is skipped; the landing never is. */
+  #publish(value: number): void {
+    if (
+      value === this.#to ? value !== this.current : !unseen(value, this.current)
+    )
+      this.current = value;
   }
 
   /** Stops where it is now. */
@@ -126,10 +138,10 @@ export class Smoothed {
   }
 
   #frame = (now: number): boolean => {
-    this.current = this.at(now);
+    const value = this.at(now);
+    this.#publish(value);
     const moving =
-      now - this.#at < this.#glide ||
-      (this.#rate > 0 && this.current < this.#max);
+      now - this.#at < this.#glide || (this.#rate > 0 && value < this.#max);
     if (!moving) this.#stop = null;
     return moving;
   };

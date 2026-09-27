@@ -27,6 +27,24 @@ test("a clock keeps moving between samples, stops at its limit and absorbs corre
   expect(clock.at(1_000)).toBe(950);
 });
 
+test("a correction too small to show publishes nothing, and a glide still lands exactly", () => {
+  const frames: FrameRequestCallback[] = [];
+  const raf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (task) => frames.push(task);
+  const value = new Smoothed();
+  value.set(20, { snap: true, now: 0 });
+  value.set(20 + 1e-9, { now: 100 });
+  for (const task of frames.splice(0)) task(150);
+  expect(value.current).toBe(20);
+  value.set(0, { over: 100, now: 200 });
+  for (let now = 216; frames.length && now < 5_000; now += 16)
+    for (const task of frames.splice(0)) task(now);
+  globalThis.requestAnimationFrame = raf;
+  // Frames still owed to other tests' clocks go back to the real scheduler.
+  for (const task of frames.splice(0)) task(5_000);
+  expect(value.current).toBe(0);
+});
+
 test("a fixed glide overrides the sample interval", () => {
   const value = new Smoothed();
   value.set(800, { snap: true, now: 0 });

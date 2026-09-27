@@ -261,7 +261,7 @@
       attributes: true,
       attributeFilter: ["data-theme"],
     });
-    const resizeObserver = new ResizeObserver(() => engine.invalidateTheme());
+    const resizeObserver = new ResizeObserver(() => engine.resize());
     resizeObserver.observe(canvasEl!);
     const stopWatchingPixelRatio = watchCanvasPixelRatio(() =>
       engine.invalidateTheme(),

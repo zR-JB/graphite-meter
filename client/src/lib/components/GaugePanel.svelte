@@ -143,15 +143,14 @@
   );
 
   announceChanges(() => readout.announcement);
-  const display = $derived(
+  const rateDisplay = (rates: typeof liveRates) =>
     readout.display ??
-      (liveRates
-        ? {
-            value: fmtSpeed(gaugeRate(liveRates.down + liveRates.up)),
-            unit: gaugeUnit,
-          }
-        : { value: MISSING, unit: "" }),
-  );
+    (rates
+      ? { value: fmtSpeed(gaugeRate(rates.down + rates.up)), unit: gaugeUnit }
+      : { value: MISSING, unit: "" });
+  const display = $derived(rateDisplay(liveRates));
+  // Assistive text follows samples, not frames.
+  const spoken = $derived(rateDisplay(liveTarget));
 
   const dialState = $derived.by<GaugeDialState>(() => {
     const p = phase;
@@ -249,7 +248,7 @@
                 >{display.unit}</span
               >{/if}
           {/if}
-          <span class="sr-only">{display.value} {display.unit}</span>
+          <span class="sr-only">{spoken.value} {spoken.unit}</span>
         </div>
       </div>
       <div class="gauge-footer" style:opacity={view.opacity}>

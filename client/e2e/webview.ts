@@ -158,9 +158,8 @@ function watchDisplay() {
     const readout = document.querySelector(".gauge-value")?.textContent ?? "";
     if (!/\d/.test(readout)) return;
     readouts.add(readout);
-    needles.add(
-      document.querySelector<HTMLElement>(".live-head")?.style.transform ?? "",
-    );
+    const head = document.querySelector(".live-head");
+    needles.add(head ? getComputedStyle(head).transform : "");
   };
   Object.assign(window, { __gmCheckDisplay: sample });
   setInterval(sample, 100);
