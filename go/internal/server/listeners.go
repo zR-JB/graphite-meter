@@ -297,8 +297,7 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 	}
 }
 
-// quicUse follows one QUIC connection's requests. Browsers keep a connection open for about 15 s after its
-// WebTransport session ends, so one that carried only sessions closes with the last, freeing its client's slot.
+// quicUse closes a sessions-only connection with its last session; browsers would hold its client slot ~15 s.
 type quicUse struct {
 	conn               *quic.Conn
 	mu                 sync.Mutex

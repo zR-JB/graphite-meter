@@ -212,8 +212,7 @@ func (s *authenticatedStack) grant(t *testing.T) string {
 	return out.Token
 }
 
-// Every transport serves a measurement to a session cookie or a bearer grant and refuses one without either; the grant
-// reaches nothing past measurement.
+// Every transport admits a session cookie or bearer grant, refuses a request with neither; a grant only measures.
 func TestAuthenticationOverEveryTransport(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)

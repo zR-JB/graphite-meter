@@ -319,8 +319,7 @@ func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	}
 }
 
-// Browsers keep a closed session's QUIC connection open, so the server closes it once its sessions end; otherwise
-// sequential sessions from one client would run into the per-client connection cap.
+// Browsers keep a closed session's QUIC connection open, so the server must close it or hit the per-client cap.
 func TestSequentialWebTransportSessionsDoNotHoldConnectionSlots(t *testing.T) {
 	t.Parallel()
 	base, _, wtTransport := wtTestServer(t, nil, nil)
@@ -590,8 +589,7 @@ func TestWebTransportUploadRefusesAnotherClientsReceiver(t *testing.T) {
 	}
 }
 
-// runGoClientUnderLifetimeCaps runs the shipped client, over the transports it names, across several request and
-// session bounds per stage.
+// runGoClientUnderLifetimeCaps runs the shipped client across several request and session bounds per stage.
 func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTransport string) {
 	t.Helper()
 	_, httpBase, _ := wtServer(t, func(c *config.Config) {

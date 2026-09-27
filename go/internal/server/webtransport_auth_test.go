@@ -63,8 +63,7 @@ func answersPing(t *testing.T, sess *webtransport.Session) {
 	t.Fatal("ping bus never answered its probe")
 }
 
-// A CONNECT needs a minted token, spent once from the page's origin, or a native grant; signing out ends the session
-// the page's login admitted.
+// A CONNECT needs a once-only same-origin token or a native grant; signing out ends the login's session.
 func TestWebTransportConnectAuthentication(t *testing.T) {
 	t.Parallel()
 	s := newAuthenticatedStack(t)

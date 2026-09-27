@@ -1,5 +1,4 @@
-// Runs one benchmark cell against a real server, measuring production lanes once they carry bytes and warm up.
-// Byte lanes and upload accounting use the production transport implementations.
+// Runs one benchmark cell against a real server through the production lanes, measured once they warm up.
 import {
   laneWorker,
   openLane,

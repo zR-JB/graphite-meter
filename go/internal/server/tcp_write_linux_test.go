@@ -12,8 +12,7 @@ import (
 	"time"
 )
 
-// pacedReadConn drains slowly through a small receive buffer, so the server's unsent queue fills; it counts
-// what it drained and closes drained at 4 MiB, by when the server has long filled any queue it keeps.
+// pacedReadConn drains slowly through a small buffer so the server's queue fills, closing drained at 4 MiB.
 type pacedReadConn struct {
 	net.Conn
 	read    *atomic.Int64
