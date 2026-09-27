@@ -87,4 +87,5 @@ COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
 COPY --from=server-build /src/rust/target/server-notices/LEGAL.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
 COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
 EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
+USER 65532:65532
 ENTRYPOINT ["/graphite-meter"]
