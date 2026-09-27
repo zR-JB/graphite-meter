@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const (
@@ -41,7 +42,7 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 		err := attempt(ctx)
 		if restored = err == nil; restored {
 			cancel()
-		} else if !errors.Is(err, context.DeadlineExceeded) || cause == nil {
+		} else if windowCtx.Err() == nil || cause == nil {
 			cause = err
 		}
 		return false, err
@@ -63,8 +64,7 @@ func (r refusal) Unwrap() error { return r.error }
 
 func permanent(err error) bool {
 	_, refused := errors.AsType[refusal](err)
-	_, auth := errors.AsType[*AuthRequiredError](err)
-	return refused || auth
+	return refused || IsAuthRequired(err)
 }
 
 // persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
@@ -86,7 +86,7 @@ func persist(ctx context.Context, attempt func(context.Context) (progressed bool
 			failingSince = started
 		}
 		if !progressed && time.Since(failingSince) >= redialWindow {
-			return cmp.Or(err, errNoBytes)
+			return cmp.Or(err, errStalled)
 		}
 		var delay time.Duration
 		if status, ok := errors.AsType[statusError](err); ok && status.busy() {
@@ -165,14 +165,9 @@ func (r *runner) runLanes(
 	dir Direction,
 	progress *uploadProgress,
 	lane laneFunc,
-) (failure error) {
+) error {
 	lanes := r.startLanes(ctx, r.streams.of(dir), lane)
 	defer lanes.stop()
-	defer func() {
-		if failure != nil {
-			gate.cancel(failure)
-		}
-	}()
 	var progressFailed <-chan struct{}
 	wait := func(until <-chan struct{}) error {
 		select {
@@ -207,7 +202,7 @@ func (r *runner) runLanes(
 func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {
 	for {
 		snapshot, err := r.receiverCheckpointOnce(ctx)
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); err == nil || authRequired {
+		if err == nil || IsAuthRequired(err) {
 			return snapshot, err
 		}
 		if !pause(ctx, 100*time.Millisecond) {
@@ -225,16 +220,13 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 	if err != nil {
 		return nil, err
 	}
-	var count struct {
-		Bytes uint64 `json:"bytes"`
-		Nanos uint64 `json:"nanos"`
-	}
+	var count wire.UploadCheckpoint
 	target := withUploadID(endpoint, id)
 	if _, err := controlJSON(ctx, r.http, http.MethodPost, target, "receiver checkpoint", &count); err != nil {
 		return nil, err
 	}
-	if count.Nanos == 0 || count.Nanos > uint64(1<<63-1) {
-		return nil, fmt.Errorf("%w: invalid receiver clock", errProtocol)
+	if count.Nanos == 0 {
+		return nil, fmt.Errorf("%w: the receiver clock has not started", errProtocol)
 	}
 	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos}, nil
 }

@@ -36,6 +36,11 @@ type (
 	freshnessMsg struct{}
 )
 
+const (
+	fps           = 30
+	frameInterval = time.Second / fps
+)
+
 type prepareState int
 
 const (
@@ -70,16 +75,14 @@ type model struct {
 	help       help.Model
 	notice     string
 
-	row           int
-	advanced      bool
-	edit          *editState
-	latencyChoice string
-	popup         popup
-	serverDraft   []string
-	serverRow     int
-	openChooser   bool
-	details       viewport.Model
-	body          viewport.Model
+	row         int
+	advanced    bool
+	edit        *editState
+	popup       popup
+	serverDraft []string
+	serverRow   int
+	openChooser bool
+	body        viewport.Model
 
 	prepareSeq   int
 	preparation  *goclient.Preparation
@@ -105,7 +108,7 @@ func newModel(cfg goclient.Config) model {
 	controller := goclient.NewController(context.Background())
 	st := newStyles(true)
 	dial := spinner.MiniDot
-	dial.FPS = time.Second / 30
+	dial.FPS = frameInterval
 	h := help.New()
 	h.Styles = st.helpStyles()
 	return model{
@@ -117,7 +120,6 @@ func newModel(cfg goclient.Config) model {
 		prepareSeq:   1,
 		spin:         spinner.New(spinner.WithSpinner(dial), spinner.WithStyle(st.accent)),
 		help:         h,
-		details:      viewport.New(),
 		body:         viewport.New(),
 		now:          time.Now(),
 	}
@@ -169,12 +171,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.abort):
-		m.interrupted = true
+		m.interrupted = m.running()
 		return m, tea.Quit
 	case m.edit != nil:
 		return m.handleEditKey(msg)
 	case key.Matches(msg, keys.quit):
 		return m.quit()
+	case key.Matches(msg, keys.help) && !m.stopPrompt:
+		m.help.ShowAll = !m.help.ShowAll
+		return m, nil
 	case m.popup == popupDetails:
 		return m.handleDetailsKey(msg)
 	case m.popup == popupServers:
@@ -187,9 +192,6 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = "Test continues."
 		}
-		return m, nil
-	case key.Matches(msg, keys.help):
-		m.help.ShowAll = !m.help.ShowAll
 		return m, nil
 	case key.Matches(msg, keys.page), m.run != nil && key.Matches(msg, keys.scroll):
 		m.scrollBody(msg)
@@ -209,7 +211,7 @@ func (m model) handleRunKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.details):
 		m.popup = popupDetails
-		m.details.GotoTop()
+		m.body.SetYOffset(0)
 	case m.multipleRunServers() && key.Matches(msg, keys.latencyServer):
 		m.run.nextFocus()
 	case m.running() && key.Matches(msg, keys.stop):
@@ -287,7 +289,7 @@ func delta(msg tea.KeyPressMsg) int {
 }
 
 func (m *model) navigate(msg tea.KeyPressMsg) {
-	m.row = min(max(m.row+delta(msg), 0), len(m.rows())-1)
+	m.row, m.notice = min(max(m.row+delta(msg), 0), len(m.rows())-1), ""
 	_, line := m.setupList(m.width)
 	m.body = m.bodyViewport(m.layout())
 	m.body.EnsureVisible(1+line, 0, 0)

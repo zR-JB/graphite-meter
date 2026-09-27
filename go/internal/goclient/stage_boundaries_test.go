@@ -24,14 +24,13 @@ func TestTransferWarmupWaitsForDelayedTransports(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				held, release := make(chan struct{}), make(chan struct{})
 				var holdOnce sync.Once
-				var uploaded atomic.Uint64
 				mux := http.NewServeMux()
 				mux.HandleFunc("/download", func(w http.ResponseWriter, _ *http.Request) {
 					time.Sleep(time.Millisecond)
 					_, _ = w.Write(make([]byte, 32*1024))
 				})
 				mux.Handle("/ws/ping", pingHandler(answerAll, 0))
-				mountUploadReceiver(mux, &uploaded, receiveUpload(&uploaded, nil))
+				mountUploadReceiver(mux, nil)
 				r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					path := r.URL.Path
 					delay := delayed == "download lane" && path == "/download" && r.URL.Query().Get("lane") == "1" ||
@@ -94,7 +93,6 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
-				var uploaded atomic.Uint64
 				var canInterrupt atomic.Bool
 				mux := http.NewServeMux()
 				mux.Handle("/ws/ping", pingHandler(answerAll, 0))
@@ -107,7 +105,7 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 					_, _ = w.Write(make([]byte, 32*1024))
 				})
 				uploadFails := func() bool { return canInterrupt.Load() && interruption == "upload failure" }
-				mountUploadReceiver(mux, &uploaded, receiveUpload(&uploaded, uploadFails))
+				mountUploadReceiver(mux, uploadFails)
 				r := pipedRunner(t, mux)
 				r.cfg.LoadedLatency, r.cfg.PingInterval, r.cfg.LoadedPingInterval = true, 10*time.Millisecond,
 					10*time.Millisecond
@@ -187,9 +185,8 @@ func TestUploadReceiverEvidenceFailsBeforeMeasuring(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				warm := make(chan struct{})
 				var checkpointStarted, checkpointStopped atomic.Bool
-				var uploaded atomic.Uint64
 				mux := http.NewServeMux()
-				mountUploadReceiver(mux, &uploaded, receiveUpload(&uploaded, nil))
+				mountUploadReceiver(mux, nil)
 				r := pipedRunner(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 					switch {
 					case req.URL.Path == "/upload/checkpoint" && !c.revoked:
@@ -197,7 +194,7 @@ func TestUploadReceiverEvidenceFailsBeforeMeasuring(t *testing.T) {
 						<-req.Context().Done()
 						checkpointStopped.Store(true)
 					case req.URL.Path == "/upload/progress" && req.Method == http.MethodGet:
-						serveProgressUntilWarm(w, req, warm, c.revoked, &uploaded)
+						serveProgressUntilWarm(w, req, warm, c.revoked)
 					default:
 						mux.ServeHTTP(w, req)
 					}
@@ -236,8 +233,7 @@ func TestUploadReceiverEvidenceFailsBeforeMeasuring(t *testing.T) {
 	}
 }
 
-func serveProgressUntilWarm(w http.ResponseWriter, r *http.Request, warm <-chan struct{}, revoke bool,
-	uploaded *atomic.Uint64) {
+func serveProgressUntilWarm(w http.ResponseWriter, r *http.Request, warm <-chan struct{}, revoke bool) {
 	select {
 	case <-warm:
 		if revoke {
@@ -260,7 +256,7 @@ func serveProgressUntilWarm(w http.ResponseWriter, r *http.Request, warm <-chan 
 			return
 		case <-time.After(10 * time.Millisecond):
 		}
-		_, _ = fmt.Fprintf(w, "{\"type\":\"progress\",\"bytes\":%d,\"nanos\":%d}\n", uploaded.Load(), nanos)
+		_, _ = fmt.Fprintf(w, "{\"type\":\"progress\",\"bytes\":%d,\"nanos\":%d}\n", nanos, nanos)
 		w.(http.Flusher).Flush()
 	}
 }
@@ -280,7 +276,7 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 					}))
 				} else {
 					mux := http.NewServeMux()
-					mountUploadReceiver(mux, new(atomic.Uint64), discardUpload)
+					mountSilentReceiver(mux)
 					srv = httptest.NewServer(mux)
 				}
 				defer srv.Close()

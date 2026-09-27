@@ -120,7 +120,8 @@ jitter, deadlines and added latency.
 | Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply |
 | Warmup RTT | The latency focus server's path-check RTT | The highest RTT among active servers, updated to latency-stage medians |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
-| Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; `l` rotates the shown one |
+| Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |
+| Latency cadence | Reply-driven, Fast, Medium or Slow | Also a custom spacing from 80 ms to 15 s |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter | Counts in RTT and jitter if before its deadline |
 | Browser only | P10–P90 span, stability, wire-rate estimate, saved history | |
@@ -137,7 +138,8 @@ jitter, deadlines and added latency.
 
 The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving
 server that measured latency. The latency stage is Incomplete only when no focus population has a median; latency
-failures on other servers make the run Partial.
+failures on other servers make the run Partial. A population or stage that ends without a result records
+`insufficient-evidence`.
 
 ### Failure reasons
 
@@ -147,7 +149,7 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 | --- | --- | --- |
 | `preparation-failed` | Couldn't prepare the connection | A path check or stage preparation failed without a better reason. |
 | `connection-lost` | Connection lost | Network error, offline device or server shutdown. |
-| `timeout` | Stopped delivering data | A timed-out path, the silence limit, or an idle or lifetime lane ending. |
+| `timeout` | Stopped delivering data | A timed-out path, the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending. |
 | `sign-in-required` | Sign-in required | Sign-out or a revoked grant. |
 | `server-busy` | Server at capacity | Admission refused with 429 or 503; retries wait 300 ms doubling, or Retry-After, up to 1.2 s. |
 | `protocol-error` | Unexpected server response | An unexpected status or a refused upload owner. |

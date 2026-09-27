@@ -231,7 +231,7 @@ Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the conta
 | `--throughput-protocol` | `auto` | `http1`, `http2` or `http3` for a negotiated origin. |
 | `--throughput-transport` | `auto` | `fetch-stream` or `webtransport`. |
 | `--latency-transport` | `auto` | `websocket` or `webtransport`. |
-| `--stages` | `latency,download,upload` | Comma-separated; add `bidirectional`. An unknown name is an error. |
+| `--stages` | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`). |
 | `--warmup` | `800ms` | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s. |
 | `--latency-duration` | `4s` | Measured window, 1 s–5 min, checked even for a stage that is off. |
 | `--download-/--upload-/--bidirectional-duration` | `10s` | Same bounds. |
@@ -252,10 +252,12 @@ the plain report to stdout; an interactive run prints the same report on exit.
 | 0 | Complete, or quit before a run. |
 | 1 | Any other outcome (Partial, Incomplete, Stopped, Failed) or a runtime error. |
 | 2 | Invalid flags or arguments. |
-| 130 / 143 | Stopped by SIGINT (or ctrl+c) / SIGTERM. |
+| 130 / 143 | A run stopped by SIGINT (or ctrl+c) / SIGTERM; after a finished run they exit like q. |
 
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
-group. The footer names what enter does on the focused row; `?` shows every key for the current screen.
+group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
+current screen. **Latency server** chooses whose latency is the run's result (Automatic: the lowest preparation
+round trip); every selected server is still probed, and `l` switches the server shown.
 
 | Key | Where | Action |
 | --- | --- | --- |
@@ -264,12 +266,12 @@ group. The footer names what enter does on the focused row; `?` shows every key 
 | r, v, s, u, a | setup | Start test, recheck paths, test servers, use available servers, automatic paths. |
 | ←/→, home/end, enter, esc | editing a value | Move the cursor, apply, cancel. |
 | space, enter, esc | server chooser | Select, apply, cancel. |
-| enter (o), esc | sign-in | Open the approval page, cancel. |
+| enter, space (o), esc | sign-in | Open the approval page, cancel. |
 | esc | running | Stop test; a second esc confirms. |
 | enter (r), esc | finished | Run again; back to setup. |
 | d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
 | ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| ?, q, ctrl+c | any | Keys for this screen; quit. |
+| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. |
 
 ## Upgrading
 

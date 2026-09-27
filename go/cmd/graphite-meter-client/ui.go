@@ -38,13 +38,6 @@ func (s styles) panel(title, body string, w, h int) string {
 	return top + "\n" + box.Render(fit(body, inner))
 }
 
-func overlay(base, box string, w, top, h int) (string, int, int) {
-	x := max((w-lipgloss.Width(box))/2, 0)
-	y := top + max((h-lipgloss.Height(box))/2, 0)
-	layers := lipgloss.NewCompositor(lipgloss.NewLayer(base), lipgloss.NewLayer(box).X(x).Y(y).Z(1))
-	return layers.Render(), x, y
-}
-
 func (s styles) grid(headers []string, rows [][]string, w int) string {
 	widths := make([]int, len(headers))
 	for _, row := range append([][]string{headers}, rows...) {

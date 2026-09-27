@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/zR-JB/graphite-meter/go/internal/goclient"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -65,7 +63,7 @@ func (m model) readiness() []readiness {
 		switch {
 		case m.prepare == prepareChecking:
 			r.state = pathChecking
-		case isAuthRequired(s.Err):
+		case goclient.IsAuthRequired(s.Err):
 			r.state, r.detail = pathFailed, "Sign-in required."
 		case s.Err != nil || s.Connection == nil:
 			r.state = pathFailed
@@ -208,20 +206,11 @@ func (m model) handleDetailsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.close), key.Matches(msg, keys.details):
 		m.popup = popupNone
-		return m, nil
+		m.body.SetYOffset(0)
+	case key.Matches(msg, keys.scroll), key.Matches(msg, keys.page):
+		m.scrollBody(msg)
 	}
-	vp, cmd := m.detailsViewport().Update(msg)
-	m.details = vp
-	return m, cmd
-}
-
-func (m model) detailsViewport() viewport.Model {
-	vp := m.details
-	content := m.detailsView(m.popupWidth()-4, true)
-	vp.SetWidth(m.popupWidth() - 4)
-	vp.SetHeight(min(lipgloss.Height(content), m.layout().bodyH-2))
-	vp.SetContent(content)
-	return vp
+	return m, nil
 }
 
 func (m model) detailsView(w int, full bool) string {
@@ -282,7 +271,7 @@ func (m model) detailsView(w int, full bool) string {
 	lines = append(lines, m.st.grid(headers, rows, w), "",
 		m.st.heading.Render("Latency median by server"), m.st.grid(populations, latency, w))
 	if len(details.Failures) > 0 {
-		lines = append(lines, "", m.st.heading.Render("Left the test"))
+		lines = append(lines, "", m.st.heading.Render("Issues"))
 		for _, f := range details.Failures {
 			lines = append(lines, fmt.Sprintf("%s · %s %s · at %s · %s: %s", m.serverName(f.ServerID),
 				compactStage(f.Stage), f.Scope, fmtClock(f.At), failureLabels[f.Reason], errorText(f.Err)))

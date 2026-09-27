@@ -9,18 +9,19 @@ import (
 )
 
 type runner struct {
-	coordinated   *participantCounters
-	cfg           Config
-	cred          credential
-	streams       byDirection[int]
-	http          *http.Client
-	websocketHTTP *http.Client
-	uploadHTTP    *http.Client
-	target        *wire.ThroughputTarget
-	latencyTarget *wire.LatencyTarget
-	emit          func(Event)
-	idleRTT       time.Duration
-	teardown      context.Context
+	coordinated    *participantCounters
+	cfg            Config
+	cred           credential
+	streams        byDirection[int]
+	http           *http.Client
+	websocketHTTP  *http.Client
+	uploadHTTP     *http.Client
+	target         *wire.ThroughputTarget
+	latencyTarget  *wire.LatencyTarget
+	emit           func(Event)
+	idleRTT        time.Duration
+	teardown       context.Context
+	replacedUpload bool
 }
 
 func adaptiveWarmup(base, rtt time.Duration) time.Duration {

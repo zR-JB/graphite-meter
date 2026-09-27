@@ -18,12 +18,12 @@ import (
 )
 
 type setupRow struct {
-	label, value, note string
+	label, value, help string
 	inert              bool
 }
 
 type setting struct {
-	label, note string
+	label, help string
 	flag        func(*goclient.Config) *bool
 	span        func(*goclient.Config) *time.Duration
 	view        func(model) setupRow
@@ -38,39 +38,48 @@ func (s *setting) row(m model) setupRow {
 		return s.view(m)
 	case s.flag != nil && s.span != nil:
 		on := *s.flag(&m.cfg)
-		return setupRow{label: s.label, value: m.st.checkbox(on) + " " + fmtSetting(*s.span(&m.cfg)), note: s.note,
+		return setupRow{label: s.label, value: m.st.checkbox(on) + " " + fmtSetting(*s.span(&m.cfg)), help: s.help,
 			inert: !on}
 	case s.flag != nil:
-		return setupRow{label: s.label, value: m.st.checkbox(*s.flag(&m.cfg)), note: s.note}
+		return setupRow{label: s.label, value: m.st.checkbox(*s.flag(&m.cfg)), help: s.help}
 	case s.span != nil:
-		return setupRow{label: s.label, value: fmtSetting(*s.span(&m.cfg)), note: s.note}
+		return setupRow{label: s.label, value: fmtSetting(*s.span(&m.cfg)), help: s.help}
 	}
-	return setupRow{label: s.label, note: s.note}
+	return setupRow{label: s.label, help: s.help}
+}
+
+func stageSetting(label, what string, flag func(*goclient.Config) *bool,
+	span func(*goclient.Config) *time.Duration) *setting {
+	bound := goclient.StageBound
+	return &setting{label: label, flag: flag, span: span, help: fmt.Sprintf("%s. ←/→ ±1 s (%s–%s), space on/off.",
+		what, fmtSetting(bound.Min), fmtSetting(bound.Max))}
 }
 
 var (
-	startRow    = &setting{label: "Start test"}
+	startRow    = &setting{label: "Start test", help: "Runs the checked stages in order. r starts from any row."}
 	advancedRow = &setting{
 		view: func(m model) setupRow {
 			value := map[bool]string{false: "▸ hidden", true: "▾ shown"}[m.advanced]
-			return setupRow{label: "Advanced", value: value, note: "warmup, cadence, streams, TLS"}
+			return setupRow{label: "Advanced", value: value,
+				help: "Warmup, probe cadence, streams and TLS. ←/→ shows or hides."}
 		},
 		cycle: func(m *model, _ int) { m.advanced = !m.advanced },
 	}
 	catalogueRow = &setting{
 		view: func(m model) setupRow {
-			return setupRow{label: "Catalogue URL", value: m.cfg.BaseURL, note: "server list origin"}
+			return setupRow{label: "Catalogue URL", value: m.cfg.BaseURL,
+				help: "Origin that lists the test servers. enter types one."}
 		},
 		parse: func(m *model, raw string) error {
 			if !strings.Contains(raw, "://") {
 				raw = defaultScheme(raw) + raw
 			}
-			canonical, err := wire.CanonicalOrigin(strings.TrimSuffix(raw, "/"))
+			canonical, err := wire.CatalogOrigin(raw)
 			if err != nil {
 				return errors.New("use an http:// or https:// origin, for example https://meter.example")
 			}
 			if canonical != m.cfg.BaseURL {
-				m.cfg.ServerIDs, m.latencyChoice = nil, ""
+				m.cfg.ServerIDs, m.cfg.LatencyServer = nil, ""
 			}
 			m.cfg.BaseURL = canonical
 			m.notice = "Catalogue " + canonical + "."
@@ -78,8 +87,12 @@ var (
 		},
 	}
 	serversRow = &setting{view: func(m model) setupRow {
-		return setupRow{label: "Test servers", value: m.selectedServerNames(), note: m.readinessSummary(),
-			inert: !m.canChooseServers()}
+		value := m.selectedServerNames()
+		if summary := m.readinessSummary(); summary != "" {
+			value += " · " + summary
+		}
+		return setupRow{label: "Test servers", value: value, inert: !m.canChooseServers(), help: fmt.Sprintf(
+			"Measured at once; their speeds add up. enter picks up to %d.", wire.MaxSelectedServers)}
 	}}
 	throughputPathRow = pathSetting("Throughput path", false, func(c *goclient.Config) (*string, *string) {
 		return &c.ThroughputTarget, &c.ThroughputTransport
@@ -103,25 +116,25 @@ var (
 		view: latencyServerView,
 		cycle: func(m *model, step int) {
 			if latencyServerView(*m).inert {
-				m.notice = "Select two ready servers to choose which latency is shown first."
+				m.notice = "Select two ready servers to choose whose latency is the result."
 				return
 			}
-			m.latencyChoice = nextChoice(m.latencyChoice, append([]string{""}, m.readyServers()...), step)
+			m.cfg.LatencyServer = nextChoice(m.cfg.LatencyServer, append([]string{""}, m.readyServers()...), step)
 			m.notice = "Latency server: " + latencyServerView(*m).value + "."
 		},
 	}
-	warmupRow = &setting{label: "Warmup", note: "per stage, before the window opens",
-		span: func(c *goclient.Config) *time.Duration { return &c.Warmup }}
-	idleCadenceRow = cadenceSetting("Idle latency cadence", func(c *goclient.Config) *time.Duration {
+	warmupRow = &setting{label: "Warmup", span: func(c *goclient.Config) *time.Duration { return &c.Warmup },
+		help: fmt.Sprintf("Ramp-up before each window, at least ten round trips. ←/→ ±100 ms (%s–%s).",
+			fmtSetting(goclient.WarmupBound.Min), fmtSetting(goclient.WarmupBound.Max))}
+	idleCadenceRow = cadenceSetting("Idle latency cadence", "when idle", func(c *goclient.Config) *time.Duration {
 		return &c.PingInterval
 	})
-	loadedCadenceRow = cadenceSetting("Loaded latency cadence", func(c *goclient.Config) *time.Duration {
-		return &c.LoadedPingInterval
-	})
+	loadedCadenceRow = cadenceSetting("Loaded latency cadence", "during transfers",
+		func(c *goclient.Config) *time.Duration { return &c.LoadedPingInterval })
 	forceStreamsRow = &setting{
 		view: func(m model) setupRow {
 			return setupRow{label: "Force exact stream count", value: m.st.checkbox(m.cfg.TransferStreams.Forced > 0),
-				note: "per server and direction"}
+				help: "Off: each path picks its count. On: the count below everywhere."}
 		},
 		cycle: func(m *model, _ int) {
 			streams := &m.cfg.TransferStreams
@@ -135,46 +148,49 @@ var (
 	}
 	streamsRow = &setting{
 		view: func(m model) setupRow {
-			if n := m.cfg.TransferStreams.Forced; n > 0 {
-				return setupRow{label: "Streams per server and direction", value: strconv.Itoa(n), note: streamRange}
+			row := setupRow{label: "Maximum H1 streams per direction", value: strconv.Itoa(*streamCount(&m.cfg)),
+				help: fmt.Sprintf("Upper bound on HTTP/1.1 paths. ←/→ ±1 (1–%d).", goclient.MaxStreams)}
+			if m.cfg.TransferStreams.Forced > 0 {
+				row.label = "Streams per server and direction"
+				row.help = fmt.Sprintf("Exact streams per server and direction. ←/→ ±1 (1–%d).", goclient.MaxStreams)
 			}
-			return setupRow{label: "Maximum H1 streams per direction",
-				value: strconv.Itoa(m.cfg.TransferStreams.AutomaticMax), note: "HTTP/1.1 paths only"}
+			return row
 		},
 		cycle: func(m *model, step int) {
-			n := &m.cfg.TransferStreams.AutomaticMax
-			if m.cfg.TransferStreams.Forced > 0 {
-				n = &m.cfg.TransferStreams.Forced
-			}
+			n := streamCount(&m.cfg)
 			*n = min(max(*n+step, 1), goclient.MaxStreams)
 			m.notice = "Stream count: " + streamsLabel(m.cfg.TransferStreams, "http1", wire.TransportFetchStream) + "."
 		},
 		parse: func(m *model, raw string) error {
 			n, err := strconv.Atoi(raw)
 			if err != nil || n < 1 || n > goclient.MaxStreams {
-				return errors.New("streams must be a whole number from " + streamRange)
+				return fmt.Errorf("streams must be a whole number from 1 to %d", goclient.MaxStreams)
 			}
-			if m.cfg.TransferStreams.Forced > 0 {
-				m.cfg.TransferStreams.Forced = n
-			} else {
-				m.cfg.TransferStreams.AutomaticMax = n
-			}
+			*streamCount(&m.cfg) = n
 			m.notice = "Stream count: " + streamsLabel(m.cfg.TransferStreams, "http1", wire.TransportFetchStream) + "."
 			return nil
 		},
 	}
-	resetRow = &setting{label: "Reset settings", note: "keeps the catalogue and servers", act: func(m *model) {
-		if !m.resetPrompt {
-			m.resetPrompt = true
-			m.notice = "Press enter again to reset every setting; any other key keeps them."
-			return
-		}
-		defaults := goclient.DefaultConfig()
-		defaults.BaseURL, defaults.ServerIDs = m.cfg.BaseURL, m.cfg.ServerIDs
-		m.cfg, m.resetPrompt = defaults, false
-		m.notice = "Settings reset to defaults."
-	}}
+	resetRow = &setting{label: "Reset settings", help: "Restores defaults; keeps the catalogue and servers.",
+		act: func(m *model) {
+			if !m.resetPrompt {
+				m.resetPrompt = true
+				m.notice = "Press enter again to reset every setting; any other key keeps them."
+				return
+			}
+			defaults := goclient.DefaultConfig()
+			defaults.BaseURL, defaults.ServerIDs = m.cfg.BaseURL, m.cfg.ServerIDs
+			m.cfg, m.resetPrompt = defaults, false
+			m.notice = "Settings reset to defaults."
+		}}
 )
+
+func streamCount(c *goclient.Config) *int {
+	if c.TransferStreams.Forced > 0 {
+		return &c.TransferStreams.Forced
+	}
+	return &c.TransferStreams.AutomaticMax
+}
 
 var setupGroups = []struct {
 	label string
@@ -184,23 +200,25 @@ var setupGroups = []struct {
 	{"Connection", []*setting{catalogueRow, serversRow, throughputPathRow, protocolRow, latencyPathRow,
 		latencyServerRow}},
 	{"Stages", []*setting{
-		{label: "Latency", note: "idle round trips", flag: func(c *goclient.Config) *bool { return &c.Stages.Latency },
-			span: func(c *goclient.Config) *time.Duration { return &c.LatencyDuration }},
-		{label: "Download", note: "server to client",
-			flag: func(c *goclient.Config) *bool { return &c.Stages.Download },
-			span: func(c *goclient.Config) *time.Duration { return &c.DownloadDuration }},
-		{label: "Upload", note: "client to server, receiver-timed",
-			flag: func(c *goclient.Config) *bool { return &c.Stages.Upload },
-			span: func(c *goclient.Config) *time.Duration { return &c.UploadDuration }},
-		{label: "Bidirectional", note: "download and upload at once",
-			flag: func(c *goclient.Config) *bool { return &c.Stages.Bidirectional },
-			span: func(c *goclient.Config) *time.Duration { return &c.BidirectionalDuration }},
-		{label: "Loaded latency", note: "round trips during transfers",
-			flag: func(c *goclient.Config) *bool { return &c.LoadedLatency }},
+		stageSetting("Latency", "Idle round trips",
+			func(c *goclient.Config) *bool { return &c.Stages.Latency },
+			func(c *goclient.Config) *time.Duration { return &c.LatencyDuration }),
+		stageSetting("Download", "Server to client",
+			func(c *goclient.Config) *bool { return &c.Stages.Download },
+			func(c *goclient.Config) *time.Duration { return &c.DownloadDuration }),
+		stageSetting("Upload", "Client to server, receiver-timed",
+			func(c *goclient.Config) *bool { return &c.Stages.Upload },
+			func(c *goclient.Config) *time.Duration { return &c.UploadDuration }),
+		stageSetting("Bidirectional", "Download and upload at once",
+			func(c *goclient.Config) *bool { return &c.Stages.Bidirectional },
+			func(c *goclient.Config) *time.Duration { return &c.BidirectionalDuration }),
+		{label: "Loaded latency", flag: func(c *goclient.Config) *bool { return &c.LoadedLatency },
+			help: "Round trips during transfers: the latency load adds. space on/off."},
 	}},
 	{"", []*setting{advancedRow, warmupRow, idleCadenceRow, loadedCadenceRow, forceStreamsRow, streamsRow,
-		{label: "Skip TLS verify", note: "unsafe; refuses sign-in",
-			flag: func(c *goclient.Config) *bool { return &c.InsecureSkipTLSVerify }}, resetRow}},
+		{label: "Skip TLS verify", flag: func(c *goclient.Config) *bool { return &c.InsecureSkipTLSVerify },
+			help: "Accepts any certificate. Unsafe; sign-in is refused. space on/off."},
+		resetRow}},
 }
 
 func (m model) rows() []*setting {
@@ -220,20 +238,20 @@ func (m model) currentRow() *setting { return m.rows()[m.row] }
 
 func protocolView(m model) setupRow {
 	if t := m.selectedThroughputPath(); t != nil && t.Protocol != "negotiated" {
-		return setupRow{label: "HTTP version", value: protocolLabel(t.Protocol), note: "fixed by this path",
-			inert: true}
+		return setupRow{label: "HTTP version", value: protocolLabel(t.Protocol), inert: true,
+			help: "Fixed by this path; pick another path to change it."}
 	}
 	return setupRow{label: "HTTP version", value: protocolLabel(m.cfg.ThroughputProtocol),
-		note: "where the path negotiates"}
+		help: "Where the path negotiates. ←/→ Automatic, HTTP/1.1, HTTP/2, HTTP/3."}
 }
 
 func latencyServerView(m model) setupRow {
 	value := "Automatic"
-	if m.latencyChoice != "" {
-		value = m.serverName(m.latencyChoice)
+	if m.cfg.LatencyServer != "" {
+		value = m.serverName(m.cfg.LatencyServer)
 	}
-	return setupRow{label: "Latency server", value: value, note: "shown first; every server is measured",
-		inert: len(m.readyServers()) < 2}
+	return setupRow{label: "Latency server", value: value, inert: len(m.readyServers()) < 2,
+		help: "Whose latency is the result; all are probed. ←/→ picks one."}
 }
 
 func (m model) activate(s *setting) (tea.Model, tea.Cmd) {
@@ -292,8 +310,6 @@ func enterVerb(s *setting) string {
 	return "next"
 }
 
-var streamRange = fmt.Sprintf("1 to %d", goclient.MaxStreams)
-
 func shortOrigin(base, target string) string {
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" {
@@ -323,8 +339,8 @@ func (m *model) beginEdit(s *setting, value string) {
 	in.Prompt = ""
 	styles := in.Styles()
 	styles.Focused.Text = m.st.value
+	styles.Cursor.Blink = false
 	in.SetStyles(styles)
-	in.SetVirtualCursor(false)
 	in.SetValue(value)
 	in.Focus()
 	m.edit = &editState{row: s, input: in}
@@ -394,10 +410,15 @@ func (s *setting) inBounds(d time.Duration) error {
 	return nil
 }
 
-func cadenceSetting(label string, field func(*goclient.Config) *time.Duration) *setting {
+func cadenceSetting(label, when string, field func(*goclient.Config) *time.Duration) *setting {
+	var spacings []string
+	for _, c := range cadences[1:] {
+		spacings = append(spacings, strconv.FormatInt(c.interval.Milliseconds(), 10))
+	}
+	help := "Probe spacing " + when + ". ←/→ reply-driven, " + strings.Join(spacings, ", ") + " ms."
 	return &setting{
 		view: func(m model) setupRow {
-			return setupRow{label: label, value: cadenceLabel(*field(&m.cfg)), note: "probe spacing"}
+			return setupRow{label: label, value: cadenceLabel(*field(&m.cfg)), help: help}
 		},
 		cycle: func(m *model, step int) {
 			interval := field(&m.cfg)
@@ -438,13 +459,15 @@ func (c pathChoice) selects(target, transport string) bool {
 
 func (m model) pathRow(label, target, transport string, latency bool) setupRow {
 	choices := m.pathChoices(latency)
-	for i, choice := range choices {
+	carries := map[bool]string{false: "How transfers reach the server", true: "How probes travel"}[latency]
+	help := fmt.Sprintf("%s. ←/→ picks one of %d.", carries, len(choices))
+	for _, choice := range choices {
 		if choice.selects(target, transport) {
-			return setupRow{
-				label: label,
-				value: choice.label,
-				note:  strings.TrimSpace(fmt.Sprintf("%d/%d  %s", i+1, len(choices), choice.note)),
+			value := choice.label
+			if choice.note != "" {
+				value += " · " + choice.note
 			}
+			return setupRow{label: label, value: value, help: help}
 		}
 	}
 	mechanism := transportLabel(transport, latency)
@@ -452,7 +475,7 @@ func (m model) pathRow(label, target, transport string, latency bool) setupRow {
 	if target == "auto" {
 		value = mechanism + " · automatic origin"
 	}
-	return setupRow{label: label, value: value, note: "not offered by the checked server"}
+	return setupRow{label: label, value: value, help: "Not offered by the checked server. " + help}
 }
 
 func nextPath(target, transport string, choices []pathChoice, step int) pathChoice {

@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -16,97 +15,25 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func nativeBoundary(ms int, down map[string]uint64, up map[string]*ReceiverSnapshot) measurementBoundary {
 	return measurementBoundary{at: time.Duration(ms) * time.Millisecond, down: down, up: up}
 }
+
+func testStage(p *participant, plan StagePlan, emit func(Event)) *stageRun {
+	c := &coordinator{servers: []*participant{p}, started: time.Now(), emit: emit}
+	c.aggregate.beginStage(plan.Name, []string{p.id()}, 0)
+	own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
+	return &stageRun{c: c, plan: plan, servers: []*stageServer{own}}
+}
+
 func nativeReceiver(id string, bytes uint64, ms int) *ReceiverSnapshot {
 	return &ReceiverSnapshot{ID: id, Bytes: bytes, Nanos: uint64(time.Duration(ms) * time.Millisecond)}
 }
 
-func TestCoordinatedReceiverWindows(t *testing.T) {
-	t.Parallel()
-	a := aggregateMeasurements{}
-	a.beginStage("upload", []string{"a", "b"}, 0)
-	a.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{
-		"a": nativeReceiver("a", 100, 100),
-		"b": nativeReceiver("b", 200, 100),
-	}))
-	sample, _ := a.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{
-		"a": nativeReceiver("a", 1100, 1100),
-		"b": nativeReceiver("b", 6200, 2100),
-	}))
-	if sample == nil || *sample.UpBytesPerSec != 4000 {
-		t.Fatalf("sum of receiver-window means = %+v, want 4000 B/s", sample)
-	}
-	result := a.result(Up)
-	if result.Unavailable || result.MeanBps != 4000 || result.TotalBytes != 7000 {
-		t.Fatalf("result=%+v", result)
-	}
-	if sample.Up[0].Duration != time.Second || sample.Up[1].Duration != 2*time.Second {
-		t.Fatalf("receiver durations were combined: %+v", sample.Up)
-	}
-	if result.Elapsed != 2*time.Second {
-		t.Fatalf("receiver-timed elapsed = %v, want the receiver window", result.Elapsed)
-	}
-}
-
-func TestPeaksNeedAMinimumWindow(t *testing.T) {
-	t.Parallel()
-	a := aggregateMeasurements{}
-	a.beginStage("download", []string{"a", "b"}, 0)
-	for i, bytes := range []uint64{0, 0, 1000, 1000, 2000, 2000, 3000} {
-		a.observe(nativeBoundary(i*250, map[string]uint64{"a": bytes, "b": bytes / 2}, nil))
-	}
-	result := a.result(Down)
-	if result.PeakBps != 3000 || result.MeanBps != 3000 || result.Samples != 6 {
-		t.Fatalf("a burst inside a short window became the peak: %+v", result)
-	}
-	if own := a.current().servers; own["a"].peak.down != 2000 || own["b"].peak.down != 1000 || own["a"].samples != 6 {
-		t.Fatalf("per-server peaks or samples = %+v %+v", own["a"], own["b"])
-	}
-}
-func TestAFastTailCannotLeaveThePeakBelowTheHeadline(t *testing.T) {
-	t.Parallel()
-	a := aggregateMeasurements{}
-	a.beginStage("download", []string{"a"}, 0)
-	for i, bytes := range []uint64{0, 500, 1000} {
-		a.observe(nativeBoundary(i*500, map[string]uint64{"a": bytes}, nil))
-	}
-	a.observe(nativeBoundary(1400, map[string]uint64{"a": 3000}, nil))
-	result, own := a.result(Down), a.serverResult("a", Down)
-	if math.Abs(result.MeanBps-3000/1.4) > 1e-6 || result.PeakBps != result.MeanBps || own.PeakBps != own.MeanBps {
-		t.Fatalf("peak below its headline: combined %+v, own %+v", result, own)
-	}
-}
-
-func TestCoordinatedOppositeFluctuationsAndLedger(t *testing.T) {
-	t.Parallel()
-	a := aggregateMeasurements{}
-	a.beginStage("download", []string{"a", "b"}, 0)
-	a.observe(nativeBoundary(0, map[string]uint64{"a": 0, "b": 0}, nil))
-	a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000, "b": 3000}, nil))
-	a.observe(nativeBoundary(2000, map[string]uint64{"a": 4000, "b": 4000}, nil))
-	result := a.result(Down)
-	if result.MeanBps != 4000 || result.PeakBps != 4000 || result.TotalBytes != 8000 {
-		t.Fatalf("independent peaks or durations leaked into aggregate: %+v", result)
-	}
-	a.restart([]string{"b"}, 2*time.Second, ReasonDropout)
-	a.observe(nativeBoundary(2100, map[string]uint64{"b": 4200}, nil))
-	a.observe(nativeBoundary(2500, map[string]uint64{"b": 5000}, nil))
-	if result := a.result(Down); result.Unavailable || result.MeanBps != 4000 || result.PeakBps != 4000 ||
-		result.TotalBytes != 9000 {
-		t.Fatalf("a late dropout lost the headline of the interval before it: %+v", result)
-	}
-	if latest := a.current(); latest.combined.peak.down != 0 || latest.servers["b"].samples != 1 {
-		t.Fatalf("peaks outlived their interval: %+v", latest)
-	}
-	if a.intervals[0].Window == nil || *a.intervals[0].Window.DownBytesPerSec != 4000 {
-		t.Fatal("earlier evidence lost")
-	}
-}
 func TestCoordinatedZeroMissingAndRecovery(t *testing.T) {
 	t.Parallel()
 	a := aggregateMeasurements{}
@@ -149,23 +76,6 @@ func TestCoordinatedIntervalsStayBounded(t *testing.T) {
 	}
 }
 
-func TestCoordinatedReceiverRegressionRevokesRateAndRetainsBytes(t *testing.T) {
-	t.Parallel()
-	var measurements aggregateMeasurements
-	measurements.beginStage("upload", []string{"a"}, 0)
-	measurements.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)}))
-	measurements.observe(nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 3000)}))
-	before := measurements.result(Up)
-	if before.Unavailable || before.MeanBps != 1000 || before.TotalBytes != 2000 {
-		t.Fatalf("receiver clock was replaced by the client clock: %+v", before)
-	}
-	measurements.observe(nativeBoundary(1500, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 3000, 1500)}))
-	after := measurements.result(Up)
-	if !after.Unavailable || after.TotalBytes != before.TotalBytes || measurements.intervals[0].Window == nil {
-		t.Fatalf("regressed receiver clock retained a rate or lost earlier bytes: %+v", after)
-	}
-}
-
 func TestCheckpointMissesRemoveServers(t *testing.T) {
 	t.Parallel()
 	s := &stageRun{misses: map[string]int{}}
@@ -186,27 +96,6 @@ func TestCheckpointMissesRemoveServers(t *testing.T) {
 	}
 }
 
-func TestReceiverWindowsNeedOneAdvancingReceiver(t *testing.T) {
-	t.Parallel()
-	var a aggregateMeasurements
-	a.beginStage(StageUpload, []string{"a"}, 0)
-	first := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("id", 1000, 1000)})
-	for _, c := range []struct {
-		name  string
-		next  *ReceiverSnapshot
-		stale bool
-	}{
-		{"replaced receiver", nativeReceiver("new", 5000, 2000), false},
-		{"replaced receiver at the same clock", nativeReceiver("new", 5000, 1000), false},
-		{"bytes without receiver time", nativeReceiver("id", 5000, 1000), true},
-	} {
-		window, err := a.window(first, nativeBoundary(1000, nil, map[string]*ReceiverSnapshot{"a": c.next}))
-		if window != nil || err == nil || errors.Is(err, errStaleBoundary) != c.stale {
-			t.Errorf("%s: window=%+v err=%v, want stale=%v", c.name, window, err, c.stale)
-		}
-	}
-}
-
 func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
@@ -214,14 +103,10 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		moved   uint64
 		removed bool
 	}{{"silent", 0, true}, {"one byte", 1, false}} {
-		server := PreparedServer{Server: wire.ServerEntry{ID: "a"}, Connection: &PreparedConnection{}}
-		p := &participant{prepared: server}
-		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
-		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
-		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
-		s := &stageRun{c: co, plan: stage, servers: []*stageServer{own}}
-		s.beginSampling(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+		s := testStage(p, StagePlan{Name: StageDownload, Directions: []Direction{Down}}, func(Event) {})
+		s.c.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
+		s.beginSampling(time.Now().Add(-redialWindow))
 		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)})
 		if p.removed != c.removed {
 			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
@@ -231,10 +116,7 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 
 func TestAggregationMatchesTheSharedVectors(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../../api/aggregation.testvectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := apipin.Read(t, "aggregation.testvectors.json")
 	type window struct {
 		StartMs, EndMs                 int64
 		DownBytesPerSec, UpBytesPerSec *float64
@@ -330,14 +212,12 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 			coordinated: &participantCounters{}}
 		r.coordinated.upload.Store(newUploadProgress(t.Context(), "u"))
 		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}, transport: r}
-		co := &coordinator{servers: []*participant{p}, started: begun, emit: func(Event) {}}
-		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-		s := &stageRun{c: co, plan: StagePlan{Name: StageUpload, Directions: []Direction{Up}}, ctx: t.Context(),
-			servers: own}
-		initial, _ := s.collect(t.Context(), co.active(), checkpointBudget)
-		co.aggregate.beginStage(StageUpload, []string{"a"}, initial.at)
+		s := testStage(p, StagePlan{Name: StageUpload, Directions: []Direction{Up}}, func(Event) {})
+		s.ctx, s.c.started = t.Context(), begun
+		initial, _ := s.collect(t.Context(), s.c.active(), checkpointBudget)
+		co := s.c
 		co.aggregate.observe(initial)
-		s.beginSampling(time.Now(), initial)
+		s.beginSampling(time.Now())
 		s.startSampler()
 		defer func() {
 			s.sampler.cancel()
@@ -362,41 +242,14 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 	})
 }
 
-func TestAFinalBoundaryWithoutProgressKeepsTheLastGoodOne(t *testing.T) {
-	t.Parallel()
-	for _, moved := range []uint64{0, 100} {
-		var a aggregateMeasurements
-		a.beginStage(StageBidirectional, []string{"a"}, 0)
-		up := map[string]*ReceiverSnapshot{"a": nativeReceiver("r", 0, 0)}
-		a.observe(nativeBoundary(0, map[string]uint64{"a": 0}, up))
-		a.observe(nativeBoundary(1000, map[string]uint64{"a": 1000}, map[string]*ReceiverSnapshot{
-			"a": nativeReceiver("r", 1000, 1000)}))
-		final := nativeBoundary(1250, map[string]uint64{"a": 1250}, map[string]*ReceiverSnapshot{
-			"a": nativeReceiver("r", 1000+moved, 1250)})
-		final.final = true
-		a.observe(final)
-		want := 1250 * time.Millisecond
-		if moved == 0 {
-			want = time.Second
-		}
-		if end := a.current().End; end != want || a.result(Up).TotalBytes != 1000+moved {
-			t.Errorf("moved %d: window ends at %v, want %v; %+v", moved, end, want, a.result(Up))
-		}
-	}
-}
-
 func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	t.Parallel()
 	p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
 	var live []ThroughputSample
-	co := &coordinator{servers: []*participant{p}, emit: func(e Event) { live = append(live, e.Throughput) }}
-	stage := StagePlan{Name: StageUpload, Directions: []Direction{Up}}
-	initial := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)})
-	co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-	co.aggregate.observe(initial)
-	own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-	s := &stageRun{c: co, plan: stage, servers: own}
-	s.beginSampling(time.Now(), initial)
+	s := testStage(p, StagePlan{Name: StageUpload, Directions: []Direction{Up}},
+		func(e Event) { live = append(live, e.Throughput) })
+	s.c.aggregate.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)}))
+	s.beginSampling(time.Now())
 	for i, step := range []struct {
 		receiver *ReceiverSnapshot
 		want     []ThroughputSample

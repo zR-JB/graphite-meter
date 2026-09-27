@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"io"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,64 +20,41 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-type fixtureHTTP func(http.ResponseWriter, *http.Request) error
-
-func (f fixtureHTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) { _ = f(w, r) }
-
-// fixtureRoutes mounts each fixture handler on its exact path.
-type fixtureRoutes map[string]http.Handler
-
-func (routes fixtureRoutes) RegisterHTTP(path string, h http.Handler) { routes[path] = h }
-
-func (routes fixtureRoutes) Mount(_ context.Context, mux *http.ServeMux) {
-	for path, h := range routes {
-		mux.Handle(path, h)
-	}
-}
-
-type pacedBody struct {
-	io.ReadCloser
-	ctx    context.Context
-	failed *atomic.Bool
-}
-
-func (b pacedBody) Read(p []byte) (int, error) {
-	if b.failed.Load() {
-		return 0, errors.New("fixture disconnected")
-	}
-	timer := time.NewTimer(time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-b.ctx.Done():
-		return 0, b.ctx.Err()
-	case <-timer.C:
-	}
-	return b.ReadCloser.Read(p[:min(len(p), 8192)])
-}
-
 type serverFixture struct {
 	server               *httptest.Server
 	catalog              wire.ServerCatalog
-	failed               atomic.Bool
+	failed, revoked      atomic.Bool
+	silent               atomic.Bool
 	checkpointFailed     atomic.Bool
 	checkpointRefusals   atomic.Int32
 	checkpointDelayNanos atomic.Int64
 	handlers, conns      sync.WaitGroup
 	catalogReads         atomic.Int32
 	dropLatency          func()
+	upload               atomic.Pointer[endpoint.Upload]
+}
+
+func (f *serverFixture) restart() {
+	f.upload.Store(endpoint.NewUpload(nil, nil))
+	f.server.CloseClientConnections()
 }
 
 func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	t.Helper()
 	f := &serverFixture{}
-	upload := endpoint.NewUpload(nil, nil)
-	registry := fixtureRoutes{}
-	registry.RegisterHTTP(route.UploadSession, http.HandlerFunc(upload.ServeSession))
-	registry.RegisterHTTP(route.UploadProgress, http.HandlerFunc(upload.ServeProgress))
-	registry.RegisterHTTP(route.UploadCheckpoint, http.HandlerFunc(upload.ServeCheckpoint))
-	registry.RegisterHTTP(route.Upload, upload.Handler(wire.IdleBound))
-	registry.RegisterHTTP(route.Preflight, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
-		return json.MarshalWrite(w, wire.Preflight{
+	f.upload.Store(endpoint.NewUpload(nil, nil))
+	mux := http.NewServeMux()
+	receiver := func(serve func(*endpoint.Upload, http.ResponseWriter, *http.Request)) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) { serve(f.upload.Load(), w, r) }
+	}
+	mux.HandleFunc(route.UploadSession, receiver((*endpoint.Upload).ServeSession))
+	mux.HandleFunc(route.UploadProgress, receiver((*endpoint.Upload).ServeProgress))
+	mux.HandleFunc(route.UploadCheckpoint, receiver((*endpoint.Upload).ServeCheckpoint))
+	mux.HandleFunc(route.Upload, receiver(func(u *endpoint.Upload, w http.ResponseWriter, r *http.Request) {
+		u.Handler(wire.IdleBound).ServeHTTP(w, r)
+	}))
+	mux.HandleFunc(route.Preflight, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.MarshalWrite(w, wire.Preflight{
 			Server:        wire.ServerInfo{Name: name},
 			EngineVersion: "test",
 			Generation:    name,
@@ -89,45 +66,38 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 				LatencyTargets: []wire.LatencyTarget{{Origin: ".", Transport: wire.TransportWebSocket}},
 			},
 		})
-	}))
-	registry.RegisterHTTP(route.Servers, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
+	})
+	mux.HandleFunc(route.Servers, func(w http.ResponseWriter, r *http.Request) {
 		f.catalogReads.Add(1)
-		return json.MarshalWrite(w, f.catalog)
-	}))
-	registry.RegisterHTTP(route.Probe, http.HandlerFunc(writeProbe))
-	registry.RegisterHTTP(route.Download, fixtureHTTP(func(w http.ResponseWriter, r *http.Request) error {
+		_ = json.MarshalWrite(w, f.catalog)
+	})
+	mux.HandleFunc(route.Probe, writeProbe)
+	mux.HandleFunc(route.Download, func(w http.ResponseWriter, r *http.Request) {
 		block := make([]byte, 8192)
-		timer := time.NewTicker(time.Millisecond)
-		defer timer.Stop()
-		for {
-			select {
-			case <-r.Context().Done():
-				return nil
-			case <-timer.C:
-				if f.failed.Load() {
-					return nil
-				}
-				if _, err := w.Write(block); err != nil {
-					return nil
-				}
-				if err := http.NewResponseController(w).Flush(); err != nil {
-					return nil
-				}
+		for range time.Tick(time.Millisecond) {
+			if r.Context().Err() != nil || f.failed.Load() {
+				return
+			}
+			if _, err := w.Write(block); err != nil || http.NewResponseController(w).Flush() != nil {
+				return
 			}
 		}
-	}))
-	mux := http.NewServeMux()
-	registry.Mount(t.Context(), mux)
+	})
 	latency, dropLatency := context.WithCancel(t.Context())
 	mux.Handle(route.Ping, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 		defer context.AfterFunc(latency, cancel)()
-		pingHandler(answerAll, 0).ServeHTTP(w, r.WithContext(ctx))
+		pingHandler(func(uint32) bool { return !f.silent.Load() }, 0).ServeHTTP(w, r.WithContext(ctx))
 	}))
 	f.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.handlers.Add(1)
 		defer f.handlers.Done()
+		if f.revoked.Load() {
+			w.Header().Set("Graphite-Meter-Auth", "required")
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
 		if r.URL.Path == route.UploadCheckpoint {
 			if delay := time.Duration(f.checkpointDelayNanos.Swap(0)); delay > 0 {
 				timer := time.NewTimer(delay)
@@ -149,7 +119,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 			return
 		}
 		if r.URL.Path == route.Upload {
-			r.Body = pacedBody{r.Body, r.Context(), &f.failed}
+			r.Body = pacedBody{r.Body, r.Context(), f.failed.Load}
 		}
 		mux.ServeHTTP(w, r)
 	}))
@@ -335,6 +305,105 @@ func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
 	if err != nil || details == nil || details.Outcome != OutcomeIncomplete || len(details.Failures) != 1 ||
 		len(results) != 2 || !results[0].Unavailable || results[1].Unavailable {
 		t.Fatalf("a sole server's failed stage ended the run: %v %+v %+v", err, details, results)
+	}
+}
+
+func TestASoleServerLosesAStageItCannotMeasure(t *testing.T) {
+	t.Parallel()
+	for _, revoked := range []bool{false, true} {
+		t.Run(fmt.Sprint("revoked ", revoked), func(t *testing.T) {
+			t.Parallel()
+			a := coordinatedFixture(t, "a")
+			fault := &a.checkpointFailed
+			if revoked {
+				fault = &a.revoked
+			}
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Download: true, Upload: true}
+			var log eventLog
+			err := Run(t.Context(), cfg, func(e Event) {
+				if e.Kind == EventStage && e.Stage == StageDownload && e.Phase == PhaseFinished {
+					fault.Store(true)
+				}
+				log.emit(e)
+			})
+			results, details := log.results(), log.details()
+			if details == nil || details.Outcome != OutcomeIncomplete || len(results) == 0 || results[0].Unavailable {
+				t.Fatalf("%v: %+v %+v", err, details, results)
+			}
+			switch _, signIn := errors.AsType[*AuthRequiredError](err); {
+			case revoked && !signIn:
+				t.Fatalf("a revoked grant ended with %v, want the sign-in prompt", err)
+			case !revoked && (err != nil || len(results) != 2 || !results[1].Unavailable || results[1].Err == nil):
+				t.Fatalf("an unprepared upload = %v, %+v; want its stage failed with a reason", err, results)
+			}
+		})
+	}
+}
+
+func TestARestartedServerGetsOneReplacementReceiver(t *testing.T) {
+	t.Parallel()
+	for _, restarts := range []int32{1, 2} {
+		t.Run(fmt.Sprint(restarts, " restarts"), func(t *testing.T) {
+			t.Parallel()
+			a := coordinatedFixture(t, "a")
+			cfg := fixtureConfig(a)
+			cfg.Stages, cfg.UploadDuration = StageSet{Upload: true}, 3*time.Second
+			var log eventLog
+			var restarted atomic.Int32
+			err := Run(t.Context(), cfg, func(e Event) {
+				log.emit(e)
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable && restarted.Load() < restarts {
+					restarted.Add(1)
+					a.restart()
+				}
+			})
+			details := log.details()
+			if err != nil || details == nil || restarted.Load() != restarts {
+				t.Fatalf("run = %v after %d restarts: %+v", err, restarted.Load(), details)
+			}
+			resumed := slices.IndexFunc(details.Intervals, func(i AggregationInterval) bool {
+				return i.Reason == ReasonEvidenceResumed
+			})
+			if resumed != 1 || details.Intervals[0].Complete {
+				t.Fatalf("the replaced receiver did not resume evidence: %+v", details.Intervals)
+			}
+			if restarts == 1 && (details.Outcome != OutcomeComplete || log.results()[0].Unavailable) {
+				t.Fatalf("one restart lost the upload: %+v %+v", details, log.results())
+			}
+			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureConnectionLost) {
+				t.Fatalf("a second unknown id = %+v, want the server lost as connection-lost", details.Failures)
+			}
+		})
+	}
+}
+
+func TestTheLatencyResultFollowsTheFocusServer(t *testing.T) {
+	t.Parallel()
+	for _, silentFocus := range []bool{false, true} {
+		t.Run(fmt.Sprint("silent focus ", silentFocus), func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Latency: true}
+			prepared := prepareFixtureRun(t, cfg, a, b)
+			prepared.LatencyFocus = "b"
+			silent, id, want := a, "self", OutcomePartial
+			if silentFocus {
+				silent, id, want = b, "b", OutcomeIncomplete
+			}
+			silent.silent.Store(true)
+			var log eventLog
+			err := runSelected(t.Context(), cfg, prepared, log.emit)
+			details := log.details()
+			if err != nil || details == nil || details.Outcome != want || len(details.Failures) != 1 {
+				t.Fatalf("%v: %+v", err, details)
+			}
+			if f := details.Failures[0]; f.Reason != FailureInsufficientEvidence || f.Scope != ScopeLatency ||
+				f.ServerID != id {
+				t.Fatalf("a silent population = %+v, want its reason recorded", f)
+			}
+		})
 	}
 }
 
