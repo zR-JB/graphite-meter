@@ -3,12 +3,12 @@
   import type { ResultArcPhase } from "./resultGauge";
   export interface GaugeDialState extends SweepTargetInput {
     showValue: boolean;
-    resultArcs: readonly {
-      phase: ResultArcPhase;
-      fraction: number;
-      dashed: boolean;
-      description: string;
-    }[];
+  }
+  interface ResultArc {
+    phase: ResultArcPhase;
+    fraction: number;
+    dashed: boolean;
+    description: string;
   }
 </script>
 
@@ -21,19 +21,24 @@
   import type { GaugeLayout } from "./gaugeLayout";
   import { resultGaugeHeadPlacements } from "./resultGauge";
 
-  let { input, layout }: { input: GaugeDialState; layout: GaugeLayout } =
-    $props();
+  let {
+    input,
+    layout,
+    result,
+  }: {
+    input: GaugeDialState;
+    layout: GaugeLayout;
+    result: { arcs: readonly ResultArc[]; opacity: number };
+  } = $props();
   const shadeId = $props.id();
   // An unseen dial snaps rather than animating.
   let seen = $state(true);
   const motion = $derived(seen && !still());
-  const completed = $derived(
-    input.phase === "complete" && input.resultArcs.length > 0,
-  );
   const target = $derived(sweepTarget(input));
+  const visible = $derived(input.showValue && target !== null);
   const headRadius = $derived.by(() => {
     const radius = Math.min(7.5, layout.arcWidth * 0.48);
-    const close = input.resultArcs.some((arc, index, arcs) =>
+    const close = result.arcs.some((arc, index, arcs) =>
       arcs
         .slice(index + 1)
         .some(
@@ -51,7 +56,7 @@
   );
   const placements = $derived(
     resultGaugeHeadPlacements(
-      input.resultArcs.map((arc) => arc.fraction),
+      result.arcs.map((arc) => arc.fraction),
       {
         baseRadius: layout.radius,
         arcSweep: layout.arcSweep,
@@ -61,39 +66,44 @@
     ),
   );
   const results = $derived(
-    input.resultArcs.map((arc, index) => ({
+    result.arcs.map((arc, index) => ({
       ...arc,
       ...placements[index],
       fraction: Math.min(1, Math.max(0, arc.fraction)),
     })),
   );
-  // Before a run and after a stop or failure the dial shows its bare track, never a pose that reads as a value.
-  const resting = $derived(
-    input.phase === "idle" ||
-      input.phase === "aborted" ||
-      input.phase === "error",
-  );
-  const accent = $derived(
-    resting
-      ? "var(--text-soft)"
-      : `var(--phase-${input.phase === "connecting" ? "warmup" : input.phase})`,
-  );
-
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  // The needle follows the readout's own smoothed value; only a change of phase, scale or evidence glides it.
+  // The needle follows the readout's own smoothed value and glides only across a change of scale.
+  // Without a value the live layer fades out holding its pose, and it is revealed at the measured value.
   const sweep = new Smoothed();
+  let accent = $state("var(--phase-latency)");
   let course = "";
+  let revealed = false;
   $effect(() => {
-    const next = target * 270;
-    const { phase, scaleBytesPerSec, latencyScaleMs, throughputEvidence } =
-      input;
-    const current = `${phase}:${scaleBytesPerSec}:${latencyScaleMs}:${throughputEvidence}`;
-    const snap = !motion || !input.showValue || completed;
-    const glide = current === course ? { finish: true } : { over: 480 };
-    course = current;
-    untrack(() => sweep.set(next, { snap, ...glide }));
+    const next = (target ?? 0) * 270;
+    const current = `${input.scaleBytesPerSec}:${input.latencyScaleMs}`;
+    const tone = `var(--phase-${input.phase})`;
+    if (!visible) revealed = false;
+    else
+      untrack(() => {
+        sweep.set(
+          next,
+          !motion || !revealed
+            ? { snap: true }
+            : current === course
+              ? { finish: true }
+              : { over: 480 },
+        );
+        accent = tone;
+        revealed = true;
+        course = current;
+      });
   });
+  const capUnderHead = $derived(
+    (sweep.current * Math.PI * layout.radius) / 180 <
+      headRadius + layout.arcWidth / 2,
+  );
   // Each half ring turns through its own 180°, so both clips meet at the crossing.
   const halfRing = (sweep: number) => {
     const r = layout.radius;
@@ -206,8 +216,8 @@
       </g>
     </g>
   </svg>
-  {#if completed}
-    <div class="result-layer">
+  {#if results.length}
+    <div class="result-layer" style:opacity={result.opacity}>
       <svg
         class="dial-art"
         aria-hidden="true"
@@ -276,7 +286,7 @@
   {/if}
   <div
     class="live"
-    class:visible={input.showValue && !completed && !resting}
+    class:visible
     style:--sweep={`${sweep.current}deg`}
     aria-hidden="true"
   >
@@ -316,6 +326,7 @@
       {/each}
       <svg
         class="start-cap"
+        style:visibility={capUnderHead ? "hidden" : null}
         width={diameter}
         height={diameter}
         viewBox={`0 0 ${diameter} ${diameter}`}
@@ -369,8 +380,7 @@
   .live.visible {
     opacity: 1;
   }
-  .motion .live,
-  .motion .result-layer {
+  .motion .live {
     transition: opacity var(--dur-slide) var(--ease-out);
   }
   .motion .live svg path {
@@ -378,11 +388,6 @@
   }
   .motion .live svg circle {
     transition: fill var(--dur-slide) linear;
-  }
-  @starting-style {
-    .motion .result-layer {
-      opacity: 0;
-    }
   }
   .sweep-ring {
     position: absolute;

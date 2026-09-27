@@ -28,11 +28,7 @@
   } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { Smoothed, type Handoff } from "../presentation/motion.svelte";
-  import type { Phase } from "../runner/contract";
-
-  let { status: view }: { status: Handoff<{ phase: Phase; label: string }> } =
-    $props();
+  import { handoff, Smoothed } from "../presentation/motion.svelte";
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -45,8 +41,7 @@
         ? `Tested ${indicatedServers.length} servers`
         : `${indicatedServers.length} servers selected`,
   );
-  // The instrument presents the phase it hands off to, never a flash of one it passes through.
-  const phase = $derived(view.shown.phase);
+  const phase = $derived(store.phase);
   let resultsBody = $state(0);
   const resultsHeight = new Smoothed();
   $effect(() => {
@@ -124,14 +119,18 @@
   });
   const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
   const liveTarget = $derived(liveTargets(store.live));
-  const showGaugeTicks = $derived(
-    !unusableStage &&
+  // Each part hands off what it shows, so its content only changes while it is faded out.
+  const ticks = handoff(
+    () =>
+      !unusableStage &&
       (phase === "latency" ||
         phase === "download" ||
         phase === "upload" ||
         phase === "bidirectional" ||
-        phase === "complete") &&
-      gaugeTicks.length > 1,
+        phase === "complete")
+        ? gaugeTicks.map((tick) => tick.label)
+        : [],
+    (labels) => labels.join(),
   );
 
   const readout = $derived(
@@ -158,38 +157,64 @@
     (rates
       ? { value: fmtSpeed(gaugeRate(rates.down + rates.up)), unit: gaugeUnit }
       : { value: MISSING, unit: "" });
-  const display = $derived(rateDisplay(liveRates));
   const spoken = $derived(rateDisplay(liveTarget));
-  const dialState = $derived.by<GaugeDialState>(() => {
-    const p = phase;
-    const scale = store.scales.gaugeBytesPerSec;
-    return {
-      phase: p,
-      showValue: !unusableStage,
-      valueBytesPerSec: unusableStage
-        ? 0
-        : p === "complete" && headlineArc
-          ? headlineArc.bytesPerSec
-          : liveRates
-            ? liveRates.down + liveRates.up
-            : 0,
-      scaleBytesPerSec: scale,
-      throughputEvidence:
-        p === "complete" ? terminalArcs.length > 0 : !!liveTarget,
-      latencyScaleMs: gaugeLatency.scaleMs,
-      rtt: liveReadout.rtt.current,
-      completedKind,
-      resultArcs:
-        p === "complete"
-          ? terminalArcs.map((arc) => ({
-              phase: arc.phase,
-              fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
-              dashed: arc.dashed,
-              description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
-            }))
-          : [],
-    };
+  const hero = handoff(
+    () => {
+      const scale = store.scales.gaugeBytesPerSec;
+      return {
+        terminal: readout.terminal,
+        display: rateDisplay(liveRates),
+        unit: gaugeUnit,
+        arcs:
+          phase === "complete"
+            ? terminalArcs.map((arc) => ({
+                phase: arc.phase,
+                fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
+                dashed: arc.dashed,
+                description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
+              }))
+            : [],
+      };
+    },
+    ({ terminal, display }) =>
+      terminal
+        ? `${terminal.phase}:${terminal.value}`
+        : `${display.value === MISSING}:${display.unit}`,
+  );
+  const { terminal, display } = $derived(hero.shown);
+  const dialState = $derived<GaugeDialState>({
+    phase,
+    showValue: !unusableStage,
+    valueBytesPerSec: liveRates ? liveRates.down + liveRates.up : 0,
+    scaleBytesPerSec: store.scales.gaugeBytesPerSec,
+    throughputEvidence: liveRates !== null,
+    latencyScaleMs: gaugeLatency.scaleMs,
+    rtt: liveReadout.rtt.current,
+    completedKind,
   });
+  const footer = handoff(
+    () => {
+      const { hint, status, failure } = readout;
+      if (store.preparing)
+        return { status: readout.preparationLabel, tone: "preparation" };
+      if (failure)
+        return {
+          status: failure.headline,
+          tone: "error",
+          hint: failure.detail,
+        };
+      if (status)
+        return {
+          status: status.headline,
+          tone: status.error ? "error" : "",
+          hint: status.action,
+        };
+      const known = PHASE_HINT[phase];
+      return hint ? { hint: known?.text ?? hint, tip: known?.tip } : {};
+    },
+    (notes: { status?: string; tone?: string; hint?: string; tip?: string }) =>
+      `${notes.status}|${notes.hint}`,
+  );
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
@@ -211,12 +236,16 @@
         class="gauge-face"
         style:--gauge-center-offset={`${layout.center.y - layout.height / 2}px`}
       >
-        <GaugeDial input={dialState} {layout} />
-        {#if showGaugeTicks}
+        <GaugeDial
+          input={dialState}
+          {layout}
+          result={{ arcs: hero.shown.arcs, opacity: hero.opacity }}
+        />
+        {#if ticks.shown.length > 1}
           <div
             class="gauge-ticks"
             aria-hidden="true"
-            style:opacity={view.opacity}
+            style:opacity={ticks.opacity}
           >
             {#each layout.labelPoints as point, index (index)}
               <span
@@ -224,31 +253,31 @@
                 data-anchor-x={point.anchorX}
                 data-anchor-y={point.anchorY}
                 style:left={`${point.x}px`}
-                style:top={`${point.y}px`}>{gaugeTicks[index].label}</span
+                style:top={`${point.y}px`}>{ticks.shown[index]}</span
               >
             {/each}
           </div>
         {/if}
-        <div class="metric-wrap" style:opacity={view.opacity}>
-          <div class="hero" class:terminal={!!readout.terminal}>
-            {#if readout.terminal}
+        <div class="metric-wrap" style:opacity={hero.opacity}>
+          <div class="hero" class:terminal={!!terminal}>
+            {#if terminal}
               <div
                 class="terminal-readout"
-                class:partial={readout.terminal.dashed}
+                class:partial={terminal.dashed}
                 aria-hidden="true"
               >
                 <span class="terminal-direction">
                   <span
                     class="tone-icon terminal-icon"
-                    data-tone={readout.terminal.direction}
+                    data-tone={terminal.direction}
                   >
-                    <Icon name={STAGE[readout.terminal.direction].icon} />
+                    <Icon name={STAGE[terminal.direction].icon} />
                   </span>
-                  {STAGE[readout.terminal.direction].label}
+                  {STAGE[terminal.direction].label}
                 </span>
-                <span class="terminal-number">{readout.terminal.value}</span>
-                <span class="terminal-unit">{gaugeUnit}</span>
-                {#if readout.terminal.dashed}
+                <span class="terminal-number">{terminal.value}</span>
+                <span class="terminal-unit">{hero.shown.unit}</span>
+                {#if terminal.dashed}
                   <span class="terminal-partial" data-tone={STATUS_TONE.partial}
                     >{OUTCOME.partial}</span
                   >
@@ -265,27 +294,16 @@
           </div>
         </div>
       </div>
-      <div class="gauge-footer" style:opacity={view.opacity}>
-        {#if readout.hint || readout.status || readout.failure}
+      <div class="gauge-footer" style:opacity={footer.opacity}>
+        {#if footer.shown.status || footer.shown.hint}
+          {@const { status, tone, hint, tip } = footer.shown}
           <div class="gauge-notes">
-            {#if store.preparing}
-              <span class="gauge-status preparation"
-                >{readout.preparationLabel}</span
-              >
-            {:else if readout.failure}
-              <span class="gauge-status error">{readout.failure.headline}</span>
-              <span class="gauge-hint">{readout.failure.detail}</span>
-            {:else if readout.status}
-              <span class="gauge-status" class:error={readout.status.error}>
-                {readout.status.headline}
-              </span>
-              <span class="gauge-hint">{readout.status.action}</span>
-            {:else if readout.hint}
-              {@const hint = PHASE_HINT[phase]}
-              <span
-                class="gauge-hint"
-                {@attach hint?.tip ? tooltip(() => hint.tip!) : null}
-                >{hint?.text ?? readout.hint}</span
+            {#if status}
+              <span class="gauge-status {tone}">{status}</span>
+            {/if}
+            {#if hint}
+              <span class="gauge-hint" {@attach tip ? tooltip(() => tip) : null}
+                >{hint}</span
               >
             {/if}
           </div>

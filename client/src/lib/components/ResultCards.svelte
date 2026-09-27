@@ -125,13 +125,15 @@
   function liveCard(key: Stage): SummaryCard {
     const active = status(key) === "active" || status(key) === "recovering";
     const timeout = key === "latency" && active && store.liveLatencyLost;
-    const { down = null, up = null } = store.live ?? {};
-    const [value, accessible] = !active
+    const own = active && (key === "latency" || live.phase === key);
+    const { down = null, up = null } =
+      store.live?.phase === key ? store.live : {};
+    const [value, accessible] = !own
       ? [null, null]
       : key === "latency"
-        ? [(live.rtt.current ?? store.liveRtt) || null, store.liveRtt || null]
+        ? [live.rtt.current, store.liveRtt]
         : [
-            live.rates ? live.rates.down + live.rates.up : null,
+            live.rates!.down + live.rates!.up,
             down == null && up == null ? null : (down ?? 0) + (up ?? 0),
           ];
     // A value's unit arrives with it, so a pending card never shifts its unit.
@@ -155,7 +157,7 @@
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
-      rows: active ? liveRows(key) : skeleton(key),
+      rows: own ? liveRows(key) : skeleton(key),
       accessible: active
         ? timeout
           ? "probe timeout"

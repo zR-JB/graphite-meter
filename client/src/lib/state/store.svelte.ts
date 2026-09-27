@@ -618,10 +618,14 @@ class AppStore {
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
+        // A stopped stage keeps how far it got.
+        if (to !== "aborted" || this.phase !== this.phaseStage) {
+          this.phaseStage = stage;
+          this.phaseFraction = 0;
+        }
         this.phase = to;
-        this.phaseStage = stage;
         this.phaseStartedAtMs = t;
-        this.phaseFraction = this.phaseElapsedMs = 0;
+        this.phaseElapsedMs = this.liveStageBytes = 0;
         this.phaseClock.set(0, { snap: true });
         this.live = null;
         if (to === "connecting") {
@@ -708,7 +712,9 @@ class AppStore {
       error: null,
       run: null,
       historyCandidate: null,
+      liveStageBytes: 0,
     });
+    this.#stageBase = { phase: "", bytes: 0, last: 0 };
     this.runSeq++;
   }
 

@@ -208,6 +208,10 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-tight);
   }
+  /* A live value changes width as it moves; its unit holds still. */
+  .active .num {
+    min-width: 5ch;
+  }
   .unit {
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);

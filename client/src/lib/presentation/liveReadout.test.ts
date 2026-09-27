@@ -2,7 +2,8 @@ import "../state/runes.testutil";
 import { expect, test } from "bun:test";
 import type { LiveSample } from "../runner/contract";
 
-const { LiveReadout, STALL_FADE_MS } = await import("./liveReadout.svelte");
+const { LiveReadout, STAGE_GLIDE_MS, STALL_FADE_MS } =
+  await import("./liveReadout.svelte");
 
 const live = (overrides: Partial<LiveSample> = {}): LiveSample => ({
   t: 0,
@@ -16,9 +17,9 @@ const live = (overrides: Partial<LiveSample> = {}): LiveSample => ({
   ...overrides,
 });
 const shown = (readout: InstanceType<typeof LiveReadout>, now: number) =>
-  readout.shown ? readout.down.at(now) + readout.up.at(now) : null;
+  readout.phase ? readout.down.at(now) + readout.up.at(now) : null;
 
-test("a stage change holds the last rate until its first evidence, which snaps", () => {
+test("a stage change holds the last rate until its first evidence, then glides at one pace", () => {
   const readout = new LiveReadout();
   readout.update(live(), 1, 0);
   expect(shown(readout, 0)).toBe(1_000);
@@ -28,14 +29,17 @@ test("a stage change holds the last rate until its first evidence, which snaps",
   for (const gap of [null, live({ phase: "upload", down: null })])
     readout.update(gap, 1, 300);
   expect(shown(readout, 300)).toBe(2_000);
-  readout.update(
-    live({ phase: "upload", down: null, up: 400, bridgedUp: 450 }),
-    1,
-    400,
-  );
-  expect(shown(readout, 400)).toBe(450);
-  readout.update(null, 2, 500);
-  expect(shown(readout, 500)).toBeNull();
+  const upload = (up: number) =>
+    live({ phase: "upload", down: null, up, bridgedUp: up });
+  readout.update(upload(450), 1, 400);
+  expect(readout.phase).toBe("upload");
+  expect(shown(readout, 400)).toBe(2_000);
+  // A sample during the glide retargets it without hurrying it.
+  readout.update(upload(650), 1, 400 + STAGE_GLIDE_MS / 2);
+  expect(shown(readout, 400 + STAGE_GLIDE_MS / 2)).toBe(1_225);
+  expect(shown(readout, 400 + STAGE_GLIDE_MS)).toBe(650);
+  readout.update(null, 2, 900);
+  expect(shown(readout, 900)).toBeNull();
 });
 
 test("a stall fades to zero once, over its own time", () => {

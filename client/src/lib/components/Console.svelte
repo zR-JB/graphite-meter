@@ -716,7 +716,7 @@
           stageArmed = false;
       }}
     >
-      <GaugePanel {status} /><ThroughputChart />
+      <GaugePanel /><ThroughputChart />
     </section>
   {/if}
 
