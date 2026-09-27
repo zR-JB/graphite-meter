@@ -1,22 +1,9 @@
-use askama::Template;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_server::auth::pages::{
-    ApprovalPage, ContinuePage, DonePage, LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, security_headers,
+    LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, approval_page, capacity_page, continue_page, done_page,
+    security_headers,
 };
 use sha2::{Digest, Sha256};
-
-fn login() -> LoginPage<'static> {
-    LoginPage {
-        csrf: "csrf-token",
-        provider: "Authelia",
-        challenge: "challenge",
-        password: true,
-        oidc: true,
-        oidc_ready: true,
-        notice: "",
-        status: "",
-    }
-}
 
 fn inline_blocks<'a>(html: &'a str, tag: &str) -> Vec<&'a str> {
     let open = format!("<{tag}>");
@@ -27,33 +14,82 @@ fn inline_blocks<'a>(html: &'a str, tag: &str) -> Vec<&'a str> {
         .collect()
 }
 
+#[derive(Default, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Case {
+    page: String,
+    csrf: String,
+    provider: String,
+    challenge: String,
+    notice: String,
+    status: String,
+    code: String,
+    origin: String,
+    password: bool,
+    oidc: bool,
+    oidc_ready: bool,
+    browser: bool,
+    capacity: bool,
+    opening: bool,
+}
+
+fn render(case: &Case) -> String {
+    match case.page.as_str() {
+        "login" => LoginPage {
+            csrf: &case.csrf,
+            provider: &case.provider,
+            challenge: &case.challenge,
+            password: case.password,
+            oidc: case.oidc,
+            oidc_ready: case.oidc_ready,
+            notice: &case.notice,
+            status: &case.status,
+        }
+        .render(),
+        "cli" if case.capacity => capacity_page(),
+        "cli" => approval_page(&case.code, &case.csrf, &case.challenge, &case.origin),
+        "cli-done" => done_page(case.browser),
+        "continue" => continue_page(&case.challenge, case.opening),
+        page => panic!("unknown page {page}"),
+    }
+}
+
+#[test]
+fn pages_render_as_go_renders_the_shared_goldens() {
+    let directory = concat!(env!("CARGO_MANIFEST_DIR"), "/../../go/internal/auth/testdata/pages");
+    let mut pages = 0;
+    for entry in std::fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        let golden = std::fs::read_to_string(&path).unwrap();
+        let (header, expected) = golden.split_once('\n').unwrap();
+        let case: Case = serde_json::from_str(header).unwrap();
+        let html = render(&case)
+            .replace(STYLES, "/* auth.css */")
+            .replace(THEME_SCRIPT, "/* theme.js */")
+            .replace(PENDING_SCRIPT, "/* pending.js */");
+        assert_eq!(html, expected, "{}", path.display());
+        pages += 1;
+    }
+    assert!(pages >= 15, "{pages} golden pages");
+}
+
 #[test]
 fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
+    let login = LoginPage {
+        csrf: "csrf-token",
+        provider: "Authelia",
+        challenge: "challenge",
+        password: true,
+        oidc: true,
+        oidc_ready: true,
+        notice: "",
+        status: "",
+    };
     let pages = [
-        (login().render().unwrap(), true),
-        (
-            ApprovalPage {
-                browser_capacity: false,
-                client_limit: 8,
-                browser_origin: "",
-                code: "1234",
-                csrf: "csrf",
-                challenge: "challenge",
-            }
-            .render()
-            .unwrap(),
-            true,
-        ),
-        (DonePage { browser: true }.render().unwrap(), false),
-        (
-            ContinuePage {
-                challenge: "",
-                opening: false,
-            }
-            .render()
-            .unwrap(),
-            false,
-        ),
+        (login.render(), true),
+        (approval_page("1234", "csrf", "challenge", ""), true),
+        (done_page(true), false),
+        (continue_page("", false), false),
     ];
     let headers = security_headers(None).unwrap();
     let csp = headers["content-security-policy"].to_str().unwrap();
@@ -73,7 +109,6 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
             let expected = format!("'sha256-{}'", STANDARD.encode(Sha256::digest(asset.as_bytes())));
             assert!(csp.contains(&expected));
         }
-        assert_eq!(html.matches("rel=\"icon\"").count(), 1);
     }
     assert_eq!(headers["cache-control"], "no-store");
     assert_eq!(headers["referrer-policy"], "same-origin");
@@ -83,123 +118,6 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
         "camera=(), microphone=(), geolocation=()"
     );
     assert!(!csp.contains("unsafe-inline"));
-}
-
-#[test]
-fn dynamic_fields_are_html_escaped_and_never_become_scripts() {
-    let attack = "\"><script>alert('x')</script>&";
-    let mut page = login();
-    page.csrf = attack;
-    page.challenge = attack;
-    page.provider = attack;
-    page.notice = "provider";
-    let html = page.render().unwrap();
-    assert!(!html.contains(attack));
-    assert!(!html.contains("<script>alert"));
-    assert_eq!(inline_blocks(&html, "script"), [THEME_SCRIPT, PENDING_SCRIPT]);
-    let approval = ApprovalPage {
-        browser_capacity: false,
-        client_limit: 8,
-        browser_origin: attack,
-        code: attack,
-        csrf: attack,
-        challenge: attack,
-    }
-    .render()
-    .unwrap();
-    assert!(!approval.contains(attack));
-    assert_eq!(inline_blocks(&approval, "script"), [THEME_SCRIPT, PENDING_SCRIPT]);
-    assert!(approval.contains("action=\"/auth/browser/approve\""));
-}
-
-#[test]
-fn login_notices_statuses_and_auth_methods_preserve_branches() {
-    for (notice, expected) in [
-        ("password", "Incorrect password."),
-        ("throttled", "Too many attempts."),
-        ("provider", "Authelia is unreachable"),
-        ("busy", "The server is busy."),
-        ("stale", "This sign-in form expired."),
-        ("unexpected", "Sign-in failed."),
-    ] {
-        let mut page = login();
-        page.notice = notice;
-        assert!(page.render().unwrap().contains(expected));
-    }
-    for (status, expected) in [
-        ("signed_out", "You're signed out."),
-        ("expired", "Your session ended."),
-        ("renew", "Sign in again before starting this long test."),
-    ] {
-        let mut page = login();
-        page.status = status;
-        assert!(page.render().unwrap().contains(expected));
-    }
-    let mut page = login();
-    page.password = false;
-    page.oidc_ready = false;
-    let html = page.render().unwrap();
-    assert!(!html.contains("action=\"/auth/password\""));
-    assert!(html.contains("type=\"submit\" disabled"));
-    assert!(html.contains("Authelia is temporarily unavailable."));
-    assert!(!html.contains("class=\"separator\""));
-    page.password = true;
-    page.oidc = false;
-    let html = page.render().unwrap();
-    assert!(!html.contains("action=\"/auth/oidc/start\""));
-    assert!(html.contains("autocomplete=\"current-password\""));
-}
-
-#[test]
-fn approval_capacity_and_completion_keep_expected_forms_and_scripts() {
-    let mut page = ApprovalPage {
-        browser_capacity: false,
-        client_limit: 8,
-        browser_origin: "",
-        code: "1234",
-        csrf: "csrf",
-        challenge: "challenge",
-    };
-    let terminal = page.render().unwrap();
-    assert!(terminal.contains("Approve terminal client"));
-    assert!(terminal.contains("action=\"/auth/cli/approve\""));
-    page.browser_origin = "https://meter.example";
-    assert!(page.render().unwrap().contains("Approve browser client"));
-    page.browser_capacity = true;
-    let capacity = page.render().unwrap();
-    assert!(capacity.contains("already has 8 measurement clients"));
-    assert!(!capacity.contains("<form"));
-    for browser in [false, true] {
-        let html = DonePage { browser }.render().unwrap();
-        assert!(html.contains(if browser { "Browser client" } else { "Terminal client" }));
-        assert!(!html.contains("<form"));
-        assert_eq!(inline_blocks(&html, "script"), [THEME_SCRIPT]);
-    }
-}
-
-#[test]
-fn continue_encodes_challenge_as_one_query_value() {
-    let page = ContinuePage {
-        challenge: "a&next=https://evil.example/\"<script>;#",
-        opening: true,
-    };
-    let destination = page.destination();
-    let (path, query) = destination.split_once('?').unwrap();
-    assert_eq!(path, "/auth/cli");
-    assert_eq!(
-        form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>(),
-        [("challenge".into(), page.challenge.into())]
-    );
-    let html = page.render().unwrap();
-    assert!(html.contains("<h1>Continue sign-in</h1>"));
-    assert!(!html.contains("<svg class=\"mark\""));
-    assert!(!html.contains(page.challenge));
-    let page = ContinuePage {
-        challenge: "",
-        opening: false,
-    };
-    assert_eq!(page.destination(), "/");
-    assert!(page.render().unwrap().contains("<h1>Signed in</h1>"));
 }
 
 #[test]

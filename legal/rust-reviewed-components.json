@@ -75,103 +75,6 @@
   },
   {
     "ecosystem": "cargo",
-    "name": "askama",
-    "reviewedVersion": "0.16.1",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "87cb0d734c723c083e51c825930ff42bce28596b52dee15567f6b28f19c195e3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "df20e0180764bf5bd76f74d47bc9e8c0069a666401629c390003a1d5eba99c92",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/askama-rs/askama; revision 9ae4d5bdf4352b35e34106e38944c90d7a7ede3e. Cargo archive SHA-256 6024d73179f43f15ccd2b881bfea6fee7f3a46ec53f33b52210dea749ebebaa4. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "askama_derive",
-    "reviewedVersion": "0.16.1",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "87cb0d734c723c083e51c825930ff42bce28596b52dee15567f6b28f19c195e3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "df20e0180764bf5bd76f74d47bc9e8c0069a666401629c390003a1d5eba99c92",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/askama-rs/askama; revision 9ae4d5bdf4352b35e34106e38944c90d7a7ede3e. Cargo archive SHA-256 071ee5ebf2138e3ad180e0aacf6940c2cab5e6d8333741d9925c7bee2b153f39. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "askama_macros",
-    "reviewedVersion": "0.16.1",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "87cb0d734c723c083e51c825930ff42bce28596b52dee15567f6b28f19c195e3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "df20e0180764bf5bd76f74d47bc9e8c0069a666401629c390003a1d5eba99c92",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/askama-rs/askama; revision 9ae4d5bdf4352b35e34106e38944c90d7a7ede3e. Cargo archive SHA-256 643e1c7cbb6aec1d920332fe51a7c0d8219e273dcb8602db03f5263e4d16487b. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "askama_parser",
-    "reviewedVersion": "0.16.1",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT OR Apache-2.0",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "benches/librustdoc/LICENSE.md",
-        "sha256": "ceca995f2a9ba147d4ada210d9527769091630651e565e40e841acf435c9cea2",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-APACHE",
-        "sha256": "87cb0d734c723c083e51c825930ff42bce28596b52dee15567f6b28f19c195e3",
-        "kind": "license"
-      },
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "df20e0180764bf5bd76f74d47bc9e8c0069a666401629c390003a1d5eba99c92",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/askama-rs/askama; revision 9ae4d5bdf4352b35e34106e38944c90d7a7ede3e. Cargo archive SHA-256 2c5ae75772275d268b03ab8bdccdd12117b6169ee23256942b34e46c9f476583. Reviewed Askama MIT grant and benchmark-only copied librustdoc attribution at eeb59f16a5f40e14dc29b95155b7f2569329e3ec; keep nested benchmark notice conservatively."
-  },
-  {
-    "ecosystem": "cargo",
     "name": "atomic-waker",
     "reviewedVersion": "1.1.2",
     "upstream": "registry+https://github.com/rust-lang/crates.io-index",
@@ -5729,24 +5632,6 @@
     "modified": false,
     "reviewDecision": "approved",
     "reviewNotes": "Source: https://github.com/seanmonstar/want; revision 6e65401c71fa55c75b6fb52f595a692ef3643939. Cargo archive SHA-256 bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e. Reviewed packaged MIT copyright/permission/disclaimer text and every additional LICENSE/COPYRIGHT file listed here. The source declaration permits MIT; preserve all packaged attribution and alternative license texts."
-  },
-  {
-    "ecosystem": "cargo",
-    "name": "winnow",
-    "reviewedVersion": "1.0.4",
-    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
-    "declaredLicenseExpression": "MIT",
-    "selectedLicenseExpression": "MIT",
-    "legalFiles": [
-      {
-        "name": "LICENSE-MIT",
-        "sha256": "cb5aedb296c5246d1f22e9099f925a65146f9f0d6b4eebba97fd27a6cdbbab2d",
-        "kind": "license"
-      }
-    ],
-    "modified": false,
-    "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/winnow-rs/winnow; revision 7539ec0fc27144bfdcf9a68b0dbbec48bd0d5bae. Cargo archive SHA-256 23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81. Reviewed source declaration, packaged MIT copyright/permission/disclaimer text and additional license/COPYRIGHT notices. Preserve every listed file, including alternative-license text; unmodified third-party source."
   },
   {
     "ecosystem": "cargo",

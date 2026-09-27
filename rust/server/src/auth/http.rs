@@ -4,7 +4,7 @@ use super::{
     TicketError,
     logging::{Counter, SecurityLog},
     oidc::OidcFailure,
-    pages::{self, ApprovalPage, ContinuePage, DonePage, LoginPage},
+    pages::{self, LoginPage},
     password_login::{PasswordAttempt, PasswordLogin},
     policy::{Authorization, AuthorizedRequest, Policy, constant_equal, cookie},
     rate::{AttemptLimiter, Budget},
@@ -15,7 +15,6 @@ use crate::{
     config::{AuthConfig, AuthMode, ConfigError},
     cors::Access,
 };
-use askama::Template;
 use bytes::Bytes;
 use http::{HeaderValue, Method, Request, Response, StatusCode, header};
 use ipnet::IpNet;
@@ -176,7 +175,7 @@ impl Service {
         };
         let mut result = html(
             StatusCode::OK,
-            &LoginPage {
+            LoginPage {
                 csrf: &nonce,
                 provider: self.oidc.as_ref().map_or("", |oidc| oidc.name()),
                 challenge,
@@ -185,7 +184,8 @@ impl Service {
                 oidc_ready: provider.is_some(),
                 notice,
                 status,
-            },
+            }
+            .render(),
         );
         if let Some(provider) = provider {
             result
@@ -356,13 +356,7 @@ impl Service {
             if let Some(prior) = identity.prior {
                 self.sessions.revoke(&prior);
             }
-            let mut result = html(
-                StatusCode::OK,
-                &ContinuePage {
-                    challenge: &identity.challenge,
-                    opening: false,
-                },
-            );
+            let mut result = html(StatusCode::OK, pages::continue_page(&identity.challenge, false));
             set_cookie(
                 &mut result,
                 "__Host-gm_session",
@@ -506,29 +500,17 @@ impl Service {
                         && text(request, "sec-fetch-mode") == "navigate"
                         && text(request, "sec-fetch-dest") == "document"
                     {
-                        return html(
-                            StatusCode::OK,
-                            &ContinuePage {
-                                challenge,
-                                opening: true,
-                            },
-                        );
+                        return html(StatusCode::OK, pages::continue_page(challenge, true));
                     }
                     return redirect(&query_url("/login", &[("challenge", challenge)]));
                 };
+                let origin = view.browser_origin.as_deref().unwrap_or_default();
                 html(
                     StatusCode::OK,
-                    &ApprovalPage {
-                        browser_capacity: false,
-                        client_limit: 8,
-                        browser_origin: view.browser_origin.as_deref().unwrap_or(""),
-                        code: &view.code,
-                        csrf: session.session().csrf(),
-                        challenge,
-                    },
+                    pages::approval_page(&view.code, session.session().csrf(), challenge, origin),
                 )
             }
-            Err(ApprovalError::GrantCapacity) => capacity_page(origin),
+            Err(ApprovalError::GrantCapacity) => capacity_page(),
             Err(ApprovalError::Capacity) => {
                 if !browser {
                     self.log.count(Counter::Capacity);
@@ -558,22 +540,9 @@ impl Service {
         ) {
             Ok(()) => {
                 self.log.count(Counter::CliApproval);
-                html(StatusCode::OK, &DonePage { browser })
+                html(StatusCode::OK, pages::done_page(browser))
             }
-            Err(ApprovalError::GrantCapacity) => {
-                let origin = self
-                    .sessions
-                    .browser_approval_redirect(challenge)
-                    .and_then(|path| path.split_once('?').map(|(_, query)| query.to_owned()))
-                    .map(|query| {
-                        form_urlencoded::parse(query.as_bytes())
-                            .find(|(key, _)| key == "client_origin")
-                            .map(|(_, value)| value.into_owned())
-                            .unwrap_or_default()
-                    })
-                    .unwrap_or_default();
-                capacity_page(&origin)
-            }
+            Err(ApprovalError::GrantCapacity) => capacity_page(),
             Err(_) => response(StatusCode::FORBIDDEN),
         }
     }
@@ -692,19 +661,14 @@ fn response(status: StatusCode) -> Response<Bytes> {
     *response.headers_mut() = pages::security_headers(None).expect("static auth CSP");
     response
 }
-fn html(status: StatusCode, template: &impl Template) -> Response<Bytes> {
-    match template.render() {
-        Ok(body) => {
-            let mut response = response(status);
-            response.headers_mut().insert(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("text/html; charset=utf-8"),
-            );
-            *response.body_mut() = body.into();
-            response
-        }
-        Err(_) => response(StatusCode::INTERNAL_SERVER_ERROR),
-    }
+fn html(status: StatusCode, body: String) -> Response<Bytes> {
+    let mut response = response(status);
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    *response.body_mut() = body.into();
+    response
 }
 fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Bytes> {
     let mut response = response(status);
@@ -738,18 +702,8 @@ fn login_rejected(notice: &str, challenge: &str) -> Response<Bytes> {
     }
     redirect(&query_url("/login", &fields))
 }
-fn capacity_page(origin: &str) -> Response<Bytes> {
-    html(
-        StatusCode::TOO_MANY_REQUESTS,
-        &ApprovalPage {
-            browser_capacity: true,
-            client_limit: 8,
-            browser_origin: origin,
-            code: "",
-            csrf: "",
-            challenge: "",
-        },
-    )
+fn capacity_page() -> Response<Bytes> {
+    html(StatusCode::TOO_MANY_REQUESTS, pages::capacity_page())
 }
 fn query_url(path: &str, values: &[(&str, &str)]) -> String {
     format!(
