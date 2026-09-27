@@ -1,7 +1,7 @@
 //! The layer over real noq connections on loopback: our client against our server, and raw peers
 //! that send what a conforming client never would. Deadlines run on tokio's paused clock.
 use bytes::Bytes;
-use graphite_meter_http3::{Code, Error, RequestStream, client, server};
+use graphite_meter_http3::{Code, Error, RequestStream, WtCode, client, server, webtransport::Session};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{
     future::Future,
@@ -47,6 +47,11 @@ struct Peers {
 }
 
 async fn peers(limit: usize) -> Result<Peers, TestError> {
+    peers_with(limit, None, true).await
+}
+
+/// `window` caps the client's per-stream receive window; `reliable_reset` is its reset_stream_at offer.
+async fn peers_with(limit: usize, window: Option<u32>, reliable_reset: bool) -> Result<Peers, TestError> {
     let (certificate, key) = test_identity::generate_identity("localhost")?;
     let certificate = CertificateDer::from_pem_slice(certificate.as_bytes())?;
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -61,9 +66,8 @@ async fn peers(limit: usize) -> Result<Peers, TestError> {
     let mut transport = noq::TransportConfig::default();
     // Fake-clock jumps stay inside the idle timeout.
     transport.max_idle_timeout(Some(Duration::from_secs(120).try_into()?));
-    let transport = Arc::new(transport);
     let mut server = noq::ServerConfig::with_crypto(Arc::new(noq::crypto::rustls::QuicServerConfig::try_from(tls)?));
-    server.transport_config(transport.clone());
+    server.transport_config(Arc::new(transport));
     let mut roots = rustls::RootCertStore::empty();
     roots.add(certificate)?;
     let mut tls = rustls::ClientConfig::builder_with_provider(provider)
@@ -72,9 +76,17 @@ async fn peers(limit: usize) -> Result<Peers, TestError> {
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"h3".to_vec()];
     let mut client = noq::ClientConfig::new(Arc::new(noq::crypto::rustls::QuicClientConfig::try_from(tls)?));
-    client.transport_config(transport);
+    let mut client_transport = noq::TransportConfig::default();
+    client_transport.max_idle_timeout(Some(Duration::from_secs(120).try_into()?));
+    if let Some(window) = window {
+        client_transport.stream_receive_window(window.into());
+    }
+    client.transport_config(Arc::new(client_transport));
     let server = noq::Endpoint::server(server, "127.0.0.1:0".parse()?)?;
-    let client_endpoint = noq::Endpoint::client("127.0.0.1:0".parse()?)?;
+    let mut endpoint = noq::EndpointConfig::default();
+    endpoint.reliable_stream_reset(reliable_reset);
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    let client_endpoint = noq::Endpoint::new(endpoint, None, socket, noq::default_runtime().ok_or("runtime")?)?;
     let connecting = client_endpoint.connect_with(client, server.local_addr()?, "localhost")?;
     let (client, accepted) = tokio::join!(connecting, async { server.accept().await.expect("incoming").await });
     Ok(Peers {
@@ -399,6 +411,12 @@ async fn protocol_violations_close_the_connection_with_their_code() -> Result<()
             })
         );
     }
+    // A datagram's quarter stream ID must fit a stream ID.
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve(&peers, |_, _| async {});
+    peers.client.send_datagram(varint(1 << 60).into())?;
+    assert_eq!(closed_with(&peers.client).await, Code::H3_DATAGRAM_ERROR);
+    drop(serving);
     Ok(())
 }
 
@@ -583,5 +601,341 @@ async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Resu
     tokio::task::yield_now().await;
     jump(Duration::from_secs(6)).await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+    Ok(())
+}
+
+const DRAFT02: [(u64, u64); 2] = [(0x2b603742, 1), (0x33, 1)];
+
+fn settings(pairs: &[(u64, u64)]) -> Vec<u8> {
+    let payload: Vec<u8> = pairs
+        .iter()
+        .flat_map(|&(id, value)| [varint(id), varint(value)].concat())
+        .collect();
+    [vec![0x00], frame(0x04, &payload)].concat()
+}
+
+fn connect_head(path: &str) -> Vec<u8> {
+    let head = [
+        (":method", "CONNECT"),
+        (":protocol", "webtransport"),
+        (":scheme", "https"),
+        (":authority", "localhost"),
+    ];
+    frame(0x01, &section(&[&head[..], &[(":path", path)]].concat()))
+}
+
+/// A raw client's CONNECT; a task reads its response stream so stream credit keeps flowing.
+async fn raw_connect(
+    quic: &noq::Connection,
+    path: &str,
+) -> Result<(noq::SendStream, tokio::task::JoinHandle<(Vec<u8>, Result<(), Code>)>), TestError> {
+    let (mut send, mut recv) = quic.open_bi().await?;
+    send.write_all(&connect_head(path)).await?;
+    Ok((send, tokio::spawn(async move { raw_stream(&mut recv).await })))
+}
+
+/// Accepts every CONNECT as a session and runs `scenario` on it; other requests get an empty 200.
+fn serve_sessions<F, H>(peers: &Peers, scenario: H) -> (Serving, Arc<Notify>)
+where
+    H: Fn(Session) -> F + Send + Sync + 'static,
+    F: Future<Output = ()> + Send + 'static,
+{
+    let scenario = Arc::new(scenario);
+    serve(peers, move |request, stream| {
+        let scenario = scenario.clone();
+        async move {
+            if request.method() != http::Method::CONNECT {
+                let mut send = stream.split().0;
+                send.send_response(http::Response::new(())).await.unwrap();
+                send.finish().await.unwrap();
+            } else if let Ok(session) = Session::accept(stream).await {
+                scenario(session).await;
+            }
+        }
+    })
+}
+
+/// A raw stream's bytes, and how it ended: FIN, a reset code, or the connection's end as code 0.
+async fn raw_stream(recv: &mut noq::RecvStream) -> (Vec<u8>, Result<(), Code>) {
+    let mut bytes = Vec::new();
+    loop {
+        match recv.read_chunk(usize::MAX).await {
+            Ok(Some(chunk)) => bytes.extend_from_slice(&chunk),
+            Ok(None) => return (bytes, Ok(())),
+            Err(noq::ReadError::Reset(code)) => return (bytes, Err(Code(code.into_inner()))),
+            Err(_) => return (bytes, Err(Code(0))),
+        }
+    }
+}
+
+#[tokio::test]
+async fn cancelled_lanes_keep_their_association_header() -> Result<(), TestError> {
+    // One-byte stream credit makes the header trickle, so the first lane is cancelled mid-header.
+    for (reliable_reset, window) in [(true, Some(1)), (true, None), (false, Some(1)), (false, None)] {
+        let peers = peers_with(usize::MAX, window, reliable_reset).await?;
+        let cancel = Arc::new(Notify::new());
+        let cancelled = cancel.clone();
+        let (serving, _) = serve_sessions(&peers, move |session| {
+            let cancelled = cancelled.clone();
+            async move {
+                if window.is_some() {
+                    tokio::select! {
+                        _ = session.open_uni() => panic!("the header outran its stream credit"),
+                        () = cancelled.notified() => {}
+                    }
+                } else {
+                    let mut lane = session.open_uni().await.unwrap();
+                    lane.write_all(&[1; 64 * 1024]).await.unwrap();
+                    lane.reset(WtCode(7));
+                }
+                let mut next = session.open_uni().await.unwrap();
+                next.write_all(b"next").await.unwrap();
+                next.finish().unwrap();
+                let _ = session.closed().await;
+            }
+        });
+        let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+        let (_connect, _response) = raw_connect(&peers.client, "/wt").await?;
+        // The server's control stream comes first.
+        let _server_control = peers.client.accept_uni().await?;
+        let mut lane = peers.client.accept_uni().await?;
+        let mut bytes = Vec::new();
+        if window.is_some() {
+            bytes.extend_from_slice(&lane.read_chunk(1).await?.unwrap_or_default());
+            cancel.notify_one();
+        }
+        let (rest, end) = raw_stream(&mut lane).await;
+        bytes.extend(rest);
+        let code = if window.is_some() { WtCode(0) } else { WtCode(7) };
+        assert_eq!(end, Err(code.to_http()), "reset, never FIN");
+        if reliable_reset {
+            assert_eq!(&bytes[..3], [0x40, 0x54, 0x00], "RESET_STREAM_AT keeps the header");
+        }
+        let mut next = peers.client.accept_uni().await?;
+        assert_eq!(raw_stream(&mut next).await, (b"\x40\x54\x00next".to_vec(), Ok(())));
+        drop((lane, next, serving));
+        peers.client.close(0_u32.into(), b"done");
+        settled(&peers.budget).await;
+    }
+    Ok(())
+}
+
+fn connect_request() -> http::Request<()> {
+    http::Request::get("https://localhost/wt").body(()).unwrap()
+}
+
+#[tokio::test]
+async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move {
+        let reply = session.read_datagram().await.unwrap();
+        session.send_datagram(&[&b"echo "[..], &reply].concat()).unwrap();
+        let mut upload = session.accept_uni().await.unwrap();
+        let mut received = Vec::new();
+        while let Some(chunk) = upload.read_chunk().await.unwrap() {
+            received.extend_from_slice(&chunk);
+        }
+        let mut download = session.open_uni().await.unwrap();
+        download.write_chunk(received.into()).await.unwrap();
+        download.finish().unwrap();
+        let _ = session.closed().await;
+    });
+    let (driver, requests) = client(&peers);
+    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    assert_eq!(session.id(), 0);
+    assert!(session.max_datagram_size().is_some_and(|size| size > 1000));
+    session.send_datagram_wait(b"PING,1").await?;
+    assert_eq!(session.read_datagram().await.as_deref(), Some(&b"echo PING,1"[..]));
+    let mut upload = session.open_uni().await?;
+    upload.write_all(b"upload").await?;
+    upload.finish()?;
+    let mut download = session.accept_uni().await.expect("server stream");
+    assert_eq!(download.read_chunk().await?.as_deref(), Some(&b"upload"[..]));
+    assert_eq!(download.read_chunk().await?, None);
+    drop((download, session));
+    settled(&peers.budget).await;
+    assert_eq!(
+        (driver.await?, serving.await?),
+        (Ok(()), Ok(())),
+        "a sessions-only connection ends with its session"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), TestError> {
+    // The server ends the session; the peer's FIN ends the wait long before 1 s.
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move {
+        let started = std::time::Instant::now();
+        session.close(2, "lifetime").await;
+        assert!(started.elapsed() < Duration::from_millis(900));
+    });
+    let (driver, requests) = client(&peers);
+    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    assert_eq!(session.closed().await?, (2, "lifetime".into()));
+    session.close(0, "").await;
+    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+
+    // The peer ends it: the server only finishes its side.
+    let peers = self::peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move {
+        assert_eq!(session.closed().await.unwrap(), (7, "bye".into()));
+        session.close(1, "unused").await;
+    });
+    let (driver, requests) = client(&peers);
+    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    session.close(7, "bye").await;
+    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+
+    // A raw peer that never finishes gets STOP_SENDING WT_SESSION_GONE once the second passes.
+    let peers = self::peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(4, "shutdown").await });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    let (connect, response) = raw_connect(&peers.client, "/wt").await?;
+    while peers.budget.used.load(Ordering::Relaxed) == 0 {
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+    jump(Duration::from_secs(2)).await;
+    assert_eq!(stopped(&connect).await, Some(Code::WT_SESSION_GONE));
+    let (bytes, end) = response.await?;
+    let close = [&[0x68, 0x43, 0x0c, 0, 0, 0, 4][..], b"shutdown"].concat();
+    assert!(bytes.ends_with(&frame(0x00, &close)) && end.is_ok(), "CLOSE, then FIN");
+    drop(serving);
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_session_per_connection_and_streams_wait_for_theirs() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let release = Arc::new(Notify::new());
+    let (sessions_tx, mut sessions) = tokio::sync::mpsc::unbounded_channel();
+    let (serving, _) = serve_sessions(&peers, {
+        let release = release.clone();
+        move |session| {
+            let (release, sessions_tx) = (release.clone(), sessions_tx.clone());
+            async move {
+                let _ = sessions_tx.send(session.id());
+                let mut streams = Vec::new();
+                tokio::select! {
+                    () = release.notified() => {}
+                    () = async { while let Some(stream) = session.accept_uni().await { streams.push(stream.id()) } } => {}
+                }
+                let _ = sessions_tx.send(streams.len() as u64 + 1000);
+            }
+        }
+    });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    // A plain request first: this connection is not sessions-only, so it outlives its sessions.
+    let (mut send, mut recv) = peers.client.open_bi().await?;
+    send.write_all(&request_head(&[])).await?;
+    send.finish()?;
+    assert!(response_bytes(&mut recv).await.is_ok());
+    // A stream for session 12 arrives before its CONNECT and waits.
+    let early = uni(
+        &peers.client,
+        &[varint(0x54), varint(12), b"early".to_vec()].concat(),
+        false,
+    )
+    .await?;
+    let (_first, _first_response) = raw_connect(&peers.client, "/wt").await?;
+    assert_eq!(sessions.recv().await, Some(4));
+    let (second, mut second_response) = peers.client.open_bi().await?;
+    let mut second = second;
+    second.write_all(&connect_head("/wt")).await?;
+    assert_eq!(
+        response_bytes(&mut second_response).await,
+        Err(Code::H3_REQUEST_REJECTED)
+    );
+    assert_eq!(stopped(&second).await, Some(Code::H3_REQUEST_REJECTED));
+    release.notify_one();
+    assert_eq!(sessions.recv().await, Some(1000));
+    // Session 4 is gone; a stream for it is refused at once.
+    let gone = uni(&peers.client, &[varint(0x54), varint(4)].concat(), false).await?;
+    assert_eq!(stopped(&gone).await, Some(Code::WT_SESSION_GONE));
+    let (_third, _third_response) = raw_connect(&peers.client, "/wt").await?;
+    assert_eq!(sessions.recv().await, Some(12));
+    drop(early);
+    // A stream for a session that never comes is refused after 5 s.
+    let before = peers.budget.used.load(Ordering::Relaxed);
+    let orphan = uni(&peers.client, &[varint(0x54), varint(64)].concat(), false).await?;
+    while peers.budget.used.load(Ordering::Relaxed) <= before {
+        tokio::task::yield_now().await;
+    }
+    jump(Duration::from_secs(6)).await;
+    assert_eq!(stopped(&orphan).await, Some(Code::WT_BUFFERED_STREAM_REJECTED));
+    release.notify_one();
+    assert_eq!(sessions.recv().await, Some(1001), "the early stream joined session 12");
+    drop(serving);
+    Ok(())
+}
+
+/// Reads one whole frame from a raw stream.
+async fn first_frame(recv: &mut noq::RecvStream) -> Result<Vec<u8>, TestError> {
+    let mut bytes = Vec::new();
+    loop {
+        let header =
+            varint_at(&bytes, 0).and_then(|(_, a)| varint_at(&bytes, a).map(|(length, b)| a + b + length as usize));
+        if let Some(end) = header.filter(|&end| bytes.len() >= end) {
+            return Ok(bytes[..end].to_vec());
+        }
+        bytes.extend_from_slice(&recv.read_chunk(usize::MAX).await?.ok_or("stream ended")?);
+    }
+}
+
+fn varint_at(bytes: &[u8], at: usize) -> Option<(u64, usize)> {
+    let first = *bytes.get(at)?;
+    let size = 1 << (first >> 6);
+    let slice = bytes.get(at..at + size)?;
+    Some((
+        slice[1..]
+            .iter()
+            .fold(u64::from(first & 0x3f), |value, byte| value << 8 | u64::from(*byte)),
+        size,
+    ))
+}
+
+#[tokio::test]
+async fn webtransport_needs_the_peer_signal_and_datagrams() -> Result<(), TestError> {
+    // Our QPACK: :status 200 is static index 25, 400 is 67.
+    let (ok, bad_request) = (frame(0x01, &[0x00, 0x00, 0xd9]), frame(0x01, &[0x00, 0x00, 0xff, 0x04]));
+    for (pairs, draft02, allowed) in [
+        (&DRAFT02[..], true, true),
+        (&[(0x2c7cf000, 1), (0x33, 1)], false, true),
+        (&[(0x2b603742, 1)], false, false),
+        (&[(0xffd277, 1)], false, false),
+        (&[], false, false),
+    ] {
+        let peers = peers(usize::MAX).await?;
+        let (serving, _) = serve_sessions(&peers, |session| async move {
+            let _ = session.closed().await;
+        });
+        let _control = uni(&peers.client, &settings(pairs), false).await?;
+        let (mut send, mut recv) = peers.client.open_bi().await?;
+        send.write_all(&connect_head("/wt")).await?;
+        let head = first_frame(&mut recv).await?;
+        match (allowed, draft02) {
+            // Draft 02 requires the response header naming it.
+            (true, true) => assert!(head.len() > ok.len() && head[2..5] == ok[2..], "{head:x?}"),
+            (true, false) => assert_eq!(head, ok),
+            (false, _) => assert_eq!(head, bad_request, "{pairs:x?}"),
+        }
+        drop((send, recv, serving));
+    }
+
+    // Without the peer's SETTINGS the CONNECT waits 5 s, then gets 400.
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |_| async {});
+    let (mut send, mut recv) = peers.client.open_bi().await?;
+    send.write_all(&connect_head("/wt")).await?;
+    while peers.budget.used.load(Ordering::Relaxed) == 0 {
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+    jump(Duration::from_secs(6)).await;
+    assert_eq!(first_frame(&mut recv).await?, bad_request);
+    drop((send, serving));
     Ok(())
 }

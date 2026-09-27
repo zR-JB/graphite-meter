@@ -1,6 +1,6 @@
 //! HTTP/3 and WebTransport for Graphite Meter's routes, shared by the server and the client.
-// WebTransport's codec is called from the session layer, which comes next.
-#![allow(dead_code)]
+// The fuzz harness builds the codec without the connection layer that calls it.
+#![cfg_attr(not(feature = "io"), allow(dead_code))]
 
 mod capsule;
 #[cfg(feature = "io")]
@@ -22,6 +22,8 @@ mod settings;
 #[cfg(feature = "io")]
 mod stream;
 mod varint;
+#[cfg(feature = "io")]
+pub mod webtransport;
 
 pub use code::{Code, WtCode};
 #[cfg(feature = "io")]

@@ -98,3 +98,12 @@ impl From<noq::WriteError> for Error {
         }
     }
 }
+
+impl From<noq::SendDatagramError> for Error {
+    fn from(error: noq::SendDatagramError) -> Self {
+        match error {
+            noq::SendDatagramError::ConnectionLost(error) => error.into(),
+            _ => Self::Refused,
+        }
+    }
+}

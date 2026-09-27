@@ -71,6 +71,9 @@ impl Request {
                         match Charge::new(&stream.shared().budget, bytes) {
                             Some(charge) => {
                                 let mut request = head.message;
+                                if request.method() != http::Method::CONNECT {
+                                    stream.shared().state().sessions.served = true;
+                                }
                                 request.extensions_mut().insert(HeadCharge(Arc::new(charge)));
                                 stream.recv.content_length(head.content_length);
                                 return Ok(request);

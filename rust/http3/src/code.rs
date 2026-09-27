@@ -6,7 +6,6 @@ pub struct Code(pub u64);
 
 impl Code {
     pub const H3_NO_ERROR: Self = Self(0x100);
-    pub const H3_GENERAL_PROTOCOL_ERROR: Self = Self(0x101);
     pub const H3_STREAM_CREATION_ERROR: Self = Self(0x103);
     pub const H3_CLOSED_CRITICAL_STREAM: Self = Self(0x104);
     pub const H3_FRAME_UNEXPECTED: Self = Self(0x105);

@@ -77,6 +77,10 @@ impl RequestStream {
     pub(crate) fn shared(&self) -> &Shared {
         &self.recv.shared
     }
+
+    pub(crate) fn shared_arc(&self) -> Arc<Shared> {
+        self.recv.shared.clone()
+    }
 }
 
 /// Reads a message: its head, then DATA payloads as noq delivered them. Trailers are checked and dropped.

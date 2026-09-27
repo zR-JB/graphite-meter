@@ -1,6 +1,7 @@
 //! The connection driver for both roles: our control stream, the peer's control and QPACK streams,
 //! stream classification, GOAWAY and idle. Streams hold [`Shared`], the state they need from it.
 use crate::{
+    capsule,
     charge::{Budget, Charge},
     code::Code,
     error::Error,
@@ -8,6 +9,7 @@ use crate::{
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint,
+    webtransport::{PendingReset, RecvStream, Registry},
 };
 use bytes::Bytes;
 use std::{
@@ -50,7 +52,7 @@ pub(crate) struct Shared {
     state: Mutex<State>,
 }
 
-struct State {
+pub(crate) struct State {
     /// Request stream halves alive; a server connection without any for a while closes.
     live: usize,
     idle_since: Instant,
@@ -59,11 +61,26 @@ struct State {
     goaway: Option<u64>,
     /// The code this side closed the connection with.
     closed: Option<Code>,
+    pub(crate) sessions: Registry,
+    resets: Vec<PendingReset>,
 }
 
 impl Shared {
-    fn state(&self) -> std::sync::MutexGuard<'_, State> {
+    pub(crate) fn state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().expect("HTTP/3 state poisoned")
+    }
+
+    /// Hands a cancelled stream's unfinished association header to the driver.
+    pub(crate) fn defer_reset(&self, mut pending: PendingReset) {
+        let Some(charge) = Charge::new(&self.budget, size_of::<PendingReset>()) else {
+            return pending.abandon();
+        };
+        pending._charge = Some(charge);
+        let mut state = self.state();
+        state.resets.push(pending);
+        if let Some(driver) = state.driver.take() {
+            driver.wake();
+        }
     }
 
     pub(crate) fn hold(&self, halves: usize) {
@@ -106,10 +123,19 @@ impl Shared {
 
 type Pending<T> = Pin<Box<dyn Future<Output = Result<T, noq::ConnectionError>> + Send>>;
 
+/// Routes each datagram to its session; ends only with the connection or a malformed ID.
+async fn datagrams(shared: Arc<Shared>) -> Result<(), Error> {
+    loop {
+        let datagram = shared.quic.read_datagram().await?;
+        let (session, payload) = capsule::datagram(datagram).map_err(|code| shared.close(code))?;
+        shared.state().sessions.datagram(session, payload);
+    }
+}
+
 /// The layer's fixed state per connection, for the application's connection floor: the driver,
-/// what its streams share, the peer's control and QPACK streams, and three boxed stream futures.
+/// what its streams share, the peer's control and QPACK streams, and four boxed stream futures.
 pub const CONNECTION_BYTES: usize =
-    size_of::<Connection>() + size_of::<Shared>() + 3 * size_of::<Uni>() + size_of::<PeerControl>() + 3 * 256;
+    size_of::<Connection>() + size_of::<Shared>() + 3 * size_of::<Uni>() + size_of::<PeerControl>() + 4 * 256;
 
 fn accept_uni(quic: &noq::Connection) -> Pending<noq::RecvStream> {
     let quic = quic.clone();
@@ -126,7 +152,9 @@ pub(crate) struct Connection {
     control: Control,
     uni: Pending<noq::RecvStream>,
     bi: Option<Pending<(noq::SendStream, noq::RecvStream)>>,
+    datagrams: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>,
     streams: Vec<Uni>,
+    resets: Vec<PendingReset>,
     /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
     critical: [bool; 3],
     /// Streams still covered by [`CONNECTION_BYTES`] instead of a charge.
@@ -164,6 +192,8 @@ enum Kind {
     Decoder {
         continuing: bool,
     },
+    /// Classified; the driver hands it to the session registry.
+    Session(u64),
 }
 
 #[derive(Default)]
@@ -194,6 +224,8 @@ impl Connection {
                 driver: None,
                 goaway: None,
                 closed: None,
+                sessions: Registry::default(),
+                resets: Vec::new(),
             }),
         });
         Self {
@@ -205,7 +237,9 @@ impl Connection {
             },
             uni: accept_uni(&quic),
             bi: (role == Role::Server).then(|| accept_bi(&quic)),
+            datagrams: Box::pin(datagrams(shared.clone())),
             streams: Vec::new(),
+            resets: Vec::new(),
             critical: [false; 3],
             floor: 3,
             next_request: 0,
@@ -272,6 +306,12 @@ impl Connection {
         if let Err(code) = self.poll_streams(cx) {
             return Poll::Ready(Err(self.shared.close(code)));
         }
+        if let Poll::Ready(Err(error)) = self.datagrams.as_mut().poll(cx) {
+            return Poll::Ready(Err(error));
+        }
+        let now = Instant::now();
+        self.resets.append(&mut self.shared.state().resets);
+        self.resets.retain_mut(|pending| !pending.poll(cx, now));
         while let Some(bi) = &mut self.bi {
             let Poll::Ready(streams) = bi.as_mut().poll(cx) else {
                 break;
@@ -359,8 +399,20 @@ impl Connection {
         while index < self.streams.len() {
             if self.poll_uni(index, cx)? {
                 index += 1;
-            } else {
-                self.streams.swap_remove(index);
+                continue;
+            }
+            let uni = self.streams.swap_remove(index);
+            if let Kind::Session(session) = uni.kind {
+                match Charge::new(&self.shared.budget, size_of::<RecvStream>()) {
+                    Some(charge) => {
+                        let stream = RecvStream::new(uni.stream, uni.input, charge);
+                        self.shared.state().sessions.stream(session, stream);
+                    }
+                    None => {
+                        let mut stream = uni.stream;
+                        let _ = stream.stop(Code::H3_REQUEST_REJECTED.into());
+                    }
+                }
             }
         }
         Ok(())
@@ -373,7 +425,11 @@ impl Connection {
         loop {
             match &mut uni.kind {
                 Kind::Unknown { header, .. } => {
-                    if let Some((kind, _)) = header.read(&mut uni.input) {
+                    if let Some((kind, session)) = header.read(&mut uni.input) {
+                        if let Some(session) = session {
+                            uni.kind = Kind::Session(session);
+                            return Ok(false);
+                        }
                         let (slot, next) = match kind {
                             frame::CONTROL_STREAM => (0, Kind::Control(Box::default())),
                             frame::ENCODER_STREAM => (1, Kind::Encoder),
@@ -413,6 +469,7 @@ impl Connection {
                     }
                     uni.input.clear();
                 }
+                Kind::Session(_) => return Ok(false),
             }
             match pin!(uni.stream.read_chunk(usize::MAX)).poll(cx) {
                 Poll::Pending => return Ok(true),
@@ -434,13 +491,18 @@ impl Connection {
                 }
                 _ => true,
             });
-            let (live, idle_since) = {
-                let state = self.shared.state();
-                (state.live, state.idle_since)
+            let (live, idle_since, sessions_only, reordering) = {
+                let mut state = self.shared.state();
+                let sessions = &mut state.sessions;
+                let sessions_only = sessions.carried && !sessions.served;
+                let reordering = sessions.expire(now);
+                (state.live, state.idle_since, sessions_only, reordering)
             };
-            let idle = (self.shared.role == Role::Server && live == 0).then_some(idle_since + IDLE);
-            let finished = self.drain.is_some_and(|drain| live == 0 || drain <= now);
-            if finished || idle.is_some_and(|idle| idle <= now) {
+            let server = self.shared.role == Role::Server;
+            let idle = (server && live == 0).then_some(idle_since + IDLE);
+            // A connection that only carried sessions ends with its last one: browsers would hold its slot.
+            let done = live == 0 && (self.drain.is_some() || server && sessions_only);
+            if done || self.drain.is_some_and(|drain| drain <= now) || idle.is_some_and(|idle| idle <= now) {
                 self.shared.close(Code::H3_NO_ERROR);
                 return Poll::Ready(Ok(None));
             }
@@ -448,7 +510,14 @@ impl Connection {
                 Kind::Unknown { deadline, .. } => Some(deadline),
                 _ => None,
             });
-            let Some(deadline) = types.chain(idle).chain(self.drain).min() else {
+            let resets = self.resets.iter().map(PendingReset::deadline);
+            let Some(deadline) = types
+                .chain(resets)
+                .chain(reordering)
+                .chain(idle)
+                .chain(self.drain)
+                .min()
+            else {
                 return Poll::Pending;
             };
             if self.timer.deadline() != deadline {
