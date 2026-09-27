@@ -86,13 +86,13 @@ unchanged per-connection caps. A refused charge closes only that connection with
 drops, including after connection destruction. Until an admitted upload reads
 on the connection, its receive window is 64 KiB, so a silent or unauthenticated
 peer can make Noq hold at most 192 KiB of reassembly. The first grant reserves
-the rest of a 16 MiB connection window until Noq drops the connection, and Noq
-charges the connection's buffers to it first. The window never shrinks, so the
-peer never holds more credit than is reserved. Transmit windows adapt between
-2 MiB and 32 MiB. Neither window grows once three quarters of the budget is
-used, so pressure slows new transfers instead of closing running ones; one log
-line reports when growth is held back, and one when usage falls below five
-eighths again. Endpoint
+the rest of Go's 48 MiB connection window until Noq drops the connection, and
+Noq charges the connection's buffers to it first. The window never shrinks, so
+the peer never holds more credit than is reserved; streams get Go's 32 MiB.
+Transmit windows adapt between 2 MiB and 48 MiB. Neither window grows once three
+quarters of the budget is used, so pressure slows new transfers instead of
+closing running ones; one log line reports when growth is held back, and one
+when usage falls below five eighths again. Endpoint
 reservations cover the configured UDP socket buffers, receive batches and
 pending incoming packets until the socket and its senders drop. Additional
 incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The

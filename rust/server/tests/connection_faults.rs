@@ -236,7 +236,7 @@ async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), T
     let id = reply["uploadId"].as_str().ok_or("upload id")?.to_owned();
 
     let size = 4 * 1024 * 1024;
-    let started = tokio::time::Instant::now();
+    let granted = quic.stats().frame_rx.max_data;
     let mut upload = sender
         .send_request(Request::post(format!("https://localhost/upload?id={id}")).body(())?)
         .await?;
@@ -247,11 +247,13 @@ async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), T
     while let Some(mut data) = upload.recv_data().await? {
         reply.extend_from_slice(&data.copy_to_bytes(data.remaining()));
     }
-    let elapsed = started.elapsed();
     assert_eq!(serde_json::from_slice::<serde_json::Value>(&reply)?["bytes"], size);
-    let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
-    eprintln!("h3 4 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
-    assert!(round_trips < 20.0, "window-bound upload: {round_trips:.1} RTT");
+    let updates = quic.stats().frame_rx.max_data - granted;
+    let floor_bound = (size - 64 * 1024) as u64 / (64 * 1024);
+    assert!(
+        updates < floor_bound,
+        "{updates} MAX_DATA round trips; each raises a 64 KiB floor window by 64 KiB at most"
+    );
     quic.close(0_u32.into(), b"done");
     driving.abort();
     stop.send(()).ok();

@@ -15,14 +15,15 @@ const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const WT_SESSION_GONE: u64 = 0x170d7b68;
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
-const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
+const MAX_SEND_WINDOW: u64 = RECEIVE_WINDOW as u64;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 const INCOMING_BYTES: u64 = 64 * 1024;
 const INCOMING_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
 const UNI_STREAMS: u32 = 23;
-const RECEIVE_WINDOW: u32 = 16 * 1024 * 1024;
-// One maximal 64 KiB HTTP/3 frame of credit until admitted work raises it.
+// Go's autotuning ceilings, and one maximal 64 KiB HTTP/3 frame of credit until an upload is admitted.
+const STREAM_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
+const RECEIVE_WINDOW: u32 = 48 * 1024 * 1024;
 const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
 const CREDIT_BYTES: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 // h3 copies one maximal 64 KiB frame plus a 16 KiB block per stream outside Noq's pools.
@@ -110,8 +111,7 @@ impl HttpServer {
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams(u32::try_from(max_requests(&self.config.limits))?.into());
         transport.max_concurrent_uni_streams(UNI_STREAMS.into());
-        // A fixed 1 MiB Noq stream window capped one upload near 80 Mbit/s at 100 ms RTT.
-        transport.stream_receive_window((8 * 1024 * 1024_u32).into());
+        transport.stream_receive_window(STREAM_RECEIVE_WINDOW.into());
         transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
         transport.send_window(MIN_SEND_WINDOW);
         transport.shared_budget(Some(self.memory.clone()));
