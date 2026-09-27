@@ -850,19 +850,20 @@
     min-width: 0;
     padding: 9px 10px;
   }
+  /* The badge wraps below a date that needs the whole cell. */
   .date-cell {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: var(--space-2);
+    gap: 2px var(--space-2);
   }
   time {
     display: flex;
-    flex: 1;
+    flex: 1 1 auto;
     flex-wrap: wrap;
     align-items: baseline;
     gap: 0 var(--space-2);
     min-width: 0;
-    white-space: nowrap;
   }
   time strong,
   .metric-cell strong {
