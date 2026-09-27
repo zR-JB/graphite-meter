@@ -36,6 +36,11 @@ type (
 	freshnessMsg struct{}
 )
 
+const (
+	fps           = 30
+	frameInterval = time.Second / fps
+)
+
 type prepareState int
 
 const (
@@ -105,7 +110,7 @@ func newModel(cfg goclient.Config) model {
 	controller := goclient.NewController(context.Background())
 	st := newStyles(true)
 	dial := spinner.MiniDot
-	dial.FPS = time.Second / 30
+	dial.FPS = frameInterval
 	h := help.New()
 	h.Styles = st.helpStyles()
 	return model{

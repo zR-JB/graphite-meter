@@ -84,11 +84,11 @@ func verifyThroughputWebTransport(ctx context.Context, cred credential, target *
 
 type wtBus struct{ sess *wtSession }
 
-func (b wtBus) Send(_ context.Context, msg string) error { return b.sess.SendDatagram([]byte(msg)) }
+func (b wtBus) Send(_ context.Context, msg []byte) error { return b.sess.SendDatagram(msg) }
 
-func (b wtBus) Recv(ctx context.Context) (string, error) {
+func (b wtBus) Recv(ctx context.Context) ([]byte, error) {
 	data, err := b.sess.ReceiveDatagram(ctx)
-	return string(data), laneEnding(err)
+	return data, laneEnding(err)
 }
 
 func (b wtBus) Close() { b.sess.close() }

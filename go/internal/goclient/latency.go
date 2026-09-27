@@ -3,8 +3,10 @@ package goclient
 import (
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,24 +15,43 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
+// pingBus reuses its buffers at tens of thousands of probes per second: a message is valid until the next Recv.
 type pingBus interface {
-	Send(ctx context.Context, msg string) error
-	Recv(ctx context.Context) (string, error)
+	Send(ctx context.Context, msg []byte) error
+	Recv(ctx context.Context) ([]byte, error)
 	Close()
 }
 
-type wsBus struct{ conn *websocket.Conn }
-
-func (b wsBus) Send(ctx context.Context, msg string) error {
-	return b.conn.Write(ctx, websocket.MessageText, []byte(msg))
+type wsBus struct {
+	conn *websocket.Conn
+	buf  [wire.MaxPongLen + 1]byte
 }
 
-func (b wsBus) Recv(ctx context.Context) (string, error) {
-	_, msg, err := b.conn.Read(ctx)
-	return string(msg), laneEnding(err)
+func (b *wsBus) Send(ctx context.Context, msg []byte) error {
+	return b.conn.Write(ctx, websocket.MessageText, msg)
 }
 
-func (b wsBus) Close() { _ = b.conn.Close(websocket.StatusNormalClosure, "") }
+func (b *wsBus) Recv(ctx context.Context) ([]byte, error) {
+	_, message, err := b.conn.Reader(ctx)
+	if err != nil {
+		return nil, laneEnding(err)
+	}
+	n, err := io.ReadFull(message, b.buf[:])
+	switch err {
+	case io.EOF, io.ErrUnexpectedEOF:
+		return b.buf[:n], nil
+	case nil:
+		_, err = io.Copy(io.Discard, message)
+		return nil, laneEnding(err)
+	}
+	return nil, laneEnding(err)
+}
+
+func (b *wsBus) Close() { _ = b.conn.CloseNow() }
+
+func appendPing(dst []byte, id uint32) []byte {
+	return strconv.AppendUint(append(dst, "PING,"...), uint64(id), 10)
+}
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	return dialLatencyBus(ctx, r.cred, r.websocketHTTP, r.latencyTarget)
@@ -63,7 +84,7 @@ func dialLatencyBus(
 		}
 		return nil, fmt.Errorf("latency WebSocket connection failed: %w", err)
 	}
-	return wsBus{conn: conn}, nil
+	return &wsBus{conn: conn}, nil
 }
 
 func verifyLatency(
@@ -82,7 +103,7 @@ func verifyLatency(
 	datagrams := target.Transport == wire.TransportWebTransport
 	for {
 		sent := time.Now()
-		if err := bus.Send(ctx, wire.EncodePing(0)); err != nil {
+		if err := bus.Send(ctx, appendPing(nil, 0)); err != nil {
 			return 0, fmt.Errorf("latency probe failed: %w", err)
 		}
 		for {
@@ -98,7 +119,7 @@ func verifyLatency(
 			if err != nil {
 				break
 			}
-			if pong, err := wire.DecodePong(reply); err == nil && pong.ID == 0 {
+			if pong, err := wire.DecodePong(string(reply)); err == nil && pong.ID == 0 {
 				return time.Since(sent), nil
 			}
 		}
@@ -151,8 +172,8 @@ func (r *runner) measureLatency(
 	var readers sync.WaitGroup
 	defer func() {
 		cancel()
-		readers.Wait()
 		conn.Close()
+		readers.Wait()
 	}()
 	finish := func(err error) (LatencyStats, error) { return probes.finish(time.Now(), duration), err }
 	emit := func(at time.Time, sample LatencySample) {
@@ -161,13 +182,14 @@ func (r *runner) measureLatency(
 	startReader := func(bus pingBus) {
 		readers.Go(func() {
 			for {
-				msg, err := bus.Recv(measureCtx)
+				// The bus closes with the measurement, so a read needs no context of its own.
+				msg, err := bus.Recv(context.Background())
 				if err != nil {
 					recvErr <- err
 					return
 				}
 				now := time.Now() // Reply receipt ends raw RTT before diagnostic parsing.
-				f, err := wire.DecodePong(msg)
+				f, err := wire.DecodePong(string(msg))
 				if err != nil {
 					continue
 				}
@@ -181,6 +203,7 @@ func (r *runner) measureLatency(
 			}
 		})
 	}
+	ping := make([]byte, 0, len("PING,4294967295"))
 	send := func() error {
 		id, ok := probes.register(time.Now())
 		if !ok {
@@ -189,7 +212,8 @@ func (r *runner) measureLatency(
 		if replyDriven {
 			pace.Reset(probes.backup())
 		}
-		err := conn.Send(measureCtx, wire.EncodePing(id))
+		ping = appendPing(ping[:0], id)
+		err := conn.Send(measureCtx, ping)
 		if err != nil {
 			probes.sendFailed(id)
 		}

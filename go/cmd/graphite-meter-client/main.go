@@ -106,7 +106,7 @@ func main() {
 		}()
 		m = runHeadless(m)
 	} else {
-		program := tea.NewProgram(m, tea.WithFPS(30), tea.WithoutSignalHandler())
+		program := tea.NewProgram(m, tea.WithFPS(fps), tea.WithoutSignalHandler())
 		go func() {
 			caught.Store(<-signals)
 			program.Quit()

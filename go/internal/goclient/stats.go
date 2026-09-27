@@ -1,13 +1,16 @@
 package goclient
 
 import (
+	"maps"
 	"math"
 	"slices"
 	"time"
 )
 
+// latencyStats counts each distinct RTT: a fast reply-driven stage repeats values, so memory stays bounded.
 type latencyStats struct {
-	values                             []time.Duration
+	counts                             map[time.Duration]int
+	count                              int
 	timeouts, unresolved, sendFailures int
 	previous                           time.Duration
 	hasPrevious                        bool
@@ -36,7 +39,11 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 		s.pairs++
 	}
 	s.previous, s.hasPrevious = rtt, true
-	s.values = append(s.values, rtt)
+	if s.counts == nil {
+		s.counts = map[time.Duration]int{}
+	}
+	s.counts[rtt]++
+	s.count++
 	// A diagnostic cannot turn an otherwise valid raw reply into a missing outcome.
 	if handlingNanos <= math.MaxInt64 && time.Duration(handlingNanos) <= rtt {
 		s.timingCount++
@@ -47,7 +54,7 @@ func (s *latencyStats) add(rtt time.Duration, timeout bool, handlingNanos uint64
 
 func (s *latencyStats) snapshot() LatencyStats {
 	out := LatencyStats{
-		Count:        len(s.values),
+		Count:        s.count,
 		Timeouts:     s.timeouts,
 		Unresolved:   s.unresolved,
 		SendFailures: s.sendFailures,
@@ -64,29 +71,23 @@ func (s *latencyStats) snapshot() LatencyStats {
 	if s.pairs > 0 {
 		out.Jitter = s.variation / time.Duration(s.pairs)
 	}
-	if len(s.values) == 0 {
+	if s.count == 0 {
 		return out
 	}
-	slices.Sort(s.values)
-	out.P50, out.P95 = median(s.values), percentile(s.values, 0.95)
+	sorted := slices.Sorted(maps.Keys(s.counts))
+	out.P50 = s.nth(sorted, (s.count+1)/2)
+	if s.count%2 == 0 {
+		out.P50 += (s.nth(sorted, s.count/2+1) - out.P50) / 2
+	}
+	out.P95 = s.nth(sorted, max(1, int(math.Ceil(0.95*float64(s.count)))))
 	return out
 }
 
-func median(xs []time.Duration) time.Duration {
-	if len(xs) == 0 {
-		return 0
+func (s *latencyStats) nth(sorted []time.Duration, rank int) time.Duration {
+	for _, rtt := range sorted {
+		if rank -= s.counts[rtt]; rank <= 0 {
+			return rtt
+		}
 	}
-	mid := len(xs) / 2
-	if len(xs)%2 != 0 {
-		return xs[mid]
-	}
-	return xs[mid-1] + (xs[mid]-xs[mid-1])/2
-}
-
-func percentile(xs []time.Duration, p float64) time.Duration {
-	if len(xs) == 0 {
-		return 0
-	}
-	rank := max(1, min(len(xs), int(math.Ceil(p*float64(len(xs))))))
-	return xs[rank-1]
+	return sorted[len(sorted)-1]
 }

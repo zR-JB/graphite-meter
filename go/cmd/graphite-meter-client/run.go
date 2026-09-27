@@ -208,6 +208,7 @@ func newRunState(cfg goclient.Config, focus string, started time.Time) *runState
 	return r
 }
 
+// waitEvents gathers one frame of events: a reply-driven stage emits thousands per second.
 func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-events
@@ -215,17 +216,20 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 			return nil
 		}
 		batch := []goclient.Event{e}
-		for {
+		frame := time.NewTimer(frameInterval)
+		defer frame.Stop()
+		for e.Kind != goclient.EventDone {
 			select {
-			case e, ok := <-events:
+			case e, ok = <-events:
 				if !ok {
 					return eventsMsg{seq: seq, events: batch}
 				}
 				batch = append(batch, e)
-			default:
+			case <-frame.C:
 				return eventsMsg{seq: seq, events: batch}
 			}
 		}
+		return eventsMsg{seq: seq, events: batch}
 	}
 }
 
