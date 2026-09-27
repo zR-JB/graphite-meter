@@ -3,7 +3,7 @@ use ipnet::IpNet;
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl Connections {
         } else {
             crate::client_address::client_keys(addr)
         };
-        let mut counts = self.0.counts.lock().expect("connection counts poisoned");
+        let mut counts = self.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
         if crate::client_address::share_full(&keys, self.0.client_max, |key| {
             counts.clients.get(key).copied().unwrap_or_default()
         }) || buffered
@@ -98,7 +98,7 @@ impl Connections {
         self.0
             .counts
             .lock()
-            .expect("connection counts poisoned")
+            .unwrap_or_else(PoisonError::into_inner)
             .stats
     }
 }
@@ -110,7 +110,7 @@ impl Drop for Permit {
             .0
             .counts
             .lock()
-            .expect("connection counts poisoned");
+            .unwrap_or_else(PoisonError::into_inner);
         counts.stats.active -= 1;
         for key in &self.keys {
             let count = counts
@@ -141,4 +141,21 @@ pub fn subnet(addr: IpAddr) -> IpNet {
     IpNet::new(addr, if addr.is_ipv4() { 32 } else { 64 })
         .expect("valid prefix length")
         .trunc()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn poisoned_counts_keep_admitting() {
+        let connections = super::Connections::new(4, 4, vec![]);
+        let held = connections.clone();
+        std::thread::spawn(move || {
+            let _counts = held.0.counts.lock().unwrap();
+            panic!("bug under the lock");
+        })
+        .join()
+        .unwrap_err();
+        drop(connections.acquire("192.0.2.1:1".parse().unwrap()).unwrap());
+        assert_eq!(connections.stats().active, 0);
+    }
 }

@@ -149,7 +149,7 @@ impl HttpServer {
                     let Ok(connecting) = incoming.accept() else { continue; };
                     let Some(weak) = connecting.weak_handle() else { continue; };
                     let window = Arc::new(Mutex::new(SendWindow::new()));
-                    self.memory.quic.lock().expect("memory registry poisoned").push(QuicReservation {
+                    self.memory.quic.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(QuicReservation {
                         weak, _lease: lease, window: window.clone(),
                     });
                     let server = self.clone();
@@ -386,20 +386,20 @@ impl MemoryBudget {
     fn reclaim(&self) {
         self.quic
             .lock()
-            .expect("memory registry poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|reservation| {
                 if let Some(connection) = reservation.weak.upgrade() {
                     reservation
                         .window
                         .lock()
-                        .expect("send window poisoned")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .refund(&connection);
                     true
                 } else {
                     reservation
                         .window
                         .lock()
-                        .expect("send window poisoned")
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .extra = None;
                     reservation.weak.has_receive_allocations()
                 }

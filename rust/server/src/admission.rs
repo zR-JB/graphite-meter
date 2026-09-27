@@ -1,7 +1,7 @@
 //! Shared operation budgets. A permit lives until the operation has fully stopped.
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, PoisonError},
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -84,7 +84,7 @@ impl Admission {
     }
 
     pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
-        let mut counts = self.0.counts.lock().expect("admission mutex poisoned");
+        let mut counts = self.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
         let (clients, limit) = match class {
             Class::Request => (
                 &counts.requests_by_client,
@@ -131,7 +131,7 @@ impl Admission {
             self.0
                 .counts
                 .lock()
-                .expect("admission mutex poisoned")
+                .unwrap_or_else(PoisonError::into_inner)
                 .active,
             self.0.limits.operations,
         )
@@ -145,7 +145,7 @@ impl Drop for Permit {
             .0
             .counts
             .lock()
-            .expect("admission mutex poisoned");
+            .unwrap_or_else(PoisonError::into_inner);
         counts.active -= 1;
         let clients = match self.class {
             Class::Request => &mut counts.requests_by_client,

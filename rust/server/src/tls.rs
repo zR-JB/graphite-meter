@@ -12,7 +12,7 @@ use std::{
     fmt,
     future::Future,
     path::PathBuf,
-    sync::{Arc, RwLock},
+    sync::{Arc, PoisonError, RwLock},
     time::{Duration, SystemTime},
 };
 
@@ -101,7 +101,7 @@ impl Certificates {
             &self.advertised_names,
             now,
         )?);
-        let mut current = self.current.write().expect("certificate state poisoned");
+        let mut current = self.current.write().unwrap_or_else(PoisonError::into_inner);
         let changed = current.cert != replacement.cert;
         if changed {
             log_certificate(&replacement, now);
@@ -129,7 +129,7 @@ impl ResolvesServerCert for Certificates {
         Some(
             self.current
                 .read()
-                .expect("certificate state poisoned")
+                .unwrap_or_else(PoisonError::into_inner)
                 .clone(),
         )
     }
