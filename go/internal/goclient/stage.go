@@ -210,33 +210,62 @@ func (s *stageRun) lost() error {
 	return c.noSurvivors()
 }
 
-func (s *stageRun) ready() error {
-	timer := time.NewTimer(stageReadyTimeout)
-	defer timer.Stop()
-	for slices.ContainsFunc(s.servers, func(server *stageServer) bool { return len(s.missing(server)) > 0 }) {
+type stageEvent struct {
+	report *readyResource
+	now    time.Time
+	sample *sampledBoundary
+}
+
+// await serves every phase: outcomes are handled here, and step decides when the phase is over.
+func (s *stageRun) await(timer <-chan time.Time, step func(stageEvent) (bool, error)) error {
+	for {
+		var e stageEvent
 		select {
 		case <-s.ctx.Done():
 			return context.Cause(s.ctx)
-		case resource := <-s.reports:
-			s.seen[resource] = true
 		case outcome := <-s.outcomes:
 			if err := s.handle(outcome); err != nil {
 				return err
 			}
-		case now := <-timer.C:
+		case report := <-s.reports:
+			e.report = &report
+		case e.now = <-timer:
+		case sample := <-s.results():
+			e.sample = &sample
+		}
+		if over, err := step(e); over || err != nil {
+			return err
+		}
+	}
+}
+
+func (s *stageRun) ready() error {
+	waiting := func() bool {
+		return slices.ContainsFunc(s.servers, func(server *stageServer) bool { return len(s.missing(server)) > 0 })
+	}
+	if !waiting() {
+		return nil
+	}
+	timer := time.NewTimer(stageReadyTimeout)
+	defer timer.Stop()
+	return s.await(timer.C, func(e stageEvent) (bool, error) {
+		switch {
+		case e.report != nil:
+			s.seen[*e.report] = true
+		case !e.now.IsZero():
 			failure := fmt.Errorf("server resources were not ready within %v: %w", stageReadyTimeout,
 				context.DeadlineExceeded)
 			for _, server := range s.servers {
 				for _, role := range s.missing(server) {
-					s.fail(server, role, failure, now)
+					s.fail(server, role, failure, e.now)
 				}
 			}
 			if err := s.lost(); err != nil {
-				return err
+				return true, err
 			}
 		}
-	}
-	return nil
+		return !waiting(), nil
+	})
 }
 
 func (s *stageRun) warmup() error {
@@ -251,18 +280,7 @@ func (s *stageRun) warmup() error {
 	}
 	timer := time.NewTimer(warmup)
 	defer timer.Stop()
-	for {
-		select {
-		case <-s.ctx.Done():
-			return context.Cause(s.ctx)
-		case outcome := <-s.outcomes:
-			if err := s.handle(outcome); err != nil {
-				return err
-			}
-		case <-timer.C:
-			return nil
-		}
-	}
+	return s.await(timer.C, func(e stageEvent) (bool, error) { return !e.now.IsZero(), nil })
 }
 
 func (s *stageRun) window() error {
@@ -282,22 +300,13 @@ func (s *stageRun) window() error {
 		s.beginSampling(started)
 		s.startSampler()
 	}
-	for {
-		select {
-		case <-s.ctx.Done():
-			return context.Cause(s.ctx)
-		case outcome := <-s.outcomes:
-			if err := s.handle(outcome); err != nil {
-				return err
-			}
-		case sample := <-s.results():
-			if _, err := s.observe(sample); err != nil {
-				return err
-			}
-		case <-end.C:
-			return nil
+	return s.await(end.C, func(e stageEvent) (bool, error) {
+		if e.sample != nil {
+			_, err := s.observe(*e.sample)
+			return err != nil, err
 		}
-	}
+		return !e.now.IsZero(), nil
+	})
 }
 
 func (s *stageRun) results() <-chan sampledBoundary {
@@ -310,20 +319,12 @@ func (s *stageRun) results() <-chan sampledBoundary {
 func (s *stageRun) final() error {
 	s.ending = true
 	close(s.sampler.finish)
-	for {
-		select {
-		case <-s.ctx.Done():
-			return context.Cause(s.ctx)
-		case outcome := <-s.outcomes:
-			if err := s.handle(outcome); err != nil {
-				return err
-			}
-		case sample := <-s.results():
-			if done, err := s.observe(sample); done {
-				return err
-			}
+	return s.await(nil, func(e stageEvent) (bool, error) {
+		if e.sample == nil {
+			return false, nil
 		}
-	}
+		return s.observe(*e.sample)
+	})
 }
 
 func (s *stageRun) open() (time.Time, error) {
