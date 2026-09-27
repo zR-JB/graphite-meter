@@ -295,7 +295,7 @@ async fn quic_server(
     Ok((address, task, stop))
 }
 
-fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestError> {
+fn quic_client_config(tls: &Tls) -> Result<quinn::ClientConfig, TestError> {
     let provider = Arc::new(graphite_meter_server::crypto::provider());
     let mut roots = RootCertStore::empty();
     roots.add(tls.certificate.clone())?;
@@ -304,6 +304,12 @@ fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestE
         .with_root_certificates(roots)
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
+    Ok(quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
+    )))
+}
+
+fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestError> {
     let mut endpoint_config = quinn::EndpointConfig::default();
     endpoint_config.reliable_stream_reset(reliable_reset);
     let endpoint = quinn::Endpoint::new(
@@ -312,9 +318,7 @@ fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestE
         graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?,
         quinn::default_runtime().unwrap(),
     )?;
-    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
-    )));
+    endpoint.set_default_client_config(quic_client_config(tls)?);
     Ok(endpoint)
 }
 
@@ -676,17 +680,28 @@ async fn webtransport_only_connection_ends_with_its_session() -> Result<(), Test
         let (address, server, stop) = quic_server(&tls, Config::default()).await?;
         let endpoint = quic_client(&tls, true)?;
 
-        let mut refused = WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
+        let mut config = quic_client_config(&tls)?;
+        let mut transport = quinn::TransportConfig::default();
+        transport.stream_receive_window(16_u32.into());
+        config.transport_config(Arc::new(transport));
+        let mut refused = WebTransportClient::new(endpoint.connect_with(config, address, "localhost")?.await?).await?;
         assert_eq!(refused.max_sessions, 1);
         let mut control = refused.session("/wt/upload?id=").await?;
         let mut progress = refused.incoming.recv().await.ok_or("missing progress stream")?;
-        let record = poll_fn(|cx| progress.poll_data(cx))
-            .await?
-            .ok_or("empty progress stream")?;
+        tokio::time::pause();
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        tokio::time::resume();
+        let mut record = Vec::new();
+        while !record.ends_with(b"\n") {
+            record.extend_from_slice(&poll_fn(|cx| progress.poll_data(cx)).await?.ok_or("truncated record")?);
+        }
         assert!(matches!(
             graphite_meter_core::wire::decode_upload_progress(record.trim_ascii_end())?,
             graphite_meter_core::wire::UploadProgress::Error { .. }
         ));
+        tokio::time::pause();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::resume();
         assert_eq!(
             close_capsule(&mut control).await?,
             Capsule::CloseSession {

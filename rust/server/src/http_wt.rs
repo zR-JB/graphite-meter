@@ -216,7 +216,7 @@ impl HttpServer {
         let mut connect_bytes = 0_u64;
         let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let settle = Instant::now() + if verify { Duration::from_secs(5) } else { REFUSAL_LINGER };
+        let mut settle = verify.then(|| Instant::now() + Duration::from_secs(5));
         let mut ending = LaneEnding::Finished;
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
@@ -234,7 +234,7 @@ impl HttpServer {
                         }
                     }
                     _ = tokio::time::sleep_until(deadline) => { ending = LaneEnding::Lifetime; break; },
-                    _ = tokio::time::sleep_until(settle), if verify || refused => break,
+                    _ = tokio::time::sleep_until(settle.unwrap_or(deadline)), if settle.is_some() => break,
                     _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
                     data = stream.recv_data() => {
                         let Some(mut data) = data? else { decoder.finish()?; break; };
@@ -255,7 +255,11 @@ impl HttpServer {
                             break;
                         }
                     }
-                    Some(_) = controls.next(), if !controls.is_empty() => {}
+                    Some(_) = controls.next(), if !controls.is_empty() => {
+                        if refused && settle.is_none() {
+                            settle = Some(Instant::now() + REFUSAL_LINGER);
+                        }
+                    }
                     event = events.datagrams.recv() => {
                         let Some(Datagram { payload, _budget }) = event else { break };
                         match route {
