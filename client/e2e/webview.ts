@@ -1,7 +1,8 @@
 import { afterAll, expect as bunExpect, test as bunTest } from "bun:test";
 import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, resolve } from "node:path";
 
 type Name = string | RegExp;
 type Step =
@@ -281,13 +282,18 @@ function removeProfiles() {
         .split(" ")
         .filter(Boolean)) {
         const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-        const dir = /--user-data-dir=(\S+\.bun-chrome)(\s|\0|$)/.exec(cmdline);
+        const dir = /--user-data-dir=([^\0\s]+\.bun-chrome)(?:\0|$)/.exec(
+          cmdline,
+        );
         if (dir) profiles.push(dir[1]);
       }
   } catch {}
   Bun.WebView.closeAll();
   for (const dir of profiles)
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    try {
+      if (dirname(dir) === tmpdir())
+        rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
+    } catch {}
 }
 process.on("exit", removeProfiles);
 // Parallel test workers end without an exit event; outside the test runner afterAll throws.
