@@ -218,7 +218,7 @@
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
-  <div class="instrument">
+  <div class="instrument" style:--results-height={`${resultsHeight.current}px`}>
     <div class="well stage">
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
@@ -335,9 +335,9 @@
   .gauge-panel {
     container: viz / inline-size;
   }
-  /* The dial yields to the rest of the stage (chrome, controls, cards, chart) before the page would scroll. */
+  /* The dial yields to the rest of the stage (chrome, controls, results, chart) before the page would scroll. */
   .instrument {
-    --rest-height: 575px;
+    --rest-height: calc(435px + var(--results-height));
     --gauge-well-height: clamp(
       200px,
       min(35svh, 100svh - var(--rest-height)),
@@ -377,7 +377,11 @@
   }
   @media (min-width: 1800px) and (min-height: 1000px) {
     .instrument {
-      --gauge-well-height: clamp(360px, min(43svh, 32cqw), 560px);
+      --gauge-well-height: clamp(
+        280px,
+        min(43svh, 32cqw, 100svh - var(--rest-height)),
+        560px
+      );
     }
   }
   @media (max-width: 759px) and (orientation: portrait) {
@@ -444,7 +448,7 @@
   }
   @media (max-height: 800px) {
     .instrument {
-      --rest-height: 505px;
+      --rest-height: calc(365px + var(--results-height));
       row-gap: var(--space-2);
     }
     .instrument-controls {
