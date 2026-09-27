@@ -314,7 +314,7 @@ jobs:
           DIST: ${{ runner.temp }}/rust-darwin
           DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
         run: |
-          (cd rust && rustup toolchain install)
+          (cd rust && rustup toolchain install && rustup target add $(awk '$1 ~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt))
           python3 scripts/package-rust.py "$VERSION" --output "$DIST" --supplement legal/rust-platform-macos.json \
             --platform $(awk '$1 ~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
           cd "$DIST"
