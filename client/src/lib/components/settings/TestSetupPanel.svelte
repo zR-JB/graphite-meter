@@ -28,7 +28,12 @@
     READINESS_TIP,
     STAGE,
   } from "../../presentation/vocabulary";
-  import { fmtDuration } from "../../format";
+  import {
+    fmtDuration,
+    rateUnit,
+    rateValueAt,
+    rawRateFrom,
+  } from "../../format";
   import { untrack } from "svelte";
   import {
     announce,
@@ -214,11 +219,19 @@
   const vizAuto = $derived(
     store.config.visualization.throughputMaxBytesPerSec === "auto",
   );
+  // The maximum keeps one prefix, so a typed number never changes meaning.
+  const MAX_UNIT = 2;
+  const vizUnit = $derived(rateUnit(store.unitBase, store.unitKind, MAX_UNIT));
   const vizDisplay = $derived(
     vizAuto
       ? 0
-      : store.toUnit(
-          store.config.visualization.throughputMaxBytesPerSec as number,
+      : Number(
+          rateValueAt(
+            store.config.visualization.throughputMaxBytesPerSec as number,
+            store.unitBase,
+            store.unitKind,
+            MAX_UNIT,
+          ).toPrecision(4),
         ),
   );
   function setVizAuto(auto: boolean) {
@@ -227,13 +240,20 @@
     );
   }
   function setVizMax(event: Event) {
-    const current = Number(vizDisplay.toFixed(2));
     commitNumber(
       event,
       "gauge",
-      current,
-      (value) => (value > 0 ? value : current),
-      (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
+      vizDisplay,
+      (value) => (value > 0 ? value : vizDisplay),
+      (value) =>
+        gaugeMax(
+          Math.max(
+            1,
+            Math.round(
+              rawRateFrom(value, store.unitBase, store.unitKind, MAX_UNIT),
+            ),
+          ),
+        ),
     );
   }
 
@@ -427,10 +447,10 @@
               <input
                 type="number"
                 min="1"
-                value={Number(vizDisplay.toFixed(2))}
+                value={vizDisplay}
                 onchange={setVizMax}
               />
-              <span>{store.unitLabel}</span>
+              <span>{vizUnit}</span>
             </span>
           </label>
         </div>
