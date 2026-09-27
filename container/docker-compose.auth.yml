@@ -73,7 +73,8 @@ networks:
           gateway: 172.30.0.1
 
 # Each secret is mounted read-only at /run/secrets/<name>. Keep the host files
-# outside the repository checkout and readable only by the Docker daemon's user.
+# outside the repository checkout and readable only by the image user:
+#   sudo chown 65532:65532 FILE && sudo chmod 0400 FILE
 secrets:
   gm_auth_password_hash:
     file: /etc/graphite-meter/auth-password-hash
