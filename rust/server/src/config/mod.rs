@@ -176,7 +176,7 @@ impl Default for Config {
             trusted_proxies: Vec::new(),
             limits: Limits::default(),
             max_buffer_bytes: 8 * 1024 * 1024 * 1024,
-            max_connections: 512,
+            max_connections: 4096,
             max_connections_per_client: 64,
             max_operation_duration: Duration::from_secs(300),
             max_session_duration: Duration::from_secs(7200),

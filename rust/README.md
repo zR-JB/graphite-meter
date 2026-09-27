@@ -59,16 +59,19 @@ enabled HTTP/2 and HTTP/3 listeners below, the QUIC endpoint buffers when HTTP/3
 is enabled and the shared download block; HTTP/1 connections hold no floor.
 Configuration checks what it knows; loading or reloading the certificate chain
 and binding the QUIC socket check the actual terms, and a reload that does not
-fit keeps the previous chain.
+fit keeps the previous chain. The default budget covers Go's default of 4096
+connections with every listener enabled, also with per-client limits raised to
+the totals.
 QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until Noq drops the connection, a QUIC connection
 holds a floor for the TLS handshake, five server flights of the loaded
 certificate chain and a copy of it, and for the HTTP/3 layer's fixed state
-(2.5 KiB), plus the floor Noq charges itself, 481 KiB at the default limits:
-about 0.5 MiB with a two-certificate chain. The layer retains no payload and
-charges each request's and session's own state as it arrives; a request the
-budget cannot cover is refused with `H3_REQUEST_REJECTED`, while running
-transfers finish from their floors.
+(2.6 KiB), plus the floor Noq charges itself for the streams a client may open,
+481 KiB at the default limits and 976 KiB with per-client limits at the totals:
+about 0.5 MiB with a two-certificate chain and default limits. The layer
+retains no payload and charges each request's and session's own state as it
+arrives; a request the budget cannot cover is refused with
+`H3_REQUEST_REJECTED`, while running transfers finish from their floors.
 An HTTP/2 connection holds a 1.5 MiB floor from accept until its task ends:
 512 KiB of TLS and codec buffers and a 1 MiB allowance for decoded headers,
 buffered DATA frames and queued response metadata, charged as they fill. A
