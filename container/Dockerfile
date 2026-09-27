@@ -74,4 +74,6 @@ EXPOSE 7247/tcp
 EXPOSE 7248/tcp
 EXPOSE 7249/tcp
 EXPOSE 7249/udp
+# Distroless "nonroot"; mounted keys and secrets must be readable by it.
+USER 65532:65532
 ENTRYPOINT ["/graphite-meter"]
