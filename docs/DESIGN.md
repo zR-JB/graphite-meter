@@ -139,10 +139,11 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Sheet | `.sheet`: side panels, History's panes, the About & legal dialog | The canvas (`--bg`), so its grouped lists read as plates. A docked panel and History let the shell's canvas run on beneath them; a flyout, phone sheet or dialog floats with `--elev-float`. |
 
 - **Hairlines.** `--hairline` is 1 px, and 0.5 px (one device pixel) from 2 dppx. A hairline marks structure only:
-  the edge of a plate, well or float (`--border`), the rule under a header that content scrolls beneath (`--border`),
-  and the separators between rows inside a well (`--border-subtle`, inset to the row text). Spacing separates
-  everything else: groups, sections, a title from its well. Controls carry no decorative outline; fields and checks keep
-  a 1 px `--field-edge` because it identifies them.
+  the edge of a well or float (`--border`) or of a grouped list's plate (`--border-subtle`), the rule under a head
+  that content scrolls beneath (`--border`), the edge of a docked panel or pane, and the separators between setting
+  or fact rows (`--border-subtle`, inset to the row text). A choice list has none: its fill marks the choice.
+  Spacing separates everything else: groups, sections, a title from its list. Controls carry no decorative outline;
+  fields and checks keep a 1 px `--field-edge` because it identifies them.
 - **Glass** is only for small floating chrome. It is never used for tiles, panels or dialogs.
 - **Shadows** are tinted `--shade`, denser in dark mode, and never black.
 
@@ -172,7 +173,8 @@ ping are the phase marks.
 - **Grouped list** (`.group` > `h3` or `.group-head`, then `.kv`): every direct child of `.kv` is a row. Facts are
   `dt`/`dd` pairs with one label column (`--kv-label`); labels are `--text-soft`, values `--text`. A row that holds an
   input, select, button or segmented control lets the control set its height. The title sits on the row text edge in
-  every group; a `.group-head` puts a badge or a quiet button on the trailing edge without growing the head.
+  every group; a `.group-head` puts a badge or a quiet button on the trailing edge without growing the head. Inside a
+  group, a `.list-label` names each list (Test servers, Throughput path); controls live in rows, never in a group head.
 - **Setting rows** put the name on the leading edge and the control on the trailing edge. A number field carries
   its unit inside (`800 ms`), so every control ends on the same trailing edge.
 - **Choice list** (`.kv.choices`, or `.choices` inside a list): a segmented control stood on end. Rows are 32 px on
