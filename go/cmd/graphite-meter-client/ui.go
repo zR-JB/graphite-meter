@@ -60,7 +60,7 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 			for i, cell := range row {
 				cells[i] = pad(cell, widths[i])
 			}
-			lines = append(lines, strings.TrimRight(style.Render(strings.Join(cells, "  ")), " "))
+			lines = append(lines, style.Render(strings.TrimRight(strings.Join(cells, "  "), " ")))
 		}
 		return strings.Join(lines, "\n")
 	}

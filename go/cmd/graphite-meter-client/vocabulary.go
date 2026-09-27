@@ -10,7 +10,10 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
-const missing = "—"
+const (
+	missing   = "—"
+	addedNote = "Added: loaded median minus idle median, same server."
+)
 
 var stageLabels = map[goclient.Stage]string{
 	goclient.StageLatency:       "Latency",

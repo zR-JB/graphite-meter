@@ -380,24 +380,24 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		goclient.Result{Stage: goclient.StageLatency, Latency: idle},
 		goclient.Result{Stage: goclient.StageDownload, Latency: loaded})
 	m.run.outcome = goclient.OutcomeComplete
-	text := m.finalReport()
+	text := ansi.Strip(m.finalReport())
 	for _, want := range []string{
-		outcomeLabels[goclient.OutcomeComplete], populationLabel(goclient.StageLatency),
+		outcomeLabels[goclient.OutcomeComplete], compactPopulation(goclient.StageLatency),
 		populationLabel(goclient.StageDownload), fmtMs(idle.P50), fmtMs(idle.P95), fmtMs(idle.Jitter),
-		fmtRate(117_500_000), fmtRate(125_000_000), fmtBytes(1_200_000_000), fmtMs(loaded.P50),
-		fmtAdded(loaded.P50 - idle.P50), fmtRate(5_000_000), compactStage(goclient.StageBidirectional),
+		fmtRate(117_500_000), "peak 1000 ·", fmtBytes(1_200_000_000), fmtMs(loaded.P50),
+		fmtAdded(loaded.P50 - idle.P50), fmtRate(5_000_000), stageLabels[goclient.StageBidirectional],
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lost %q:\n%s", want, text)
 		}
 	}
 	m.run.stages[3].state = stageStopped
-	if text := m.finalReport(); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
+	if text := ansi.Strip(m.finalReport()); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
 		t.Errorf("a stage stopped before measuring is not named: %s", text)
 	}
-	if strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "loss") ||
-		!strings.Contains(text, "Upload stopped") {
-		t.Errorf("report styling or vocabulary: %q", text)
+	if strings.Contains(strings.ToLower(text), "loss") || !strings.Contains(text, "Upload stopped") ||
+		strings.Contains(text, populationLabel(goclient.StageLatency)) {
+		t.Errorf("report vocabulary or a population note without an issue: %q", text)
 	}
 	m.run = nil
 	if m.finalReport() != "" {
@@ -733,7 +733,7 @@ func TestFailedRunShowsNoActivity(t *testing.T) {
 	m.run = newRunState(m.cfg, "", time.Now())
 	done := goclient.Event{Kind: goclient.EventDone, Err: errors.New("refused")}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{done}}))
-	screen, report := view(m), m.finalReport()
+	screen, report := view(m), ansi.Strip(m.finalReport())
 	for _, stale := range []string{"Checking paths", "○", "Median"} {
 		if strings.Contains(screen+report, stale) {
 			t.Errorf("failed run still shows %q:\n%s\n%s", stale, screen, report)

@@ -245,7 +245,8 @@ Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the conta
 | `--version` / `--legal` | | Print the version or third-party notices and exit. |
 
 Fixed cadences are capped at 15 s, half the server's idle bound. Headless runs print stage progress to stderr and
-the plain report to stdout; an interactive run prints the same report on exit.
+the report to stdout; an interactive run prints the same report on exit. It is plain text unless stdout is a
+terminal and `NO_COLOR` is unset.
 
 | Exit | Meaning |
 | --- | --- |

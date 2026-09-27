@@ -148,6 +148,7 @@ type runState struct {
 	plan     []goclient.StagePlan
 	stages   []stageProgress
 	started  time.Time
+	finished time.Time
 	stage    goclient.Stage
 	phase    goclient.Phase
 	details  *goclient.RunDetails
@@ -290,7 +291,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	m.stopPrompt = false
 	r := m.run
 	r.adopt(done.Servers)
-	r.outcome = done.Outcome()
+	r.outcome, r.finished = done.Outcome(), done.At
 	m.last = r.outcome
 	if done.Err != nil && !errors.Is(done.Err, context.Canceled) {
 		r.err = done.Err
