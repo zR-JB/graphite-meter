@@ -552,11 +552,7 @@ pub async fn run_prepared(
                 }
             }
         }
-        if sole.is_some() && !failed.is_empty() {
-            retry_sole = true;
-        } else {
-            prepared.retain(|server| !failed.contains(&server.entry.id));
-        }
+        prepared.retain(|server| !failed.contains(&server.entry.id));
     }
     snapshots.send_modify(|snapshot| {
         let partial = snapshot.servers.iter().any(|server| server.error.is_some())
