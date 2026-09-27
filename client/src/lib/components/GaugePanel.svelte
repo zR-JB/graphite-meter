@@ -337,13 +337,10 @@
     /* Here, not on .instrument: a container query only styles descendants. */
     container: viz / inline-size;
   }
-  /* The instrument owns the gauge, profile and controls as one responsive grid. */
   .instrument {
-    /* One gauge size for live and completed states. */
     --gauge-well-height: clamp(280px, 35svh, 360px);
     display: grid;
     gap: var(--space-3) var(--space-2);
-    /* Narrow: the results follow the gauge, before the latency detail. */
     grid-template:
       "gauge" var(--gauge-well-height)
       "controls" auto
@@ -358,7 +355,6 @@
       "results" auto
       / 1fr;
   }
-  /* Wide instruments pair the two readings above their controls. */
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
@@ -367,7 +363,6 @@
         "results results" auto
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
-    /* The gauge keeps its size when latency is disabled. */
     .instrument:not(:has(.latency-panel)) {
       grid-template:
         "gauge gauge" var(--gauge-well-height)
@@ -376,7 +371,6 @@
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
-  /* Controls under the gauge, results under the latency panel: one band on the panel grid. */
   @container viz (min-width: 1100px) {
     .instrument,
     .instrument:not(:has(.latency-panel)) {
@@ -408,7 +402,6 @@
       min-height: 280px;
     }
   }
-  /* The gauge well: the deepest recess on the faceplate. */
   .stage {
     grid-area: gauge;
     position: relative;
@@ -514,7 +507,6 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    /* Keeps the number clear of the ring's sides. */
     padding-inline: 9%;
     padding-top: calc(2 * var(--gauge-center-offset));
   }

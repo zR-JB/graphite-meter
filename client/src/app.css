@@ -1,9 +1,5 @@
-/* The design system: tokens, a compact reset, and the shared primitives every
-   component composes. Components keep only layout and identity-specific
-   styling; anything a second component would restate belongs here.
-
-   Layers keep this file below component styles: Svelte's scoped rules are
-   unlayered, so a component may refine a primitive without specificity work. */
+/* Anything a second component would restate belongs here. Svelte's scoped rules
+   are unlayered, so a component refines a primitive without specificity work. */
 @layer reset, base, components;
 
 /* Fonts are self-hosted so the meter still renders correctly offline. */
@@ -98,8 +94,6 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  /* Recessed wells and tracks, chrome controls and cards, the primary pill,
-     and capsules (--r-full clamps to half the shorter side). */
   --r-well: 6px;
   --r-chrome: 8px;
   --r-pill: 12px;
@@ -119,13 +113,11 @@
   --track-caps: 0.08em;
   --track-wide: 0.1em;
 
-  /* Stacking: the phase toast sits below flyout panels and their scrim. */
   --z-toast: 40;
   --z-scrim: 50;
   --z-panel: 51;
 
   --control-h: 32px;
-  /* Label column of every key/value list. */
   --kv-label: 7.5rem;
   --hit: 44px;
   --icon: 16px;
@@ -142,7 +134,6 @@
   --surface-1: light-dark(#ffffff, #1c1f23);
   --surface-2: light-dark(#f0f3f4, #23262b);
   --surface-inset: light-dark(#f3f5f6, #16191d);
-  /* Surface sheen: the lit top of a tile, layered over its surface colour. */
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
   --border-subtle: light-dark(rgb(43 44 40 / 0.08), rgb(211 219 227 / 0.07));
@@ -178,7 +169,6 @@
   --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
 
   --grid-line: light-dark(rgb(43 44 40 / 0.06), rgb(211 219 227 / 0.05));
-  /* Edges of selected or active controls, and the dimming behind overlays. */
   --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
   --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
   --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
@@ -206,15 +196,12 @@
   --elev-tooltip: 0 4px 12px color-mix(in srgb, var(--shade) 18%, transparent);
   --elev-float: 0 18px 60px light-dark(rgb(43 44 40 / 0.16), rgb(4 6 8 / 0.55));
 
-  /* One ring for every focusable surface. Solid brand clears the 3:1 non-text
-     contrast floor against the light palette's surfaces, where a translucent
-     ring does not; components restate only the offset or radius they need. */
+  /* Solid brand clears the 3:1 non-text contrast floor on light surfaces, where
+     a translucent ring does not. */
   --focus-ring: 2px solid var(--brand);
   --ring-halo: 0 0 0 3px var(--brand-soft);
 }
 
-/* Measurement identity: a data-tone names the phase or state a surface
-   belongs to, and the derived line and wash follow it. */
 [data-tone],
 .notice,
 .badge,
@@ -380,7 +367,6 @@
     text-decoration: underline;
     text-underline-offset: 3px;
   }
-  /* Form fields share one inset treatment; the ring halo reads as focus. */
   select,
   input:where([type="number"], [type="text"], [type="search"]) {
     width: 100%;
@@ -428,8 +414,7 @@
     white-space: nowrap;
   }
 
-  /* Small uppercase technical label: section kickers, field and column
-     labels. Mono, because it names instrument quantities. */
+  /* Mono, because caps labels name instrument quantities. */
   .caps,
   .field > span:first-child {
     color: var(--text-soft);
@@ -438,15 +423,13 @@
     text-transform: uppercase;
   }
 
-  /* Secondary explanatory copy under a control or section. */
   .hint {
     color: var(--text-soft);
     font-size: var(--type-xs);
     line-height: 1.5;
   }
 
-  /* Buttons, and links acting as buttons. The visible edge is an inset ring so a coarse pointer
-     can grow the hit area with a transparent border without moving the drawn box. */
+  /* The edge is an inset ring so a coarse pointer's transparent border grows the hit area in place. */
   .btn {
     --btn-line: var(--border);
     --hit-pad: 0px;
@@ -495,7 +478,6 @@
     width: calc(var(--control-h) + 2 * var(--hit-pad));
     padding: 0;
   }
-  /* Recessed variant for dialogs and inspectors sitting on --surface-1. */
   .btn-inset {
     background-color: var(--surface-inset);
   }
@@ -538,7 +520,6 @@
     }
   }
 
-  /* Status capsule. */
   .badge {
     --tone: var(--text-soft);
     display: inline-flex;
@@ -556,7 +537,6 @@
     white-space: nowrap;
   }
 
-  /* Status dot: a state's tone beside its name. */
   .status-dot {
     --tone: var(--text-soft);
     flex: none;
@@ -567,7 +547,6 @@
     box-shadow: 0 0 0 3px var(--tone-wash);
   }
 
-  /* Tone-tinted inline message. */
   .notice {
     --tone: var(--signal);
     display: flex;
@@ -585,8 +564,6 @@
     color: var(--tone);
   }
 
-  /* Surfaces: a raised tile, a recessed panel, a deep instrument well, and
-     the lit header strip that tops a sectioned surface. */
   .surface {
     border: 1px solid var(--border);
     border-radius: var(--r-chrome);
@@ -611,7 +588,6 @@
     box-shadow: var(--elev-tile);
   }
 
-  /* A phase glyph in a tone-bordered tile. */
   .tone-icon {
     display: grid;
     flex: none;
@@ -628,7 +604,6 @@
     height: var(--icon-sm);
   }
 
-  /* Key/value list: labels wrap above values when the row runs out of room. */
   .kv {
     display: grid;
     gap: var(--space-2);
@@ -655,7 +630,6 @@
     overflow-wrap: anywhere;
   }
 
-  /* Grouped list: a caps heading over one inset surface of label–value rows. */
   .group {
     display: grid;
     gap: var(--space-2);
@@ -682,18 +656,15 @@
     font-variant-numeric: tabular-nums;
     word-spacing: 0.12em;
   }
-  /* A row with an explainer brightens its label while pointed at. */
   .group > .kv > [tabindex]:is(:hover, :focus-visible) dt {
     color: var(--text);
   }
 
-  /* Labelled form field: a caps label above its control. */
   .field {
     display: grid;
     gap: 6px;
     min-width: 0;
   }
-  /* Segmented control: one pressed choice in a recessed track. */
   .segmented {
     display: flex;
     gap: 3px;
@@ -713,8 +684,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* Selectable tile or row: one wash over the whole hit area on hover, one
-     selected state however the choice is expressed. */
   .tile,
   .segmented > button {
     transition: var(--transition-control);
@@ -740,7 +709,6 @@
     color: var(--brand-strong);
   }
 
-  /* Centred placeholder for loading, empty and error states. */
   .empty-state {
     display: grid;
     flex: 1;
@@ -783,7 +751,6 @@
     height: 20px;
   }
 
-  /* Floating surfaces: menus, popovers, and dialogs share one shell. */
   .float {
     border: 1px solid var(--border-strong);
     border-radius: var(--r-chrome);
@@ -792,8 +759,6 @@
     box-shadow: var(--elev-float);
   }
 
-  /* Hover card: one shell for explainer tooltips and plot readouts. A sans title
-     line, then label/value rows; it never takes the pointer. */
   .tooltip,
   .inspect-card {
     padding: var(--space-2) var(--space-3);
@@ -807,7 +772,6 @@
     text-transform: none;
     pointer-events: none;
   }
-  /* A plot readout positioned by its plot. */
   .inspect-card {
     position: absolute;
     display: grid;
@@ -830,7 +794,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Popovers anchor to their invoker; the fallbacks flip them on-screen. */
   .popover {
     position: fixed;
     inset: auto;
@@ -849,7 +812,6 @@
   .popover.align-end {
     position-area: block-end span-inline-start;
   }
-  /* Without anchor positioning a popover centres in the viewport. */
   @supports not (position-area: block-end) {
     .popover {
       inset: 0;
@@ -934,8 +896,6 @@
     translate: none;
   }
 
-  /* Entry motion: one short fade-and-settle for anything that appears,
-     including popovers and dialogs entering the top layer. */
   .enter,
   .popover,
   dialog.float {

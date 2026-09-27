@@ -249,7 +249,6 @@
     background: color-mix(in srgb, var(--brand) 55%, transparent);
     animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
   }
-  /* Reduced motion keeps warmup legible as a steady, dimmed bar. */
   @media (prefers-reduced-motion: reduce) {
     .seg-fill--warmup {
       width: 100%;
