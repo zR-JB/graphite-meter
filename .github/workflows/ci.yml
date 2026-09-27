@@ -310,7 +310,7 @@ jobs:
           cache-binary: 'false'
           buildkitd-flags: --log-level=info
       - name: Build the Rust server with reviewed browser and runtime notices
-        run: docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-e2e --build-arg VERSION=0.0.0-dev --output type=local,dest=rust/target/e2e .
+        run: docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-e2e --build-arg VERSION=0.0.0-dev --build-arg PROFILE=ci --output type=local,dest=rust/target/e2e .
       - name: Run the shared browser suite against Rust
         env:
           BUN_CHROME_ARGS: --no-sandbox

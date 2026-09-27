@@ -43,6 +43,7 @@ RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:b
 
 FROM rust-build AS server-build
 ARG VERSION
+ARG PROFILE=release
 ENV GM_ENGINE_VERSION=${VERSION}-rust \
     GM_RUST_ASSET_DIR=/src/client/dist
 COPY --from=browser /src/client/ /src/client/
@@ -51,11 +52,11 @@ COPY --from=browser /src/client/ /src/client/
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
 RUN python3 -m scripts.legal.rust --package graphite-meter-server \
-    --target x86_64-unknown-linux-gnu --profile release --out /src/rust/target/server-notices \
+    --target x86_64-unknown-linux-gnu --profile "$PROFILE" --out /src/rust/target/server-notices \
     --reviews legal/rust-reviewed-components.json \
     --supplement legal/rust-platform-debian-bookworm.json \
     --browser-scan /tmp/browser-modules.json
-RUN cp rust/target/x86_64-unknown-linux-gnu/release/graphite-meter-server /graphite-meter \
+RUN cp "rust/target/x86_64-unknown-linux-gnu/$PROFILE/graphite-meter-server" /graphite-meter \
     && /graphite-meter --legal > /tmp/embedded-notices.txt \
     && cmp /tmp/embedded-notices.txt rust/target/server-notices/LEGAL.txt
 

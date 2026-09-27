@@ -184,7 +184,7 @@ def main() -> None:
     parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument('--package', choices=PACKAGES, required=True)
     parser.add_argument('--target', required=True)
-    parser.add_argument('--profile', choices=('dev', 'release'), default='release')
+    parser.add_argument('--profile', choices=('dev', 'ci', 'release'), default='release')
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--reviews', type=Path)
     parser.add_argument('--supplement', type=Path,
@@ -311,8 +311,10 @@ def main() -> None:
     except (LegalError, OSError, ValueError, subprocess.CalledProcessError):
         (output / 'LEGAL.txt').unlink(missing_ok=True)
         raise
-    # Compilation input sources, including native code nested in crates, are
-    # bundled with unchanged license files and explicit local-patch provenance.
+    # Only shipped (release) builds bundle their compilation input sources, including native
+    # code nested in crates, with unchanged license files and explicit local-patch provenance.
+    if args.profile != 'release':
+        return
     with (output / 'THIRD_PARTY_SOURCE.tar.gz').open('wb') as destination:
         with gzip.GzipFile(filename='', mode='wb', fileobj=destination, mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode='w') as archive:

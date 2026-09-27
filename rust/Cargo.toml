@@ -20,6 +20,11 @@ lto = "thin"
 codegen-units = 1
 strip = "symbols"
 
+[profile.ci]
+inherits = "release"
+lto = false
+codegen-units = 16
+
 [patch.crates-io]
 h2 = { git = "https://github.com/zR-JB/h2", rev = "ece53421ec31270ff843a783bcdf244bd6c5eef7" }
 h3 = { git = "https://github.com/zR-JB/h3", rev = "03874beb50d065f4ac8f946ddb7814d2432b7527" }
