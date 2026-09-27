@@ -35,13 +35,13 @@
     {disabled}
     onchange={handleChange}
   />
-  <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if tooltipText}<span class="sr-only" id={describedBy}>{tooltipText}</span
     >{/if}
   {#if label}<span
       class="label"
       {@attach tooltipText ? tooltip(() => tooltipText) : null}>{label}</span
     >{/if}
+  <span class="track" aria-hidden="true"><span class="knob"></span></span>
 </label>
 
 <style>
@@ -85,11 +85,11 @@
       translate var(--dur-hover) var(--ease-snap),
       background-color var(--dur-hover) var(--ease-out);
   }
-  input:checked + .track {
+  input:checked ~ .track {
     border-color: var(--brand-line);
     background: var(--brand-soft);
   }
-  input:checked + .track .knob {
+  input:checked ~ .track .knob {
     translate: 16px 0;
     background: var(--brand);
   }

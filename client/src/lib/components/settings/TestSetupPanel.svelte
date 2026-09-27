@@ -117,11 +117,11 @@
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
   const DURATION_FIELDS = [
-    ["warmupMs", phaseLabel("warmup")],
-    ["latencyMs", STAGE.latency.label],
-    ["downloadMs", STAGE.download.label],
-    ["uploadMs", STAGE.upload.label],
-    ["bidirectionalMs", STAGE.bidirectional.label],
+    ["warmupMs", phaseLabel("warmup"), "warmup"],
+    ["latencyMs", STAGE.latency.label, "latency"],
+    ["downloadMs", STAGE.download.label, "download"],
+    ["uploadMs", STAGE.upload.label, "upload"],
+    ["bidirectionalMs", STAGE.bidirectional.short, "bidirectional"],
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   function sameDuration(
@@ -189,10 +189,19 @@
     const name = preset[0].toUpperCase() + preset.slice(1);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
-    return `${name}\n${activeDurationFields
-      .map(([key, label]) => `${label} ${fmtDuration(times[key])}`)
-      .join(" · ")}`;
+    return [
+      name,
+      ...activeDurationFields.map(
+        ([key, label]) => `${label} ${fmtDuration(times[key])}`,
+      ),
+    ].join("\n");
   }
+  const unitsTip = [
+    "Units",
+    ...[JARGON.rateUnit, JARGON.unitPrefix].flatMap((tip) =>
+      tip.split("\n").slice(1),
+    ),
+  ].join("\n");
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
   const queuedStreams = $derived(
@@ -284,7 +293,7 @@
 {/snippet}
 
 <div class="settings">
-  <section class="group">
+  <section class="group connection">
     <div class="group-head">
       <h3>Connection</h3>
       <span
@@ -318,7 +327,8 @@
       <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
     </h3>
     <div class="kv">
-      <div>
+      <div class="row">
+        <span>Preset</span>
         <div
           class="segmented presets"
           role="group"
@@ -335,19 +345,19 @@
           {/each}
         </div>
       </div>
-      {#each activeDurationFields as [key, label] (key)}
-        {@const [min, max] = DURATION_LIMITS[key]}
-        {@const tip =
-          key === "warmupMs"
-            ? JARGON.warmup
-            : durationMode === "custom"
-              ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
-              : ""}
-        {#if durationMode === "custom"}
-          <div>
-            <label class="row">
+      <div class="stages" data-count={activeDurationFields.length}>
+        {#each activeDurationFields as [key, label, tone] (key)}
+          {@const [min, max] = DURATION_LIMITS[key]}
+          {@const tip =
+            key === "warmupMs"
+              ? JARGON.warmup
+              : durationMode === "custom"
+                ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
+                : ""}
+          {#if durationMode === "custom"}
+            <label class="stage" data-tone={tone}>
               <span {@attach tip ? term(() => tip) : null}>{label}</span>
-              <span class="number">
+              <span class="measure">
                 <input
                   type="number"
                   {min}
@@ -360,16 +370,19 @@
                 <span>ms</span>
               </span>
             </label>
-          </div>
-        {:else}
-          <div class="row">
-            <span {@attach tip ? term(() => tip) : null}>{label}</span>
-            <span class="value"
-              >{fmtDuration(DURATION_PRESETS[durationMode][key])}</span
-            >
-          </div>
-        {/if}
-      {/each}
+          {:else}
+            {@const [value, unit] = fmtDuration(
+              DURATION_PRESETS[durationMode][key],
+            ).split(" ")}
+            <div class="stage" data-tone={tone}>
+              <span {@attach tip ? term(() => tip) : null}>{label}</span>
+              <span class="measure"
+                ><span class="value">{value}</span><span>{unit}</span></span
+              >
+            </div>
+          {/if}
+        {/each}
+      </div>
       {@render toggle(
         "Bidirectional stage",
         JARGON.bidirectionalStage,
@@ -395,33 +408,33 @@
     <h3>Display</h3>
     <div class="kv">
       <div class="row">
-        <span {@attach tooltip(() => JARGON.rateUnit)}>Rate unit</span>
-        <div class="segmented" role="group" aria-label="Rate unit">
-          <button
-            type="button"
-            aria-pressed={store.unitKind === "bits"}
-            onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
-          >
-          <button
-            type="button"
-            aria-pressed={store.unitKind === "bytes"}
-            onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
-          >
-        </div>
-      </div>
-      <div class="row">
-        <span {@attach tooltip(() => JARGON.unitPrefix)}>Prefix</span>
-        <div class="segmented" role="group" aria-label="Prefix scale">
-          <button
-            type="button"
-            aria-pressed={store.unitBase === "base10"}
-            onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
-          >
-          <button
-            type="button"
-            aria-pressed={store.unitBase === "base2"}
-            onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
-          >
+        <span {@attach tooltip(() => unitsTip)}>Units</span>
+        <div class="controls">
+          <div class="segmented" role="group" aria-label="Rate unit">
+            <button
+              type="button"
+              aria-pressed={store.unitKind === "bits"}
+              onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
+            >
+            <button
+              type="button"
+              aria-pressed={store.unitKind === "bytes"}
+              onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
+            >
+          </div>
+          <div class="segmented" role="group" aria-label="Prefix scale">
+            <button
+              type="button"
+              aria-pressed={store.unitBase === "base10"}
+              onclick={() => store.prefer({ unitBase: "base10" })}
+              >Decimal</button
+            >
+            <button
+              type="button"
+              aria-pressed={store.unitBase === "base2"}
+              onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
+            >
+          </div>
         </div>
       </div>
       {@render toggle(
@@ -446,7 +459,7 @@
         <div>
           <label class="row">
             <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
-            <span class="number">
+            <span class="measure">
               <input
                 type="number"
                 min="1"
@@ -613,8 +626,11 @@
 <style>
   .settings {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-5);
     container: settings / inline-size;
+  }
+  .connection > .group-head {
+    padding-inline: var(--space-3);
   }
   .group-head {
     display: flex;
@@ -622,34 +638,23 @@
     justify-content: space-between;
     gap: var(--space-2);
   }
-  /* One row per setting: its name on the left, its control on the right. */
   .row {
     display: flex;
     flex: 1;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--space-1) var(--space-3);
     min-width: 0;
     min-height: var(--control-h);
   }
   .switch-row > :global(.switch) {
     flex: 1;
-    flex-direction: row-reverse;
     justify-content: space-between;
     min-height: var(--control-h);
   }
-  .value {
-    font-weight: var(--w-normal);
-  }
-  .number {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-soft);
-    font-size: var(--type-sm);
-  }
   .row input {
-    width: 7rem;
+    width: 6rem;
     text-align: end;
   }
   .row select {
@@ -657,15 +662,82 @@
     max-width: 11rem;
   }
   .presets {
-    flex: 1;
+    flex: 0 1 15rem;
   }
   .presets > button {
     text-transform: capitalize;
   }
-  .row > .segmented {
-    flex: 0 1 12rem;
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .controls > .segmented {
+    flex: none;
+    width: 7.5rem;
+  }
+  .stages {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-2);
+    padding-block: var(--space-2);
+  }
+  .stages[data-count="5"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @container settings (min-width: 420px) {
+    .stages[data-count="5"] {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  .stage {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+  }
+  .stage::before {
+    content: "";
+    height: 3px;
+    margin-bottom: 6px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+  }
+  /* A preset time sits where its custom field goes, so switching moves nothing. */
+  .measure {
+    position: relative;
+    display: flex;
+    align-items: baseline;
+    gap: 3px;
+    min-width: 0;
+  }
+  .measure > span:last-child {
+    color: var(--text-soft);
+    font-size: var(--type-2xs);
+  }
+  div.stage .measure {
+    min-height: 36px;
+    padding-block: 8px;
+  }
+  .stage input + span {
+    position: absolute;
+    right: 9px;
+    bottom: 11px;
+  }
+  .value {
+    color: var(--text);
+    font-size: var(--type-body);
+    font-weight: var(--w-normal);
+  }
+  .stage input {
+    padding-right: 26px;
+    appearance: textfield;
+  }
+  .stage input::-webkit-inner-spin-button {
+    appearance: none;
   }
   .settings-reset {
-    margin-top: var(--space-2);
+    margin-top: var(--space-1);
   }
 </style>
