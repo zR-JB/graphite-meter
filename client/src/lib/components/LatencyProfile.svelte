@@ -59,11 +59,10 @@
     </div>
   {/if}
   {#if store.stagePresentation.latency.status === "failed"}
+    {@const failure = store.stagePresentation.latency.failure}
     <p class="notice" data-tone="err" role="alert">
-      {STAGE.latency.label} · {STATUS.failed}{store.stagePresentation.latency
-        .failure
-        ? ` · ${reasonLabel(store.stagePresentation.latency.failure)}`
-        : ""}
+      <strong>{STAGE.latency.label} {STATUS.failed.toLowerCase()}</strong>
+      {failure ? reasonLabel(failure) : ""}
     </p>
   {/if}
 

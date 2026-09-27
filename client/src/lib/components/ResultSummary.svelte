@@ -1,10 +1,15 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import { cardTip, type SummaryCard } from "../presentation/resultSummary";
+  import {
+    cardLine,
+    cardTip,
+    type SummaryCard,
+  } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
+  import type { TransportRole } from "../runner/contract";
   import ServerScope from "./ServerScope.svelte";
-  import { tipGroup, tooltip } from "../actions/tooltip";
-  import { STATUS } from "../presentation/vocabulary";
+  import { term, tipGroup, tooltip } from "../actions/tooltip";
+  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -20,12 +25,25 @@
     fade?: number;
     reserve?: boolean;
     details?: MultiServerResult | null;
-    issues?: { server: string; stages: string; reason: string }[];
+    issues?: {
+      server: string;
+      stages: string;
+      reason: string;
+      throughput: TransportRole[];
+    }[];
     scope?: string;
     onscope?: (id: string) => void;
     locked?: boolean;
   } = $props();
   const uid = $props.id();
+  // One shown server's reasons sit on the chips they failed; only All servers needs an attributed list.
+  const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
+  const onChips = $derived(
+    attributed ? [] : issues.filter((issue) => issue.throughput.length),
+  );
+  const listed = $derived(
+    attributed ? issues : issues.filter((issue) => !issue.throughput.length),
+  );
 </script>
 
 <div class="result-summary" style:--cards={Math.min(4, cards.length)}>
@@ -50,9 +68,14 @@
       />
     </div>
   {/if}
-  <div class="chips" class:reserve data-tip-group {@attach tipGroup}>
+  <div class="result-cards" class:reserve data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
+      {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
+      {@const line = cardLine(card)}
+      {@const reason = line
+        ? ""
+        : onChips.find((issue) => issue.throughput.includes(card.key))?.reason}
       <article
         class="chip {card.status}"
         data-tone={card.key}
@@ -92,8 +115,13 @@
           <span class="name">
             <Icon name={card.icon} />
             {card.label}
-            {#if card.status !== "complete" && card.status !== "active" && card.status !== "pending"}<span
-                class="status">{STATUS[card.status]}</span
+            {#if tone}<span class="status"
+                >{#if tone !== "neutral"}<span
+                    class="status-dot"
+                    data-tone={tone}
+                  ></span>{/if}{STATUS[
+                  card.status as keyof typeof STATUS
+                ]}</span
               >{/if}
           </span>
           {#key scope}
@@ -107,23 +135,38 @@
             </span>
           {/key}
         </span>
-        {#if card.wire}
-          {@const wire = card.wire}
-          <span class="wire"
-            >{wire.value}
-            <span {@attach tooltip(() => wire.tip)}>wire {wire.overhead}</span
-            ></span
-          >
+        {#if line && !quiet}
+          <span class="facts">
+            {#if line.label}<span
+                class="label"
+                {@attach line.tip ? term(() => line.tip!) : null}
+                >{line.label}</span
+              >{/if}
+            {#each line.facts as fact, index (index)}
+              <span class="fact"
+                >{#if fact.stage}<span class="fact-icon" data-tone={fact.stage}
+                    ><Icon name={STAGE[fact.stage].icon} /></span
+                  ><span class="sr-only">{STAGE[fact.stage].short}</span
+                  >{/if}{fact.value}</span
+              >
+            {/each}
+            {#if line.mark}
+              {@const mark = line.mark}
+              <span class="mark" {@attach term(() => mark.tip)}
+                >{mark.text}</span
+              >
+            {/if}
+          </span>
+        {:else if reason && !quiet}
+          <span class="facts"><span class="fact">{reason}</span></span>
         {/if}
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
   </div>
-  <!-- One shown server needs no attribution: its reasons sit as quiet pairs under the cards. -->
-  {#if issues.length}
-    {@const attributed = (details?.selection.length ?? 1) > 1 && !scope}
+  {#if listed.length}
     <dl class="issues enter" class:attributed aria-label="Issues">
-      {#each issues as issue, index (index)}
+      {#each listed as issue, index (index)}
         {#if attributed}<dt>{issue.server}</dt>
           <dd>{issue.stages}</dd>
         {:else}<dt>{issue.stages}</dt>{/if}
@@ -149,13 +192,13 @@
     justify-content: center;
     gap: var(--space-2);
   }
-  .chips {
+  .result-cards {
     display: grid;
     grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
     gap: var(--space-2);
   }
   @container results (max-width: 480px) {
-    .chips {
+    .result-cards {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
   }
@@ -164,14 +207,14 @@
     position: relative;
     isolation: isolate;
     display: grid;
-    grid-template-rows: auto auto;
+    grid-template-rows: 14px 26px 15px;
     align-content: start;
     row-gap: 2px;
-    height: 64px;
+    height: 74px;
     padding: var(--space-2) var(--space-3) 0;
     overflow: hidden;
-    border: 1px solid var(--edge);
-    border-radius: var(--r-pill);
+    border: var(--hairline) solid var(--edge);
+    border-radius: var(--r-chrome);
     background:
       linear-gradient(transparent 30%, var(--tone-wash)), var(--surface-1);
     box-shadow: var(--elev-tile);
@@ -189,20 +232,11 @@
   .chip:is(.pending, .not-run) {
     --edge: var(--border-subtle);
   }
-  .chip.stopped {
-    --edge: var(--border-strong);
-  }
-  .chip.partial {
-    --edge: color-mix(in srgb, var(--warn) 45%, var(--border));
-  }
-  .chip.failed {
-    --edge: var(--err-line);
-  }
   .trace {
     position: absolute;
     inset: auto 0 0;
     z-index: -1;
-    height: 18px;
+    height: 14px;
     opacity: var(--fade);
   }
   .trace svg {
@@ -228,8 +262,8 @@
   }
   .face {
     display: grid;
-    align-content: start;
-    gap: 3px;
+    grid-row: 1 / 3;
+    grid-template-rows: subgrid;
     min-width: 0;
   }
   .name {
@@ -237,21 +271,26 @@
     align-items: center;
     gap: 5px;
     min-width: 0;
-    color: var(--text-muted);
-    font: var(--w-strong) var(--type-xs) / 1.2 var(--font-sans);
+    color: var(--tone-ink);
+    font: var(--w-strong) var(--type-sm) / 14px var(--font-sans);
+    white-space: nowrap;
   }
-  .name :global(svg) {
+  .name > :global(svg) {
     flex: none;
     width: 12px;
     height: 12px;
     color: var(--tone);
   }
   .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     margin-left: auto;
-    color: color-mix(in srgb, var(--edge) 60%, var(--text));
+    color: var(--text-muted);
+    font-size: var(--type-xs);
   }
   .val,
-  .wire,
+  .facts,
   .status {
     opacity: var(--fade);
   }
@@ -263,8 +302,7 @@
     white-space: nowrap;
   }
   .num {
-    font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
-    font-variant-numeric: tabular-nums;
+    font: var(--w-strong) var(--type-xl) / 26px var(--font-display);
     letter-spacing: var(--track-tight);
   }
   .quiet .num {
@@ -274,13 +312,34 @@
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
-  .wire {
+  .facts {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
     overflow: hidden;
-    color: var(--text-soft);
-    font: var(--w-normal) var(--type-xs) / 1.3 var(--font-sans);
-    font-variant-numeric: tabular-nums;
-    text-overflow: ellipsis;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-xs) / 15px var(--font-sans);
     white-space: nowrap;
+  }
+  .label {
+    color: var(--text-soft);
+  }
+  .fact {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+  }
+  .fact-icon {
+    display: inline-grid;
+    color: var(--tone);
+  }
+  .fact-icon :global(svg) {
+    width: 10px;
+    height: 10px;
+  }
+  .mark {
+    color: var(--tone-ink);
   }
   .issues {
     display: grid;

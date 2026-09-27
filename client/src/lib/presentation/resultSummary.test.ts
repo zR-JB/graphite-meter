@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { summaryCards, summaryEvidence, tracePaths } from "./resultSummary";
+import {
+  cardLine,
+  summaryCards,
+  summaryEvidence,
+  tracePaths,
+} from "./resultSummary";
 
 test("run evidence keeps only stages with a result and names no single source", () => {
   const evidence = summaryEvidence(
@@ -64,6 +69,14 @@ test("a saved wire overhead shows from half a percent and only when chosen", () 
     overhead: "+5.0%",
   });
   expect(wire(1.05, false).wire).toBeUndefined();
+  expect(cardLine(wire(1.05))).toMatchObject({
+    label: "wire",
+    mark: { text: "+5.0%" },
+  });
+  expect(cardLine(wire(1.05, false))).toMatchObject({
+    label: "transferred",
+    facts: [{ value: "1.0 MB" }],
+  });
 });
 
 test("a one-lane bidirectional result has no combined value, only its surviving lane", () => {
@@ -110,6 +123,14 @@ test("the latency card groups signed added latency, even of a failed stage; ever
     ["upload", "+0.0 ms"],
     ["bidirectional", "+0.0 ms"],
   ]);
+  expect(cardLine(cards[0])).toMatchObject({
+    label: "added",
+    facts: [
+      { stage: "download", value: "8.3" },
+      { stage: "upload", value: "0.0" },
+      { stage: "bidirectional", value: "0.0" },
+    ],
+  });
   const stability = (card: (typeof cards)[number]) =>
     card.rows.find((row) => row.label === "Stability")?.value;
   expect(cards.map(stability)).toEqual(["92%", "95%", "80%", undefined]);

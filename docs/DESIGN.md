@@ -97,7 +97,7 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Group title (`--role-title`) | Plex Sans | `--type-sm` 12 px / 1.3 | `--w-strong` 600, `--text-muted` |
 | Caption (`--role-caption`): hints, notices, menu item details | Plex Sans | `--type-xs` 11 px / 1.5 | 450 |
 | Badge | Plex Sans, sentence case | `--type-xs` 11 px | `--w-strong` 600 |
-| Instrument chrome: axes, units, lane stats, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
+| Instrument chrome: axes, units, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
 | Axis names and unit captions (`.caps`) | Plex Mono | `--type-2xs` 10 px, `--track-caps` | `--w-heavy` |
 
 - 10 px is the floor for any text. Only headings scale with the viewport.
@@ -186,6 +186,12 @@ ping are the phase marks.
   becomes an aligned pair (`.inspect-row`: label `--text-soft`, value 600), set 4 px below any prose line. A tip opens on hover
   intent, keyboard focus or long press, never after a click on a control.
 - **Selectable tile or row** (`.tile`): the same hover and selection washes as a segment.
+- **Result chip**: one per stage, under its stage tile, at a fixed height in every state. The stage name is in phase
+  ink, then the value and unit, then one quiet line: the wire rate, else added latency per loaded stage (the phase
+  glyph, whole ms from 10 ms), jitter, each bidirectional lane, or bytes so far. Status is a dot and a word. The hover
+  lists every fact as pairs. Latency lanes and chart stage labels use the same name treatment.
+- **Tile or selectable row** (`.tile`): `--hover-wash` on hover. Selected tiles take `--brand-line`, `--brand-soft`
+  and `--brand-strong`.
 
 ## Density
 

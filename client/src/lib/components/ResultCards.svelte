@@ -15,6 +15,7 @@
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
+    laneShort,
     resultSentence,
     summaryCards,
     serverIssues,
@@ -126,11 +127,13 @@
           value: fmtBytes(store.liveStageBytes, units.base),
         },
       ];
+    const combined = live.rates && live.rates.down + live.rates.up;
     return (["download", "upload"] as const).map((stage) => {
       const rate = live.rates?.[stage === "download" ? "down" : "up"];
       return {
         label: STAGE[stage].short,
         value: rate == null ? MISSING : formatRate(rate, units),
+        short: laneShort(rate, combined, units),
         stage,
       };
     });
