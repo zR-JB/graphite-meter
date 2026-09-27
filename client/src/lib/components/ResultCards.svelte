@@ -7,7 +7,7 @@
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
-  import { fmtMs, resultRate } from "../format";
+  import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
@@ -100,6 +100,27 @@
     announce(untrack(() => resultSentence(settled)));
   });
 
+  // A running stage fills its facts as it goes: bytes so far, and each bidirectional lane's rate.
+  function liveRows(key: Stage): SummaryRow[] {
+    const lanes = { download: live.rates?.down, upload: live.rates?.up };
+    return skeleton(key).map((row) =>
+      row.label === "Transferred"
+        ? { ...row, value: fmtBytes(store.liveStageBytes, units.base) }
+        : key === "bidirectional" && row.stage && row.stage !== "latency"
+          ? {
+              ...row,
+              value:
+                lanes[row.stage as "download" | "upload"] == null
+                  ? MISSING
+                  : formatRate(
+                      lanes[row.stage as "download" | "upload"],
+                      units,
+                    ),
+            }
+          : row,
+    );
+  }
+
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {
     const active = status(key) === "active" || status(key) === "recovering";
@@ -134,7 +155,7 @@
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
       tip: JARGON[key],
-      rows: skeleton(key),
+      rows: active ? liveRows(key) : skeleton(key),
       accessible: active
         ? timeout
           ? "probe timeout"

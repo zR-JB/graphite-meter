@@ -288,7 +288,12 @@
       style:height={`${diameter}px`}
     >
       {#each [0, 1] as half (half)}
-        <div class="half-clip" class:second={half === 1}>
+        <!-- At rest against its clip edge, the second half would bleed a hairline at the seam. -->
+        <div
+          class="half-clip"
+          class:second={half === 1}
+          hidden={half === 1 && sweep.current <= 180}
+        >
           <div
             class="rotor"
             style:width={`${diameter}px`}

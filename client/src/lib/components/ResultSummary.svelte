@@ -4,7 +4,12 @@
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
   import { tipGroup, tooltip } from "../actions/tooltip";
-  import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
+  import {
+    MISSING,
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+  } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -23,17 +28,27 @@
   } = $props();
 </script>
 
-{#snippet line({ label, value, stage, tip }: SummaryRow)}
-  <span class="line">
-    <span class="line-label" {@attach tip ? tooltip(() => tip) : null}>
-      {#if stage}<span class="line-icon" data-tone={stage}
-          ><Icon name={STAGE[stage].icon} /></span
-        >{#if label !== STAGE[stage].short}<span class="sr-only"
-            >{STAGE[stage].short}</span
-          >{/if}{/if}{label}
-    </span>
-    <span class="line-value">{value}</span>
-  </span>
+<!-- Facts read "value term"; the term carries the explainer, a run of stage icons shares one term. -->
+{#snippet facts(rows: SummaryRow[])}
+  <span class="facts"
+    ><span class="facts-line">
+      {#each rows as row, i (row.label + row.stage)}
+        {@const lane = row.stage && row.label === STAGE[row.stage].short}
+        {@const joined = row.stage && rows[i + 1]?.label === row.label}
+        <span class="fact">
+          {#if row.stage}<span class="fact-icon" data-tone={row.stage}
+              ><Icon name={STAGE[row.stage].icon} /></span
+            ><span class="sr-only">{STAGE[row.stage].short}</span>{/if}
+          <span class="fact-value">{row.value}</span>
+          {#if !lane && !joined}<span
+              class="fact-term"
+              {@attach row.tip ? tooltip(() => row.tip!) : null}
+              >{row.label.toLowerCase()}</span
+            >{/if}
+        </span>
+      {/each}
+    </span></span
+  >
 {/snippet}
 
 <div class="result-summary" style:--cards={Math.min(4, cards.length)}>
@@ -55,52 +70,52 @@
   {/if}
   <div class="result-cards" data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
+      {@const stability = card.rows.find((row) => row.label === "Stability")}
       <article class="surface result-card enter {card.status}">
-        <span class="headline">
-          <span class="head" data-tone={card.key}>
-            <span class="tone-icon" aria-hidden="true"
-              ><Icon name={card.icon} /></span
+        <span class="head" data-tone={card.key}>
+          <span class="tone-icon" aria-hidden="true"
+            ><Icon name={card.icon} /></span
+          >
+          <span class="label" {@attach tooltip(() => card.tip)}
+            >{card.label}</span
+          >
+          {#if card.status === "partial" || card.status === "failed" || card.status === "stopped"}
+            <span class="badge" data-tone={STATUS_TONE[card.status]}
+              >{STATUS[card.status]}</span
             >
-            <span class="label" {@attach tooltip(() => card.tip)}
-              >{card.label}</span
+          {:else if stability && stability.value !== MISSING}
+            <span class="stability"
+              >{stability.value}
+              <span
+                class="fact-term"
+                {@attach stability.tip ? tooltip(() => stability.tip!) : null}
+                >stable</span
+              ></span
             >
-            {#if card.status === "partial" || card.status === "failed" || card.status === "stopped"}
-              <span class="badge" data-tone={STATUS_TONE[card.status]}
-                >{STATUS[card.status]}</span
-              >
-            {/if}
-          </span>
-          {#key scope}
+          {/if}
+        </span>
+        {#key scope}
+          <span class="readout enter">
             <span
-              class="val enter"
+              class="val"
               aria-hidden={card.accessible ? "true" : undefined}
             >
               <span class="num">{card.num}</span>
               {#if card.unit}<span class="unit">{card.unit}</span>{/if}
             </span>
-          {/key}
-        </span>
-        {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
-        {#key scope}
-          <span class="readout enter">
             {#if card.wire}
               {@const wire = card.wire}
               <span class="wire"
-                ><span>{wire.value}</span><span
-                  class="wire-tag"
-                  {@attach tooltip(() => wire.tip)}>wire {wire.overhead}</span
+                >{wire.value}
+                <span class="fact-term" {@attach tooltip(() => wire.tip)}
+                  >wire {wire.overhead}</span
                 ></span
               >
             {/if}
-            {#if card.rows.length}
-              <span class="rows">
-                {#each card.rows as row (row.label + row.stage)}
-                  {@render line(row)}
-                {/each}
-              </span>
-            {/if}
+            {@render facts(card.rows.filter((row) => row !== stability))}
           </span>
         {/key}
+        {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
   </div>
@@ -148,7 +163,7 @@
       grid-column: 1 / -1;
     }
   }
-  @container results (max-width: 330px) {
+  @container results (max-width: 480px) {
     .result-cards {
       grid-template-columns: minmax(0, 1fr);
     }
@@ -156,19 +171,13 @@
   .result-card {
     display: grid;
     align-content: start;
-    gap: var(--space-1);
+    gap: 6px;
     min-width: 0;
-    padding: var(--space-3);
+    padding: 10px var(--space-3);
     transition: var(--transition-control);
   }
   .result-card.active {
     border-color: var(--brand-line);
-  }
-  .headline {
-    display: grid;
-    gap: var(--space-2);
-    justify-self: start;
-    min-width: 0;
   }
   .head {
     display: flex;
@@ -176,8 +185,9 @@
     gap: var(--space-2);
     min-width: 0;
   }
-  .head .badge {
-    margin-left: var(--space-1);
+  .head .badge,
+  .stability {
+    margin-left: auto;
   }
   .label {
     font-size: var(--type-sm);
@@ -185,7 +195,7 @@
   }
   .readout {
     display: grid;
-    gap: var(--space-1);
+    gap: 3px;
     min-width: 0;
   }
   .val {
@@ -202,68 +212,54 @@
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
-  /* Value and overhead wrap as whole units, never mid-unit. */
-  .wire {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0 var(--space-2);
-    justify-self: start;
+  .wire,
+  .facts,
+  .stability {
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-xs) var(--font-mono);
+    font: var(--w-strong) var(--type-xs) / 1.5 var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
-  .wire > span {
-    white-space: nowrap;
+  /* Each fact wraps whole; its middot sits in the gap before it, clipped at a line start. */
+  .facts {
+    display: block;
+    overflow: hidden;
   }
-  .wire-tag {
-    color: var(--text-soft);
-    font-weight: var(--w-normal);
-  }
-  .rows {
-    display: grid;
-    gap: 3px;
-    margin-top: var(--space-1);
-  }
-  .line {
+  .facts-line {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2);
-    min-width: 0;
+    flex-wrap: wrap;
+    margin-left: calc(-1 * var(--space-3));
   }
-  @media (pointer: coarse) {
-    .line {
-      min-height: 24px;
-      align-items: center;
-    }
-  }
-  .line-label {
+  .fact {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
+    gap: 3px;
+    padding-left: var(--space-3);
+    white-space: nowrap;
+  }
+  .fact::before {
+    content: "·";
+    position: absolute;
+    left: calc(var(--space-3) / 2 - 0.5ch);
     color: var(--text-soft);
-    font-size: var(--type-xs);
-    transition: color var(--dur-hover) var(--ease-out);
   }
-  @media (hover: hover) {
-    .line-label:hover,
-    .label:hover,
-    .wire-tag:hover {
-      color: var(--text);
-    }
-  }
-  .line-icon {
+  .fact-icon {
     display: inline-grid;
     color: var(--tone);
   }
-  .line-icon :global(svg) {
-    width: 12px;
-    height: 12px;
+  .fact-icon :global(svg) {
+    width: 11px;
+    height: 11px;
   }
-  .line-value {
-    font: var(--w-strong) var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    text-align: end;
+  .fact-term {
+    color: var(--text-soft);
+    font-weight: var(--w-normal);
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  @media (hover: hover) {
+    .fact-term:hover,
+    .label:hover {
+      color: var(--text);
+    }
   }
 </style>

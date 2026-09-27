@@ -354,23 +354,6 @@
         / minmax(240px, 1fr) minmax(240px, 1fr);
     }
   }
-  @container viz (min-width: 1100px) {
-    .instrument,
-    .instrument:not(:has(.latency-panel)) {
-      grid-template-areas:
-        "gauge latency"
-        "controls results";
-      grid-template-rows: minmax(var(--gauge-well-height), auto) auto;
-    }
-    .instrument:not(:has(.latency-panel)) {
-      grid-template-areas:
-        "gauge gauge"
-        "controls results";
-    }
-    .results-slot :global(.result-summary) {
-      max-width: none;
-    }
-  }
   @media (min-width: 1800px) and (min-height: 1000px) {
     .instrument {
       --gauge-well-height: clamp(360px, min(43svh, 32cqw), 560px);

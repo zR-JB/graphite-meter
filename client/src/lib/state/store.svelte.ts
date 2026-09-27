@@ -517,9 +517,22 @@ class AppStore {
     return rawRateFrom(displayValue, unitBase, unitKind, scales.unitIndex);
   }
 
+  /** Bytes the running stage has moved so far, so its card counts up live. */
+  liveStageBytes = $state(0);
+  #stageBase = { phase: "", bytes: 0, last: 0 };
+
   #ingestLive(live: LiveSample): void {
     this.live = live;
     const { t, phase, continuityId, bytes: bytesCumulative } = live;
+    const base = this.#stageBase;
+    if (phase !== base.phase || bytesCumulative < base.last)
+      this.#stageBase = {
+        phase,
+        bytes: bytesCumulative < base.last ? 0 : base.last,
+        last: bytesCumulative,
+      };
+    this.#stageBase.last = bytesCumulative;
+    this.liveStageBytes = bytesCumulative - this.#stageBase.bytes;
     for (const dir of ["down", "up"] as const) {
       const bytesPerSec = live[dir];
       if (bytesPerSec == null) continue;
