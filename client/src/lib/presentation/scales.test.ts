@@ -26,11 +26,11 @@ const ticks = (from: number, rates: number[]): ThroughputSample[] =>
 const scales = (series: ThroughputSample[], result = NO_RESULT) =>
   throughputScales(series, result, "auto", "base10", "bits");
 
-test("each throughput axis contains what it draws, on a 1-2-5 step with headroom", () => {
+test("each throughput axis contains what it draws, with headroom and no decade jump", () => {
   const gigabit = ticks(0, [117e6, 125.4e6, 118e6]);
-  // One sample just over 1 Gbit/s steps both axes to 2 Gbit/s, never a decade.
+  // One sample just over 1 Gbit/s: the chart stays filled at 1.2, the dial steps to a round 2 Gbit/s.
   expect(scales(gigabit)).toEqual({
-    chartBytesPerSec: 250e6,
+    chartBytesPerSec: 150e6,
     gaugeBytesPerSec: 250e6,
     unitIndex: 2,
   });

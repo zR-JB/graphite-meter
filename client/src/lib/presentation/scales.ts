@@ -15,6 +15,8 @@ const LATENCY_HEADROOM = 1.25;
 /** The highest plotted rate stays this far below the top edge. */
 const RATE_HEADROOM = 1.03;
 const RATE_STEPS = [1, 2, 5];
+// The chart is read by its fill, so its ceiling sits just above the peak; the dial keeps round labels.
+const CHART_RATE_STEPS = [1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8];
 // Quarter ticks of a 1-2-4 ladder stay round: 0.25, 0.5, 1, 2.5, 5, 10 ms.
 const LATENCY_STEPS = [1, 2, 4];
 const LATENCY_FLOOR_MS = 1;
@@ -32,8 +34,8 @@ export function ceilStep(value: number, steps: readonly number[]): number {
 }
 
 /** A throughput ceiling above the highest plotted rate, chosen in bit/s so bits and bytes share it. */
-const rateCeiling = (bytesPerSec: number) =>
-  ceilStep(bytesPerSec * 8 * RATE_HEADROOM, RATE_STEPS) / 8;
+const rateCeiling = (bytesPerSec: number, steps = RATE_STEPS) =>
+  ceilStep(bytesPerSec * 8 * RATE_HEADROOM, steps) / 8;
 
 /** The highest rate drawn on one lane, and the highest two concurrent lanes add up to. */
 function peaks(series: readonly ThroughputSample[]) {
@@ -90,7 +92,7 @@ export function throughputScales(
   const floor = unitIndex >= 2 ? 1_000_000_000 / 8 : 0;
   return {
     chartBytesPerSec: chartPeak
-      ? rateCeiling(chartPeak)
+      ? rateCeiling(chartPeak, CHART_RATE_STEPS)
       : DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC,
     gaugeBytesPerSec: Math.max(floor, rateCeiling(gaugePeak)),
     unitIndex,

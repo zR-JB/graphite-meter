@@ -147,9 +147,7 @@
     font: var(--w-strong) var(--type-lg) var(--font-display);
     letter-spacing: var(--track-tight);
   }
-  /* Names, not field labels: the column fits a module path. */
   .legal-body {
-    --kv-label: 17rem;
     display: grid;
     gap: var(--space-4);
     min-height: 0;
@@ -178,5 +176,9 @@
     .legal-body {
       padding: var(--space-3);
     }
+  }
+  /* Component names, not field labels: the column fits a module path. */
+  .components {
+    --kv-label: 17rem;
   }
 </style>
