@@ -693,7 +693,7 @@ dependencies = [
 [[package]]
 name = "h2"
 version = "0.4.19"
-source = "git+https://github.com/zR-JB/h2?rev=8df5360fe933afe48e5e8c804727a5569111e357#8df5360fe933afe48e5e8c804727a5569111e357"
+source = "git+https://github.com/zR-JB/h2?rev=aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6#aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6"
 dependencies = [
  "atomic-waker",
  "bytes",

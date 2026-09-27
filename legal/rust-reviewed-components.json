@@ -1819,7 +1819,7 @@
     "ecosystem": "cargo",
     "name": "h2",
     "reviewedVersion": "0.4.19",
-    "upstream": "git+https://github.com/zR-JB/h2?rev=8df5360fe933afe48e5e8c804727a5569111e357#8df5360fe933afe48e5e8c804727a5569111e357",
+    "upstream": "git+https://github.com/zR-JB/h2?rev=aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6#aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6",
     "declaredLicenseExpression": "MIT",
     "selectedLicenseExpression": "MIT",
     "legalFiles": [
@@ -1831,7 +1831,7 @@
     ],
     "modified": true,
     "reviewDecision": "approved",
-    "reviewNotes": "Source: https://github.com/zR-JB/h2; revision 8df5360fe933afe48e5e8c804727a5569111e357. Based on hyperium/h2 v0.4.19 (d57d1b852fec9dda6d42d3454502006d52104da8). Reviewed MIT copyright/permission/disclaimer text; LICENSE is unchanged from the reviewed upstream archive. Allocation ownership and regression changes are recorded in legal/rust-forks.json; preserve the upstream attribution and include the modified source in the source offer."
+    "reviewNotes": "Source: https://github.com/zR-JB/h2; revision aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6. Based on hyperium/h2 v0.4.19 (d57d1b852fec9dda6d42d3454502006d52104da8). Reviewed MIT copyright/permission/disclaimer text; LICENSE is unchanged from the reviewed upstream archive. Allocation ownership and regression changes are recorded in legal/rust-forks.json; preserve the upstream attribution and include the modified source in the source offer."
   },
   {
     "ecosystem": "cargo",

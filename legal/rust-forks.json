@@ -158,11 +158,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "8df5360fe933afe48e5e8c804727a5569111e357",
+    "rev": "aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "023af39f0f7bd1d0412aca0ab3839e9e3b311c4270a84677a7bad79af7b3cd39",
+    "diffSha256": "61748fb65b906aad73b91f0683da0cf390c89c2e8b1330c9480c1fd21b841343",
     "modifiedPackages": [
       "h2"
     ],
@@ -219,6 +219,10 @@
       },
       {
         "subject": "Refund in-flight DATA when the codec is dropped",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Bound retained header map metadata",
         "origin": "graphite-meter"
       }
     ],
