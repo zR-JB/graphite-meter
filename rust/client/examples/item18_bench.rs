@@ -23,24 +23,28 @@ async fn main() -> Result<(), Error> {
         let _: serde_json::Value = transport.json(Method::GET, Route::Probe, &[]).await?;
         transports.push(Arc::new(transport));
     }
-    let id = if mode == "upload" {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Minted {
-            upload_id: String,
-        }
-        let minted: Minted = transports[0].json(Method::POST, Route::UploadSession, &[]).await?;
-        minted.upload_id
-    } else {
-        String::new()
-    };
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Minted {
+        upload_id: String,
+    }
+    // Upload sessions belong to the minting client address, so each connection mints its own.
+    let mut ids = Vec::new();
+    for transport in &transports {
+        ids.push(if mode == "upload" {
+            let minted: Minted = transport.json(Method::POST, Route::UploadSession, &[]).await?;
+            minted.upload_id
+        } else {
+            String::new()
+        });
+    }
     let mut block = vec![0_u8; 64 * 1024];
     getrandom::fill(&mut block).map_err(|_| "randomness unavailable")?;
     let block = Bytes::from(block);
     let started = Instant::now();
     let mut tasks = tokio::task::JoinSet::new();
-    for (lane, transport) in transports.into_iter().enumerate() {
-        let (mode, id, block) = (mode.clone(), id.clone(), block.clone());
+    for (lane, (transport, id)) in transports.into_iter().zip(ids).enumerate() {
+        let (mode, block) = (mode.clone(), block.clone());
         tasks.spawn(async move {
             if mode == "download" {
                 let size = bytes.to_string();
