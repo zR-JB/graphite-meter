@@ -480,7 +480,7 @@
             {#each visible as record, index (record.id)}
               {@const day = byDay ? dayHeading(record.completedAt) : ""}
               {#if day && (index === 0 || day !== dayHeading(visible[index - 1].completedAt))}
-                <li class="day caps" aria-hidden="true">{day}</li>
+                <li class="day" aria-hidden="true">{day}</li>
               {/if}
               <li>
                 <svelte:boundary>
@@ -620,7 +620,7 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     box-shadow: var(--elev-raised);
@@ -640,8 +640,7 @@
   .history-head p {
     min-width: 0;
     color: var(--text-muted);
-    font: var(--type-xs) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    font-size: var(--type-xs);
   }
   .head-actions {
     display: flex;
@@ -653,7 +652,6 @@
     display: grid;
     gap: var(--space-1);
     padding: var(--space-2) var(--space-4);
-    border-bottom: 1px solid var(--border);
   }
   .notice {
     align-items: center;
@@ -688,7 +686,7 @@
     }
     .detail-pane {
       grid-area: 1 / 2;
-      border-left: 1px solid var(--border-strong);
+      border-left: 1px solid var(--border-subtle);
     }
   }
   .history-list {
@@ -697,8 +695,9 @@
   .history-table {
     display: grid;
     grid-template-columns:
-      minmax(150px, 1.25fr)
-      repeat(var(--metric-columns), minmax(72px, 1fr));
+      minmax(150px, 16rem)
+      repeat(var(--metric-columns), minmax(72px, 10rem))
+      minmax(0, 1fr);
     padding-inline: var(--space-2);
   }
   .column-head,
@@ -716,8 +715,8 @@
     z-index: 1;
     margin-inline: calc(-1 * var(--space-2));
     padding-inline: var(--space-2);
-    border-bottom: 1px solid var(--border-strong);
-    background: var(--sheen), var(--surface-1);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-1);
   }
   .column-head button {
     position: relative;
@@ -774,12 +773,11 @@
     width: var(--icon-sm);
     height: var(--icon-sm);
   }
-  li {
-    border-bottom: 1px solid var(--border-subtle);
-  }
   li.day {
     display: block;
     padding: var(--space-4) 10px var(--space-1);
+    color: var(--text-muted);
+    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
   }
   .result-row {
     min-height: 40px;
@@ -814,13 +812,14 @@
     min-width: 0;
     white-space: nowrap;
   }
-  time strong {
-    font: var(--w-strong) var(--type-xs) var(--font-mono);
+  time strong,
+  .metric-cell strong {
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
   time small {
     color: var(--text-muted);
-    font: var(--type-2xs) var(--font-mono);
+    font-size: var(--type-xs);
   }
   .metric-cell {
     display: grid;
@@ -832,8 +831,6 @@
   }
   .metric-cell strong {
     overflow-wrap: break-word;
-    font: var(--w-strong) var(--type-xs) / 1.35 var(--font-mono);
-    font-variant-numeric: tabular-nums;
   }
   .load-more {
     display: flex;
@@ -842,7 +839,7 @@
     gap: var(--space-3);
     padding: var(--space-4);
     color: var(--text-muted);
-    font: var(--type-2xs) var(--font-mono);
+    font-size: var(--type-xs);
   }
   @container history-list (max-width: 560px) {
     .column-head {
@@ -863,22 +860,17 @@
       box-shadow: var(--elev-tile);
     }
     li.day {
-      border: 0;
       padding: var(--space-3) var(--space-1) 0;
     }
     .date-cell {
       grid-column: 1 / -1;
       padding-block: 6px 5px;
-      border-bottom: 1px solid var(--border-subtle);
     }
     .metric-cell {
       align-content: start;
       gap: 3px;
       padding: 6px 7px 7px;
       text-align: start;
-    }
-    .metric-cell + .metric-cell {
-      border-left: 1px solid var(--border-subtle);
     }
     .metric-cell small {
       display: flex;
@@ -887,7 +879,7 @@
       color: var(--text-muted);
     }
     .metric-cell strong {
-      font-size: var(--type-2xs);
+      font-size: var(--type-xs);
     }
   }
   @container history (max-width: 560px) {

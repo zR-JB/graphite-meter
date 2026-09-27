@@ -63,7 +63,7 @@
       </div>
     {:else if data}
       <section class="group" aria-labelledby="project-legal-title">
-        <h3 class="caps" id="project-legal-title">{data.project.name}</h3>
+        <h3 id="project-legal-title">{data.project.name}</h3>
         <dl class="kv">
           <div>
             <dt>Copyright</dt>
@@ -107,7 +107,7 @@
       </section>
 
       <section class="group" aria-labelledby="third-party-title">
-        <h3 class="caps" id="third-party-title">Third-party software</h3>
+        <h3 id="third-party-title">Third-party software</h3>
         <dl class="kv components">
           {#each data.components as component (component.ecosystem + component.name + component.version)}
             <div class="component">
@@ -147,9 +147,11 @@
     font: var(--w-strong) var(--type-lg) var(--font-display);
     letter-spacing: var(--track-tight);
   }
+  /* Names, not field labels: the column fits a module path. */
   .legal-body {
+    --kv-label: 17rem;
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -159,10 +161,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
-  }
-  /* Names, not field labels: the column fits a module path. */
-  .components {
-    --kv-label: 17rem;
   }
   .components a {
     display: block;

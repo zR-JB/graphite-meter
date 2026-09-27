@@ -265,8 +265,8 @@ func (m model) detailsView(w int, full bool) string {
 		populations = append(populations, compactPopulation(stage.Name))
 	}
 	lines := []string{m.st.heading.Render(m.outcomeNotice())}
-	if _, facts := m.resultsView(w); full && facts != "" {
-		lines = append(lines, facts, "")
+	if notes := m.resultsView(w).notes; full && len(notes) > 0 {
+		lines = append(append(lines, notes...), "")
 	}
 	lines = append(lines, m.st.grid(headers, rows, w), "",
 		m.st.heading.Render("Latency median by server"), m.st.grid(populations, latency, w))

@@ -85,7 +85,7 @@
         event.currentTarget.querySelector<HTMLElement>("button")?.focus();
     }}
   >
-    <h3 class="caps">
+    <h3>
       <span {@attach tooltip(() => "Columns\nDate is always shown")}
         >Columns</span
       >
@@ -106,7 +106,7 @@
         </button>
       {/each}
     </div>
-    <h3 class="caps">
+    <h3>
       <span
         {@attach tooltip(() => "Sort by\nResults missing the value stay last")}
         >Sort by</span
@@ -162,7 +162,6 @@
   }
   h3 {
     padding: var(--space-2) var(--space-2) 0;
-    color: var(--text-muted);
   }
   h3 + .menu {
     padding: 0;

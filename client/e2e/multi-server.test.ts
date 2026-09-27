@@ -90,14 +90,13 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
 
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
-  const badge = (role: string) =>
-    info.locator(`.path[data-role="${role}"] .badge`);
+  const path = (role: string) => info.locator(`.path[data-role="${role}"] dd`);
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
-  await expect(badge("throughput")).toHaveText("Used");
-  await expect(badge("latency")).toHaveText("Not in test");
+  await expect(path("throughput")).toContainText("Used");
+  await expect(path("latency")).toHaveText("Not selected");
   await info.getByRole("combobox", { name: "Inspect server" }).fill("self");
-  await expect(badge("latency")).toHaveText("Used");
+  await expect(path("latency")).toContainText("Used");
 });
 
 test("deselecting a verified peer starts a self-only run at once", async (page) => {

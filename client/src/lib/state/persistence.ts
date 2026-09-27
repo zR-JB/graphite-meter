@@ -36,7 +36,7 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
   "loaded",
 ];
 
-export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
+export const DEFAULT_DOCK_WIDTH = { left: 400, right: 416 };
 
 export interface LatencySelection {
   mode: "primary" | "all";

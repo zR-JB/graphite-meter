@@ -103,12 +103,13 @@
   --type-2xs: 10px;
   --type-xs: 11px;
   --type-sm: 12px;
+  --type-body: 13px;
   --type-md: 14px;
   --type-lg: 17px;
   --type-xl: 22px;
-  --w-normal: 500;
-  --w-strong: 650;
-  --w-heavy: 750;
+  --w-normal: 450;
+  --w-strong: 600;
+  --w-heavy: 700;
   --track-tight: -0.02em;
   --track-caps: 0.08em;
   --track-wide: 0.1em;
@@ -118,7 +119,7 @@
   --z-panel: 51;
 
   --control-h: 32px;
-  --kv-label: 7.5rem;
+  --kv-label: 6.75rem;
   --hit: 44px;
   --icon: 16px;
   --icon-sm: 13px;
@@ -176,6 +177,7 @@
   --field-edge: color-mix(in srgb, var(--text-soft) 70%, transparent);
   /* Pointer over a selectable tile or row; translucent so it reads on any surface. */
   --hover-wash: color-mix(in srgb, var(--text) 6%, transparent);
+  --group-fill: light-dark(rgb(43 44 40 / 0.04), rgb(211 219 227 / 0.045));
 
   /* Elevation. The ink is the shadow hue; depths differ per theme because a
      dark canvas needs a much denser shadow to read at all. */
@@ -347,6 +349,9 @@
     background: var(--canvas);
     color: var(--text);
     font-family: var(--font-sans);
+    /* Instrument Sans' 0.2em space crowds " · " joins. */
+    word-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
@@ -377,7 +382,8 @@
     border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--text);
-    font: var(--type-sm) var(--font-mono);
+    font: var(--type-sm) var(--font-sans);
+    font-variant-numeric: tabular-nums;
     transition: var(--transition-control);
   }
   select:focus-visible,
@@ -583,9 +589,8 @@
     box-shadow: var(--elev-inset);
   }
   .surface-head {
-    border-bottom: 1px solid var(--border-strong);
-    background: var(--sheen), var(--surface-1);
-    box-shadow: var(--elev-tile);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-1);
   }
 
   .tone-icon {
@@ -594,9 +599,8 @@
     place-items: center;
     width: 22px;
     height: 22px;
-    border: 1px solid var(--tone-line, var(--border));
     border-radius: var(--r-well);
-    background: var(--surface-2);
+    background: var(--tone-wash, var(--surface-2));
     color: var(--tone, var(--text-soft));
   }
   .tone-icon :where(svg) {
@@ -604,60 +608,51 @@
     height: var(--icon-sm);
   }
 
+  /* A grouped list: one size for labels and values; tone and weight tell them apart. */
   .kv {
     display: grid;
-    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--r-chrome);
+    background: var(--group-fill);
+    font-size: var(--type-body);
+    line-height: 1.4;
   }
   .kv > div {
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 2px var(--space-3);
+    gap: 2px 10px;
     min-width: 0;
+    padding-block: 5px;
   }
   .kv dt {
     flex: 0 0 var(--kv-label);
     color: var(--text-soft);
-    font-size: var(--type-xs);
-    font-weight: var(--w-strong);
+  }
+  .kv dt[tabindex]:is(:hover, :focus-visible) {
+    color: var(--text);
   }
   .kv dd {
     flex: 1 1 10rem;
     min-width: 0;
-    color: var(--text);
-    font-size: var(--type-sm);
-    line-height: 1.43;
+    font-weight: var(--w-normal);
     overflow-wrap: anywhere;
   }
 
   .group {
     display: grid;
-    gap: var(--space-2);
+    gap: 6px;
     min-width: 0;
   }
-  .group > .kv {
-    gap: 0;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
+  /* Section titles are names, not instrument quantities, so they skip .caps. */
+  .group > h3,
+  .group > .group-head > h3,
+  .float > h3 {
+    color: var(--text-muted);
+    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
   }
-  .group > .kv > div {
-    padding-block: 6px;
-  }
-  /* Label and value share one size; only tone tells them apart. */
-  .group > .kv dt {
-    font-size: var(--type-sm);
-    font-weight: var(--w-normal);
-    line-height: 1.5;
-  }
-  /* The sans space is narrow beside a middot; values joined by " · " need the air. */
-  .group > .kv dd {
-    font-variant-numeric: tabular-nums;
-    word-spacing: 0.12em;
-  }
-  .group > .kv dt[tabindex]:is(:hover, :focus-visible) {
-    color: var(--text);
+  .group:has(> .kv) > :is(h3, .group-head) {
+    padding-inline: var(--space-3);
   }
 
   .field {
@@ -752,7 +747,7 @@
   }
 
   .float {
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-1);
     color: var(--text);
@@ -834,7 +829,7 @@
     padding: var(--space-1) var(--space-2);
     border-radius: var(--r-well);
     color: var(--text-muted);
-    font-size: var(--type-xs);
+    font-size: var(--type-sm);
     text-align: start;
     transition: var(--transition-control);
   }

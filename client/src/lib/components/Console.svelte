@@ -582,7 +582,6 @@
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
     >
-    <span class="chrome-divider" aria-hidden="true"></span>
     <div class="connectivity"><ConnectivityIndicator /></div>
     <div class="topbar-spacer"></div>
     {#if awayRunIndicator}<button
@@ -661,7 +660,6 @@
     onClose={() => dismissPanel("settings")}
     side="left"
     title="Settings"
-    kicker="Test & Display"
   >
     <TestSetupPanel
       open={settingsOpen}
@@ -734,7 +732,6 @@
     onResetWidth={() => resetDockWidth("right")}
     onClose={() => dismissPanel("endpoint")}
     title="Details"
-    kicker="Server & connection"
   >
     <EndpointInfo onOpenLegal={openLegal} />
   </SidePanel>
@@ -814,12 +811,6 @@
   .brand-glyph {
     width: 18px;
     height: 18px;
-  }
-  .chrome-divider {
-    width: 1px;
-    height: 22px;
-    margin: 0 2px;
-    background: var(--border);
   }
   .connectivity {
     display: grid;
@@ -938,7 +929,6 @@
       padding-inline: 6px;
     }
     .brand-label,
-    .chrome-divider,
     .live-copy {
       display: none;
     }
