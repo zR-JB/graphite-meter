@@ -100,6 +100,10 @@ test("formatting matches the shared vectors", () => {
   for (const { in: ms, out } of vectors.added) expect(fmtAddedMs(ms)).toBe(out);
   for (const { bytesPerSec, out } of vectors.rate)
     expect(formatRate(bytesPerSec, { base: "base10", kind: "bits" })).toBe(out);
+  expect(formatRate(1_048_576, { base: "base2", kind: "bytes" })).toBe(
+    "1024 KiB/s",
+  );
+  expect(formatRate(null, { base: "base10", kind: "bits" })).toBe("—");
 });
 
 test("no formatter renders a non-finite value as NaN or Infinity", () => {

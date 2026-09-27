@@ -11,11 +11,8 @@
     HistoryRepository,
     onHistoryChanged,
   } from "../history/repository";
-  import {
-    formatHistoryRate,
-    formatLatency,
-    formatRecentCompletion,
-  } from "../history/format";
+  import { formatRecentCompletion } from "../history/format";
+  import { formatLatency, formatRate } from "../format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
@@ -220,7 +217,7 @@
       return value == null
         ? stageStatusLabel(stages.latency)
         : formatLatency(value);
-    if (value != null) return formatHistoryRate(value, units);
+    if (value != null) return formatRate(value, units);
     if (column !== "bidirectional") return stageStatusLabel(stages[column]);
     const { survivingDirection } = bidirectionalResultPresentation(
       bidirectional?.down?.reportedBytesPerSec,
