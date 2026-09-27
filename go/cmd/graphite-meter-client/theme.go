@@ -20,7 +20,7 @@ func newStyles(dark bool) styles {
 	pick := lipgloss.LightDark(dark)
 	tone := func(light, dark string) color.Color { return pick(lipgloss.Color(light), lipgloss.Color(dark)) }
 	fg := func(c color.Color) lipgloss.Style { return lipgloss.NewStyle().Foreground(c) }
-	ink, text, soft := tone("#20242a", "#e6e8eb"), tone("#171b20", "#eef0f3"), tone("#5f646a", "#8e9299")
+	ink, text, soft := tone("#20242a", "#e6e8ea"), tone("#171b20", "#eef0f3"), tone("#5f646a", "#8e9299")
 	good, caution, bad := tone("#2e734b", "#88d1a2"), tone("#85671f", "#e8cf83"), tone("#ab413e", "#ed8b88")
 	badge := lipgloss.NewStyle().Bold(true).Foreground(tone("#fdfdfd", "#0d1013")).Padding(0, 1)
 	s := styles{
@@ -35,7 +35,7 @@ func newStyles(dark bool) styles {
 		err:    fg(bad).Bold(true),
 		border: fg(tone("#cacbcf", "#3e4348")),
 		stage: map[goclient.Stage]lipgloss.Style{
-			goclient.StageLatency:       fg(tone("#1d7a6f", "#70dbc4")),
+			goclient.StageLatency:       fg(tone("#1d7a73", "#70dbc4")),
 			goclient.StageDownload:      fg(tone("#254ea3", "#71a3ff")),
 			goclient.StageUpload:        fg(tone("#a35d1d", "#feb66a")),
 			goclient.StageBidirectional: fg(tone("#7f2456", "#e472ac")),
@@ -48,7 +48,7 @@ func newStyles(dark bool) styles {
 			goclient.OutcomeFailed:     badge.Background(bad),
 		},
 	}
-	s.selected = s.text.Bold(true).Background(tone("#e6e6e9", "#2d2f33"))
+	s.selected = s.text.Bold(true).Background(tone("#e6e6e9", "#303236"))
 	s.heading = s.accent.Bold(true)
 	return s
 }

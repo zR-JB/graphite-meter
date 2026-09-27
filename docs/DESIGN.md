@@ -80,7 +80,8 @@ strengthens subtle edges and `--text-soft`; it and `prefers-reduced-transparency
 The auth pages keep a pinned copy of the page, ink and text tokens (`go/internal/auth/assets/auth.css`), and
 `client/index.html` repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink,
 stage and status tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so
-its light stage colours are each hue's `--tone-ink`.
+its light stage colours are each hue's `--tone-ink`. A few values sit a unit or three off their token so that
+256-colour terminals still map ink and selection to grey and keep latency apart from ok.
 
 ## Type
 
