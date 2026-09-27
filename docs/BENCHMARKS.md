@@ -81,4 +81,4 @@ GM_MULTI_BENCH_MATRIX='rtt=0,100 loss=0,1 count=1 transport=h2,h3 client=go,rust
 cat /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson | python3 client/bench/server-matrix-summary.py  # sessions together
 ```
 
-The full matrix (1,440 cells, 3 repeats) takes about 16 hours.
+The full matrix (1,440 cells, 3 repeats, 4,320 runs of 13–18 s) takes about 18 hours.
