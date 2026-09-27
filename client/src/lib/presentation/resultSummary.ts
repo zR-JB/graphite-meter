@@ -294,13 +294,21 @@ export const serverIssues = (details: MultiServerResult, scope = "") =>
       text: `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${reasonLabel(failure.reason)}`,
     }));
 
-/** One server's share of a run, with the statuses the run settled for that server. */
+/** One server's share of a run, with the statuses the run settled for that server; none if it measured nothing. */
 function serverEvidence(
   details: MultiServerResult,
   id: string,
-): SummaryEvidence | null {
+): SummaryEvidence {
   const server = details.servers.find((entry) => entry.server.id === id);
-  if (!server) return null;
+  if (!server)
+    return {
+      status: {},
+      download: null,
+      upload: null,
+      bidirectional: null,
+      latency: null,
+      added: null,
+    };
   return {
     status: shownStatus(server.stages),
     download: server.download,

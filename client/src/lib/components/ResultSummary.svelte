@@ -72,6 +72,11 @@
         value={scope}
         onchange={onscope}
         disabled={locked}
+        disabledIds={details.selection
+          .filter(
+            ({ id }) => !details.servers.some(({ server }) => server.id === id),
+          )
+          .map(({ id }) => id)}
         aggregate="Combined"
         label="Result measurements"
       />
