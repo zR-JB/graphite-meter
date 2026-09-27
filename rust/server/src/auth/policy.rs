@@ -384,6 +384,7 @@ pub fn constant_equal(expected: &str, actual: &str) -> bool {
     expected.len() > 20 && expected.as_bytes().ct_eq(actual.as_bytes()).into()
 }
 
+/// Go's `CookiesNamed` for one cookie: invalid pairs are skipped, and two valid ones are ambiguous.
 pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let values = headers.get_all(header::COOKIE);
     let count: usize = values
@@ -394,34 +395,27 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         return None;
     }
     let mut found = None;
-    for header in values {
-        let Ok(header) = header.to_str() else {
-            return None;
+    for part in values
+        .iter()
+        .flat_map(|header| header.as_bytes().split(|byte| *byte == b';'))
+    {
+        let part = part.trim_ascii();
+        let (key, value) = match part.iter().position(|byte| *byte == b'=') {
+            Some(at) => (&part[..at], &part[at + 1..]),
+            None => (part, &b""[..]),
         };
-        for part in header.split(';').map(str::trim) {
-            let Some((key, value)) = part.split_once('=') else {
-                continue;
-            };
-            if key.trim() != name {
-                continue;
-            }
-            if found.is_some() {
-                return None;
-            }
-            let value = value
-                .strip_prefix('"')
-                .and_then(|value| value.strip_suffix('"'))
-                .unwrap_or(value);
-            if !value
-                .bytes()
-                .all(|byte| (0x20..0x7f).contains(&byte) && !matches!(byte, b'"' | b';' | b'\\'))
-            {
-                return None;
-            }
-            found = Some(value);
+        let value = match value {
+            [b'"', value @ .., b'"'] => value,
+            value => value,
+        };
+        let valid = value
+            .iter()
+            .all(|byte| (0x20..0x7f).contains(byte) && !matches!(byte, b'"' | b';' | b'\\'));
+        if key.trim_ascii() == name.as_bytes() && valid && found.replace(value).is_some() {
+            return None;
         }
     }
-    found
+    found.map(|value| std::str::from_utf8(value).expect("cookie values are ASCII"))
 }
 
 fn query<B>(request: &Request<B>, name: &str) -> Option<String> {

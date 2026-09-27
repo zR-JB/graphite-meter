@@ -186,12 +186,17 @@ fn ambiguous_cookie_and_origin_evidence_cannot_authorize_a_measurement() {
     req.headers_mut()
         .insert("x-csrf-token", session.session().csrf().parse().unwrap());
     allowed(&policy, &req);
+    for other in ["theme=é", "__Host-gm_session=ab\"c"] {
+        req.headers_mut().append(header::COOKIE, other.parse().unwrap());
+        allowed(&policy, &req);
+    }
 
-    req.headers_mut()
-        .append(header::COOKIE, "__Host-gm_session=other".parse().unwrap());
-    refused(&policy, &req, Refusal::AuthenticationRequired);
-    req.headers_mut().remove(header::COOKIE);
-    cookie(&mut req, &token);
+    for duplicate in ["__Host-gm_session=other", "__Host-gm_session"] {
+        req.headers_mut().append(header::COOKIE, duplicate.parse().unwrap());
+        refused(&policy, &req, Refusal::AuthenticationRequired);
+        req.headers_mut().remove(header::COOKIE);
+        cookie(&mut req, &token);
+    }
 
     for (name, value) in [
         (header::ORIGIN, PUBLIC),
