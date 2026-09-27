@@ -618,8 +618,8 @@ class AppStore {
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
-        // A stopped stage keeps how far it got.
-        if (to !== "aborted" || this.phase !== this.phaseStage) {
+        const stopped = to === "aborted" && this.phase === this.phaseStage;
+        if (!stopped) {
           this.phaseStage = stage;
           this.phaseFraction = 0;
         }

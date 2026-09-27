@@ -54,7 +54,6 @@ export interface ChartData {
   scaleBytesPerSec: number;
   /** Shared robust latency ceiling, identical to the gauge. */
   latencyScaleMs: number;
-  /** The rate unit the labels use, kept with the run they describe. */
   units: { base: UnitBase; kind: UnitKind; index: number };
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
@@ -105,7 +104,6 @@ const THROUGHPUT_LANES = [
 export interface ChartPresentation {
   layout: ChartLayout;
   units: ChartData["units"];
-  /** The ceilings the axes settle on while the plotted ones glide to them. */
   ceiling: { bytesPerSec: number; rttMs: number };
   latencyEnabled: boolean;
   hasThroughputScale: boolean;
@@ -220,7 +218,6 @@ export class ChartEngine {
   /** The result-mode time axis; a live run follows its timeline instead. */
   #camera = new Smoothed();
   #cameraTarget = 4_000;
-  /** A new run replaces the presented one only once it has faded out. */
   #runFade = new Smoothed();
   #shownFade = 1;
   #bytesCeiling = new Smoothed();
@@ -260,7 +257,7 @@ export class ChartEngine {
     textSoft: "#8b929a",
     brand: "#6db0b8",
   };
-  /** onPresentation runs when labels or scales change; onTimeScale on every camera frame, onFade on every run fade frame. */
+  /** onPresentation runs when labels or scales change; onTimeScale on every camera frame. */
   constructor(
     data: ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
@@ -468,7 +465,6 @@ export class ChartEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
   render = (now: number): boolean => {
-    // While the last run fades out, the new data waits and every frame checks again.
     const handing = this.#dirty && !this.#update(now);
     this.#dirty = handing;
     const tMax = this.#result
@@ -539,7 +535,7 @@ export class ChartEngine {
     this.#sceneTMax = 0;
     this.#sceneDirty = true;
   }
-  /** False while the presented run is still fading out. */
+  /** A new run replaces the presented one only once it has faded out; false until then. */
   #update(now: number): boolean {
     const d = this.#data;
     if (d.runSeq !== this.#runSeq) {
@@ -581,7 +577,6 @@ export class ChartEngine {
     this.#hasThroughputScale =
       d.scaleBytesPerSec !== DEFAULT_THROUGHPUT_REFERENCE_BYTES_PER_SEC ||
       d.throughput.length > 0;
-    // A rescale glides the plotted marks; before any are plotted it snaps.
     const ceiling = (value: Smoothed, target: number, empty: boolean) => {
       if (value.target !== target || empty)
         value.set(target, { over: RESULT_GLIDE_MS, snap: empty, now });
@@ -707,7 +702,6 @@ export class ChartEngine {
     const latencyAnimating = d.latencyEnabled
       ? this.#drawActiveLatency(ctx, now)
       : false;
-    // The run's marks fade as one layer; the grid behind them stays.
     ctx.save();
     if (fade < 1) {
       ctx.globalCompositeOperation = "destination-in";

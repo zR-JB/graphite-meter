@@ -26,7 +26,6 @@
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  // Axis labels name the ceiling the plot settles on and change only while faded.
   const axis = handoff(
     () => {
       if (!chartPresentation) return { unit: "", left: [], right: [] };
@@ -524,7 +523,6 @@
   .time-label {
     left: 0;
   }
-  /* The run's own labels leave with its plot; the axes hand off by themselves. */
   .time-label,
   .marks {
     opacity: var(--run-fade, 1);

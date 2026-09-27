@@ -73,7 +73,6 @@
       stageShown(s.key, s.selected, store.stagePresentation[s.key]),
     ),
   );
-  // Each segment hands off its own look, so a change in one leaves the others still.
   const look = (key: StageKey) => {
     const s = model.find((s) => s.key === key)!;
     const live = s.state === "active" && store.phaseBudgetMs > 0;

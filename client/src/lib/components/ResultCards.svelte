@@ -99,7 +99,6 @@
     ),
   );
 
-  // A new run's cards replace the last run's only while faded out.
   const view = handoff(
     () => ({
       run: store.runSeq,

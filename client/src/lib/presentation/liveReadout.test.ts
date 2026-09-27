@@ -34,7 +34,6 @@ test("a stage change holds the last rate until its first evidence, then glides a
   readout.update(upload(450), 1, 400);
   expect(readout.phase).toBe("upload");
   expect(shown(readout, 400)).toBe(2_000);
-  // A sample during the glide retargets it without hurrying it.
   readout.update(upload(650), 1, 400 + STAGE_GLIDE_MS / 2);
   expect(shown(readout, 400 + STAGE_GLIDE_MS / 2)).toBe(1_225);
   expect(shown(readout, 400 + STAGE_GLIDE_MS)).toBe(650);

@@ -892,7 +892,7 @@
   .stage > :global(.gauge-panel) {
     flex: none;
   }
-  /* The timeline uses spare height while the gauge remains stable; a short viewport shortens it first. */
+  /* The timeline uses spare height while the gauge remains stable. */
   .stage > :global(.chart) {
     --chart-min: clamp(120px, 100svh - 680px, 160px);
     flex: 1 0 var(--chart-min);

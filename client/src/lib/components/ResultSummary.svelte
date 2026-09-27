@@ -22,9 +22,7 @@
     locked = false,
   }: {
     cards: SummaryCard[];
-    /** The cards' contents fade through a handoff while their surfaces stay. */
     fade?: number;
-    /** Live cards hold their settled height, so arriving values move nothing. */
     reserve?: boolean;
     details?: MultiServerResult | null;
     issues?: { server: string; text: string }[];
@@ -226,7 +224,6 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-tight);
   }
-  /* A live value changes width as it moves; its unit holds still. */
   .active .num {
     min-width: 5ch;
   }
@@ -249,8 +246,10 @@
   .wire {
     min-height: 1lh;
   }
-  .reserve .facts {
-    min-height: 2lh;
+  @container results (min-width: 481px) {
+    .reserve .facts {
+      min-height: 2lh;
+    }
   }
   .facts-line {
     display: flex;

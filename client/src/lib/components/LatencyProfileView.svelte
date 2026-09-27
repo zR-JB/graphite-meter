@@ -40,7 +40,6 @@
 
   const scale = $derived(profileDomain(lanes));
   const live = $derived(variant === "bare");
-  // A rescaled axis relabels only while faded; the markers glide to it.
   const ticks = handoff(
     () =>
       [scale.min, scale.min + scale.span / 2, scale.min + scale.span].map(
@@ -181,7 +180,6 @@
       ),
     );
     untrack(() => {
-      // A marker that leaves is revealed at its next value, not glided in from the last.
       for (const key of glides.keys())
         if (!targets.some(([other]) => other === key)) glides.delete(key);
       for (const [key, target] of targets) {

@@ -74,8 +74,7 @@
   );
   const extent = $derived(layout.radius + layout.arcWidth / 2 + 1);
   const diameter = $derived(extent * 2);
-  // The needle follows the readout's own smoothed value and glides only across a change of scale.
-  // Without a value the live layer fades out holding its pose, and it is revealed at the measured value.
+  // The needle follows the readout, glides across a rescale, holds its pose while hidden and is revealed at the value.
   const sweep = new Smoothed();
   let accent = $state("var(--phase-latency)");
   let course = "";

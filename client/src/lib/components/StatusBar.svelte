@@ -19,7 +19,6 @@
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const recovering = $derived(store.effectiveConnectivity === "recovering");
-  // A new run's counters replace the last run's only while faded out.
   const counters = handoff(
     () => ({
       run: store.runSeq,

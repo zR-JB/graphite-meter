@@ -96,7 +96,6 @@
     phase === "latency" ||
       (phase === "complete" && completedKind === "latency"),
   );
-  // An RTT the gauge does not show snaps, so the next one it shows starts from the truth.
   $effect(() => {
     const ms = gaugeLatency.rttMs;
     const shown = msTicksActive;
@@ -120,7 +119,6 @@
   });
   const layout = $derived(gaugeLayout(gaugeWidth, gaugeHeight));
   const liveTarget = $derived(liveTargets(store.live));
-  // Each part hands off what it shows, so its content only changes while it is faded out.
   const ticks = handoff(
     () =>
       !unusableStage &&
@@ -557,7 +555,6 @@
     line-height: 1;
     white-space: nowrap;
   }
-  /* A small dial has no room above its number; the arc's colour and the cards name the stage. */
   @container (max-height: 180px) {
     .terminal-direction {
       display: none;
