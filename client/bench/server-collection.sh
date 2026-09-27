@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Called by mise with its pinned runtimes and an already built production server.
 test -n "${BUN_CHROME_PATH:?Set BUN_CHROME_PATH to the pinned Chrome for Testing binary}"
-for program in unshare nsenter ip tc openssl curl; do
+for program in unshare nsenter ip tc ethtool openssl curl; do
   command -v "$program" >/dev/null
 done
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -20,4 +20,5 @@ export GM_E2E_SPKI
 export GM_MULTI_BENCH_OUTPUT="${GM_MULTI_BENCH_OUTPUT:-$(mktemp -d -t graphite-meter-servers.XXXXXX)}"
 cd "$root/client"
 printf 'Writing measurement evidence to %s\n' "$GM_MULTI_BENCH_OUTPUT"
-unshare --user --map-root-user --net python3 bench/server-collection-rig.py
+# The PID namespace ends every server and browser together with the rig.
+unshare --user --map-root-user --net --pid --fork --kill-child --mount-proc python3 bench/server-collection-rig.py

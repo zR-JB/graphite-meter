@@ -1,6 +1,6 @@
-"""One client, one router and four real servers inside disposable user/network namespaces.
+"""One client, one router and four real servers inside disposable user, network and PID namespaces.
 
-Run through unshare --user --map-root-user --net. No host interface or qdisc is changed.
+Run through server-collection.sh. No host interface or qdisc is changed.
 The browser control channel stays on unshaped client loopback. Results are written
 under the temporary directory; the caller supplies an already built server and pinned Chrome.
 """
@@ -25,7 +25,7 @@ backends = []
 
 
 def namespace():
-    child = subprocess.Popen(["unshare", "--net", "sleep", "1800"])
+    child = subprocess.Popen(["unshare", "--net", "sleep", "infinity"])
     keepers.append(child)
     for _ in range(100):
         if os.readlink(f"/proc/{child.pid}/ns/net") != os.readlink("/proc/self/ns/net"):
@@ -41,6 +41,9 @@ def link(name, a_namespace, a_address, b_namespace, b_address):
     for iface, owner, address in [(name, a_namespace, a_address), (other, b_namespace, b_address)]:
         if owner:
             command("ip", "link", "set", iface, "netns", str(owner))
+        # netem must see single packets; batches would be delayed and dropped whole.
+        command("ethtool", "-K", iface, "tso", "off", "gso", "off", "gro", "off", "tx-udp-segmentation", "off",
+                namespace=owner, stdout=subprocess.DEVNULL)
         command("ip", "addr", "add", address, "dev", iface, namespace=owner)
         command("ip", "link", "set", iface, "up", namespace=owner)
 
@@ -69,7 +72,7 @@ def browser_processes(parent):
         if found <= descendants:
             break
         descendants |= found
-    return {pid: (cpu, rss) for pid, (_ppid, name, cpu, rss) in processes.items() if pid in descendants and name.startswith("chrome")}
+    return {pid: (cpu, rss) for pid, (_ppid, name, cpu, rss) in processes.items() if pid in descendants and name.startswith("chrom")}
 
 
 def run_cell(environment, output, profile, count, repeat):
@@ -146,7 +149,10 @@ def main():
     command("ip", "route", "add", "10.81.0.0/16", "via", "10.80.0.1")
     command("sysctl", "-qw", "net.ipv4.ip_forward=1", namespace=router)
     servers = [{"id": "self" if i == 1 else f"server-{i}", "url": f"https://10.81.{i}.2:7247", "name": f"Path {i}"} for i in range(1, 5)]
+    # The browser gets its own configuration directory, never the desktop profile or its launcher flags.
+    browser_config = tempfile.TemporaryDirectory()
     env = {key: value for key, value in os.environ.items() if not key.startswith("GM_AUTH_") and not key.startswith("GM_SERVER_CATALOG")}
+    env["XDG_CONFIG_HOME"] = browser_config.name
     for i, node in enumerate(nodes, 1):
         link(f"gm{i}", router, f"10.81.{i}.1/24", node, f"10.81.{i}.2/24")
         command("ip", "route", "add", "default", "via", f"10.81.{i}.1", namespace=node)
