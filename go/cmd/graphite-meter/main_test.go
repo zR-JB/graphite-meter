@@ -14,6 +14,13 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
+	// The operator's own GM_* settings must not leak into the cases.
+	for _, kv := range os.Environ() {
+		if key, _, _ := strings.Cut(kv, "="); strings.HasPrefix(key, "GM_") {
+			t.Setenv(key, "")
+			os.Unsetenv(key)
+		}
+	}
 	for _, tc := range []struct {
 		name  string
 		env   string // a GM_H2_ADDR the flags must complete
