@@ -21,9 +21,7 @@ The release server embeds one reviewed third-party notice payload for both
 The packaged TUI keeps its reviewed notice compressed inside the executable and
 expands it only for `--legal`; the archive also carries the readable `LEGAL.txt`.
 
-Run `GM_IMPLEMENTATION=rust mise run tui` to open the experimental TUI, or pass
-`--url https://your-server`. `mise run tui` selects Go by default.
-`mise run rust-client-run -- --url https://your-server` remains available.
+Run `mise run rust-client-run -- --url https://your-server` to open the experimental TUI.
 Start test is focused initially. Tab/Shift-Tab changes focus, arrows adjust
 settings, and Space toggles stages. Advanced exposes stream and timing settings.
 Press `d` for Details, `l` to change the displayed latency server, `?` for help,
@@ -42,9 +40,6 @@ a separate Linux amd64 server image tagged `VERSION-rust`, with a matching sourc
 offer. Go remains the release default; Rust prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`. The port remains
 blocked from merging until a human decides its design.
-
-Set `GM_IMPLEMENTATION=rust` when running `mise run dev` or `mise run prod` to
-select the experimental server. Leaving it unset selects Go.
 
 `mise run rust-server-run` builds the browser UI and runs the experimental server
 using `GM_*` configuration or server flags. HTTP/1, HTTPS/WSS, HTTP/2, and
@@ -149,11 +144,12 @@ lost the final prefix byte when a read returned that byte with a reset error.
 The current-only Go probe exercises the draft-09+ transport parameter; it is
 not evidence of Safari browser parity.
 
-The QUIC stack uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
-and [HTTP/3](https://github.com/zR-JB/h3) forks. No third-party source is vendored
-in this checkout. [Fork provenance](../legal/rust-forks.json) records upstream
-bases, changes and reviewed revisions. `rust-check` validates locked sources
-offline; release packaging also verifies fork branches, upstream tags and diffs.
+The server uses exact revisions of the [Noq](https://github.com/zR-JB/noq),
+[HTTP/3](https://github.com/zR-JB/h3) and [h2](https://github.com/zR-JB/h2) forks.
+[Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
+revisions and each commit's purpose. `rust-check` validates locked sources offline;
+`scripts/legal/check_git_sources.py --verify` checks fork branches, upstream tags
+and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
 The shared `webtransport` crate owns association-preserving cancellation, with
 plain RESET fallback when peers do not support reliable reset. The forks remain
 experimental; current-codepoint tests do not establish Safari compatibility.

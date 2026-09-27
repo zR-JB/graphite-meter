@@ -131,7 +131,8 @@ the default branch. No fork Actions setup is needed.
 Canonical updates get draft Cargo.toml pin PRs on SHA-specific branches. Existing proposals
 and reviewer edits are never overwritten. Lockfiles and reviewed provenance stay unchanged,
 so existing gates block the drafts. Review origins, diffs, package/file scope, licenses and
-budgets; update `rust-forks.json`, Cargo.lock and generated legal outputs; then run
+budgets; update `rust-forks.json` (each commit's subject, purpose and origin), Cargo.lock
+and generated legal outputs; then run
 `scripts/legal/check_git_sources.py --verify` and the Rust/fork gates before approval.
 Upkeep never reviews sources, merges PRs or changes protections.
 

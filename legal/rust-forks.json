@@ -15,58 +15,72 @@
     "commits": [
       {
         "subject": "h3: expose unidirectional streams awaiting their header",
+        "purpose": "Lists unidirectional streams whose type or session header is incomplete so the owner can time them out.",
         "origin": "graphite-meter"
       },
       {
         "subject": "h3: recognize current WebTransport settings",
+        "purpose": "Reads and sends the current draft's WT_ENABLED and WT_MAX_SESSIONS settings, falling back to draft-02 IDs, and exposes the peer session limit.",
         "origin": "graphite-meter"
       },
       {
         "subject": "h3: accept the webtransport-h3 CONNECT protocol",
+        "purpose": "Accepts the current :protocol webtransport-h3 alongside the legacy webtransport spelling.",
         "origin": "graphite-meter"
       },
       {
         "subject": "h3: keep the full CONNECT stream ID as WebTransport session ID",
+        "purpose": "Fixes session IDs derived from the quarter stream index, which misidentified every session except stream 0.",
         "origin": "graphite-meter"
       },
       {
         "subject": "h3: expose WebTransport settings on the client builder",
+        "purpose": "Adds WebTransport enablement and session limit to the client builder, matching the server builder.",
         "origin": "graphite-meter"
       },
       {
         "subject": "h3-noq: copy h3-quinn 0.0.10",
+        "purpose": "Copies h3-quinn 0.0.10 unchanged as the reviewable baseline for the Noq adapter.",
         "origin": "hyperium/h3 h3-quinn 0.0.10, unchanged"
       },
       {
         "subject": "h3-noq: adapt the h3-quinn transport to Noq",
+        "purpose": "Ports the adapter to Noq with cancellation-safe bounded chunk reads; drops the datagram module and tokio-util.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Test the Graphite Meter fork",
+        "purpose": "Adds the fork-only CI workflow and fixes h3-noq Clippy findings.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Install Clippy for fork CI",
+        "purpose": "Installs Clippy in the fork CI toolchain.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Parse buffered stream headers before reading more data",
+        "purpose": "Decodes a stream type or session varint already buffered instead of stalling until more bytes or FIN arrive.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound buffered frames and stream unknown payloads",
+        "purpose": "Rejects oversized HEADERS, PUSH_PROMISE and SETTINGS frames, streams unknown frame payloads without buffering and rejects malformed control frames.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Own and coalesce retained receive buffers",
+        "purpose": "Copies received chunks into owned 4-16 KiB blocks so small slices cannot pin large transport buffers.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Test pending receive ownership in the adapter",
+        "purpose": "Tests pending and cancelled receive ownership through the Noq adapter.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound QPACK literal allocation before decoding headers",
+        "purpose": "Checks QPACK literal lengths against the remaining header or table budget before copying them.",
         "origin": "graphite-meter"
       }
     ],
@@ -89,110 +103,137 @@
     "commits": [
       {
         "subject": "feat: reset_stream_at TransportParameter",
+        "purpose": "Adds the reset_stream_at transport parameter and its endpoint option and 0-RTT compatibility check.",
         "origin": "n0-computer/noq#805 b7a4d3663e904d5d9b20fa3d2fa28295aacfb4f5"
       },
       {
         "subject": "Add the frame type itself",
+        "purpose": "Adds the RESET_STREAM_AT frame type, codec, qlog and statistics.",
         "origin": "n0-computer/noq#805 a03d4ffa3f90df0825ba973f17051e0eac023707"
       },
       {
         "subject": "impl retransmit of RESET_STREAM_AT",
+        "purpose": "Tracks RESET_STREAM_AT for retransmission.",
         "origin": "n0-computer/noq#805 c39c57eb8ad5a9a88110c16ea4d6816f944b30a3"
       },
       {
         "subject": "allow sending the RESET_STREAM_AT",
+        "purpose": "Adds SendStream::reset_at, truncating send data beyond the reliable size.",
         "origin": "n0-computer/noq#805 a4a97fdebe9e21dfd358e222440417d7da674091"
       },
       {
         "subject": "wip: thanks to claude",
+        "purpose": "Completes reliable reset receive handling, flow control, acknowledgement tracking and peer-support gating, with tests.",
         "origin": "n0-computer/noq#805 ca4b44552c6df355906f45c58e992ddbb7986bbb"
       },
       {
         "subject": "noq-proto: release reset receive credit exactly once",
+        "purpose": "Stops a reset-then-stopped stream from releasing flow-control credit for its tail twice.",
         "origin": "graphite-meter"
       },
       {
         "subject": "noq-proto: advertise reset_stream_at on 0x1d and the draft codepoint",
+        "purpose": "Advertises and accepts the IETF 0x1d and the deployed draft codepoint; rejects duplicates and nonempty values.",
         "origin": "graphite-meter"
       },
       {
         "subject": "noq-proto: compute the Retry integrity tag with ring or aws-lc-rs",
+        "purpose": "Computes the Retry tag with the rustls crypto provider instead of RustCrypto aes-gcm, with the RFC 9001 vector.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Require the security-fixed rustls release",
+        "purpose": "Carries the #821 dependency updates and raises the rustls minimum to the security-fixed release.",
         "origin": "n0-computer/noq#821 92361d2283346c9b6a414016c080a170e4d4049b, dependency updates with rustls 0.23.45 minimum"
       },
       {
         "subject": "Test the Graphite Meter fork",
+        "purpose": "Adds the fork-only CI workflow for graphite-meter branches.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound datagram queue storage and detach packet backing",
+        "purpose": "Charges each queued datagram's entry size and copies payloads so datagrams cannot pin packet buffers.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound queued incoming packet storage",
+        "purpose": "Charges queued incoming packets by capacity, caps each connection's queue and copies GSO segments apart.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Expose connection lifetime and buffered stream payload",
+        "purpose": "Exposes buffered send bytes and a weak handle while connecting for external memory accounting.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound receive reassembly metadata and copy backing",
+        "purpose": "Charges reassembly metadata to a per-connection budget, copies fragments into bounded blocks and closes on exhaustion.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Charge receive backing through delivered byte ownership",
+        "purpose": "Keeps received STREAM data charged until the application drops the delivered bytes.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Expose receive allocation lifetime on weak connection handles",
+        "purpose": "Lets the owner see when a closed connection's received bytes are freed.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound retained stream send storage",
+        "purpose": "Copies send writes into budget-charged backing and charges acknowledgement and retransmit range sets.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Retransmit without allocating range metadata",
+        "purpose": "Retransmits the whole unacknowledged span when range metadata cannot be charged.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Precharge sparse stream acknowledgement storage",
+        "purpose": "Tracks stream acknowledgements in a bitmap charged at write time so sparse ACKs never allocate.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Refund only newly acknowledged stream bytes",
+        "purpose": "Stops duplicate or overlapping ACKs from reducing unacknowledged data twice.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound packet index ownership without sequence gaps",
+        "purpose": "Replaces the sent-packet index with a charged map; under pressure sends only untracked ACK packets.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound retained datagram storage through its last owner",
+        "purpose": "Keeps datagram queues and payloads charged until the last owner drops them.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Block untracked packet padding and abandoned path retries",
+        "purpose": "Stops budget-starved untracked packets from being padded or abandoning the path.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Retain exact CRYPTO backing allocation credit",
+        "purpose": "Charges outgoing handshake CRYPTO data and closes when it cannot be charged.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound retained packet control storage",
+        "purpose": "Charges queued control-frame retransmit state and closes with INTERNAL_ERROR on exhaustion.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Retain normalized close reason backing",
+        "purpose": "Copies CONNECTION_CLOSE reasons into charged backing so they cannot pin packet buffers.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound stream state through final acknowledgment",
+        "purpose": "Charges stream map entries, pending lists and events until final acknowledgment; opening fails when exhausted.",
         "origin": "graphite-meter"
       }
     ],
@@ -244,30 +285,37 @@
     "commits": [
       {
         "subject": "Bound buffered receive events and backing storage",
+        "purpose": "Charges each buffered DATA event and copies payloads and pseudo-headers so they cannot pin read buffers.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound queued send metadata and codec storage",
+        "purpose": "Caps queued DATA frames per stream and stops the codec write buffer growing past its default capacity.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Fix upstream strict lint and test cleanup",
+        "purpose": "Fixes strict Clippy findings and moves the fork's wire test into h2-tests.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Preserve client concurrency and refund discarded requests",
+        "purpose": "Limits drain accounting to servers and refunds DATA of discarded pending-accept streams.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Add strict owner fork gates",
+        "purpose": "Adds the fork-only CI workflow running fmt, strict Clippy and tests.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Refund in-flight DATA when the codec is dropped",
+        "purpose": "Refunds a pending DATA frame and releases its stream when the connection is dropped.",
         "origin": "graphite-meter"
       },
       {
         "subject": "Bound retained header map metadata",
+        "purpose": "Caps header map capacity by the header list limit and resets streams with oversized trailers.",
         "origin": "graphite-meter"
       }
     ],
