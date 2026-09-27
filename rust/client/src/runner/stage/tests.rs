@@ -81,6 +81,12 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let request = &request[..length];
+                        if request.starts_with(b"GET /servers ") {
+                            let body = serde_json::json!({"defaultSelection":["self","gone"],"servers":[{"id":"self","url":".","name":"self"},{"id":"gone","url":"http://127.0.0.1:1","name":"gone"}]}).to_string();
+                            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            return;
+                        }
                         if request.starts_with(b"GET /preflight ") || request.starts_with(b"GET /probe ") {
                             let body = if request.starts_with(b"GET /preflight ") {
                                 serde_json::json!({"generation":"fixture","capabilities":{"uploadCheckpoint":true,"throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"latency":[]}})
@@ -663,7 +669,7 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
     ];
     let config = Config {
         warmup: Duration::ZERO,
-        download_duration: Duration::from_secs(3),
+        download_duration: Duration::from_millis(1900),
         streams: 1,
         loaded_latency: false,
         ..Config::default()
@@ -672,9 +678,7 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
     let (_stop, cancelled) = watch::channel(false);
     let refuse_near = async {
         observed
-            .wait_for(|snapshot| {
-                snapshot.phase == Phase::Measuring && snapshot.latest.elapsed >= Duration::from_secs(1)
-            })
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
             .await
             .unwrap();
         near_mode.store(14, Ordering::SeqCst);
@@ -790,6 +794,43 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
         graphite_meter_core::failure::FailureReason::ServerBusy
     );
     peer.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_selection_that_lost_a_server_in_preparation_gets_no_sole_retry() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (origin, mode, peer) = download_peer().await?;
+    let config = Config {
+        url: origin,
+        stages: vec![Stage::Download, Stage::Upload],
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(3),
+        upload_duration: Duration::from_secs(1),
+        loaded_latency: false,
+        streams: 1,
+        insecure: true,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let refuse = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        mode.store(14, Ordering::SeqCst);
+    };
+    let run = super::super::run_prepared(config, Http::new(true)?, snapshots.clone(), cancelled, None);
+    let (result, ()) = tokio::join!(run, refuse);
+    peer.abort();
+    assert!(
+        result.is_err(),
+        "the prepared server of two was retried as a sole server"
+    );
+    let snapshot = snapshots.borrow();
+    assert_eq!(snapshot.results.len(), 1);
+    assert_eq!(snapshot.failures[0].server_id, "gone");
     Ok(())
 }
 

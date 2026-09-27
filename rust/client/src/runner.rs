@@ -363,8 +363,8 @@ pub async fn run_prepared(
         snapshot.latest = Point::default();
         snapshot.stage = None;
     });
-    let mut prepared = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
-        Some(prepared) => prepared.servers,
+    let (mut prepared, selected) = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
+        Some(prepared) => (prepared.servers, None),
         None => {
             let preparation = tokio::select! {
                 result = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT) => result?,
@@ -376,14 +376,15 @@ pub async fn run_prepared(
                     snapshot.failure(&failure.id, crate::model::FailureScope::Throughput, &failure.source);
                 }
             });
-            preparation.servers
+            let selected = preparation.servers.len() + preparation.failures.len();
+            (preparation.servers, Some(selected))
         }
     };
     snapshots.send_modify(|snapshot| {
         snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
         snapshot.latency_focus = latency_focus(&prepared);
     });
-    let sole = (prepared.len() == 1).then(|| prepared[0].entry.clone());
+    let sole = (selected.unwrap_or(prepared.len()) == 1).then(|| prepared[0].entry.clone());
     let mut retry_sole = false;
     for stage in &config.stages {
         if *cancel.borrow() {
@@ -459,8 +460,9 @@ pub async fn run_prepared(
         let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone()).await;
         let failed = match measured {
             Ok(failed) => failed,
-            Err(_)
+            Err(error)
                 if sole.is_some()
+                    && crate::net::authentication_required(error.as_ref()).is_none()
                     && snapshots
                         .borrow()
                         .results
