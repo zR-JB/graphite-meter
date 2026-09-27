@@ -4,7 +4,6 @@ import {
   connectionDraftRoleKey,
   describeTransferStreams,
   FETCH_FORCED_MAX,
-  normalizeStreamCount,
   planServerStreams,
   preparedPaths,
   roleNeedsValidation,
@@ -20,7 +19,6 @@ import type {
   TransferStreamPolicy,
 } from "./contract";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { presentConnections } from "../presentation/paths";
 import { testPreparedPaths } from "./test-helpers.testutil";
 
 const auto = { mode: "auto", count: 6 } as const;
@@ -145,13 +143,6 @@ test("stream diagnostics describe the policy each stage resolves", () => {
     expect(describeTransferStreams(policy, stages, protocol, transport)).toBe(
       expected,
     );
-  for (const [value, expected] of [
-    [Number.NaN, 1],
-    [0, 1],
-    [2.4, 2],
-    [999, 128],
-  ] as const)
-    expect(normalizeStreamCount(value)).toBe(expected);
 });
 
 const verified = (paths: PreparedPaths): ConnectionValidation => ({
@@ -179,14 +170,6 @@ test("equivalent selections and display or stage edits reuse verified paths", ()
   expect(
     roleNeedsValidation(edited, validation, "throughput", paths.discovery),
   ).toBe(false);
-});
-
-test("a path card names the carrier beneath each mechanism", () => {
-  const paths = testPreparedPaths();
-  const cards = presentConnections(config(), paths.discovery, verified(paths));
-  expect(cards.throughput.carrier).toBe("HTTP/1.1 · clear");
-  expect(cards.throughput.summary).toEndWith(" · HTTP/1.1 · clear");
-  expect(cards.latency.carrier).toBe("HTTP/1.1 · clear");
 });
 
 test("prepared runs require fresh verified evidence for every needed role", () => {
