@@ -643,10 +643,13 @@
     background: var(--surface-inset);
   }
   .group > .kv > div {
-    padding-block: 5px;
+    padding-block: 6px;
   }
+  /* Label and value share one size; only tone tells them apart. */
   .group > .kv dt {
+    font-size: var(--type-sm);
     font-weight: var(--w-normal);
+    line-height: 1.5;
   }
   /* The sans space is narrow beside a middot; values joined by " · " need the air. */
   .group > .kv dd {

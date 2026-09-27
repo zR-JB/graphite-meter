@@ -220,14 +220,15 @@
             {role === "throughput" ? "Throughput path" : "Latency path"}
           </dt>
           <dd>
-            {inTest ? connection.summary : "Not selected"}
-            <span class="badge" data-tone={inTest ? status.tone : "neutral"}
-              >{inTest
-                ? status.label
-                : pathMode === "live"
-                  ? "Not selected"
-                  : "Not in test"}</span
-            >
+            {#if inTest}<span
+                class="status-dot"
+                data-tone={status.tone}
+                aria-hidden="true"
+              ></span>{/if}
+            <span>{inTest ? connection.summary : "Not selected"}</span>
+            {#if inTest && connection.validation !== "verified"}<span
+                class="status">{status.label}</span
+              >{:else if inTest}<span class="sr-only">{status.label}</span>{/if}
           </dd>
         </div>
       {/each}
@@ -325,10 +326,15 @@
     gap: var(--space-2);
   }
   .path dd {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
+    display: flex;
+    align-items: baseline;
     gap: var(--space-2);
+  }
+  .path .status-dot {
+    translate: 0 -1px;
+  }
+  .status {
+    color: var(--tone, var(--text-soft));
   }
   .actions {
     display: flex;
