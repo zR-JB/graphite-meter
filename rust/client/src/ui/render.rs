@@ -685,13 +685,6 @@ impl Ui {
     }
 
     fn draw_results(&self, frame: &mut Frame, area: Rect) {
-        let idle = self
-            .snapshot
-            .results
-            .iter()
-            .find(|result| result.stage == Stage::Latency)
-            .and_then(|result| self.result_latency(result))
-            .and_then(|host| host.median());
         let mut lines = vec![Line::styled(
             "Throughput              Download           Upload",
             Style::new()
@@ -754,16 +747,9 @@ impl Ui {
                 continue;
             };
             let median = host.median();
-            let added = if result.stage == Stage::Latency {
-                None
-            } else {
-                median
-                    .zip(idle)
-                    .map(|(loaded, idle)| (loaded as f64 - idle as f64) / 1e6)
-            };
             let cells = [
                 milliseconds(median.map(|median| median as f64 / 1e6)),
-                added.map_or_else(
+                self.snapshot.added_ms(result, &host.id).map_or_else(
                     || "—".into(),
                     |value| format!("{} ms", graphite_meter_core::format::added_ms(value)),
                 ),

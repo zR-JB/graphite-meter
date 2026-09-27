@@ -332,12 +332,20 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
                 intervals: Default::default(),
                 omitted_intervals: 0,
                 complete: true,
-                server_latencies: vec![ServerLatencyResult {
-                    elapsed: Some(Duration::from_secs(1)),
-                    id: "self".into(),
-                    summary: idle.snapshot(),
-                    error: None,
-                }],
+                server_latencies: vec![
+                    ServerLatencyResult {
+                        elapsed: Some(Duration::from_secs(1)),
+                        id: "dropped".into(),
+                        summary: loaded.snapshot(),
+                        error: None,
+                    },
+                    ServerLatencyResult {
+                        elapsed: Some(Duration::from_secs(1)),
+                        id: "self".into(),
+                        summary: idle.snapshot(),
+                        error: None,
+                    },
+                ],
                 server_results: Vec::new(),
             },
             StageResult {

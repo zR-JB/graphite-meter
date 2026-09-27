@@ -176,32 +176,10 @@ fn report(snapshot: &Snapshot) {
                     },
                 )
             };
-            let added = if result.stage == graphite_meter_client::model::Stage::Latency {
-                "—".into()
-            } else {
-                snapshot
-                    .results
-                    .iter()
-                    .find(|result| result.stage == graphite_meter_client::model::Stage::Latency)
-                    .and_then(|result| {
-                        result
-                            .server_latencies
-                            .iter()
-                            .find(|idle| idle.id == host.id)
-                    })
-                    .and_then(|idle| Some((host.median()?, idle.median()?)))
-                    .map_or_else(
-                        || "—".into(),
-                        |(loaded, idle)| {
-                            format!(
-                                "{} ms",
-                                graphite_meter_core::format::added_ms(
-                                    (loaded as f64 - idle as f64) / 1e6
-                                )
-                            )
-                        },
-                    )
-            };
+            let added = snapshot.added_ms(result, &host.id).map_or_else(
+                || "—".into(),
+                |value| format!("{} ms", graphite_meter_core::format::added_ms(value)),
+            );
             use graphite_meter_client::vocabulary as words;
             println!(
                 "  {}: {} {}, {} {}, {} {}, {} {}, {} {}",

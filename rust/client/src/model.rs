@@ -246,6 +246,24 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    pub fn added_ms(&self, loaded: &StageResult, id: &str) -> Option<f64> {
+        let median = |result: &StageResult| {
+            result
+                .server_latencies
+                .iter()
+                .find(|host| host.id == id)?
+                .median()
+        };
+        let idle = self
+            .results
+            .iter()
+            .find(|result| result.stage == Stage::Latency)?;
+        if loaded.stage == Stage::Latency {
+            return None;
+        }
+        Some((median(loaded)? as f64 - median(idle)? as f64) / 1e6)
+    }
+
     pub fn failure(&mut self, id: &str, scope: FailureScope, error: &crate::Error) {
         let Some(stage) = self.stage else { return };
         if self.failures.iter().any(|failure| {
