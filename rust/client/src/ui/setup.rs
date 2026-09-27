@@ -98,27 +98,42 @@ impl Ui {
 }
 
 impl Field {
-    pub(super) fn label(self) -> &'static str {
+    pub(super) fn term(self) -> crate::vocabulary::Term {
         match self {
-            Self::Start => "Start test",
-            Self::Advanced => "Advanced",
-            Self::Url => "Catalogue URL",
-            Self::Servers => "Test servers",
-            Self::ThroughputOrigin => "Throughput origin",
-            Self::Protocol => "HTTP protocol",
-            Self::ThroughputTransport => "Throughput transport",
-            Self::LatencyOrigin => "Latency origin",
-            Self::LatencyTransport => "Latency transport",
-            Self::LatencyStage => "Latency",
-            Self::DownloadStage => "Download",
-            Self::UploadStage => "Upload",
-            Self::BidiStage => "Bidirectional",
-            Self::Warmup => "Warmup (seconds)",
-            Self::Streams => "Streams (0 = automatic)",
-            Self::AutoStreams => "Automatic stream ceiling",
-            Self::PingInterval => "Latency cadence",
-            Self::LoadedLatency => "Loaded latency",
-            Self::Insecure => "Skip TLS verification",
+            Self::Start => crate::vocabulary::START,
+            Self::Advanced => crate::vocabulary::ADVANCED,
+            Self::Url => crate::vocabulary::URL,
+            Self::Servers => crate::vocabulary::SERVERS,
+            Self::ThroughputOrigin => crate::vocabulary::THROUGHPUT_ORIGIN,
+            Self::Protocol => crate::vocabulary::PROTOCOL,
+            Self::ThroughputTransport => crate::vocabulary::THROUGHPUT_TRANSPORT,
+            Self::LatencyOrigin => crate::vocabulary::LATENCY_ORIGIN,
+            Self::LatencyTransport => crate::vocabulary::LATENCY_TRANSPORT,
+            Self::LatencyStage => crate::vocabulary::LATENCY,
+            Self::DownloadStage => crate::vocabulary::DOWNLOAD,
+            Self::UploadStage => crate::vocabulary::UPLOAD,
+            Self::BidiStage => crate::vocabulary::BIDIRECTIONAL,
+            Self::Warmup => crate::vocabulary::WARMUP,
+            Self::Streams => crate::vocabulary::STREAMS,
+            Self::AutoStreams => crate::vocabulary::AUTO_STREAMS,
+            Self::PingInterval => crate::vocabulary::PING_INTERVAL,
+            Self::LoadedLatency => crate::vocabulary::LOADED_LATENCY,
+            Self::Insecure => crate::vocabulary::INSECURE,
+        }
+    }
+    pub(super) fn label(self) -> &'static str {
+        self.term().label
+    }
+    pub(super) fn explanation(self, config: &Config) -> &'static str {
+        match self {
+            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol).explanation,
+            Self::ThroughputTransport => {
+                crate::vocabulary::throughput_transport(config.throughput_transport).explanation
+            }
+            Self::LatencyTransport => {
+                crate::vocabulary::latency_transport(config.latency_transport).explanation
+            }
+            _ => self.term().explanation,
         }
     }
     pub(super) fn stage(self) -> Option<Stage> {
@@ -144,26 +159,19 @@ impl Field {
             Self::Servers => config.servers.join(","),
             Self::ThroughputOrigin => config.throughput_origin.clone().unwrap_or_default(),
             Self::LatencyOrigin => config.latency_origin.clone().unwrap_or_default(),
-            Self::Protocol => match config.throughput_protocol {
-                None => "automatic",
-                Some(Protocol::Http1) => "HTTP/1.1",
-                Some(Protocol::Http2) => "HTTP/2",
-                Some(Protocol::Http3) => "HTTP/3",
-                Some(Protocol::Negotiated) => "negotiated",
+            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol)
+                .label
+                .into(),
+            Self::ThroughputTransport => {
+                crate::vocabulary::throughput_transport(config.throughput_transport)
+                    .label
+                    .into()
             }
-            .into(),
-            Self::ThroughputTransport => match config.throughput_transport {
-                None => "automatic",
-                Some(ThroughputTransport::FetchStream) => "Fetch streams",
-                Some(_) => "WebTransport streams",
+            Self::LatencyTransport => {
+                crate::vocabulary::latency_transport(config.latency_transport)
+                    .label
+                    .into()
             }
-            .into(),
-            Self::LatencyTransport => match config.latency_transport {
-                None => "automatic",
-                Some(LatencyTransport::WebSocket) => "WebSocket",
-                Some(LatencyTransport::WebTransport) => "WebTransport datagrams",
-            }
-            .into(),
             Self::Warmup => seconds(config.warmup),
             Self::Streams => config.streams.to_string(),
             Self::AutoStreams => config.auto_streams.to_string(),

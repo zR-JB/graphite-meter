@@ -528,7 +528,7 @@ fn panel(title: &str, theme: Theme) -> Block<'_> {
         ))
 }
 fn popup(area: Rect, width: u16, height: u16) -> Rect {
-    let width = width.min(area.width.saturating_sub(2));
+    let width = width.min(84).min(area.width.saturating_sub(4));
     let height = height.min(area.height.saturating_sub(2));
     Rect::new(
         area.x + (area.width - width) / 2,
@@ -537,7 +537,7 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         height,
     )
 }
-fn safe_text(value: &str, limit: usize) -> String {
+pub(crate) fn safe_text(value: &str, limit: usize) -> String {
     value
         .chars()
         .take(limit.min(MAX_TEXT))

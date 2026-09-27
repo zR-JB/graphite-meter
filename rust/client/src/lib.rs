@@ -15,6 +15,7 @@ pub mod selection;
 pub mod stream_plan;
 pub mod transport;
 pub mod upload;
+pub mod vocabulary;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 

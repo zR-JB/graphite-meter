@@ -8,7 +8,7 @@ use std::{ffi::OsString, time::Duration};
 
 #[derive(Debug)]
 pub enum Action {
-    Run(Box<Config>),
+    Run { config: Box<Config>, report: bool },
     Help,
     Version,
     Legal,
@@ -21,6 +21,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
     }
     let mut args = args.into_iter();
     let mut config = Config::default();
+    let mut report = false;
     while let Some(arg) = args.next() {
         let arg = arg.into_string().map_err(|_| "flags must be valid UTF-8")?;
         let flag = arg
@@ -36,6 +37,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
                 if boolean(inline.unwrap_or("true"))? {
                     return Ok(Action::Version);
                 }
+                continue;
+            }
+            "report" => {
+                report = boolean(inline.unwrap_or("true"))?;
                 continue;
             }
             "insecure" => {
@@ -111,7 +116,10 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
         }
     }
     config.validate()?;
-    Ok(Action::Run(Box::new(config)))
+    Ok(Action::Run {
+        config: Box::new(config),
+        report,
+    })
 }
 
 fn automatic(value: String) -> Option<String> {
@@ -177,6 +185,7 @@ pub const HELP: &str = "Graphite Meter experimental Rust client
   -ping CADENCE                 reply-driven, fast, medium, slow, or duration (reply-driven)
   -loaded-latency=BOOL           Measure latency under load (true)
   -insecure                     Skip TLS certificate verification
+  -report                       Run once and print the final report
   -version                      Print version
   --legal                       Print dependency notices
 
@@ -189,7 +198,7 @@ mod tests {
 
     #[test]
     fn existing_invocation_preserves_stage_order_and_explicit_choices() {
-        let Action::Run(config) = parse(
+        let Action::Run { config, .. } = parse(
             [
                 "-url",
                 "https://meter.example",
@@ -227,7 +236,7 @@ mod tests {
             ("fetch-stream", Some(ThroughputTransport::FetchStream)),
             ("webtransport", Some(ThroughputTransport::WebTransport)),
         ] {
-            let Action::Run(config) =
+            let Action::Run { config, .. } =
                 parse([OsString::from(format!("--throughput-transport={name}"))]).unwrap()
             else {
                 panic!("expected run configuration");

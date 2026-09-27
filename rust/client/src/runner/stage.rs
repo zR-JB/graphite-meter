@@ -596,14 +596,21 @@ pub(super) async fn measure(
         let mut previous = std::mem::take(&mut snapshot.server_latencies);
         snapshot.server_latencies = servers
             .iter()
-            .map(|server| ServerLatency {
-                id: server.entry.id.clone(),
-                history: previous
+            .map(|server| {
+                let mut history = previous
                     .iter_mut()
                     .find(|host| host.id == server.entry.id)
                     .map(|host| std::mem::take(&mut host.history))
-                    .unwrap_or_default(),
-                ..ServerLatency::default()
+                    .unwrap_or_default();
+                history.add(Point {
+                    elapsed: offset,
+                    ..Point::default()
+                });
+                ServerLatency {
+                    id: server.entry.id.clone(),
+                    history,
+                    ..ServerLatency::default()
+                }
             })
             .collect();
     });
@@ -1056,8 +1063,12 @@ pub(super) async fn measure(
         while let Some(Some(event)) = events.next().now_or_never() {
             latency.observe(event, started, ended);
         }
-        let down = transfer_stage.map(|stage| accounting.result(stage, Direction::Down));
-        let up = transfer_stage.map(|stage| accounting.result(stage, Direction::Up));
+        let down = transfer_stage
+            .filter(|stage| stage.needs_down())
+            .map(|stage| accounting.result(stage, Direction::Down));
+        let up = transfer_stage
+            .filter(|stage| stage.needs_up())
+            .map(|stage| accounting.result(stage, Direction::Up));
         snapshots.send_modify(|snapshot| {
             latency.sample(snapshot, ended.duration_since(started));
             let missing = (stage.downloads()

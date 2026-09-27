@@ -480,8 +480,21 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
     assert!(rendered.contains("Upload 12.00 Mbit/s"));
     assert!(rendered.contains("Latency 25.0 ms"));
     assert!(rendered.contains("Download: 12.00 Mbit/s"));
-    assert!(rendered.contains("d details"));
+    assert!(rendered.contains("d Details"));
 
+    ui.help = true;
+    terminal.draw(|frame| ui.draw(frame)).unwrap();
+    let expanded = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|cell| cell.symbol())
+        .collect::<String>();
+    assert!(expanded.contains("Tab/Shift-Tab"));
+    assert!(expanded.contains("Ctrl-C stop"));
+    assert_eq!(ui.popup, Popup::None);
+    ui.help = false;
     ui.snapshot.phase = Phase::Complete;
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     let completed = terminal

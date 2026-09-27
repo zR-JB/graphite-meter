@@ -17,17 +17,36 @@ impl Ui {
             horizontal: 1,
             vertical: 1,
         });
+        let help_lines = if self.help {
+            [
+                "Tab/Shift-Tab focus · arrows change",
+                "Enter edit/run · Space stage",
+                "Esc close/stop · r run · v recheck",
+                "s servers · u available · a auto",
+                "d Details · l latency · o sign-in",
+                "q quit · Ctrl-C stop · ? keys",
+            ]
+            .into_iter()
+            .map(Line::from)
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let regions = Layout::vertical([
             Constraint::Length(2),
-            Constraint::Min(4),
-            Constraint::Length(if self.help { 4 } else { 2 }),
+            Constraint::Min(if self.help { 1 } else { 4 }),
+            Constraint::Length(if self.help {
+                1 + help_lines.len() as u16
+            } else {
+                2
+            }),
         ])
         .split(area);
         let status = match self.snapshot.phase {
             Phase::Setup => "Not started",
             Phase::Preparing => "Checking paths",
             Phase::Warmup => "Warmup",
-            Phase::Measuring => self.snapshot.stage.map_or("Checking paths", Stage::name),
+            Phase::Measuring => "Running",
             Phase::Complete => "Complete",
             Phase::Partial => "Partial",
             Phase::Incomplete => "Incomplete",
@@ -71,7 +90,7 @@ impl Ui {
                             self.snapshot
                                 .servers
                                 .iter()
-                                .filter(|server| server.checked())
+                                .filter(|server| server.has_check_result())
                                 .map(|server| server.name.as_str())
                                 .collect::<Vec<_>>()
                                 .join(" · ")
@@ -90,11 +109,15 @@ impl Ui {
         } else {
             self.draw_setup(frame, regions[1]);
         }
-        let (notice, is_error) = self.notice();
+        let (mut notice, is_error) = self.notice();
+        if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup
+        {
+            notice = self.fields()[self.rows.selected().unwrap_or(0)].explanation(&self.config);
+        }
         let notice_color = if is_error {
             self.theme.error
         } else {
-            self.theme.warning
+            self.theme.muted
         };
         let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
             vec!["Esc confirm stop", "any key continue", "q quit"]
@@ -102,8 +125,8 @@ impl Ui {
             if self.active() {
                 vec![
                     "Esc stop",
-                    "d details",
-                    "l latency server",
+                    "d Details",
+                    "l Latency server",
                     "? keys",
                     "q quit",
                 ]
@@ -111,8 +134,8 @@ impl Ui {
                 vec![
                     "Enter Run again",
                     "Esc setup",
-                    "d details",
-                    "l latency server",
+                    "d Details",
+                    "l Latency server",
                     "? keys",
                     "q quit",
                 ]
@@ -127,15 +150,38 @@ impl Ui {
                 "q quit",
             ]
         } else {
+            let field = self.fields()[self.rows.selected().unwrap_or(0)];
+            use super::setup::Field;
+            let action = if field.stage().is_some()
+                || matches!(field, Field::LoadedLatency | Field::Insecure)
+            {
+                "Space toggle"
+            } else {
+                match field {
+                    Field::Servers => "Enter choose servers",
+                    Field::Advanced => "Enter show/hide",
+                    Field::Url
+                    | Field::ThroughputOrigin
+                    | Field::LatencyOrigin
+                    | Field::Streams
+                    | Field::AutoStreams => "Enter edit",
+                    Field::Warmup => "←/→ 0.1 s",
+                    _ => "←/→ choose",
+                }
+            };
             vec![
-                "←/→ change",
-                "Enter edit/toggle",
-                "↑/↓ focus",
+                action,
+                if field.stage().is_some() {
+                    "←/→ 1 s"
+                } else {
+                    "Tab focus"
+                },
                 "r Start test",
                 "? keys",
                 "q quit",
             ]
         };
+
         let mut footer = String::new();
         for hint in hints {
             let next = if footer.is_empty() {
@@ -148,16 +194,19 @@ impl Ui {
             }
             footer = next;
         }
-        let mut lines = vec![
-            Line::styled(
+        let mut lines = if self.help {
+            Vec::new()
+        } else {
+            vec![Line::styled(
                 safe_text_width(notice, usize::from(regions[2].width)),
                 Style::new().fg(notice_color),
-            ),
-            Line::styled(footer, Style::new().fg(self.theme.brand_strong)),
-        ];
-        if self.help {
-            lines.extend([Line::from("Tab/Shift-Tab focus · Space stage · a automatic paths"), Line::from("r start · v Recheck paths · s servers · u available · d Details · l Latency server · q quit")]);
-        }
+            )]
+        };
+        lines.push(Line::styled(
+            footer,
+            Style::new().fg(self.theme.brand_strong),
+        ));
+        lines.extend(help_lines);
         frame.render_widget(Paragraph::new(lines), regions[2]);
         if self.popup == Popup::Details {
             self.draw_details(frame);
@@ -291,7 +340,7 @@ impl Ui {
                 let mut lines = Vec::new();
                 if *field == Field::Servers {
                     lines.push(Line::styled(
-                        "Connection paths",
+                        "Connections",
                         Style::new()
                             .fg(self.theme.brand_strong)
                             .add_modifier(Modifier::BOLD),
@@ -655,14 +704,31 @@ impl Ui {
         }
         if area.width >= 90 {
             lines.push(Line::styled(
-                "Latency        Median       Added        p95          Jitter       Probe timeouts",
+                format!(
+                    "{:<15}{:<13}{:<13}{:<13}{:<13}{}",
+                    crate::vocabulary::LATENCY.label,
+                    crate::vocabulary::MEDIAN.label,
+                    crate::vocabulary::ADDED.label,
+                    crate::vocabulary::P95.label,
+                    crate::vocabulary::JITTER.label,
+                    crate::vocabulary::PROBE_TIMEOUTS.label
+                ),
                 Style::new()
                     .fg(self.theme.brand_strong)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             lines.push(Line::styled(
-                "Latency · Median · Added · p95 · Jitter · Probe timeouts",
+                [
+                    crate::vocabulary::LATENCY,
+                    crate::vocabulary::MEDIAN,
+                    crate::vocabulary::ADDED,
+                    crate::vocabulary::P95,
+                    crate::vocabulary::JITTER,
+                    crate::vocabulary::PROBE_TIMEOUTS,
+                ]
+                .map(|term| term.label)
+                .join(" · "),
                 Style::new()
                     .fg(self.theme.brand_strong)
                     .add_modifier(Modifier::BOLD),
@@ -914,7 +980,7 @@ impl Ui {
                     };
                 lines.push(Line::from(format!(
                     "{name}: {}",
-                    throughput_facts(measurement)
+                    crate::vocabulary::throughput_facts(measurement)
                 )));
             }
             if !result.server_results.is_empty() {
@@ -1028,6 +1094,17 @@ impl Ui {
                         .join(" · "),
                 ));
             }
+        }
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(
+            "Values",
+            Style::new().fg(self.theme.brand_strong),
+        ));
+        for term in crate::vocabulary::VALUES {
+            lines.extend(wrap_columns(
+                &format!("{} · {}", term.label, term.explanation),
+                usize::from(area.width.saturating_sub(2)),
+            ));
         }
         let visible = usize::from(area.height.saturating_sub(2));
         self.details_scroll = self
@@ -1143,24 +1220,4 @@ fn axis_ceiling(value: f64) -> f64 {
         .find(|step| step * power >= value)
         .unwrap()
         * power
-}
-
-fn throughput_facts(measurement: &graphite_meter_core::measurement::MeasurementResult) -> String {
-    let mut facts = vec![
-        format!(
-            "peak {}",
-            rate(measurement.peak_bytes_per_sec.map(|rate| rate * 8.0))
-        ),
-        graphite_meter_core::format::bytes(measurement.total_bytes),
-    ];
-    if let Some(elapsed) = measurement.elapsed_nanos {
-        facts.push(format!("{:.1} s", elapsed as f64 / 1e9));
-    }
-    if measurement.samples > 0 {
-        facts.push(format!("{} samples", measurement.samples));
-    }
-    if measurement.direction == graphite_meter_core::measurement::Direction::Up {
-        facts.push("receiver-timed".into());
-    }
-    facts.join(" · ")
 }

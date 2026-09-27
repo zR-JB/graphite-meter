@@ -79,6 +79,44 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<S
     Ok(final_snapshot)
 }
 
+pub async fn run_once(
+    config: Config,
+    shutdown: impl Future<Output = ()>,
+) -> Result<Snapshot, Error> {
+    let mut controller = Controller::new(&config)?;
+    let mut events = controller.start(config, None)?;
+    let result = {
+        let finished = controller.finish();
+        tokio::pin!(finished, shutdown);
+        let mut prompt = None;
+        let mut stage = None;
+        loop {
+            tokio::select! {
+                result = &mut finished => break Some(result),
+                _ = &mut shutdown => break None,
+                result = events.changed() => {
+                    if result.is_err() { continue; }
+                    let snapshot = events.borrow_and_update();
+                    if let Some(auth) = &snapshot.auth && prompt.as_ref() != Some(&auth.browser_url) {
+                        eprintln!("Sign in · Match code {}\n{}", crate::ui::safe_text(&auth.code, 64), crate::ui::safe_text(&auth.browser_url, 4096));
+                        prompt = Some(auth.browser_url.clone());
+                    }
+                    if snapshot.phase == Phase::Measuring && stage != snapshot.stage {
+                        stage = snapshot.stage;
+                        if let Some(stage) = stage { eprintln!("{}…", stage.name()); }
+                    }
+                }
+            }
+        }
+    };
+    if let Some(result) = result {
+        result
+    } else {
+        controller.cancel();
+        controller.finish().await
+    }
+}
+
 pub struct Controller {
     snapshots: watch::Sender<Snapshot>,
     operations: JoinSet<Result<Option<runner::PreparedRun>, Error>>,

@@ -1,6 +1,4 @@
-use graphite_meter_core::discovery::{
-    LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport,
-};
+use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport, Protocol, ThroughputTarget};
 use graphite_meter_core::origin::target_origin;
 use std::{collections::VecDeque, time::Duration};
 
@@ -15,10 +13,10 @@ pub enum Stage {
 impl Stage {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Latency => "Latency",
-            Self::Download => "Download",
-            Self::Upload => "Upload",
-            Self::Bidirectional => "Bidirectional",
+            Self::Latency => crate::vocabulary::LATENCY.label,
+            Self::Download => crate::vocabulary::DOWNLOAD.label,
+            Self::Upload => crate::vocabulary::UPLOAD.label,
+            Self::Bidirectional => crate::vocabulary::BIDIRECTIONAL.label,
         }
     }
     pub fn downloads(self) -> bool {
@@ -181,17 +179,8 @@ impl ServerSummary {
 
     pub fn throughput_label(&self) -> Option<String> {
         let target = self.throughput.as_ref()?;
-        let transport = if target.transport == ThroughputTransport::FetchStream {
-            "Fetch streams"
-        } else {
-            "WebTransport streams"
-        };
-        let protocol = match target.protocol {
-            Protocol::Http1 => "HTTP/1.1",
-            Protocol::Http2 => "HTTP/2",
-            Protocol::Http3 => "HTTP/3",
-            Protocol::Negotiated => "Negotiated",
-        };
+        let transport = crate::vocabulary::throughput_transport(Some(target.transport)).label;
+        let protocol = crate::vocabulary::protocol(Some(target.protocol)).label;
         Some(format!(
             "{transport} · {protocol} · {}",
             security(&target.base_url)
@@ -200,10 +189,14 @@ impl ServerSummary {
 
     pub fn latency_label(&self) -> Option<String> {
         let target = self.latency.as_ref()?;
-        let (transport, protocol) = match target.transport {
-            LatencyTransport::WebSocket => ("WebSocket", "HTTP/1.1"),
-            LatencyTransport::WebTransport => ("WebTransport datagrams", "HTTP/3"),
-        };
+        let transport = crate::vocabulary::latency_transport(Some(target.transport)).label;
+        let protocol =
+            crate::vocabulary::protocol(Some(if target.transport == LatencyTransport::WebSocket {
+                Protocol::Http1
+            } else {
+                Protocol::Http3
+            }))
+            .label;
         Some(format!(
             "{transport} · {protocol} · {}",
             security(&target.base_url)
