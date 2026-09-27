@@ -21,6 +21,7 @@ import {
   type ChartViewport,
 } from "./chartLayout";
 import { canvasPixelRatio } from "./canvasResolution";
+import type { UnitBase, UnitKind } from "../format";
 import { traceSmoothLine } from "./smoothPath";
 // A throughput break is explicit runner lifecycle state, never a delivery gap.
 const throughputSamplesContinuous = (
@@ -28,6 +29,8 @@ const throughputSamplesContinuous = (
   right: ThroughputSample,
 ) => left.continuityId === right.continuityId;
 const RESULT_GLIDE_MS = 400;
+const RUN_FADE_OUT_MS = 90;
+const RUN_FADE_IN_MS = 180;
 const TERMINAL: readonly Phase[] = ["idle", "complete", "aborted", "error"];
 const LATENCY_GLYPH_ENTER_MS = 90;
 const LATENCY_ANIMATION_WINDOW = 32;
@@ -51,6 +54,8 @@ export interface ChartData {
   scaleBytesPerSec: number;
   /** Shared robust latency ceiling, identical to the gauge. */
   latencyScaleMs: number;
+  /** The rate unit the labels use, kept with the run they describe. */
+  units: { base: UnitBase; kind: UnitKind; index: number };
   /** Canonical headline rates produced by the measurement reducer. */
   resultRates: Partial<
     Record<"download" | "upload" | "bidiDown" | "bidiUp", number>
@@ -99,6 +104,7 @@ const THROUGHPUT_LANES = [
 }>;
 export interface ChartPresentation {
   layout: ChartLayout;
+  units: ChartData["units"];
   latencyEnabled: boolean;
   hasThroughputScale: boolean;
   phaseLabels: ReadonlyArray<{ phase: ChartLabelPhase; x: number; y: number }>;
@@ -173,6 +179,9 @@ const sceneKey = (d: ChartData) => [
   d.runSeq,
   d.scaleBytesPerSec,
   d.latencyScaleMs,
+  d.units.base,
+  d.units.kind,
+  d.units.index,
   d.resultRates.download,
   d.resultRates.upload,
   d.resultRates.bidiDown,
@@ -183,6 +192,7 @@ export class ChartEngine {
   #sceneKey: unknown[];
   #onPresentation: ((presentation: ChartPresentation) => void) | null;
   #onTimeScale: ((tMax: number) => void) | null;
+  #onFade: ((opacity: number) => void) | null;
   #presentationKey = "";
   #canvas: HTMLCanvasElement | null = null;
   #ctx: CanvasRenderingContext2D | null = null;
@@ -208,6 +218,9 @@ export class ChartEngine {
   /** The result-mode time axis; a live run follows its timeline instead. */
   #camera = new Smoothed();
   #cameraTarget = 4_000;
+  /** A new run replaces the presented one only once it has faded out. */
+  #runFade = new Smoothed();
+  #shownFade = 1;
   // Rebuilt only when theme or plot height changes.
   #gradDownload: CanvasGradient | null = null;
   #gradUpload: CanvasGradient | null = null;
@@ -243,16 +256,19 @@ export class ChartEngine {
     textSoft: "#8b929a",
     brand: "#6db0b8",
   };
-  /** onPresentation runs when labels or scales change; onTimeScale on every camera frame. */
+  /** onPresentation runs when labels or scales change; onTimeScale on every camera frame, onFade on every run fade frame. */
   constructor(
     data: ChartData,
     onPresentation?: (presentation: ChartPresentation) => void,
     onTimeScale?: (tMax: number) => void,
+    onFade?: (opacity: number) => void,
   ) {
     this.#data = data;
     this.#sceneKey = sceneKey(data);
     this.#onPresentation = onPresentation ?? null;
     this.#onTimeScale = onTimeScale ?? null;
+    this.#onFade = onFade ?? null;
+    this.#runFade.set(1, { snap: true });
   }
   update(data: ChartData): void {
     const key = sceneKey(data);
@@ -448,35 +464,35 @@ export class ChartEngine {
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
   }
   render = (now: number): boolean => {
-    const dirty = this.#dirty;
-    if (dirty) {
-      this.#update(now);
-      this.#dirty = false;
-    }
+    // While the last run fades out, the new data waits and every frame checks again.
+    const handing = this.#dirty && !this.#update(now);
+    this.#dirty = handing;
     const tMax = this.#result
       ? this.#camera.at(now)
       : Math.max(this.#data.timelineAt(now) + 2_000, 4_000);
     const cameraMoving = this.#result
       ? tMax !== this.#cameraTarget
       : !TERMINAL.includes(this.#data.phase);
-    if (tMax !== this.#vp.tMax) {
+    if (tMax !== this.#vp.tMax && !handing) {
       this.#vp = { ...this.#vp, tMin: 0, tMax };
       this.#layout = chartLayout(this.#w, this.#h, this.#vp);
       this.#onTimeScale?.(tMax);
       this.#publishPresentation(this.#data, !cameraMoving);
     }
-    if (this.#sceneDirty) {
+    const fade = this.#runFade.at(now);
+    if (fade !== this.#shownFade) this.#onFade?.((this.#shownFade = fade));
+    if (this.#sceneDirty && !handing) {
       this.#rebuildScene(now);
       this.#sceneDirty = false;
     }
     const wasLatencyAnimating = this.#latencyGlyphActive;
-    this.#latencyGlyphActive = this.#compose(now);
+    this.#latencyGlyphActive = this.#compose(now, fade);
     // Fold entering glyphs into the cache once their animation completes.
-    if (wasLatencyAnimating && !this.#latencyGlyphActive) {
+    if (wasLatencyAnimating && !this.#latencyGlyphActive && !handing) {
       this.#rebuildScene(now);
       this.#sceneDirty = false;
     }
-    return cameraMoving || this.#latencyGlyphActive;
+    return cameraMoving || this.#latencyGlyphActive || handing || fade < 1;
   };
   #latestT(d: ChartData): number {
     const a = d.throughput.length ? d.throughput[d.throughput.length - 1].t : 0;
@@ -499,11 +515,18 @@ export class ChartEngine {
     this.#sceneTMax = 0;
     this.#sceneDirty = true;
   }
-  #update(now: number): void {
+  /** False while the presented run is still fading out. */
+  #update(now: number): boolean {
     const d = this.#data;
     if (d.runSeq !== this.#runSeq) {
+      if (this.#runSeq >= 0) {
+        if (this.#runFade.target !== 0)
+          this.#runFade.set(0, { over: RUN_FADE_OUT_MS, now });
+        if (this.#runFade.at(now) > 0) return false;
+      }
       this.#runSeq = d.runSeq;
       this.#resetRunState();
+      this.#runFade.set(1, { over: RUN_FADE_IN_MS, now });
     }
     this.#indexData(d);
     // Sample timestamps cannot mark a sample-free warmup, so the runner's boundary is the phase clock.
@@ -548,6 +571,7 @@ export class ChartEngine {
     };
     this.#layout = chartLayout(this.#w, this.#h, this.#vp);
     this.#publishPresentation(d);
+    return true;
   }
   #publishPresentation(data: ChartData, force = false): void {
     if (!this.#onPresentation) return;
@@ -555,6 +579,9 @@ export class ChartEngine {
     const key = [
       width,
       height,
+      data.units.base,
+      data.units.kind,
+      data.units.index,
       viewport.bytesPerSecMax,
       viewport.rttMax,
       data.latencyEnabled,
@@ -597,6 +624,7 @@ export class ChartEngine {
       : [];
     this.#onPresentation({
       layout: this.#layout,
+      units: data.units,
       latencyEnabled: data.latencyEnabled,
       hasThroughputScale: this.#hasThroughputScale,
       phaseLabels,
@@ -614,13 +642,12 @@ export class ChartEngine {
     else this.#latencyAnimating.clear();
     this.#sceneTMax = this.#vp.tMax;
   }
-  #compose(now: number): boolean {
+  #compose(now: number, fade: number): boolean {
     const ctx = this.#ctx;
     const scene = this.#scene;
     if (!ctx || !scene) return false;
     const d = this.#data;
     ctx.clearRect(0, 0, this.#w, this.#h);
-    this.#drawGrid(ctx);
     const { plot } = this.#layout;
     const plotWidth = plot.right - plot.left;
     const plotHeight = plot.bottom - plot.top;
@@ -647,6 +674,17 @@ export class ChartEngine {
     const latencyAnimating = d.latencyEnabled
       ? this.#drawActiveLatency(ctx, now)
       : false;
+    // The run's marks fade as one layer; the grid behind them stays.
+    ctx.save();
+    if (fade < 1) {
+      ctx.globalCompositeOperation = "destination-in";
+      ctx.globalAlpha = fade;
+      ctx.fillRect(0, 0, this.#w, this.#h);
+      ctx.globalAlpha = 1;
+    }
+    ctx.globalCompositeOperation = "destination-over";
+    this.#drawGrid(ctx);
+    ctx.restore();
     return latencyAnimating;
   }
   #clipSpan(t0: number, t1: number): { x0: number; x1: number } {

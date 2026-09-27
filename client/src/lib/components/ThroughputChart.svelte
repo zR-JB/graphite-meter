@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { inView } from "../actions/inView";
-  import { handoff, nextFrame } from "../presentation/motion.svelte";
+  import { nextFrame } from "../presentation/motion.svelte";
   import { store } from "../state/store.svelte";
   import {
     ChartEngine,
@@ -9,7 +9,14 @@
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import { fmtDuration, fmtSpeed, formatLatency, formatRate } from "../format";
+  import {
+    fmtDuration,
+    fmtSpeed,
+    formatLatency,
+    formatRate,
+    rateUnit,
+    rateValueAt,
+  } from "../format";
   import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
   import { fmtGaugeTick } from "./gaugeScale";
@@ -19,13 +26,6 @@
   let plotEl = $state<HTMLDivElement>();
   let hover = $state.raw<HoverInfo | null>(null);
   let chartPresentation = $state.raw<ChartPresentation | null>(null);
-  const marks = handoff(
-    () => ({
-      labels: chartPresentation?.phaseLabels ?? [],
-      stats: chartPresentation?.phaseStats ?? [],
-    }),
-    ({ labels, stats }) => `${labels.length}:${stats.length}`,
-  );
   let selectedT = $state<number | null>(null);
   let retainSelection = false;
   const componentId = $props.id();
@@ -147,6 +147,11 @@
     runSeq: store.runSeq,
     scaleBytesPerSec: store.scales.chartBytesPerSec,
     latencyScaleMs: store.latencyScaleMs,
+    units: {
+      base: store.unitBase,
+      kind: store.unitKind,
+      index: store.scales.unitIndex,
+    },
     resultRates: {
       download: store.stageResults.download?.reportedBytesPerSec,
       upload: store.stageResults.upload?.reportedBytesPerSec,
@@ -165,6 +170,7 @@
       setTimeScale(tMax);
       if (selectedT != null) updateHover();
     },
+    (opacity) => plotEl?.style.setProperty("--run-fade", String(opacity)),
   );
   $effect(() => engine.update(chartData()));
 
@@ -314,15 +320,18 @@
     {#if chartPresentation}
       {@const presentation = chartPresentation}
       {@const { viewport, plot, width } = presentation.layout}
+      {@const { base, kind, index } = presentation.units}
+      {@const rate = (bytesPerSec: number) =>
+        rateValueAt(bytesPerSec, base, kind, index)}
       <div class="chart-labels" aria-hidden="true">
         {#if presentation.hasThroughputScale}
           <span class="axis-unit" style:left="4px" style:top={`${plot.top}px`}
-            >{store.unitLabel}</span
+            >{rateUnit(base, kind, index)}</span
           >
           {#each presentation.layout.axisRows as row (row.fraction)}
             <span class="axis-label" style:left="4px" style:top={`${row.y}px`}
               >{fmtGaugeTick(
-                store.toUnit(viewport.bytesPerSecMax * (1 - row.fraction)),
+                rate(viewport.bytesPerSecMax * (1 - row.fraction)),
               )}</span
             >
           {/each}
@@ -354,8 +363,8 @@
             >{fmtDuration(tick.t, tick.t % 1000 === 0 ? 0 : 1)}</span
           >
         {/each}
-        <div class="marks" style:opacity={marks.opacity}>
-          {#each marks.shown.labels as label (label.phase + label.x)}
+        <div class="marks">
+          {#each presentation.phaseLabels as label (label.phase)}
             <span
               class="phase-label caps"
               style:left={`${label.x}px`}
@@ -365,14 +374,14 @@
                 : phaseLabel(label.phase)}</span
             >
           {/each}
-          {#each marks.shown.stats as stat (stat.lane)}
+          {#each presentation.phaseStats as stat (stat.lane)}
             <span
               class="stat-label"
               data-tone={stat.tone}
               style:left={`${stat.x}px`}
               style:top={`${stat.y}px`}
-              >{fmtSpeed(store.toUnit(stat.bytesPerSec))}
-              {store.unitLabel}</span
+              >{fmtSpeed(rate(stat.bytesPerSec))}
+              {rateUnit(base, kind, index)}</span
             >
           {/each}
         </div>
@@ -467,6 +476,7 @@
     border-radius: var(--r-full);
   }
   .chart-labels {
+    opacity: var(--run-fade, 1);
     color: var(--text-soft);
     font: var(--type-2xs) var(--font-mono);
   }
@@ -497,6 +507,16 @@
   .phase-label {
     translate: 0 -100%;
     opacity: 0.62;
+  }
+  .phase-label,
+  .stat-label {
+    transition: opacity var(--dur-slide) var(--ease-out);
+  }
+  @starting-style {
+    .phase-label,
+    .stat-label {
+      opacity: 0;
+    }
   }
   .stat-label {
     max-width: 126px;

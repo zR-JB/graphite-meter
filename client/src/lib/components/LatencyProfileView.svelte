@@ -178,6 +178,9 @@
       ),
     );
     untrack(() => {
+      // A marker that leaves is revealed at its next value, not glided in from the last.
+      for (const key of glides.keys())
+        if (!targets.some(([other]) => other === key)) glides.delete(key);
       for (const [key, target] of targets) {
         const glide = glides.get(key) ?? new Smoothed();
         if (!glides.has(key)) glides.set(key, glide);

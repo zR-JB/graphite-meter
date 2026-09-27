@@ -48,7 +48,8 @@ export interface SummaryCard {
   num: string;
   unit: string;
   tip: string;
-  wire?: WireRate;
+  /** Null holds the line for a wire rate that has not settled. */
+  wire?: WireRate | null;
   rows: SummaryRow[];
   accessible?: string;
 }

@@ -6,6 +6,7 @@
   import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
+  import { handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
   const servers = $derived(
@@ -38,6 +39,10 @@
       };
     }),
   );
+  const profile = handoff(
+    () => ({ run: store.runSeq, lanes }),
+    (profile) => profile.run,
+  );
 </script>
 
 <section class="live-profile" aria-label="Latency distribution">
@@ -62,7 +67,9 @@
     </p>
   {/if}
 
-  <LatencyProfileView {lanes} variant="bare" />
+  <div style:opacity={profile.opacity}>
+    <LatencyProfileView lanes={profile.shown.lanes} variant="bare" />
+  </div>
 </section>
 
 <style>

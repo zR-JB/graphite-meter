@@ -11,6 +11,7 @@
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import { announce } from "../presentation/announcer.svelte";
+  import { handoff } from "../presentation/motion.svelte";
   import { untrack } from "svelte";
   import {
     CARD_ORDER,
@@ -85,12 +86,29 @@
     };
   }
   const cards = $derived(
-    store.phase !== "complete" && store.phase !== "error"
+    (store.phase !== "complete" && store.phase !== "error"
       ? planned.map((key) => {
           const card = settled.find((card) => card.key === key);
           return card ? held(card) : liveCard(key);
         })
-      : settled,
+      : settled
+    ).map((card) =>
+      card.key === "latency" || !store.showWireEstimates
+        ? card
+        : { ...card, wire: card.wire ?? null },
+    ),
+  );
+
+  // A new run's cards replace the last run's only while faded out.
+  const view = handoff(
+    () => ({
+      run: store.runSeq,
+      cards,
+      issues: store.serverDetails
+        ? serverIssues(store.serverDetails, shown)
+        : [],
+    }),
+    (view) => view.run,
   );
 
   // Once per completed run, never again for a unit or scope change.
@@ -168,9 +186,11 @@
 </script>
 
 <ResultSummary
-  {cards}
+  cards={view.shown.cards}
+  fade={view.opacity}
+  reserve
   details={details ?? store.serverDetails}
-  issues={store.serverDetails ? serverIssues(store.serverDetails, shown) : []}
+  issues={view.shown.issues}
   locked={!details}
   scope={details ? shown : ""}
   onscope={selectScope}

@@ -13,6 +13,8 @@
 
   let {
     cards,
+    fade = 1,
+    reserve = false,
     details,
     issues = [],
     scope = "",
@@ -20,6 +22,10 @@
     locked = false,
   }: {
     cards: SummaryCard[];
+    /** The cards' contents fade through a handoff while their surfaces stay. */
+    fade?: number;
+    /** Live cards hold their settled height, so arriving values move nothing. */
+    reserve?: boolean;
     details?: MultiServerResult | null;
     issues?: { server: string; text: string }[];
     scope?: string;
@@ -51,7 +57,12 @@
   >
 {/snippet}
 
-<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
+<div
+  class="result-summary"
+  class:reserve
+  style:--cards={Math.min(4, cards.length)}
+  style:--fade={fade}
+>
   {#if details && details.selection.length > 1 && onscope}
     <div class="summary-scope">
       {#if details.participants.length < details.selection.length}<span
@@ -111,6 +122,8 @@
                   >wire {wire.overhead}</span
                 ></span
               >
+            {:else if card.wire === null}
+              <span class="wire"></span>
             {/if}
             {@render facts(card.rows.filter((row) => row !== stability))}
           </span>
@@ -193,6 +206,11 @@
     font-size: var(--type-sm);
     font-weight: var(--w-heavy);
   }
+  .readout > *,
+  .head .badge,
+  .stability {
+    opacity: var(--fade);
+  }
   .readout {
     display: grid;
     gap: 3px;
@@ -227,6 +245,12 @@
   .facts {
     display: block;
     overflow: hidden;
+  }
+  .wire {
+    min-height: 1lh;
+  }
+  .reserve .facts {
+    min-height: 2lh;
   }
   .facts-line {
     display: flex;

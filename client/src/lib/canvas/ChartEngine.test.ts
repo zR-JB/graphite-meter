@@ -20,6 +20,7 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
     runSeq: 1,
     scaleBytesPerSec: 125_000,
     latencyScaleMs: 50,
+    units: { base: "base10", kind: "bits", index: 2 },
     resultRates: {},
     ...overrides,
   };
@@ -65,6 +66,43 @@ test("the live axis follows the run timeline every frame; a finished run glides 
     expect(glide.every((t, i) => i === 0 || t <= glide[i - 1])).toBe(true);
     expect(timeScale).toBe(5_100);
     expect(published.layout.viewport.tMax).toBe(5_100);
+  } finally {
+    engine.destroy();
+  }
+});
+
+test("a new run replaces the presented one only once it has faded out", () => {
+  const throughput = [0, 5_000].map((t) => ({
+    t,
+    bytesPerSec: 100_000,
+    bytesCumulative: t,
+    dir: "down" as const,
+    phase: "download" as const,
+    continuityId: 1,
+  }));
+  let published!: ChartPresentation;
+  let fade = 1;
+  const engine = new ChartEngine(
+    data({ phase: "complete", throughput, resultRates: { download: 100_000 } }),
+    (next) => (published = next),
+    undefined,
+    (opacity) => (fade = opacity),
+  );
+  try {
+    let now = 0;
+    engine.render(now);
+    expect(published.phaseStats).toHaveLength(1);
+    engine.update(data({ runSeq: 2, phase: "connecting" }));
+    const frames: [number, number][] = [];
+    for (let active = true; active && now < 2_000;) {
+      active = engine.render((now += 16));
+      frames.push([fade, published.phaseStats.length]);
+    }
+    const swap = frames.findIndex(([, stats]) => stats === 0);
+    expect(swap).toBeGreaterThan(0);
+    expect(frames.slice(0, swap).every(([opacity]) => opacity > 0)).toBe(true);
+    expect(frames[swap][0]).toBe(0);
+    expect(frames.at(-1)).toEqual([1, 0]);
   } finally {
     engine.destroy();
   }
