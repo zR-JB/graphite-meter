@@ -69,6 +69,23 @@ async fn prepare(
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
 ) -> Result<Vec<PreparedServer>, Error> {
+    tokio::time::timeout(
+        Duration::from_secs(12),
+        prepare_inner(config, http, snapshots),
+    )
+    .await
+    .map_err(|_| -> Error {
+        Box::new(crate::failure::MeasurementFailure(
+            graphite_meter_core::failure::FailureReason::Timeout,
+        ))
+    })?
+}
+
+async fn prepare_inner(
+    config: &Config,
+    http: &Http,
+    snapshots: &watch::Sender<Snapshot>,
+) -> Result<Vec<PreparedServer>, Error> {
     config.validate()?;
     snapshots.send_modify(|snapshot| {
         snapshot.phase = Phase::Preparing;
@@ -295,14 +312,7 @@ async fn verify_throughput_webtransport(
     insecure: bool,
 ) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
-    let query = match target.transport {
-        ThroughputTransport::WebTransport => "bytes=0",
-        ThroughputTransport::WebTransportDatagram => {
-            return Err("native datagram throughput is unsupported".into());
-        }
-        ThroughputTransport::FetchStream => return Err("fetch stream is not WebTransport".into()),
-    };
-    let url = format!("{origin}{}?{query}", Route::WtDownload.path());
+    let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
     crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3))
         .await?
         .close()
