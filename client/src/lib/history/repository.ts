@@ -44,19 +44,24 @@ function done(transaction: IDBTransaction): Promise<void> {
   });
 }
 
+const OPEN_MS = 5_000;
 const BLOCKED_MS = 1_000;
 
 function open(): Promise<IDBDatabase> {
   if (typeof indexedDB === "undefined")
     return Promise.reject(new Error("IndexedDB unavailable"));
   return new Promise((resolve, reject) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
     let settled = false;
     const fail = (error: Error) => {
       settled = true;
       clearTimeout(timer);
       reject(error);
     };
+    // No IndexedDB event is awaited without a bound: a request that never settles is refused.
+    let timer = setTimeout(
+      () => fail(new Error("History storage did not open in time.")),
+      OPEN_MS,
+    );
     const opening = indexedDB.open(HISTORY_DB.name, HISTORY_DB.version);
     opening.onupgradeneeded = (event) => {
       if (event.oldVersion !== 0) {
@@ -86,7 +91,8 @@ function open(): Promise<IDBDatabase> {
     opening.onerror = () =>
       fail(opening.error ?? new Error("IndexedDB open failed"));
     opening.onblocked = () => {
-      timer ??= setTimeout(
+      clearTimeout(timer);
+      timer = setTimeout(
         () => fail(new Error("History is open elsewhere in another version.")),
         BLOCKED_MS,
       );
@@ -101,10 +107,14 @@ export class HistoryRepository {
     // Another version is refused, never upgraded; the next request retries a refused or closed connection.
     const opened: Promise<IDBDatabase> = (this.#db ??= open().then(
       (db) => {
-        db.onversionchange = db.onclose = () => {
+        // A page leaving for the back/forward cache must not hold History against another tab.
+        const drop = () => {
           db.close();
+          globalThis.removeEventListener?.("pagehide", drop);
           if (this.#db === opened) this.#db = null;
         };
+        db.onversionchange = db.onclose = drop;
+        globalThis.addEventListener?.("pagehide", drop);
         return db;
       },
       (error) => {

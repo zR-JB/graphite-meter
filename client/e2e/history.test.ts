@@ -83,6 +83,7 @@ function seed(page: Page, archive: Archive) {
     ({ db, records, clears, version }) =>
       new Promise<void>((resolve, reject) => {
         const opening = indexedDB.open(db.name, version ?? db.version);
+        opening.onblocked = () => reject(new Error("seeding is blocked"));
         opening.onupgradeneeded = () => {
           const database = opening.result;
           database
@@ -122,6 +123,7 @@ function stored(page: Page) {
       new Promise<Archive>((resolve, reject) => {
         const opening = indexedDB.open(db.name);
         opening.onerror = () => reject(opening.error);
+        opening.onblocked = () => reject(new Error("reading is blocked"));
         opening.onsuccess = () => {
           const database = opening.result;
           const stores = [...database.objectStoreNames];
@@ -281,6 +283,7 @@ test("History never waits on another version's connection and never changes its 
       new Promise<string>((resolve) => {
         const opening = indexedDB.open(db.name, db.version + 1);
         opening.onblocked = () => resolve("blocked");
+        opening.onerror = () => resolve(`failed: ${opening.error?.name}`);
         opening.onsuccess = () => {
           opening.result.close();
           resolve("upgraded");
@@ -299,17 +302,20 @@ test("History never waits on another version's connection and never changes its 
   await seed(page, { records: [{ id: "preserved" }], version: 1 });
   const before = await stored(page);
   await page.goto(home.url);
-  await page.evaluate(
+  const older = await page.evaluate(
     (db) =>
-      new Promise<void>((resolve) => {
+      new Promise<string>((resolve) => {
         const opening = indexedDB.open(db.name);
+        opening.onblocked = () => resolve("blocked");
+        opening.onerror = () => resolve(`failed: ${opening.error?.name}`);
         opening.onsuccess = () => {
           (window as any).older = opening.result;
-          resolve();
+          resolve(`v${opening.result.version}`);
         };
       }),
     HISTORY_DB,
   );
+  expect(older).toBe("v1");
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible();
   await page.evaluate(() => (window as any).older.close());
