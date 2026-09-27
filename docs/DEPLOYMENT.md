@@ -325,7 +325,7 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32` | Handlers per client identity. |
 | `GM_MAX_ACTIVE_SESSIONS` | `--max-active-sessions` | `64` | WebTransport sessions, a share of the handler pool. |
 | `GM_MAX_SESSIONS_PER_CLIENT` | `--max-sessions-per-client` | `8` | WebTransport sessions per client identity. |
-| `GM_MAX_CONNECTIONS` | `--max-connections` | `512` | Concurrent TCP and QUIC connections. |
+| `GM_MAX_CONNECTIONS` | `--max-connections` | `4096` | Concurrent TCP and QUIC connections. |
 | `GM_MAX_CONNECTIONS_PER_CLIENT` | `--max-connections-per-client` | `64` | Connections per direct client. |
 | `GM_MAX_OPERATION_DURATION` | `--max-operation-duration` | `5m` | Request-shaped measurement lifetime. |
 | `GM_MAX_SESSION_DURATION` | `--max-session-duration` | `2h` | WebTransport transfer session lifetime. |
