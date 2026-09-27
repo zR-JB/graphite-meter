@@ -331,11 +331,8 @@
 </section>
 
 <style>
+  /* The container .instrument queries; a block, as a flex box here kept a stale height in Chromium. */
   .gauge-panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    /* Here, not on .instrument: a container query only styles descendants. */
     container: viz / inline-size;
   }
   /* The dial yields to the rest of the stage (chrome, controls, cards, chart) before the page would scroll. */
