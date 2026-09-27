@@ -9,7 +9,7 @@ use crate::{
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint,
-    webtransport::{PendingReset, RecvStream, Registry},
+    webtransport::{Connect, PendingReset, RecvStream, Registry},
 };
 use bytes::Bytes;
 use std::{
@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::watch,
+    sync::{mpsc, watch},
     time::{Instant, Sleep},
 };
 
@@ -49,6 +49,8 @@ pub(crate) struct Shared {
     pub(crate) budget: Budget,
     pub(crate) role: Role,
     pub(crate) peer: watch::Sender<Option<Peer>>,
+    /// Sessions hand their CONNECT streams to the driver.
+    pub(crate) connects: mpsc::UnboundedSender<Connect>,
     state: Mutex<State>,
 }
 
@@ -65,6 +67,14 @@ pub(crate) struct State {
     resets: Vec<PendingReset>,
 }
 
+impl State {
+    pub(crate) fn wake(&mut self) {
+        if let Some(driver) = self.driver.take() {
+            driver.wake();
+        }
+    }
+}
+
 impl Shared {
     pub(crate) fn state(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().expect("HTTP/3 state poisoned")
@@ -78,9 +88,7 @@ impl Shared {
         pending._charge = Some(charge);
         let mut state = self.state();
         state.resets.push(pending);
-        if let Some(driver) = state.driver.take() {
-            driver.wake();
-        }
+        state.wake();
     }
 
     pub(crate) fn hold(&self, halves: usize) {
@@ -92,9 +100,7 @@ impl Shared {
         state.live -= 1;
         if state.live == 0 {
             state.idle_since = Instant::now();
-            if let Some(driver) = state.driver.take() {
-                driver.wake();
-            }
+            state.wake();
         }
     }
 
@@ -155,6 +161,9 @@ pub(crate) struct Connection {
     datagrams: Pin<Box<dyn Future<Output = Result<(), Error>> + Send>>,
     streams: Vec<Uni>,
     resets: Vec<PendingReset>,
+    connects: mpsc::UnboundedReceiver<Connect>,
+    /// The session's CONNECT stream, and earlier ones still finishing their close.
+    sessions: Vec<Connect>,
     /// Whether the peer opened its control, QPACK encoder and QPACK decoder streams.
     critical: [bool; 3],
     /// Streams still covered by [`CONNECTION_BYTES`] instead of a charge.
@@ -213,11 +222,13 @@ impl Connection {
             Role::Client => &settings::CLIENT,
         };
         let opening = quic.clone();
+        let (connects, connecting) = mpsc::unbounded_channel();
         let shared = Arc::new(Shared {
             quic: quic.clone(),
             budget,
             role,
             peer: watch::Sender::new(None),
+            connects,
             state: Mutex::new(State {
                 live: 0,
                 idle_since: Instant::now(),
@@ -240,6 +251,8 @@ impl Connection {
             datagrams: Box::pin(datagrams(shared.clone())),
             streams: Vec::new(),
             resets: Vec::new(),
+            connects: connecting,
+            sessions: Vec::new(),
             critical: [false; 3],
             floor: 3,
             next_request: 0,
@@ -250,8 +263,9 @@ impl Connection {
         }
     }
 
-    /// Server: sends GOAWAY, refuses later requests, and closes once the others end or 5 s pass.
-    pub(crate) fn shutdown(&mut self) {
+    /// Server: sends GOAWAY and ends every session with `code` and `reason`; later requests are
+    /// refused, and the connection closes once the others end or 5 s pass.
+    pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
         if self.drain.is_none() && !self.closed {
             frame::put_header(
                 frame::GOAWAY,
@@ -260,9 +274,9 @@ impl Connection {
             );
             varint::put(self.next_request, &mut self.control.pending);
             self.drain = Some(Instant::now() + DRAIN);
-            if let Some(driver) = self.shared.state().driver.take() {
-                driver.wake();
-            }
+            let mut state = self.shared.state();
+            state.sessions.shutdown(code, reason);
+            state.wake();
         }
     }
 
@@ -312,6 +326,10 @@ impl Connection {
         let now = Instant::now();
         self.resets.append(&mut self.shared.state().resets);
         self.resets.retain_mut(|pending| !pending.poll(cx, now));
+        while let Poll::Ready(Some(connect)) = self.connects.poll_recv(cx) {
+            self.sessions.push(connect);
+        }
+        self.sessions.retain_mut(|connect| !connect.poll(cx, now, &self.shared));
         while let Some(bi) = &mut self.bi {
             let Poll::Ready(streams) = bi.as_mut().poll(cx) else {
                 break;
@@ -322,7 +340,7 @@ impl Connection {
                 return Poll::Ready(Ok(Some(request)));
             }
         }
-        self.poll_timers(cx)
+        self.poll_timers(cx, now)
     }
 
     fn poll_control(&mut self, cx: &mut Context<'_>) -> Result<(), Error> {
@@ -481,50 +499,56 @@ impl Connection {
         }
     }
 
-    fn poll_timers(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<RequestStream>, Error>> {
-        loop {
-            let now = Instant::now();
-            self.streams.retain_mut(|uni| match uni.kind {
-                Kind::Unknown { deadline, .. } if deadline <= now => {
-                    let _ = uni.stream.stop(Code::H3_STREAM_CREATION_ERROR.into());
-                    false
-                }
-                _ => true,
-            });
-            let (live, idle_since, sessions_only, reordering) = {
-                let mut state = self.shared.state();
-                let sessions = &mut state.sessions;
-                let sessions_only = sessions.carried && !sessions.served;
-                let reordering = sessions.expire(now);
-                (state.live, state.idle_since, sessions_only, reordering)
-            };
-            let server = self.shared.role == Role::Server;
-            let idle = (server && live == 0).then_some(idle_since + IDLE);
-            // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-            let done = live == 0 && (self.drain.is_some() || server && sessions_only);
-            if done || self.drain.is_some_and(|drain| drain <= now) || idle.is_some_and(|idle| idle <= now) {
-                self.shared.close(Code::H3_NO_ERROR);
-                return Poll::Ready(Ok(None));
+    /// Everything due by `now` was handled, so the timer waits for a later deadline.
+    fn poll_timers(&mut self, cx: &mut Context<'_>, now: Instant) -> Poll<Result<Option<RequestStream>, Error>> {
+        self.streams.retain_mut(|uni| match uni.kind {
+            Kind::Unknown { deadline, .. } if deadline <= now => {
+                let _ = uni.stream.stop(Code::H3_STREAM_CREATION_ERROR.into());
+                false
             }
-            let types = self.streams.iter().filter_map(|uni| match uni.kind {
-                Kind::Unknown { deadline, .. } => Some(deadline),
-                _ => None,
-            });
-            let resets = self.resets.iter().map(PendingReset::deadline);
-            let Some(deadline) = types
-                .chain(resets)
-                .chain(reordering)
-                .chain(idle)
-                .chain(self.drain)
-                .min()
-            else {
-                return Poll::Pending;
-            };
-            if self.timer.deadline() != deadline {
-                self.timer.as_mut().reset(deadline);
-            }
-            ready!(self.timer.as_mut().poll(cx));
+            _ => true,
+        });
+        let (live, idle_since, sessions_only, reordering, linger) = {
+            let mut state = self.shared.state();
+            let sessions = &mut state.sessions;
+            let sessions_only = sessions.carried && !sessions.served;
+            let reordering = sessions.expire(now);
+            let linger = sessions.linger.filter(|linger| *linger > now);
+            (state.live, state.idle_since, sessions_only, reordering, linger)
+        };
+        let server = self.shared.role == Role::Server;
+        let idle = (server && live == 0).then_some(idle_since + IDLE);
+        // A connection that only carried sessions ends with its last one: browsers would hold its slot.
+        let done = live == 0 && linger.is_none() && (self.drain.is_some() || server && sessions_only);
+        if done || self.drain.is_some_and(|drain| drain <= now) || idle.is_some_and(|idle| idle <= now) {
+            self.shared.close(Code::H3_NO_ERROR);
+            return Poll::Ready(Ok(None));
         }
+        let types = self.streams.iter().filter_map(|uni| match uni.kind {
+            Kind::Unknown { deadline, .. } => Some(deadline),
+            _ => None,
+        });
+        let resets = self.resets.iter().map(PendingReset::deadline);
+        let closing = self.sessions.iter().filter_map(Connect::deadline);
+        let Some(deadline) = types
+            .chain(resets)
+            .chain(closing)
+            .chain(reordering)
+            .chain(linger)
+            .chain(idle)
+            .chain(self.drain)
+            .min()
+        else {
+            return Poll::Pending;
+        };
+        if self.timer.deadline() != deadline {
+            self.timer.as_mut().reset(deadline);
+        }
+        if self.timer.as_mut().poll(cx).is_ready() {
+            // It passed while this pass ran: run another with a later clock.
+            cx.waker().wake_by_ref();
+        }
+        Poll::Pending
     }
 }
 

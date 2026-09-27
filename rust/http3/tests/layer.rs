@@ -9,6 +9,7 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    task::Poll,
     time::Duration,
 };
 use tokio::sync::Notify;
@@ -118,7 +119,7 @@ where
                 request = connection.next() => request?,
                 () = stopping.notified(), if !stopped => {
                     stopped = true;
-                    connection.shutdown();
+                    connection.shutdown(4, "shutdown");
                     continue;
                 }
             };
@@ -762,9 +763,30 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
     Ok(())
 }
 
+fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
+    frame(
+        0x00,
+        &[
+            varint(0x2843),
+            varint(4 + reason.len() as u64),
+            code.to_be_bytes().to_vec(),
+            reason.into(),
+        ]
+        .concat(),
+    )
+}
+
+/// Whether STOP_SENDING has already arrived for a raw stream.
+async fn stopped_yet(send: &noq::SendStream) -> bool {
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    std::future::poll_fn(|cx| Poll::Ready(std::pin::pin!(send.stopped()).poll(cx).is_ready())).await
+}
+
 #[tokio::test]
 async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), TestError> {
-    // The server ends the session; the peer's FIN ends the wait long before 1 s.
+    // The server ends the session; our client's FIN ends the wait long before 1 s.
     let peers = peers(usize::MAX).await?;
     let (serving, _) = serve_sessions(&peers, |session| async move {
         let started = std::time::Instant::now();
@@ -775,10 +797,12 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
     assert_eq!(session.closed().await?, (2, "lifetime".into()));
     session.close(0, "").await;
+    settled(&peers.budget).await;
+    jump(Duration::from_secs(1)).await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
 
-    // The peer ends it: the server only finishes its side.
+    // The peer ends it: the server only finishes its side, and the connection closes at once.
     let peers = self::peers(usize::MAX).await?;
     let (serving, _) = serve_sessions(&peers, |session| async move {
         assert_eq!(session.closed().await.unwrap(), (7, "bye".into()));
@@ -789,21 +813,95 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
     session.close(7, "bye").await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
 
-    // A raw peer that never finishes gets STOP_SENDING WT_SESSION_GONE once the second passes.
+    // A raw peer answering with FIN never sees STOP_SENDING, and the connection lingers a second
+    // so the CLOSE arrives before CONNECTION_CLOSE.
+    let peers = self::peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(2, "lifetime").await });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    let (mut connect, response) = raw_connect(&peers.client, "/wt").await?;
+    let (bytes, end) = response.await?;
+    assert!(
+        bytes.ends_with(&close_capsule(2, "lifetime")) && end.is_ok(),
+        "CLOSE, then FIN"
+    );
+    connect.finish()?;
+    assert_eq!(stopped(&connect).await, None);
+    settled(&peers.budget).await;
+    assert!(peers.server.close_reason().is_none());
+    jump(Duration::from_secs(1)).await;
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    assert_eq!(serving.await?, Ok(()));
+
+    // A silent peer gets STOP_SENDING WT_SESSION_GONE only once the second passes.
     let peers = self::peers(usize::MAX).await?;
     let (serving, _) = serve_sessions(&peers, |session| async move { session.close(4, "shutdown").await });
     let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (connect, response) = raw_connect(&peers.client, "/wt").await?;
+    let (bytes, end) = response.await?;
+    assert!(
+        bytes.ends_with(&close_capsule(4, "shutdown")) && end.is_ok(),
+        "CLOSE, then FIN"
+    );
+    jump(Duration::from_millis(900)).await;
+    assert!(!stopped_yet(&connect).await, "STOP_SENDING before the second");
+    jump(Duration::from_millis(200)).await;
+    assert_eq!(stopped(&connect).await, Some(Code::WT_SESSION_GONE));
+    drop(serving);
+    Ok(())
+}
+
+#[tokio::test]
+async fn shutdown_closes_every_session_before_the_connection() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (serving, stop) = serve_sessions(&peers, |session| async move {
+        let _ = session.closed().await;
+    });
+    let (driver, requests) = client(&peers);
+    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    stop.notify_one();
+    assert_eq!(session.closed().await?, (4, "shutdown".into()));
+    drop(session);
+    settled(&peers.budget).await;
+    jump(Duration::from_secs(1)).await;
+    assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+
+    let peers = self::peers(usize::MAX).await?;
+    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
+    let (serving, stop) = serve_sessions(&peers, move |session| {
+        let endings = endings.clone();
+        async move {
+            let _ = endings.send(session.closed().await);
+        }
+    });
+    // Admitted before GOAWAY, this CONNECT waits for SETTINGS and is accepted only after it.
+    let (mut connect, response) = raw_connect(&peers.client, "/wt").await?;
     while peers.budget.used.load(Ordering::Relaxed) == 0 {
         tokio::task::yield_now().await;
     }
-    tokio::task::yield_now().await;
-    jump(Duration::from_secs(2)).await;
-    assert_eq!(stopped(&connect).await, Some(Code::WT_SESSION_GONE));
+    stop.notify_one();
+    let mut control = peers.client.accept_uni().await?;
+    let mut received = Vec::new();
+    while !received.ends_with(&frame(0x07, &varint(4))) {
+        received.extend_from_slice(&control.read_chunk(usize::MAX).await?.ok_or("control stream ended")?);
+    }
+    let (mut late, mut late_response) = peers.client.open_bi().await?;
+    late.write_all(&connect_head("/wt")).await?;
+    assert_eq!(response_bytes(&mut late_response).await, Err(Code::H3_REQUEST_REJECTED));
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
     let (bytes, end) = response.await?;
-    let close = [&[0x68, 0x43, 0x0c, 0, 0, 0, 4][..], b"shutdown"].concat();
-    assert!(bytes.ends_with(&frame(0x00, &close)) && end.is_ok(), "CLOSE, then FIN");
-    drop(serving);
+    assert!(
+        bytes.starts_with(&[0x01]) && bytes.ends_with(&close_capsule(4, "shutdown")) && end.is_ok(),
+        "200, CLOSE, then FIN"
+    );
+    assert_eq!(ended.recv().await, Some(Ok((4, "shutdown".into()))));
+    connect.finish()?;
+    assert_eq!(stopped(&connect).await, None);
+    settled(&peers.budget).await;
+    assert!(peers.server.close_reason().is_none(), "the CLOSE goes first");
+    jump(Duration::from_secs(1)).await;
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
+    assert_eq!(serving.await?, Ok(()));
     Ok(())
 }
 

@@ -1,9 +1,9 @@
 //! An interop peer for the Go clients, not a measurement server: `interop ADDRESS CERT_PEM KEY_PEM`.
 use bytes::Bytes;
-use graphite_meter_http3::{Error, RequestStream, WtCode, server, webtransport::Session};
+use graphite_meter_http3::{Code, Error, RequestStream, WtCode, server, webtransport::Session};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::sync::Arc;
-use tokio::task::JoinSet;
+use tokio::{sync::watch, task::JoinSet};
 
 type Failure = Box<dyn std::error::Error + Send + Sync>;
 
@@ -25,35 +25,49 @@ async fn main() -> Result<(), Failure> {
     config.transport_config(Arc::new(transport));
     let endpoint = noq::Endpoint::server(config, address.parse()?)?;
     println!("listening {}", endpoint.local_addr()?);
+    let (stop, stopping) = watch::channel(false);
     let mut connections = JoinSet::new();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => break,
             Some(incoming) = endpoint.accept() => {
+                let stopping = stopping.clone();
                 connections.spawn(async move {
-                    if let Err(error) = serve(incoming).await {
+                    if let Err(error) = serve(incoming, stopping).await {
                         eprintln!("connection: {error}");
                     }
                 });
             }
         }
     }
-    endpoint.close(0_u32.into(), b"probe complete");
-    connections.shutdown().await;
+    // Each connection ends its session with its CLOSE, then closes itself.
+    let _ = stop.send(true);
+    while connections.join_next().await.is_some() {}
+    endpoint.close(Code::H3_NO_ERROR.into(), b"");
     endpoint.wait_idle().await;
     Ok(())
 }
 
-async fn serve(incoming: noq::Incoming) -> Result<(), Failure> {
+async fn serve(incoming: noq::Incoming, mut stopping: watch::Receiver<bool>) -> Result<(), Failure> {
     let mut connection = server::Connection::new(incoming.await?, None);
     let mut requests = JoinSet::new();
-    while let Some(request) = connection.next().await? {
-        requests.spawn(async move {
-            let (request, stream) = request.resolve().await?;
-            respond(request, stream).await
-        });
+    let mut stopped = false;
+    loop {
+        tokio::select! {
+            request = connection.next() => {
+                let Some(request) = request? else { return Ok(()) };
+                requests.spawn(async move {
+                    let (request, stream) = request.resolve().await?;
+                    respond(request, stream).await
+                });
+            }
+            // Level-triggered, so a connection that arrives while stopping shuts down too.
+            _ = stopping.wait_for(|stop| *stop), if !stopped => {
+                stopped = true;
+                connection.shutdown(4, "shutdown");
+            }
+        }
     }
-    Ok(())
 }
 
 /// Echoes a request body, or answers `transport probe`; CONNECT opens a probe session.
@@ -89,10 +103,7 @@ async fn probe(path: &str, session: Arc<Session>) -> Result<(), Error> {
         }
         "/wt/reset" => session.open_uni().await?.reset(WtCode(7)),
         "/wt/close" => {
-            Arc::into_inner(session)
-                .expect("sole owner")
-                .close(17, "probe closed")
-                .await;
+            session.close(17, "probe closed").await;
             return Ok(());
         }
         _ => {}
@@ -124,6 +135,6 @@ async fn probe(path: &str, session: Arc<Session>) -> Result<(), Error> {
         }
     }
     echoes.shutdown().await;
-    Arc::into_inner(session).expect("sole owner").close(0, "").await;
+    session.close(0, "").await;
     Ok(())
 }

@@ -266,12 +266,17 @@ impl SendHalf {
         Poll::Ready(Ok(()))
     }
 
-    async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
-        poll_fn(|cx| self.poll_ready(cx)).await?;
+    /// Queues a frame; the previous one must be written.
+    pub(crate) fn queue(&mut self, kind: u64, payload: Bytes) {
         let mut header = &mut self.header[..];
         frame::put_header(kind, payload.len() as u64, &mut header);
         let remaining = header.len();
         (self.header_end, self.header_written, self.payload) = ((16 - remaining) as u8, 0, payload);
+    }
+
+    async fn frame(&mut self, kind: u64, payload: Bytes) -> Result<(), Error> {
+        poll_fn(|cx| self.poll_ready(cx)).await?;
+        self.queue(kind, payload);
         poll_fn(|cx| self.poll_ready(cx)).await
     }
 
@@ -279,24 +284,39 @@ impl SendHalf {
         self.frame(frame::DATA, data).await
     }
 
-    /// Sends a response head within the peer's field section limit.
-    pub async fn send_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
+    /// Queues a response head within the peer's field section limit.
+    pub(crate) fn queue_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
         let (parts, ()) = response.into_parts();
         let section = fields::encode_response(&parts, self.shared.peer_field_limit()).map_err(|_| Error::Refused)?;
-        self.frame(frame::HEADERS, section.into()).await
+        self.queue(frame::HEADERS, section.into());
+        Ok(())
+    }
+
+    pub async fn send_response(&mut self, response: http::Response<()>) -> Result<(), Error> {
+        poll_fn(|cx| self.poll_ready(cx)).await?;
+        self.queue_response(response)?;
+        poll_fn(|cx| self.poll_ready(cx)).await
     }
 
     pub(crate) async fn send_request(&mut self, head: Vec<u8>) -> Result<(), Error> {
         self.frame(frame::HEADERS, head.into()).await
     }
 
-    /// Ends the stream once pending frames are written.
+    /// Ends the stream once pending frames are written; a stream that already ended stays so.
+    pub(crate) fn poll_finish(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        if !self.finished {
+            let written = ready!(self.poll_ready(cx));
+            self.finished = true;
+            written?;
+            self.stream
+                .finish()
+                .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))?;
+        }
+        Poll::Ready(Ok(()))
+    }
+
     pub async fn finish(&mut self) -> Result<(), Error> {
-        poll_fn(|cx| self.poll_ready(cx)).await?;
-        self.finished = true;
-        self.stream
-            .finish()
-            .map_err(|_| Error::Stopped(Code::H3_REQUEST_CANCELLED))
+        poll_fn(|cx| self.poll_finish(cx)).await
     }
 
     pub fn reset(&mut self, code: Code) {

@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{Mutex, mpsc},
+    sync::{Mutex, mpsc, watch},
     time::Instant,
 };
 
@@ -41,29 +41,36 @@ const LANE_CANCELLED: WtCode = WtCode(0);
 /// The connection's one session, and peer streams that arrived before theirs.
 #[derive(Default)]
 pub(crate) struct Registry {
-    active: Option<Queues>,
+    active: Option<Active>,
     pending: VecDeque<(Instant, u64, RecvStream)>,
     /// Sessions at or below this ID have ended.
     gone_through: Option<u64>,
+    /// The close every session gets once the server shuts the connection down.
+    shutdown: Option<(u32, String)>,
+    /// A sessions-only connection stays open until then, so the CLOSE of a session this side ended
+    /// reaches the peer first.
+    pub(crate) linger: Option<Instant>,
     /// Whether the connection carried a session, and served anything else.
     pub(crate) carried: bool,
     pub(crate) served: bool,
 }
 
-struct Queues {
+struct Active {
     id: u64,
     streams: mpsc::Sender<RecvStream>,
     datagrams: mpsc::Sender<Bytes>,
+    /// This side's close, from the application or the shutdown; the first one stands.
+    close: Option<(u32, String)>,
 }
 
 impl Registry {
     pub(crate) fn stream(&mut self, session: u64, mut stream: RecvStream) {
         match &self.active {
-            Some(queues) if queues.id == session => {
-                if let Err(refused) = queues.streams.try_send(stream) {
-                    refused.into_inner().stop(Code::WT_BUFFERED_STREAM_REJECTED);
-                }
-            }
+            Some(active) if active.id == session => match active.streams.try_send(stream) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(mut stream)) => stream.stop(Code::WT_BUFFERED_STREAM_REJECTED),
+                Err(mpsc::error::TrySendError::Closed(mut stream)) => stream.stop(Code::WT_SESSION_GONE),
+            },
             _ if self.gone_through.is_some_and(|gone| session <= gone) => stream.stop(Code::WT_SESSION_GONE),
             _ if self.pending.len() < MAX_PENDING => {
                 self.pending.push_back((Instant::now() + REORDERING, session, stream))
@@ -74,8 +81,8 @@ impl Registry {
 
     /// Datagrams are unreliable: one for no current session, or over the queue, is dropped.
     pub(crate) fn datagram(&self, session: u64, payload: Bytes) {
-        if let Some(queues) = self.active.as_ref().filter(|queues| queues.id == session) {
-            let _ = queues.datagrams.try_send(payload);
+        if let Some(active) = self.active.as_ref().filter(|active| active.id == session) {
+            let _ = active.datagrams.try_send(payload);
         }
     }
 
@@ -88,13 +95,27 @@ impl Registry {
         self.pending.front().map(|(deadline, ..)| *deadline)
     }
 
+    /// Server: every session, current or yet to come, ends with this close.
+    pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
+        self.shutdown = Some((code, reason.into()));
+        if let Some(active) = &mut self.active {
+            active.close.get_or_insert_with(|| (code, reason.into()));
+        }
+    }
+
     fn register(&mut self, id: u64) -> Option<(mpsc::Receiver<RecvStream>, mpsc::Receiver<Bytes>)> {
         if self.active.is_some() {
             return None;
         }
         let (streams, stream_receiver) = mpsc::channel(STREAM_QUEUE);
         let (datagrams, datagram_receiver) = mpsc::channel(DATAGRAM_QUEUE);
-        self.active = Some(Queues { id, streams, datagrams });
+        let close = self.shutdown.clone();
+        self.active = Some(Active {
+            id,
+            streams,
+            datagrams,
+            close,
+        });
         self.carried = true;
         for (deadline, session, stream) in std::mem::take(&mut self.pending) {
             if session == id {
@@ -106,8 +127,23 @@ impl Registry {
         Some((stream_receiver, datagram_receiver))
     }
 
+    fn request_close(&mut self, id: u64, code: u32, reason: &str) {
+        if let Some(active) = self.active.as_mut().filter(|active| active.id == id) {
+            active.close.get_or_insert_with(|| (code, reason.into()));
+        }
+    }
+
+    fn requested_close(&self, id: u64) -> Option<(u32, String)> {
+        self.active
+            .as_ref()
+            .filter(|active| active.id == id)
+            .and_then(|active| active.close.clone())
+    }
+
     fn unregister(&mut self, id: u64) {
-        self.active = None;
+        if self.active.as_ref().is_some_and(|active| active.id == id) {
+            self.active = None;
+        }
         self.gone_through = self.gone_through.max(Some(id));
     }
 }
@@ -289,38 +325,140 @@ impl PendingReset {
     }
 }
 
-/// A WebTransport session on its CONNECT stream. Its methods take `&self`, so lanes can share it.
-pub struct Session {
+/// A session's CONNECT stream once its head is out: the connection's driver reads the peer's
+/// capsules and runs the close, so every session ends with one whatever its handle does.
+pub(crate) struct Connect {
     id: u64,
-    shared: Arc<Shared>,
-    datagram_prefix: ([u8; 8], usize),
-    send: Mutex<SendHalf>,
-    connect: Mutex<Connect>,
-    streams: Mutex<mpsc::Receiver<RecvStream>>,
-    datagrams: Mutex<mpsc::Receiver<Bytes>>,
-    _charge: Charge,
-}
-
-struct Connect {
+    send: SendHalf,
     recv: RecvHalf,
     capsules: capsule::Reader,
     input: Bytes,
     bytes: u64,
     chunks: u64,
-    /// The peer's CLOSE, or code 0 once its side finished without one.
-    closed: Option<(u32, String)>,
+    ended: watch::Sender<Option<Result<(u32, String), Error>>>,
+    /// Once the session ended: when the wait for the peer's FIN gives up.
+    deadline: Option<Instant>,
+    peer_finished: bool,
+    /// This side ended the session, so a sessions-only connection lingers for its CLOSE.
+    closed_here: bool,
 }
 
-/// State a session keeps apart from its CONNECT stream: channel slots and the reader.
+impl Connect {
+    /// Ends the session once the peer does or this side asks: CLOSE unless the peer ended it, FIN,
+    /// the peer's FIN within 1 s, and only then STOP_SENDING. `true` once the stream is done with.
+    pub(crate) fn poll(&mut self, cx: &mut Context<'_>, now: Instant, shared: &Shared) -> bool {
+        let failed = match self.poll_read(cx) {
+            Ok(()) if self.deadline.is_none() => match self.send.poll_ready(cx) {
+                Poll::Pending => return false,
+                Poll::Ready(written) => written.err(),
+            },
+            read => read.err(),
+        };
+        if let Some(error) = failed {
+            self.end(Err(error));
+        } else {
+            let deadline = match self.deadline {
+                Some(deadline) => deadline,
+                None => {
+                    if self.ended.borrow().is_none() {
+                        let Some((code, reason)) = shared.state().sessions.requested_close(self.id) else {
+                            return false;
+                        };
+                        self.send.queue(frame::DATA, capsule::close(code, &reason).into());
+                        self.end(Ok((code, reason)));
+                        self.closed_here = true;
+                    }
+                    // The session is gone for routing; its CONNECT stream finishes on its own.
+                    shared.state().sessions.unregister(self.id);
+                    *self.deadline.insert(now + CLOSE_DRAIN)
+                }
+            };
+            let finished = self.send.poll_finish(cx).is_ready();
+            if !(finished && self.peer_finished) && now < deadline {
+                return false;
+            }
+            // Browsers drop the code of a CLOSE whose STOP_SENDING arrives first.
+            self.send.reset(Code::WT_SESSION_GONE);
+            self.recv.stop(Code::WT_SESSION_GONE);
+        }
+        let mut state = shared.state();
+        state.sessions.unregister(self.id);
+        if self.closed_here {
+            state.sessions.linger = Some(now + CLOSE_DRAIN);
+        }
+        true
+    }
+
+    pub(crate) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    /// Reads capsules to the peer's FIN; its CLOSE, or a FIN without one, ends the session.
+    fn poll_read(&mut self, cx: &mut Context<'_>) -> Result<(), Error> {
+        while !self.peer_finished {
+            match self.capsules.read(&mut self.input) {
+                Err(code) => return Err(self.abort(code)),
+                Ok(Some(Capsule::Close { code, reason })) => self.end(Ok((code, reason))),
+                Ok(Some(Capsule::Drain)) => {}
+                Ok(None) => match self.recv.poll_data(cx) {
+                    Poll::Pending => break,
+                    Poll::Ready(Ok(Some(data))) => {
+                        (self.bytes, self.chunks) = (self.bytes + data.len() as u64, self.chunks + 1);
+                        if self.bytes > MAX_CONNECT_BYTES || self.chunks > MAX_CONNECT_CHUNKS {
+                            return Err(self.abort(Code::H3_EXCESSIVE_LOAD));
+                        }
+                        self.input = data;
+                    }
+                    Poll::Ready(Ok(None)) if self.capsules.at_boundary() => {
+                        self.peer_finished = true;
+                        self.end(Ok((0, String::new())));
+                    }
+                    Poll::Ready(Ok(None)) => return Err(self.abort(Code::H3_MESSAGE_ERROR)),
+                    Poll::Ready(Err(error)) => return Err(error),
+                },
+            }
+        }
+        Ok(())
+    }
+
+    /// A malformed CONNECT stream ends the session in both directions.
+    fn abort(&mut self, code: Code) -> Error {
+        self.recv.stop(code);
+        self.send.reset(code);
+        Error::Protocol(code)
+    }
+
+    /// The first ending stands.
+    fn end(&self, ending: Result<(u32, String), Error>) {
+        self.ended
+            .send_if_modified(|ended| ended.is_none() && ended.replace(ending).is_none());
+    }
+}
+
+/// A WebTransport session. Its methods take `&self`, so lanes can share it; dropping it unclosed
+/// ends the session as finished, with code 0.
+pub struct Session {
+    id: u64,
+    shared: Arc<Shared>,
+    datagram_prefix: ([u8; 8], usize),
+    streams: Mutex<mpsc::Receiver<RecvStream>>,
+    datagrams: Mutex<mpsc::Receiver<Bytes>>,
+    ended: watch::Receiver<Option<Result<(u32, String), Error>>>,
+    _charge: Charge,
+}
+
+/// State a session keeps apart from its CONNECT stream's halves: channel slots, the capsule reader
+/// and both sides' close reasons.
 const SESSION_BYTES: usize = size_of::<Session>()
     + size_of::<Connect>()
     + STREAM_QUEUE * size_of::<RecvStream>()
     + DATAGRAM_QUEUE * size_of::<Bytes>()
     + 4
-    + capsule::MAX_REASON;
+    + 2 * capsule::MAX_REASON;
 
 impl Session {
-    /// Registers the connection's one session; a second is refused with `refusal`.
+    /// Registers the connection's one session and hands its CONNECT stream to the driver; a second
+    /// is refused with `refusal`.
     fn register(stream: RequestStream, refusal: Code) -> Result<Self, Error> {
         let (shared, id) = (stream.shared_arc(), stream.id());
         let registered = Charge::new(&shared.budget, SESSION_BYTES)
@@ -334,23 +472,29 @@ impl Session {
         varint::put(id / 4, &mut rest);
         let prefix_len = 8 - rest.len();
         let (send, recv) = stream.split();
-        let capsules = capsule::Reader::default();
+        let (ended, ending) = watch::channel(None);
         let connect = Connect {
+            id,
+            send,
             recv,
-            capsules,
+            capsules: capsule::Reader::default(),
             input: Bytes::new(),
             bytes: 0,
             chunks: 0,
-            closed: None,
+            ended,
+            deadline: None,
+            peer_finished: false,
+            closed_here: false,
         };
+        // Without a driver the connection is gone, and so is the stream.
+        let _ = shared.connects.send(connect);
         Ok(Self {
             id,
             shared,
             datagram_prefix: (prefix, prefix_len),
-            send: Mutex::new(send),
-            connect: Mutex::new(connect),
             streams: Mutex::new(streams),
             datagrams: Mutex::new(datagrams),
+            ended: ending,
             _charge: charge,
         })
     }
@@ -369,7 +513,6 @@ impl Session {
             stream.send.finish().await?;
             return Err(Error::Refused);
         };
-        let session = Self::register(stream, Code::H3_REQUEST_REJECTED)?;
         let mut response = http::Response::new(());
         if dialect == Dialect::Draft02 {
             // Draft 02 requires it; Go omits it.
@@ -378,8 +521,9 @@ impl Session {
                 http::HeaderValue::from_static("draft02"),
             );
         }
-        session.send.lock().await.send_response(response).await?;
-        Ok(session)
+        // The driver writes it before any capsule.
+        stream.send.queue_response(response)?;
+        Self::register(stream, Code::H3_REQUEST_REJECTED)
     }
 
     /// Client: opens a session, speaking the server's dialect. A refusal returns its response.
@@ -406,16 +550,13 @@ impl Session {
             fields::encode_request(&parts, Some(protocol), shared.peer_field_limit()).map_err(|_| Error::Refused)?;
         let charges = stream::charges(&shared.budget).ok_or(Error::Refused)?;
         let (send, recv) = shared.quic.open_bi().await?;
-        let limit = shared.role.field_limit();
-        let stream = RequestStream::new(shared, send, recv, limit, charges);
-        let session = Self::register(stream, Code::H3_REQUEST_CANCELLED)?;
-        session.send.lock().await.send_request(head).await?;
-        let response = session.connect.lock().await.recv.response().await?;
-        Ok(if response.status().is_success() {
-            Ok(session)
-        } else {
-            Err(response)
-        })
+        let mut stream = RequestStream::new(shared, send, recv, shared.role.field_limit(), charges);
+        stream.send.send_request(head).await?;
+        let response = stream.recv.response().await?;
+        if !response.status().is_success() {
+            return Ok(Err(response));
+        }
+        Self::register(stream, Code::H3_REQUEST_CANCELLED).map(Ok)
     }
 
     /// The CONNECT stream's ID.
@@ -459,64 +600,37 @@ impl Session {
         Ok(self.shared.quic.send_datagram_wait(self.datagram(payload)).await?)
     }
 
-    /// Resolves when the peer ends the session: its CLOSE code and reason, or code 0 when its
-    /// side finished without one. Other capsules, flow control included, are ignored.
+    /// Resolves once the session ends: with the peer's CLOSE code and reason, code 0 when the peer
+    /// finished without one, or this side's close when it ended the session first.
     pub async fn closed(&self) -> Result<(u32, String), Error> {
-        let mut guard = self.connect.lock().await;
-        let connect = &mut *guard;
-        loop {
-            if let Some(closed) = &connect.closed {
-                return Ok(closed.clone());
-            }
-            match connect.capsules.read(&mut connect.input) {
-                Err(code) => return Err(self.abort(connect, code)),
-                Ok(Some(Capsule::Close { code, reason })) => connect.closed = Some((code, reason)),
-                Ok(Some(Capsule::Drain)) => {}
-                Ok(None) => match connect.recv.data().await? {
-                    Some(data) => {
-                        (connect.bytes, connect.chunks) = (connect.bytes + data.len() as u64, connect.chunks + 1);
-                        if connect.bytes > MAX_CONNECT_BYTES || connect.chunks > MAX_CONNECT_CHUNKS {
-                            return Err(self.abort(connect, Code::H3_EXCESSIVE_LOAD));
-                        }
-                        connect.input = data;
-                    }
-                    None if connect.capsules.at_boundary() => connect.closed = Some((0, String::new())),
-                    None => return Err(self.abort(connect, Code::H3_MESSAGE_ERROR)),
-                },
-            }
+        let mut ended = self.ended.clone();
+        match ended.wait_for(Option::is_some).await.map(|ended| ended.clone()) {
+            Ok(Some(ending)) => ending,
+            // The driver dropped the stream with the connection.
+            _ => Err(self.shared.quic.close_reason().map_or(Error::Refused, Error::from)),
         }
     }
 
-    /// A malformed CONNECT stream ends the session in both directions.
-    fn abort(&self, connect: &mut Connect, code: Code) -> Error {
-        connect.recv.stop(code);
-        if let Ok(mut send) = self.send.try_lock() {
-            send.reset(code);
-        }
-        Error::Protocol(code)
+    /// Ends the session with `code` and `reason` unless it already ended, and returns once its
+    /// CONNECT stream is done: CLOSE and FIN, then the peer's FIN within 1 s, and only then
+    /// STOP_SENDING. Browsers report that order's code and reason; Go's all-at-once close reads as
+    /// a failure.
+    pub async fn close(&self, code: u32, reason: &str) {
+        self.request_close(code, reason);
+        let mut ended = self.ended.clone();
+        while ended.changed().await.is_ok() {}
     }
 
-    /// Ends the session: CLOSE and FIN, then the peer's FIN within 1 s, and only then STOP_SENDING.
-    /// Browsers report that order's code and reason; Go's all-at-once close reads as a failure.
-    /// After the peer ended the session, this only finishes this side.
-    pub async fn close(mut self, code: u32, reason: &str) {
-        let (send, connect) = (self.send.get_mut(), self.connect.get_mut());
-        let _ = tokio::time::timeout(CLOSE_DRAIN, async {
-            if connect.closed.is_none() {
-                send.send_data(capsule::close(code, reason).into()).await?;
-            }
-            send.finish().await?;
-            while connect.closed.is_none() && connect.recv.data().await?.is_some() {}
-            Ok::<_, Error>(())
-        })
-        .await;
-        connect.recv.stop(Code::WT_SESSION_GONE);
+    fn request_close(&self, code: u32, reason: &str) {
+        let mut state = self.shared.state();
+        state.sessions.request_close(self.id, code, reason);
+        state.wake();
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        self.shared.state().sessions.unregister(self.id);
+        self.request_close(0, "");
         // Streams the application never took belong to a session that is gone.
         let streams = self.streams.get_mut();
         streams.close();
