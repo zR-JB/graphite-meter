@@ -36,9 +36,12 @@ import {
 } from "./measure";
 import {
   buildSegments,
+  failureScope,
+  outcomeOf,
   planned,
   reconfigureTimeline,
   segmentAt,
+  stageLanes,
   STAGES,
   truncateSegmentAt,
   type Segment,
@@ -114,10 +117,6 @@ const noEvidence = (): StageEvidence => ({
   upload: null,
   bidirectional: null,
 });
-const stageLanes = (evidence: StageEvidence, stage: TransportRole) =>
-  stage === "bidirectional"
-    ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
-    : [evidence[stage]];
 /** The run and each server share one rule: every lane, then no failure. */
 const stageStatus = (lanes: unknown[], failed: boolean): StageStatus =>
   !lanes.every(Boolean) ? "failed" : failed ? "partial" : "complete";
@@ -309,13 +308,7 @@ export class Run {
     for (const stage of STAGES)
       if (planned(this.#cfg!, stage) && !this.#settled[stage])
         for (const { server } of servers)
-          this.#record(
-            server.id,
-            stage === "latency" ? "latency" : "throughput",
-            reason,
-            message,
-            stage,
-          );
+          this.#record(server.id, failureScope(stage), reason, message, stage);
     this.finish();
   }
 
@@ -1224,7 +1217,7 @@ export class Run {
   }
 
   #failed(stage: TransportRole, serverId?: string): boolean {
-    const scope = stage === "latency" ? "latency" : "throughput";
+    const scope = failureScope(stage);
     return this.#failures.some(
       (failure) =>
         failure.stage === stage &&
@@ -1285,7 +1278,7 @@ export class Run {
           : (this.#aggregate.intervals.findLast(
               (interval) => interval.stage === stage,
             )?.participants ?? this.#ids());
-      const scope = stage === "latency" ? "latency" : "throughput";
+      const scope = failureScope(stage);
       for (const id of ids)
         this.#record(
           id,
@@ -1313,11 +1306,7 @@ export class Run {
       addedLatency: source.addedLatency(),
       latencyByStage: source.summaries(),
       multiServer: this.details(),
-      outcome: statuses.includes("failed")
-        ? "incomplete"
-        : this.#failures.length
-          ? "partial"
-          : "complete",
+      outcome: outcomeOf(statuses, this.#failures.length),
       startedAt: this.#clock.startedAt,
       durationMs,
     };

@@ -5,6 +5,8 @@ import type {
   Phase,
   FlowDirection,
   PhaseActivity,
+  RunResult,
+  StageStatus,
   TransportRole,
 } from "./contract";
 
@@ -21,6 +23,27 @@ const TRANSFER: Record<TransportRole, readonly FlowDirection[]> = {
   upload: ["up"],
   bidirectional: ["down", "up"],
 };
+
+/** A stage's results: both directions of bidirectional, else its own. */
+export const stageLanes = (
+  evidence: Pick<RunResult, TransportRole>,
+  stage: TransportRole,
+) =>
+  stage === "bidirectional"
+    ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
+    : [evidence[stage]];
+
+/** Only the latency stage's failures are latency failures of its own population. */
+export const failureScope = (stage: TransportRole) =>
+  stage === "latency" ? "latency" : "throughput";
+
+/** The outcome follows the statuses: any failed stage, else any failure. */
+export const outcomeOf = (statuses: StageStatus[], failures: number) =>
+  statuses.includes("failed")
+    ? "incomplete"
+    : failures
+      ? "partial"
+      : "complete";
 
 /** A stage runs only when it is on and has time; 0 ms skips it. */
 export const planned = (

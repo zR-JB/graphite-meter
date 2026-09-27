@@ -12,7 +12,13 @@ import {
 import type { CompensationBreakdown } from "../compensation";
 import { isRecord } from "../api/decode";
 import { createUuid } from "../uuid";
-import { planned, STAGES } from "../runner/schedule";
+import {
+  failureScope,
+  outcomeOf,
+  planned,
+  stageLanes,
+  STAGES,
+} from "../runner/schedule";
 import {
   EARLY_FINISH,
   sufficient,
@@ -56,11 +62,6 @@ export function buildHistoryRecord(
   return record;
 }
 
-const lanesOf = (result: RunResult, stage: TransportRole) =>
-  stage === "bidirectional"
-    ? [result.bidirectional?.down, result.bidirectional?.up]
-    : [result[stage]];
-
 /** Invariants a saved result must hold; with the run's config, planned stages must also be covered. */
 export function incoherence(
   result: RunResult,
@@ -73,8 +74,8 @@ export function incoherence(
       problems.push(`unknown failure reason ${failure.reason}`);
   for (const name of STAGES) {
     const status = result.stages[name];
-    const lanes = lanesOf(result, name);
-    const scope = name === "latency" ? "latency" : "throughput";
+    const lanes = stageLanes(result, name);
+    const scope = failureScope(name);
     const explained = failures.some(
       (f) => f.stage === name && f.scope === scope,
     );
@@ -114,11 +115,7 @@ export function incoherence(
   const statuses = Object.values(result.stages);
   if (statuses.every((status) => status === "not-run"))
     problems.push("no stage ran");
-  const expected = statuses.includes("failed")
-    ? "incomplete"
-    : failures.length
-      ? "partial"
-      : "complete";
+  const expected = outcomeOf(statuses, failures.length);
   if (result.outcome !== expected)
     problems.push(`outcome ${result.outcome} should be ${expected}`);
   return problems;
