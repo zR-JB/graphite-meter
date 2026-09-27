@@ -137,7 +137,7 @@
     <div class="sheet-handle" aria-hidden="true">
       <span class="sheet-grip" aria-hidden="true"></span>
     </div>
-    <header class="panel-head">
+    <header class="surface-head panel-head">
       <!-- svelte-ignore a11y_autofocus -->
       <h2 tabindex="-1" autofocus>{title}</h2>
       <button
@@ -181,8 +181,6 @@
     max-height: none;
     margin: 0;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-4);
     border-left: var(--hairline) solid var(--border);
     background: var(--surface-1);
     color: var(--text);
@@ -280,12 +278,12 @@
     display: none;
     flex: none;
     justify-content: center;
-    height: 8px;
+    padding-top: 6px;
+    background: var(--surface-1);
   }
   .sheet-grip {
     width: 36px;
     height: 4px;
-    margin-top: -6px;
     border-radius: var(--r-full);
     background: var(--border-strong);
   }
@@ -295,8 +293,8 @@
       inset: auto 0 0;
       width: 100%;
       height: 88dvh;
-      padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
-      border-radius: var(--r-well) var(--r-well) 0 0;
+      padding-bottom: env(safe-area-inset-bottom);
+      border-radius: var(--r-surface) var(--r-surface) 0 0;
     }
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
@@ -312,10 +310,7 @@
     .panel-layer:not(.docked) .panel-head {
       position: sticky;
       z-index: 1;
-      top: calc(-1 * var(--space-4));
-      margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0;
-      padding: var(--space-4);
-      background: var(--surface-1);
+      top: 0;
     }
     .panel-layer:not(.docked) .panel-body {
       flex: none;
@@ -329,7 +324,8 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    min-width: 0;
+    min-height: 56px;
+    padding: var(--space-2) var(--space-4);
   }
   h2 {
     min-width: 0;
@@ -347,9 +343,7 @@
     overflow: hidden auto;
     overscroll-behavior: contain;
     touch-action: pan-y;
-    /* The scrollbar rides the panel edge, outside the content's even inset. */
-    margin-inline: calc(-1 * var(--space-4));
-    padding-inline: var(--space-4);
+    padding: var(--space-4);
     scrollbar-gutter: stable;
   }
 </style>
