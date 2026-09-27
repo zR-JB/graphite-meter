@@ -36,6 +36,7 @@ use tokio::{
 };
 
 const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const STALL_QUIET: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BoundaryKind {
@@ -500,15 +501,36 @@ impl<'a> StageRun<'a> {
     }
 
     async fn finish_window(&mut self) -> Result<(), Error> {
+        let ended = Instant::now();
         for member in &self.members {
             member.stop_latency(Stop::Drain);
         }
-        if self.transfer.is_some() {
-            let (mut boundary, misses) = self.collect(BoundaryKind::Final, None).await.expect("no stage end");
-            boundary.final_boundary = true;
-            self.observe_boundary(boundary, misses)?;
+        if self.transfer.is_none() {
+            return Ok(());
         }
-        Ok(())
+        let (mut boundary, misses) = self.collect(BoundaryKind::Final, None).await.expect("no stage end");
+        boundary.final_boundary = true;
+        self.observe_boundary(boundary, misses)?;
+        let retrying = self
+            .members
+            .iter()
+            .filter_map(|member| {
+                let lanes = [
+                    member.lanes.down.as_ref().map(Download::retrying),
+                    member.lanes.up.as_ref().map(Upload::retrying),
+                ];
+                lanes
+                    .into_iter()
+                    .zip(member.moved)
+                    .find_map(|(failure, moved)| {
+                        failure
+                            .flatten()
+                            .filter(|_| ended.saturating_duration_since(moved) >= STALL_QUIET)
+                    })
+                    .map(|failure| (member.id.clone(), failure))
+            })
+            .collect();
+        self.depart(retrying, false)
     }
 
     fn check_health(&mut self) -> Result<(), Error> {

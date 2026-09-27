@@ -2,7 +2,7 @@
 use crate::{
     Error,
     net::Http,
-    transport::{TransferRetry, Transport},
+    transport::{Retrying, TransferRetry, Transport},
     webtransport::{ConnectRejected, Session, SessionSlot},
 };
 use graphite_meter_core::{
@@ -26,6 +26,7 @@ use tokio::{
 
 pub struct Download {
     bytes: Arc<AtomicU64>,
+    retrying: Retrying,
     tasks: JoinSet<Result<(), Error>>,
 }
 
@@ -53,6 +54,7 @@ impl Download {
         let bytes = Arc::new(AtomicU64::new(0));
         let mut owner = Self {
             bytes,
+            retrying: Retrying::default(),
             tasks: JoinSet::new(),
         };
         let (ready, mut received) = mpsc::channel(lanes);
@@ -61,12 +63,13 @@ impl Download {
             let bytes = owner.bytes.clone();
             let ready = ready.clone();
             let mut cancel = cancel.clone();
+            let retry = TransferRetry::new(owner.retrying.clone(), lane);
             owner.tasks.spawn(async move {
                 let transfer = async {
                     if lane > 0 && !stagger.is_zero() {
                         tokio::time::sleep(stagger * lane as u32).await;
                     }
-                    receive_http_lane(&transport, lane, &bytes, &ready, duration).await
+                    receive_http_lane(&transport, lane, &bytes, &ready, duration, retry).await
                 };
                 tokio::select! {
                     biased;
@@ -126,6 +129,7 @@ impl Download {
         let origin = canonical_origin(&target.base_url)?;
         let mut owner = Self {
             bytes: Arc::new(AtomicU64::new(0)),
+            retrying: Retrying::default(),
             tasks: JoinSet::new(),
         };
         let (ready, mut received) = mpsc::channel(lanes);
@@ -135,15 +139,16 @@ impl Download {
                 let group = (lanes - first).min(WT_LANES_PER_SESSION);
                 let target = format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
                 let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
-                for _ in 0..group {
+                for lane in first..first + group {
                     let slot = slot.clone();
                     let bytes = owner.bytes.clone();
                     let ready = ready.clone();
                     let mut cancel = lane_cancel.clone();
+                    let retry = TransferRetry::new(owner.retrying.clone(), lane);
                     owner.tasks.spawn(async move {
                         tokio::select! {biased;
                             _ = cancel.wait_for(|value| *value) => Ok(()),
-                            result = timeout(duration, receive_webtransport(slot, bytes, ready)) => result?,
+                            result = timeout(duration, receive_webtransport(slot, bytes, ready, retry)) => result?,
                         }
                     });
                 }
@@ -174,6 +179,10 @@ impl Download {
         self.bytes.load(Ordering::Relaxed)
     }
 
+    pub(crate) fn retrying(&self) -> Option<Error> {
+        self.retrying.failure()
+    }
+
     pub fn health(&mut self) -> Result<(), Error> {
         if let Some(task) = self.tasks.try_join_next() {
             task??;
@@ -195,11 +204,11 @@ async fn receive_http_lane(
     bytes: &AtomicU64,
     ready: &mpsc::Sender<()>,
     duration: Duration,
+    mut retry: TransferRetry,
 ) -> Result<(), Error> {
     let lane = lane.to_string();
     let requested_bytes = HTTP_DOWNLOAD_BYTES.to_string();
     let mut announced = false;
-    let mut retry = TransferRetry::default();
     loop {
         let started = Instant::now();
         let mut moved = false;
@@ -245,9 +254,9 @@ async fn receive_webtransport(
     slot: Arc<SessionSlot>,
     bytes: Arc<AtomicU64>,
     ready: mpsc::Sender<()>,
+    mut retry: TransferRetry,
 ) -> Result<(), Error> {
     let mut announced = false;
-    let mut retry = TransferRetry::default();
     loop {
         let session = slot.current().await;
         let started = Instant::now();

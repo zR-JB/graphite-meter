@@ -1,7 +1,8 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    transport::{TransferRetry, Transport},
+    failure::SharedFailure,
+    transport::{Retrying, TransferRetry, Transport},
     webtransport::{ConnectRejected, SessionSlot},
 };
 use bytes::Bytes;
@@ -41,23 +42,6 @@ struct State {
     error: Option<Arc<Error>>,
 }
 
-struct SharedFailure(Arc<Error>);
-impl std::fmt::Debug for SharedFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("upload task failed")
-    }
-}
-impl std::fmt::Display for SharedFailure {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(self.0.as_ref(), f)
-    }
-}
-impl std::error::Error for SharedFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.0.as_ref().as_ref())
-    }
-}
-
 /// Drop cancels every owned task. finish(true) also awaits the aggregate's
 /// `complete`; finish(false) only sends its DELETE. Drop relies on server expiry.
 pub struct Upload {
@@ -70,6 +54,7 @@ pub struct Upload {
     lanes: JoinSet<()>,
     progress: JoinSet<()>,
     session: Option<Arc<SessionSlot>>,
+    retrying: Retrying,
 }
 
 impl Upload {
@@ -143,6 +128,7 @@ impl Upload {
             lanes: JoinSet::new(),
             progress: JoinSet::new(),
             session: None,
+            retrying: Retrying::default(),
         };
         if webtransport {
             let query = [("id", owner.id.as_str())];
@@ -190,6 +176,7 @@ impl Upload {
             let mut all_stop = all_stop.clone();
             let mut cancelled_stage = cancel.clone();
             let session = owner.session.clone();
+            let retry = TransferRetry::new(owner.retrying.clone(), index);
             owner.lanes.spawn(async move {
                 tokio::select! {
                     biased;
@@ -202,9 +189,9 @@ impl Upload {
                             tokio::time::sleep(stagger * index as u32).await;
                         }
                         if let Some(session) = session {
-                            send_wt_reconnecting(&session, block, active).await
+                            send_wt_reconnecting(&session, block, active, retry).await
                         } else {
-                            send_lane(&transport, &id, index, block, active).await
+                            send_lane(&transport, &id, index, block, active, retry).await
                         }
                     } => {
                         if let Err(error) = result {
@@ -254,6 +241,9 @@ impl Upload {
             id: self.id.clone(),
             maximum: value.bytes,
         })
+    }
+    pub(crate) fn retrying(&self) -> Option<Error> {
+        self.retrying.failure()
     }
     pub fn health(&self) -> Result<(), Error> {
         let state = self.state.borrow();
@@ -377,9 +367,9 @@ async fn send_lane(
     index: usize,
     block: Bytes,
     active: Arc<AtomicBool>,
+    mut retry: TransferRetry,
 ) -> Result<(), Error> {
     let lane = index.to_string();
-    let mut retry = TransferRetry::default();
     loop {
         let started = Instant::now();
         let moved = Arc::new(AtomicBool::new(false));
@@ -540,8 +530,12 @@ async fn send_wt_lane(
     }
 }
 
-async fn send_wt_reconnecting(slot: &SessionSlot, block: Bytes, active: Arc<AtomicBool>) -> Result<(), Error> {
-    let mut retry = TransferRetry::default();
+async fn send_wt_reconnecting(
+    slot: &SessionSlot,
+    block: Bytes,
+    active: Arc<AtomicBool>,
+    mut retry: TransferRetry,
+) -> Result<(), Error> {
     loop {
         let session = slot.current().await;
         let started = Instant::now();
@@ -645,6 +639,7 @@ mod tests {
                 0,
                 Bytes::from(vec![42; 64 * 1024]),
                 active,
+                TransferRetry::new(Retrying::default(), 0),
             )
             .await
         });
@@ -742,6 +737,7 @@ mod tests {
             lanes: JoinSet::new(),
             progress: JoinSet::new(),
             session: None,
+            retrying: Retrying::default(),
         };
         let refused = upload.checkpoint(Duration::from_millis(250)).await.unwrap_err();
         assert_eq!(

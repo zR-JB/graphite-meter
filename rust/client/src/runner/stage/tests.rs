@@ -148,7 +148,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             let _ = stream.shutdown().await;
                             return;
                         }
-                        if flag.load(Ordering::SeqCst) == 1 {
+                        if matches!(flag.load(Ordering::SeqCst), 1 | 14) {
                             let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
@@ -157,7 +157,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             std::future::pending::<()>().await;
                         }
                         let bytes = [0_u8; 65536];
-                        while flag.load(Ordering::SeqCst) != 3 && stream.write_all(&bytes).await.is_ok() {
+                        while !matches!(flag.load(Ordering::SeqCst), 3 | 14) && stream.write_all(&bytes).await.is_ok() {
                             if flag.load(Ordering::SeqCst) == 4 {
                                 std::future::pending::<()>().await;
                             }
@@ -648,6 +648,55 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     );
     assert!(result.server_results[0].down_bps().is_some());
     assert!(result.server_results[0].up_bps().is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, _, far_task) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        download_duration: Duration::from_secs(3),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let refuse_near = async {
+        observed
+            .wait_for(|snapshot| {
+                snapshot.phase == Phase::Measuring && snapshot.latest.elapsed >= Duration::from_secs(1)
+            })
+            .await
+            .unwrap();
+        near_mode.store(14, Ordering::SeqCst);
+    };
+    let (result, ()) = tokio::join!(
+        measure(Stage::Download, &config, &servers, &snapshots, cancelled),
+        refuse_near
+    );
+    near_task.abort();
+    far_task.abort();
+    assert_eq!(result?, ["near"]);
+    let snapshot = observed.borrow();
+    let failure = &snapshot.failures[0];
+    assert_eq!(
+        (failure.server_id.as_str(), failure.reason),
+        ("near", graphite_meter_core::failure::FailureReason::ServerBusy)
+    );
+    let stage = &snapshot.results[0];
+    assert!(stage.down_bps().is_some());
+    let (first, last) = (&stage.intervals[0], stage.intervals.back().unwrap());
+    assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{:?}", stage.intervals);
+    assert_eq!(last.participants, ["far"]);
     Ok(())
 }
 

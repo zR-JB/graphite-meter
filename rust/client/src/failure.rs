@@ -98,6 +98,23 @@ pub(crate) fn lane_error(error: Error) -> Error {
     error
 }
 
+pub(crate) struct SharedFailure(pub std::sync::Arc<Error>);
+impl std::fmt::Debug for SharedFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.0.as_ref(), f)
+    }
+}
+impl std::fmt::Display for SharedFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.0.as_ref(), f)
+    }
+}
+impl std::error::Error for SharedFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref().as_ref())
+    }
+}
+
 #[derive(Debug)]
 pub struct MeasurementFailure(pub FailureReason);
 impl std::fmt::Display for MeasurementFailure {

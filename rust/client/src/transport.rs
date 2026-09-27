@@ -10,7 +10,7 @@ use futures_util::{Stream, StreamExt};
 use graphite_meter_core::{discovery::Protocol, origin::canonical_origin, route::Route, wire::decode_json};
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
     sync::Mutex,
     time::{Instant, timeout_at},
@@ -49,16 +49,40 @@ impl RetryBackoff {
     }
 }
 
+#[derive(Clone, Default)]
+pub(crate) struct Retrying(Arc<std::sync::Mutex<BTreeMap<usize, Arc<Error>>>>);
+
+impl Retrying {
+    pub(crate) fn failure(&self) -> Option<Error> {
+        let lanes = self.0.lock().expect("retrying lanes poisoned");
+        lanes
+            .values()
+            .next()
+            .map(|error| Box::new(crate::failure::SharedFailure(error.clone())) as Error)
+    }
+}
+
 /// Ends a lane whose attempts fail without moving bytes; silence is the stage's rule.
-#[derive(Default)]
 pub(crate) struct TransferRetry {
     failing_since: Option<Instant>,
     backoff: RetryBackoff,
+    retrying: Retrying,
+    lane: usize,
 }
 
 impl TransferRetry {
+    pub(crate) fn new(retrying: Retrying, lane: usize) -> Self {
+        Self {
+            failing_since: None,
+            backoff: RetryBackoff::default(),
+            retrying,
+            lane,
+        }
+    }
+
     pub(crate) fn progressed(&mut self) {
         self.failing_since = None;
+        self.publish(None);
     }
 
     pub(crate) async fn retry(
@@ -74,8 +98,18 @@ impl TransferRetry {
         if !retryable || !moved && self.failing_since.get_or_insert(started).elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
             return Err(error);
         }
-        tokio::time::sleep(self.backoff.delay(error.as_ref(), started)).await;
+        let delay = self.backoff.delay(error.as_ref(), started);
+        self.publish((!moved).then(|| Arc::new(error)));
+        tokio::time::sleep(delay).await;
         Ok(())
+    }
+
+    fn publish(&self, failure: Option<Arc<Error>>) {
+        let mut lanes = self.retrying.0.lock().expect("retrying lanes poisoned");
+        match failure {
+            Some(failure) => lanes.insert(self.lane, failure),
+            None => lanes.remove(&self.lane),
+        };
     }
 }
 
