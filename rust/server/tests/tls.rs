@@ -99,6 +99,15 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     assert_eq!(handshake(tls.clone(), &roots).await?, replacement);
     fs::write(&config.tls_cert, b"incomplete certificate replacement")?;
     assert!(manager.reload(SystemTime::now()).is_err());
+    assert_eq!(handshake(tls.clone(), &roots).await?, replacement);
+    fs::write(
+        &config.tls_cert,
+        fs::read_to_string(second.directory().join("identity.pem"))?.repeat(9),
+    )?;
+    assert_eq!(
+        manager.reload(SystemTime::now()).unwrap_err().to_string(),
+        "TLS certificate chain exceeds 8 certificates or 32 KiB"
+    );
     assert_eq!(handshake(tls, &roots).await?, replacement);
     Ok(())
 }

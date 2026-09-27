@@ -53,7 +53,9 @@ configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
 QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until its task ends, a QUIC connection holds a
 floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3 frame
-and copy block outside Noq: 67 streams and 5.2 MiB with the default limits.
+and copy block outside Noq, plus 196 KiB for the TLS handshake: 5.4 MiB with
+the default 67 streams. Certificate chains are limited to 8 certificates and
+32 KiB, and the handshake term allows five server flights of that chain.
 HTTP/2 still reserves 36 MiB before each TLS handshake; that reservation
 outlives its connection, local stream futures, and buffers. Once a quarter of
 either connection capacity or the budget is used, unvalidated QUIC handshakes

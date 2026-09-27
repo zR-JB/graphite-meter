@@ -16,6 +16,14 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+const MAX_CHAIN_CERTIFICATES: usize = 8;
+const MAX_CHAIN_BYTES: usize = 32 * 1024;
+/// With chain bytes C in N certificates: five server flights of C + 5N + 609 plus a C + 48N clone.
+pub(crate) const HANDSHAKE_BYTES: usize = {
+    let flight = MAX_CHAIN_BYTES + 5 * MAX_CHAIN_CERTIFICATES + 609;
+    5 * flight + MAX_CHAIN_BYTES + 48 * MAX_CHAIN_CERTIFICATES
+};
+
 pub struct Certificates {
     certificate_path: PathBuf,
     key_path: PathBuf,
@@ -158,6 +166,15 @@ fn read_identity(
 ) -> Result<CertifiedKey, ConfigError> {
     let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
     let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
+    if chain.len() > MAX_CHAIN_CERTIFICATES
+        || chain
+            .iter()
+            .map(|certificate| certificate.len())
+            .sum::<usize>()
+            > MAX_CHAIN_BYTES
+    {
+        return Err("TLS certificate chain exceeds 8 certificates or 32 KiB".into());
+    }
     let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
     if now < not_before {
         return Err("TLS certificate is not valid yet".into());

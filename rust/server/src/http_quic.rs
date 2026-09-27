@@ -348,7 +348,9 @@ pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
 }
 
 pub(super) fn connection_floor(limits: &crate::admission::Limits) -> usize {
-    (max_requests(limits) + UNI_STREAMS as usize).saturating_mul(STREAM_FLOOR_BYTES)
+    (max_requests(limits) + UNI_STREAMS as usize)
+        .saturating_mul(STREAM_FLOOR_BYTES)
+        .saturating_add(crate::tls::HANDSHAKE_BYTES)
 }
 
 #[derive(Debug)]
