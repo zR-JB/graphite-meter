@@ -157,6 +157,14 @@ impl UploadRefusal {
             Self::Revoked => 403,
         }
     }
+    pub const fn failure_reason(self) -> FailureReason {
+        match self {
+            Self::Invalid | Self::OwnerMismatch => FailureReason::ProtocolError,
+            Self::GlobalFull | Self::ClientFull => FailureReason::ServerBusy,
+            Self::Idle => FailureReason::Timeout,
+            Self::Revoked => FailureReason::SignInRequired,
+        }
+    }
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|refusal| refusal.name() == name)
     }

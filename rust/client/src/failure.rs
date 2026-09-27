@@ -15,10 +15,9 @@ impl HttpFailure {
     }
     pub fn reason(&self) -> FailureReason {
         match self.refusal {
-            Some(UploadRefusal::Revoked) => FailureReason::SignInRequired,
-            _ if matches!(self.status, 429 | 503) => FailureReason::ServerBusy,
-            Some(UploadRefusal::Idle) => FailureReason::Timeout,
-            _ => FailureReason::ProtocolError,
+            Some(refusal) => refusal.failure_reason(),
+            None if matches!(self.status, 429 | 503) => FailureReason::ServerBusy,
+            None => FailureReason::ProtocolError,
         }
     }
 }

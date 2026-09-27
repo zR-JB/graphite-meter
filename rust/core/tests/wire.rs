@@ -8,6 +8,7 @@ use graphite_meter_core::{
 };
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 #[test]
 fn ping_conforms_to_shared_corpus() {
@@ -175,6 +176,12 @@ fn vocabularies_match_shared_pins_by_name() {
         assert_eq!(refusal.message(), row[1]);
         assert_eq!(refusal.status().to_string(), row[2]);
     }
+    let failures = pin(include_str!("../../../api/uploadrefusalreasons.txt"));
+    assert_eq!(failures.len(), UploadRefusal::ALL.len());
+    let pinned: BTreeMap<_, _> = failures.iter().map(|row| (row[0], row[1])).collect();
+    let mapped =
+        UploadRefusal::ALL.map(|refusal| (refusal.name(), refusal.failure_reason().name()));
+    assert_eq!(pinned, BTreeMap::from(mapped));
 }
 
 #[test]
