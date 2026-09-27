@@ -1,5 +1,4 @@
 # Experimental only; container/Dockerfile remains the default Go build.
-ARG BUN_VERSION=1.4.2
 ARG VERSION=0.0.0-dev
 
 FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS python
@@ -13,6 +12,7 @@ COPY LICENSE COPYRIGHT ./
 COPY scripts/ scripts/
 COPY legal/ legal/
 COPY rust/ rust/
+COPY go/internal/auth/assets/ go/internal/auth/assets/
 RUN python3 --version && cargo +1.98.1 --version
 
 FROM rust-build AS tui-build
@@ -23,7 +23,7 @@ RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist \
 FROM scratch AS tui-artifacts
 COPY --from=tui-build /src/dist/ /
 
-FROM docker.io/oven/bun:${BUN_VERSION} AS browser
+FROM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS browser
 ARG VERSION
 ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
@@ -57,6 +57,9 @@ RUN cp rust/target/x86_64-unknown-linux-gnu/release/graphite-meter-server /graph
     && cmp /tmp/embedded-notices.txt rust/target/server-notices/LEGAL.txt
 
 # Export matching source separately for the GitHub release; it is not runtime data.
+FROM scratch AS server-e2e
+COPY --from=server-build /graphite-meter /graphite-meter-server
+
 FROM scratch AS server-artifacts
 COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz /
 COPY --from=server-build /src/rust/target/server-notices/inventory.json /
