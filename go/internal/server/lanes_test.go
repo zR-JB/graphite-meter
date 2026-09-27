@@ -123,7 +123,6 @@ func TestHTTPUploadLaneEndings(t *testing.T) {
 		if counted(id) != 1024 {
 			t.Fatal("the idle lane lost its 1024 bytes")
 		}
-		// The lifetime is also the answer's write deadline, so the lane closes, answered or not.
 		res, id, took, err := upload(func(w io.Writer) {
 			for range 6 {
 				if _, err := w.Write([]byte("x")); err != nil {
@@ -134,6 +133,7 @@ func TestHTTPUploadLaneEndings(t *testing.T) {
 		})
 		if err == nil {
 			res.Body.Close()
+			t.Fatalf("lane at its lifetime was answered %d, want a close without an answer", res.StatusCode)
 		}
 		if took > 50*time.Second || counted(id) != 5 {
 			t.Fatalf("lane at its lifetime ended after %v, want at 45s keeping the 5 bytes sent before it", took)

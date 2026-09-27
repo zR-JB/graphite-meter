@@ -158,11 +158,15 @@ func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
 	store := NewUpload(nil, nil)
 	id := store.Mint()
 	rec := httptest.NewRecorder()
-	store.Handler(wire.IdleBound).ServeHTTP(rec,
-		httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096}))
-	if rec.Body.Len() != 0 {
-		t.Fatalf("aborted upload published response %q", rec.Body.String())
-	}
+	func() {
+		defer func() {
+			if p := recover(); p != http.ErrAbortHandler || rec.Body.Len() != 0 {
+				t.Fatalf("aborted upload ended with %v and response %q, want an abort without one", p, rec.Body)
+			}
+		}()
+		store.Handler(wire.IdleBound).ServeHTTP(rec,
+			httptest.NewRequest(http.MethodPost, "/upload?id="+id, &errReader{remaining: 4096}))
+	}()
 	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || store.lanesOf(agg) != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
 	}

@@ -205,7 +205,9 @@ the default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behi
 
 Sign-in is rate limited per client address (an IPv6 /64 whose /56 and /48 share two and four times the limit): 5
 password attempts per minute, at most 60 wrong passwords per minute across all clients, and 10 OIDC code exchanges
-and 10 sign-in approval pages per minute.
+and 10 sign-in approval pages per minute. A password sign-in also leaves a 30-day device cookie (signed with the
+password hash, so changing the password forgets every device); a browser holding it keeps its own address's limit but
+skips the bounds all clients share, so others' attempts cannot lock a known operator out.
 
 **Terminal clients** never see the operator password: the client shows a short code and an approval URL, and after
 browser approval receives an in-memory, measurement-only grant bound to that session and HTTPS origin. Sign-out
@@ -315,15 +317,15 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 | `GM_PUBLIC_ORIGINS` | `--public-origins` | empty | Negotiated origins (or `self`) for throughput and latency. |
 | `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | empty | Negotiated throughput-only origins. |
 | `GM_PUBLIC_LATENCY_ORIGINS` | `--public-latency-origins` | empty | WebSocket latency-only origins. |
-| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients. |
-| `GM_SERVER_LOCATION` | `--location` | empty | Location label. |
+| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters. |
+| `GM_SERVER_LOCATION` | `--location` | empty | Location label, with the same limits. |
 | `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false` | Default for saving completed browser results on the device. |
 | `GM_VERBOSE` | `--verbose` | `false` | Log per-second throughput, admission counters and authentication debug lines. |
 | `GM_MAX_ACTIVE_MEASUREMENTS` | `--max-active-measurements` | `256` | Concurrent measurement handlers. |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32` | Handlers per client identity. |
 | `GM_MAX_ACTIVE_SESSIONS` | `--max-active-sessions` | `64` | WebTransport sessions, a share of the handler pool. |
 | `GM_MAX_SESSIONS_PER_CLIENT` | `--max-sessions-per-client` | `8` | WebTransport sessions per client identity. |
-| `GM_MAX_CONNECTIONS` | `--max-connections` | `512` | Concurrent TCP and QUIC connections. |
+| `GM_MAX_CONNECTIONS` | `--max-connections` | `4096` | Concurrent TCP and QUIC connections. |
 | `GM_MAX_CONNECTIONS_PER_CLIENT` | `--max-connections-per-client` | `64` | Connections per direct client. |
 | `GM_MAX_OPERATION_DURATION` | `--max-operation-duration` | `5m` | Request-shaped measurement lifetime. |
 | `GM_MAX_SESSION_DURATION` | `--max-session-duration` | `2h` | WebTransport transfer session lifetime. |

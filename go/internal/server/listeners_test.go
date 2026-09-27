@@ -6,9 +6,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -123,6 +125,52 @@ func TestListenerBoundsTheRequestHeaderBlock(t *testing.T) {
 		if res.StatusCode != want {
 			t.Errorf("%d-byte header = %d, want %d", size, res.StatusCode, want)
 		}
+	}
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Any peer can fail a handshake; repeating it cannot grow the log, while the server's own errors stay visible.
+func TestFailedHandshakesLogOncePerMinute(t *testing.T) {
+	var out lockedBuffer
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+		cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+	}, nil)
+	for range 5 {
+		conn, err := net.Dial("tcp", cfg.Native.H3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = conn.Write([]byte{0, 1, 2, 3, 4, 5, 6, 7})
+		_, _ = io.Copy(io.Discard, conn)
+		conn.Close()
+	}
+	build.peers.mu.Lock()
+	suppressed := build.peers.suppressed
+	build.peers.mu.Unlock()
+	if got := strings.Count(out.String(), "TLS handshake error"); got != 1 || suppressed != 4 {
+		t.Fatalf("5 failed handshakes logged %d lines and suppressed %d, want 1 and 4:\n%s", got, suppressed, out.String())
+	}
+	_, _ = build.peers.Write([]byte("http: panic serving 192.0.2.1:1: boom\n"))
+	if !strings.Contains(out.String(), "panic serving") {
+		t.Fatal("a server error was suppressed with the peers' failures")
 	}
 }
 
