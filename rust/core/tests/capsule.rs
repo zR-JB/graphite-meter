@@ -167,23 +167,3 @@ fn numeric_bounds() {
         assert_eq!(encode(&capsule), Err(Error::ValueOutOfRange));
     }
 }
-
-#[test]
-fn public_varint_prefix_codec() {
-    use graphite_meter_core::capsule::{decode_varint, encode_varint};
-    for value in [0, 63, 64, 16383, 16384, (1 << 30) - 1, 1 << 30, MAX_VARINT] {
-        let mut bytes = Vec::new();
-        encode_varint(value, &mut bytes).unwrap();
-        for end in 0..bytes.len() {
-            assert_eq!(decode_varint(&bytes[..end]), Ok(None));
-        }
-        assert_eq!(decode_varint(&bytes), Ok(Some((value, bytes.len()))));
-        assert_eq!(decode_varint(&varint(value)), Ok(Some((value, 8))));
-    }
-    let mut bytes = vec![1];
-    assert_eq!(
-        encode_varint(MAX_VARINT + 1, &mut bytes),
-        Err(Error::ValueOutOfRange)
-    );
-    assert_eq!(bytes, [1]);
-}

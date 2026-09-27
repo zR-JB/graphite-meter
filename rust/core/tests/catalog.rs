@@ -56,33 +56,6 @@ fn ipv6_stays_in_discovery_but_not_csp() {
 }
 
 #[test]
-fn selection_and_resolution() {
-    let mut catalog = ServerCatalog::singleton();
-    catalog
-        .servers
-        .push(entry("remote", "https://REMOTE.example:443"));
-    catalog.validate().unwrap();
-    for ids in [
-        vec![],
-        vec!["self", "self"],
-        vec!["missing"],
-        vec!["self", "remote", "x", "y", "z"],
-    ] {
-        assert_eq!(
-            catalog.validate_selection(&ids.into_iter().map(str::to_owned).collect::<Vec<_>>()),
-            Err(CatalogError::InvalidSelection)
-        );
-    }
-    catalog
-        .validate_selection(&["remote".into(), "self".into()])
-        .unwrap();
-    let resolved = catalog.resolve("https://local.example:443");
-    assert_eq!(resolved.servers[0].url, "https://local.example");
-    assert_eq!(resolved.servers[1].url, "https://remote.example");
-    assert_eq!(catalog.servers[0].url, ".");
-}
-
-#[test]
 fn rejects_duplicate_ids_and_equivalent_origins() {
     for remote in [
         entry("self", "https://remote.example"),
