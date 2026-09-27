@@ -325,6 +325,13 @@
     overflow: clip;
     overscroll-behavior: none;
   }
+  /* One thin scrollbar for every scroll area. */
+  :root {
+    scrollbar-color: var(--border-strong) transparent;
+  }
+  * {
+    scrollbar-width: thin;
+  }
   body {
     background: var(--canvas);
     color: var(--text);
@@ -606,6 +613,36 @@
     font-size: var(--type-sm);
     line-height: 1.43;
     overflow-wrap: anywhere;
+  }
+
+  /* Grouped list: a caps heading over one inset surface of label–value rows. */
+  .group {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .group > .kv {
+    gap: 0;
+    padding-inline: var(--space-3);
+    border: 1px solid var(--border);
+    border-radius: var(--r-chrome);
+    background: var(--surface-inset);
+  }
+  .group > .kv > div {
+    padding-block: var(--space-2);
+  }
+  .group > .kv > div + div {
+    border-top: 1px solid var(--border-subtle);
+  }
+  .group > .kv dt {
+    font-weight: var(--w-normal);
+  }
+  .group > .kv dd {
+    font-variant-numeric: tabular-nums;
+  }
+  /* A row with an explainer brightens its label while pointed at. */
+  .group > .kv > [tabindex]:is(:hover, :focus-visible) dt {
+    color: var(--text);
   }
 
   /* Labelled form field: a caps label above its control. */
@@ -892,6 +929,9 @@
       opacity var(--dur-hover) var(--ease-out),
       translate var(--dur-hover) var(--ease-out);
   }
+  .tooltip[data-titled]::first-line {
+    font-weight: var(--w-heavy);
+  }
   .tooltip[data-show="true"] {
     opacity: 1;
     translate: none;
@@ -945,4 +985,9 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* Unlayered, so it outranks every layered ring; main.ts sets data-pointer. */
+:root[data-pointer] :is(:focus-visible, :has(> summary:focus-visible)) {
+  outline: none;
 }

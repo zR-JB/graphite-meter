@@ -677,7 +677,7 @@
   }
   @container history (min-width: 821px) {
     .has-detail {
-      grid-template-columns: minmax(0, 1fr) minmax(380px, 0.8fr);
+      grid-template-columns: minmax(320px, 2fr) minmax(460px, 3fr);
     }
     .has-detail .history-list {
       visibility: visible;

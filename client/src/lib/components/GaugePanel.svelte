@@ -176,6 +176,7 @@
               phase: arc.phase,
               fraction: throughputGaugeFraction(arc.bytesPerSec, scale),
               dashed: arc.dashed,
+              description: `${arc.label}${arc.dashed ? ` · ${OUTCOME.partial}` : ""}\n${fmtSpeed(gaugeRate(arc.bytesPerSec))} ${gaugeUnit}`,
             }))
           : [],
     };
@@ -559,10 +560,14 @@
   .gauge-status.preparation {
     color: var(--brand-strong);
   }
+  /* Padding, not overflow-clip-margin, keeps shadows in: Chrome hides anchored tips inside a clip margin. */
   .results-slot {
     flex: none;
+    margin: calc(-1 * var(--space-1));
     overflow: clip;
-    overflow-clip-margin: var(--space-1);
+  }
+  .results-body {
+    padding: var(--space-1);
   }
   .results-slot:has(> .results-body:empty) {
     display: none;

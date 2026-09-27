@@ -26,6 +26,11 @@ function tooltipAction(node: HTMLElement, initial: string) {
   const inert = !node.closest(ACTIONABLE_SELECTOR);
   if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
     node.tabIndex = 0;
+  // A multi-line tip is an explainer: its first line titles the rest.
+  function write(target: HTMLElement) {
+    target.textContent = text;
+    target.toggleAttribute("data-titled", text.includes("\n"));
+  }
   function show() {
     if (bubble || !text || !node.isConnected) return;
     bubble = document.createElement("div");
@@ -34,7 +39,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
     bubble.popover = "manual";
     bubble.setAttribute("role", "tooltip");
     bubble.style.setProperty("position-anchor", `--${id}`);
-    bubble.textContent = text;
+    write(bubble);
     document.body.appendChild(bubble);
     bubble.showPopover();
     prevDescribedBy = node.getAttribute("aria-describedby");
@@ -153,7 +158,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
       text = next;
       if (!bubble) return;
       if (!text) hide();
-      else bubble.textContent = text;
+      else write(bubble);
     },
     destroy() {
       hide();

@@ -16,7 +16,7 @@ import type {
 import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
-import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
+import { JARGON, MISSING, STAGE } from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
 type LiveStatus = "active" | "pending";
@@ -32,7 +32,12 @@ export interface SummaryRow {
   label: string;
   value: string;
   stage?: TransportRole;
-  note?: string;
+  tip?: string;
+}
+interface WireRate {
+  value: string;
+  overhead: string;
+  tip: string;
 }
 export interface SummaryCard {
   key: TransportRole;
@@ -41,8 +46,9 @@ export interface SummaryCard {
   status: SummaryStatus | LiveStatus;
   num: string;
   unit: string;
+  tip: string;
+  wire?: WireRate;
   rows: SummaryRow[];
-  details: SummaryRow[];
   accessible?: string;
 }
 
@@ -79,27 +85,24 @@ export function summaryEvidence(
   );
 }
 
-const stability = (pct: number | null): SummaryRow[] =>
-  pct === null ? [] : [{ label: "Stability", value: `${Math.round(pct)}%` }];
+const stability = (pct: number | null, tip: string): SummaryRow[] =>
+  pct === null
+    ? []
+    : [{ label: "Stability", value: `${Math.round(pct)}%`, tip }];
 
-/** From half a percent of overhead the estimate joins the transferred data, and its breakdown the details. */
+/** From half a percent of overhead the wire estimate sits under the headline. */
 function wire(
   model: WireModel | null | undefined,
   bytesPerSec: number,
   units: RateUnits,
-): [face: SummaryRow[], details: SummaryRow[]] {
-  if (!model || model.totalMultiplier < 1.005) return [[], []];
+): WireRate | undefined {
+  if (!model || model.totalMultiplier < 1.005) return undefined;
   const overhead = `+${((model.totalMultiplier - 1) * 100).toFixed(1)}%`;
-  const note = compensationTooltip(model).split("\n").join(" · ");
-  return [
-    [
-      {
-        label: "Wire",
-        value: formatRate(bytesPerSec * model.totalMultiplier, units),
-      },
-    ],
-    [{ label: "Wire overhead", value: overhead, note }],
-  ];
+  return {
+    value: formatRate(bytesPerSec * model.totalMultiplier, units),
+    overhead,
+    tip: `Wire rate ${overhead}\nPayload plus the headers the link also carried\n${compensationTooltip(model)}`,
+  };
 }
 
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
@@ -115,6 +118,7 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
             label: "Added",
             value: `${fmtAddedMs(ms)} ms`,
             stage,
+            tip: JARGON.addedLatency,
           },
         ];
   });
@@ -127,9 +131,10 @@ function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [{ label: "Jitter", value: jitter }, ...added],
-    details: [
-      ...stability(steady),
+    rows: [
+      { label: "Jitter", value: jitter, tip: JARGON.jitter },
+      ...added,
+      ...stability(steady, JARGON.latencyStability),
       ...(evidence.latencySource
         ? [{ label: "Server", value: evidence.latencySource }]
         : []),
@@ -161,19 +166,18 @@ function bidirectionalCard(
       : [lane("download", model.down), lane("upload", model.up)];
   if (value === null) return { ...card, rows };
   const complete = card.status === "complete";
-  const [face, details] =
-    showWire && complete ? wire(lanes?.wire, value, units) : [[], []];
   return {
     ...card,
     ...resultRate(value, units),
-    rows: [...rows, ...face],
-    details: [
+    wire: showWire && complete ? wire(lanes?.wire, value, units) : undefined,
+    rows: [
+      ...rows,
       ...stability(
         complete && lanes?.down && lanes.up
           ? Math.min(lanes.down.stabilityPct, lanes.up.stabilityPct)
           : null,
+        JARGON.rateStability,
       ),
-      ...details,
     ],
   };
 }
@@ -193,8 +197,8 @@ export function summaryCards(
       status,
       num: MISSING,
       unit: "",
+      tip: JARGON[key],
       rows: [],
-      details: [],
     };
     if (key === "latency") return [latencyCard(card, evidence)];
     if (key === "bidirectional")
@@ -203,29 +207,32 @@ export function summaryCards(
     if (!result) return [card];
     const value = result.reportedBytesPerSec;
     const complete = status === "complete";
-    const [face, details] =
-      showWire && complete ? wire(result.wire, value, units) : [[], []];
     const peak = result.peakBytesPerSec;
     return [
       {
         ...card,
         ...resultRate(value, units),
+        wire:
+          showWire && complete ? wire(result.wire, value, units) : undefined,
         rows: [
           {
             label: "Transferred",
             value: fmtBytes(result.totalBytes, units.base),
+            tip: JARGON.transferred,
           },
-          ...face,
-        ],
-        details: [
-          ...stability(complete ? result.stabilityPct : null),
           ...(peak == null
             ? []
-            : [{ label: "Peak", value: formatRate(peak, units) }]),
-          ...(key === "upload"
-            ? [{ label: "Timing", value: RECEIVER_TIMED }]
-            : []),
-          ...details,
+            : [
+                {
+                  label: "Peak",
+                  value: formatRate(peak, units),
+                  tip: JARGON.peak,
+                },
+              ]),
+          ...stability(
+            complete ? result.stabilityPct : null,
+            JARGON.rateStability,
+          ),
         ],
       },
     ];

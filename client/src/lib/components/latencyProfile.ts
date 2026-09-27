@@ -1,5 +1,5 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs } from "../format";
+import { fmtCount, fmtMs } from "../format";
 import { niceDomain, type NiceDomain } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION } from "../presentation/vocabulary";
@@ -157,12 +157,16 @@ export function probeAccountingDetails(
   >,
 ): string {
   const counts = [
-    `${lane.count} resolved`,
-    lane.timeoutCount == null ? null : `${lane.timeoutCount} timeouts`,
-    lane.unresolvedCount == null ? null : `${lane.unresolvedCount} unresolved`,
+    `${fmtCount(lane.count)} resolved`,
+    lane.timeoutCount == null
+      ? null
+      : `${fmtCount(lane.timeoutCount)} timeouts`,
+    lane.unresolvedCount == null
+      ? null
+      : `${fmtCount(lane.unresolvedCount)} unresolved`,
     lane.sendFailureCount == null
       ? null
-      : `${lane.sendFailureCount} send failures`,
+      : `${fmtCount(lane.sendFailureCount)} send failures`,
   ]
     .filter((value): value is string => value !== null)
     .join(" · ");
@@ -200,17 +204,17 @@ export function probeAccountingSummary(
   return {
     replies:
       replied == null
-        ? `${count} resolved`
-        : `${replied} ${replied === 1 ? "reply" : "replies"}`,
+        ? `${fmtCount(count)} resolved`
+        : `${fmtCount(replied)} ${replied === 1 ? "reply" : "replies"}`,
     exceptions: [
       (lane.timeoutCount ?? 0) > 0
-        ? `${lane.timeoutCount} ${lane.timeoutCount === 1 ? "timeout" : "timeouts"}`
+        ? `${fmtCount(lane.timeoutCount ?? 0)} ${lane.timeoutCount === 1 ? "timeout" : "timeouts"}`
         : null,
       (lane.unresolvedCount ?? 0) > 0
-        ? `${lane.unresolvedCount} unresolved`
+        ? `${fmtCount(lane.unresolvedCount ?? 0)} unresolved`
         : null,
       (lane.sendFailureCount ?? 0) > 0
-        ? `${lane.sendFailureCount} ${lane.sendFailureCount === 1 ? "send failure" : "send failures"}`
+        ? `${fmtCount(lane.sendFailureCount ?? 0)} ${lane.sendFailureCount === 1 ? "send failure" : "send failures"}`
         : null,
     ].filter((value): value is string => value !== null),
   };

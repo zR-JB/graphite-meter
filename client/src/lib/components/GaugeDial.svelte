@@ -7,12 +7,14 @@
       phase: ResultArcPhase;
       fraction: number;
       dashed: boolean;
+      description: string;
     }[];
   }
 </script>
 
 <script lang="ts">
   import { inView } from "../actions/inView";
+  import { tooltip } from "../actions/tooltip";
   import { untrack } from "svelte";
   import { Smoothed, still } from "../presentation/motion.svelte";
   import { sweepTarget, angleForFraction } from "./gaugeSweep";
@@ -255,6 +257,21 @@
         {/each}
       </svg>
     </div>
+    {#each results as result (result.phase)}
+      {@const angle = angleForFraction(
+        result.fraction,
+        layout.arcStart,
+        layout.arcSweep,
+      )}
+      <span
+        class="head-target"
+        role="img"
+        aria-label={result.description.replace("\n", " ")}
+        style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
+        style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
+        {@attach tooltip(() => result.description)}
+      ></span>
+    {/each}
   {/if}
   <div
     class="live"
@@ -391,6 +408,14 @@
   .start-cap {
     position: absolute;
     inset: 0;
+  }
+  .head-target {
+    position: absolute;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    translate: -50% -50%;
   }
   .live-head {
     position: absolute;

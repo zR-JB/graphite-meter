@@ -1,10 +1,10 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import Disclosure from "./Disclosure.svelte";
   import type { SummaryCard, SummaryRow } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
-  import { JARGON, STAGE, STATUS } from "../presentation/vocabulary";
+  import { tooltip } from "../actions/tooltip";
+  import { STAGE, STATUS } from "../presentation/vocabulary";
 
   let {
     cards,
@@ -19,12 +19,10 @@
     onscope?: (id: string) => void;
     locked?: boolean;
   } = $props();
-  // One state for every card, so the row of cards opens and closes together.
-  let open = $state(false);
 </script>
 
-{#snippet line({ label, value, stage, note }: SummaryRow)}
-  <span class="line">
+{#snippet line({ label, value, stage, tip }: SummaryRow)}
+  <span class="line" {@attach tip ? tooltip(() => tip) : null}>
     <span class="line-label">
       {#if stage}<span class="line-icon" data-tone={stage}
           ><Icon name={STAGE[stage].icon} /></span
@@ -33,7 +31,6 @@
           >{/if}{/if}{label}
     </span>
     <span class="line-value">{value}</span>
-    {#if note}<span class="line-note">{note}</span>{/if}
   </span>
 {/snippet}
 
@@ -56,48 +53,48 @@
   {/if}
   <div class="result-cards">
     {#each cards as card (card.key)}
-      <Disclosure class="surface result-card enter {card.status}" bind:open>
-        {#snippet summary()}
-          <span class="head" data-tone={card.key}>
-            <span class="tone-icon" aria-hidden="true"
-              ><Icon name={card.icon} /></span
+      <article class="surface result-card enter {card.status}">
+        <span
+          class="head"
+          data-tone={card.key}
+          {@attach tooltip(() => card.tip)}
+        >
+          <span class="tone-icon" aria-hidden="true"
+            ><Icon name={card.icon} /></span
+          >
+          <span class="label">{card.label}</span>
+          {#if card.status === "partial" || card.status === "failed"}
+            <span class="badge" data-tone="err">{STATUS[card.status]}</span>
+          {/if}
+        </span>
+        {#key scope}
+          <span class="readout enter">
+            <span
+              class="val"
+              aria-hidden={card.accessible ? "true" : undefined}
             >
-            <span class="label">{card.label}</span>
-            {#if card.status === "partial" || card.status === "failed"}
-              <span class="badge" data-tone="err">{STATUS[card.status]}</span>
+              <span class="num">{card.num}</span>
+              {#if card.unit}<span class="unit">{card.unit}</span>{/if}
+            </span>
+            {#if card.accessible}<span class="sr-only">{card.accessible}</span
+              >{/if}
+            {#if card.wire}
+              {@const wire = card.wire}
+              <span class="wire" {@attach tooltip(() => wire.tip)}
+                >{wire.value}<span class="wire-tag">wire {wire.overhead}</span
+                ></span
+              >
+            {/if}
+            {#if card.rows.length}
+              <span class="rows">
+                {#each card.rows as row (row.label + row.stage)}
+                  {@render line(row)}
+                {/each}
+              </span>
             {/if}
           </span>
-          {#key scope}
-            <span class="readout enter">
-              <span
-                class="val"
-                aria-hidden={card.accessible ? "true" : undefined}
-              >
-                <span class="num">{card.num}</span>
-                {#if card.unit}<span class="unit">{card.unit}</span>{/if}
-              </span>
-              {#if card.accessible}<span class="sr-only">{card.accessible}</span
-                >{/if}
-              {#each card.rows as row (row.label + row.stage)}
-                {@render line(row)}
-              {/each}
-            </span>
-          {/key}
-        {/snippet}
-        <div class="readout details">
-          {#each card.details as row (row.label)}
-            {@render line(row)}
-          {:else}
-            <p class="hint">No further measurements.</p>
-          {/each}
-        </div>
-        {#if card.key === "latency"}
-          <p class="hint">{JARGON.jitter}</p>
-          {#if card.rows.length > 1}<p class="hint">
-              {JARGON.addedLatency}
-            </p>{/if}
-        {/if}
-      </Disclosure>
+        {/key}
+      </article>
     {/each}
   </div>
 </div>
@@ -136,11 +133,15 @@
       grid-template-columns: minmax(0, 1fr);
     }
   }
-  .result-cards > :global(.result-card) {
-    --disclosure-pad: var(--space-3);
+  .result-card {
+    display: grid;
+    align-content: start;
+    gap: var(--space-2);
+    min-width: 0;
+    padding: var(--space-3);
     transition: var(--transition-control);
   }
-  .result-cards > :global(.active) {
+  .result-card.active {
     border-color: var(--brand-line);
   }
   .head {
@@ -148,9 +149,10 @@
     align-items: center;
     gap: var(--space-2);
     min-width: 0;
+    justify-self: start;
   }
   .head .badge {
-    margin-left: auto;
+    margin-left: var(--space-1);
   }
   .label {
     font-size: var(--type-sm);
@@ -158,18 +160,13 @@
   }
   .readout {
     display: grid;
-    gap: 3px;
+    gap: var(--space-1);
     min-width: 0;
-  }
-  .details {
-    padding-top: var(--space-2);
-    border-top: 1px solid var(--border-subtle);
   }
   .val {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    margin: 2px 0 var(--space-1);
   }
   .num {
     font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
@@ -180,12 +177,29 @@
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
+  .wire {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    justify-self: start;
+    color: var(--text-muted);
+    font: var(--w-strong) var(--type-xs) var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .wire-tag {
+    color: var(--text-soft);
+    font-weight: var(--w-normal);
+  }
+  .rows {
+    display: grid;
+    gap: 3px;
+    margin-top: var(--space-1);
+  }
   .line {
     display: flex;
-    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
-    gap: 0 var(--space-2);
+    gap: var(--space-2);
     min-width: 0;
   }
   .line-label {
@@ -194,6 +208,14 @@
     gap: var(--space-1);
     color: var(--text-soft);
     font-size: var(--type-xs);
+    transition: color var(--dur-hover) var(--ease-out);
+  }
+  @media (hover: hover) {
+    .line:hover .line-label,
+    .head:hover .label,
+    .wire:hover .wire-tag {
+      color: var(--text);
+    }
   }
   .line-icon {
     display: inline-grid;
@@ -203,13 +225,7 @@
     width: 12px;
     height: 12px;
   }
-  .line-note {
-    flex-basis: 100%;
-    color: var(--text-soft);
-    font-size: var(--type-xs);
-  }
   .line-value {
-    margin-left: auto;
     font: var(--w-strong) var(--type-sm) var(--font-mono);
     font-variant-numeric: tabular-nums;
     text-align: end;

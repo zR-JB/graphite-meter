@@ -321,9 +321,7 @@
     overscroll-behavior: contain;
     touch-action: pan-y;
     /* Reserve room so overlay scrollbars cannot cover cards or controls. */
-    padding-right: calc(var(--space-2) + 12px);
+    padding-right: var(--space-2);
     scrollbar-gutter: stable;
-    scrollbar-width: thin;
-    scrollbar-color: var(--border-strong) transparent;
   }
 </style>

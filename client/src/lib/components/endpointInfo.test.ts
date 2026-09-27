@@ -112,14 +112,9 @@ test("HTTP capability paths do not claim a latency-only WebTransport target", ()
 
 test("path evidence retains each protocol observation boundary", () => {
   for (const [mode, browser, server, expected] of [
-    [
-      "throughput",
-      "h2",
-      "http/1.1",
-      "Browser observed HTTP/2 · Server observed HTTP/1.1",
-    ],
-    ["throughput", undefined, "h3", "Server observed HTTP/3"],
-    ["latency", "h2", "http/1.1", "Server observed HTTP/1.1"],
+    ["throughput", "h2", "http/1.1", "Browser HTTP/2 · server HTTP/1.1"],
+    ["throughput", undefined, "h3", "Server HTTP/3"],
+    ["latency", "h2", "http/1.1", "Server HTTP/1.1"],
     ["latency", undefined, undefined, "Pending"],
   ] as const)
     expect(pathEvidence(mode, browser, server)).toBe(expected);

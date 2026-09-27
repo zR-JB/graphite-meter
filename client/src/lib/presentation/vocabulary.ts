@@ -15,7 +15,6 @@ import type { ThemePref } from "../state/persistence";
 import type { PreparationState } from "../state/store.svelte";
 
 export const MISSING = "—";
-export const RECEIVER_TIMED = "Receiver-timed";
 
 export const STAGE: Record<
   TransportRole,
@@ -110,26 +109,70 @@ const FAILURE: Record<FailureReason, string> = {
 export const reasonLabel = (reason: FailureReason) =>
   FAILURE[reason] ?? "Measurement issue";
 
+/** Explainers: a title line, then short lines; tooltips set the title apart. */
 export const JARGON = {
+  download:
+    "Download\nPayload bytes the client received per second\n" +
+    "Mean of the last interval with at least 0.8 s of evidence\nWarmup is left out",
+  upload:
+    "Upload\nPayload bytes the server received per second\n" +
+    "Timed by the server's receiver, so queued bytes don't count\n" +
+    "Mean of the last interval with at least 0.8 s of evidence",
+  bidirectional:
+    "Bidirectional\nDownload and upload at the same time, added together\n" +
+    "Each direction is timed like its own stage",
+  latency:
+    "Latency\nMedian round trip of probes on an idle connection\nThe base for added latency",
+  transferred:
+    "Transferred\nPayload bytes measured in this stage, each counted once",
+  peak:
+    "Peak\nHighest mean over any 0.5 s or longer window of the headline interval\n" +
+    "Never below the headline",
+  rateStability:
+    "Stability\n100% minus the spread of 250 ms rates over the last 4 s\n" +
+    "Spread: standard deviation divided by the mean",
+  latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
-    "Added latency: loaded median minus idle median for the same server, signed.",
+    "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",
   jitter:
-    "Jitter: mean absolute change between consecutive replies. Lower is steadier; " +
-    "probe timeouts are left out.",
+    "Jitter\nMean change between consecutive replies\nProbe timeouts are left out",
   wireRate:
-    "Estimated physical-link rate, including forward-path protocol overhead.",
+    "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
+    "An estimate from the path's framing and an assumed MTU",
   unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
   unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
   unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",
   unitBinary: "Binary prefixes: 1,024 per step (Kibit/s, Mibit/s, Gibit/s).",
+  throughputPath:
+    "Throughput path\nTransport and HTTP version that carry the test bytes\n" +
+    "Verified before the test starts",
+  latencyPath:
+    "Latency path\nTransport the latency probes use, on its own connection",
+  pathEvidence:
+    "Evidence\nThe HTTP version the browser and the server each observed\n" +
+    "Shown only where that side exposes it",
+  uploadFeed:
+    "Upload feed\nHow the server reports received upload bytes back to the page",
+  clientAddress:
+    "Your address\nThe address the server saw for this browser\n" +
+    "From a trusted proxy header, else the socket peer",
+  serverLoad:
+    "Load\nTests running on the server when this path was checked\n" +
+    "Past half its slots, other tests share the bandwidth being measured",
+  serverInstance:
+    "Server\nEngine version of the tested server\nThe instance changes when the backend restarts",
+  probeAccounting:
+    "Probe accounting\nReplies, and timeouts: no reply before the deadline\n" +
+    "Unfinished probes and failed sends are counted apart, never as timeouts",
   preflight:
-    "Preflight request time includes connection setup and the response. It is not a latency measurement.",
+    "Pre-test latency\nOne request before the test: connection setup plus the response\n" +
+    "Not a latency measurement",
   checkReuse:
     "Recent successful checks are reused while the required server and path are unchanged. " +
     "Expired checks are refreshed before a test starts.",
   forcedStreams:
-    "Automatic chooses concurrency for each protocol. Forced uses the exact count per server and " +
-    "direction within shared connection limits.",
+    "Streams\nParallel connections per server and direction\n" +
+    "Automatic: chosen per protocol\nForced: the exact count, within shared connection limits",
   resetSettings:
     "Restore test, display, and history-saving settings to their defaults? " +
     "Your theme, panel layout, and saved results will be kept.",

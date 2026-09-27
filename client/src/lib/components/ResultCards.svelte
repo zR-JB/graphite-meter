@@ -3,7 +3,7 @@
   import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
   import { fmtMs, resultRate } from "../format";
-  import { MISSING, STAGE } from "../presentation/vocabulary";
+  import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
   import {
     CARD_ORDER,
@@ -87,8 +87,8 @@
       status: active ? "active" : "pending",
       num: timeout ? MISSING : shown.num,
       unit: timeout ? "timeout" : shown.unit,
+      tip: JARGON[key],
       rows: [],
-      details: [],
       accessible: active
         ? timeout
           ? "probe timeout"

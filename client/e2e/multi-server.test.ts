@@ -89,7 +89,7 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
   const badge = (role: string) =>
-    info.locator(".path", { hasText: `${role} path` }).locator(".badge");
+    info.locator(`.path[data-role="${role}"] .badge`);
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(badge("throughput")).toHaveText("Used");

@@ -13,9 +13,9 @@
   import { latencyLanes, transferredBytes } from "../../runner/measure";
   import { store } from "../../state/store.svelte";
   import {
+    JARGON,
     OUTCOME,
     STAGE,
-    MISSING,
     reasonLabel,
     TRANSPORT,
     transportLabel,
@@ -33,7 +33,6 @@
     probeAccountingSummary,
     hasProbeAccountingNotice,
   } from "../latencyProfile";
-  import Disclosure from "../Disclosure.svelte";
   import MoreMenu from "../MoreMenu.svelte";
   import ResultSummary from "../ResultSummary.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
@@ -49,7 +48,8 @@
   let shown = $state("");
   const result = $derived(record.result);
   const run = $derived(result.multiServer);
-  const details = $derived(run.selection.length > 1 ? run : null);
+  const multiple = $derived(run.selection.length > 1);
+  const details = $derived(multiple ? run : null);
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const completed = $derived(new Date(record.completedAt));
 
@@ -106,16 +106,6 @@
       : [],
   );
 
-  const accountingFacts = $derived(
-    accounting
-      .flatMap((lane) =>
-        probeAccountingSummary(lane).exceptions.map(
-          (exception) => `${lane.label} ${exception}`,
-        ),
-      )
-      .join(" · ") || "No timeouts or failed sends",
-  );
-
   function path(
     role: "throughput" | "latency",
     kind: string | null | undefined,
@@ -147,7 +137,7 @@
       return {
         id: server.id,
         name: serverLabel(server),
-        host: URL.parse(server.url)?.host ?? "",
+        url: server.url,
         down: rate(measured?.download?.reportedBytesPerSec),
         up: rate(measured?.upload?.reportedBytesPerSec),
         latency: formatLatency(measured?.latency?.reportedMs),
@@ -166,14 +156,10 @@
     }),
   );
   const issues = $derived(
-    run.failures.map((failure) =>
-      [
-        serverName(run.selection, failure.serverId),
-        STAGE[failure.stage].label +
-          (failure.scope === "latency" ? " latency" : ""),
-        reasonLabel(failure.reason),
-      ].join(" · "),
-    ),
+    run.failures.map((failure) => ({
+      server: serverName(run.selection, failure.serverId),
+      text: `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""} · ${reasonLabel(failure.reason)}`,
+    })),
   );
   const ipVersion = $derived(
     run.servers.find((server) => server.server.id === run.latencyFocus)
@@ -259,11 +245,11 @@
     />
 
     {#if profile.length}
-      <section aria-labelledby={`result-${record.id}-latency`}>
+      <section class="group" aria-labelledby={`result-${record.id}-latency`}>
         <h3 class="caps" id={`result-${record.id}-latency`}>
-          Latency{latencyServer
-            ? ` · ${serverLabel(latencyServer.server)}`
-            : ""}
+          Latency{#if multiple && latencyServer}<span class="name">
+              · {serverLabel(latencyServer.server)}</span
+            >{/if}
         </h3>
         <LatencyProfileView
           lanes={profile}
@@ -273,105 +259,94 @@
       </section>
     {/if}
 
-    <div class="sections">
-      <Disclosure
-        class="surface-inset"
-        title="Servers & paths"
-        facts={serverRows.length > 1
-          ? serverRows.map((row) => row.name).join(", ")
-          : `${serverRows[0]?.name ?? MISSING} · ${serverRows[0]?.throughputPath ?? MISSING}`}
-      >
-        <div class="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Server</th>
-                <th scope="col">{STAGE.download.short}</th>
-                <th scope="col">{STAGE.upload.short}</th>
-                <th scope="col">Latency</th>
-                <th scope="col">Throughput path</th>
-                <th scope="col">Latency path</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each serverRows as row (row.id)}
-                <tr>
-                  <th scope="row"
-                    >{row.name}{#if row.host}<small>{row.host}</small>{/if}</th
-                  >
-                  <td>{row.down}</td>
-                  <td>{row.up}</td>
-                  <td>{row.latency}</td>
-                  <td>{row.throughputPath}</td>
-                  <td>{row.latencyPath}</td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      </Disclosure>
-
+    <div class="facts">
       {#if accounting.length}
-        <Disclosure
-          class="surface-inset"
-          title="Probe accounting"
-          facts={accountingFacts}
-        >
-          <p class="hint">
-            Timeouts: no reply before the deadline. Unfinished probes and failed
-            sends are counted separately.{accounting.some(
-              (lane) => lane.accountingComplete === false,
-            )
-              ? ` Partial accounting: ${PARTIAL_ACCOUNTING_HELP}`
-              : ""}
-          </p>
-          <ul class="accounting">
+        <section class="group">
+          <h3 class="caps">Probes</h3>
+          <dl class="kv">
             {#each accounting as lane (lane.key)}
               {@const counts = probeAccountingSummary(lane)}
-              <li
+              <div
                 data-tone={lane.key}
                 aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
+                {@attach tooltip(() =>
+                  lane.accountingComplete === false
+                    ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
+                    : JARGON.probeAccounting,
+                )}
               >
-                <strong>{lane.label}</strong>
-                <span>{counts.replies}</span>
-                <span
-                  >{[
+                <dt>{lane.label}</dt>
+                <dd>
+                  {[
+                    counts.replies,
                     ...counts.exceptions,
                     ...(lane.accountingComplete === false
                       ? ["partial accounting"]
                       : []),
-                  ].join(" · ") || "No timeouts"}</span
-                >
-              </li>
+                  ].join(" · ")}
+                </dd>
+              </div>
             {/each}
-          </ul>
-        </Disclosure>
+          </dl>
+        </section>
       {/if}
+
+      {#each serverRows as row (row.id)}
+        <section class="group">
+          <h3 class="caps">
+            Server{#if multiple}<span class="name"> · {row.name}</span>{/if}
+          </h3>
+          <dl class="kv">
+            {#if !multiple}<div>
+                <dt>Name</dt>
+                <dd>{row.name}</dd>
+              </div>{/if}
+            {#if row.url}<div>
+                <dt>Address</dt>
+                <dd>{row.url}</dd>
+              </div>{/if}
+            {#if multiple}
+              <div>
+                <dt>{STAGE.download.short}</dt>
+                <dd>{row.down}</dd>
+              </div>
+              <div>
+                <dt>{STAGE.upload.short}</dt>
+                <dd>{row.up}</dd>
+              </div>
+              <div>
+                <dt>Latency</dt>
+                <dd>{row.latency}</dd>
+              </div>
+            {/if}
+            <div {@attach tooltip(() => JARGON.throughputPath)}>
+              <dt>Throughput path</dt>
+              <dd>{row.throughputPath}</dd>
+            </div>
+            <div {@attach tooltip(() => JARGON.latencyPath)}>
+              <dt>Latency path</dt>
+              <dd>{row.latencyPath}</dd>
+            </div>
+          </dl>
+        </section>
+      {/each}
 
       {#if issues.length}
-        <Disclosure
-          class="surface-inset"
-          title="Issues"
-          facts={issues.length > 1
-            ? `${issues[0]} and ${issues.length - 1} more`
-            : issues[0]}
-        >
-          {#snippet aside()}
-            <span class="badge" data-tone="warn">{issues.length}</span>
-          {/snippet}
-          <ul class="issues">
+        <section class="group">
+          <h3 class="caps">Issues</h3>
+          <dl class="kv">
             {#each issues as issue, index (index)}
-              <li>{issue}</li>
+              <div>
+                <dt>{issue.server}</dt>
+                <dd>{issue.text}</dd>
+              </div>
             {/each}
-          </ul>
-        </Disclosure>
+          </dl>
+        </section>
       {/if}
 
-      <Disclosure
-        class="surface-inset"
-        title="Build & environment"
-        facts={environment.map(([, value]) => value).join(" · ") || MISSING}
-      >
+      <section class="group">
+        <h3 class="caps">Environment</h3>
         <dl class="kv">
           {#each environment as [label, value] (label)}
             <div>
@@ -380,7 +355,7 @@
             </div>
           {/each}
         </dl>
-      </Disclosure>
+      </section>
     </div>
   </div>
 </article>
@@ -428,63 +403,26 @@
     gap: var(--space-4);
     padding: var(--space-4);
   }
-  h3 {
-    margin-bottom: var(--space-2);
+  .detail-body > :global(.result-summary) {
+    max-width: none;
   }
-  .sections {
+  h3 > .name {
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .facts {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-4);
+    align-content: start;
   }
-  .table-scroll {
-    overflow-x: auto;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font: var(--type-xs) / 1.4 var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-  th,
-  td {
-    padding: 6px var(--space-2);
-    border-bottom: 1px solid var(--border-subtle);
-    text-align: start;
-    vertical-align: top;
-  }
-  thead th {
-    color: var(--text-soft);
-    font-weight: var(--w-heavy);
-    white-space: nowrap;
-  }
-  tbody th {
-    font: var(--w-strong) var(--type-xs) var(--font-sans);
-  }
-  tbody small {
-    display: block;
-    color: var(--text-soft);
-    font: var(--type-2xs) var(--font-mono);
-  }
-  .accounting,
-  .issues {
-    display: grid;
-    gap: var(--space-1);
-    font-size: var(--type-xs);
-  }
-  .accounting li {
-    display: grid;
-    grid-template-columns: minmax(7rem, auto) auto minmax(0, 1fr);
-    gap: var(--space-2);
-    padding-block: 4px;
-    border-top: 1px solid var(--border-subtle);
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .accounting strong {
-    color: var(--tone);
-  }
-  .issues li {
-    color: var(--text-muted);
-    overflow-wrap: anywhere;
+  @container detail (min-width: 1000px) {
+    .detail-body {
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      align-items: start;
+    }
+    .detail-body > :global(:first-child) {
+      grid-column: 1 / -1;
+    }
   }
   .kv {
     --kv-label: 7rem;
@@ -501,12 +439,6 @@
     .detail-head,
     .detail-body {
       padding-inline: var(--space-3);
-    }
-    .accounting li {
-      grid-template-columns: minmax(0, 1fr) auto;
-    }
-    .accounting li > span:last-child {
-      grid-column: 1 / -1;
     }
   }
 </style>
