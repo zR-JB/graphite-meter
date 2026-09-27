@@ -201,9 +201,7 @@ export function shouldExitPhase(input: {
 
 /** Raw outcomes of one stage; presentation buckets never feed it. */
 export class LatencyPopulation {
-  /** Replies counted by RTT in whole nanoseconds, so memory and summaries scale with distinct values. */
   #counts = new Map<number, number>();
-  /** Ascending distinct RTTs over a buffer with spare capacity; new ones wait in `#fresh`. */
   #sorted = new Float64Array(0);
   #fresh: number[] = [];
   #n = 0;
@@ -291,7 +289,6 @@ export class LatencyPopulation {
     let total = 0;
     keys.forEach((key, i) => (cumulative[i] = total += this.#counts.get(key)!));
     const n = this.#n;
-    // The RTT at a 0-based rank: the first distinct value whose cumulative count passes it.
     const at = (index: number) => {
       let [lo, hi] = [0, keys.length - 1];
       while (lo < hi) {

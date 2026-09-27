@@ -492,7 +492,6 @@ function recordOutcome(
   observedAt: number,
   handlingMs?: number,
 ): void {
-  // One object per outcome: this runs for every reply on the timestamping thread.
   const sample = pingSample(observedAt - ping.sentAt, timedOut, observedAt);
   sample.sentAtEpochMs = performance.timeOrigin + ping.sentAt;
   if (!timedOut && handlingMs !== undefined)

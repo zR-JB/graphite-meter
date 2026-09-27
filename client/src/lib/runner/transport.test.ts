@@ -235,7 +235,6 @@ test("upload refusals fail the stage, an unknown id stalls even mid-recovery, an
   await h.open(0, "first");
   await preparing;
   stage.measure();
-  // A restarting server drops the lanes before it forgets the id.
   await until(() => workers("upload").length === 1);
   workers("upload")[0].emit({
     type: "error",

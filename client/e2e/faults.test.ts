@@ -18,14 +18,13 @@ interface Fault {
   name: string;
   downloadMs?: number;
   uploadMs?: number;
-  /** Acts once the named stage has run for 300 ms; a relaunched server is returned for cleanup. */
+  /** Acts once the named stage has run for 300 ms. */
   during: "download" | "upload";
   act?(page: Page, victim: Peer): Promise<{ kill(): void } | void>;
   /** A Settings edit of the active download's duration, a second later. */
   editDownloadMs?: number;
   outcome: "partial" | "incomplete" | "complete";
   failure: { serverId: string; stage: string; reason: string } | null;
-  /** An aggregation interval reason the stage must record. */
   interval?: { stage: string; reason: string };
 }
 
@@ -58,7 +57,6 @@ const faults: Fault[] = [
         JSON.parse(process.env.GM_E2E_LAUNCH!),
         victim.server,
       );
-      // The replacement must answer inside the 1.5 s silence limit for the run to rotate.
       if (Date.now() - started > 1_000)
         throw new Error("the peer took over a second to relaunch");
       return relaunched;
@@ -188,7 +186,6 @@ test("a peer at capacity while its upload prepares leaves as busy", async (page)
       },
     });
     await ready(page);
-    // Slowly read downloads from this host hold the peer's per-client slots without idling out.
     for (let i = 0; i < 2; i++) {
       const hold = await fetch(
         `${busy.server.http}/download?bytes=${2 ** 40}`,

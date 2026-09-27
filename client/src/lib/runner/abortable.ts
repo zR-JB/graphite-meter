@@ -26,7 +26,6 @@ export async function withinBudget<T>(
     signal.throwIfAborted();
     return value;
   } catch (error) {
-    // The platform's timeout reason is renamed for the check it bounded.
     if (!owner.aborted && error === deadline.reason)
       throw new DOMException("Connection check timed out", "TimeoutError");
     throw error;

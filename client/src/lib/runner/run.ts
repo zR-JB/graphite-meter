@@ -272,7 +272,6 @@ export class Run {
     this.#transition("connecting", null, 0);
     this.#cfg = config;
     this.#segments = buildSegments(config).segments;
-    // A server dropped before the run fails the first stage it would have carried bytes in.
     const first = (
       this.#segments.find(({ activity }) => activity.transfer.length) ??
       this.#segments[0]
@@ -1121,7 +1120,6 @@ export class Run {
       server.buckets.restart(this.#elapsed, this.#continuity);
   }
 
-  /** A removed focus hands the headline latency to a survivor that measured it. */
   #focus(): Participant {
     const source = this.#latencySource;
     return source.removed
@@ -1151,7 +1149,6 @@ export class Run {
       : { score: 0, sampleCount: 0 };
   }
 
-  /** Stability only serves early finish, so it is not computed while that is off. */
   #updateStability(): boolean {
     const segment = this.#active;
     if (!segment || segment.phase === "warmup" || !this.#cfg!.adaptive)

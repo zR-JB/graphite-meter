@@ -164,7 +164,6 @@ async function history(page: Page, selected = "") {
   await page.goto(`${home.url}/#/history${selected && `/${selected}`}`);
 }
 
-// The product's own open deadline is 5 s; a refusal check waits past it rather than racing it.
 const OPEN_BOUND = { timeout: 10_000 };
 
 test("a 2,000-result archive sorts in bounded chunks and caps deep links", async (page) => {

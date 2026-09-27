@@ -36,7 +36,6 @@ export function createPingScheduler(
   let wakeAt = Infinity;
   let running = false;
 
-  // One timer serves every rearm: a later due time waits for the earlier wake, which checks it again.
   const arm = (delayMs: number): void => {
     const now = clock.now();
     wakeAt = now + delayMs;

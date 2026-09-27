@@ -4,7 +4,6 @@ import { nearestRank, sortedMedian } from "./measure";
 /** Points kept per presented history. */
 export const SERIES_LIMIT = 1_200;
 const BUCKET_MS = 200;
-/** Outcomes delivered later than this after their bucket closed no longer revise it. */
 const REVISION_MS = 10_000;
 const NONE: LatencyBucket[] = [];
 

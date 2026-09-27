@@ -16,7 +16,6 @@ import {
 } from "../runner/measure";
 import { singleLatencyBucket } from "../runner/series";
 
-// The store reads build tokens when it first loads, whichever test loads it.
 let restoreBuild: () => void;
 beforeAll(() => (restoreBuild = stubGlobals(TEST_BUILD_TOKENS)));
 afterAll(() => restoreBuild());

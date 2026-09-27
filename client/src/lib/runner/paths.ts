@@ -53,7 +53,6 @@ export const ROUTES = {
 export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
-/** Keeps a bidirectional stage, its feed, checkpoints and pings inside a server's 32 measurements per client, as natively. */
 export const FETCH_FORCED_MAX = 14;
 const BROWSER_CONNECTION_BUDGET = 6;
 export const MAX_STREAMS = 128;
@@ -216,7 +215,6 @@ function matchesGroup(target: AnyTarget, selection: string): boolean {
 const isGroup = (selection: string) =>
   selection.startsWith("protocol:") || selection.startsWith("transport:");
 
-/** The origin a selection names; Automatic and protocol or transport groups name none. */
 export const selectionOrigin = (selection: string): string | null =>
   selection === "auto" || isGroup(selection)
     ? null

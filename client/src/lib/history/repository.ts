@@ -99,7 +99,6 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
-/** A permanent write failure: retrying the same record never succeeds. */
 export class HistoryRefusal extends Error {}
 
 type Opened = Promise<{ db: IDBDatabase; drop(): void }>;
@@ -156,7 +155,6 @@ export class HistoryRepository {
         return tx.abort();
       }
       written = true;
-      // Only readable results count toward the limit; unreadable ones stay untouched.
       const values = results.index(HISTORY_DB.completedAtIndex).getAll();
       values.onsuccess = () => {
         const ids = values.result.flatMap(

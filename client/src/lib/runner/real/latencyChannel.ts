@@ -183,7 +183,6 @@ export class LatencyChannel {
     return promise;
   }
 
-  /** A worker that crashed or never acknowledged leaves its outcomes unknown. */
   #abandon(worker: Worker, detail: string): void {
     if (this.#worker !== worker) return;
     this.#deps.host.latencyIncomplete();

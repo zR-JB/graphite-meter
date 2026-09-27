@@ -16,7 +16,6 @@ export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
 export const BUSY_RESTART_CAP_MS =
   DIRECTION_PROGRESS_WINDOW_MS - LANE_RESTART_BACKOFF_MS;
 
-/** The backoff doubles per consecutive busy refusal, or waits Retry-After, up to the busy cap. */
 export const restartDelayMs = (busyRefusals: number, retryAfterMs = 0) =>
   Math.min(
     BUSY_RESTART_CAP_MS,

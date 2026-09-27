@@ -32,7 +32,6 @@ export async function readJSONResponse(response: Response): Promise<unknown> {
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** A counter: a safe non-negative integer. */
 export const isCount = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) >= 0;
 
@@ -135,7 +134,6 @@ export function parsePreflight(value: unknown) {
       ...(capabilities.uploadCheckpoint === undefined
         ? {}
         : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
-      // A newer server's unknown mechanisms are skipped, never the whole document.
       throughput: targets(capabilities.throughput).flatMap((value) => {
         const { baseUrl, transport, protocol } = record(value);
         return known(transport, THROUGHPUT_TRANSPORTS) &&

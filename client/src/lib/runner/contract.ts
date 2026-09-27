@@ -224,7 +224,6 @@ export interface StageLatencySummary {
 export interface LatencyResult {
   reportedMs: number;
   jitterMs: number | null;
-  /** 100% minus jitter as a share of the median (floored at 1 ms); absent in records saved before it. */
   stabilityPct?: number | null;
 }
 

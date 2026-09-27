@@ -103,7 +103,6 @@ export function incoherence(
       )
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
-      // From the first to the last evidence, so a hidden-page gap between intervals still counts as run time.
       const covered = spans.length ? spans.at(-1)!.endMs - spans[0].startMs : 0;
       const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
       if (config && covered < plannedMs * floor)

@@ -24,7 +24,6 @@ const TRANSFER: Record<TransportRole, readonly FlowDirection[]> = {
   bidirectional: ["down", "up"],
 };
 
-/** A stage's results: both directions of bidirectional, else its own. */
 export const stageLanes = (
   evidence: Pick<RunResult, TransportRole>,
   stage: TransportRole,
@@ -33,11 +32,9 @@ export const stageLanes = (
     ? [evidence.bidirectional?.down, evidence.bidirectional?.up]
     : [evidence[stage]];
 
-/** Only the latency stage's failures are latency failures of its own population. */
 export const failureScope = (stage: TransportRole) =>
   stage === "latency" ? "latency" : "throughput";
 
-/** The outcome follows the statuses: any failed stage, else any failure. */
 export const outcomeOf = (statuses: StageStatus[], failures: number) =>
   statuses.includes("failed")
     ? "incomplete"

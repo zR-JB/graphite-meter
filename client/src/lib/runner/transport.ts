@@ -99,7 +99,6 @@ export interface StageOptions {
 const LANE_STAGGER_MS = 75;
 const CHECKPOINT_TIMEOUT_MS = 1500;
 
-/** What a fetch lane or WebTransport session worker reports; an alive's byte/time pair is a presentation hint only. */
 export type WorkerMsg =
   | { type: "established" | "stopped" | "auth-required" }
   | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
@@ -266,7 +265,6 @@ class LaneSet {
       )
         host.uploadHint(index, msg.bytes, msg.elapsedMs);
     } else if (msg.type === "upload-progress") {
-      // A session feed's refusal ends that session like any lane failure.
       if (msg.msg.type === "fatal") this.#error(index, msg.msg);
       else this.stage.receiver?.accept(msg.msg);
     } else if (msg.type === "auth-required")
@@ -321,14 +319,12 @@ export class ServerStage implements StageTransport {
   readonly #streams: Record<FlowDirection, number>;
   readonly #seed: string;
   readonly #abort = new AbortController();
-  /** One readiness budget from the start of preparation, however many steps a stage needs. */
   #budget = AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS);
   #lanes: Partial<Record<FlowDirection, LaneSet>> = {};
   receiver: UploadReceiver | null = null;
   #checkpoint: Promise<ReceiverCheckpoint | null> | null = null;
   #latency: LatencyChannel | null = null;
   #stalled = false;
-  /** The last retryable refusal was admission, so a lapsed budget means capacity. */
   busy = false;
   readinessChanged = () => {};
 

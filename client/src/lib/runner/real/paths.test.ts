@@ -585,7 +585,6 @@ test("Automatic falls back to a verified advertised path, while explicit HTTP1 r
   }
 });
 
-/** Runs a check on the fake clock until it settles, within a bounded span of fake time. */
 async function onFakeClock<T>(start: () => Promise<T>): Promise<T> {
   jest.useFakeTimers();
   try {
