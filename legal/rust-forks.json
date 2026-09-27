@@ -277,11 +277,11 @@
   {
     "fork": "https://github.com/zR-JB/h2",
     "branch": "graphite-meter/h2-v0.4.19",
-    "rev": "b3b4a42caaf168c121c3edd1981f59ccf9f264a3",
+    "rev": "ece53421ec31270ff843a783bcdf244bd6c5eef7",
     "upstream": "https://github.com/hyperium/h2",
     "baseTag": "v0.4.19",
     "base": "d57d1b852fec9dda6d42d3454502006d52104da8",
-    "diffSha256": "d917730b47e3b53f895a2708ff3fc13e89dcbc17c9694bfcf48393993d54b48c",
+    "diffSha256": "622d9b7aefe21afa198b65c5cced6b0ebc777dde1f2b36bffe351e0d48d792fc",
     "modifiedPackages": [
       "h2"
     ],
@@ -365,6 +365,26 @@
       {
         "subject": "Charge connection state and receive window to a shared budget",
         "purpose": "Charges header, event and queued metadata state against a per-connection allowance and funds connection receive-window growth from a SharedBudget; refusals stay stream-local.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Refuse requests the state allowance cannot hold as retryable",
+        "purpose": "Answers allowance refusals of request headers with RST_STREAM(REFUSED_STREAM) and no response, keeps HPACK in sync, keeps 431 for genuinely oversize lists and uses ENHANCE_YOUR_CALM for refused trailers.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Refund receive window credit when the connection ends",
+        "purpose": "Refunds charged receive credit on EOF, drop and connection error even while handlers hold stream handles.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Exempt empty final DATA from the send allowance",
+        "purpose": "Lets a response finish with an empty END_STREAM frame under allowance pressure.",
+        "origin": "graphite-meter"
+      },
+      {
+        "subject": "Restore is_released's doc comment",
+        "purpose": "Moves a misplaced doc comment back to its function.",
         "origin": "graphite-meter"
       }
     ],
