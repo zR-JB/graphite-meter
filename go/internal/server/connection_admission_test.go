@@ -284,4 +284,36 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 			}
 		}
 	})
+	// A request stream's first frame type stops HTTP/3's idle timer before any handler runs.
+	t.Run("h3 stalled headers", func(t *testing.T) {
+		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+		}, shape)
+		quicConfig := transport.NewQUICConfig()
+		quicConfig.KeepAlivePeriod = timeout / 4
+		conn, err := quic.DialAddr(t.Context(), cfg.Native.H3,
+			&tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}, //nolint:gosec // test certificate
+			quicConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.CloseWithError(0, "")
+		str, err := conn.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := str.Write([]byte{0x01}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-conn.Context().Done():
+		case <-time.After(released):
+			t.Fatal("a request stream stalled before its headers held its connection")
+		}
+		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
+			if time.Since(start) > released {
+				t.Fatal("a closed HTTP/3 connection held its slot")
+			}
+		}
+	})
 }
