@@ -12,7 +12,7 @@
     onHistoryChanged,
   } from "../history/repository";
   import { formatRecentCompletion } from "../history/format";
-  import { formatLatency, formatRate } from "../format";
+  import { formatLatency, formatRate, throughputUnitIndex } from "../format";
   import { stageStatusLabel } from "../presentation/vocabulary";
   import {
     historyMetrics,
@@ -68,9 +68,8 @@
   let loadGeneration = 0;
 
   const columns = $derived(store.historyColumns);
-  const ordered = $derived(
-    sortPreparedHistory(prepareHistorySort(records), sort, descending),
-  );
+  const prepared = $derived(prepareHistorySort(records));
+  const ordered = $derived(sortPreparedHistory(prepared, sort, descending));
   const selectedIndex = $derived(
     selectedId ? ordered.findIndex((record) => record.id === selectedId) : -1,
   );
@@ -211,6 +210,26 @@
   }
 
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
+  // One prefix per rate column, from its median, so a column reads in one unit.
+  const tiers = $derived.by(() => {
+    const tier = (column: "download" | "upload" | "bidirectional") => {
+      const values = prepared
+        .flatMap((entry) => entry.keys[column] ?? [])
+        .sort((a, b) => a - b);
+      return values.length
+        ? throughputUnitIndex(
+            values[values.length >> 1],
+            units.base,
+            units.kind,
+          )
+        : undefined;
+    };
+    return {
+      download: tier("download"),
+      upload: tier("upload"),
+      bidirectional: tier("bidirectional"),
+    };
+  });
 
   function metric(record: HistoryRecord, column: HistoryColumn): string {
     const { stages, bidirectional } = record.result;
@@ -220,7 +239,7 @@
       return value == null
         ? stageStatusLabel(stages.latency)
         : formatLatency(value);
-    if (value != null) return formatRate(value, units);
+    if (value != null) return formatRate(value, units, tiers[column]);
     if (column !== "bidirectional") return stageStatusLabel(stages[column]);
     const { survivingDirection } = bidirectionalResultPresentation(
       bidirectional?.down?.reportedBytesPerSec,
