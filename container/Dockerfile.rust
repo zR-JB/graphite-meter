@@ -31,7 +31,7 @@ ENV VERSION=$VERSION \
     GM_CLIENT_BUILD_PROFILE=prod \
     GM_CLIENT_ALLOW_DUMMY=0 \
     GM_CLIENT_REVISION=$GM_CLIENT_REVISION \
-    GM_LEGAL_SCAN_OUT=/src/browser-modules.json
+    GM_LEGAL_SCAN_OUT=/tmp/browser-modules.json
 WORKDIR /src/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
@@ -48,12 +48,12 @@ COPY --from=browser /src/client/ /src/client/
 # Bun's isolated linker resolves module source through its installation cache.
 # Keep the same paths so the legal scan reads the exact bundled packages.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
-COPY --from=browser /src/browser-modules.json /src/browser-modules.json
+COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
 RUN python3 -m scripts.legal.rust --package graphite-meter-server \
     --target x86_64-unknown-linux-gnu --profile release --out /src/rust/target/server-notices \
     --reviews legal/rust-reviewed-components.json \
     --supplement legal/rust-platform-debian-bookworm.json \
-    --browser-scan /src/browser-modules.json
+    --browser-scan /tmp/browser-modules.json
 RUN cp rust/target/x86_64-unknown-linux-gnu/release/graphite-meter-server /graphite-meter \
     && /graphite-meter --legal > /tmp/embedded-notices.txt \
     && cmp /tmp/embedded-notices.txt rust/target/server-notices/LEGAL.txt
