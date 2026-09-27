@@ -1,5 +1,9 @@
 //! Fuzz target bodies; `cargo test` replays every committed corpus input through them.
-use crate::{capsule, fields, frame, qpack, settings};
+use crate::{
+    Code, WtCode, capsule, fields, frame,
+    message::{Event, Message},
+    qpack, settings, varint,
+};
 use bytes::Bytes;
 
 /// Frames read in arbitrary chunks equal the frames read in one piece.
@@ -139,6 +143,127 @@ pub fn webtransport_ids(data: &[u8]) {
     }
 }
 
+/// A request stream read in arbitrary chunks agrees with a whole-input reference model.
+pub fn request_stream(data: &[u8]) {
+    let [limit, length, data @ ..] = data else {
+        return;
+    };
+    let limit = u64::from(*limit) * 4;
+    let length = (*length != 0xff).then_some(u64::from(*length));
+    let read = |chunk: &dyn Fn(usize) -> usize| {
+        let mut message = Message::new(limit);
+        let mut events = Vec::new();
+        let mut result = Ok(());
+        'chunks: for mut input in chunks(data, chunk) {
+            loop {
+                match message.next(&mut input) {
+                    Ok(Some(event)) => {
+                        if matches!(event, Event::Head(_)) {
+                            message.content_length(length);
+                        }
+                        push(&mut events, event);
+                    }
+                    Ok(None) => break,
+                    Err(code) => {
+                        result = Err(code);
+                        break 'chunks;
+                    }
+                }
+            }
+        }
+        let result = result.and_then(|()| message.finish());
+        (events, result)
+    };
+    let (model_events, model_result) = model(data, limit, length);
+    let whole = |_| data.len();
+    let split = |index: usize| (index * 7 + data.len()) % 11 + 1;
+    for chunking in [&whole as &dyn Fn(usize) -> usize, &split] {
+        let (events, result) = read(chunking);
+        assert_eq!(result, model_result);
+        // Data before an error depends on where chunks end; field sections do not.
+        let fields = |events: &[(u8, Vec<u8>)]| {
+            events
+                .iter()
+                .filter(|(tag, _)| *tag != b'd')
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        if result.is_ok() {
+            assert_eq!(events, model_events);
+        } else {
+            assert_eq!(fields(&events), fields(&model_events));
+        }
+    }
+}
+
+/// Events tagged `h`, `d` or `t`, with consecutive DATA merged.
+type Events = Vec<(u8, Vec<u8>)>;
+
+fn push(events: &mut Events, event: Event) {
+    let (tag, bytes) = match event {
+        Event::Head(bytes) => (b'h', bytes),
+        Event::Data(bytes) => (b'd', bytes),
+        Event::Trailers(bytes) => (b't', bytes),
+    };
+    match events.last_mut() {
+        Some((b'd', data)) if tag == b'd' => data.extend_from_slice(&bytes),
+        _ => events.push((tag, bytes.to_vec())),
+    }
+}
+
+/// RFC 9114 §4.1 over the whole stream at once, independent of the incremental reader.
+fn model(mut data: &[u8], limit: u64, length: Option<u64>) -> (Events, Result<(), Code>) {
+    let (mut events, mut phase, mut owed) = (Vec::new(), 0, None);
+    loop {
+        let Some((kind, a)) = varint::decode(data) else {
+            let end = match (data.is_empty(), phase, owed) {
+                (false, ..) => Err(Code::H3_FRAME_ERROR),
+                (true, 0, _) => Err(Code::H3_REQUEST_INCOMPLETE),
+                (true, _, Some(owed)) if owed > 0 => Err(Code::H3_MESSAGE_ERROR),
+                _ => Ok(()),
+            };
+            return (events, end);
+        };
+        let Some((length_field, b)) = varint::decode(&data[a..]) else {
+            return (events, Err(Code::H3_FRAME_ERROR));
+        };
+        data = &data[a + b..];
+        match (kind, phase) {
+            (0x01, 0 | 1) if length_field > limit => return (events, Err(Code::H3_EXCESSIVE_LOAD)),
+            (0x01, 0 | 1) | (0x00, 1) => {}
+            (0x41, 0) => return (events, Err(WtCode(0).to_http())),
+            (0x00..=0x09 | 0x0d, _) => return (events, Err(Code::H3_FRAME_UNEXPECTED)),
+            _ => {}
+        }
+        let payload = &data[..usize::try_from(length_field).map_or(data.len(), |length| length.min(data.len()))];
+        data = &data[payload.len()..];
+        if kind == 0x00 {
+            if let Some(remaining) = owed {
+                if payload.len() as u64 > remaining {
+                    return (events, Err(Code::H3_MESSAGE_ERROR));
+                }
+                owed = Some(remaining - payload.len() as u64);
+            }
+            push(&mut events, Event::Data(Bytes::copy_from_slice(payload)));
+        }
+        if (payload.len() as u64) < length_field {
+            return (events, Err(Code::H3_FRAME_ERROR));
+        }
+        if kind == 0x01 {
+            let section = Bytes::copy_from_slice(payload);
+            push(
+                &mut events,
+                if phase == 0 {
+                    Event::Head(section)
+                } else {
+                    Event::Trailers(section)
+                },
+            );
+            (phase, owed) = (phase + 1, if phase == 0 { length } else { owed });
+        }
+    }
+}
+
 /// Splits `data` into chunks whose lengths `chunk` picks by index; each at least one byte.
 fn chunks<'a>(data: &'a [u8], chunk: &'a dyn Fn(usize) -> usize) -> impl Iterator<Item = Bytes> + 'a {
     let mut rest = Bytes::copy_from_slice(data);
@@ -157,6 +282,7 @@ mod tests {
         replay("huffman", super::huffman);
         replay("capsule", super::capsules);
         replay("webtransport_ids", super::webtransport_ids);
+        replay("request_stream", super::request_stream);
     }
 
     fn replay(target: &str, body: fn(&[u8])) {

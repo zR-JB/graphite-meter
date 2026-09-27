@@ -583,6 +583,9 @@ version = "0.8.6"
 dependencies = [
  "bytes",
  "http",
+ "noq",
+ "rustls",
+ "tokio",
 ]
 
 [[package]]

@@ -14,16 +14,24 @@ const WT_ENABLED: u64 = 0x2c7cf000;
 const MAX_LENGTH: u64 = 8 * 1024;
 const MAX_IDS: usize = 64;
 
+/// The largest field section each role accepts: Go's server limit, and our client's.
+pub(crate) const SERVER_FIELD_SECTION: u64 = 4096;
+pub(crate) const CLIENT_FIELD_SECTION: u64 = 32 * 1024;
+
 /// Exactly the Go server's set: static-only QPACK and no WebTransport flow control.
 pub(crate) const SERVER: [(u64, u64); 6] = [
-    (MAX_FIELD_SECTION_SIZE, 4096),
+    (MAX_FIELD_SECTION_SIZE, SERVER_FIELD_SECTION),
     (ENABLE_CONNECT_PROTOCOL, 1),
     (H3_DATAGRAM, 1),
     (WT_ENABLE_DRAFT02, 1),
     (WT_ENABLED, 1),
     (WT_MAX_SESSIONS_DRAFT13, varint::MAX),
 ];
-pub(crate) const CLIENT: [(u64, u64); 3] = [(MAX_FIELD_SECTION_SIZE, 32 * 1024), (H3_DATAGRAM, 1), (WT_ENABLED, 1)];
+pub(crate) const CLIENT: [(u64, u64); 3] = [
+    (MAX_FIELD_SECTION_SIZE, CLIENT_FIELD_SECTION),
+    (H3_DATAGRAM, 1),
+    (WT_ENABLED, 1),
+];
 
 /// A control stream's first bytes: its stream type, then the SETTINGS frame.
 pub(crate) fn control_stream(settings: &[(u64, u64)]) -> Vec<u8> {

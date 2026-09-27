@@ -7,7 +7,7 @@ license = "AGPL-3.0-or-later"
 publish = false
 
 [dependencies]
-graphite-meter-http3 = { path = ".." }
+graphite-meter-http3 = { path = "..", default-features = false }
 libfuzzer-sys = "=0.4.13"
 
 [[bin]]
@@ -48,6 +48,13 @@ bench = false
 [[bin]]
 name = "webtransport_ids"
 path = "fuzz_targets/webtransport_ids.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "request_stream"
+path = "fuzz_targets/request_stream.rs"
 test = false
 doc = false
 bench = false
