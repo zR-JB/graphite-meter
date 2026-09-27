@@ -109,7 +109,7 @@ func testRunner(srv *httptest.Server) *runner {
 		cfg:           Config{BaseURL: srv.URL}.normalized(),
 		http:          srv.Client(),
 		target:        fetchTarget(srv.URL),
-		latencyTarget: new(testChannel("test-ws", srv.URL, false)),
+		latencyTarget: new(testChannel("test-ws", srv.URL)),
 		streams:       byDirection[int]{down: 1, up: 1},
 		emit:          func(Event) {},
 	}
@@ -130,10 +130,10 @@ func (r *runner) measureNow(ctx context.Context, underLoad bool, window time.Dur
 }
 
 func fetchTarget(origin string) *wire.ThroughputTarget {
-	return new(testTransfer(origin, origin, "http1", false))
+	return new(testTransfer(origin, origin, "http1"))
 }
 
-func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
+func testTransfer(id, origin, protocol string) wire.ThroughputTarget {
 	return wire.ThroughputTarget{
 		ID:        id,
 		Origin:    origin,
@@ -142,7 +142,7 @@ func testTransfer(id, origin, protocol string, tls bool) wire.ThroughputTarget {
 	}
 }
 
-func testChannel(id, origin string, tls bool) wire.LatencyTarget {
+func testChannel(id, origin string) wire.LatencyTarget {
 	return wire.LatencyTarget{
 		ID:        id,
 		Origin:    origin,
@@ -169,8 +169,8 @@ func mountDiscovery(mux *http.ServeMux) {
 			Generation:    "test",
 			Capabilities: wire.Capabilities{
 				UploadCheckpoint:  true,
-				ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1", false)},
-				LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin, false)},
+				ThroughputTargets: []wire.ThroughputTarget{testTransfer("http1-clear", origin, "http1")},
+				LatencyTargets:    []wire.LatencyTarget{testChannel("ws-http1-clear", origin)},
 			},
 		})
 	})
@@ -326,7 +326,7 @@ func pipedRunner(t *testing.T, handler http.Handler) *runner {
 		http:          client,
 		websocketHTTP: client,
 		target:        fetchTarget(origin),
-		latencyTarget: new(testChannel("test-ws", origin, false)),
+		latencyTarget: new(testChannel("test-ws", origin)),
 		streams:       byDirection[int]{down: 1, up: 1},
 		emit:          func(Event) {},
 	}

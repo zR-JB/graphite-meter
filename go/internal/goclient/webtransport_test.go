@@ -302,7 +302,7 @@ const wtUnreachableOrigin = "https://127.0.0.1:1"
 
 func TestPrepareReportsTheFetchRefusalWhenWebTransportIsUnreachable(t *testing.T) {
 	t.Parallel()
-	wt := testTransfer("wt", wtUnreachableOrigin, "http3", true)
+	wt := testTransfer("wt", wtUnreachableOrigin, "http3")
 	wt.Transport = wire.TransportWebTransport
 	srv := httptest.NewServer(ambiguousFetch(wt))
 	defer srv.Close()

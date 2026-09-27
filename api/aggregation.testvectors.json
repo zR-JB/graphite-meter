@@ -70,7 +70,8 @@
     "boundaries": [
       {"atMs": 0, "down": {"a": 0}, "up": {"a": {"id": "r1", "bytes": 0, "nanos": 1000000000}}},
       {"atMs": 1000, "down": {"a": 3000}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}},
-      {"atMs": 1100, "down": {"a": 3300}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
+      {"atMs": 1100, "final": true, "down": {"a": 3300},
+       "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000}}}
     ],
     "result": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000},
                "up": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}},
@@ -179,6 +180,121 @@
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "uploads add each receiver's rate over its own clock",
+    "stage": "upload",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 100, "nanos": 100000000},
+                                     "b": {"id": "s1", "bytes": 200, "nanos": 100000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1100, "nanos": 1100000000},
+                                        "b": {"id": "s1", "bytes": 6200, "nanos": 2100000000}}}
+    ],
+    "result": {"down": null, "up": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 4000}}
+    ]
+  },
+  {
+    "name": "a burst inside a short window cannot become the peak",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 250, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 1000, "b": 500}, "up": {}},
+      {"atMs": 750, "down": {"a": 1000, "b": 500}, "up": {}},
+      {"atMs": 1000, "down": {"a": 2000, "b": 1000}, "up": {}},
+      {"atMs": 1250, "down": {"a": 2000, "b": 1000}, "up": {}},
+      {"atMs": 1500, "down": {"a": 3000, "b": 1500}, "up": {}}
+    ],
+    "result": {"down": {"bytesPerSec": 3000, "peakBytesPerSec": 3000}, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1500, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a fast tail shorter than a peak window lifts the peak to the headline",
+    "stage": "download",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0}, "up": {}},
+      {"atMs": 500, "down": {"a": 500}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000}, "up": {}},
+      {"atMs": 1250, "down": {"a": 3000}, "up": {}}
+    ],
+    "result": {"down": {"bytesPerSec": 2400, "peakBytesPerSec": 2400}, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1250, "downBytesPerSec": 2400, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "servers moving in opposite directions share one combined peak",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}},
+      {"atMs": 2000, "down": {"a": 4000, "b": 4000}, "up": {}}
+    ],
+    "result": {"down": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a regressing receiver clock revokes the rate",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 3000000000}}},
+      {"atMs": 1500, "down": {}, "up": {"a": {"id": "r1", "bytes": 3000, "nanos": 1500000000}}}
+    ],
+    "result": {"down": null, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": false,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": null, "upBytesPerSec": 1000}},
+      {"reason": "evidence-resumed", "complete": true, "window": null}
+    ]
+  },
+  {
+    "name": "a receiver replaced at the same clock resumes evidence",
+    "stage": "upload",
+    "participants": ["a"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r2", "bytes": 5000, "nanos": 1000000000}}}
+    ],
+    "result": {"down": null, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": false, "window": null},
+      {"reason": "evidence-resumed", "complete": true, "window": null}
+    ]
+  },
+  {
+    "name": "a replaced receiver resumes evidence even beside a stale one",
+    "stage": "upload",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000},
+                                     "b": {"id": "s1", "bytes": 1000, "nanos": 1000000000}}},
+      {"atMs": 1000, "down": {}, "up": {"a": {"id": "r1", "bytes": 1000, "nanos": 1000000000},
+                                        "b": {"id": "s2", "bytes": 500, "nanos": 500000000}}},
+      {"atMs": 2000, "down": {}, "up": {"a": {"id": "r1", "bytes": 2000, "nanos": 2000000000},
+                                        "b": {"id": "s2", "bytes": 1500, "nanos": 1500000000}}}
+    ],
+    "result": {"down": null, "up": {"bytesPerSec": 2000, "peakBytesPerSec": 2000}},
+    "intervals": [
+      {"reason": "stage-start", "complete": false, "window": null},
+      {"reason": "evidence-resumed", "complete": true,
+       "window": {"startMs": 1000, "endMs": 2000, "downBytesPerSec": null, "upBytesPerSec": 2000}}
     ]
   }
 ]

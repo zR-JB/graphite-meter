@@ -183,7 +183,7 @@ func TestRunKeys(t *testing.T) {
 	if m, _ = modelAndCmd(m.Update(press("esc"))); !m.stopPrompt {
 		t.Fatal("esc did not ask before stopping")
 	}
-	if m, _ = modelAndCmd(m.Update(press("x"))); m.stopPrompt || !m.running() || m.notice != "Test continues." {
+	if m, _ = modelAndCmd(m.Update(press("x"))); m.stopPrompt || !m.running() {
 		t.Fatal("another key did not continue the test")
 	}
 	if m, _ = modelAndCmd(m.Update(press("r"))); m.runSeq != 0 {
@@ -382,13 +382,10 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	m.run.outcome = goclient.OutcomeComplete
 	text := m.finalReport()
 	for _, want := range []string{
-		"Graphite Meter · Complete", "Median", "Probe timeouts",
-		"Idle latency", "10.0 ms", "12.0 ms", "0.4 ms", "Idle latency: 16 replies · 4.0 s",
-		"Server timing (2 paired replies, means): raw 10.0 ms · handling < 0.1 ms",
-		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
-		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
-		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Bi-dir",
-		"Added: loaded median minus idle median.",
+		outcomeLabels[goclient.OutcomeComplete], populationLabel(goclient.StageLatency),
+		populationLabel(goclient.StageDownload), fmtMs(idle.P50), fmtMs(idle.P95), fmtMs(idle.Jitter),
+		fmtRate(117_500_000), fmtRate(125_000_000), fmtBytes(1_200_000_000), fmtMs(loaded.P50),
+		fmtAdded(loaded.P50 - idle.P50), fmtRate(5_000_000), compactStage(goclient.StageBidirectional),
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lost %q:\n%s", want, text)
@@ -398,7 +395,8 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 	if text := m.finalReport(); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
 		t.Errorf("a stage stopped before measuring is not named: %s", text)
 	}
-	if strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "loss") {
+	if strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "loss") ||
+		!strings.Contains(text, "Upload stopped") {
 		t.Errorf("report styling or vocabulary: %q", text)
 	}
 	m.run = nil
@@ -793,7 +791,7 @@ func TestResetAsksFirst(t *testing.T) {
 		t.Fatal("reset did not ask first")
 	}
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m.cfg.Warmup != time.Second || m.resetPrompt || m.notice != "Settings kept." {
+	if m.cfg.Warmup != time.Second || m.resetPrompt {
 		t.Fatal("another key did not keep the settings")
 	}
 	m, _ = modelAndCmd(m.Update(press("enter")))

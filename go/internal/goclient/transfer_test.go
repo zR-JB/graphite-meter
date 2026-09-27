@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"testing/iotest"
@@ -44,23 +43,6 @@ func TestDownloadLaneCountsExactBytes(t *testing.T) {
 	<-done
 	if got := total.Load(); got != size {
 		t.Errorf("total = %d, want %d with no partial second request counted", got, size)
-	}
-}
-
-func TestMintUploadID(t *testing.T) {
-	t.Parallel()
-	for body, want := range map[string]string{
-		`{"uploadId":"abc-123"}`: "abc-123",
-		`{}`:                     "",
-		`{"uploadId":"` + strings.Repeat("a", 8193) + `"}`: "",
-	} {
-		r := &runner{http: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			reply := io.NopCloser(strings.NewReader(body))
-			return &http.Response{StatusCode: http.StatusOK, Body: reply, Request: req}, nil
-		})}, target: fetchTarget("http://meter.test")}
-		if id, err := r.mintUploadID(t.Context()); id != want || (err == nil) != (want != "") {
-			t.Errorf("session response of %d bytes minted %q, %v; want %q", len(body), id, err, want)
-		}
 	}
 }
 

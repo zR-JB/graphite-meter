@@ -13,8 +13,8 @@ import (
 
 func ambiguousFetch(extra ...wire.ThroughputTarget) http.HandlerFunc {
 	targets := append([]wire.ThroughputTarget{
-		testTransfer("one", "http://one.example", "negotiated", false),
-		testTransfer("two", "http://two.example", "negotiated", false),
+		testTransfer("one", "http://one.example", "negotiated"),
+		testTransfer("two", "http://two.example", "negotiated"),
 	}, extra...)
 	return func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, wire.Preflight{
@@ -29,14 +29,14 @@ func TestTargetSelection(t *testing.T) {
 	type throughput = []wire.ThroughputTarget
 	type latency = []wire.LatencyTarget
 	fetch, wt, ws := wire.TransportFetchStream, wire.TransportWebTransport, wire.TransportWebSocket
-	h1 := testTransfer("h1", "http://meter:7246", "http1", false)
-	h2 := testTransfer("h2", "https://meter:7248", "http2", true)
-	edge := testTransfer("edge", "https://edge.example", "http2", true)
-	fetch3 := testTransfer("fetch3", "https://meter:7249", "http3", true)
-	wt3 := testTransfer("wt3", "https://meter:7249", "http3", true)
+	h1 := testTransfer("h1", "http://meter:7246", "http1")
+	h2 := testTransfer("h2", "https://meter:7248", "http2")
+	edge := testTransfer("edge", "https://edge.example", "http2")
+	fetch3 := testTransfer("fetch3", "https://meter:7249", "http3")
+	wt3 := testTransfer("wt3", "https://meter:7249", "http3")
 	wt3.Transport = wt
-	port443 := testTransfer("443", "https://meter.example:443", "http1", true)
-	port7248 := testTransfer("7248", "https://meter.example:7248", "http2", true)
+	port443 := testTransfer("443", "https://meter.example:443", "http1")
+	port7248 := testTransfer("7248", "https://meter.example:7248", "http2")
 	for _, c := range []struct {
 		name, base, target, transport, protocol string
 		targets                                 []wire.ThroughputTarget
@@ -63,10 +63,10 @@ func TestTargetSelection(t *testing.T) {
 		}
 	}
 
-	ws1 := testChannel("ws1", "http://meter:7246", false)
-	ws2 := testChannel("ws2", "https://meter:7247", true)
-	proxy := testChannel("proxy", "https://meter.example:443", true)
-	wtPing := testChannel("wtping", "https://meter:7249", true)
+	ws1 := testChannel("ws1", "http://meter:7246")
+	ws2 := testChannel("ws2", "https://meter:7247")
+	proxy := testChannel("proxy", "https://meter.example:443")
+	wtPing := testChannel("wtping", "https://meter:7249")
 	wtPing.Transport, wtPing.Protocol = wt, "http3"
 	for _, c := range []struct {
 		name, base, target, transport string
@@ -76,9 +76,9 @@ func TestTargetSelection(t *testing.T) {
 		{"ambiguous", "https://meter:7248", "auto", "auto", latency{ws1, ws2}, ""},
 		{"explicit origin", "https://meter:7248", "http://meter:7246", "auto", latency{ws1, ws2}, "ws1"},
 		{"later base origin", "https://meter.example", "auto", "auto",
-			latency{ws1, ws2, testChannel("self", "https://meter.example", true)}, "self"},
+			latency{ws1, ws2, testChannel("self", "https://meter.example")}, "self"},
 		{"default port", "https://meter.example", "auto", "auto",
-			latency{testChannel("clear", "http://meter.example:7246", false), proxy}, "proxy"},
+			latency{testChannel("clear", "http://meter.example:7246"), proxy}, "proxy"},
 		{"explicit default port", "http://discovery", "https://meter.example", "auto", latency{proxy}, "proxy"},
 		{"WebTransport first", "https://meter:7249", "auto", "auto", latency{ws2, wtPing}, "wtping"},
 		{"explicit WebSocket", "https://meter:7249", "auto", ws, latency{ws2, wtPing}, "ws2"},
@@ -144,7 +144,7 @@ func TestVerifyLatencyRequiresMatchingProbeReply(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			target := testChannel(server.URL, server.URL, false)
+			target := testChannel(server.URL, server.URL)
 			rtt, err := verifyLatency(t.Context(), credential{}, server.Client(), &target)
 			if (err == nil) != matching || matching && rtt <= 0 {
 				t.Fatalf("readiness = %v, %v; matching reply = %v", rtt, err, matching)
