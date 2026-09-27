@@ -305,7 +305,7 @@
     max-height: 220px;
     overflow-y: auto;
     padding: 3px;
-    border: 1px solid var(--border);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-inset);
   }

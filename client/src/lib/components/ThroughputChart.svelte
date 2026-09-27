@@ -482,8 +482,8 @@
     position: relative;
     flex: 1 1 auto;
     overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
   }

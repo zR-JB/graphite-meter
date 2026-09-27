@@ -183,13 +183,13 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    border-left: 1px solid var(--border);
+    border-left: var(--hairline) solid var(--border);
     background: var(--surface-1);
     color: var(--text);
   }
   .panel-layer > :global(dialog.panel.left) {
     border-left: 0;
-    border-right: 1px solid var(--border);
+    border-right: var(--hairline) solid var(--border);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;

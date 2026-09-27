@@ -183,17 +183,20 @@
 
   --r-well: 6px;
   --r-chrome: 8px;
+  --r-surface: 12px;
   --r-pill: 12px;
   --r-full: 999px;
+  /* One device pixel on dense screens; field edges stay 1px for their 3:1 floor. */
+  --hairline: 1px;
 
-  /* 10px is the legibility floor for any text. */
+  /* 10px is the legibility floor for any text; only headings scale with the viewport. */
   --type-2xs: 10px;
   --type-xs: 11px;
   --type-sm: 12px;
   --type-body: 13px;
   --type-md: 14px;
-  --type-lg: 17px;
-  --type-xl: 22px;
+  --type-lg: clamp(16px, 15px + 0.2vw, 18px);
+  --type-xl: clamp(20px, 17px + 0.5vw, 26px);
   --w-normal: 450;
   --w-strong: 600;
   --w-heavy: 700;
@@ -217,86 +220,149 @@
      - go/internal/auth/assets/auth.css: the token subset the server-rendered auth
        pages need. A Go test pins its colours, --focus-ring and
        --edge-highlight against this file. */
-  --canvas: light-dark(#f0f2f3, #131518);
-  --bg: light-dark(#f5f6f7, #17191c);
-  --surface-1: light-dark(#ffffff, #1c1f23);
-  --surface-2: light-dark(#f0f3f4, #23262b);
-  --surface-inset: light-dark(#f3f5f6, #16191d);
+  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.18 0.009 255));
+  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.222 0.011 255));
+  --surface-2: light-dark(oklch(0.972 0.004 255), oklch(0.255 0.012 255));
+  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.172 0.009 255));
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
-  --border-subtle: light-dark(rgb(43 44 40 / 0.08), rgb(211 219 227 / 0.07));
-  --border: light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.11));
-  --border-strong: light-dark(rgb(43 44 40 / 0.22), rgb(211 219 227 / 0.2));
+  --border-subtle: light-dark(
+    oklch(0.3 0.02 255 / 0.08),
+    oklch(0.92 0.02 255 / 0.07)
+  );
+  --border: light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
+  --border-strong: light-dark(
+    oklch(0.3 0.02 255 / 0.24),
+    oklch(0.92 0.02 255 / 0.2)
+  );
 
-  --text: light-dark(#26272a, #d9dce0);
-  --text-muted: light-dark(#454a4d, #9ba2aa);
-  --text-soft: light-dark(#505559, #8b929a);
-  --text-inverse: light-dark(#ffffff, #111315);
+  --text: light-dark(oklch(0.255 0.012 255), oklch(0.925 0.007 255));
+  --text-muted: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
+  --text-soft: light-dark(oklch(0.48 0.014 255), oklch(0.7 0.014 255));
+  --text-inverse: light-dark(oklch(1 0 0), oklch(0.18 0.009 255));
 
-  --brand: light-dark(#2f717a, #6db0b8);
-  --brand-strong: light-dark(#235257, #93cdd4);
-  --brand-soft: light-dark(rgb(47 113 122 / 0.12), rgb(109 176 184 / 0.14));
+  /* Hues sit inside sRGB here; the P3 block below only raises their chroma. */
+  --brand: light-dark(oklch(0.52 0.088 205), oklch(0.78 0.115 205));
+  --brand-strong: light-dark(oklch(0.42 0.07 205), oklch(0.87 0.085 205));
+  --brand-soft: color-mix(in oklab, var(--brand) 14%, transparent);
 
-  --signal: light-dark(#4b6076, #8ba3ba);
-  --signal-soft: light-dark(rgb(75 96 118 / 0.12), rgb(139 163 186 / 0.14));
+  --signal: light-dark(oklch(0.5 0.12 262), oklch(0.75 0.105 262));
+  --signal-soft: color-mix(in oklab, var(--signal) 14%, transparent);
 
-  --phase-warmup: light-dark(#70767d, #858c94);
-  --phase-latency: light-dark(#4b6076, #8ba3ba);
-  --phase-download: light-dark(#2f717a, #6db0b8);
-  --phase-upload: light-dark(#8f6425, #bda36c);
-  --phase-bidirectional: light-dark(#6d5e94, #a695c8);
-  --phase-complete: light-dark(#445f79, #7590a5);
+  --phase-warmup: light-dark(oklch(0.52 0.012 255), oklch(0.66 0.012 255));
+  --phase-latency: var(--signal);
+  --phase-download: var(--brand);
+  --phase-upload: light-dark(oklch(0.54 0.125 55), oklch(0.8 0.125 62));
+  --phase-bidirectional: light-dark(oklch(0.5 0.15 302), oklch(0.74 0.13 302));
+  --phase-complete: var(--brand);
   /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
   --latency-loaded: var(--text);
 
-  --ok: light-dark(#285443, #79ad91);
-  --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
-  --warn: light-dark(#6f5426, #c4a568);
-  --warn-soft: light-dark(rgb(111 84 38 / 0.13), rgb(196 165 104 / 0.14));
-  --err: light-dark(#a04a4a, #d89393);
-  --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
+  --ok: light-dark(oklch(0.5 0.11 155), oklch(0.78 0.12 155));
+  --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
+  --warn: light-dark(oklch(0.53 0.105 85), oklch(0.85 0.12 92));
+  --warn-soft: color-mix(in oklab, var(--warn) 14%, transparent);
+  --err: light-dark(oklch(0.52 0.16 25), oklch(0.72 0.14 22));
+  --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
-  --grid-line: light-dark(rgb(43 44 40 / 0.06), rgb(211 219 227 / 0.05));
-  --brand-line: color-mix(in srgb, var(--brand) 48%, var(--border));
-  --err-line: color-mix(in srgb, var(--err) 45%, var(--border));
-  --scrim: color-mix(in srgb, var(--canvas) 60%, transparent);
+  --grid-line: light-dark(
+    oklch(0.3 0.02 255 / 0.07),
+    oklch(0.92 0.02 255 / 0.06)
+  );
+  --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
+  --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
+  --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);
   /* The edge that identifies a field, track or switch: at least 3:1 on every surface. */
-  --field-edge: color-mix(in srgb, var(--text-soft) 70%, transparent);
+  --field-edge: color-mix(in oklab, var(--text-soft) 70%, transparent);
   /* Pointer over a selectable tile or row; translucent so it reads on any surface. */
-  --hover-wash: color-mix(in srgb, var(--text) 6%, transparent);
-  --group-fill: light-dark(rgb(43 44 40 / 0.04), rgb(211 219 227 / 0.045));
+  --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
 
-  /* Elevation. The ink is the shadow hue; depths differ per theme because a
-     dark canvas needs a much denser shadow to read at all. */
-  --shade: light-dark(rgb(43 44 40), rgb(5 7 9));
-  --edge-light: light-dark(rgb(255 255 255 / 0.36), rgb(211 219 227 / 0.04));
-  /* Lit top edge of a brand-gradient surface. Theme-neutral: that gradient is
-     dark enough to carry white in both palettes. */
+  /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
+     needs a denser shadow to read at all. The grain is a cached tile. */
+  --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
+  --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.06));
   --edge-highlight: rgb(255 255 255 / 0.22);
-  --elev-tile: inset 0 1px 0 var(--edge-light);
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --bg:
+    var(--grain),
+    radial-gradient(
+      120% 70% at 50% 0%,
+      light-dark(oklch(1 0 0 / 0.55), oklch(0.8 0.04 225 / 0.05)),
+      transparent 70%
+    ),
+    var(--canvas);
+  --glass: color-mix(in oklab, var(--surface-2) 74%, transparent);
+  --glass-blur: blur(20px) saturate(1.6);
+
+  --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
   --elev-recess: inset 0 1px 2px
-    light-dark(rgb(43 44 40 / 0.024), rgb(5 7 9 / 0.056));
+    color-mix(in oklab, var(--shade) 6%, transparent);
   --elev-inset:
-    inset 0 1px 2px light-dark(rgb(43 44 40 / 0.048), rgb(5 7 9 / 0.112)),
-    inset 0 6px 14px light-dark(rgb(43 44 40 / 0.027), rgb(5 7 9 / 0.063));
+    inset 0 1px 2px color-mix(in oklab, var(--shade) 11%, transparent),
+    inset 0 6px 14px color-mix(in oklab, var(--shade) 6%, transparent);
   --elev-raised:
-    0 1px 0 var(--edge-light),
-    0 4px 14px light-dark(rgb(43 44 40 / 0.06), rgb(5 7 9 / 0.28));
-  --elev-tooltip: 0 4px 12px color-mix(in srgb, var(--shade) 18%, transparent);
-  --elev-float: 0 18px 60px light-dark(rgb(43 44 40 / 0.16), rgb(4 6 8 / 0.55));
+    var(--elev-tile),
+    0 1px 2px
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.35)),
+    0 8px 24px -12px
+      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.05 0.01 255 / 0.6));
+  --elev-tooltip:
+    0 1px 3px
+      light-dark(oklch(0.25 0.02 255 / 0.08), oklch(0.05 0.01 255 / 0.3)),
+    0 10px 28px -8px
+      light-dark(oklch(0.25 0.02 255 / 0.22), oklch(0.05 0.01 255 / 0.6));
+  --elev-float:
+    var(--elev-tile),
+    0 2px 6px
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.3)),
+    0 28px 64px -16px
+      light-dark(oklch(0.25 0.02 255 / 0.24), oklch(0.03 0.01 255 / 0.7));
 
   /* Solid brand clears the 3:1 non-text contrast floor on light surfaces, where
      a translucent ring does not. */
   --focus-ring: 2px solid var(--brand);
   --ring-halo: 0 0 0 3px var(--brand-soft);
 }
+@media (color-gamut: p3) {
+  :root {
+    --brand: light-dark(oklch(0.52 0.11 205), oklch(0.78 0.144 205));
+    --brand-strong: light-dark(oklch(0.42 0.088 205), oklch(0.87 0.106 205));
+    --signal: light-dark(oklch(0.5 0.15 262), oklch(0.75 0.131 262));
+    --phase-upload: light-dark(oklch(0.54 0.143 55), oklch(0.8 0.156 62));
+    --phase-bidirectional: light-dark(
+      oklch(0.5 0.188 302),
+      oklch(0.74 0.163 302)
+    );
+    --ok: light-dark(oklch(0.5 0.138 155), oklch(0.78 0.15 155));
+    --warn: light-dark(oklch(0.53 0.118 85), oklch(0.85 0.15 92));
+    --err: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.175 22));
+  }
+}
+@media (min-resolution: 2dppx) {
+  :root {
+    --hairline: 0.5px;
+  }
+}
+@media (prefers-contrast: more) {
+  :root {
+    --border-subtle: var(--border-strong);
+    --text-soft: var(--text-muted);
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --glass: var(--surface-2);
+    --glass-blur: none;
+  }
+}
 
 [data-tone],
 .notice,
 .badge,
 .status-dot {
-  --tone-line: color-mix(in srgb, var(--tone) 34%, var(--border));
-  --tone-wash: color-mix(in srgb, var(--tone) 12%, transparent);
+  --tone-line: color-mix(in oklab, var(--tone) 38%, var(--border));
+  --tone-wash: color-mix(in oklab, var(--tone) 14%, transparent);
+  --tone-ink: color-mix(in oklab, var(--tone) 80%, var(--text));
 }
 [data-tone="warmup"] {
   --tone: var(--phase-warmup);
@@ -464,7 +530,7 @@
     min-height: 36px;
     padding: 7px 9px;
     border: 1px solid var(--field-edge);
-    border-radius: var(--r-well);
+    border-radius: var(--r-chrome);
     background: var(--surface-1);
     color: var(--text);
     font: var(--type-sm) var(--font-sans);
@@ -483,7 +549,7 @@
     min-width: 16px;
     height: 16px;
     padding: 0 4px;
-    border: 1px solid var(--border);
+    border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-well);
     background: var(--surface-2);
     box-shadow: var(--elev-tile);
@@ -491,7 +557,7 @@
     font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
   }
   ::selection {
-    background: color-mix(in srgb, var(--brand) 32%, transparent);
+    background: color-mix(in oklab, var(--brand) 32%, transparent);
   }
 }
 
@@ -536,7 +602,7 @@
     border-radius: calc(var(--r-chrome) + var(--hit-pad));
     background: var(--surface-2) padding-box;
     box-shadow:
-      inset 0 0 0 1px var(--btn-line),
+      inset 0 0 0 var(--hairline) var(--btn-line),
       var(--elev-tile);
     color: var(--text-muted);
     font: var(--w-strong) var(--type-xs) / 1.2 var(--font-sans);
@@ -579,7 +645,7 @@
   .btn-danger {
     --btn-line: var(--err-line);
     background: transparent;
-    box-shadow: inset 0 0 0 1px var(--btn-line);
+    box-shadow: inset 0 0 0 var(--hairline) var(--btn-line);
   }
   @media (hover: hover) {
     .btn-danger:hover:not(:disabled) {
@@ -620,8 +686,7 @@
     padding: 2px 7px;
     border-radius: var(--r-full);
     background: var(--tone-wash);
-    /* Small caps on a tinted wash need more than the bare tone to read at 4.5:1. */
-    color: color-mix(in srgb, var(--tone) 78%, var(--text));
+    color: var(--tone-ink);
     font: var(--w-heavy) var(--type-2xs) / 1.3 var(--font-mono);
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
@@ -644,8 +709,8 @@
     align-items: flex-start;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--tone-line);
-    border-radius: var(--r-well);
+    border: var(--hairline) solid var(--tone-line);
+    border-radius: var(--r-chrome);
     background: var(--tone-wash);
     color: var(--text);
     font-size: var(--type-xs);
@@ -656,26 +721,27 @@
   }
 
   .surface {
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
     background: var(--surface-1);
-    box-shadow: var(--elev-tile);
+    box-shadow: var(--elev-raised);
   }
   .surface-inset {
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
     background: var(--sheen), var(--surface-inset);
     box-shadow: var(--elev-recess);
   }
   .well {
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--r-surface);
     background: var(--surface-inset);
     box-shadow: var(--elev-inset);
   }
   .surface-head {
-    border-bottom: 1px solid var(--border-subtle);
-    background: var(--surface-1);
+    border-bottom: var(--hairline) solid var(--border-strong);
+    background: var(--sheen), var(--surface-1);
+    box-shadow: var(--elev-tile);
   }
 
   .tone-icon {
@@ -684,6 +750,7 @@
     place-items: center;
     width: 22px;
     height: 22px;
+    border: var(--hairline) solid var(--tone-line, var(--border));
     border-radius: var(--r-well);
     background: var(--tone-wash, var(--surface-2));
     color: var(--tone, var(--text-soft));
@@ -693,12 +760,14 @@
     height: var(--icon-sm);
   }
 
-  /* A grouped list: one size for labels and values; tone and weight tell them apart. */
+  /* A grouped list is an engraved well ruled by hairlines; tone and weight tell label from value. */
   .kv {
     display: grid;
-    padding: var(--space-1) var(--space-3);
+    padding-inline: var(--space-3);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--group-fill);
+    background: var(--surface-inset);
+    box-shadow: var(--elev-recess);
     font-size: var(--type-body);
     line-height: 1.4;
   }
@@ -706,9 +775,12 @@
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 2px 10px;
+    gap: 2px 12px;
     min-width: 0;
-    padding-block: 5px;
+    padding-block: 6px;
+  }
+  .kv > div + div {
+    border-top: var(--hairline) solid var(--border-subtle);
   }
   .kv dt {
     flex: 0 0 var(--kv-label);
@@ -755,7 +827,7 @@
     min-width: 0;
     min-height: 30px;
     overflow: hidden;
-    border-radius: var(--r-well);
+    border-radius: calc(var(--r-chrome) - 3px);
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) / 1.2 var(--font-sans);
     text-overflow: ellipsis;
@@ -816,8 +888,8 @@
     width: 44px;
     height: 44px;
     margin-bottom: var(--space-1);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--r-chrome);
+    border: var(--hairline) solid var(--border-strong);
+    border-radius: var(--r-surface);
     background: var(--surface-inset);
     box-shadow: var(--elev-recess);
     color: var(--tone, var(--brand));
@@ -828,20 +900,30 @@
     height: 20px;
   }
 
+  .float,
+  .tooltip,
+  .inspect-card {
+    background: var(--glass);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
   .float {
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-1);
+    border: var(--hairline) solid var(--border-strong);
+    border-radius: var(--r-surface);
     color: var(--text);
     box-shadow: var(--elev-float);
+  }
+  /* A dialog holds reading text over a scrim, so it stays opaque. */
+  dialog.float {
+    background: var(--surface-1);
+    backdrop-filter: none;
   }
 
   .tooltip,
   .inspect-card {
     padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-strong);
+    border: var(--hairline) solid var(--border-strong);
     border-radius: var(--r-chrome);
-    background: var(--surface-2);
     color: var(--text);
     box-shadow: var(--elev-tooltip);
     font: var(--w-normal) var(--type-sm) / 1.4 var(--font-sans);
@@ -909,7 +991,7 @@
     width: 100%;
     min-height: 40px;
     padding: var(--space-1) var(--space-2);
-    border-radius: var(--r-well);
+    border-radius: var(--r-chrome);
     color: var(--text-muted);
     font-size: var(--type-sm);
     text-align: start;

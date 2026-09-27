@@ -131,11 +131,12 @@ function isChartLabelPhase(phase: Phase): phase is ChartLabelPhase {
     phase === "bidirectional"
   );
 }
+type AreaFade = [wash: string, clear: string];
 interface ThemeColors {
   download: string;
-  downloadRgb: { r: number; g: number; b: number };
+  downloadFade: AreaFade;
   upload: string;
-  uploadRgb: { r: number; g: number; b: number };
+  uploadFade: AreaFade;
   bidirectional: string;
   signal: string;
   latencyLoaded: string;
@@ -143,17 +144,6 @@ interface ThemeColors {
   grid: string;
   textSoft: string;
   brand: string;
-}
-// Computed style resolves colours to rgb()/rgba(); fallbacks are six-digit hex.
-function toRgb(color: string): { r: number; g: number; b: number } {
-  if (color.startsWith("#")) {
-    const n = parseInt(color.slice(1, 7), 16);
-    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-  }
-  const [r = 136, g = 136, b = 136] = (color.match(/[\d.]+/g) ?? []).map(
-    Number,
-  );
-  return { r, g, b };
 }
 function fillCircle(
   ctx: CanvasRenderingContext2D,
@@ -247,17 +237,17 @@ export class ChartEngine {
   #latencyGlyphStartedAt = new WeakMap<LatencyBucket, number>();
   #latencyGlyphActive = false;
   #colors: ThemeColors = {
-    download: "#6db0b8",
-    downloadRgb: { r: 109, g: 176, b: 184 },
-    upload: "#bda36c",
-    uploadRgb: { r: 189, g: 163, b: 108 },
-    bidirectional: "#a695c8",
-    signal: "#8ba3ba",
-    latencyLoaded: "#d9dce0",
-    err: "#d89393",
-    grid: "rgba(211,219,227,0.05)",
-    textSoft: "#8b929a",
-    brand: "#6db0b8",
+    download: "#46ccda",
+    downloadFade: ["rgb(70 204 218 / 0.22)", "rgb(70 204 218 / 0)"],
+    upload: "#f7ab64",
+    uploadFade: ["rgb(247 171 100 / 0.22)", "rgb(247 171 100 / 0)"],
+    bidirectional: "#ba96ef",
+    signal: "#88aef4",
+    latencyLoaded: "#e3e6eb",
+    err: "#ef7e7c",
+    grid: "rgb(229 233 240 / 0.06)",
+    textSoft: "#999fa7",
+    brand: "#46ccda",
   };
   /** onPresentation runs when labels or scales change; onTimeScale on every camera frame. */
   constructor(
@@ -291,9 +281,10 @@ export class ChartEngine {
   }
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
-    this.#ctx = canvas.getContext("2d");
+    // P3 buffers keep wide-gamut phase hues; sRGB colours convert exactly.
+    this.#ctx = canvas.getContext("2d", { colorSpace: "display-p3" });
     this.#scene = document.createElement("canvas");
-    this.#sceneCtx = this.#scene.getContext("2d");
+    this.#sceneCtx = this.#scene.getContext("2d", { colorSpace: "display-p3" });
     canvas.addEventListener("contextrestored", this.#restoreSurface);
     this.#scene.addEventListener("contextrestored", this.#restoreSurface);
     this.invalidateTheme();
@@ -423,24 +414,29 @@ export class ChartEngine {
     // Palette tokens are light-dark() pairs; the canvas's computed colour resolves the active scheme.
     const probe = this.#canvas?.style ? this.#canvas : null;
     const cs = probe && getComputedStyle(probe);
-    const g = (v: string, fb: string) => {
-      probe?.style.setProperty("color", `var(${v})`);
-      return cs?.color || fb;
+    const fb = this.#colors;
+    const g = (color: string, fallback: string) => {
+      probe?.style.setProperty("color", color);
+      return cs?.color || fallback;
     };
-    const download = g("--phase-download", "#6db0b8");
-    const upload = g("--phase-upload", "#bda36c");
+    const token = (name: string, fallback: string) =>
+      g(`var(${name})`, fallback);
+    const fade = (name: string, [wash, clear]: AreaFade): AreaFade => [
+      g(`oklch(from var(${name}) l c h / 0.22)`, wash),
+      g(`oklch(from var(${name}) l c h / 0)`, clear),
+    ];
     this.#colors = {
-      download,
-      downloadRgb: toRgb(download),
-      upload,
-      uploadRgb: toRgb(upload),
-      bidirectional: g("--phase-bidirectional", "#a695c8"),
-      signal: g("--signal", "#8ba3ba"),
-      latencyLoaded: g("--latency-loaded", "#d9dce0"),
-      err: g("--err", "#d89393"),
-      grid: g("--grid-line", "rgba(211,219,227,0.05)"),
-      textSoft: g("--text-soft", "#8b929a"),
-      brand: g("--brand", "#6db0b8"),
+      download: token("--phase-download", fb.download),
+      downloadFade: fade("--phase-download", fb.downloadFade),
+      upload: token("--phase-upload", fb.upload),
+      uploadFade: fade("--phase-upload", fb.uploadFade),
+      bidirectional: token("--phase-bidirectional", fb.bidirectional),
+      signal: token("--signal", fb.signal),
+      latencyLoaded: token("--latency-loaded", fb.latencyLoaded),
+      err: token("--err", fb.err),
+      grid: token("--grid-line", fb.grid),
+      textSoft: token("--text-soft", fb.textSoft),
+      brand: token("--brand", fb.brand),
     };
     probe?.style.removeProperty("color");
     this.#gradH = -1;
@@ -451,18 +447,14 @@ export class ChartEngine {
   ): CanvasGradient {
     if (this.#gradH !== this.#h) {
       const bot = this.#layout.plot.bottom;
-      const make = (rgb: {
-        r: number;
-        g: number;
-        b: number;
-      }): CanvasGradient => {
+      const make = ([wash, clear]: AreaFade): CanvasGradient => {
         const grad = ctx.createLinearGradient(0, this.#layout.plot.top, 0, bot);
-        grad.addColorStop(0, `rgba(${rgb.r},${rgb.g},${rgb.b},0.22)`);
-        grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
+        grad.addColorStop(0, wash);
+        grad.addColorStop(1, clear);
         return grad;
       };
-      this.#gradDownload = make(this.#colors.downloadRgb);
-      this.#gradUpload = make(this.#colors.uploadRgb);
+      this.#gradDownload = make(this.#colors.downloadFade);
+      this.#gradUpload = make(this.#colors.uploadFade);
       this.#gradH = this.#h;
     }
     return phase === "download" ? this.#gradDownload! : this.#gradUpload!;
