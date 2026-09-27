@@ -74,9 +74,9 @@ const entry = ({ id, name, url }: Server) => ({ id, name, url });
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
     const input = [
-      ...document.querySelectorAll<HTMLInputElement>(".duration-fields input"),
+      ...document.querySelectorAll<HTMLInputElement>("input[type=number]"),
     ].find((field) =>
-      field.closest("label")?.textContent?.startsWith("Download"),
+      field.closest("label")?.textContent?.trim().startsWith("Download"),
     )!;
     input.value = String(value);
     input.dispatchEvent(new Event("change", { bubbles: true }));
