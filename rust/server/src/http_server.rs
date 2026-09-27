@@ -422,14 +422,8 @@ impl HttpServer {
                         .headers_mut()
                         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
                 }
-                if let Some(operation) = &response.body().operation {
-                    if head {
-                        operation.lock().expect("operation poisoned").body_complete = true;
-                    }
-                    let mut pending = operations.lock().expect("connection operations poisoned");
-                    if !pending.iter().any(|entry| Arc::ptr_eq(entry, operation)) {
-                        pending.push(operation.clone());
-                    }
+                if head && let Some(operation) = &response.body().operation {
+                    operation.lock().expect("operation poisoned").body_complete = true;
                 }
                 *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = if response.status()
                     == StatusCode::SWITCHING_PROTOCOLS
@@ -610,7 +604,7 @@ impl HttpServer {
                 // A successful logout deliberately revokes the current lease;
                 // its cookie-clearing response must still reach the browser.
                 if !(logout && response.status().is_redirection()) {
-                    self.retain_auth(&mut response, lease, operations);
+                    self.retain_operation(&mut response, lease, operations);
                 }
                 return Ok(response);
             }
@@ -693,15 +687,20 @@ impl HttpServer {
             .get("x-graphite-upload-refusal")
             .is_none_or(|code| code != "revoked")
         {
-            self.retain_auth(&mut response, lease, operations);
+            self.retain_operation(&mut response, lease, operations);
         }
         Ok(response)
     }
 
-    fn retain_auth(&self, response: &mut Response<ResponseBody>, lease: Option<AuthLease>, operations: &Operations) {
+    fn retain_operation(
+        &self,
+        response: &mut Response<ResponseBody>,
+        lease: Option<AuthLease>,
+        operations: &Operations,
+    ) {
         if let Some(lease) = lease {
             let complete = response.body().is_end_stream();
-            let operation = response
+            response
                 .body_mut()
                 .operation
                 .get_or_insert_with(|| {
@@ -713,14 +712,42 @@ impl HttpServer {
                         revoked: false,
                     }))
                 })
-                .clone();
-            operation.lock().expect("operation poisoned").revocation =
-                Some(Box::pin(async move { lease.ended().await }));
+                .lock()
+                .expect("operation poisoned")
+                .revocation = Some(Box::pin(async move { lease.ended().await }));
+        }
+        if let Some(operation) = &response.body().operation {
             let mut operations = operations.lock().expect("operations poisoned");
-            if !operations.iter().any(|entry| Arc::ptr_eq(entry, &operation)) {
-                operations.push(operation);
+            if !operations.iter().any(|entry| Arc::ptr_eq(entry, operation)) {
+                operations.push(operation.clone());
             }
         }
+    }
+
+    /// Bounds a multiplexed request by its operations and counts it as admitted work once it holds a permit.
+    async fn guard(
+        &self,
+        operations: &Operations,
+        work: &AdmittedWork,
+        exchange: impl Future<Output = io::Result<()>>,
+    ) -> io::Result<()> {
+        let mut exchange = std::pin::pin!(exchange);
+        let mut admitted = None;
+        let guarded = std::future::poll_fn(|cx| {
+            check_operations(operations, cx)?;
+            let result = exchange.as_mut().poll(cx);
+            if result.is_pending() {
+                // Dispatch may install a lease in this poll; register its wake before flow control blocks.
+                check_operations(operations, cx)?;
+            }
+            if admitted.is_none() && holds_permit(operations) {
+                admitted = Some(work.admit());
+            }
+            result
+        });
+        tokio::time::timeout(self.config.max_operation_duration, guarded)
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
     }
 
     fn auth_refusal<B>(
@@ -1044,10 +1071,7 @@ impl<T> DeadlineIo<T> {
                 return Err(io::ErrorKind::TimedOut.into());
             }
         }
-        for operation in self.operations.lock().expect("connection operations poisoned").iter() {
-            operation.lock().expect("operation poisoned").check(cx)?;
-        }
-        Ok(())
+        check_operations(&self.operations, cx)
     }
 
     fn flushed(&self, cx: &mut Context<'_>) {
@@ -1130,6 +1154,53 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     let mut receiver = stopping.subscribe();
     if !*receiver.borrow_and_update() {
         let _ = receiver.changed().await;
+    }
+}
+
+fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
+    for operation in operations.lock().expect("operations poisoned").iter() {
+        operation.lock().expect("operation poisoned").check(cx)?;
+    }
+    Ok(())
+}
+
+/// Admitted operations on one connection; leftover receive credit is reclaimed 15 seconds after the last.
+#[derive(Clone)]
+struct AdmittedWork(Arc<Mutex<WorkState>>);
+
+struct WorkState {
+    running: usize,
+    idle_since: tokio::time::Instant,
+}
+
+impl AdmittedWork {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new(WorkState {
+            running: 0,
+            idle_since: tokio::time::Instant::now(),
+        })))
+    }
+
+    fn admit(&self) -> Admitted {
+        self.0.lock().expect("admitted work poisoned").running += 1;
+        Admitted(self.clone())
+    }
+
+    fn idle_since(&self) -> Option<tokio::time::Instant> {
+        let work = self.0.lock().expect("admitted work poisoned");
+        (work.running == 0).then_some(work.idle_since)
+    }
+}
+
+struct Admitted(AdmittedWork);
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        let mut work = self.0.0.lock().expect("admitted work poisoned");
+        work.running -= 1;
+        if work.running == 0 {
+            work.idle_since = tokio::time::Instant::now();
+        }
     }
 }
 

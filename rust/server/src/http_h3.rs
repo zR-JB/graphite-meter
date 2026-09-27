@@ -49,13 +49,14 @@ impl HttpServer {
             finished: false,
         };
         let operations: Operations = Arc::new(Mutex::new(Vec::new()));
+        let work = credit.work().clone();
         let exchange = async {
             let body = RequestBody {
                 stream: receive,
                 finished: false,
                 credit,
                 operations: operations.clone(),
-                admitted: None,
+                funded: false,
             };
             let response = if connect {
                 // CONNECT belongs to the session dispatcher. A mistaken call
@@ -79,28 +80,8 @@ impl HttpServer {
             };
             send.response(response, head, active_responses).await
         };
-        let mut exchange = std::pin::pin!(exchange);
-        let guarded = std::future::poll_fn(|cx| {
-            check_operations(&operations, cx)?;
-            let result = exchange.as_mut().poll(cx);
-            if result.is_pending() {
-                // Dispatch may install a lease in this poll. Register its wake
-                // even when QUIC flow control blocks the first response write.
-                check_operations(&operations, cx)?;
-            }
-            result
-        });
-        tokio::time::timeout(self.config.max_operation_duration, guarded)
-            .await
-            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
+        self.guard(&operations, &work, exchange).await
     }
-}
-
-fn check_operations(operations: &Operations, cx: &mut Context<'_>) -> io::Result<()> {
-    for operation in operations.lock().expect("operations poisoned").iter() {
-        operation.lock().expect("operation poisoned").check(cx)?;
-    }
-    Ok(())
 }
 
 struct RequestBody {
@@ -108,7 +89,7 @@ struct RequestBody {
     finished: bool,
     credit: super::http_quic::ReceiveCredit,
     operations: Operations,
-    admitted: Option<super::http_quic::Admitted>,
+    funded: bool,
 }
 
 impl Body for RequestBody {
@@ -119,8 +100,8 @@ impl Body for RequestBody {
         if self.finished {
             return Poll::Ready(None);
         }
-        if self.admitted.is_none() {
-            self.admitted = self.credit.fund(&self.operations);
+        if !self.funded {
+            self.funded = holds_permit(&self.operations) && self.credit.fund();
         }
         let result = match ready!(self.stream.poll_recv_data(cx)) {
             Ok(Some(mut data)) => Some(Ok(Frame::data(data.copy_to_bytes(data.remaining())))),

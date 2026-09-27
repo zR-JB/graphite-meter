@@ -43,21 +43,32 @@ impl HttpServer {
             memory: self.memory.clone(),
             uploads: AtomicUsize::new(0),
             granted: AtomicBool::new(false),
+            work: AdmittedWork::new(),
         });
+        let mut last_idle = None;
         let mut stale: Option<Pin<Box<Sleep>>> = None;
         let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
+        let mut shutting_down = false;
         std::future::poll_fn(|cx| {
             while let Poll::Ready(Some(())) = Pin::new(&mut streams).poll_next(cx) {}
-            if window.uploads.load(Ordering::Relaxed) > 0 {
-                stale = None;
-            } else if window.granted.swap(false, Ordering::Relaxed) {
-                stale = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
+            let idle_since = window.work.idle_since();
+            if idle_since != last_idle {
+                last_idle = idle_since;
+                let granted = window.granted.load(Ordering::Relaxed);
+                stale = idle_since
+                    .filter(|_| granted)
+                    .map(|since| Box::pin(tokio::time::sleep_until(since + IDLE_TIMEOUT)));
+                if let (Some(since), Some(deadline)) = (idle_since, closing.as_mut())
+                    && !shutting_down
+                {
+                    deadline.as_mut().reset(since + SHUTDOWN_GRACE);
+                }
             }
-            // Control requests must not keep an upload's leftover credit alive.
             let expired = stale.as_mut().is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
-            if closing.is_none() && (expired || stopping.as_mut().poll(cx).is_ready()) {
+            shutting_down = shutting_down || stopping.as_mut().poll(cx).is_ready();
+            if closing.is_none() && (expired || shutting_down) {
                 connection.graceful_shutdown();
                 closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
             }
@@ -79,7 +90,12 @@ impl HttpServer {
                 Poll::Ready(Some(Err(_)) | None) => Poll::Ready(()),
                 Poll::Pending => {
                     if let Some(deadline) = &mut closing {
-                        return deadline.as_mut().poll(cx);
+                        // Admitted work that raced the GOAWAY runs on, then gets the grace to drain.
+                        return if idle_since.is_some() || shutting_down {
+                            deadline.as_mut().poll(cx)
+                        } else {
+                            Poll::Pending
+                        };
                     }
                     // Transport state includes queued END_STREAM frames even
                     // after the endpoint future completes. Neither active work
@@ -109,49 +125,19 @@ impl HttpServer {
         window: Arc<UploadWindow>,
     ) {
         let head = request.method() == Method::HEAD;
-        // This registry belongs only to this stream. Upload can register its
-        // permit before body reception, without placing a timer on shared IO.
         let operations = Arc::new(Mutex::new(Vec::new()));
-        let result = {
-            let exchange = async {
-                let request = request.map(|stream| H2Body {
-                    stream,
-                    operations: operations.clone(),
-                    window,
-                    funded: false,
-                });
-                let response = self.respond_incoming(request, facts, &operations, None).await?;
-                send_response(&mut reply, response, head).await
-            };
-            let mut exchange = std::pin::pin!(exchange);
-            let guarded = std::future::poll_fn(|cx| {
-                let check = || {
-                    for operation in operations.lock().expect("operations poisoned").iter() {
-                        operation.lock().expect("operation poisoned").check(cx)?;
-                    }
-                    Ok::<_, io::Error>(())
-                };
-                let mut check = check;
-                if let Err(error) = check() {
-                    return Poll::Ready(Err(error));
-                }
-                let result = exchange.as_mut().poll(cx);
-                // Dispatch can install its lease during this poll. Register its
-                // revocation wake even if flow control blocks before another poll.
-                if result.is_pending() {
-                    for operation in operations.lock().expect("operations poisoned").iter() {
-                        if let Err(error) = operation.lock().expect("operation poisoned").check(cx) {
-                            return Poll::Ready(Err(error));
-                        }
-                    }
-                }
-                result
+        let work = window.work.clone();
+        let exchange = async {
+            let request = request.map(|stream| H2Body {
+                stream,
+                operations: operations.clone(),
+                window,
+                funded: false,
             });
-            tokio::time::timeout(self.config.max_operation_duration, guarded)
-                .await
-                .unwrap_or_else(|_| Err(io::ErrorKind::TimedOut.into()))
+            let response = self.respond_incoming(request, facts, &operations, None).await?;
+            send_response(&mut reply, response, head).await
         };
-        if result.is_err() {
+        if self.guard(&operations, &work, exchange).await.is_err() {
             // Reset only this stream, including when peer flow control stopped
             // body polling. Healthy siblings retain their shared connection.
             reply.send_reset(Reason::CANCEL);
@@ -226,6 +212,7 @@ struct UploadWindow {
     memory: Arc<http_quic::MemoryBudget>,
     uploads: AtomicUsize,
     granted: AtomicBool,
+    work: AdmittedWork,
 }
 
 struct H2Body {

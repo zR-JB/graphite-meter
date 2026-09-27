@@ -81,9 +81,7 @@ async fn exercise() -> Result<(), TestError> {
     let mut stalled = sender.send_request(request("GET", "/download?bytes=10000000")).await?;
     stalled.finish().await?;
     assert_eq!(stalled.recv_response().await?.status(), 200);
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_millis(350)).await;
-    tokio::time::resume();
+    advance(Duration::from_millis(350)).await;
     loop {
         match stalled.recv_data().await {
             Ok(Some(_)) => continue,
@@ -177,8 +175,15 @@ async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(
     Ok(())
 }
 
+async fn advance(duration: Duration) {
+    tokio::time::pause();
+    tokio::time::advance(duration).await;
+    tokio::task::yield_now().await;
+    tokio::time::resume();
+}
+
 #[tokio::test]
-async fn probes_do_not_keep_admitted_works_leftover_credit_alive() -> Result<(), TestError> {
+async fn admitted_work_keeps_leftover_credit_and_probes_do_not() -> Result<(), TestError> {
     let (mut sender, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
     let session = body(&mut sender, http::Method::POST, "/upload/session", b"").await?;
     let session: serde_json::Value = serde_json::from_slice(&session)?;
@@ -190,15 +195,25 @@ async fn probes_do_not_keep_admitted_works_leftover_credit_alive() -> Result<(),
     upload.finish().await?;
     assert_eq!(upload.recv_response().await?.status(), http::StatusCode::OK);
     while upload.recv_data().await?.is_some() {}
+    advance(Duration::from_secs(10)).await;
+    let bytes = 8 * 1024 * 1024;
+    let request = Request::get(format!("https://localhost/download?bytes={bytes}")).body(())?;
+    let mut download = sender.send_request(request).await?;
+    download.finish().await?;
+    assert_eq!(download.recv_response().await?.status(), http::StatusCode::OK);
     for _ in 0..2 {
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(7)).await;
-        tokio::time::resume();
+        advance(Duration::from_secs(6)).await;
+    }
+    let mut received = 0;
+    while let Some(data) = download.recv_data().await? {
+        received += data.remaining();
+    }
+    assert_eq!(received, bytes, "leftover credit cut an admitted download");
+    for _ in 0..2 {
+        advance(Duration::from_secs(7)).await;
         body(&mut sender, http::Method::GET, "/probe", b"").await?;
     }
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(2)).await;
-    tokio::time::resume();
+    advance(Duration::from_secs(2)).await;
     tokio::time::timeout(Duration::from_secs(2), driving)
         .await
         .expect("probes kept the post-upload connection alive")?;

@@ -403,7 +403,7 @@ async fn next_frame(peer: &mut Peer) -> std::io::Result<(u8, u8, u32, Vec<u8>)> 
     Ok((head[3], head[4], stream, payload))
 }
 
-async fn exchange(peer: &mut Peer, id: u32, method: u8, path: &str, body: &[u8]) -> Vec<u8> {
+async fn open_stream(peer: &mut Peer, id: u32, method: u8, path: &str, body: &[u8]) {
     let mut head = vec![method, 0x87, 0x04, path.len() as u8];
     head.extend(path.as_bytes());
     head.extend(b"\x01\x09localhost");
@@ -411,21 +411,44 @@ async fn exchange(peer: &mut Peer, id: u32, method: u8, path: &str, body: &[u8])
     if !body.is_empty() {
         frame(peer, 0, 1, id, body).await;
     }
+}
+
+async fn read_data(peer: &mut Peer, id: u32, limit: usize) -> Vec<u8> {
     let mut data = Vec::new();
-    loop {
-        let (kind, flags, stream, payload) = next_frame(peer).await.unwrap();
+    while data.len() < limit {
+        let (kind, flags, stream, payload) = next_frame(peer).await.expect("response cut");
         assert_ne!((kind, stream), (3, id), "request reset");
         if stream == id && kind == 0 {
             data.extend(payload);
         }
         if stream == id && flags & 1 == 1 {
-            return data;
+            break;
         }
     }
+    data
+}
+
+async fn exchange(peer: &mut Peer, id: u32, method: u8, path: &str, body: &[u8]) -> Vec<u8> {
+    open_stream(peer, id, method, path, body).await;
+    read_data(peer, id, usize::MAX).await
+}
+
+const DOWNLOAD_BYTES: usize = 1024 * 1024;
+
+async fn held_download(peer: &mut Peer, id: u32, steps: usize) -> usize {
+    open_stream(peer, id, 0x82, &format!("/download?bytes={DOWNLOAD_BYTES}"), b"").await;
+    let received = read_data(peer, id, 1).await.len();
+    for _ in 0..steps {
+        advance_clock(Duration::from_secs(6)).await;
+    }
+    for stream in [0, id] {
+        frame(peer, 8, 0, stream, &(DOWNLOAD_BYTES as u32).to_be_bytes()).await;
+    }
+    received + read_data(peer, id, usize::MAX).await.len()
 }
 
 #[tokio::test]
-async fn unacknowledged_shutdown_does_not_keep_an_uploads_leftover_credit_alive() {
+async fn admitted_work_keeps_leftover_credit_and_unacknowledged_shutdown_does_not() {
     let harness = Harness::start(Duration::from_secs(30)).await;
     let socket = TcpStream::connect(harness.address).await.unwrap();
     let mut peer = connect(&harness.connector, socket).await;
@@ -439,21 +462,29 @@ async fn unacknowledged_shutdown_does_not_keep_an_uploads_leftover_credit_alive(
         serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
         3
     );
-    for id in [5, 7] {
+    advance_clock(Duration::from_secs(10)).await;
+    let download = held_download(&mut peer, 5, 2).await;
+    assert_eq!(download, DOWNLOAD_BYTES, "leftover credit cut an admitted download");
+    for id in [7, 9] {
         advance_clock(Duration::from_secs(7)).await;
         exchange(&mut peer, id, 0x82, "/probe", b"").await;
     }
     advance_clock(Duration::from_secs(2)).await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !matches!(next_frame(&mut peer).await.unwrap(), (6, 0, ..)) {}
+    })
+    .await
+    .expect("the server never sent its shutdown PING");
+    let download = held_download(&mut peer, 11, 1).await;
+    assert_eq!(
+        download, DOWNLOAD_BYTES,
+        "the shutdown grace cut a download racing its GOAWAY"
+    );
     advance_clock(Duration::from_secs(5)).await;
-    let pinged = tokio::time::timeout(Duration::from_secs(2), async {
-        let mut pinged = false;
-        while let Ok((kind, flags, ..)) = next_frame(&mut peer).await {
-            pinged |= kind == 6 && flags == 0;
-        }
-        pinged
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while next_frame(&mut peer).await.is_ok() {}
     })
     .await
     .expect("an unacknowledged shutdown kept the upload's credit alive");
-    assert!(pinged, "the server never sent its shutdown PING");
     harness.close().await;
 }
