@@ -360,6 +360,16 @@ cd go && go build -trimpath -o graphite-meter-client \
   -ldflags="-s -w -X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" ./cmd/graphite-meter-client
 '''
 
+[tasks.tui]
+shell = "bash -e -o pipefail -c"
+description = "Run the native TUI; arguments after -- go to the client (e.g. -- -server http://host:7246)"
+raw = true
+run = '''
+version=$(scripts/build-version.sh)
+cd go && go run -ldflags="-X github.com/zR-JB/graphite-meter/go/internal/goclient.Version=$version" \
+  ./cmd/graphite-meter-client "$@"
+'''
+
 [tasks.dev]
 description = "Build the development client and run the embedded server"
 raw = true

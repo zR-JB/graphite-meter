@@ -17,6 +17,7 @@ git clone https://github.com/zR-JB/graphite-meter.git
 cd graphite-meter
 mise run setup      # locked tools and dependencies, the Git hook, then `mise run doctor`
 mise run dev        # development build on http://localhost:7246
+mise run tui        # native TUI against it; add `-- -server <url>` for another server
 ```
 
 mise trusts the project configuration automatically; in paranoid mode run
