@@ -539,12 +539,12 @@ func TestMultiServerRunViews(t *testing.T) {
 		t.Fatalf("failure notice = %q, want the server's name and reason", m.notice)
 	}
 	m.run.outcome = goclient.OutcomeComplete
-	if screen := view(m); !strings.Contains(screen, "Latency to A") || !strings.Contains(screen, "10.0 ms") {
+	if screen := view(m); !strings.Contains(screen, "latency to A") || !strings.Contains(screen, "10.0 ms") {
 		t.Fatalf("focus A: %q", screen)
 	}
 	m, _ = modelAndCmd(m.Update(press("l")))
 	if screen := view(m); m.run.latencyServer() != "b" ||
-		!strings.Contains(screen, "Latency to B") ||
+		!strings.Contains(screen, "latency to B") ||
 		!strings.Contains(screen, "90.0 ms") {
 		t.Fatalf("focus did not move to B")
 	}

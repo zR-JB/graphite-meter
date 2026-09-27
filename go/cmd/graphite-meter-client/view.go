@@ -370,12 +370,15 @@ func (m model) signInLink(w int) string {
 func (m model) runView(w, h int) string {
 	results := ""
 	if !m.run.live() {
-		results = m.resultsView(w - 4).view()
+		results = m.resultsView(w-4, "Latency").view()
 	}
 	if results == "" {
 		return m.stageView(w, h)
 	}
 	title := "Results"
+	if m.multipleRunServers() {
+		title += " · latency to " + m.serverName(m.run.latencyServer())
+	}
 	bottom := m.st.panel(title, results, w, 0)
 	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
 		fields := strings.Join(m.testFields(w-1-rw-4), "\n")
@@ -647,7 +650,7 @@ func (r *runState) failureReason(stage goclient.Stage, err error) goclient.Failu
 	return goclient.ReasonOf(err)
 }
 
-func (m model) resultsView(w int) results {
+func (m model) resultsView(w int, latencyHeading string) results {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
@@ -716,15 +719,15 @@ func (m model) resultsView(w int) results {
 	if out.added {
 		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
-	combined, latencyHeader := "", "Latency"
+	combined := ""
 	if m.multipleRunServers() {
-		combined, latencyHeader = "Combined", "Latency to "+m.serverName(r.latencyServer())
+		combined = "Combined"
 	}
 	if len(throughput) > 0 {
 		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
-		headers := []string{latencyHeader, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
+		headers := []string{latencyHeading, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
 		for i, row := range latencyRows {
 			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
 			if !out.added {
@@ -748,7 +751,11 @@ func (m model) finalReport() string {
 	m.run = &run
 	w, _ := m.size()
 	blocks := []string{m.reportHeader()}
-	if results := m.resultsView(w); results.view() != "" {
+	heading := "Latency"
+	if m.multipleRunServers() {
+		heading += " to " + m.serverName(m.run.latencyServer())
+	}
+	if results := m.resultsView(w, heading); results.view() != "" {
 		blocks = append(blocks, m.throughputReport(w), results.latency, strings.Join(results.failures, "\n"),
 			m.reportNotes(w, results.added))
 	}

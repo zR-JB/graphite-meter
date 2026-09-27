@@ -265,7 +265,7 @@ func (m model) detailsView(w int, full bool) string {
 		populations = append(populations, compactPopulation(stage.Name))
 	}
 	lines := []string{m.st.heading.Render(m.outcomeNotice())}
-	if notes := m.resultsView(w).notes; full && len(notes) > 0 {
+	if notes := m.resultsView(w, "Latency").notes; full && len(notes) > 0 {
 		lines = append(append(lines, notes...), "")
 	}
 	lines = append(lines, m.st.grid(headers, rows, w), "",
