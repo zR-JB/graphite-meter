@@ -13,9 +13,7 @@ pub struct Distribution {
     pub min: u64,
     pub max: u64,
     pub mean: u64,
-    pub p10: u64,
     pub p50: u64,
-    pub p90: u64,
     pub p95: u64,
 }
 
@@ -24,7 +22,6 @@ pub struct ReflectorTiming {
     pub count: usize,
     pub mean_raw_rtt: u64,
     pub mean_handling: u64,
-    pub mean_adjusted_rtt: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -124,7 +121,6 @@ impl LatencyAccumulator {
                 count: self.timing_count,
                 mean_raw_rtt: (self.timing_raw_sum / count) as u64,
                 mean_handling: (self.handling_sum / count) as u64,
-                mean_adjusted_rtt: ((self.timing_raw_sum - self.handling_sum) / count) as u64,
             });
         }
         if !sorted.is_empty() {
@@ -141,9 +137,7 @@ impl LatencyAccumulator {
                 min: sorted[0],
                 max: sorted[sorted.len() - 1],
                 mean: (self.rtt_sum / sorted.len() as u128) as u64,
-                p10: nearest_rank(&sorted, 10),
                 p50,
-                p90: nearest_rank(&sorted, 90),
                 p95: nearest_rank(&sorted, 95),
             });
         }

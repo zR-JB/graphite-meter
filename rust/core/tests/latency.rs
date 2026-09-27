@@ -32,7 +32,6 @@ fn reflector_diagnostic_never_changes_raw_reply_population() {
             count: 2,
             mean_raw_rtt: 15 * MS as u64,
             mean_handling: MS as u64,
-            mean_adjusted_rtt: 14 * MS as u64,
         })
     );
     snapshot.reflector_timing = None;
