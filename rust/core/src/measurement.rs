@@ -395,12 +395,14 @@ impl AggregateMeasurements {
         result
     }
 
-    pub fn server_result(&self, id: &str, direction: Direction) -> MeasurementResult {
-        let total = self
-            .servers
+    pub fn bytes(&self, id: &str, direction: Direction) -> u64 {
+        self.servers
             .get(id)
-            .map_or(0, |server| server.bytes[direction as usize]);
-        let mut result = MeasurementResult::unavailable(direction, total);
+            .map_or(0, |server| server.bytes[direction as usize])
+    }
+
+    pub fn server_result(&self, id: &str, direction: Direction) -> MeasurementResult {
+        let mut result = MeasurementResult::unavailable(direction, self.bytes(id, direction));
         for interval in self.stage_intervals() {
             let Some(window) = interval.window.as_ref().filter(|_| interval.complete) else {
                 continue;

@@ -148,10 +148,16 @@ impl Upload {
             let query = [("id", owner.id.as_str())];
             let session = tokio::select! {
                 biased;
-                () = cancelled(&mut cancel) => return Err("WebTransport upload cancelled during setup".into()),
-                session = owner.transport.webtransport_slot(Route::WtUpload, &query) => session?,
+                () = cancelled(&mut cancel) => Err("WebTransport upload cancelled during setup".into()),
+                session = owner.transport.webtransport_slot(Route::WtUpload, &query) => session,
             };
-            owner.session = Some(Arc::new(session));
+            match session {
+                Ok(session) => owner.session = Some(Arc::new(session)),
+                Err(error) => {
+                    let _ = owner.finish(false).await;
+                    return Err(error);
+                }
+            }
         }
         {
             let transport = owner.control.clone();

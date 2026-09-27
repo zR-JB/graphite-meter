@@ -1,67 +1,112 @@
-//! One stage owns its transfers, latency tasks, accounting and cleanup.
+//! One stage owns its members' transfers and latency sessions, their accounting and their cleanup.
 use super::{PreparedServer, lane_plan};
 use crate::{
     Error,
     config::Config,
     download::Download,
+    failure::MeasurementFailure,
     latency::Observation,
-    model::{Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage, StageResult},
+    model::{
+        FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
+        StageResult,
+    },
     stream_plan::StageLanePlan,
     transport::{TRANSFER_PROGRESS_TIMEOUT, Transport},
     upload::Upload,
 };
 use futures_util::{
     FutureExt, StreamExt,
+    future::BoxFuture,
     stream::{BoxStream, FuturesUnordered, SelectAll},
 };
 use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    failure::FailureReason,
     latency::LatencyAccumulator,
     measurement::{
-        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction, FINAL_CHECKPOINT_BUDGET,
-        SAMPLE_INTERVAL, Stage as TransferStage,
+        AggregateMeasurements, AggregateWindow, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction,
+        FINAL_CHECKPOINT_BUDGET, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
-use std::{
-    collections::{BTreeMap, HashSet},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{
     sync::{mpsc, watch},
     task::JoinSet,
     time::{Instant, MissedTickBehavior},
 };
 
-#[derive(Clone, Copy)]
+const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum BoundaryKind {
     Initial,
     Sample,
     Final,
 }
 
-struct Transfer {
-    id: String,
+#[derive(Default)]
+struct Lanes {
     down: Option<Download>,
     up: Option<Upload>,
-    checkpoint_misses: u8,
 }
 
-struct StageResources {
-    transfers: Vec<Transfer>,
-    latency: JoinSet<LatencyCompletion>,
-    latency_completed: BTreeMap<String, Instant>,
-    stop: watch::Sender<bool>,
-    stop_latency: BTreeMap<String, watch::Sender<bool>>,
-    retired: JoinSet<Result<(), Error>>,
-    failed: Vec<String>,
-    latency_failed: bool,
+impl Lanes {
+    async fn close(self, confirm: bool) -> Result<(), Error> {
+        if let Some(down) = self.down {
+            down.stop().await;
+        }
+        if let Some(up) = self.up {
+            up.finish(confirm).await?;
+        }
+        Ok(())
+    }
 }
 
-struct LatencyCompletion {
+/// A selected server in this stage; it leaves only through `StageRun::fail`.
+struct Member {
     id: String,
-    at: Instant,
-    result: Result<(), Error>,
+    stop: watch::Sender<bool>,
+    latency: Option<watch::Sender<bool>>,
+    starting: bool,
+    dialled: bool,
+    latency_failed: bool,
+    lanes: Lanes,
+    checkpoint_misses: u8,
+    moved: [Instant; 2],
+}
+
+impl Member {
+    fn dialling(&self) -> bool {
+        self.latency.is_some() && !self.dialled && !self.latency_failed
+    }
+
+    fn stop_latency(&self) {
+        if let Some(stop) = &self.latency {
+            stop.send_replace(true);
+        }
+    }
+
+    fn health(&mut self) -> Result<(), Error> {
+        if let Some(down) = &mut self.lanes.down {
+            down.health()?;
+        }
+        if let Some(up) = &self.lanes.up {
+            up.health()?;
+        }
+        Ok(())
+    }
+
+    /// A refused grant leaves at once; three missed checkpoints in a row leave, except at the final boundary.
+    fn missed(&mut self, error: Option<Error>, final_boundary: bool) -> Option<Error> {
+        let Some(error) = error else {
+            self.checkpoint_misses = 0;
+            return None;
+        };
+        self.checkpoint_misses += 1;
+        (crate::net::authentication_required(error.as_ref()).is_some()
+            || self.checkpoint_misses >= 3 && !final_boundary)
+            .then_some(error)
+    }
 }
 
 #[derive(Debug)]
@@ -93,409 +138,39 @@ impl std::error::Error for AllParticipantsFailed {
     }
 }
 
-#[derive(Debug)]
-struct LatencyFailure {
+struct LatencyCompletion {
     id: String,
-    source: Error,
-}
-impl std::fmt::Display for LatencyFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{} latency unavailable: {}", self.id, self.source)
-    }
-}
-impl std::error::Error for LatencyFailure {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
-    }
+    at: Instant,
+    stopped: bool,
+    result: Result<(), Error>,
 }
 
-fn latency_task_result(id: &str, result: Result<(), Error>, stop_requested: bool) -> Result<(), Error> {
-    let source = match result {
-        Ok(()) if stop_requested => return Ok(()),
-        Ok(()) => "latency session ended before stage boundary".into(),
-        Err(error) => error,
-    };
-    Err(LatencyFailure {
-        id: id.to_owned(),
-        source,
-    }
-    .into())
+#[derive(Default)]
+struct HostLatency {
+    accumulator: LatencyAccumulator,
+    latest: Option<f64>,
+    ended_at: Option<Instant>,
 }
 
-impl Transfer {
-    async fn close(self, confirm: bool) -> Result<(), Error> {
-        if let Some(down) = self.down {
-            down.stop().await;
-        }
-        if let Some(up) = self.up {
-            up.finish(confirm).await?;
-        }
-        Ok(())
-    }
-}
+type Start<'a> = BoxFuture<'a, (String, Result<Lanes, Error>)>;
 
-impl StageResources {
-    fn preparation_failure(&mut self, id: &str, error: &Error, snapshots: &watch::Sender<Snapshot>) {
-        self.failed.push(id.to_owned());
-        self.stop_host_latency(id);
-        snapshots.send_modify(|snapshot| {
-            if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
-                server.error = Some(error.to_string());
-            }
-            if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
-                latency.error = Some("throughput participant unavailable".into());
-                latency.latest_ms = None;
-            }
-            snapshot.failure(id, crate::model::FailureScope::Throughput, error);
-            snapshot.status = format!("{id} unavailable; preparing remaining servers");
-        });
-    }
-
-    fn stop_all_latency(&self) {
-        for stop in self.stop_latency.values() {
-            stop.send_replace(true);
-        }
-    }
-
-    fn stop_host_latency(&self, id: &str) {
-        if let Some(stop) = self.stop_latency.get(id) {
-            stop.send_replace(true);
-        }
-    }
-
-    async fn close_transfers(&mut self, confirm: bool) -> Result<(), Error> {
-        self.stop.send_replace(true);
-        let finalizers = self.transfers.drain(..).map(|transfer| transfer.close(confirm));
-        let results = futures_util::future::join_all(finalizers).await;
-        results.into_iter().find(Result::is_err).unwrap_or(Ok(()))
-    }
-
-    async fn close(mut self) -> Result<(), Error> {
-        self.stop_all_latency();
-        let mut failure = self.close_transfers(true).await.err();
-        while let Some(result) = self.latency.join_next().await {
-            if let Err(error) = self.latency_result(result) {
-                failure.get_or_insert(error);
-            }
-        }
-        // Retired participants already have a recorded failure. Reap their
-        // bounded cleanup without turning a survivor result into another failure.
-        while self.retired.join_next().await.is_some() {}
-        failure.map_or(Ok(()), Err)
-    }
-
-    fn health(&mut self) -> Result<(), Error> {
-        for transfer in &mut self.transfers {
-            if let Some(down) = &mut transfer.down {
-                down.health().map_err(|source| ParticipantFailure {
-                    id: transfer.id.clone(),
-                    source,
-                })?;
-            }
-            if let Some(up) = &mut transfer.up {
-                up.health().map_err(|source| ParticipantFailure {
-                    id: transfer.id.clone(),
-                    source,
-                })?;
-            }
-        }
-        while let Some(result) = self.latency.try_join_next() {
-            self.latency_result(result)?;
-        }
-        Ok(())
-    }
-
-    fn latency_result(&mut self, completed: Result<LatencyCompletion, tokio::task::JoinError>) -> Result<(), Error> {
-        let completed = completed?;
-        self.latency_completed.insert(completed.id, completed.at);
-        completed.result
-    }
-
-    fn record_latency_failure(
-        &mut self,
-        failure: &LatencyFailure,
-        snapshots: &watch::Sender<Snapshot>,
-        latency_stage: bool,
-    ) {
-        use graphite_meter_core::failure::FailureReason;
-        self.latency_failed = true;
-        self.stop_host_latency(&failure.id);
-        let another_remains = latency_stage && self.transfers.len() > 1;
-        let mut leaves = false;
-        snapshots.send_modify(|snapshot| {
-            if let Some(latency) = snapshot
-                .server_latencies
-                .iter_mut()
-                .find(|latency| latency.id == failure.id)
-            {
-                latency.error = Some(failure.source.to_string());
-                latency.latest_ms = None;
-            }
-            let reason = snapshot.failure(&failure.id, crate::model::FailureScope::Latency, &failure.source);
-            leaves = another_remains && matches!(reason, Some(FailureReason::ConnectionLost | FailureReason::Timeout));
-            if leaves && let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == failure.id) {
-                server.error = Some(failure.source.to_string());
-            }
-            snapshot.status = format!("{failure}; other measurements continue");
-        });
-        if leaves {
-            self.transfers.retain(|transfer| transfer.id != failure.id);
-            self.failed.push(failure.id.clone());
-        }
-    }
-
-    fn latency_completion(
-        &mut self,
-        completed: Result<LatencyCompletion, tokio::task::JoinError>,
-        snapshots: &watch::Sender<Snapshot>,
-        latency_stage: bool,
-    ) -> Result<(), Error> {
-        match self.latency_result(completed) {
-            Err(error) if error.is::<LatencyFailure>() => {
-                let failure = error.downcast::<LatencyFailure>()?;
-                self.record_latency_failure(&failure, snapshots, latency_stage);
-                Ok(())
-            }
-            result => result,
-        }
-    }
-
-    fn recover(
-        &mut self,
-        error: Error,
-        accounting: &mut AggregateMeasurements,
-        stage: Option<TransferStage>,
-        measuring: bool,
-        epoch: Instant,
-        snapshots: &watch::Sender<Snapshot>,
-    ) -> Result<(), Error> {
-        if error.is::<LatencyFailure>() {
-            let failure = error.downcast::<LatencyFailure>()?;
-            self.record_latency_failure(&failure, snapshots, stage.is_none());
-            return Ok(());
-        }
-        let failure = error.downcast::<ParticipantFailure>()?;
-        let Some(index) = self.transfers.iter().position(|transfer| transfer.id == failure.id) else {
-            return Err(failure);
-        };
-        let transfer = self.transfers.remove(index);
-        snapshots.send_modify(|snapshot| {
-            if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == failure.id) {
-                server.error = Some(failure.source.to_string());
-            }
-            snapshot.failure(&failure.id, crate::model::FailureScope::Throughput, &failure.source);
-            snapshot.status = format!("{} unavailable; continuing with remaining servers", failure.id);
-        });
-        self.stop_host_latency(&failure.id);
-        snapshots.send_modify(|snapshot| {
-            if let Some(latency) = snapshot
-                .server_latencies
-                .iter_mut()
-                .find(|latency| latency.id == failure.id)
-            {
-                latency.error = Some("throughput participant disconnected".into());
-                latency.latest_ms = None;
-            }
-        });
-        self.failed.push(failure.id.clone());
-        self.retired.spawn(transfer.close(false));
-        if measuring {
-            let survivors: Vec<_> = self.transfers.iter().map(|transfer| transfer.id.clone()).collect();
-            accounting.dropout(&survivors, nanos(epoch.elapsed()));
-        }
-        if self.transfers.is_empty() {
-            return Err(AllParticipantsFailed(*failure).into());
-        }
-        Ok(())
-    }
-
-    fn local_boundary(&self, epoch: Instant) -> Boundary {
-        let mut boundary = Boundary {
-            at_nanos: nanos(epoch.elapsed()),
-            ..Boundary::default()
-        };
-        for transfer in &self.transfers {
-            if let Some(down) = &transfer.down {
-                boundary.down.insert(transfer.id.clone(), down.bytes());
-            }
-            if let Some(up) = &transfer.up
-                && let Some(observed) = up.observed()
-            {
-                boundary.observed_up.insert(transfer.id.clone(), observed);
-            }
-        }
-        boundary
-    }
-
-    async fn boundary(&mut self, epoch: Instant, kind: BoundaryKind) -> Result<Boundary, Error> {
-        // Snapshot every local counter before waiting on any remote clock.
-        // Parallel checkpoints prevent one server's RTT from shifting its peers.
-        let mut boundary = self.local_boundary(epoch);
-        boundary.final_boundary = matches!(kind, BoundaryKind::Final);
-        let budget = if matches!(kind, BoundaryKind::Final) {
-            FINAL_CHECKPOINT_BUDGET
-        } else {
-            CHECKPOINT_BUDGET
-        };
-        let checkpoints = self.transfers.iter_mut().filter_map(|transfer| {
-            let Transfer {
-                id,
-                up,
-                checkpoint_misses,
-                ..
-            } = transfer;
-            up.as_ref().map(|up| async move {
-                let result = up.checkpoint(budget).await;
-                match result {
-                    Ok(snapshot) => {
-                        *checkpoint_misses = 0;
-                        Ok::<_, Error>(Some((id.clone(), snapshot)))
-                    }
-                    Err(source) => {
-                        *checkpoint_misses += 1;
-                        if crate::net::authentication_required(source.as_ref()).is_some()
-                            || matches!(kind, BoundaryKind::Initial)
-                            || (matches!(kind, BoundaryKind::Sample) && *checkpoint_misses >= 3)
-                        {
-                            Err(ParticipantFailure { id: id.clone(), source }.into())
-                        } else {
-                            Ok(None)
-                        }
-                    }
-                }
-            })
-        });
-        for result in futures_util::future::join_all(checkpoints).await {
-            if let Some(snapshot) = result? {
-                boundary.up.extend([snapshot]);
-            }
-        }
-        Ok(boundary)
-    }
-}
-
-fn server_contributions(
-    stage: Option<TransferStage>,
-    servers: &[PreparedServer],
-    accounting: &AggregateMeasurements,
-    snapshot: &Snapshot,
-) -> Vec<ServerContribution> {
-    let Some(stage) = stage else {
-        return Vec::new();
-    };
-    servers
-        .iter()
-        .map(|server| {
-            let id = &server.entry.id;
-            ServerContribution {
-                id: id.clone(),
-                down: stage
-                    .needs_down()
-                    .then(|| accounting.server_result(id, Direction::Down)),
-                up: stage.needs_up().then(|| accounting.server_result(id, Direction::Up)),
-                error: snapshot
-                    .servers
-                    .iter()
-                    .find(|summary| summary.id == *id)
-                    .and_then(|summary| summary.error.clone()),
-            }
-        })
-        .collect()
-}
-
-const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
-
-#[derive(Clone, Copy)]
-struct StageTiming {
-    operation_limit: Duration,
-    ready_by: Instant,
-}
-
-async fn start_transfer(
+struct StageRun<'a> {
     stage: Stage,
-    server: &PreparedServer,
-    plan: &StageLanePlan,
-    config: &Config,
-    timing: StageTiming,
-    stopped: watch::Receiver<bool>,
-) -> Result<Transfer, Error> {
-    let mut transfer = Transfer {
-        id: server.entry.id.clone(),
-        down: None,
-        up: None,
-        checkpoint_misses: 0,
-    };
-    let started = tokio::time::timeout_at(timing.ready_by, async {
-        if stage.downloads() || stage.uploads() {
-            let target = server.throughput.as_ref().ok_or("missing throughput target")?;
-            let transport = server.http.as_ref().ok_or("missing throughput connection")?;
-            let lanes = plan.lanes(&server.entry.id).ok_or("missing stream allocation")?;
-            let upload_transport = if stage == Stage::Bidirectional
-                && target.transport == ThroughputTransport::FetchStream
-                && target.protocol == Protocol::Http3
-            {
-                // Sustained downloads can occupy the connection send window
-                // and starve upload control traffic at high lane counts.
-                Arc::new(
-                    Transport::connect(
-                        server.client.clone(),
-                        &target.base_url,
-                        target.protocol,
-                        config.insecure,
-                    )
-                    .await?,
-                )
-            } else {
-                transport.clone()
-            };
-            if stage.downloads() {
-                transfer.down = Some(if target.transport == ThroughputTransport::FetchStream {
-                    Download::start_staggered(
-                        transport.clone(),
-                        lanes.download,
-                        timing.operation_limit,
-                        lane_stagger(config.warmup, server.idle_rtt, lanes.download),
-                        stopped.clone(),
-                    )
-                    .await?
-                } else {
-                    Download::start_webtransport(
-                        &server.client,
-                        target,
-                        lanes.download,
-                        timing.operation_limit,
-                        config.insecure,
-                        stopped.clone(),
-                    )
-                    .await?
-                });
-            }
-            if stage.uploads() {
-                transfer.up = Some(if target.transport == ThroughputTransport::FetchStream {
-                    Upload::start_staggered(
-                        upload_transport.clone(),
-                        lanes.upload,
-                        lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
-                        stopped.clone(),
-                    )
-                    .await?
-                } else {
-                    Upload::start_webtransport(upload_transport, lanes.upload, stopped.clone()).await?
-                });
-            }
-        }
-        Ok::<(), Error>(())
-    })
-    .await;
-    let error = match started {
-        Ok(Ok(())) => return Ok(transfer),
-        Ok(Err(error)) => error,
-        Err(error) => error.into(),
-    };
-    // A bidirectional peer may have a live download when upload setup fails.
-    // This also runs when setup times out after the download became ready.
-    let _ = transfer.close(false).await;
-    Err(error)
+    transfer: Option<TransferStage>,
+    config: &'a Config,
+    snapshots: &'a watch::Sender<Snapshot>,
+    epoch: Instant,
+    participants: Vec<String>,
+    members: Vec<Member>,
+    starts: FuturesUnordered<Start<'a>>,
+    latency: JoinSet<LatencyCompletion>,
+    events: SelectAll<BoxStream<'static, (String, Observation)>>,
+    hosts: BTreeMap<String, HostLatency>,
+    retired: JoinSet<()>,
+    removed: Vec<String>,
+    lost: Option<ParticipantFailure>,
+    accounting: AggregateMeasurements,
+    window: Option<(Instant, Instant)>,
 }
 
 pub(super) async fn measure(
@@ -506,546 +181,768 @@ pub(super) async fn measure(
     mut cancel: watch::Receiver<bool>,
 ) -> Result<Vec<String>, Error> {
     let plan = lane_plan(config, stage, servers)?;
-    let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
-        warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
-    });
-    let epoch = Instant::now();
-    let (stop, stopped) = watch::channel(false);
-    let mut resources = StageResources {
-        latency_completed: BTreeMap::new(),
-        transfers: Vec::new(),
-        latency: JoinSet::new(),
-        stop,
-        stop_latency: BTreeMap::new(),
-        retired: JoinSet::new(),
-        failed: Vec::new(),
-        latency_failed: false,
+    let mut run = StageRun::open(stage, config, servers, &plan, snapshots)?;
+    let result = tokio::select! {
+        result = run.run(servers) => result,
+        _ = cancel.wait_for(|value| *value) => Ok(()),
     };
-    let mut events: SelectAll<BoxStream<'static, (String, Observation)>> = SelectAll::new();
-    let operation_limit = planned_warmup
-        .checked_add(config.duration(stage))
-        .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
-        .ok_or("stage duration overflow")?;
-    snapshots.send_modify(|snapshot| {
-        snapshot.phase = Phase::Preparing;
-        snapshot.stage = Some(stage);
-        snapshot.status = format!("Preparing {}", stage.name());
-        snapshot.latest = Point::default();
-        let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
-        snapshot.history.add(Point {
-            elapsed: offset,
-            ..Point::default()
+    let stopped = *cancel.borrow();
+    run.close(result, stopped).await
+}
+
+impl<'a> StageRun<'a> {
+    fn open(
+        stage: Stage,
+        config: &'a Config,
+        servers: &'a [PreparedServer],
+        plan: &'a StageLanePlan,
+        snapshots: &'a watch::Sender<Snapshot>,
+    ) -> Result<Self, Error> {
+        let planned_warmup = servers.iter().fold(config.warmup, |warmup, server| {
+            warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
         });
-        let mut previous = std::mem::take(&mut snapshot.server_latencies);
-        snapshot.server_latencies = servers
-            .iter()
-            .map(|server| {
-                let mut history = previous
-                    .iter_mut()
-                    .find(|host| host.id == server.entry.id)
-                    .map(|host| std::mem::take(&mut host.history))
-                    .unwrap_or_default();
-                history.add(Point {
-                    elapsed: offset,
-                    ..Point::default()
-                });
-                ServerLatency {
-                    id: server.entry.id.clone(),
-                    history,
-                    ..ServerLatency::default()
-                }
-            })
-            .collect();
-    });
-    let transfer_stage = match stage {
-        Stage::Latency => None,
-        Stage::Download => Some(TransferStage::Download),
-        Stage::Upload => Some(TransferStage::Upload),
-        Stage::Bidirectional => Some(TransferStage::Bidirectional),
-    };
-    let mut accounting = AggregateMeasurements::default();
-    let mut latency = LatencyMeasurements::default();
-    let mut measurement_start = None;
-    let mut measurement_end = None;
-    let operation = async {
-        let ready_by = Instant::now() + STAGE_READY_TIMEOUT;
-        if stage == Stage::Latency || config.loaded_latency {
-            for server in servers {
-                let target = server.latency.clone().ok_or("missing selected latency target")?;
-                let id = server.entry.id.clone();
-                let http = server.client.clone();
-                let (stop, stopped) = watch::channel(false);
-                resources.stop_latency.insert(id.clone(), stop);
-                // Each transport can settle up to 256 unresolved probes at once.
-                // Keep headroom for observations queued during receiver checkpoints.
-                let (observations, receiver) = mpsc::channel(1024);
-                events.push(
-                    futures_util::stream::unfold((id.clone(), receiver), |(id, mut receiver)| async {
-                        receiver.recv().await.map(|event| ((id.clone(), event), (id, receiver)))
-                    })
-                    .boxed(),
-                );
-                latency.hosts.insert(id.clone(), HostLatency::default());
-                let insecure = config.insecure;
-                let interval = if stage == Stage::Latency {
-                    config.ping_interval
-                } else {
-                    config.loaded_ping_interval
-                };
-                let window = if stage != Stage::Latency {
-                    2
-                } else if interval.is_zero() {
-                    4
-                } else {
-                    16
-                };
-                resources.latency.spawn(async move {
-                    let kind = match target.transport {
-                        LatencyTransport::WebSocket => crate::latency::Kind::WebSocket,
-                        LatencyTransport::WebTransport => crate::latency::Kind::WebTransport,
-                    };
-                    let result = crate::latency::run_kind(
-                        &http,
-                        &target.base_url,
-                        insecure,
-                        (interval, operation_limit, window),
-                        observations,
-                        stopped.clone(),
-                        kind,
-                    )
-                    .await;
-                    LatencyCompletion {
-                        at: Instant::now(),
-                        result: latency_task_result(&id, result, *stopped.borrow()),
-                        id,
-                    }
-                });
-            }
-        }
-        // Transfers and latency sessions share one readiness budget; latency is ready once dialled.
-        let mut starts = servers
-            .iter()
-            .enumerate()
-            .map(|(index, server)| {
-                let stopped = stopped.clone();
-                let plan = &plan;
-                async move {
-                    (
-                        index,
-                        start_transfer(
-                            stage,
-                            server,
-                            plan,
-                            config,
-                            StageTiming {
-                                operation_limit,
-                                ready_by,
-                            },
-                            stopped,
-                        )
-                        .await,
-                    )
-                }
-            })
-            .collect::<FuturesUnordered<_>>();
-        let mut started: Vec<Option<Transfer>> = (0..servers.len()).map(|_| None).collect();
-        let mut last_failure = None;
-        let mut dialled = HashSet::new();
-        let mut expired = false;
-        loop {
-            let dialling = resources
-                .stop_latency
+        let operation_limit = planned_warmup
+            .checked_add(config.duration(stage))
+            .and_then(|duration| duration.checked_add(Duration::from_secs(60)))
+            .ok_or("stage duration overflow")?;
+        snapshots.send_modify(|snapshot| {
+            snapshot.phase = Phase::Preparing;
+            snapshot.stage = Some(stage);
+            snapshot.status = format!("Preparing {}", stage.name());
+            snapshot.latest = Point::default();
+            let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
+            snapshot.history.add(Point {
+                elapsed: offset,
+                ..Point::default()
+            });
+            let mut previous = std::mem::take(&mut snapshot.server_latencies);
+            snapshot.server_latencies = servers
                 .iter()
-                .any(|(id, stop)| !dialled.contains(id) && !*stop.borrow());
-            if starts.is_empty() && !dialling {
-                break;
+                .map(|server| {
+                    let mut history = previous
+                        .iter_mut()
+                        .find(|host| host.id == server.entry.id)
+                        .map(|host| std::mem::take(&mut host.history))
+                        .unwrap_or_default();
+                    history.add(Point {
+                        elapsed: offset,
+                        ..Point::default()
+                    });
+                    ServerLatency {
+                        id: server.entry.id.clone(),
+                        history,
+                        ..ServerLatency::default()
+                    }
+                })
+                .collect();
+        });
+        let epoch = Instant::now();
+        let mut run = Self {
+            stage,
+            transfer: match stage {
+                Stage::Latency => None,
+                Stage::Download => Some(TransferStage::Download),
+                Stage::Upload => Some(TransferStage::Upload),
+                Stage::Bidirectional => Some(TransferStage::Bidirectional),
+            },
+            config,
+            snapshots,
+            epoch,
+            participants: servers.iter().map(|server| server.entry.id.clone()).collect(),
+            members: Vec::new(),
+            starts: FuturesUnordered::new(),
+            latency: JoinSet::new(),
+            events: SelectAll::new(),
+            hosts: BTreeMap::new(),
+            retired: JoinSet::new(),
+            removed: Vec::new(),
+            lost: None,
+            accounting: AggregateMeasurements::default(),
+            window: None,
+        };
+        for server in servers {
+            let (stop, stopped) = watch::channel(false);
+            let latency = (stage == Stage::Latency || config.loaded_latency)
+                .then(|| run.spawn_latency(server, operation_limit))
+                .transpose()?;
+            if run.transfer.is_some() {
+                let id = server.entry.id.clone();
+                let start = start_transfer(stage, server, plan, config, operation_limit, stopped);
+                run.starts.push(start.map(move |started| (id, started)).boxed());
             }
+            run.members.push(Member {
+                id: server.entry.id.clone(),
+                stop,
+                latency,
+                starting: run.transfer.is_some(),
+                dialled: false,
+                latency_failed: false,
+                lanes: Lanes::default(),
+                checkpoint_misses: 0,
+                moved: [epoch; 2],
+            });
+        }
+        Ok(run)
+    }
+
+    fn spawn_latency(
+        &mut self,
+        server: &PreparedServer,
+        operation_limit: Duration,
+    ) -> Result<watch::Sender<bool>, Error> {
+        let target = server.latency.clone().ok_or("missing selected latency target")?;
+        let id = server.entry.id.clone();
+        let http = server.client.clone();
+        let (stop, stopped) = watch::channel(false);
+        // Each transport can settle up to 256 unresolved probes at once.
+        // Keep headroom for observations queued during receiver checkpoints.
+        let (observations, receiver) = mpsc::channel(1024);
+        self.events.push(
+            futures_util::stream::unfold((id.clone(), receiver), |(id, mut receiver)| async {
+                receiver.recv().await.map(|event| ((id.clone(), event), (id, receiver)))
+            })
+            .boxed(),
+        );
+        self.hosts.insert(id.clone(), HostLatency::default());
+        let insecure = self.config.insecure;
+        let idle = self.stage == Stage::Latency;
+        let interval = if idle {
+            self.config.ping_interval
+        } else {
+            self.config.loaded_ping_interval
+        };
+        let window = if !idle {
+            2
+        } else if interval.is_zero() {
+            4
+        } else {
+            16
+        };
+        self.latency.spawn(async move {
+            let kind = match target.transport {
+                LatencyTransport::WebSocket => crate::latency::Kind::WebSocket,
+                LatencyTransport::WebTransport => crate::latency::Kind::WebTransport,
+            };
+            let result = crate::latency::run_kind(
+                &http,
+                &target.base_url,
+                insecure,
+                (interval, operation_limit, window),
+                observations,
+                stopped.clone(),
+                kind,
+            )
+            .await;
+            LatencyCompletion {
+                at: Instant::now(),
+                stopped: *stopped.borrow(),
+                result,
+                id,
+            }
+        });
+        Ok(stop)
+    }
+
+    async fn run(&mut self, servers: &[PreparedServer]) -> Result<(), Error> {
+        self.ready().await?;
+        self.warmup(servers).await?;
+        self.open_window().await?;
+        self.measure_window().await?;
+        self.finish_window().await
+    }
+
+    /// Transfers and latency sessions share one readiness budget; latency is ready once dialled.
+    async fn ready(&mut self) -> Result<(), Error> {
+        let ready_by = Instant::now() + STAGE_READY_TIMEOUT;
+        let mut expired = false;
+        while !self.starts.is_empty() || self.members.iter().any(Member::dialling) {
             tokio::select! {
-                Some((index, result)) = starts.next(), if !starts.is_empty() => match result {
-                    Ok(transfer) => started[index] = Some(transfer),
-                    Err(error) => {
-                        let id = &servers[index].entry.id;
-                        resources.preparation_failure(id, &error, snapshots);
-                        if last_failure
-                            .as_ref()
-                            .is_none_or(|failure: &ParticipantFailure| {
-                                crate::net::authentication_required(failure.source.as_ref()).is_none()
-                            })
-                            || crate::net::authentication_required(error.as_ref()).is_some()
-                        {
-                            last_failure = Some(ParticipantFailure {
-                                id: id.clone(),
-                                source: error,
-                            });
-                        }
-                    }
-                },
-                Some((id, event)) = events.next(), if !events.is_empty() => {
-                    if matches!(event, Observation::ConnectionBoundary) {
-                        dialled.insert(id);
-                    }
-                },
-                Some(task) = resources.latency.join_next(), if !resources.latency.is_empty() => {
-                    resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
-                },
+                Some((id, started)) = self.starts.next(), if !self.starts.is_empty() => self.started(&id, started)?,
+                Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
+                Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
                 () = tokio::time::sleep_until(ready_by), if !expired => {
                     expired = true;
-                    let missing: Vec<_> = resources
-                        .stop_latency
+                    let late: Vec<_> = self
+                        .members
                         .iter()
-                        .filter(|(id, stop)| !dialled.contains(*id) && !*stop.borrow())
-                        .map(|(id, _)| id.clone())
+                        .filter(|member| member.starting || member.dialling())
+                        .map(|member| (member.id.clone(), member.starting))
                         .collect();
-                    for id in missing {
-                        resources.record_latency_failure(
-                            &LatencyFailure {
-                                id,
-                                source: std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut,
-                                    "latency session was not ready within 10 seconds",
-                                )
-                                .into(),
-                            },
-                            snapshots,
-                            stage == Stage::Latency,
-                        );
+                    let mut removed = false;
+                    for (id, starting) in late {
+                        let error: Error = std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "server resources were not ready within 10 seconds",
+                        )
+                        .into();
+                        let scope = if starting { FailureScope::Throughput } else { FailureScope::Latency };
+                        removed |= self.fail(&id, scope, error, true);
                     }
+                    self.settle(removed)?;
                 },
             }
         }
-        resources.transfers.extend(started.into_iter().flatten());
-        if resources.transfers.is_empty() {
-            return Err(
-                AllParticipantsFailed(last_failure.expect("one preparation failure for each selected server")).into(),
-            );
+        Ok(())
+    }
+
+    fn started(&mut self, id: &str, started: Result<Lanes, Error>) -> Result<(), Error> {
+        let Some(member) = self.members.iter_mut().find(|member| member.id == id) else {
+            if let Ok(lanes) = started {
+                self.retire(lanes);
+            }
+            return Ok(());
+        };
+        member.starting = false;
+        match started {
+            Ok(lanes) => {
+                member.lanes = lanes;
+                Ok(())
+            }
+            Err(error) => {
+                let removed = self.fail(id, FailureScope::Throughput, error, true);
+                self.settle(removed)
+            }
         }
+    }
+
+    fn retire(&mut self, lanes: Lanes) {
+        self.retired.spawn(async move {
+            let _ = lanes.close(false).await;
+        });
+    }
+
+    async fn warmup(&mut self, servers: &[PreparedServer]) -> Result<(), Error> {
         let warmup = servers
             .iter()
-            .filter(|server| !resources.failed.contains(&server.entry.id))
-            .fold(config.warmup, |warmup, server| {
-                warmup.max(adaptive_warmup(config.warmup, server.idle_rtt))
+            .filter(|server| self.members.iter().any(|member| member.id == server.entry.id))
+            .fold(self.config.warmup, |warmup, server| {
+                warmup.max(adaptive_warmup(self.config.warmup, server.idle_rtt))
             });
-        snapshots.send_modify(|snapshot| {
+        self.snapshots.send_modify(|snapshot| {
             snapshot.phase = Phase::Warmup;
             snapshot.status = "Warming up".into();
         });
-        let warmup_end = Instant::now() + warmup;
+        let end = Instant::now() + warmup;
         loop {
-            if let Err(error) = resources.health() {
-                resources.recover(error, &mut accounting, transfer_stage, false, epoch, snapshots)?;
-            }
+            self.check_health()?;
             tokio::select! {
-                _ = tokio::time::sleep_until(warmup_end) => break,
-                _ = events.next(), if !events.is_empty() => {},
+                () = tokio::time::sleep_until(end) => return Ok(()),
+                Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
+                Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
             }
         }
-        let mut initial = None;
-        if transfer_stage.is_some() {
-            loop {
-                let result = {
-                    let checkpoint = resources.boundary(epoch, BoundaryKind::Initial);
-                    tokio::pin!(checkpoint);
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = events.next(), if !events.is_empty() => {},
-                            boundary = &mut checkpoint => break boundary,
-                        }
-                    }
-                };
-                match result {
-                    Ok(boundary) => {
-                        initial = Some(boundary);
-                        break;
-                    }
-                    Err(error) => resources.recover(error, &mut accounting, transfer_stage, false, epoch, snapshots)?,
-                }
+    }
+
+    async fn open_window(&mut self) -> Result<(), Error> {
+        let initial = match self.transfer {
+            Some(_) => {
+                let (initial, misses) = self.collect(BoundaryKind::Initial, None).await.expect("no stage end");
+                self.depart(misses.into_iter().collect(), true)?;
+                self.check_health()?;
+                Some(initial)
             }
-        }
+            None => None,
+        };
         let started = Instant::now();
-        let end = started + config.duration(stage);
-        measurement_start = Some(started);
-        if let (Some(stage), Some(mut boundary)) = (transfer_stage, initial) {
+        self.window = Some((started, started + self.config.duration(self.stage)));
+        if let (Some(stage), Some(mut initial)) = (self.transfer, initial) {
             // Local counters restart at the actual measurement start.
-            let local = resources.local_boundary(epoch);
-            boundary.at_nanos = local.at_nanos;
-            boundary.down = local.down;
-            boundary.observed_up = local.observed_up;
-            accounting.begin_stage(
-                stage,
-                resources.transfers.iter().map(|transfer| transfer.id.clone()).collect(),
-                boundary.at_nanos,
-            );
-            accounting.observe(boundary);
+            let local = self.local_boundary();
+            initial.at_nanos = local.at_nanos;
+            initial.down = local.down;
+            initial.observed_up = local.observed_up;
+            let participants = self.members.iter().map(|member| member.id.clone()).collect();
+            self.accounting.begin_stage(stage, participants, initial.at_nanos);
+            self.accounting.observe(initial);
         }
-        let mut movement: BTreeMap<String, [(u64, Instant); 2]> = resources
-            .transfers
-            .iter()
-            .map(|transfer| (transfer.id.clone(), [(0, started); 2]))
-            .collect();
+        for member in &mut self.members {
+            member.moved = [started; 2];
+        }
+        Ok(())
+    }
+
+    async fn measure_window(&mut self) -> Result<(), Error> {
+        let (started, end) = self.window.expect("window opened");
+        self.snapshots.send_modify(|snapshot| {
+            snapshot.phase = Phase::Measuring;
+            snapshot.status = format!("Measuring {}", self.stage.name());
+        });
         let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
         sample.tick().await;
-        snapshots.send_modify(|snapshot| {
-            snapshot.phase = Phase::Measuring;
-            snapshot.status = format!("Measuring {}", stage.name());
-        });
         loop {
-            if let Err(error) = resources.health() {
-                resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?;
-            }
+            self.check_health()?;
             tokio::select! {
                 biased;
-                _ = tokio::time::sleep_until(end) => break,
-                event = events.next(), if !events.is_empty() => {
-                    if let Some(event) = event {
-                        latency.observe(event, started, end);
-                    }
-                },
+                () = tokio::time::sleep_until(end) => return Ok(()),
+                Some(event) = self.events.next(), if !self.events.is_empty() => self.observe_latency(event),
+                Some(joined) = self.latency.join_next(), if !self.latency.is_empty() => self.latency_ended(joined)?,
                 scheduled = sample.tick() => {
-                    let stalled_tick = scheduled.elapsed() > CLIENT_STALL;
-                    let window = if transfer_stage.is_some() {
-                        let boundary = {
-                            let checkpoint = resources.boundary(epoch, BoundaryKind::Sample);
-                            tokio::pin!(checkpoint);
-                            loop {
-                                tokio::select! {
-                                    biased;
-                                    _ = tokio::time::sleep_until(end) => break None,
-                                    event = events.next(), if !events.is_empty() => {
-                                        if let Some(event) = event {
-                                            latency.observe(event, started, end);
-                                        }
-                                    },
-                                    result = &mut checkpoint => break Some(result),
-                                }
-                            }
-                        };
-                        let Some(boundary) = boundary else { break; };
-                        match boundary {
-                            Ok(mut boundary) => {
-                                boundary.stalled = stalled_tick;
-                                let stalled = resources.transfers.iter().find_map(|transfer| {
-                                    let id = &transfer.id;
-                                    let counters = [
-                                        transfer.down.as_ref().map(|_| boundary.down.get(id).copied().unwrap_or_default()),
-                                        transfer.up.as_ref().map(|_| boundary.observed_up.get(id).map_or(0, |up| up.maximum)
-                                            .max(boundary.up.get(id).map_or(0, |up| up.bytes))),
-                                    ];
-                                    let silent = counters.into_iter().zip(movement.get_mut(id).unwrap()).any(|(bytes, (previous, moved_at))| {
-                                        let Some(bytes) = bytes else { return false; };
-                                        if bytes > *previous {
-                                            (*previous, *moved_at) = (bytes, Instant::now());
-                                        }
-                                        moved_at.elapsed() >= TRANSFER_PROGRESS_TIMEOUT
-                                    });
-                                    silent.then(|| ParticipantFailure {
-                                        id: id.clone(), source: Box::new(crate::failure::LaneFailure(graphite_meter_core::failure::LaneEnding::Idle)),
-                                    })
-                                });
-                                let window = accounting.observe(boundary);
-                                if let Some(failure) = stalled {
-                                    resources.recover(failure.into(), &mut accounting, transfer_stage, true, epoch, snapshots)?;
-                                    None
-                                } else { window }
-                            },
-                            Err(error) => {
-                                resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?;
-                                None
-                            }
+                    let stalled = scheduled.elapsed() > CLIENT_STALL;
+                    let window = match self.transfer {
+                        Some(_) => {
+                            let Some((mut boundary, misses)) = self.collect(BoundaryKind::Sample, Some(end)).await else {
+                                return Ok(());
+                            };
+                            boundary.stalled = stalled;
+                            self.observe_boundary(boundary, misses)?
                         }
-                    } else {
-                        None
+                        None => None,
                     };
-                    snapshots.send_modify(|snapshot| {
-                        latency.sample(snapshot, started.elapsed());
-                        snapshot.sample(Point {
-                            elapsed: started.elapsed(),
-                            sample_count: 1,
-                            down_bps: window.as_ref()
-                                .and_then(|window| window.down_bytes_per_sec)
-                                .map(|rate| rate * 8.0),
-                            up_bps: window.as_ref()
-                                .and_then(|window| window.up_bytes_per_sec)
-                                .map(|rate| rate * 8.0),
-                            latency_ms: None,
-                        });
-                    });
-                }
+                    self.publish(started, window.as_ref());
+                },
             }
         }
-        measurement_end = Some(end);
-        resources.stop_all_latency();
-        if transfer_stage.is_some() {
-            loop {
-                match resources.boundary(epoch, BoundaryKind::Final).await {
-                    Ok(boundary) => {
-                        accounting.observe(boundary);
-                        break;
-                    }
-                    Err(error) => resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?,
-                }
+    }
+
+    async fn finish_window(&mut self) -> Result<(), Error> {
+        for member in &self.members {
+            member.stop_latency();
+        }
+        if self.transfer.is_some() {
+            let (mut boundary, misses) = self.collect(BoundaryKind::Final, None).await.expect("no stage end");
+            boundary.final_boundary = true;
+            self.observe_boundary(boundary, misses)?;
+        }
+        Ok(())
+    }
+
+    fn check_health(&mut self) -> Result<(), Error> {
+        let failures = self
+            .members
+            .iter_mut()
+            .filter_map(|member| member.health().err().map(|error| (member.id.clone(), error)))
+            .collect();
+        self.depart(failures, false)
+    }
+
+    fn depart(&mut self, failures: Vec<(String, Error)>, preparing: bool) -> Result<(), Error> {
+        let mut removed = false;
+        for (id, error) in failures {
+            removed |= self.fail(&id, FailureScope::Throughput, error, preparing);
+        }
+        self.settle(removed)
+    }
+
+    /// Records a failure once. A throughput failure removes its member, and so does a latency-stage loss while
+    /// another server remains.
+    fn fail(&mut self, id: &str, scope: FailureScope, error: Error, preparing: bool) -> bool {
+        let Some(index) = self.members.iter().position(|member| member.id == id) else {
+            return false;
+        };
+        let reason = crate::failure::reason(error.as_ref(), preparing);
+        let remaining = self.members.len();
+        let member = &mut self.members[index];
+        let removed = match scope {
+            FailureScope::Latency if member.latency_failed => return false,
+            FailureScope::Latency => {
+                member.latency_failed = true;
+                member.stop_latency();
+                self.stage == Stage::Latency
+                    && matches!(reason, FailureReason::ConnectionLost | FailureReason::Timeout)
+                    && remaining > 1
             }
+            FailureScope::Throughput => true,
+        };
+        self.snapshots.send_modify(|snapshot| {
+            snapshot.failure(id, scope, &error);
+            if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
+                latency.error.get_or_insert_with(|| error.to_string());
+                latency.latest_ms = None;
+            }
+            if removed && let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
+                server.error = Some(error.to_string());
+            }
+            snapshot.status = format!("{id}: {}", reason.label());
+        });
+        if removed {
+            let member = self.members.remove(index);
+            member.stop.send_replace(true);
+            member.stop_latency();
+            self.retire(member.lanes);
+            self.removed.push(id.to_owned());
+            self.lost = Some(ParticipantFailure {
+                id: id.to_owned(),
+                source: error,
+            });
         }
-        resources.stop.send_replace(true);
-        while let Some(result) = resources.latency.join_next().await {
-            resources.latency_completion(result, snapshots, stage == Stage::Latency)?;
-        }
-        while let Some(Some(event)) = events.next().now_or_never() {
-            latency.observe(event, started, end);
-        }
-        Ok::<(), Error>(())
-    };
-    let result = tokio::select! {
-        result = operation => result,
-        _ = cancel.wait_for(|value| *value) => Ok(()),
-    };
-    let stopped_at = Instant::now();
-    measurement_end.get_or_insert(stopped_at);
-    if measurement_start.is_some() && (result.is_err() || *cancel.borrow()) {
-        // Preserve received bytes even when cancellation prevents a final remote
-        // checkpoint. Missing receiver windows remain explicitly incomplete.
-        accounting.observe(resources.local_boundary(epoch));
+        removed
     }
-    if *cancel.borrow() {
-        let _ = resources.close_transfers(false).await;
+
+    /// Survivors restart their interval together after removals; with none left the stage ends.
+    fn settle(&mut self, removed: bool) -> Result<(), Error> {
+        if removed {
+            let survivors: Vec<_> = self.members.iter().map(|member| member.id.clone()).collect();
+            self.accounting.dropout(&survivors, nanos(self.epoch.elapsed()));
+        }
+        if !self.members.is_empty() {
+            return Ok(());
+        }
+        Err(self.lost.take().map_or_else(
+            || "no selected server remained".into(),
+            |lost| AllParticipantsFailed(lost).into(),
+        ))
     }
-    resources.stop_all_latency();
-    let mut result = result;
-    while let Some(joined) = resources.latency.join_next().await {
-        if let Err(error) = resources.latency_completion(joined, snapshots, stage == Stage::Latency)
-            && result.is_ok()
+
+    fn latency_ended(&mut self, joined: Result<LatencyCompletion, tokio::task::JoinError>) -> Result<(), Error> {
+        let completion = joined?;
+        if let Some(host) = self.hosts.get_mut(&completion.id) {
+            host.ended_at = Some(completion.at);
+        }
+        let error = match completion.result {
+            Ok(()) if completion.stopped => return Ok(()),
+            Ok(()) => "latency session ended before stage boundary".into(),
+            Err(error) => error,
+        };
+        let removed = self.fail(&completion.id, FailureScope::Latency, error, self.window.is_none());
+        self.settle(removed)
+    }
+
+    fn observe_latency(&mut self, event: (String, Observation)) {
+        if matches!(event.1, Observation::ConnectionBoundary)
+            && let Some(member) = self.members.iter_mut().find(|member| member.id == event.0)
         {
-            result = Err(error);
+            member.dialled = true;
         }
+        observe(&mut self.hosts, self.window, event);
     }
-    if let Some(started) = measurement_start {
-        let ended = measurement_end.unwrap_or_else(Instant::now);
-        while let Some(Some(event)) = events.next().now_or_never() {
-            latency.observe(event, started, ended);
+
+    fn local_boundary(&self) -> Boundary {
+        let mut boundary = Boundary {
+            at_nanos: nanos(self.epoch.elapsed()),
+            ..Boundary::default()
+        };
+        for member in &self.members {
+            if let Some(down) = &member.lanes.down {
+                boundary.down.insert(member.id.clone(), down.bytes());
+            }
+            if let Some(observed) = member.lanes.up.as_ref().and_then(Upload::observed) {
+                boundary.observed_up.insert(member.id.clone(), observed);
+            }
         }
-        let down = transfer_stage
-            .filter(|stage| stage.needs_down())
-            .map(|_| accounting.result(Direction::Down));
-        let up = transfer_stage
-            .filter(|stage| stage.needs_up())
-            .map(|_| accounting.result(Direction::Up));
-        snapshots.send_modify(|snapshot| {
-            latency.sample(snapshot, ended.duration_since(started));
-            let missing = (stage.downloads() && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
-                || (stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
-            if missing && !*cancel.borrow() {
-                let error: Error = Box::new(crate::failure::MeasurementFailure(
-                    graphite_meter_core::failure::FailureReason::InsufficientEvidence,
-                ));
-                for transfer in &resources.transfers {
-                    snapshot.failure(&transfer.id, crate::model::FailureScope::Throughput, &error);
+        boundary
+    }
+
+    /// Snapshots every local counter before waiting on any remote clock; parallel checkpoints keep one server's
+    /// RTT from shifting its peers. With `until`, the stage end abandons the checkpoints.
+    async fn collect(
+        &mut self,
+        kind: BoundaryKind,
+        until: Option<Instant>,
+    ) -> Option<(Boundary, BTreeMap<String, Error>)> {
+        let mut boundary = self.local_boundary();
+        let budget = if kind == BoundaryKind::Final {
+            FINAL_CHECKPOINT_BUDGET
+        } else {
+            CHECKPOINT_BUDGET
+        };
+        let checkpoints = futures_util::future::join_all(self.members.iter().filter_map(|member| {
+            let up = member.lanes.up.as_ref()?;
+            Some(async move { (member.id.clone(), up.checkpoint(budget).await) })
+        }));
+        tokio::pin!(checkpoints);
+        let results = loop {
+            tokio::select! {
+                biased;
+                () = tokio::time::sleep_until(until.unwrap_or_else(Instant::now)), if until.is_some() => return None,
+                Some(event) = self.events.next(), if !self.events.is_empty() => observe(&mut self.hosts, self.window, event),
+                results = &mut checkpoints => break results,
+            }
+        };
+        let mut misses = BTreeMap::new();
+        for (id, result) in results {
+            match result {
+                Ok(snapshot) => {
+                    boundary.up.insert(id, snapshot);
+                }
+                Err(error) => {
+                    misses.insert(id, error);
                 }
             }
-            let server_results = server_contributions(transfer_stage, servers, &accounting, snapshot);
-            snapshot.results.push(StageResult {
-                stage,
-                elapsed: ended.duration_since(started),
-                down: down.clone(),
-                up: up.clone(),
-                intervals: accounting.intervals().clone(),
-                omitted_intervals: accounting.omitted_intervals(),
-                server_latencies: snapshot
-                    .server_latencies
+        }
+        Some((boundary, misses))
+    }
+
+    /// A member leaves when a direction's measured bytes stop growing for the silence limit, at every boundary.
+    fn observe_boundary(
+        &mut self,
+        boundary: Boundary,
+        mut misses: BTreeMap<String, Error>,
+    ) -> Result<Option<AggregateWindow>, Error> {
+        let final_boundary = boundary.final_boundary;
+        let collected = self.epoch + Duration::from_nanos(boundary.at_nanos);
+        let directions: &[Direction] = match self.transfer {
+            Some(TransferStage::Download) => &[Direction::Down],
+            Some(TransferStage::Upload) => &[Direction::Up],
+            _ => &[Direction::Down, Direction::Up],
+        };
+        let before: Vec<Vec<u64>> = self
+            .members
+            .iter()
+            .map(|member| {
+                directions
                     .iter()
-                    .map(|host| ServerLatencyResult {
-                        elapsed: resources
-                            .latency_completed
-                            .get(&host.id)
-                            .map(|at| (*at).min(ended).saturating_duration_since(started)),
-                        id: host.id.clone(),
-                        summary: latency
-                            .hosts
-                            .get(&host.id)
-                            .map(|host| host.accumulator.snapshot())
-                            .unwrap_or_default(),
-                        error: host.error.clone().or_else(|| cancel.borrow().then(|| "Stopped".into())),
-                    })
-                    .collect(),
-                server_results,
-                complete: result.is_ok()
-                    && resources.failed.is_empty()
-                    && !resources.latency_failed
-                    && !*cancel.borrow()
-                    && (stage != Stage::Latency
-                        || latency.hosts.values().all(|host| host.accumulator.snapshot().count > 0))
-                    && (!stage.downloads() || down.is_some_and(|result| result.mean_bytes_per_sec.is_some()))
-                    && (!stage.uploads() || up.is_some_and(|result| result.mean_bytes_per_sec.is_some())),
+                    .map(|direction| self.accounting.bytes(&member.id, *direction))
+                    .collect()
             })
+            .collect();
+        let window = self.accounting.observe(boundary);
+        let mut departures = Vec::new();
+        for (member, before) in self.members.iter_mut().zip(before) {
+            if let Some(error) = member.missed(misses.remove(&member.id), final_boundary) {
+                departures.push((member.id.clone(), error));
+                continue;
+            }
+            for (direction, before) in directions.iter().zip(before) {
+                let moved = &mut member.moved[*direction as usize];
+                if self.accounting.bytes(&member.id, *direction) > before {
+                    *moved = collected;
+                } else if collected.saturating_duration_since(*moved) >= TRANSFER_PROGRESS_TIMEOUT {
+                    let stalled: Error = Box::new(MeasurementFailure(FailureReason::Timeout));
+                    departures.push((member.id.clone(), stalled));
+                    break;
+                }
+            }
+        }
+        self.depart(departures, false)?;
+        Ok(window)
+    }
+
+    fn publish(&mut self, started: Instant, window: Option<&AggregateWindow>) {
+        let elapsed = started.elapsed();
+        let hosts = &mut self.hosts;
+        self.snapshots.send_modify(|snapshot| {
+            sample_hosts(hosts, snapshot, elapsed);
+            snapshot.sample(Point {
+                elapsed,
+                sample_count: 1,
+                down_bps: window
+                    .and_then(|window| window.down_bytes_per_sec)
+                    .map(|rate| rate * 8.0),
+                up_bps: window.and_then(|window| window.up_bytes_per_sec).map(|rate| rate * 8.0),
+                latency_ms: None,
+            });
         });
-    } else if result.is_err() && !*cancel.borrow() {
-        // A failed preparation still belongs to this stage. Earlier completed
-        // results remain untouched, and this missing population is explicit.
-        snapshots.send_modify(|snapshot| {
-            let server_results = server_contributions(transfer_stage, servers, &accounting, snapshot);
+    }
+
+    /// Stops and joins every resource before recording the stage.
+    async fn close(mut self, result: Result<(), Error>, stopped: bool) -> Result<Vec<String>, Error> {
+        for member in &self.members {
+            member.stop.send_replace(true);
+            member.stop_latency();
+        }
+        while let Some((id, started)) = self.starts.next().await {
+            match (started, self.members.iter_mut().find(|member| member.id == id)) {
+                (Ok(lanes), Some(member)) => member.lanes = lanes,
+                (Ok(lanes), None) => self.retire(lanes),
+                (Err(_), _) => {}
+            }
+        }
+        let confirm = result.is_ok() && !stopped;
+        let lanes = self
+            .members
+            .iter_mut()
+            .map(|member| std::mem::take(&mut member.lanes).close(confirm));
+        let closed = futures_util::future::join_all(lanes)
+            .await
+            .into_iter()
+            .all(|closed| closed.is_ok());
+        while let Some(joined) = self.latency.join_next().await {
+            if confirm {
+                let _ = self.latency_ended(joined);
+            } else if let Ok(completion) = joined
+                && let Some(host) = self.hosts.get_mut(&completion.id)
+            {
+                host.ended_at = Some(completion.at);
+            }
+        }
+        while let Some(Some(event)) = self.events.next().now_or_never() {
+            observe(&mut self.hosts, self.window, event);
+        }
+        if self.window.is_some() || result.is_err() && !stopped {
+            self.record(result.is_ok() && closed, stopped);
+        }
+        while self.retired.join_next().await.is_some() {}
+        result.map(|()| self.removed)
+    }
+
+    fn record(&mut self, finished: bool, stopped: bool) {
+        let measuring = self.window.is_some();
+        let (started, end) = self.window.unwrap_or((self.epoch, self.epoch));
+        let ended = end.min(Instant::now());
+        let elapsed = ended.saturating_duration_since(started);
+        let down = self
+            .transfer
+            .filter(|stage| measuring && stage.needs_down())
+            .map(|_| self.accounting.result(Direction::Down));
+        let up = self
+            .transfer
+            .filter(|stage| measuring && stage.needs_up())
+            .map(|_| self.accounting.result(Direction::Up));
+        let missing = (self.stage.downloads()
+            && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
+            || (self.stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
+        let complete = finished
+            && !stopped
+            && !missing
+            && self.removed.is_empty()
+            && self.members.iter().all(|member| !member.latency_failed)
+            && (self.stage != Stage::Latency || self.hosts.values().all(|host| host.accumulator.snapshot().count > 0));
+        let hosts = &mut self.hosts;
+        let accounting = &self.accounting;
+        let (stage, transfer, members, participants) = (self.stage, self.transfer, &self.members, &self.participants);
+        self.snapshots.send_modify(|snapshot| {
+            if measuring {
+                sample_hosts(hosts, snapshot, elapsed);
+            }
+            if measuring && missing && !stopped {
+                let error: Error = Box::new(MeasurementFailure(FailureReason::InsufficientEvidence));
+                for member in members {
+                    snapshot.failure(&member.id, FailureScope::Throughput, &error);
+                }
+            }
+            let server_results = transfer
+                .map(|transfer| {
+                    participants
+                        .iter()
+                        .map(|id| ServerContribution {
+                            id: id.clone(),
+                            down: transfer
+                                .needs_down()
+                                .then(|| accounting.server_result(id, Direction::Down)),
+                            up: transfer.needs_up().then(|| accounting.server_result(id, Direction::Up)),
+                            error: snapshot
+                                .servers
+                                .iter()
+                                .find(|summary| summary.id == *id)
+                                .and_then(|summary| summary.error.clone()),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let server_latencies = snapshot
+                .server_latencies
+                .iter()
+                .map(|host| {
+                    let own = hosts.get(&host.id);
+                    ServerLatencyResult {
+                        elapsed: own
+                            .and_then(|own| own.ended_at)
+                            .filter(|_| measuring)
+                            .map(|at| at.min(ended).saturating_duration_since(started)),
+                        id: host.id.clone(),
+                        summary: own.map(|own| own.accumulator.snapshot()).unwrap_or_default(),
+                        error: host.error.clone().or_else(|| stopped.then(|| "Stopped".into())),
+                    }
+                })
+                .collect();
             snapshot.results.push(StageResult {
                 stage,
-                elapsed: Duration::ZERO,
-                down: None,
-                up: None,
+                elapsed,
+                down,
+                up,
                 intervals: accounting.intervals().clone(),
                 omitted_intervals: accounting.omitted_intervals(),
-                complete: false,
-                server_latencies: snapshot
-                    .server_latencies
-                    .iter()
-                    .map(|host| ServerLatencyResult {
-                        elapsed: None,
-                        id: host.id.clone(),
-                        summary: LatencyAccumulator::default().snapshot(),
-                        error: host.error.clone(),
-                    })
-                    .collect(),
+                complete,
+                server_latencies,
                 server_results,
             });
         });
     }
-    let failed = resources.failed.clone();
-    let cleanup = resources.close().await;
-    if cleanup.is_err() {
-        snapshots.send_modify(|snapshot| {
-            if let Some(last) = snapshot.results.last_mut()
-                && last.stage == stage
-            {
-                last.complete = false;
-            }
+}
+
+async fn start_transfer(
+    stage: Stage,
+    server: &PreparedServer,
+    plan: &StageLanePlan,
+    config: &Config,
+    operation_limit: Duration,
+    mut stopped: watch::Receiver<bool>,
+) -> Result<Lanes, Error> {
+    let target = server.throughput.as_ref().ok_or("missing throughput target")?;
+    let transport = server.http.as_ref().ok_or("missing throughput connection")?;
+    let counts = plan.lanes(&server.entry.id).ok_or("missing stream allocation")?;
+    let upload_transport = if stage == Stage::Bidirectional
+        && target.transport == ThroughputTransport::FetchStream
+        && target.protocol == Protocol::Http3
+    {
+        // Sustained downloads can occupy the connection send window
+        // and starve upload control traffic at high lane counts.
+        let connect = Transport::connect(
+            server.client.clone(),
+            &target.base_url,
+            target.protocol,
+            config.insecure,
+        );
+        tokio::select! {
+            biased;
+            _ = stopped.wait_for(|stopped| *stopped) => return Err("stage stopped before its lanes started".into()),
+            connection = connect => Arc::new(connection?),
+        }
+    } else {
+        transport.clone()
+    };
+    let mut lanes = Lanes::default();
+    if stage.downloads() {
+        lanes.down = Some(if target.transport == ThroughputTransport::FetchStream {
+            Download::start_staggered(
+                transport.clone(),
+                counts.download,
+                operation_limit,
+                lane_stagger(config.warmup, server.idle_rtt, counts.download),
+                stopped.clone(),
+            )
+            .await?
+        } else {
+            Download::start_webtransport(
+                &server.client,
+                target,
+                counts.download,
+                operation_limit,
+                config.insecure,
+                stopped.clone(),
+            )
+            .await?
         });
     }
-    result.and(cleanup).map(|()| failed)
-}
-
-#[derive(Default)]
-struct HostLatency {
-    accumulator: LatencyAccumulator,
-    latest: Option<f64>,
-}
-
-#[derive(Default)]
-struct LatencyMeasurements {
-    hosts: BTreeMap<String, HostLatency>,
-}
-impl LatencyMeasurements {
-    fn observe(&mut self, (id, event): (String, Observation), start: Instant, end: Instant) {
-        if let Some(host) = self.hosts.get_mut(&id) {
-            observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
+    if stage.uploads() {
+        let up = if target.transport == ThroughputTransport::FetchStream {
+            let stagger = lane_stagger(config.warmup, server.idle_rtt, counts.upload);
+            Upload::start_staggered(upload_transport, counts.upload, stagger, stopped).await
+        } else {
+            Upload::start_webtransport(upload_transport, counts.upload, stopped).await
+        };
+        match up {
+            Ok(up) => lanes.up = Some(up),
+            Err(error) => {
+                // A bidirectional member may have a live download when its upload cannot start.
+                let _ = lanes.close(false).await;
+                return Err(error);
+            }
         }
     }
+    Ok(lanes)
+}
 
-    fn sample(&mut self, snapshot: &mut Snapshot, elapsed: Duration) {
-        let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
-        for host in &mut snapshot.server_latencies {
-            host.latest_ms = self.hosts.get_mut(&host.id).and_then(|state| state.latest.take());
-            host.history.add(Point {
-                elapsed: offset + elapsed,
-                latency_ms: host.latest_ms,
-                ..Point::default()
-            });
-        }
+fn observe(
+    hosts: &mut BTreeMap<String, HostLatency>,
+    window: Option<(Instant, Instant)>,
+    (id, event): (String, Observation),
+) {
+    if let (Some(host), Some((start, end))) = (hosts.get_mut(&id), window) {
+        observe_latency(event, start, end, &mut host.accumulator, &mut host.latest);
+    }
+}
+
+fn sample_hosts(hosts: &mut BTreeMap<String, HostLatency>, snapshot: &mut Snapshot, elapsed: Duration) {
+    let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
+    for host in &mut snapshot.server_latencies {
+        host.latest_ms = hosts.get_mut(&host.id).and_then(|state| state.latest.take());
+        host.history.add(Point {
+            elapsed: offset + elapsed,
+            latency_ms: host.latest_ms,
+            ..Point::default()
+        });
     }
 }
 

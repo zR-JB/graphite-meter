@@ -103,6 +103,11 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         if request.starts_with(b"GET /upload/progress") {
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
+                            if flag.compare_exchange(11, 12, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+                                while !finalized.load(Ordering::SeqCst) {
+                                    tokio::time::sleep(Duration::from_millis(5)).await;
+                                }
+                            }
                             while (matches!(flag.load(Ordering::SeqCst), 9 | 10) || !finalized.load(Ordering::SeqCst)) && stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
@@ -112,6 +117,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         if request.starts_with(b"DELETE /upload/progress") {
                             finalized.store(true, Ordering::SeqCst);
                             let _ = flag.compare_exchange(9, 10, Ordering::SeqCst, Ordering::SeqCst);
+                            let _ = flag.compare_exchange(12, 13, Ordering::SeqCst, Ordering::SeqCst);
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
@@ -240,14 +246,14 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
 }
 
 #[tokio::test]
-async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), Error> {
+async fn a_stopped_bidirectional_start_drains_its_started_download() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let active = Arc::new(AtomicUsize::new(0));
-    let saw_upload = Arc::new(AtomicBool::new(false));
+    let uploading = Arc::new(tokio::sync::Notify::new());
     let active_server = active.clone();
-    let upload_server = saw_upload.clone();
+    let upload_server = uploading.clone();
     let peer = tokio::spawn(async move {
         let mut clients = JoinSet::new();
         loop {
@@ -255,14 +261,13 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
                 accepted = listener.accept() => {
                     let Ok((mut stream, _)) = accepted else { break; };
                     let active = active_server.clone();
-                    let saw_upload = upload_server.clone();
+                    let uploading = upload_server.clone();
                     clients.spawn(async move {
                         let mut request = [0_u8; 4096];
                         let Ok(length) = stream.read(&mut request).await else { return; };
                         if request[..length].starts_with(b"POST /upload/session") {
-                            saw_upload.store(true, Ordering::SeqCst);
-                            tokio::time::sleep(Duration::from_secs(30)).await;
-                            return;
+                            uploading.notify_one();
+                            std::future::pending::<()>().await;
                         }
                         if !request[..length].starts_with(b"GET /download") { return; }
                         if stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n").await.is_err() { return; }
@@ -289,21 +294,24 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
         ..Config::default()
     };
     let plan = lane_plan(&config, Stage::Bidirectional, std::slice::from_ref(&server))?;
-    let (_stop, stopped) = watch::channel(false);
-    let result = start_transfer(
+    let (stop, stopped) = watch::channel(false);
+    let start = start_transfer(
         Stage::Bidirectional,
         &server,
         &plan,
         &config,
-        StageTiming {
-            operation_limit: Duration::from_secs(60),
-            ready_by: Instant::now() + Duration::from_millis(300),
-        },
+        Duration::from_secs(60),
         stopped,
-    )
-    .await;
+    );
+    let stop_while_uploading = async {
+        uploading.notified().await;
+        stop.send_replace(true);
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(start, stop_while_uploading)
+    })
+    .await?;
     assert!(result.is_err());
-    assert!(saw_upload.load(Ordering::SeqCst));
     tokio::time::timeout(Duration::from_secs(1), async {
         while active.load(Ordering::SeqCst) != 0 {
             tokio::time::sleep(Duration::from_millis(5)).await;
@@ -446,11 +454,14 @@ fn warmup_and_poststage_probes_do_not_enter_measurement() {
 fn host_latency_populations_and_continuity_are_independent() {
     let start = Instant::now();
     let end = start + Duration::from_secs(1);
-    let mut measurements = LatencyMeasurements::default();
-    measurements.hosts.insert("near".into(), HostLatency::default());
-    measurements.hosts.insert("far".into(), HostLatency::default());
+    let mut hosts = BTreeMap::from([
+        ("near".to_owned(), HostLatency::default()),
+        ("far".to_owned(), HostLatency::default()),
+    ]);
     for (id, rtt_ms) in [("near", 2), ("far", 200), ("near", 4), ("far", 220)] {
-        measurements.observe(
+        observe(
+            &mut hosts,
+            Some((start, end)),
             (
                 id.into(),
                 Observation::Sample {
@@ -460,17 +471,19 @@ fn host_latency_populations_and_continuity_are_independent() {
                     server_handling: Duration::ZERO,
                 },
             ),
-            start,
-            end,
         );
     }
-    let near = measurements.hosts["near"].accumulator.snapshot();
-    let far = measurements.hosts["far"].accumulator.snapshot();
+    let near = hosts["near"].accumulator.snapshot();
+    let far = hosts["far"].accumulator.snapshot();
     assert_eq!(near.count, 2);
     assert_eq!(far.count, 2);
     assert_eq!(near.jitter, Some(2_000_000));
     assert_eq!(far.jitter, Some(20_000_000));
-    measurements.observe(("near".into(), Observation::ConnectionBoundary), start, end);
+    observe(
+        &mut hosts,
+        Some((start, end)),
+        ("near".into(), Observation::ConnectionBoundary),
+    );
     let mut snapshot = Snapshot {
         server_latencies: vec![
             ServerLatency {
@@ -484,10 +497,10 @@ fn host_latency_populations_and_continuity_are_independent() {
         ],
         ..Snapshot::default()
     };
-    measurements.sample(&mut snapshot, Duration::from_millis(500));
+    sample_hosts(&mut hosts, &mut snapshot, Duration::from_millis(500));
     assert_eq!(snapshot.server_latencies[0].latest_ms, Some(4.0));
     assert_eq!(snapshot.server_latencies[1].latest_ms, Some(220.0));
-    measurements.sample(&mut snapshot, Duration::from_secs(1));
+    sample_hosts(&mut hosts, &mut snapshot, Duration::from_secs(1));
     assert_eq!(snapshot.server_latencies[0].latest_ms, None);
     assert_eq!(snapshot.server_latencies[1].latest_ms, None);
 }
@@ -638,79 +651,33 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     Ok(())
 }
 
-#[tokio::test]
-async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, mode, peer) = download_peer().await?;
-    let (healthy, _, healthy_peer) = download_peer().await?;
-    let http = Http::new(true)?;
-    let healthy_transport = Arc::new(Transport::connect(http.clone(), &healthy, Protocol::Http1, true).await?);
-    let transport = Arc::new(Transport::connect(http, &origin, Protocol::Http1, true).await?);
-    let (stop, cancelled) = watch::channel(false);
-    let epoch = Instant::now();
-    let upload = Upload::start(transport, 1, cancelled.clone()).await?;
-    let healthy_upload = Upload::start(healthy_transport, 1, cancelled).await?;
-    let mut resources = StageResources {
-        transfers: vec![
-            Transfer {
-                id: "peer".into(),
-                down: None,
-                up: Some(upload),
-                checkpoint_misses: 0,
-            },
-            Transfer {
-                id: "healthy".into(),
-                down: None,
-                up: Some(healthy_upload),
-                checkpoint_misses: 0,
-            },
-        ],
-        latency: JoinSet::new(),
-        stop,
-        stop_latency: BTreeMap::new(),
-        retired: JoinSet::new(),
-        failed: Vec::new(),
-        latency_completed: BTreeMap::new(),
+#[test]
+fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
+    let mut member = Member {
+        id: "peer".into(),
+        stop: watch::channel(false).0,
+        latency: None,
+        starting: false,
+        dialled: false,
         latency_failed: false,
+        lanes: Lanes::default(),
+        checkpoint_misses: 0,
+        moved: [Instant::now(); 2],
     };
-    assert_eq!(resources.boundary(epoch, BoundaryKind::Initial).await?.up.len(), 2);
-    mode.store(1, Ordering::SeqCst);
-    for _ in 0..2 {
-        assert!(
-            resources
-                .boundary(epoch, BoundaryKind::Sample)
-                .await?
-                .up
-                .contains_key("healthy")
-        );
+    let refused = || -> Option<Error> { Some("refused".into()) };
+    for final_boundary in [false, false, true] {
+        assert!(member.missed(refused(), final_boundary).is_none());
     }
-    mode.store(0, Ordering::SeqCst);
-    assert_eq!(resources.boundary(epoch, BoundaryKind::Sample).await?.up.len(), 2);
-    mode.store(1, Ordering::SeqCst);
-    for _ in 0..2 {
-        assert!(
-            resources
-                .boundary(epoch, BoundaryKind::Sample)
-                .await?
-                .up
-                .contains_key("healthy")
-        );
-    }
-    assert!(
-        resources
-            .boundary(epoch, BoundaryKind::Final)
-            .await?
-            .up
-            .contains_key("healthy")
-    );
-    assert!(resources.boundary(epoch, BoundaryKind::Sample).await.is_err());
-    mode.store(3, Ordering::SeqCst);
-    let error = resources.boundary(epoch, BoundaryKind::Final).await.unwrap_err();
-    assert!(crate::net::authentication_required(error.as_ref()).is_some());
-    drop(resources);
-    peer.abort();
-    healthy_peer.abort();
-    Ok(())
+    assert!(member.missed(None, false).is_none());
+    assert!(member.missed(refused(), false).is_none());
+    assert!(member.missed(refused(), false).is_none());
+    assert!(member.missed(refused(), false).is_some());
+    let revoked = crate::net::AuthRequired {
+        origin: "https://meter.test".into(),
+        login_url: "https://meter.test/login".into(),
+    };
+    member.checkpoint_misses = 0;
+    assert!(member.missed(Some(Box::new(revoked)), true).is_some());
 }
 
 #[tokio::test]
@@ -780,18 +747,18 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
 #[tokio::test]
 async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
-    let (near, near_mode, near_peer) = download_peer().await?;
+    let (near, _, near_peer) = download_peer().await?;
     let (far, far_mode, far_peer) = download_peer().await?;
-    near_mode.store(6, Ordering::SeqCst);
     far_mode.store(6, Ordering::SeqCst);
+    let refused = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
     let http = Http::new(true)?;
     let mut servers = vec![
         prepared_download("near", &near, &http).await?,
         prepared_download("far", &far, &http).await?,
     ];
-    for server in &mut servers {
+    for (server, latency) in servers.iter_mut().zip([&refused, &far]) {
         server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
-            base_url: server.entry.url.clone(),
+            base_url: latency.clone(),
             transport: LatencyTransport::WebSocket,
         });
     }
@@ -839,15 +806,19 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         .filter(|server| server.error.is_some())
         .collect();
     assert_eq!(departed.len(), 1);
-    assert_ne!(departed[0].id, download.server_results[0].id);
+    assert_eq!(
+        departed[0].id, "near",
+        "a server lost before its latency channel dialled stayed in the run"
+    );
+    assert_eq!(download.server_results[0].id, "far");
     Ok(())
 }
 
 #[tokio::test]
-async fn stop_sends_the_upload_delete_without_awaiting_complete() -> Result<(), Error> {
+async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (origin, mode, peer) = download_peer().await?;
-    mode.store(9, Ordering::SeqCst);
+    mode.store(11, Ordering::SeqCst);
     let http = Http::new(true)?;
     let servers = vec![prepared_download("peer", &origin, &http).await?];
     let config = Config {
@@ -857,13 +828,12 @@ async fn stop_sends_the_upload_delete_without_awaiting_complete() -> Result<(), 
         loaded_latency: false,
         ..Config::default()
     };
-    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (snapshots, _) = watch::channel(Snapshot::default());
     let (stop, cancelled) = watch::channel(false);
     let request_stop = async {
-        observed
-            .wait_for(|snapshot| snapshot.phase == Phase::Warmup)
-            .await
-            .unwrap();
+        while mode.load(Ordering::SeqCst) != 12 {
+            tokio::task::yield_now().await;
+        }
         stop.send_replace(true);
     };
     let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
@@ -874,7 +844,7 @@ async fn stop_sends_the_upload_delete_without_awaiting_complete() -> Result<(), 
     })
     .await?;
     peer.abort();
-    result?;
-    assert_eq!(mode.load(Ordering::SeqCst), 10);
+    assert!(result?.is_empty());
+    assert_eq!(mode.load(Ordering::SeqCst), 13);
     Ok(())
 }
