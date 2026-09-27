@@ -29,15 +29,15 @@ symlink another worktree's `node_modules`. Bun's package cache and Go's build ca
 
 ## Repository layout
 
-| Path | Responsibility |
-| --- | --- |
-| `api/` | Shared schemas and protocol specifications. |
-| `client/` | Svelte browser client, workers, unit tests and the E2E runner. |
-| `go/cmd/` | Server and native client entry points. |
-| `go/internal/` | Server, transport, measurement, native client and embedded assets. |
-| `container/` | Container build and deployment examples. |
-| `legal/` | Reviewed dependency metadata and generated notices ([legal pipeline](../legal/README.md)). |
-| `scripts/ci/` | CI and release control plane ([CI and release](../scripts/ci/README.md)). |
+| Path           | Responsibility                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------ |
+| `api/`         | Shared schemas and protocol specifications.                                                |
+| `client/`      | Svelte browser client, workers, unit tests and the E2E runner.                             |
+| `go/cmd/`      | Server and native client entry points.                                                     |
+| `go/internal/` | Server, transport, measurement, native client and embedded assets.                         |
+| `container/`   | Container build and deployment examples.                                                   |
+| `legal/`       | Reviewed dependency metadata and generated notices ([legal pipeline](../legal/README.md)). |
+| `scripts/ci/`  | CI and release control plane ([CI and release](../scripts/ci/README.md)).                  |
 
 ## Architecture
 
@@ -73,11 +73,11 @@ browser's version from the `CLIENT_VERSION` build argument, so `VERSION` alone s
 
 ## Tests
 
-| Layer | Command | Covers |
-| --- | --- | --- |
-| Go unit and integration | `mise run server-test` (race + coverage: `server-race`) | Server, wire, auth, native client, TUI. |
-| Browser unit | `mise run client-ci` | Types, format, measurement math, codecs, state. |
-| Real-server E2E | `mise run e2e` | Pinned Chromium against a local fleet of real servers. |
+| Layer                   | Command                                                 | Covers                                                 |
+| ----------------------- | ------------------------------------------------------- | ------------------------------------------------------ |
+| Go unit and integration | `mise run server-test` (race + coverage: `server-race`) | Server, wire, auth, native client, TUI.                |
+| Browser unit            | `mise run client-ci`                                    | Types, format, measurement math, codecs, state.        |
+| Real-server E2E         | `mise run e2e`                                          | Pinned Chromium against a local fleet of real servers. |
 
 `mise run e2e` builds the production client and server, then `client/scripts/e2e.ts` starts five servers with an
 ephemeral certificate: a home server with a catalogue, three public peers (native TLS, plain, second catalogue) and
@@ -134,17 +134,17 @@ Never create or move release tags in ordinary work.
 
 ## Toolchain pins
 
-| Pin | Owner | Consumers |
-| --- | --- | --- |
-| Go, Bun, Python, standalone checkers | `mise.toml` `[tools]` | Local tasks, CI, commit hook |
-| Tool downloads | `mise.lock` | Exact artifacts and checksums |
-| mise bootstrap | `mise.toml` `vars.mise_version` | The SHA-pinned CI action |
-| Chrome for Testing | `mise.toml` `vars.browser_chrome` | CI install and identity check |
-| CodeQL bundle | `mise.toml` `vars.codeql` | `mise run codeql` |
-| Utility container images | `mise.toml` `vars.image_*` | Image build, verification and publication |
-| Go dependencies | `go/go.mod`, `go/go.sum` | Module resolution and checksums |
-| Browser dependencies | `client/package.json`, `client/bun.lock` | Frozen Bun installs |
-| External GitHub Actions | Their `uses:` SHA | Immutable workflow refs |
+| Pin                                  | Owner                                    | Consumers                                 |
+| ------------------------------------ | ---------------------------------------- | ----------------------------------------- |
+| Go, Bun, Python, standalone checkers | `mise.toml` `[tools]`                    | Local tasks, CI, commit hook              |
+| Tool downloads                       | `mise.lock`                              | Exact artifacts and checksums             |
+| mise bootstrap                       | `mise.toml` `vars.mise_version`          | The SHA-pinned CI action                  |
+| Chrome for Testing                   | `mise.toml` `vars.browser_chrome`        | CI install and identity check             |
+| CodeQL bundle                        | `mise.toml` `vars.codeql`                | `mise run codeql`                         |
+| Utility container images             | `mise.toml` `vars.image_*`               | Image build, verification and publication |
+| Go dependencies                      | `go/go.mod`, `go/go.sum`                 | Module resolution and checksums           |
+| Browser dependencies                 | `client/package.json`, `client/bun.lock` | Frozen Bun installs                       |
+| External GitHub Actions              | Their `uses:` SHA                        | Immutable workflow refs                   |
 
 Edit the owning pin, run `mise lock`, `mise run toolchain-sync` (updates the Go directive, Docker builder defaults,
 mise bootstrap and workflow literals), `mise run setup` and `mise run check`; `mise run workflow-check` rejects

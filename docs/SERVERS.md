@@ -27,21 +27,29 @@ The object form adds named IDs, a default selection and extra measurement hosts:
 {
   "defaultSelection": ["self"],
   "servers": [
-    {"id": "frankfurt", "url": "https://fra.example.net", "name": "Frankfurt"},
-    {"id": "amsterdam", "url": "https://ams.example.net", "name": "Amsterdam",
-     "additionalOrigins": ["https://transfer.ams.example.net:8443"]}
+    {
+      "id": "frankfurt",
+      "url": "https://fra.example.net",
+      "name": "Frankfurt"
+    },
+    {
+      "id": "amsterdam",
+      "url": "https://ams.example.net",
+      "name": "Amsterdam",
+      "additionalOrigins": ["https://transfer.ams.example.net:8443"]
+    }
   ]
 }
 ```
 
-| Field | Rule |
-| --- | --- |
-| `servers` | Up to 31 entries besides the synthesized `self` (omit it). Unique IDs and origins. |
-| `id` | 1–64 ASCII letters, digits, `.`, `_` or `-`. |
-| `url` | HTTP(S) origin, ≤ 2048 bytes, no credentials, path, query or fragment. |
-| `name`, `location` | Fallbacks, ≤ 256 UTF-8 bytes, no control characters; discovery supplies current values. |
-| `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none. |
-| `defaultSelection` | One to four existing IDs; omitted means `self`, empty is invalid. |
+| Field               | Rule                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `servers`           | Up to 31 entries besides the synthesized `self` (omit it). Unique IDs and origins.      |
+| `id`                | 1–64 ASCII letters, digits, `.`, `_` or `-`.                                            |
+| `url`               | HTTP(S) origin, ≤ 2048 bytes, no credentials, path, query or fragment.                  |
+| `name`, `location`  | Fallbacks, ≤ 256 UTF-8 bytes, no control characters; discovery supplies current values. |
+| `additionalOrigins` | Up to 32 exact origins on other hosts; ports on the entry's own hostname need none.     |
+| `defaultSelection`  | One to four existing IDs; omitted means `self`, empty is invalid.                       |
 
 The raw configuration is limited to 64 KiB and the normalized catalogue, which adds this server's own entry, to
 48 KiB. The interface derives its browser
@@ -79,8 +87,8 @@ latency measurement. Hover or focus shows name, location and host. Inline **Retr
 individual entries; **Use available servers** repairs a stale saved selection.
 
 With several servers, every one is probed for latency and the run's latency is the first selected server's
-([latency definitions](MEASUREMENTS.md#latency-probing)). Results and History share one **Combined** / per-server
-selector that changes only what is shown.
+([latency definitions](MEASUREMENTS.md#latency-probing)). The results, Details and History share one server selector
+(all servers, or one) that changes only what is shown.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
 back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or

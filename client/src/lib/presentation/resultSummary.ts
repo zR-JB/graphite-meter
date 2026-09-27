@@ -207,7 +207,7 @@ function bidirectionalCard(
     wire: showWire && complete ? wire(lanes?.wire, value, units) : undefined,
     rows: [
       ...rows,
-      { label: "Combined", value: formatRate(value, units) },
+      { label: "Down + up", value: formatRate(value, units) },
       ...(moved
         ? [{ label: "Transferred", value: fmtBytes(moved, units.base) }]
         : []),
