@@ -38,52 +38,50 @@ export function describeTarget(
   advertisedDetail: string;
 } {
   const security = target.tls ? "TLS" : "clear";
+  const secured = (carrier: string) => `${carrier} (${security})`;
   const at = target.origin;
   const describe = (
     mechanism: string,
     carrier: string,
     label: string,
     advertisedDetail: string,
-  ) => ({
-    label,
-    summary: `${mechanism} · ${carrier}`,
-    carrier,
-    advertisedDetail,
-  });
+    summary = `${mechanism} over ${carrier}`,
+  ) => ({ label, summary, carrier, advertisedDetail });
   if (target.transport === "webtransport-datagram")
     return describe(
       TRANSPORT["webtransport-datagram"],
-      `${H3} · ${security}`,
-      `${TRANSPORT["webtransport-datagram"]} · ${security}`,
-      `Experimental unreliable-datagram flood over ${H3} · ${at}`,
+      secured(H3),
+      secured(TRANSPORT["webtransport-datagram"]),
+      `Experimental unreliable-datagram flood over ${H3} at ${at}`,
     );
   if (target.transport === "webtransport")
     return role === "throughput"
       ? describe(
           TRANSPORT.webtransport,
-          `${H3} · ${security}`,
-          `WebTransport · ${H3} · ${security}`,
-          `QUIC stream session over ${H3} · ${at}`,
+          secured(H3),
+          `WebTransport over ${secured(H3)}`,
+          `QUIC stream session over ${H3} at ${at}`,
         )
       : describe(
           "WebTransport",
-          `${H3} datagrams · ${security}`,
-          `WebTransport · ${H3} · ${security}`,
-          `Datagram bus over ${H3} · ${at}`,
+          secured(`${H3} datagrams`),
+          `WebTransport over ${secured(H3)}`,
+          `Datagram bus over ${H3} at ${at}`,
         );
   if (target.transport === "websocket") {
     // A WebSocket claims HTTP/1.1 only when its origin's fetch target names that protocol.
     const h1 = discovery.throughput[at]?.targets.some(
       (t) => t.transport === "fetch-stream" && t.protocol === "http1",
     );
-    const carrier = h1
-      ? `${httpProtocolLabel("http1")} · ${security}`
-      : security;
+    const label = h1
+      ? `WebSocket over ${secured(httpProtocolLabel("http1"))}`
+      : secured("WebSocket");
     return describe(
       "WebSocket",
-      carrier,
-      `WebSocket · ${carrier}`,
-      `${h1 ? `Direct ${httpProtocolLabel("http1")} WebSocket` : "WebSocket"} endpoint · ${at}`,
+      h1 ? secured(httpProtocolLabel("http1")) : security,
+      label,
+      `${h1 ? `Direct ${httpProtocolLabel("http1")} WebSocket` : "WebSocket"} endpoint at ${at}`,
+      label,
     );
   }
   const protocol = httpProtocolLabel(
@@ -91,11 +89,11 @@ export function describeTarget(
   );
   return describe(
     TRANSPORT["fetch-stream"],
-    `${protocol} · ${security}`,
-    `${protocol} · ${security}`,
+    secured(protocol),
+    secured(protocol),
     target.protocol === "negotiated"
-      ? `Browser negotiates the available HTTP version · ${at}`
-      : `Direct ${httpProtocolLabel(target.protocol)} endpoint · ${at}`,
+      ? `Browser negotiates the available HTTP version at ${at}`
+      : `Direct ${httpProtocolLabel(target.protocol)} endpoint at ${at}`,
   );
 }
 
@@ -126,7 +124,7 @@ function availability(
   const found = locateTarget(byOrigin, value);
   const entry = found?.entry ?? byOrigin[value];
   if (target && value === "auto") {
-    const first = `${describeTarget(discovery, role, target).summary} · ${target.origin}`;
+    const first = `${describeTarget(discovery, role, target).summary} at ${target.origin}`;
     return {
       disabled: false,
       detail:
@@ -143,7 +141,7 @@ function availability(
     const detail = describeTarget(discovery, role, target).advertisedDetail;
     return {
       disabled: false,
-      detail: loopback ? `Clear loopback endpoint · ${target.origin}` : detail,
+      detail: loopback ? `Clear loopback endpoint at ${target.origin}` : detail,
     };
   }
   if (selectTarget(discovery, role, value, true))
@@ -161,7 +159,7 @@ function availability(
     disabled: true,
     detail: blocked
       ? (entry.blockedReason ??
-        `Blocked by the browser: a secure page cannot open this clear endpoint · ${entry.targets[0]?.origin}`)
+        `Blocked by the browser: a secure page cannot open the clear endpoint at ${entry.targets[0]?.origin}`)
       : NOT_ADVERTISED,
   };
 }
