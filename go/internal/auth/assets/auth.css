@@ -20,7 +20,6 @@
   --type-md: 14px;
   --type-sm: 12px;
   --track-tight: -0.02em;
-  --track-wide: 0.1em;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-hover: 120ms;
@@ -289,12 +288,9 @@ form + .warn {
 }
 .completion .eyebrow {
   margin: 18px 0 5px;
-  color: var(--brand);
-  font-family: var(--font-mono);
+  color: var(--text-muted);
   font-size: var(--type-sm);
   font-weight: 600;
-  letter-spacing: var(--track-wide);
-  text-transform: uppercase;
 }
 .completion h1 {
   margin-top: 0;
