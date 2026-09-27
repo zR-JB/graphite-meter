@@ -4,7 +4,7 @@ import { Smoothed } from "./motion.svelte";
 
 export const STALL_FADE_MS = 800;
 
-export interface RatePair {
+interface RatePair {
   down: number;
   up: number;
 }

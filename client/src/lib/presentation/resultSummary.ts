@@ -18,9 +18,9 @@ import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
 import { MISSING, RECEIVER_TIMED, STAGE } from "./vocabulary";
 
-export type SummaryStatus = "complete" | "partial" | "failed";
+type SummaryStatus = "complete" | "partial" | "failed";
 type LiveStatus = "active" | "pending";
-export interface SummaryEvidence extends Pick<
+interface SummaryEvidence extends Pick<
   RunResult,
   "download" | "upload" | "bidirectional" | "latency"
 > {
@@ -233,7 +233,7 @@ export function summaryCards(
 }
 
 /** One server's share of a run, with the statuses the run settled for that server. */
-export function serverEvidence(
+function serverEvidence(
   details: MultiServerResult,
   id: string,
 ): SummaryEvidence | null {

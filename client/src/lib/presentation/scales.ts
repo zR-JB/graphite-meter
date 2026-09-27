@@ -105,7 +105,7 @@ function peaks(series: readonly ThroughputSample[]) {
 const reported = (result: ThroughputResult | null | undefined) =>
   result?.reportedBytesPerSec ?? 0;
 
-export interface ThroughputScales {
+interface ThroughputScales {
   chartBytesPerSec: number;
   gaugeBytesPerSec: number;
   unitIndex: number;
