@@ -93,8 +93,8 @@ after three replies and timeouts.
 Cadence is a scheduling policy, not an observed sampling rate: reply-driven density depends on RTT, and no coverage
 is inferred from cadence and elapsed time. The idle headline is the full stage median, the base of added latency;
 it never falls back to loaded RTTs or preflight hints. A failed stage keeps its measured population, marked
-incomplete. The shown server starts at the chosen **Latency server**, or with **Combined** at the one with the
-lowest preparation RTT; switching it never retargets probes or changes saved statistics.
+incomplete. Every selected server is probed. The run's latency is the first selected server's, or a survivor's once
+it leaves; the shown server starts there, and switching it never retargets probes or changes saved statistics.
 
 ## Paired server timing
 
@@ -124,7 +124,6 @@ jitter, deadlines and added latency.
 | Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down |
 | Warmup RTT | The latency focus server's path-check RTT | The highest RTT among active servers, updated to latency-stage medians |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
-| Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |
 | Latency cadence | Reply-driven, Fast, Medium or Slow | Also a custom spacing from 80 ms to 15 s |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter | Counts in RTT and jitter if before its deadline |
