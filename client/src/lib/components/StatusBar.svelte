@@ -31,10 +31,7 @@
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
 >
-<span
-  class="elapsed"
-  class:secondary={showRemaining}
-  {@attach tooltip(() => `Elapsed ${fmtDuration(elapsedMs)}`)}
+<span class="elapsed" class:secondary={showRemaining}
   ><span class="caption">elapsed&nbsp;</span><span class="readout"
     >{fmtDuration(elapsedMs)}</span
   ></span

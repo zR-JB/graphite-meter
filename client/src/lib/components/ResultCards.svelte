@@ -1,3 +1,8 @@
+<script module lang="ts">
+  // Module scope: returning from History must not announce the same run again.
+  let spoken: unknown = null;
+</script>
+
 <script lang="ts">
   import ResultSummary from "./ResultSummary.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -5,9 +10,12 @@
   import { fmtMs, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import type { LiveReadout } from "../presentation/liveReadout.svelte";
+  import { announce } from "../presentation/announcer.svelte";
+  import { untrack } from "svelte";
   import {
     CARD_ORDER,
     pendingRows,
+    resultSentence,
     summaryCards,
     serverIssues,
     summaryEvidence,
@@ -84,6 +92,13 @@
         })
       : settled,
   );
+
+  // Once per completed run, never again for a unit or scope change.
+  $effect(() => {
+    if (store.phase !== "complete" || store.result === spoken) return;
+    spoken = store.result;
+    announce(untrack(() => resultSentence(settled)));
+  });
 
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {

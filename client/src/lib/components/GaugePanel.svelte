@@ -147,7 +147,6 @@
       latencyMs: liveReadout.rtt.current,
       hasLatencyResult: !!store.result?.latency,
       unusable: unusableStage,
-      arcs: terminalArcs,
       headline: headlineArc,
       rate: (bytesPerSec) => fmtSpeed(gaugeRate(bytesPerSec)),
       unit: gaugeUnit,

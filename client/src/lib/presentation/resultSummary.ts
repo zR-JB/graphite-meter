@@ -240,6 +240,24 @@ export function summaryCards(
   });
 }
 
+/** A completed run spoken in card order: each headline, then latency's jitter and added latency. */
+export const resultSentence = (cards: SummaryCard[]) =>
+  cards
+    .map((card) =>
+      [
+        `${card.label} ${`${card.num} ${card.unit}`.trim()}${card.status === "complete" ? "" : `, ${card.status}`}`,
+        ...(card.key === "latency"
+          ? card.rows
+              .filter((row) => row.label === "Jitter" || row.stage)
+              .map(
+                (row) =>
+                  `${row.label}${row.stage ? ` ${STAGE[row.stage].short}` : ""} ${row.value}`,
+              )
+          : []),
+      ].join(", "),
+    )
+    .join("; ");
+
 /** Every row a stage's card will hold, still MISSING, so settling moves nothing. */
 export function pendingRows(
   key: TransportRole,

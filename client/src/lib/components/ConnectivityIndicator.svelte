@@ -51,11 +51,20 @@
         : "No probes yet",
     ].filter(Boolean);
   });
-  announceChanges(() => label);
+  // Only settled trouble is spoken; checking flaps every run and the toast speaks a stall.
+  announceChanges(() =>
+    ["degraded", "unstable", "offline"].includes(store.effectiveConnectivity)
+      ? label
+      : "",
+  );
 </script>
 
-<div class="pulse" {@attach tooltip(() => [label, ...facts].join("\n"))}>
-  <span class="sr-only">{label}</span>
+<div
+  class="pulse"
+  tabindex="-1"
+  {@attach tooltip(() => [label, ...facts].join("\n"))}
+>
+  <span class="sr-only">{[label, ...facts].join(". ")}</span>
   <span class="status-dot" data-tone={state.tone}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
     <polyline {points} />

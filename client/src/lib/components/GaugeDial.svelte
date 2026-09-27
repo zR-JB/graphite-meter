@@ -263,10 +263,11 @@
         layout.arcStart,
         layout.arcSweep,
       )}
+      <!-- Pointer-only: the cards and the announcement carry these values. -->
       <span
         class="head-target"
-        role="img"
-        aria-label={result.description.replace("\n", " ")}
+        aria-hidden="true"
+        tabindex="-1"
         style:left={`${layout.center.x + Math.cos(angle) * result.radius}px`}
         style:top={`${layout.center.y + Math.sin(angle) * result.radius}px`}
         {@attach tooltip(() => result.description)}

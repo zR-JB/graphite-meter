@@ -3,7 +3,7 @@
   import type { SummaryCard, SummaryRow } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { tipGroup, tooltip } from "../actions/tooltip";
   import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
 
   let {
@@ -53,7 +53,7 @@
       />
     </div>
   {/if}
-  <div class="result-cards">
+  <div class="result-cards" data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       <article class="surface result-card enter {card.status}">
         <span class="headline" {@attach tooltip(() => card.tip)}>
@@ -228,6 +228,12 @@
     justify-content: space-between;
     gap: var(--space-2);
     min-width: 0;
+  }
+  @media (pointer: coarse) {
+    .line {
+      min-height: 24px;
+      align-items: center;
+    }
   }
   .line-label {
     display: inline-flex;
