@@ -22,6 +22,15 @@ import (
 func nativeBoundary(ms int, down map[string]uint64, up map[string]*ReceiverSnapshot) measurementBoundary {
 	return measurementBoundary{at: time.Duration(ms) * time.Millisecond, down: down, up: up}
 }
+
+// testStage is a one-server stage whose aggregate has begun.
+func testStage(p *participant, plan StagePlan, emit func(Event)) *stageRun {
+	c := &coordinator{servers: []*participant{p}, started: time.Now(), emit: emit}
+	c.aggregate.beginStage(plan.Name, []string{p.id()}, 0)
+	own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
+	return &stageRun{c: c, plan: plan, servers: []*stageServer{own}}
+}
+
 func nativeReceiver(id string, bytes uint64, ms int) *ReceiverSnapshot {
 	return &ReceiverSnapshot{ID: id, Bytes: bytes, Nanos: uint64(time.Duration(ms) * time.Millisecond)}
 }
@@ -95,14 +104,9 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		moved   uint64
 		removed bool
 	}{{"silent", 0, true}, {"one byte", 1, false}} {
-		server := PreparedServer{Server: wire.ServerEntry{ID: "a"}, Connection: &PreparedConnection{}}
-		p := &participant{prepared: server}
-		co := &coordinator{servers: []*participant{p}, emit: func(Event) {}}
-		stage := StagePlan{Name: StageDownload, Directions: []Direction{Down}}
-		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
-		s := &stageRun{c: co, plan: stage, servers: []*stageServer{own}}
-		co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
+		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
+		s := testStage(p, StagePlan{Name: StageDownload, Directions: []Direction{Down}}, func(Event) {})
+		s.c.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
 		s.beginSampling(time.Now().Add(-redialWindow))
 		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)})
 		if p.removed != c.removed {
@@ -212,12 +216,10 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 			coordinated: &participantCounters{}}
 		r.coordinated.upload.Store(newUploadProgress(t.Context(), "u"))
 		p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}, transport: r}
-		co := &coordinator{servers: []*participant{p}, started: begun, emit: func(Event) {}}
-		own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-		s := &stageRun{c: co, plan: StagePlan{Name: StageUpload, Directions: []Direction{Up}}, ctx: t.Context(),
-			servers: own}
-		initial, _ := s.collect(t.Context(), co.active(), checkpointBudget)
-		co.aggregate.beginStage(StageUpload, []string{"a"}, initial.at)
+		s := testStage(p, StagePlan{Name: StageUpload, Directions: []Direction{Up}}, func(Event) {})
+		s.ctx, s.c.started = t.Context(), begun
+		initial, _ := s.collect(t.Context(), s.c.active(), checkpointBudget)
+		co := s.c
 		co.aggregate.observe(initial)
 		s.beginSampling(time.Now())
 		s.startSampler()
@@ -248,13 +250,9 @@ func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	t.Parallel()
 	p := &participant{prepared: PreparedServer{Server: wire.ServerEntry{ID: "a"}}}
 	var live []ThroughputSample
-	co := &coordinator{servers: []*participant{p}, emit: func(e Event) { live = append(live, e.Throughput) }}
-	stage := StagePlan{Name: StageUpload, Directions: []Direction{Up}}
-	initial := nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)})
-	co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
-	co.aggregate.observe(initial)
-	own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
-	s := &stageRun{c: co, plan: stage, servers: own}
+	s := testStage(p, StagePlan{Name: StageUpload, Directions: []Direction{Up}},
+		func(e Event) { live = append(live, e.Throughput) })
+	s.c.aggregate.observe(nativeBoundary(0, nil, map[string]*ReceiverSnapshot{"a": nativeReceiver("r1", 0, 1000)}))
 	s.beginSampling(time.Now())
 	for i, step := range []struct {
 		receiver *ReceiverSnapshot
