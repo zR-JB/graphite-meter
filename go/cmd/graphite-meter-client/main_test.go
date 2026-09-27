@@ -429,7 +429,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 			launch()
 		}
 	}
-	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened {
+	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened || m.statusLabel() != "Checking sign-in" {
 		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit != nil, m.auth)
 	}
 	for _, binding := range m.ShortHelp() {
@@ -442,7 +442,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
-	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != blocked || !strings.Contains(m.notice, "v") {
+	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "v") {
 		t.Fatalf("esc did not cancel sign-in: auth=%v prepare=%v", m.auth, m.prepare)
 	}
 	if m, _ = modelAndCmd(m.Update(press("r"))); m.run != nil {
@@ -450,7 +450,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	}
 	m.auth = &signIn{pending: pending, since: time.Now()}
 	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, err: goclient.ErrApprovalExpired}))
-	if m.auth != nil || m.statusLabel() != "Test cannot start" || !strings.Contains(m.notice, "expired") {
+	if m.auth != nil || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "expired") {
 		t.Fatalf("expiry reads %q / %q", m.statusLabel(), m.notice)
 	}
 }

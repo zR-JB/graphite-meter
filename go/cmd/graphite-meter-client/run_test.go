@@ -291,8 +291,8 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	setup := testModel(t)
 	for state, want := range map[prepareState]string{
 		prepareChecking: "Not started",
-		prepareSignIn:   "Test cannot start",
-		prepareFailed:   "Not started",
+		prepareSignIn:   "Sign in",
+		prepareFailed:   "Test could not start",
 		prepareReady:    "Not started",
 	} {
 		setup.prepare = state
@@ -592,7 +592,7 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 		"A",
 		"Ready",
 		"B",
-		"Sign-in required",
+		"Sign in",
 		"C",
 		"Failed",
 		"connection refused",
@@ -629,7 +629,7 @@ func TestRunAgainKeepsTheLastResultsUntilTheNextRunStarts(t *testing.T) {
 	if m.run != previous || m.statusLabel() != "Checking paths" || !m.running() {
 		t.Fatalf("run again replaced the results before the run started: %q", m.statusLabel())
 	}
-	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test cannot start:") {
+	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test could not start:") {
 		t.Fatalf("a failed start lost the previous run or its reason: %q", m.notice)
 	}
 }

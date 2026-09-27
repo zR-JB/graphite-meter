@@ -276,7 +276,8 @@ func (m model) planView(w int) string {
 	}
 	for _, r := range rows {
 		glyph := map[pathState]string{pathReady: m.st.ok.Render("●"), pathChecking: m.spin.View(),
-			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗")}[r.state]
+			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗"),
+			pathSignIn: m.st.warn.Render("○")}[r.state]
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
 		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(pathLabels[r.state]))
 		if r.detail != "" {

@@ -279,7 +279,8 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 	case m.last == goclient.OutcomeStopped:
 		m.notice = "Test stopped before it started."
 	default:
-		m.notice = blocked + ": " + errorText(done.Err)
+		m.notice = startFailed + ": " + errorText(done.Err)
+		return m.reprepare()
 	}
 	return m, nil
 }
@@ -465,8 +466,15 @@ func (m model) statusLabel() string {
 		}
 		return stageLabels[r.stage]
 	}
-	if m.prepare == prepareSignIn || m.cfg.Validate() != nil {
+	switch {
+	case m.cfg.Validate() != nil:
 		return blocked
+	case m.auth != nil && m.auth.opened:
+		return checkingSignIn
+	case m.prepare == prepareSignIn:
+		return pathLabels[pathSignIn]
+	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
+		return startFailed
 	}
 	return notStarted
 }

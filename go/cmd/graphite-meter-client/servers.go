@@ -64,7 +64,7 @@ func (m model) readiness() []readiness {
 		case m.prepare == prepareChecking:
 			r.state = pathChecking
 		case goclient.IsAuthRequired(s.Err):
-			r.state, r.detail = pathFailed, "Sign-in required."
+			r.state = pathSignIn
 		case s.Err != nil || s.Connection == nil:
 			r.state = pathFailed
 			if s.Err != nil {
