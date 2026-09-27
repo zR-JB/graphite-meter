@@ -2,8 +2,14 @@
 use super::*;
 use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-pub(super) const BUFFER_BYTES: u32 = 36 * 1024 * 1024;
+// TLS records and deframer, h2 frame reads, write buffer, HPACK and default window.
+const TRANSPORT_BYTES: usize = 512 * 1024;
+const STATE_BYTES: usize = 1024 * 1024;
+pub(super) const BUFFER_BYTES: u32 = (TRANSPORT_BYTES + STATE_BYTES) as u32;
+const DEFAULT_WINDOW_BYTES: u32 = 65_535;
+const WINDOW_BYTES: u32 = 16 * 1024 * 1024;
 const MAX_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 16 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -15,18 +21,16 @@ impl HttpServer {
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        // h2 keeps queued END_STREAM frames in its concurrency count until
-        // pending frames and buffered DATA drain (Stream::is_closed). Together
-        // these limits bound queued DATA to 250 * 16 KiB, even after handlers
-        // release admission. Header/codec/TLS buffers have separate bounds.
+        // Until an upload is admitted, the default connection window bounds streams.
         let mut builder = h2::server::Builder::new();
         builder
             .initial_window_size(8 * 1024 * 1024)
-            .initial_connection_window_size(16 * 1024 * 1024)
             .max_frame_size(FRAME_BYTES as u32)
             .max_header_list_size(MAX_HEADER_BYTES as u32)
             .max_concurrent_streams(MAX_STREAMS)
-            .max_send_buffer_size(FRAME_BYTES);
+            .max_send_buffer_size(FRAME_BYTES)
+            .data_frame_budget(STATE_BYTES)
+            .shared_budget(self.memory.clone(), STATE_BYTES);
         let stream = WriteProgressIo::new(stream, Duration::from_secs(30));
         let Ok(Ok(mut connection)) = tokio::time::timeout(
             Duration::from_secs(10),
@@ -39,6 +43,10 @@ impl HttpServer {
         // Poll stream futures in their connection's scope rather than spawning
         // detached tasks. Dropping this scope synchronously drops every stream.
         let mut streams = FuturesUnordered::<StreamFuture>::new();
+        let window = Arc::new(UploadWindow {
+            memory: self.memory.clone(),
+            uploads: AtomicUsize::new(0),
+        });
         let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
@@ -56,8 +64,11 @@ impl HttpServer {
                         reply.send_reset(Reason::REFUSED_STREAM);
                     } else {
                         let server = self.clone();
+                        let window = window.clone();
                         streams.push(Box::pin(async move {
-                            server.serve_http2_stream(request, reply, facts).await;
+                            server
+                                .serve_http2_stream(request, reply, facts, window)
+                                .await;
                         }));
                     }
                     cx.waker().wake_by_ref();
@@ -96,6 +107,7 @@ impl HttpServer {
         request: Request<RecvStream>,
         mut reply: SendResponse<Bytes>,
         facts: Connection,
+        window: Arc<UploadWindow>,
     ) {
         let head = request.method() == Method::HEAD;
         // This registry belongs only to this stream. Upload can register its
@@ -103,8 +115,14 @@ impl HttpServer {
         let operations = Arc::new(Mutex::new(Vec::new()));
         let result = {
             let exchange = async {
+                let request = request.map(|stream| H2Body {
+                    stream,
+                    operations: operations.clone(),
+                    window,
+                    funded: false,
+                });
                 let response = self
-                    .respond_incoming(request.map(H2Body), facts, &operations, None)
+                    .respond_incoming(request, facts, &operations, None)
                     .await?;
                 send_response(&mut reply, response, head).await
             };
@@ -202,7 +220,28 @@ async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usi
         .map_err(io::Error::other)
 }
 
-struct H2Body(RecvStream);
+impl h2::SharedBudget for http_quic::MemoryBudget {
+    fn try_charge(&self, bytes: usize) -> bool {
+        quinn::SharedBudget::try_charge(self, bytes)
+    }
+
+    fn refund(&self, bytes: usize) {
+        quinn::SharedBudget::refund(self, bytes);
+    }
+}
+
+struct UploadWindow {
+    memory: Arc<http_quic::MemoryBudget>,
+    uploads: AtomicUsize,
+}
+
+struct H2Body {
+    stream: RecvStream,
+    operations: Operations,
+    window: Arc<UploadWindow>,
+    funded: bool,
+}
+
 impl Body for H2Body {
     type Data = Bytes;
     type Error = h2::Error;
@@ -211,13 +250,45 @@ impl Body for H2Body {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
-        match ready!(self.0.poll_data(cx)) {
+        let this = &mut *self;
+        let admitted = || {
+            let operations = this.operations.lock().expect("operations poisoned");
+            operations.iter().any(|operation| {
+                operation
+                    .lock()
+                    .expect("operation poisoned")
+                    .permit
+                    .is_some()
+            })
+        };
+        // Under pressure an admitted upload keeps reading at the current window.
+        if !this.funded && this.window.memory.has_headroom() && admitted() {
+            this.funded = this.window.uploads.fetch_add(1, Ordering::Relaxed) > 0
+                || this
+                    .stream
+                    .flow_control()
+                    .set_target_connection_window_size(WINDOW_BYTES);
+            if !this.funded {
+                this.window.uploads.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+        match ready!(this.stream.poll_data(cx)) {
             Some(Ok(data)) => {
-                self.0.flow_control().release_capacity(data.len())?;
+                this.stream.flow_control().release_capacity(data.len())?;
                 Poll::Ready(Some(Ok(Frame::data(data))))
             }
             Some(Err(error)) => Poll::Ready(Some(Err(error))),
             None => Poll::Ready(None),
+        }
+    }
+}
+
+impl Drop for H2Body {
+    fn drop(&mut self) {
+        if self.funded && self.window.uploads.fetch_sub(1, Ordering::Relaxed) == 1 {
+            self.stream
+                .flow_control()
+                .set_target_connection_window_size(DEFAULT_WINDOW_BYTES);
         }
     }
 }
@@ -423,5 +494,191 @@ mod write_stall_tests {
             panic!("final queued response escaped the write-stall bound");
         };
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
+    use tokio::net::TcpStream;
+
+    struct Served {
+        server: Arc<HttpServer>,
+        address: SocketAddr,
+        connector: tokio_rustls::TlsConnector,
+        stop: tokio::sync::oneshot::Sender<()>,
+        task: tokio::task::JoinHandle<Result<(), ConfigError>>,
+    }
+
+    impl Served {
+        async fn start(memory: usize) -> Self {
+            let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
+            let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
+            let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
+            let provider = Arc::new(crate::crypto::provider());
+            let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .unwrap()
+                .with_no_client_auth()
+                .with_single_cert(vec![certificate.clone()], key)
+                .unwrap();
+            tls.alpn_protocols = vec![b"h2".to_vec()];
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(certificate).unwrap();
+            let mut client = rustls::ClientConfig::builder_with_provider(provider)
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .unwrap()
+                .with_root_certificates(roots)
+                .with_no_client_auth();
+            client.alpn_protocols = vec![b"h2".to_vec()];
+            let server =
+                Arc::new(HttpServer::with_memory(Arc::new(Config::default()), memory).unwrap());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (stop, stopped) = tokio::sync::oneshot::channel();
+            let task = tokio::spawn(server.clone().serve_http2(listener, Arc::new(tls), async {
+                let _ = stopped.await;
+            }));
+            Self {
+                server,
+                address,
+                connector: tokio_rustls::TlsConnector::from(Arc::new(client)),
+                stop,
+                task,
+            }
+        }
+
+        fn available(&self) -> usize {
+            self.server.memory.available()
+        }
+
+        async fn client(&self, window: u32) -> h2::client::SendRequest<Bytes> {
+            let stream = self
+                .connector
+                .connect(
+                    ServerName::try_from("localhost").unwrap(),
+                    TcpStream::connect(self.address).await.unwrap(),
+                )
+                .await
+                .unwrap();
+            let (client, connection) = h2::client::Builder::new()
+                .initial_window_size(window)
+                .handshake(stream)
+                .await
+                .unwrap();
+            tokio::spawn(connection);
+            client.ready().await.unwrap()
+        }
+
+        async fn stop(self) {
+            self.stop.send(()).unwrap();
+            self.task.await.unwrap().unwrap();
+        }
+    }
+
+    fn request(method: Method, path: &str) -> Request<()> {
+        Request::builder()
+            .method(method)
+            .uri(format!("https://localhost{path}"))
+            .body(())
+            .unwrap()
+    }
+
+    async fn json(response: h2::client::ResponseFuture) -> serde_json::Value {
+        let mut body = response.await.unwrap().into_body();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let chunk = chunk.unwrap();
+            body.flow_control().release_capacity(chunk.len()).unwrap();
+            bytes.extend_from_slice(&chunk);
+        }
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn unadmitted_header_and_data_floods_stay_within_the_floor() {
+        let served = Served::start(64 * 1024 * 1024).await;
+        let idle = served.available();
+        let mut flood = served.client(0).await;
+        let pad = http::HeaderValue::from_bytes(&[b'p'; 24 * 1024]).unwrap();
+        let mut held = Vec::new();
+        for _ in 0..64 {
+            flood = flood.ready().await.unwrap();
+            let mut head = request(Method::POST, "/probe");
+            head.headers_mut().insert("x-pad", pad.clone());
+            held.push(flood.send_request(head, false).unwrap());
+        }
+        for (_, upload) in &mut held {
+            for _ in 0..64 {
+                upload.reserve_capacity(1);
+                if upload.capacity() > 0 {
+                    let _ = upload.send_data(Bytes::from_static(b"x"), false);
+                }
+            }
+        }
+        let mut refused = 0;
+        for (response, _) in held {
+            let response = tokio::time::timeout(Duration::from_secs(5), response).await;
+            if !matches!(response, Ok(Ok(ref reply)) if reply.status() == StatusCode::OK) {
+                refused += 1;
+            }
+            assert!(idle - served.available() <= BUFFER_BYTES as usize);
+        }
+        assert!(refused > 0, "the flood never reached the connection's cap");
+        let mut sibling = served.client(65_535).await;
+        let (probe, _) = sibling
+            .send_request(request(Method::GET, "/probe"), true)
+            .unwrap();
+        assert_eq!(json(probe).await["protocolNegotiated"], "h2");
+        drop((flood, sibling));
+        served.stop().await;
+    }
+
+    #[tokio::test]
+    async fn pressure_keeps_admitted_uploads_at_the_default_window() {
+        let limit = 80 * 1024 * 1024;
+        let served = Served::start(limit).await;
+        let idle = served.available();
+        let mut client = served.client(65_535).await;
+        let pressure = served
+            .server
+            .memory
+            .lease(served.available() - limit / 4)
+            .unwrap();
+        let held = served.available();
+        let (session, _) = client
+            .send_request(request(Method::POST, "/upload/session"), true)
+            .unwrap();
+        let id = json(session).await["uploadId"].as_str().unwrap().to_owned();
+        client = client.ready().await.unwrap();
+        let (reply, mut upload) = client
+            .send_request(request(Method::POST, &format!("/upload?id={id}")), false)
+            .unwrap();
+        let mut body = Bytes::from(vec![7; 512 * 1024]);
+        while !body.is_empty() {
+            upload.reserve_capacity(body.len());
+            let capacity = std::future::poll_fn(|cx| upload.poll_capacity(cx))
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                capacity <= DEFAULT_WINDOW_BYTES as usize,
+                "window grew under pressure"
+            );
+            assert_eq!(served.available(), held);
+            let chunk = body.split_to(capacity.min(body.len()));
+            upload.send_data(chunk, body.is_empty()).unwrap();
+        }
+        assert_eq!(json(reply).await["bytes"], 512 * 1024);
+        client = client.ready().await.unwrap();
+        let (probe, _) = client
+            .send_request(request(Method::GET, "/probe"), true)
+            .unwrap();
+        assert_eq!(json(probe).await["load"]["active"], 0);
+        drop((client, pressure));
+        let server = served.server.clone();
+        served.stop().await;
+        assert_eq!(server.memory.available(), idle);
     }
 }

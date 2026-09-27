@@ -56,10 +56,16 @@ floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3 frame
 and copy block outside Noq, plus 196 KiB for the TLS handshake: 5.4 MiB with
 the default 67 streams. Certificate chains are limited to 8 certificates and
 32 KiB, and the handshake term allows five server flights of that chain.
-HTTP/2 still reserves 36 MiB before each TLS handshake; that reservation
-outlives its connection, local stream futures, and buffers. Once a quarter of
-either connection capacity or the budget is used, unvalidated QUIC handshakes
-require Retry. A connection whose floor or reservation does not fit is refused
+An HTTP/2 connection holds a 1.5 MiB floor from accept until its task ends:
+512 KiB of TLS and codec buffers and a 1 MiB allowance for decoded headers,
+buffered DATA frames and queued response metadata, charged as they fill. A
+request's headers stay charged until its stream future and queued trailers are
+gone; past the allowance, requests are refused and DATA resets its stream. The
+receive window stays 64 KiB until an admitted upload reads, then grows to
+16 MiB while the budget is under three quarters used, charged until the peer can
+no longer fill it. Under pressure uploads continue at their current window.
+Once a quarter of either connection capacity or the budget is used, unvalidated
+QUIC handshakes require Retry. A connection whose floor does not fit is refused
 while established connections continue.
 
 Noq charges its receive reassembly, send buffers, packet and control metadata,

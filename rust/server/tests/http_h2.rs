@@ -19,6 +19,7 @@ use tokio_rustls::TlsConnector;
 
 struct Harness {
     address: SocketAddr,
+    connector: TlsConnector,
     client: SendRequest<Bytes>,
     driver: JoinHandle<Result<(), h2::Error>>,
     stop: oneshot::Sender<()>,
@@ -62,14 +63,8 @@ impl Harness {
         let server = tokio::spawn(server.serve_http2(listener, Arc::new(tls), async {
             let _ = stopped.await;
         }));
-        let stream = TlsConnector::from(Arc::new(client_tls))
-            .connect(
-                ServerName::try_from("localhost").unwrap(),
-                TcpStream::connect(address).await.unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(stream.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+        let connector = TlsConnector::from(Arc::new(client_tls));
+        let stream = connect(&connector, TcpStream::connect(address).await.unwrap()).await;
         let (client, connection) = h2::client::Builder::new()
             .initial_window_size(1024)
             .initial_connection_window_size(1024 * 1024)
@@ -79,11 +74,21 @@ impl Harness {
         let driver = tokio::spawn(connection);
         Self {
             address,
+            connector,
             client,
             driver,
             stop,
             server,
         }
+    }
+
+    async fn connect_from(&self, source: [u8; 4]) -> SendRequest<Bytes> {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind((source, 0).into()).unwrap();
+        let stream = connect(&self.connector, socket.connect(self.address).await.unwrap()).await;
+        let (client, connection) = h2::client::handshake(stream).await.unwrap();
+        tokio::spawn(connection);
+        client
     }
 
     async fn close(self) {
@@ -92,6 +97,18 @@ impl Harness {
         self.driver.abort();
         let _ = self.driver.await;
     }
+}
+
+async fn connect(
+    connector: &TlsConnector,
+    socket: TcpStream,
+) -> tokio_rustls::client::TlsStream<TcpStream> {
+    let stream = connector
+        .connect(ServerName::try_from("localhost").unwrap(), socket)
+        .await
+        .unwrap();
+    assert_eq!(stream.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+    stream
 }
 
 fn request(method: &str, path: &str) -> Request<()> {
@@ -397,4 +414,30 @@ async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished(
         .unwrap();
     harness.stop.send(()).unwrap();
     harness.server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn silent_connections_from_few_sources_leave_room_for_new_clients() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        // The former 36 MiB reservation admitted only one connection here.
+        let harness = Harness::start_config(Config {
+            max_buffer_bytes: 64 * 1024 * 1024,
+            ..Config::default()
+        })
+        .await;
+        let mut silent = Vec::new();
+        for source in 2..6 {
+            for _ in 0..8 {
+                silent.push(harness.connect_from([127, 0, 0, source]).await);
+            }
+        }
+        let mut client = harness.connect_from([127, 0, 0, 6]).await;
+        let probe = response(&mut client, "GET", "/probe", Bytes::new()).await;
+        assert_eq!(probe.status(), 200);
+        collect(probe.into_body()).await;
+        drop(silent);
+        harness.close().await;
+    })
+    .await
+    .expect("silent connections exhausted the HTTP/2 budget");
 }

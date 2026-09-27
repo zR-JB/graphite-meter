@@ -374,7 +374,7 @@ impl MemoryBudget {
         })
     }
 
-    fn available(&self) -> usize {
+    pub(super) fn available(&self) -> usize {
         self.limit - self.used.load(Ordering::Relaxed)
     }
 
@@ -382,7 +382,7 @@ impl MemoryBudget {
         self.used.load(Ordering::Relaxed) >= self.limit / 4
     }
 
-    fn has_headroom(&self) -> bool {
+    pub(super) fn has_headroom(&self) -> bool {
         self.used.load(Ordering::Relaxed) < self.limit / 4 * 3
     }
 }
@@ -1273,7 +1273,7 @@ mod tests {
                 .unwrap();
             let exhausted = server
                 .memory
-                .lease(server.memory.available() - (floor - 1))
+                .lease(server.memory.available() + 1 - floor.min(http_h2::BUFFER_BYTES as usize))
                 .unwrap();
             let pressured = crate::test_link::Link::udp(quic_address, Duration::from_millis(50))
                 .await
