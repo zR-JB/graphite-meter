@@ -196,7 +196,16 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = tokio::time::timeout(Duration::from_secs(3), prepare(&config, &Http::new(false)?, &snapshots)).await?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(3),
+        prepare(
+            &config,
+            &Http::new(false)?,
+            &snapshots,
+            Instant::now() + PREPARATION_TIMEOUT,
+        ),
+    )
+    .await?;
     let Ok(Preparation { servers, failures }) = result else {
         return Err("one unusable server failed the whole selection".into());
     };
@@ -227,6 +236,52 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
 }
 
 #[tokio::test]
+async fn a_slow_server_fails_alone_at_the_shared_deadline() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let fast = TcpListener::bind("127.0.0.1:0").await?;
+    let slow = TcpListener::bind("127.0.0.1:0").await?;
+    let fast_origin = format!("http://{}", fast.local_addr()?);
+    let catalog = serde_json::json!({
+        "defaultSelection": ["self", "slow"],
+        "servers": [
+            {"id": "self", "url": fast_origin, "name": "fast"},
+            {"id": "slow", "url": format!("http://{}", slow.local_addr()?), "name": "slow"}
+        ]
+    })
+    .to_string();
+    let origin = fast_origin.clone();
+    let server = tokio::spawn(async move {
+        let mut held = Vec::new();
+        loop {
+            tokio::select! {
+                Ok((stream, _)) = fast.accept() => {
+                    let (origin, catalog) = (origin.clone(), catalog.clone());
+                    tokio::spawn(serve_selected(stream, origin, catalog, Arc::new(Barrier::new(1)), false));
+                }
+                Ok((stream, _)) = slow.accept() => held.push(stream),
+            }
+        }
+    });
+    let config = Config {
+        url: fast_origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let Preparation { servers, failures } = prepare(&config, &Http::new(false)?, &snapshots, deadline).await?;
+    server.abort();
+    assert_eq!(servers.len(), 1);
+    assert_eq!(failures[0].id, "slow");
+    assert_eq!(
+        crate::failure::reason(failures[0].source.as_ref(), true),
+        graphite_meter_core::failure::FailureReason::Timeout
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (origin, fixture) = fixture(FixtureMode::Latency).await?;
@@ -238,7 +293,7 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = prepare(&config, &http, &snapshots).await?;
+    let prepared = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT).await?;
     assert_eq!(
         prepared.servers[0].latency.as_ref().unwrap().transport,
         LatencyTransport::WebSocket
@@ -248,7 +303,11 @@ async fn automatic_latency_uses_websocket_when_advertised_quic_cannot_reply() ->
         latency_transport: Some(LatencyTransport::WebTransport),
         ..config
     };
-    assert!(prepare(&forced, &http, &snapshots).await.is_err());
+    assert!(
+        prepare(&forced, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT)
+            .await
+            .is_err()
+    );
     fixture.abort();
     Ok(())
 }
@@ -264,10 +323,15 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let error = prepare(&config, &Http::new(false)?, &snapshots)
-        .await
-        .err()
-        .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
+    let error = prepare(
+        &config,
+        &Http::new(false)?,
+        &snapshots,
+        Instant::now() + PREPARATION_TIMEOUT,
+    )
+    .await
+    .err()
+    .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
     assert!(error.to_string().contains("select an origin explicitly"));
     assert!(error.to_string().contains("advertised WebTransport is unavailable"));
     fixture.abort();
@@ -285,7 +349,13 @@ async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Er
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let prepared = prepare(&config, &Http::new(false)?, &snapshots).await?;
+    let prepared = prepare(
+        &config,
+        &Http::new(false)?,
+        &snapshots,
+        Instant::now() + PREPARATION_TIMEOUT,
+    )
+    .await?;
     assert_eq!(
         prepared.servers[0].throughput.as_ref().unwrap().protocol,
         Protocol::Http1

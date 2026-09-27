@@ -23,6 +23,8 @@ use tokio::{sync::watch, time::Instant};
 #[cfg(test)]
 mod prepare_tests;
 
+const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
+
 struct PreparedServer {
     entry: ServerEntry,
     client: Http,
@@ -50,7 +52,7 @@ pub async fn prepare_run(
     snapshots: &watch::Sender<Snapshot>,
 ) -> Result<PreparedRun, Error> {
     let verified_at = Instant::now();
-    let preparation = prepare(config, http, snapshots).await?;
+    let preparation = prepare(config, http, snapshots, Instant::now() + PREPARATION_TIMEOUT).await?;
     if !preparation.failures.is_empty() {
         return Err(preferred(preparation.failures));
     }
@@ -94,28 +96,29 @@ impl std::error::Error for PreparationFailure {
     }
 }
 
-async fn prepare(config: &Config, http: &Http, snapshots: &watch::Sender<Snapshot>) -> Result<Preparation, Error> {
-    tokio::time::timeout(Duration::from_secs(12), prepare_inner(config, http, snapshots))
-        .await
-        .map_err(|_| -> Error {
-            Box::new(crate::failure::MeasurementFailure(
-                graphite_meter_core::failure::FailureReason::Timeout,
-            ))
-        })?
-}
-
-async fn prepare_inner(
+/// One deadline covers the catalogue and every server, so a slow server fails alone.
+async fn prepare(
     config: &Config,
     http: &Http,
     snapshots: &watch::Sender<Snapshot>,
+    deadline: Instant,
 ) -> Result<Preparation, Error> {
+    let late = || -> Error {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "the path check did not finish within 12 seconds",
+        )
+        .into()
+    };
     config.validate()?;
     snapshots.send_modify(|snapshot| {
         snapshot.phase = Phase::Preparing;
         snapshot.error = None;
         snapshot.status = "Loading server catalogue".into();
     });
-    let discovery = http.discover(&config.url).await?;
+    let discovery = tokio::time::timeout_at(deadline, http.discover(&config.url))
+        .await
+        .map_err(|_| late())??;
     let selected = selection::servers(&discovery.catalog, config)?;
     snapshots.send_modify(|snapshot| {
         snapshot.servers = discovery
@@ -135,12 +138,14 @@ async fn prepare_inner(
     snapshots.send_modify(|snapshot| {
         snapshot.status = format!("Verifying {} selected servers", selected.len());
     });
-    // Run independent origins concurrently and publish each result as it
-    // arrives. Retain catalogue order for lane planning and error selection.
+    // Results publish as they arrive; catalogue order stays for lane planning and error selection.
     let mut checks = selected
         .iter()
         .enumerate()
-        .map(|(index, entry)| async move { (index, prepare_server(config, http, entry, transfers, latency).await) })
+        .map(|(index, entry)| async move {
+            let check = tokio::time::timeout_at(deadline, prepare_server(config, http, entry, transfers, latency));
+            (index, check.await.map_err(|_| late()).and_then(|result| result))
+        })
         .collect::<FuturesUnordered<_>>();
     let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
     let mut completed = 0;
@@ -374,7 +379,7 @@ pub async fn run_prepared(
         Some(prepared) => prepared.servers,
         None => {
             let preparation = tokio::select! {
-                result = prepare(&config, &http, &snapshots) => result?,
+                result = prepare(&config, &http, &snapshots, Instant::now() + PREPARATION_TIMEOUT) => result?,
                 _ = cancel.wait_for(|value| *value) => return Ok(()),
             };
             snapshots.send_modify(|snapshot| {
@@ -403,7 +408,7 @@ pub async fn run_prepared(
             let transfer = stage.downloads() || stage.uploads();
             let latency = *stage == Stage::Latency || config.loaded_latency;
             let replacement = tokio::select! {
-                result = tokio::time::timeout(Duration::from_secs(12), prepare_server(&config, &http, entry, transfer, latency)) => result.map_err(Error::from).and_then(|result| result),
+                result = tokio::time::timeout(PREPARATION_TIMEOUT, prepare_server(&config, &http, entry, transfer, latency)) => result.map_err(Error::from).and_then(|result| result),
                 _ = cancel.wait_for(|value| *value) => break,
             };
             match replacement {
