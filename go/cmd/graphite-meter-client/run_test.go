@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -796,5 +797,46 @@ func TestResetAsksFirst(t *testing.T) {
 	m, _ = modelAndCmd(m.Update(press("enter")))
 	if m.cfg.Warmup != goclient.DefaultConfig().Warmup || m.resetPrompt {
 		t.Fatal("confirmed reset kept the settings")
+	}
+}
+
+func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
+	t.Parallel()
+	var tr trace
+	for i := range 200 {
+		v := 1e6 + 9e5*math.Sin(float64(i)/3)
+		switch {
+		case i == 100:
+			v = math.NaN()
+		case i > 100 && i < 130:
+			continue
+		}
+		tr = tr.add(float64(i)*0.1, v)
+	}
+	st := newStyles(true)
+	marks := []mark{{0, "Latency"}, {4, "Download"}, {19.5, "Upload"}}
+	for _, w := range []int{36, 76, 116} {
+		chart := ansi.Strip(st.chart([]series{{st.down, tr.points}}, marks, rateAxis, 20, w, 12))
+		lines := strings.Split(chart, "\n")
+		inked := map[int]bool{}
+		for _, line := range lines[:len(lines)-2] {
+			for x, r := range []rune(line)[chartAxis:] {
+				if bits := int(r) - 0x2800; bits > 0 && bits <= 0xff {
+					inked[2*x] = inked[2*x] || bits&0x47 != 0
+					inked[2*x+1] = inked[2*x+1] || bits&0xb8 != 0
+				}
+			}
+		}
+		dot := func(t float64) int { return int(t / 20 * float64(2*(w-chartAxis))) }
+		for x := range dot(19.9) + 1 {
+			if gap := x > dot(9.9) && x < dot(13); inked[x] == gap {
+				t.Errorf("width %d: dot column %d inked=%v, gap %d–%d", w, x, inked[x], dot(9.9), dot(13))
+			}
+		}
+		for _, line := range lines {
+			if lipgloss.Width(line) > w {
+				t.Errorf("width %d: %q spans %d cells", w, line, lipgloss.Width(line))
+			}
+		}
 	}
 }

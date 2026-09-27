@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"math"
 	"strconv"
 	"strings"
@@ -186,33 +187,57 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		}
 	}
 	top := niceCeil(peak*ax.scale*1.05) / ax.scale
+	dotW, dotH := cols*2, rows*4
 	dots := make([]rune, cols*rows)
 	owner := make([]int, cols*rows)
 	set := func(x, y, i int) {
-		if x >= 0 && x < cols*2 && y >= 0 && y < rows*4 {
-			cell := y/4*cols + x/2
-			dots[cell] |= brailleDots[y%4][x%2]
-			owner[cell] = i
+		cell := y/4*cols + x/2
+		dots[cell] |= brailleDots[y%4][x%2]
+		owner[cell] = i
+	}
+	segment := func(x0, y0, x1, y1, i int) {
+		dx, dy, sx, sy := abs(x1-x0), -abs(y1-y0), cmp.Compare(x1, x0), cmp.Compare(y1, y0)
+		for e := dx + dy; ; {
+			set(x0, y0, i)
+			if x0 == x1 && y0 == y1 {
+				return
+			}
+			e2 := 2 * e
+			if e2 >= dy {
+				e, x0 = e+dy, x0+sx
+			}
+			if e2 <= dx {
+				e, y0 = e+dx, y0+sy
+			}
 		}
 	}
 	for i, l := range lines {
-		px, py, drawn := 0, 0, false
+		// One mean per dot column, joined to the previous column unless a missing sample lies between.
+		col, sum, n, px, py, drawn := -1, 0.0, 0, 0, 0, false
+		plot := func() {
+			if n == 0 {
+				return
+			}
+			y := dotH - 1 - int(math.Round(min(max(sum/float64(n)/top, 0), 1)*float64(dotH-1)))
+			if !drawn {
+				px, py = col, y
+			}
+			segment(px, py, col, y, i)
+			px, py, drawn, sum, n = col, y, true, 0, 0
+		}
 		for _, p := range l.points {
 			if math.IsNaN(p.v) {
+				plot()
 				drawn = false
 				continue
 			}
-			x := int((p.t - t0) / (t1 - t0) * float64(cols*2-1))
-			y := rows*4 - 1 - int(p.v/top*float64(rows*4-1))
-			if !drawn {
-				px, py = x, y
+			if x := min(max(int((p.t-t0)/(t1-t0)*float64(dotW)), 0), dotW-1); x != col {
+				plot()
+				col = x
 			}
-			steps := max(abs(x-px), abs(y-py), 1)
-			for j := 0; j <= steps; j++ {
-				set(px+(x-px)*j/steps, py+(y-py)*j/steps, i)
-			}
-			px, py, drawn = x, y, true
+			sum, n = sum+p.v*float64(p.n), n+p.n
 		}
+		plot()
 	}
 	var b strings.Builder
 	for r := range rows {
@@ -247,7 +272,7 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 	labels := []rune(strings.Repeat(" ", cols))
 	end := []rune(fmtClock(time.Duration(t1 * float64(time.Second))))
 	endAt := max(cols-len(end), 0)
-	column := func(t float64) int { return int((t - t0) / (t1 - t0) * float64(cols-1)) }
+	column := func(t float64) int { return min(int((t-t0)/(t1-t0)*float64(cols)), cols-1) }
 	for i, m := range marks {
 		x, limit := column(m.t), endAt-1
 		if x < 0 || x >= cols {
@@ -257,8 +282,9 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 			limit = min(limit, column(marks[i+1].t)-1)
 		}
 		ruler[x] = '┬'
-		label := []rune(m.label)
-		copy(labels[x:max(x, min(x+len(label), limit))], label)
+		if room := limit - x; room >= 3 {
+			copy(labels[x:], []rune(ansi.Truncate(m.label, room, "…")))
+		}
 	}
 	copy(labels[endAt:], end)
 	b.WriteString(strings.Repeat(" ", chartAxis-1) + s.border.Render("└"+string(ruler)) + "\n")
