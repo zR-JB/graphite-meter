@@ -205,12 +205,27 @@ impl HttpServer {
         let mut draining = false;
         let idle = tokio::time::sleep(Duration::from_secs(15));
         tokio::pin!(idle);
+        let mut leftover = None;
+        let stale = tokio::time::sleep(Duration::ZERO);
+        tokio::pin!(stale);
         let mut expiry = tokio::time::interval(Duration::from_secs(1));
         expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut tuning = tokio::time::interval(Duration::from_millis(250));
         tuning.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
+            let since = credit.leftover_since();
+            if since != leftover {
+                leftover = since;
+                if let Some(since) = since {
+                    stale.as_mut().reset(since + Duration::from_secs(15));
+                }
+            }
             tokio::select! {
+                _ = &mut stale, if leftover.is_some() && !draining => {
+                    draining = true;
+                    connection.http.shutdown().await?;
+                    if connection.finished(draining) { return Ok(()); }
+                }
                 _ = &mut stopping, if !draining => {
                     draining = true;
                     connection.http.shutdown().await?;
@@ -419,7 +434,14 @@ pub struct ReceiveCredit(Arc<CreditState>);
 struct CreditState {
     quic: quinn::Connection,
     memory: Arc<MemoryBudget>,
-    admitted: Mutex<usize>,
+    admitted: Mutex<Admission>,
+}
+
+#[derive(Default)]
+struct Admission {
+    active: usize,
+    granted: bool,
+    ended: Option<tokio::time::Instant>,
 }
 
 impl HttpServer {
@@ -427,7 +449,7 @@ impl HttpServer {
         ReceiveCredit(Arc::new(CreditState {
             quic,
             memory: self.memory.clone(),
-            admitted: Mutex::new(0),
+            admitted: Mutex::default(),
         }))
     }
 }
@@ -439,11 +461,21 @@ impl ReceiveCredit {
 
     pub(super) fn admit(&self) -> Admitted {
         let mut admitted = self.0.admitted.lock().expect("receive credit poisoned");
-        if *admitted == 0 && self.0.memory.has_headroom() {
+        admitted.ended = None;
+        if admitted.active == 0 && self.0.memory.has_headroom() {
             self.0.quic.set_receive_window(RECEIVE_WINDOW.into());
+            admitted.granted = true;
         }
-        *admitted += 1;
+        admitted.active += 1;
         Admitted(self.clone())
+    }
+
+    fn leftover_since(&self) -> Option<tokio::time::Instant> {
+        self.0
+            .admitted
+            .lock()
+            .expect("receive credit poisoned")
+            .ended
     }
 }
 
@@ -453,9 +485,12 @@ impl Drop for Admitted {
     fn drop(&mut self) {
         let credit = &self.0.0;
         let mut admitted = credit.admitted.lock().expect("receive credit poisoned");
-        *admitted -= 1;
-        if *admitted == 0 {
+        admitted.active -= 1;
+        if admitted.active == 0 {
             credit.quic.set_receive_window(RECEIVE_WINDOW_FLOOR.into());
+            if std::mem::take(&mut admitted.granted) {
+                admitted.ended = Some(tokio::time::Instant::now());
+            }
         }
     }
 }

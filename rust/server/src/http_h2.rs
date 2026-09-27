@@ -2,7 +2,7 @@
 use super::*;
 use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 // TLS records and deframer, h2 frame reads, write buffer, HPACK and default window.
 const TRANSPORT_BYTES: usize = 512 * 1024;
@@ -46,7 +46,9 @@ impl HttpServer {
         let window = Arc::new(UploadWindow {
             memory: self.memory.clone(),
             uploads: AtomicUsize::new(0),
+            granted: AtomicBool::new(false),
         });
+        let mut stale: Option<Pin<Box<Sleep>>> = None;
         let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
@@ -57,6 +59,20 @@ impl HttpServer {
                 connection.graceful_shutdown();
             }
             while let Poll::Ready(Some(())) = Pin::new(&mut streams).poll_next(cx) {}
+            if window.uploads.load(Ordering::Relaxed) > 0 {
+                stale = None;
+            } else if window.granted.swap(false, Ordering::Relaxed) {
+                stale = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
+            }
+            // Control requests must not keep an upload's leftover credit alive.
+            if !draining
+                && stale
+                    .as_mut()
+                    .is_some_and(|stale| stale.as_mut().poll(cx).is_ready())
+            {
+                draining = true;
+                connection.graceful_shutdown();
+            }
             match connection.poll_accept(cx) {
                 Poll::Ready(Some(Ok((request, mut reply)))) => {
                     idle = None;
@@ -233,6 +249,7 @@ impl h2::SharedBudget for http_quic::MemoryBudget {
 struct UploadWindow {
     memory: Arc<http_quic::MemoryBudget>,
     uploads: AtomicUsize,
+    granted: AtomicBool,
 }
 
 struct H2Body {
@@ -263,13 +280,16 @@ impl Body for H2Body {
         };
         // Under pressure an admitted upload keeps reading at the current window.
         if !this.funded && this.window.memory.has_headroom() && admitted() {
-            this.funded = this.window.uploads.fetch_add(1, Ordering::Relaxed) > 0
+            let window = &this.window;
+            this.funded = window.uploads.fetch_add(1, Ordering::Relaxed) > 0
                 || this
                     .stream
                     .flow_control()
                     .set_target_connection_window_size(WINDOW_BYTES);
-            if !this.funded {
-                this.window.uploads.fetch_sub(1, Ordering::Relaxed);
+            if this.funded {
+                window.granted.store(true, Ordering::Relaxed);
+            } else {
+                window.uploads.fetch_sub(1, Ordering::Relaxed);
             }
         }
         match ready!(this.stream.poll_data(cx)) {

@@ -67,6 +67,9 @@ gone; past the allowance, requests are refused and DATA resets its stream. The
 receive window stays 64 KiB until an admitted upload reads, then grows to
 16 MiB while the budget is under three quarters used, charged until the peer can
 no longer fill it. Under pressure uploads continue at their current window.
+Once the last admitted operation on an HTTP/2 or QUIC connection that raised its
+window ends, other requests no longer extend its 15-second idle period, so
+leftover credit closes the connection gracefully 15 seconds later.
 Once a quarter of either connection capacity or the budget is used, unvalidated
 QUIC handshakes require Retry. A connection whose floor does not fit is refused
 while established connections continue.

@@ -443,3 +443,36 @@ async fn silent_connections_from_few_sources_leave_room_for_new_clients() {
     .await
     .expect("silent connections exhausted the HTTP/2 budget");
 }
+
+#[tokio::test]
+async fn probes_do_not_keep_an_uploads_leftover_credit_alive() {
+    let mut harness = Harness::start(Duration::from_secs(30)).await;
+    let reply = response(&mut harness.client, "POST", "/upload/session", Bytes::new()).await;
+    let session: serde_json::Value =
+        serde_json::from_slice(&collect(reply.into_body()).await).unwrap();
+    let id = session["uploadId"].as_str().unwrap();
+    let path = format!("/upload?id={id}");
+    let reply = response(
+        &mut harness.client,
+        "POST",
+        &path,
+        Bytes::from_static(b"abc"),
+    )
+    .await;
+    assert_eq!(reply.status(), 200);
+    collect(reply.into_body()).await;
+    for _ in 0..2 {
+        advance_clock(Duration::from_secs(7)).await;
+        let probe = response(&mut harness.client, "GET", "/probe", Bytes::new()).await;
+        assert_eq!(probe.status(), 200);
+        collect(probe.into_body()).await;
+    }
+    advance_clock(Duration::from_secs(2)).await;
+    tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
+        .await
+        .expect("probes kept the post-upload connection alive")
+        .unwrap()
+        .unwrap();
+    harness.stop.send(()).unwrap();
+    harness.server.await.unwrap().unwrap();
+}

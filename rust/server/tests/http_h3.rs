@@ -187,8 +187,14 @@ async fn exercise() -> Result<(), TestError> {
     server_endpoint.close(0_u32.into(), b"done");
     Ok(())
 }
-#[tokio::test]
-async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(), TestError> {
+type Served = (
+    h3::client::SendRequest<h3_noq::OpenStreams, Bytes>,
+    tokio::task::JoinHandle<h3::error::ConnectionError>,
+    oneshot::Sender<()>,
+    tokio::task::JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>,
+);
+
+async fn serve_quic() -> Result<Served, TestError> {
     let identity = support::Identity::generate();
     let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem"))?;
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key"))?;
@@ -218,19 +224,76 @@ async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(
         quinn::crypto::rustls::QuicClientConfig::try_from(tls)?,
     )));
     let connection = client.connect(address, "localhost")?.await?;
-    let (mut driver, mut sender) = h3::client::new(h3_noq::Connection::new(connection)).await?;
+    let (mut driver, sender) = h3::client::new(h3_noq::Connection::new(connection)).await?;
     let driving = tokio::spawn(async move { driver.wait_idle().await });
-    let mut request = sender
-        .send_request(Request::get("https://localhost/download?bytes=1").body(())?)
-        .await?;
+    Ok((sender, driving, stop, task))
+}
+
+async fn body(
+    sender: &mut h3::client::SendRequest<h3_noq::OpenStreams, Bytes>,
+    method: http::Method,
+    path: &str,
+    upload: &'static [u8],
+) -> Result<Vec<u8>, TestError> {
+    let request = Request::builder()
+        .method(method)
+        .uri(format!("https://localhost{path}"))
+        .body(())?;
+    let mut request = sender.send_request(request).await?;
+    if !upload.is_empty() {
+        request.send_data(Bytes::from_static(upload)).await?;
+    }
     request.finish().await?;
     assert_eq!(
         request.recv_response().await?.status(),
         http::StatusCode::OK
     );
-    while request.recv_data().await?.is_some() {}
+    let mut bytes = Vec::new();
+    while let Some(mut data) = request.recv_data().await? {
+        bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+    }
+    Ok(bytes)
+}
+
+#[tokio::test]
+async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(), TestError> {
+    let (mut sender, driving, stop, task) = serve_quic().await?;
+    body(&mut sender, http::Method::GET, "/download?bytes=1", b"").await?;
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), task).await???;
     driving.abort();
+    Ok(())
+}
+
+#[tokio::test]
+async fn probes_do_not_keep_admitted_works_leftover_credit_alive() -> Result<(), TestError> {
+    let (mut sender, driving, stop, task) = serve_quic().await?;
+    let session = body(&mut sender, http::Method::POST, "/upload/session", b"").await?;
+    let session: serde_json::Value = serde_json::from_slice(&session)?;
+    let path = format!(
+        "https://localhost/upload?id={}",
+        session["uploadId"].as_str().unwrap()
+    );
+    let mut upload = sender.send_request(Request::post(path).body(())?).await?;
+    upload.send_data(Bytes::from_static(b"abc")).await?;
+    // A round trip later the server is still admitted, awaiting the body's end.
+    body(&mut sender, http::Method::GET, "/probe", b"").await?;
+    upload.finish().await?;
+    assert_eq!(upload.recv_response().await?.status(), http::StatusCode::OK);
+    while upload.recv_data().await?.is_some() {}
+    for _ in 0..2 {
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(7)).await;
+        tokio::time::resume();
+        body(&mut sender, http::Method::GET, "/probe", b"").await?;
+    }
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::time::resume();
+    tokio::time::timeout(Duration::from_secs(2), driving)
+        .await
+        .expect("probes kept the post-upload connection alive")?;
+    drop(stop);
+    task.abort();
     Ok(())
 }
