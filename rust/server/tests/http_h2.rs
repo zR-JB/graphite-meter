@@ -10,7 +10,7 @@ use rustls::{
 };
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
-    io::AsyncReadExt,
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     sync::oneshot,
     task::JoinHandle,
@@ -444,35 +444,79 @@ async fn silent_connections_from_few_sources_leave_room_for_new_clients() {
     .expect("silent connections exhausted the HTTP/2 budget");
 }
 
+type Peer = tokio_rustls::client::TlsStream<TcpStream>;
+
+async fn frame(peer: &mut Peer, kind: u8, flags: u8, stream: u32, payload: &[u8]) {
+    let mut bytes = (payload.len() as u32).to_be_bytes()[1..].to_vec();
+    bytes.extend([kind, flags]);
+    bytes.extend(stream.to_be_bytes());
+    bytes.extend(payload);
+    peer.write_all(&bytes).await.unwrap();
+    peer.flush().await.unwrap();
+}
+
+async fn next_frame(peer: &mut Peer) -> std::io::Result<(u8, u8, u32, Vec<u8>)> {
+    let mut head = [0; 9];
+    peer.read_exact(&mut head).await?;
+    let mut payload = vec![0; u32::from_be_bytes([0, head[0], head[1], head[2]]) as usize];
+    peer.read_exact(&mut payload).await?;
+    let stream = u32::from_be_bytes(head[5..].try_into().unwrap());
+    Ok((head[3], head[4], stream, payload))
+}
+
+async fn exchange(peer: &mut Peer, id: u32, method: u8, path: &str, body: &[u8]) -> Vec<u8> {
+    let mut head = vec![method, 0x87, 0x04, path.len() as u8];
+    head.extend(path.as_bytes());
+    head.extend(b"\x01\x09localhost");
+    frame(peer, 1, if body.is_empty() { 5 } else { 4 }, id, &head).await;
+    if !body.is_empty() {
+        frame(peer, 0, 1, id, body).await;
+    }
+    let mut data = Vec::new();
+    loop {
+        let (kind, flags, stream, payload) = next_frame(peer).await.unwrap();
+        assert_ne!((kind, stream), (3, id), "request reset");
+        if stream == id && kind == 0 {
+            data.extend(payload);
+        }
+        if stream == id && flags & 1 == 1 {
+            return data;
+        }
+    }
+}
+
 #[tokio::test]
-async fn probes_do_not_keep_an_uploads_leftover_credit_alive() {
-    let mut harness = Harness::start(Duration::from_secs(30)).await;
-    let reply = response(&mut harness.client, "POST", "/upload/session", Bytes::new()).await;
-    let session: serde_json::Value =
-        serde_json::from_slice(&collect(reply.into_body()).await).unwrap();
-    let id = session["uploadId"].as_str().unwrap();
-    let path = format!("/upload?id={id}");
-    let reply = response(
-        &mut harness.client,
-        "POST",
-        &path,
-        Bytes::from_static(b"abc"),
-    )
-    .await;
-    assert_eq!(reply.status(), 200);
-    collect(reply.into_body()).await;
-    for _ in 0..2 {
+async fn unacknowledged_shutdown_does_not_keep_an_uploads_leftover_credit_alive() {
+    let harness = Harness::start(Duration::from_secs(30)).await;
+    let socket = TcpStream::connect(harness.address).await.unwrap();
+    let mut peer = connect(&harness.connector, socket).await;
+    peer.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
+        .await
+        .unwrap();
+    frame(&mut peer, 4, 0, 0, &[]).await;
+    let session = exchange(&mut peer, 1, 0x83, "/upload/session", b"").await;
+    let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
+    let path = format!("/upload?id={}", session["uploadId"].as_str().unwrap());
+    let upload = exchange(&mut peer, 3, 0x83, &path, b"abc").await;
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
+        3
+    );
+    for id in [5, 7] {
         advance_clock(Duration::from_secs(7)).await;
-        let probe = response(&mut harness.client, "GET", "/probe", Bytes::new()).await;
-        assert_eq!(probe.status(), 200);
-        collect(probe.into_body()).await;
+        exchange(&mut peer, id, 0x82, "/probe", b"").await;
     }
     advance_clock(Duration::from_secs(2)).await;
-    tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
-        .await
-        .expect("probes kept the post-upload connection alive")
-        .unwrap()
-        .unwrap();
-    harness.stop.send(()).unwrap();
-    harness.server.await.unwrap().unwrap();
+    advance_clock(Duration::from_secs(5)).await;
+    let pinged = tokio::time::timeout(Duration::from_secs(2), async {
+        let mut pinged = false;
+        while let Ok((kind, flags, ..)) = next_frame(&mut peer).await {
+            pinged |= kind == 6 && flags == 0;
+        }
+        pinged
+    })
+    .await
+    .expect("an unacknowledged shutdown kept the upload's credit alive");
+    assert!(pinged, "the server never sent its shutdown PING");
+    harness.close().await;
 }

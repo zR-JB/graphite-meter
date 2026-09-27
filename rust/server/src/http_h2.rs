@@ -52,12 +52,7 @@ impl HttpServer {
         let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
         let mut stopping = Box::pin(stopped(self.stopping.clone()));
-        let mut draining = false;
         std::future::poll_fn(|cx| {
-            if !draining && stopping.as_mut().poll(cx).is_ready() {
-                draining = true;
-                connection.graceful_shutdown();
-            }
             while let Poll::Ready(Some(())) = Pin::new(&mut streams).poll_next(cx) {}
             if window.uploads.load(Ordering::Relaxed) > 0 {
                 stale = None;
@@ -65,13 +60,12 @@ impl HttpServer {
                 stale = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
             }
             // Control requests must not keep an upload's leftover credit alive.
-            if !draining
-                && stale
-                    .as_mut()
-                    .is_some_and(|stale| stale.as_mut().poll(cx).is_ready())
-            {
-                draining = true;
+            let expired = stale
+                .as_mut()
+                .is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
+            if closing.is_none() && (expired || stopping.as_mut().poll(cx).is_ready()) {
                 connection.graceful_shutdown();
+                closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
             }
             match connection.poll_accept(cx) {
                 Poll::Ready(Some(Ok((request, mut reply)))) => {
@@ -106,9 +100,7 @@ impl HttpServer {
                         idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
                     if deadline.as_mut().poll(cx).is_ready() {
                         connection.graceful_shutdown();
-                        let mut deadline = Box::pin(tokio::time::sleep(SHUTDOWN_GRACE));
-                        let _ = deadline.as_mut().poll(cx);
-                        closing = Some(deadline);
+                        closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
                         cx.waker().wake_by_ref();
                     }
                     Poll::Pending
