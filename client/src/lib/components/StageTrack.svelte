@@ -4,12 +4,37 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { tooltip } from "../actions/tooltip";
-  import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
-  import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
+  import {
+    lockReason,
+    stageShown,
+    stageTip,
+    stageTrackModel,
+  } from "./stageTrack";
+  import { STAGE, STATUS } from "../presentation/vocabulary";
+  import { formatLatency, formatRate } from "../format";
+  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
+  import type { StageKey } from "../state/store.svelte";
   import { STAGES } from "../runner/schedule";
   import { handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
+
+  function resultValue(key: StageKey): string | null {
+    if (key === "latency") {
+      const latency = store.stageResults.latency;
+      return latency ? formatLatency(latency.reportedMs) : null;
+    }
+    const bytes =
+      key === "bidirectional"
+        ? bidirectionalResultPresentation(
+            store.result?.bidirectional?.down?.reportedBytesPerSec,
+            store.result?.bidirectional?.up?.reportedBytesPerSec,
+          ).combinedBytesPerSec
+        : store.stageResults[key]?.reportedBytesPerSec;
+    return bytes == null
+      ? null
+      : formatRate(bytes, { base: store.unitBase, kind: store.unitKind });
+  }
 
   const segments = $derived(
     STAGES.filter((key) =>
@@ -22,21 +47,21 @@
       const reason =
         model.tag ??
         lockReason(!locked, store.phase, store.phaseStage, key, model.state);
-      const label = STAGE[key].short;
-      const hint = execution.failure
-        ? reasonLabel(execution.failure)
-        : key === "bidirectional" && !locked
-          ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
-          : reason === STATUS["not-run"] && !locked
-            ? "skipped, toggle to include"
-            : (reason ?? (selected ? "toggle to skip" : "toggle to include"));
       return {
         ...model,
         key,
-        label,
+        label: STAGE[key].short,
         icon: STAGE[key].icon,
         reason,
-        tip: `${label} — ${hint}`,
+        tip: stageTip({
+          stage: key,
+          selected,
+          locked,
+          state: model.state,
+          reason,
+          failure: execution.failure,
+          value: resultValue(key),
+        }),
       };
     }),
   );

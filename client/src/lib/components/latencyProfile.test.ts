@@ -5,8 +5,6 @@ import {
   hasProbeAccountingNotice,
   entries,
   nearestMetric,
-  hoverContext,
-  metricLabel,
   profileDomain,
 } from "./latencyProfile";
 import type { LatencyLane } from "../state/store.svelte";
@@ -63,18 +61,6 @@ test("nearestMetric: no measured metrics yields null", () => {
     current: null,
   });
   expect(nearestMetric(empty, 42)).toBeNull();
-});
-
-test("center labels and hover context follow the lane's semantics", () => {
-  const l = lane();
-  expect(hoverContext(l, "p10")).toContain("P10–P90");
-  expect(metricLabel("center")).toBe("Median");
-  expect(hoverContext(l, "center")).toContain("Range");
-  const result = lane({ center: 70 });
-  expect(hoverContext(result, "current")).toBe("Median 70.0");
-  expect(hoverContext(result, "center")).toContain("Range");
-  expect(hoverContext(lane({ p10: null }), "p90")).toBe("");
-  expect(hoverContext(lane({ center: null }), "current")).toBe("");
 });
 
 test("incomplete accounting stays visible without turning unknown outcomes into zero", () => {

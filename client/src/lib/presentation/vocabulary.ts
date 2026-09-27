@@ -18,15 +18,31 @@ export const MISSING = "—";
 
 export const STAGE: Record<
   TransportRole,
-  { label: string; short: string; icon: IconName }
+  { label: string; short: string; icon: IconName; about: string }
 > = {
-  latency: { label: "Latency", short: "Latency", icon: "ping" },
-  download: { label: "Download", short: "Download", icon: "download" },
-  upload: { label: "Upload", short: "Upload", icon: "upload" },
+  latency: {
+    label: "Latency",
+    short: "Latency",
+    icon: "ping",
+    about: "Round trips on an idle connection",
+  },
+  download: {
+    label: "Download",
+    short: "Download",
+    icon: "download",
+    about: "Server to this browser",
+  },
+  upload: {
+    label: "Upload",
+    short: "Upload",
+    icon: "upload",
+    about: "This browser to the server",
+  },
   bidirectional: {
     label: "Bidirectional",
     short: "Bi-dir",
     icon: "bidirectional",
+    about: "Download and upload at the same time",
   },
 };
 
@@ -59,8 +75,9 @@ const PHASE: Record<Phase, string> = {
 export const BLOCKED = "Test cannot start";
 export const counted = (count: number, noun: string) =>
   `${count} ${count === 1 ? noun : `${noun}s`}`;
+type Readiness = ConnectionValidationState | "sign-in" | "blocked";
 export const READINESS: Record<
-  ConnectionValidationState | "sign-in" | "blocked",
+  Readiness,
   { label: string; tone: "ok" | "brand" | "warn" | "err" }
 > = {
   verified: { label: "Ready", tone: "ok" },
@@ -69,6 +86,16 @@ export const READINESS: Record<
   failed: { label: "Failed", tone: "err" },
   "sign-in": { label: "Sign in", tone: "warn" },
   blocked: { label: BLOCKED, tone: "warn" },
+};
+export const READINESS_TIP: Record<Exclude<Readiness, "blocked">, string> = {
+  verified:
+    "Ready\nThe selected servers and paths passed their check\n" +
+    "Recent checks are reused; expired ones rerun before a test",
+  checking: "Checking\nAsking each selected server which paths it offers",
+  stale:
+    "Recheck needed\nThe last check expired or a path changed\nIt reruns before the test",
+  failed: "Failed\nA selected server or path did not answer its check",
+  "sign-in": "Sign in\nA selected server only admits signed-in clients",
 };
 
 export const START_FAILED = "Test could not start";
@@ -122,27 +149,42 @@ export const JARGON = {
     "Bidirectional\nDownload and upload at the same time, added together\n" +
     "Each direction is timed like its own stage",
   latency:
-    "Latency\nMedian round trip of probes on an idle connection\nThe base for added latency",
+    "Idle latency\nMedian round trip of probes on an idle connection\nThe base for added latency",
+  loadedLatency:
+    "Loaded latency\nHighest median round trip while a transfer ran\n" +
+    "Across download, upload and bidirectional",
+  liveRate:
+    "Live rate\nMean since the rate last shifted, over at least 0.8 s\n" +
+    "A lasting 25% drop or 20% rise restarts it\nThe result uses its own interval",
+  liveLatency:
+    "Live latency\nMedian of the latest group of probe replies\n" +
+    "The result is the median of the whole stage",
   transferred:
     "Transferred\nPayload bytes measured in this stage, each counted once",
   peak:
-    "Peak\nHighest mean over any 0.5 s or longer window of the headline interval\n" +
-    "Never below the headline",
+    "Peak\nHighest mean of the headline window and of consecutive windows " +
+    "of at least 0.5 s across its interval\nNever below the headline",
   rateStability:
-    "Stability\n100% minus the spread of 250 ms rates over the last 4 s\n" +
-    "Spread: standard deviation divided by the mean",
+    "Stability\n100% minus the coefficient of variation of 250 ms rates over the last 4 s\n" +
+    "Coefficient of variation: standard deviation divided by the mean",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
     "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",
   jitter:
-    "Jitter\nMean change between consecutive replies\nProbe timeouts are left out",
+    "Jitter\nMean absolute change between consecutive replies\nProbe timeouts are left out",
+  latencyMedian: "Median\nHalf of the stage's replies were faster, half slower",
+  latencyRange: "Range\nFastest to slowest reply in the stage",
   wireRate:
     "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
-    "An estimate from the path's framing and an assumed MTU",
-  unitBits: "Bits per second (Mbit/s, Gbit/s), used by internet plans.",
-  unitBytes: "MB/s or GB/s, used by download managers. One byte is eight bits.",
-  unitDecimal: "Decimal prefixes: 1,000 per step (kbit/s, Mbit/s, Gbit/s).",
-  unitBinary: "Binary prefixes: 1,024 per step (Kibit/s, Mibit/s, Gibit/s).",
+    "Ethernet, IP, TCP or QUIC, TLS and HTTP framing at a 1,500 B MTU\n" +
+    "An estimate; a result's wire rate lists its parts on hover",
+  unitBits:
+    "Bits\nBits per second: kbit/s, Mbit/s, Gbit/s\nThe unit internet plans use",
+  unitBytes:
+    "Bytes\nBytes per second: kB/s, MB/s, GB/s\nOne byte is 8 bits, so values read 8× lower",
+  unitDecimal: "Decimal\n1,000 per step: k, M, G",
+  unitBinary:
+    "Binary\n1,024 per step: Ki, Mi, Gi\nThe same rate reads 4.6% lower in Mi than in M",
   throughputPath:
     "Throughput path\nTransport and HTTP version that carry the test bytes\n" +
     "Verified before the test starts",
@@ -165,18 +207,73 @@ export const JARGON = {
     "Probe accounting\nReplies, and timeouts: no reply before the deadline\n" +
     "Unfinished probes and failed sends are counted apart, never as timeouts",
   preflight:
-    "Pre-test latency\nOne request before the test: connection setup plus the response\n" +
+    "Preflight request\nOne request before any test: connection setup plus the response\n" +
     "Not a latency measurement",
-  checkReuse:
-    "Recent successful checks are reused while the required server and path are unchanged. " +
-    "Expired checks are refreshed before a test starts.",
+  pretestLatency:
+    "Pre-test latency\nMedian round trip of the probes that checked the latency path\n" +
+    "Picks the shown latency server and sizes the warmup",
+  testServers:
+    "Test servers\nUp to 4 at once; their speeds are added together\n" +
+    "They share this browser's connection",
+  latencyServer:
+    "Latency server\nWhere the latency probes go\nCombined: probe every selected server",
+  warmup:
+    "Warmup\nRuns before each stage to open its connections and ramp up\n" +
+    "At least 10 round trips, at most 4 s; never counted",
+  stageTime:
+    "Stage time\nPlanned length; early finish can end a stage sooner\n1 s to 5 min; 0 skips the stage",
+  bidirectionalStage:
+    "Bidirectional stage\nDownload and upload at the same time, after the other stages\n" +
+    "The stage track can skip it; turn it back on here",
+  earlyFinish:
+    "Early finish\nEnds a steady stage after 52% of its time\n" +
+    "Steady: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
+    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift",
+  saveResults:
+    "Save results\nKeeps complete, partial and incomplete runs in this browser\n" +
+    "The newest 2,000 stay; nothing is uploaded",
+  gaugeAuto:
+    "Automatic scale\nThe chart follows the measured peak\n" +
+    "The gauge starts at 1 Gbit/s and grows in powers of ten",
+  gaugeMax:
+    "Maximum\nFixes the chart ceiling\nThe gauge rounds up to the next power of ten",
+  idleCadence:
+    "Idle latency cadence\nHow often the Latency stage sends a probe\n" +
+    "Reply-driven: the next probe leaves when the reply arrives",
+  loadedCadence:
+    "Loaded latency cadence\nHow often probes go out during transfers\n" +
+    "Fixed times are start to start",
+  skipLoadedLatency:
+    "Skip loaded latency\nWith the Latency stage off, transfers send no probes\n" +
+    "Off: transfers still measure loaded latency",
+  datagramThroughput:
+    "Datagram throughput\nAdds WebTransport datagrams as a throughput path\n" +
+    "Datagrams are never resent; missing ones are not packet loss\n" +
+    "Expect lower rates than streams, mostly for uploads",
   forcedStreams:
     "Streams\nParallel connections per server and direction\n" +
     "Automatic: chosen per protocol\nForced: the exact count, within shared connection limits",
-  resetSettings:
-    "Restore test, display, and history-saving settings to their defaults? " +
-    "Your theme, panel layout, and saved results will be kept.",
+  autoStreamCount:
+    "Maximum H1 streams\nCaps parallel HTTP/1.1 requests per direction\n" +
+    "HTTP/2 and HTTP/3 choose their own count",
+  forcedStreamCount:
+    "Streams per server and direction\nOpens exactly this many requests\n" +
+    "At most 128 per direction, within connection limits",
 } as const;
+
+export const PHASE_HINT: Partial<
+  Record<Phase, { text: string; tip?: string }>
+> = {
+  idle: { text: "Ready to measure your connection" },
+  connecting: {
+    text: "Verifying the selected paths",
+    tip: READINESS_TIP.checking,
+  },
+  warmup: { text: "Warming up; not counted", tip: JARGON.warmup },
+};
+
+export const preflightNote = (ms: string) =>
+  `Preflight request ${ms} ms: connection setup plus the response\nNot a latency measurement`;
 
 export type Outcome = NonNullable<RunResult["outcome"]>;
 export const OUTCOME: Record<Outcome, string> = {

@@ -9,15 +9,10 @@
     type ChartPresentation,
     type HoverInfo,
   } from "../canvas/ChartEngine";
-  import {
-    fmtDuration,
-    fmtSpeed,
-    fmtMsTick,
-    formatLatency,
-    formatRate,
-  } from "../format";
+  import { fmtDuration, fmtSpeed, formatLatency, formatRate } from "../format";
   import { MISSING, phaseLabel, STAGE } from "../presentation/vocabulary";
   import { latencyOverflowGlyph } from "../canvas/latencyGlyph";
+  import { fmtGaugeTick } from "./gaugeScale";
   import { watchCanvasPixelRatio } from "../canvas/canvasResolution";
 
   let canvasEl = $state<HTMLCanvasElement>();
@@ -47,7 +42,7 @@
       formatRate(bytesPerSec, units, store.scales.unitIndex);
     const rows: { label: string; value: string }[] = [];
     if (hover.bytesPerSec != null)
-      rows.push({ label: "Rate", value: rate(hover.bytesPerSec) });
+      rows.push({ label: "Throughput", value: rate(hover.bytesPerSec) });
     if (hover.downBytesPerSec != null)
       rows.push({
         label: STAGE.download.label,
@@ -60,7 +55,7 @@
       });
     if (chartPresentation?.latencyEnabled)
       rows.push({
-        label: "Median",
+        label: "Latency median",
         value: formatLatency(hover.rtt),
       });
     if (hover.timeoutCount > 0)
@@ -316,33 +311,34 @@
 
     {#if chartPresentation}
       {@const presentation = chartPresentation}
+      {@const { viewport, plot, width } = presentation.layout}
       <div class="chart-labels" aria-hidden="true">
         {#if presentation.hasThroughputScale}
+          <span class="axis-unit" style:left="4px" style:top={`${plot.top}px`}
+            >{store.unitLabel}</span
+          >
           {#each presentation.layout.axisRows as row (row.fraction)}
-            <span
-              class="axis-label axis-label-left"
-              style:left="4px"
-              style:top={`${row.y}px`}
-              >{fmtSpeed(
-                store.toUnit(
-                  presentation.layout.viewport.bytesPerSecMax *
-                    (1 - row.fraction),
-                ),
+            <span class="axis-label" style:left="4px" style:top={`${row.y}px`}
+              >{fmtGaugeTick(
+                store.toUnit(viewport.bytesPerSecMax * (1 - row.fraction)),
               )}</span
             >
           {/each}
         {/if}
         {#if presentation.latencyEnabled}
+          <span
+            class="axis-unit axis-right"
+            style:left={`${width - 4}px`}
+            style:top={`${plot.top}px`}>ms</span
+          >
           {#each presentation.layout.axisRows as row (row.fraction)}
             <span
-              class="axis-label axis-label-right"
-              style:left={`${presentation.layout.width - 4}px`}
+              class="axis-label axis-right"
+              style:left={`${width - 4}px`}
               style:top={`${row.y}px`}
-              >{fmtMsTick(
-                presentation.layout.viewport.rttMin +
-                  (presentation.layout.viewport.rttMax -
-                    presentation.layout.viewport.rttMin) *
-                    (1 - row.fraction),
+              >{fmtGaugeTick(
+                viewport.rttMin +
+                  (viewport.rttMax - viewport.rttMin) * (1 - row.fraction),
               )}</span
             >
           {/each}
@@ -473,6 +469,7 @@
     font: var(--type-2xs) var(--font-mono);
   }
   .axis-label,
+  .axis-unit,
   .time-label,
   .phase-label,
   .stat-label {
@@ -480,10 +477,16 @@
     white-space: nowrap;
   }
   .axis-label {
-    translate: 0 -50%;
+    --x: 0;
+    translate: var(--x) -50%;
   }
-  .axis-label-right {
-    translate: -100% -50%;
+  .axis-unit {
+    --x: 0;
+    translate: var(--x) calc(-100% - 7px);
+    color: var(--text-muted);
+  }
+  .axis-right {
+    --x: -100%;
   }
   /* Moving labels translate rather than lay out again as the time scale eases. */
   .time-label {
