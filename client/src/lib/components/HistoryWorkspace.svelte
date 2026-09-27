@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Dismissal lasts the page's lifetime and returns when the count changes.
+  let dismissedMalformed = $state(0);
+</script>
+
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import type { IconName } from "../presentation/icons";
@@ -52,12 +57,16 @@
   let loadState = $state<"loading" | "ready" | "error">("loading");
   let records = $state.raw<HistoryRecord[]>([]);
   let malformedCount = $state(0);
+  const malformedShown = $derived(
+    malformedCount > 0 && malformedCount !== dismissedMalformed,
+  );
   let selectedState = $state<"ready" | "missing" | "malformed">("missing");
   let sort = $state<HistorySort>("date");
   let descending = $state(true);
   let pages = $state(1);
   let renderedAt = $state(wallNow());
   let workspace = $state<HTMLElement>();
+  let list = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
   let previousSelectedId: string | null = null;
   let confirm = $state<
@@ -152,6 +161,7 @@
     sort = next;
     descending = nextDescending;
     pages = 1;
+    list?.scrollTo({ top: 0 });
   }
 
   function loadMore() {
@@ -412,7 +422,7 @@
     </div>
   </header>
 
-  {#if store.historyWarning || actionError || malformedCount || (records.length && !store.savingResults)}
+  {#if store.historyWarning || actionError || malformedShown || (records.length && !store.savingResults)}
     <div class="notices">
       {#if records.length && !store.savingResults}
         <p class="notice" data-tone="warn">
@@ -428,11 +438,21 @@
       {#each [store.historyWarning, actionError].filter(Boolean) as message (message)}
         <p class="notice" data-tone="warn" role="status">{message}</p>
       {/each}
-      {#if malformedCount}
+      {#if malformedShown}
         <p class="notice" data-tone="warn" role="status">
-          {malformedCount} unsupported or malformed {malformedCount === 1
-            ? "record was"
-            : "records were"} ignored.
+          <span
+            >{malformedCount} unsupported or malformed {malformedCount === 1
+              ? "record was"
+              : "records were"} ignored.</span
+          >
+          <button
+            class="btn"
+            type="button"
+            onclick={() => {
+              dismissedMalformed = malformedCount;
+              workspace?.focus({ preventScroll: true });
+            }}>Dismiss</button
+          >
         </p>
       {/if}
     </div>
@@ -472,7 +492,7 @@
     </div>
   {:else}
     <div class="workspace-body" class:has-detail={selectedId !== null}>
-      <div class="history-list">
+      <div class="history-list" bind:this={list}>
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
