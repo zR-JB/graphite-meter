@@ -38,6 +38,7 @@ pub enum Phase {
     Measuring,
     Complete,
     Partial,
+    Incomplete,
     Cancelled,
     Failed,
 }
@@ -62,6 +63,34 @@ pub struct StageResult {
     pub complete: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
     pub server_results: Vec<ServerContribution>,
+}
+
+impl StageResult {
+    pub fn has_results(&self) -> bool {
+        (!self.stage.downloads() || self.down_bps.is_some())
+            && (!self.stage.uploads() || self.up_bps.is_some())
+            && (self.stage != Stage::Latency
+                || self.server_latencies.iter().any(|host| {
+                    host.summary.distribution.is_some()
+                        && (host.error.is_none() || host.summary.count + host.summary.timeouts >= 3)
+                }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailureScope {
+    Throughput,
+    Latency,
+}
+
+#[derive(Clone, Debug)]
+pub struct ServerFailure {
+    pub server_id: String,
+    pub stage: Stage,
+    pub scope: FailureScope,
+    pub reason: graphite_meter_core::failure::FailureReason,
+    pub message: String,
+    pub at: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -176,9 +205,27 @@ pub struct Snapshot {
     pub error: Option<String>,
     pub auth: Option<AuthPrompt>,
     pub server_latencies: Vec<ServerLatency>,
+    pub failures: Vec<ServerFailure>,
 }
 
 impl Snapshot {
+    pub fn failure(&mut self, id: &str, scope: FailureScope, error: &crate::Error) {
+        let Some(stage) = self.stage else { return };
+        if self.failures.iter().any(|failure| {
+            failure.server_id == id && failure.stage == stage && failure.scope == scope
+        }) {
+            return;
+        }
+        self.failures.push(ServerFailure {
+            server_id: id.into(),
+            stage,
+            scope,
+            reason: crate::failure::reason(error.as_ref()),
+            message: error.to_string(),
+            at: self.latest.elapsed,
+        });
+    }
+
     pub fn sample(&mut self, point: Point) {
         self.latest = point.clone();
         if self.history.len() == 300 {

@@ -334,6 +334,7 @@ pub async fn run(
 ) -> Result<(), Error> {
     snapshots.send_modify(|snapshot| {
         snapshot.results.clear();
+        snapshot.failures.clear();
         snapshot.server_latencies.clear();
         snapshot.history.clear();
         snapshot.latest = Point::default();
@@ -381,11 +382,13 @@ pub async fn run(
         let partial = snapshot.servers.iter().any(|server| server.error.is_some())
             || snapshot.results.iter().any(|result| !result.complete);
         (snapshot.phase, snapshot.status) = if *cancel.borrow() {
-            (Phase::Cancelled, "Cancelled".into())
+            (Phase::Cancelled, "Stopped".into())
+        } else if snapshot.results.iter().any(|result| !result.has_results()) {
+            (Phase::Incomplete, "Incomplete".into())
         } else if partial {
-            (Phase::Partial, "Finished with partial results".into())
+            (Phase::Partial, "Partial".into())
         } else {
-            (Phase::Complete, "Measurement complete".into())
+            (Phase::Complete, "Complete".into())
         };
     });
     Ok(())

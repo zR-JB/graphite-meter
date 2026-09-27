@@ -390,7 +390,13 @@ impl Http {
             }));
         }
         if !status.is_success() {
-            return Err(format!("server returned HTTP {}", status.as_u16()).into());
+            return Err(Box::new(crate::failure::HttpFailure {
+                status: status.as_u16(),
+                refusal: headers
+                    .get("x-graphite-upload-refusal")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(graphite_meter_core::failure::UploadRefusal::from_name),
+            }));
         }
         Ok(())
     }

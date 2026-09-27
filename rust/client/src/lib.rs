@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod crypto;
 pub mod download;
+pub mod failure;
 pub mod latency;
 pub mod model;
 pub mod net;

@@ -155,6 +155,7 @@ impl StageResources {
                 latency.error = Some("throughput participant unavailable".into());
                 latency.latest_ms = None;
             }
+            snapshot.failure(id, crate::model::FailureScope::Throughput, error);
             snapshot.status = format!("{id} unavailable; preparing remaining servers");
         });
     }
@@ -229,6 +230,11 @@ impl StageResources {
                 latency.error = Some(failure.source.to_string());
                 latency.latest_ms = None;
             }
+            snapshot.failure(
+                &failure.id,
+                crate::model::FailureScope::Latency,
+                &failure.source,
+            );
             snapshot.status = format!("{failure}; other measurements continue");
         });
     }
@@ -295,6 +301,11 @@ impl StageResources {
             {
                 server.error = Some(failure.source.to_string());
             }
+            snapshot.failure(
+                &failure.id,
+                crate::model::FailureScope::Throughput,
+                &failure.source,
+            );
             snapshot.status = format!(
                 "{} unavailable; continuing with remaining servers",
                 failure.id
@@ -620,7 +631,7 @@ pub(super) async fn measure(
                             StageTiming {
                                 epoch,
                                 operation_limit,
-                                setup_timeout: Duration::from_secs(12),
+                                setup_timeout: Duration::from_secs(10),
                             },
                             stopped,
                         )
@@ -950,7 +961,7 @@ pub(super) async fn measure(
                                         *last_progress = Instant::now();
                                     }
                                     (last_progress.elapsed() >= TRANSFER_PROGRESS_TIMEOUT).then(|| ParticipantFailure {
-                                        id: transfer.id.clone(), source: "stopped delivering bytes".into(),
+                                        id: transfer.id.clone(), source: Box::new(crate::failure::LaneFailure(graphite_meter_core::failure::LaneEnding::Idle)),
                                     })
                                 });
                                 let window = accounting.observe(boundary);
@@ -1042,6 +1053,22 @@ pub(super) async fn measure(
         let up = transfer_stage.map(|stage| accounting.result(stage, Direction::Up));
         snapshots.send_modify(|snapshot| {
             latency.sample(snapshot, ended.duration_since(started));
+            let missing = (stage.downloads()
+                && down
+                    .as_ref()
+                    .is_none_or(|result| result.mean_bytes_per_sec.is_none()))
+                || (stage.uploads()
+                    && up
+                        .as_ref()
+                        .is_none_or(|result| result.mean_bytes_per_sec.is_none()));
+            if missing && !*cancel.borrow() {
+                let error: Error = Box::new(crate::failure::MeasurementFailure(
+                    graphite_meter_core::failure::FailureReason::InsufficientEvidence,
+                ));
+                for transfer in &resources.transfers {
+                    snapshot.failure(&transfer.id, crate::model::FailureScope::Throughput, &error);
+                }
+            }
             let server_results =
                 server_contributions(transfer_stage, servers, &accounting, snapshot);
             snapshot.results.push(StageResult {

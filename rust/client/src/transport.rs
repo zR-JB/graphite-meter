@@ -82,7 +82,7 @@ impl TransferRetry {
                 _ = &mut self.deadline => {
                     let next = self.progress.last() + TRANSFER_PROGRESS_TIMEOUT;
                     if next <= Instant::now() {
-                        return Err(self.last_error.take().unwrap_or_else(|| "lane stopped moving bytes for two seconds".into()));
+                        return Err(self.last_error.take().unwrap_or_else(|| Box::new(crate::failure::LaneFailure(graphite_meter_core::failure::LaneEnding::Idle)) as Error));
                     }
                     if started.elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
                         self.recovery = None;
@@ -144,6 +144,9 @@ impl Transport {
     }
 
     pub(crate) fn retryable_transfer_error(&self, error: &Error) -> bool {
+        if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>() {
+            return http.retryable();
+        }
         if error.is::<tokio::time::error::Elapsed>() {
             return true;
         }

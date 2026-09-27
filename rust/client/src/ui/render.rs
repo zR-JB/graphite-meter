@@ -39,7 +39,7 @@ impl Ui {
         let status_background = match self.snapshot.phase {
             Phase::Complete => self.theme.success,
             Phase::Cancelled | Phase::Partial => self.theme.warning,
-            Phase::Failed => self.theme.error,
+            Phase::Failed | Phase::Incomplete => self.theme.error,
             _ => self.theme.brand_strong,
         };
         frame.render_widget(

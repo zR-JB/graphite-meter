@@ -644,8 +644,12 @@ fn apply_event(
             *ready = true;
             state.send_modify(|state| state.ready = true);
         }
-        UploadProgress::Error { .. } => {
-            return Err(InvalidProgress("upload receiver refused the operation").into());
+        UploadProgress::Error { code, .. } => {
+            let refusal = graphite_meter_core::failure::UploadRefusal::from_name(&code);
+            return Err(Box::new(crate::failure::HttpFailure {
+                status: refusal.map_or(400, |refusal| refusal.status()),
+                refusal,
+            }));
         }
         UploadProgress::Progress { bytes, nanos } | UploadProgress::Complete { bytes, nanos } => {
             if !*ready {

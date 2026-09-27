@@ -163,7 +163,7 @@ impl Controller {
         if self.cancelling {
             self.snapshots.send_modify(|snapshot| {
                 snapshot.phase = Phase::Cancelled;
-                snapshot.status = "Cancelled".into();
+                snapshot.status = "Stopped".into();
                 snapshot.auth = None;
                 snapshot.error = None;
             });
@@ -172,8 +172,21 @@ impl Controller {
             .and_then(|result| result)
         {
             self.snapshots.send_modify(|snapshot| {
-                snapshot.phase = Phase::Failed;
-                snapshot.status = "Failed".into();
+                snapshot.phase = if snapshot
+                    .results
+                    .iter()
+                    .any(|result| result.elapsed > Duration::ZERO)
+                {
+                    Phase::Incomplete
+                } else {
+                    Phase::Failed
+                };
+                snapshot.status = if snapshot.phase == Phase::Incomplete {
+                    "Incomplete"
+                } else {
+                    "Failed"
+                }
+                .into();
                 snapshot.error = Some(error.to_string());
                 snapshot.auth = None;
             });
@@ -231,7 +244,7 @@ impl Controller {
                     Phase::Preparing | Phase::Warmup | Phase::Measuring
                 ) {
                     snapshot.phase = Phase::Cancelled;
-                    snapshot.status = "Cancelled".into();
+                    snapshot.status = "Stopped".into();
                 }
                 snapshot.auth = None;
             });

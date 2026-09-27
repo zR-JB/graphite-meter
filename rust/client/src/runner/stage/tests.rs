@@ -728,10 +728,15 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
     let snapshot = observed.borrow();
     let result = &snapshot.results[0];
     assert!(!result.complete);
-    assert!(matches!(
-        result.server_results[1].error.as_deref(),
-        Some("stopped delivering bytes" | "lane stopped moving bytes for two seconds")
-    ));
+    assert_eq!(
+        snapshot
+            .failures
+            .iter()
+            .find(|failure| failure.server_id == "far")
+            .unwrap()
+            .reason,
+        graphite_meter_core::failure::FailureReason::Timeout
+    );
     assert!(result.down_bps.is_some());
     assert!(result.server_results[0].down_bps.is_some());
     Ok(())
@@ -857,6 +862,9 @@ async fn stalled_lane_expires_while_its_sibling_keeps_receiving() -> Result<(), 
     assert!(download.bytes() > baseline);
     download.stop().await;
     peer.abort();
-    assert!(failure?.to_string().contains("lane stopped moving bytes"));
+    assert_eq!(
+        crate::failure::reason(failure?.as_ref()),
+        graphite_meter_core::failure::FailureReason::Timeout
+    );
     Ok(())
 }

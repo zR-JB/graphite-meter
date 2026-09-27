@@ -101,3 +101,57 @@ impl LaneEnding {
         }
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadRefusal {
+    Invalid,
+    GlobalFull,
+    ClientFull,
+    OwnerMismatch,
+    Idle,
+    Revoked,
+}
+
+impl UploadRefusal {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Invalid => "invalid",
+            Self::GlobalFull => "globalFull",
+            Self::ClientFull => "clientFull",
+            Self::OwnerMismatch => "ownerMismatch",
+            Self::Idle => "idle",
+            Self::Revoked => "revoked",
+        }
+    }
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::Invalid => "unknown upload id",
+            Self::GlobalFull => "upload capacity exhausted",
+            Self::ClientFull => "client upload capacity exhausted",
+            Self::OwnerMismatch => "upload id belongs to another client",
+            Self::Idle => "idle",
+            Self::Revoked => "authentication required",
+        }
+    }
+    pub fn status(self) -> u16 {
+        match self {
+            Self::Invalid => 400,
+            Self::GlobalFull => 503,
+            Self::ClientFull => 429,
+            Self::OwnerMismatch => 403,
+            Self::Idle => 408,
+            Self::Revoked => 403,
+        }
+    }
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "invalid" => Some(Self::Invalid),
+            "globalFull" => Some(Self::GlobalFull),
+            "clientFull" => Some(Self::ClientFull),
+            "ownerMismatch" => Some(Self::OwnerMismatch),
+            "idle" => Some(Self::Idle),
+            "revoked" => Some(Self::Revoked),
+            _ => None,
+        }
+    }
+}

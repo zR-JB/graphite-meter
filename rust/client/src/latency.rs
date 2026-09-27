@@ -229,7 +229,22 @@ pub(crate) async fn verify(
                                     return Ok(());
                                 }
                             }
-                            Some(Ok(Message::Close(_))) | None => {
+                            Some(Ok(Message::Close(frame))) => {
+                                if let Some(ending) = frame.and_then(|frame| {
+                                    graphite_meter_core::failure::LaneEnding::from_websocket_code(
+                                        frame.code.into(),
+                                    )
+                                }) {
+                                    break Err(
+                                        Box::new(crate::failure::LaneFailure(ending)) as Error
+                                    );
+                                }
+                                break Err(Disconnected(
+                                    "latency channel closed before measurement ended",
+                                )
+                                .into());
+                            }
+                            None => {
                                 return Err("latency channel closed before replying".into());
                             }
                             Some(Err(error)) => return Err(error),
@@ -460,8 +475,18 @@ async fn measure(
                         };
                         if let Err(error) = emit(observations, observation) { break Err(error); }
                     }
-                    Some(Ok(Message::Close(_))) | None => break Err(Disconnected("latency channel closed before measurement ended").into()),
-                    Some(Err(_)) => break Err(Disconnected("latency channel receive failed").into()),
+                    Some(Ok(Message::Close(frame))) => {
+                        if let Some(ending) = frame.and_then(|frame| graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())) {
+                            break Err(Box::new(crate::failure::LaneFailure(ending)) as Error);
+                        }
+                        break Err(Disconnected("latency channel closed before measurement ended").into());
+                    }
+                    None => break Err(Disconnected("latency channel closed before measurement ended").into()),
+                    Some(Err(error)) => {
+                        let error = crate::failure::lane_error(error);
+                        if error.is::<crate::failure::LaneFailure>() { break Err(error); }
+                        break Err(Disconnected("latency channel receive failed").into());
+                    }
                     _ => {}
                 }
             }
