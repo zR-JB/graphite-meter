@@ -6,6 +6,7 @@ pub mod catalog;
 pub mod discovery;
 pub mod duration;
 pub mod failure;
+pub mod format;
 pub mod latency;
 pub mod measurement;
 pub mod origin;
