@@ -32,8 +32,8 @@ impl Work {
 pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<Snapshot, Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
-    let mut controller = Controller::new(&config, snapshots)?;
-    controller.start(Work::Verify(config.clone()))?;
+    let mut controller = Controller::with_snapshots(&config, snapshots)?;
+    controller.launch(Work::Verify(config.clone()))?;
     let result = {
         let terminal = ui::run(config, receiver, commands);
         tokio::pin!(terminal, shutdown);
@@ -79,9 +79,10 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<S
     Ok(final_snapshot)
 }
 
-struct Controller {
+pub struct Controller {
     snapshots: watch::Sender<Snapshot>,
-    operations: JoinSet<Result<(), Error>>,
+    operations: JoinSet<Result<Option<runner::PreparedRun>, Error>>,
+    prepared: Option<runner::PreparedRun>,
     cancel: Option<watch::Sender<bool>>,
     pending: Option<Work>,
     cancelling: bool,
@@ -92,10 +93,73 @@ struct Controller {
     browser_deadline: Option<Instant>,
 }
 impl Controller {
-    fn new(config: &Config, snapshots: watch::Sender<Snapshot>) -> Result<Self, Error> {
+    pub fn new(config: &Config) -> Result<Self, Error> {
+        let (snapshots, _) = watch::channel(Snapshot::default());
+        Self::with_snapshots(config, snapshots)
+    }
+
+    pub fn events(&self) -> watch::Receiver<Snapshot> {
+        self.snapshots.subscribe()
+    }
+
+    pub async fn prepare(&mut self, config: Config) -> Result<runner::PreparedRun, Error> {
+        self.replace(Work::Verify(config))?;
+        self.wait().await?;
+        self.prepared.take().ok_or_else(|| {
+            self.snapshots
+                .borrow()
+                .error
+                .clone()
+                .unwrap_or_else(|| "preparation stopped".into())
+                .into()
+        })
+    }
+
+    pub fn authorize(
+        &self,
+        origin: &str,
+        login_url: &str,
+    ) -> Result<crate::net::PendingAuthorization, Error> {
+        self.http.begin_authorization(origin, login_url)
+    }
+
+    pub async fn poll_authorization(
+        &self,
+        pending: crate::net::PendingAuthorization,
+    ) -> Result<(), Error> {
+        self.http.poll_authorization(pending).await
+    }
+
+    pub fn start(
+        &mut self,
+        config: Config,
+        prepared: Option<runner::PreparedRun>,
+    ) -> Result<watch::Receiver<Snapshot>, Error> {
+        self.prepared = prepared;
+        self.replace(Work::Run(config))?;
+        Ok(self.events())
+    }
+
+    pub async fn finish(&mut self) -> Result<Snapshot, Error> {
+        self.wait().await?;
+        Ok(self.snapshots.borrow().clone())
+    }
+
+    async fn wait(&mut self) -> Result<(), Error> {
+        while !self.operations.is_empty() {
+            tokio::select! {
+                Some(result) = self.operations.join_next() => self.finished(result)?,
+                _ = deadline(self.cancel_deadline) => { self.operations.abort_all(); self.cancel_deadline = None; },
+            }
+        }
+        Ok(())
+    }
+
+    fn with_snapshots(config: &Config, snapshots: watch::Sender<Snapshot>) -> Result<Self, Error> {
         Ok(Self {
             snapshots,
             operations: JoinSet::new(),
+            prepared: None,
             cancel: None,
             pending: None,
             cancelling: false,
@@ -106,13 +170,26 @@ impl Controller {
             browser_deadline: None,
         })
     }
-    fn start(&mut self, work: Work) -> Result<(), Error> {
+    fn launch(&mut self, work: Work) -> Result<(), Error> {
         assert!(self.operations.is_empty());
         if self.insecure != work.config().insecure {
             self.http = Http::new(work.config().insecure)?;
             self.insecure = work.config().insecure;
         }
+        if matches!(work, Work::Verify(_)) {
+            self.prepared = None;
+        }
+        let servers = if self
+            .prepared
+            .as_ref()
+            .is_some_and(|prepared| prepared.fresh_for(work.config()))
+        {
+            self.snapshots.borrow().servers.clone()
+        } else {
+            Vec::new()
+        };
         self.snapshots.send_replace(Snapshot {
+            servers,
             phase: Phase::Preparing,
             status: "Preparing selected servers".into(),
             ..Snapshot::default()
@@ -123,20 +200,25 @@ impl Controller {
         self.cancel_deadline = None;
         let http = self.http.clone();
         let snapshots = self.snapshots.clone();
+        let prepared = if matches!(work, Work::Run(_)) {
+            self.prepared.take()
+        } else {
+            None
+        };
         self.operations
-            .spawn(async move { execute(work, http, snapshots, cancelled).await });
+            .spawn(async move { execute(work, http, snapshots, cancelled, prepared).await });
         Ok(())
     }
     fn replace(&mut self, work: Work) -> Result<(), Error> {
         if self.operations.is_empty() {
-            self.start(work)
+            self.launch(work)
         } else {
             self.pending = Some(work);
             self.request_cancel();
             Ok(())
         }
     }
-    fn cancel(&mut self) {
+    pub fn cancel(&mut self) {
         self.pending = None;
         self.request_cancel();
     }
@@ -156,7 +238,7 @@ impl Controller {
     }
     fn finished(
         &mut self,
-        result: Result<Result<(), Error>, tokio::task::JoinError>,
+        result: Result<Result<Option<runner::PreparedRun>, Error>, tokio::task::JoinError>,
     ) -> Result<(), Error> {
         self.cancel = None;
         self.cancel_deadline = None;
@@ -167,33 +249,38 @@ impl Controller {
                 snapshot.auth = None;
                 snapshot.error = None;
             });
-        } else if let Err(error) = result
-            .map_err(|error| Box::new(error) as Error)
-            .and_then(|result| result)
-        {
-            self.snapshots.send_modify(|snapshot| {
-                snapshot.phase = if snapshot
-                    .results
-                    .iter()
-                    .any(|result| result.elapsed > Duration::ZERO)
-                {
-                    Phase::Incomplete
-                } else {
-                    Phase::Failed
-                };
-                snapshot.status = if snapshot.phase == Phase::Incomplete {
-                    "Incomplete"
-                } else {
-                    "Failed"
+        } else {
+            let result = result
+                .map_err(|error| Box::new(error) as Error)
+                .and_then(|result| result);
+            match result {
+                Ok(prepared) => self.prepared = prepared,
+                Err(error) => {
+                    self.snapshots.send_modify(|snapshot| {
+                        snapshot.phase = if snapshot
+                            .results
+                            .iter()
+                            .any(|result| result.elapsed > Duration::ZERO)
+                        {
+                            Phase::Incomplete
+                        } else {
+                            Phase::Failed
+                        };
+                        snapshot.status = if snapshot.phase == Phase::Incomplete {
+                            "Incomplete"
+                        } else {
+                            "Failed"
+                        }
+                        .into();
+                        snapshot.error = Some(error.to_string());
+                        snapshot.auth = None;
+                    });
                 }
-                .into();
-                snapshot.error = Some(error.to_string());
-                snapshot.auth = None;
-            });
+            }
         }
         self.cancelling = false;
         if let Some(work) = self.pending.take() {
-            self.start(work)?;
+            self.launch(work)?;
         }
         Ok(())
     }
@@ -257,30 +344,34 @@ async fn execute(
     http: Http,
     snapshots: watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
-) -> Result<(), Error> {
+    mut prepared: Option<runner::PreparedRun>,
+) -> Result<Option<runner::PreparedRun>, Error> {
     let mut approvals = HashSet::new();
     loop {
         if *cancel.borrow() {
-            return Ok(());
+            return Ok(None);
         }
         let result = match &work {
-            Work::Run(config) => {
-                runner::run(
-                    config.clone(),
-                    http.clone(),
-                    snapshots.clone(),
-                    cancel.clone(),
-                )
-                .await
-            }
+            Work::Run(config) => runner::run_prepared(
+                config.clone(),
+                http.clone(),
+                snapshots.clone(),
+                cancel.clone(),
+                prepared.take(),
+            )
+            .await
+            .map(|()| None),
             Work::Verify(config) => tokio::select! {
                 biased;
-                _ = cancelled(&mut cancel) => return Ok(()),
-                result = runner::verify(config, &http, &snapshots) => result,
+                _ = cancelled(&mut cancel) => return Ok(None),
+                result = runner::prepare_run(config, &http, &snapshots) => result.map(|prepared| {
+                    snapshots.send_modify(|snapshot| { snapshot.phase = Phase::Setup; snapshot.status = "Selected servers verified".into(); });
+                    Some(prepared)
+                }),
             },
         };
         let error = match result {
-            Ok(()) => return Ok(()),
+            Ok(prepared) => return Ok(prepared),
             Err(error) => error,
         };
         if crate::failure::reason(error.as_ref())
@@ -322,7 +413,7 @@ async fn execute(
         });
         tokio::select! {
             biased;
-            _ = cancelled(&mut cancel) => return Ok(()),
+            _ = cancelled(&mut cancel) => return Ok(None),
             result = http.poll_authorization(pending) => result?,
         }
         snapshots.send_modify(|snapshot| {
@@ -381,7 +472,8 @@ mod tests {
             phase: Phase::Measuring,
             ..Snapshot::default()
         });
-        let mut controller = Controller::new(&Config::default(), snapshots.clone()).unwrap();
+        let mut controller =
+            Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
         let (cancel, mut cancelled_signal) = watch::channel(false);
         controller.cancel = Some(cancel);
         let (joined, completed) = tokio::sync::oneshot::channel();
@@ -389,7 +481,7 @@ mod tests {
             cancelled(&mut cancelled_signal).await;
             snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
             let _ = joined.send(());
-            Ok(())
+            Ok(None)
         });
         controller.stop().await;
         completed.await.unwrap();

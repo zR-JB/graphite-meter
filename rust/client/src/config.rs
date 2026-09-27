@@ -50,6 +50,32 @@ impl Default for Config {
 }
 
 impl Config {
+    pub(crate) fn preparation_key(&self) -> Self {
+        let mut key = self.clone();
+        key.url = graphite_meter_core::origin::canonical_origin(&key.url).unwrap_or(key.url);
+        key.servers.sort_unstable();
+        let latency = key.loaded_latency || key.stages.contains(&Stage::Latency);
+        let upload = key.stages.iter().any(|stage| stage.uploads());
+        let transfer = key
+            .stages
+            .iter()
+            .any(|stage| stage.downloads() || stage.uploads());
+        key.stages = [
+            latency.then_some(Stage::Latency),
+            transfer.then_some(Stage::Download),
+            upload.then_some(Stage::Upload),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        key.warmup = Duration::ZERO;
+        key.latency_duration = Duration::ZERO;
+        key.download_duration = Duration::ZERO;
+        key.upload_duration = Duration::ZERO;
+        key.bidirectional_duration = Duration::ZERO;
+        key
+    }
+
     pub fn duration(&self, stage: Stage) -> Duration {
         match stage {
             Stage::Latency => self.latency_duration,

@@ -33,6 +33,33 @@ struct PreparedServer {
     idle_rtt: Duration,
 }
 
+pub struct PreparedRun {
+    servers: Vec<PreparedServer>,
+    key: Config,
+    pub verified_at: Instant,
+}
+
+impl PreparedRun {
+    pub fn fresh_for(&self, config: &Config) -> bool {
+        self.key == config.preparation_key()
+            && self.verified_at.elapsed() <= Duration::from_secs(30)
+    }
+}
+
+pub async fn prepare_run(
+    config: &Config,
+    http: &Http,
+    snapshots: &watch::Sender<Snapshot>,
+) -> Result<PreparedRun, Error> {
+    let verified_at = Instant::now();
+    let servers = prepare(config, http, snapshots).await?;
+    Ok(PreparedRun {
+        servers,
+        key: config.preparation_key(),
+        verified_at,
+    })
+}
+
 #[derive(Debug)]
 struct PreparationFailure {
     name: String,
@@ -187,24 +214,25 @@ async fn prepare_server(
 ) -> Result<PreparedServer, Error> {
     let preflight = http.preflight(entry).await?;
     let client = http.for_server(entry, &preflight)?;
-    let mut throughput = transfers
-        .then(|| selection::throughput(config, entry, &preflight))
-        .transpose()?;
-    if config.stages.iter().any(|stage| stage.uploads())
-        && !preflight.capabilities.upload_checkpoint
-    {
-        return Err("selected server does not support authoritative upload checkpoints".into());
-    }
-    if let Some(target) = &throughput
-        && target.transport != ThroughputTransport::FetchStream
-    {
-        match verify_throughput_webtransport(&client, target, config.insecure).await {
-            Ok(()) => {}
-            Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
-                return Err(error);
-            }
-            Err(error) if config.throughput_transport.is_none() => {
-                throughput = Some(
+    let throughput_path = async {
+        let mut throughput = transfers
+            .then(|| selection::throughput(config, entry, &preflight))
+            .transpose()?;
+        if config.stages.iter().any(|stage| stage.uploads())
+            && !preflight.capabilities.upload_checkpoint
+        {
+            return Err("selected server does not support authoritative upload checkpoints".into());
+        }
+        if let Some(target) = &throughput
+            && target.transport != ThroughputTransport::FetchStream
+        {
+            match verify_throughput_webtransport(&client, target, config.insecure).await {
+                Ok(()) => {}
+                Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
+                    return Err(error);
+                }
+                Err(error) if config.throughput_transport.is_none() => {
+                    throughput = Some(
                     selection::throughput_with_transport(
                         config,
                         entry,
@@ -218,49 +246,52 @@ async fn prepare_server(
                         .into()
                     })?,
                 );
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    let mut idle_rtt = Duration::ZERO;
-    let transport = if let Some(target) = &mut throughput {
-        let connection = Transport::connect(
-            client.clone(),
-            &target.base_url,
-            target.protocol,
-            config.insecure,
-        )
-        .await?;
-        if target.protocol == Protocol::Negotiated {
-            let probe = client.probe(&target.base_url, Protocol::Negotiated).await?;
-            target.protocol = match probe.protocol_negotiated {
-                ProtocolNegotiated::Http1 => Protocol::Http1,
-                ProtocolNegotiated::Http2 => Protocol::Http2,
-                ProtocolNegotiated::Http3 => {
-                    return Err("negotiated HTTP probe cannot use HTTP/3".into());
                 }
-            };
-        } else {
-            let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
-            probe.validate()?;
-        }
-        Some(Arc::new(connection))
-    } else {
-        None
-    };
-    let mut latency = needs_latency
-        .then(|| selection::latency(config, entry, &preflight))
-        .transpose()?;
-    if let Some(target) = &latency
-        && target.transport == LatencyTransport::WebTransport
-    {
-        match crate::latency::verify(&client, target, config.insecure).await {
-            Ok(()) => {}
-            Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
-                return Err(error);
+                Err(error) => return Err(error),
             }
-            Err(error) if config.latency_transport.is_none() => {
-                latency = Some(
+        }
+        let transport = if let Some(target) = &mut throughput {
+            let connection = Transport::connect(
+                client.clone(),
+                &target.base_url,
+                target.protocol,
+                config.insecure,
+            )
+            .await?;
+            if target.protocol == Protocol::Negotiated {
+                let probe = client.probe(&target.base_url, Protocol::Negotiated).await?;
+                target.protocol = match probe.protocol_negotiated {
+                    ProtocolNegotiated::Http1 => Protocol::Http1,
+                    ProtocolNegotiated::Http2 => Protocol::Http2,
+                    ProtocolNegotiated::Http3 => {
+                        return Err("negotiated HTTP probe cannot use HTTP/3".into());
+                    }
+                };
+            } else {
+                let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
+                probe.validate()?;
+            }
+            Some(Arc::new(connection))
+        } else {
+            None
+        };
+        Ok::<_, Error>((throughput, transport))
+    };
+    let latency_path = async {
+        let mut idle_rtt = Duration::ZERO;
+        let mut latency = needs_latency
+            .then(|| selection::latency(config, entry, &preflight))
+            .transpose()?;
+        if let Some(target) = &latency
+            && target.transport == LatencyTransport::WebTransport
+        {
+            match crate::latency::verify(&client, target, config.insecure).await {
+                Ok(()) => {}
+                Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
+                    return Err(error);
+                }
+                Err(error) if config.latency_transport.is_none() => {
+                    latency = Some(
                     selection::latency_with_transport(
                         config,
                         entry,
@@ -274,28 +305,32 @@ async fn prepare_server(
                         .into()
                     })?,
                 );
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
         }
-    }
-    if let Some(target) = &latency {
-        if target.transport == LatencyTransport::WebTransport
-            && config.ping_interval > Duration::from_secs(15)
-        {
-            return Err("WebTransport ping interval must not exceed 15 seconds".into());
+        if let Some(target) = &latency {
+            if target.transport == LatencyTransport::WebTransport
+                && config.ping_interval > Duration::from_secs(15)
+            {
+                return Err("WebTransport ping interval must not exceed 15 seconds".into());
+            }
+            let started = Instant::now();
+            client
+                .probe(
+                    &target.base_url,
+                    graphite_meter_core::discovery::Protocol::Negotiated,
+                )
+                .await?;
+            idle_rtt = started.elapsed();
+            if target.transport == LatencyTransport::WebSocket {
+                crate::latency::verify(&client, target, config.insecure).await?;
+            }
         }
-        let started = Instant::now();
-        client
-            .probe(
-                &target.base_url,
-                graphite_meter_core::discovery::Protocol::Negotiated,
-            )
-            .await?;
-        idle_rtt = started.elapsed();
-        if target.transport == LatencyTransport::WebSocket {
-            crate::latency::verify(&client, target, config.insecure).await?;
-        }
-    }
+        Ok::<_, Error>((latency, idle_rtt))
+    };
+    let ((throughput, transport), (latency, idle_rtt)) =
+        tokio::try_join!(throughput_path, latency_path)?;
     Ok(PreparedServer {
         entry: entry.clone(),
         client,
@@ -340,7 +375,17 @@ pub async fn run(
     config: Config,
     http: Http,
     snapshots: watch::Sender<Snapshot>,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), Error> {
+    run_prepared(config, http, snapshots, cancel, None).await
+}
+
+pub async fn run_prepared(
+    config: Config,
+    http: Http,
+    snapshots: watch::Sender<Snapshot>,
     mut cancel: watch::Receiver<bool>,
+    prepared: Option<PreparedRun>,
 ) -> Result<(), Error> {
     snapshots.send_modify(|snapshot| {
         snapshot.results.clear();
@@ -350,9 +395,12 @@ pub async fn run(
         snapshot.latest = Point::default();
         snapshot.stage = None;
     });
-    let mut prepared = tokio::select! {
-        result = prepare(&config, &http, &snapshots) => result?,
-        _ = cancel.wait_for(|value| *value) => return Ok(()),
+    let mut prepared = match prepared.filter(|prepared| prepared.fresh_for(&config)) {
+        Some(prepared) => prepared.servers,
+        None => tokio::select! {
+            result = prepare(&config, &http, &snapshots) => result?,
+            _ = cancel.wait_for(|value| *value) => return Ok(()),
+        },
     };
     for stage in &config.stages {
         if *cancel.borrow() {
