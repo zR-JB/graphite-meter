@@ -143,12 +143,16 @@ fn duration(value: &str) -> Result<Duration, Error> {
 fn stages(value: &str) -> Result<Vec<Stage>, Error> {
     let mut stages = value
         .split(',')
-        .map(|part| match part.trim().to_ascii_lowercase().as_str() {
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|part| !part.is_empty())
+        .map(|part| match part.as_str() {
             "latency" | "ping" => Ok(Stage::Latency),
             "download" | "down" => Ok(Stage::Download),
             "upload" | "up" => Ok(Stage::Upload),
             "bidirectional" | "bidi" => Ok(Stage::Bidirectional),
-            _ => Err(format!("unknown measurement stage: {part}")),
+            _ => Err(format!(
+                "unknown stage {part:?}: use latency, download, upload, or bidirectional"
+            )),
         })
         .collect::<Result<Vec<_>, _>>()?;
     stages.sort_unstable();
