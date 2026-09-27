@@ -469,7 +469,7 @@
   .latency-card {
     --wash: 7%;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(min-content, 1fr);
     gap: var(--space-3);
     min-width: 0;
     height: 100%;
@@ -511,7 +511,7 @@
   .body {
     display: grid;
     grid-template-columns: minmax(176px, 0.62fr) minmax(0, 2fr);
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: minmax(min-content, 1fr);
     gap: var(--space-5);
     min-height: 0;
   }
@@ -820,7 +820,7 @@
   @container latency (max-width: 720px) {
     .body {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(min-content, 1fr);
       gap: var(--space-3);
     }
     .idle {

@@ -185,7 +185,6 @@
   --role-panel-title: var(--w-strong) var(--type-lg) / 1.25 var(--font-display);
   --role-label: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
   --track-tight: -0.02em;
-  --track-caps: 0.08em;
   --track-wide: 0.1em;
 
   --z-toast: 40;
@@ -219,7 +218,6 @@
     oklch(0.985 0.003 258 / 0.88),
     oklch(0.195 0.009 258 / 0.88)
   );
-  --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -295,15 +293,6 @@
   --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
   --elev-recess: inset 0 1px 2px
     color-mix(in oklab, var(--shade) 6%, transparent);
-  --elev-inset:
-    inset 0 1px 2px color-mix(in oklab, var(--shade) 10%, transparent),
-    inset 0 6px 14px color-mix(in oklab, var(--shade) 5%, transparent);
-  --elev-raised:
-    var(--elev-tile),
-    0 1px 2px
-      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.08 0.01 255 / 0.32)),
-    0 8px 24px -12px
-      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.08 0.01 255 / 0.45));
   --elev-tooltip:
     var(--elev-tile),
     0 1px 3px
@@ -580,14 +569,6 @@
     white-space: nowrap;
   }
 
-  /* Mono, because caps labels name instrument quantities. */
-  .caps {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-2xs) / 1.2 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
-  }
-
   .hint {
     color: var(--text-soft);
     font-size: var(--type-xs);
@@ -737,19 +718,6 @@
   }
   .notice :where(strong) {
     color: var(--tone);
-  }
-
-  .surface {
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-surface);
-    background: var(--surface-1);
-    box-shadow: var(--elev-raised);
-  }
-  .well {
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-surface);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-inset);
   }
 
   .sheet {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from "./Icon.svelte";
   import type { ServerIdentity } from "../servers/catalog";
   import { serverLabel } from "../presentation/serverAppearance";
 
@@ -11,6 +12,7 @@
     hint,
     disabled = false,
     disabledIds = [],
+    quiet = false,
   }: {
     servers: readonly ServerIdentity[];
     value: string;
@@ -20,12 +22,16 @@
     hint?: string;
     disabled?: boolean;
     disabledIds?: readonly string[];
+    /** A lens over results: a server mark and a borderless field. */
+    quiet?: boolean;
   } = $props();
   const hintId = $props.id();
 </script>
 
+{#if quiet}<span class="lens-mark"><Icon name="server" /></span>{/if}
 <select
   class="server-scope"
+  class:quiet
   aria-label={label}
   aria-describedby={hint && value === "" ? hintId : undefined}
   {value}
@@ -46,5 +52,26 @@
     width: var(--scope-width, auto);
     max-width: 100%;
     text-overflow: ellipsis;
+  }
+  .lens-mark {
+    display: inline-grid;
+    color: var(--text-soft);
+  }
+  .lens-mark :global(svg) {
+    width: 14px;
+    height: 14px;
+  }
+  .quiet {
+    min-height: 28px;
+    padding-block: 0;
+    border-color: transparent;
+    background-color: transparent;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
+  }
+  @media (hover: hover) {
+    .quiet:hover:not(:disabled) {
+      background-color: var(--hover-wash);
+    }
   }
 </style>

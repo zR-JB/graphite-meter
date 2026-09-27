@@ -53,7 +53,6 @@
     position: relative;
     display: grid;
     min-width: 0;
-    min-height: 0;
     --profile-track-height: clamp(22px, 3.4svh, 34px);
     --profile-row: clamp(32px, 6.5svh, 64px);
   }

@@ -102,6 +102,8 @@ export interface PathOption {
   label: string;
   disabled: boolean;
   detail: string;
+  /** The choice group a single server's endpoint belongs to, for its note. */
+  group?: string;
 }
 
 const noWebTransport = () =>
@@ -220,7 +222,7 @@ export function pathOptions(
     const single = [
       groups[0],
       ...groups.filter(([value]) => value !== "auto" && value === selected),
-      ...targets.map((target): [string, string] => [
+      ...targets.map((target): [string, string, string] => [
         target.id,
         describeTarget(
           known!,
@@ -228,11 +230,15 @@ export function pathOptions(
           target,
           observed?.id === target.id ? observed.protocol : undefined,
         ).label,
+        target.transport === "fetch-stream"
+          ? `protocol:${target.protocol}`
+          : `transport:${target.transport}`,
       ]),
     ];
-    return single.map(([value, label]) => ({
+    return single.map(([value, label, group = value]) => ({
       value,
       label,
+      group,
       ...availability(known, role, value),
     }));
   }

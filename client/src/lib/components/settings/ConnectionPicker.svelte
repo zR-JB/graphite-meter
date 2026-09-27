@@ -96,10 +96,10 @@
         />
         <span class="choice-label"
           >{option.label}
-          {#if option.disabled || PATH_NOTE[role][option.value]}<small
+          {#if option.disabled || PATH_NOTE[role][option.group ?? option.value]}<small
               >{option.disabled
                 ? option.detail
-                : PATH_NOTE[role][option.value]}</small
+                : PATH_NOTE[role][option.group ?? option.value]}</small
             >{/if}</span
         >
       </label>

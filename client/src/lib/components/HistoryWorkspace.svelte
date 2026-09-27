@@ -18,6 +18,7 @@
   } from "../history/repository";
   import { formatRecentCompletion } from "../history/format";
   import {
+    fmtAddedMs,
     fmtMs,
     fmtSpeed,
     rateUnit,
@@ -260,6 +261,24 @@
     ) as Record<HistoryColumn, { tier?: number; peak: number; unit: string }>,
   );
 
+  // Under each rate, the latency its load added; under idle, its jitter; under loaded, whose load it was.
+  function note(record: HistoryRecord, column: HistoryColumn): string {
+    const { addedLatency, latency, latencyByStage } = record.result;
+    if (column === "idle")
+      return latency?.jitterMs == null
+        ? ""
+        : `jitter ${fmtMs(latency.jitterMs)}`;
+    if (column === "loaded") {
+      const worst = (["download", "upload", "bidirectional"] as const)
+        .filter((stage) => latencyByStage[stage]?.p50Ms != null)
+        .toSorted(
+          (a, b) => latencyByStage[b]!.p50Ms! - latencyByStage[a]!.p50Ms!,
+        )[0];
+      return worst ? STAGE[worst].short.toLowerCase() : "";
+    }
+    const added = addedLatency?.[column];
+    return added == null ? "" : `${fmtAddedMs(added)} ms`;
+  }
   function metric(record: HistoryRecord, column: HistoryColumn) {
     const { stages, bidirectional } = record.result;
     const value = historyMetrics(record)[column];
@@ -271,8 +290,9 @@
             ? fmtMs(value)
             : fmtSpeed(rateValueAt(value, units.base, units.kind, tier)),
         share: peak > 0 ? value / peak : 0,
+        note: note(record, column),
       };
-    const missing = (text: string) => ({ text, share: null });
+    const missing = (text: string) => ({ text, share: null, note: "" });
     if (column === "loaded") return missing(MISSING);
     if (column === "idle") return missing(stageStatusLabel(stages.latency));
     if (column !== "bidirectional")
@@ -294,8 +314,13 @@
       dateStyle: "medium",
       timeStyle: "short",
     });
-    const { outcome } = record.result;
+    const { outcome, multiServer } = record.result;
     const metrics = columns.map((column) => metric(record, column));
+    const servers = multiServer.selection;
+    const where =
+      servers.length > 1
+        ? `${servers.length} servers`
+        : (servers[0]?.name ?? "");
     const time = new Date(record.completedAt).toLocaleTimeString(undefined, {
       hour: "2-digit",
       minute: "2-digit",
@@ -315,7 +340,7 @@
         : recentDay
           ? time
           : `${day}, ${time}`,
-      secondary: recent,
+      secondary: [where, recent].filter(Boolean).join(", "),
       outcome,
       metrics,
       label: [
@@ -628,6 +653,9 @@
                                 style:--share={cell.share}
                               ></span>{/if}
                             <span class="value">{cell.text}</span>
+                            {#if cell.note}<small class="note"
+                                >{cell.note}</small
+                              >{/if}
                           </span>
                         {/each}
                       </a>
@@ -933,15 +961,29 @@
   .outcome:empty {
     padding: 0;
   }
+  /* A value, then what it cost or how it varied, in the column's own ink. */
   .metric {
-    display: flex;
+    display: grid;
+    grid-template: "bar value" auto ". note" auto / minmax(0, 4.5rem) auto;
     align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-2);
+    justify-content: end;
+    column-gap: var(--space-2);
+  }
+  .note {
+    grid-area: note;
+    justify-self: end;
+    color: var(--tone-ink);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .metric[data-tone="idle"] .note {
+    color: var(--text-soft);
   }
   /* A magnitude, never a verdict: the column's largest value fills the bar. */
   .bar {
-    flex: 0 1 4.5rem;
+    grid-area: bar;
+    width: 100%;
     height: 3px;
     border-radius: var(--r-full);
     background: linear-gradient(
@@ -953,7 +995,10 @@
       no-repeat;
   }
   .value {
-    font-weight: var(--w-strong);
+    grid-area: value;
+    justify-self: end;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
   .missing .value {

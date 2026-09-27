@@ -35,6 +35,7 @@
     hasProbeAccountingNotice,
   } from "../latencyProfile";
   import ResultSummary from "../ResultSummary.svelte";
+  import ServerScope from "../ServerScope.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
   interface Props {
@@ -235,6 +236,24 @@
       </div>
     </dl>
     <div class="head-actions">
+      {#if details}
+        <span class="lens">
+          <ServerScope
+            quiet
+            servers={details.selection}
+            value={shown}
+            onchange={(id) => (shown = id)}
+            disabledIds={details.selection
+              .filter(
+                ({ id }) =>
+                  !details.servers.some(({ server }) => server.id === id),
+              )
+              .map(({ id }) => id)}
+            aggregate="All {details.selection.length} servers"
+            label="Servers shown in this result"
+          />
+        </span>
+      {/if}
       <button
         class="btn btn-icon btn-quiet"
         type="button"
@@ -261,7 +280,6 @@
       {cards}
       {details}
       scope={shown}
-      onscope={(id) => (shown = id)}
       issues={serverIssues(run, shown)}
     />
 
@@ -385,6 +403,11 @@
 </article>
 
 <style>
+  .lens {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
   .result-detail {
     display: flex;
     flex-direction: column;

@@ -7,7 +7,6 @@
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import type { TransportRole } from "../runner/contract";
-  import ServerScope from "./ServerScope.svelte";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
   import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
 
@@ -19,8 +18,6 @@
     details,
     issues = [],
     scope = "",
-    onscope,
-    locked = false,
   }: {
     cards: SummaryCard[];
     /** Graphs share one rate and latency scale so their heights compare. */
@@ -36,8 +33,6 @@
       throughput: TransportRole[];
     }[];
     scope?: string;
-    onscope?: (id: string) => void;
-    locked?: boolean;
   } = $props();
   // One shown server's reasons sit on the card they failed; only All servers needs an attributed list.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
@@ -60,27 +55,6 @@
 </script>
 
 <div class="result-summary">
-  {#if details && details.selection.length > 1 && onscope}
-    <div class="summary-scope">
-      {#if details.participants.length < details.selection.length}<span
-          class="hint"
-          >{details.participants.length} of {details.selection.length} servers</span
-        >{/if}
-      <ServerScope
-        servers={details.selection}
-        value={scope}
-        onchange={onscope}
-        disabled={locked}
-        disabledIds={details.selection
-          .filter(
-            ({ id }) => !details.servers.some(({ server }) => server.id === id),
-          )
-          .map(({ id }) => id)}
-        aggregate="Combined"
-        label="Result measurements"
-      />
-    </div>
-  {/if}
   <div class="result-cards" data-tip-group {@attach tipGroup}>
     {#each transfers as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
@@ -140,8 +114,8 @@
             >
           {/if}
         </div>
-        <div class="graph-slot">
-          {#if card.graph && scale}
+        {#if card.graph && scale}
+          <div class="graph-slot">
             <StageGraph
               tone={card.key as "download" | "upload" | "bidirectional"}
               lanes={card.graph.lanes}
@@ -158,8 +132,8 @@
               rate={scale.rate}
               label="{STAGE[card.key].label} over time"
             />
-          {/if}
-        </div>
+          </div>
+        {/if}
         <dl class="facts">
           {#each facts(card) as row (row.label)}
             <div>
@@ -191,13 +165,6 @@
     width: 100%;
     container: results / inline-size;
   }
-  .summary-scope {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-2);
-  }
   .result-cards {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -207,9 +174,8 @@
   .card {
     --wash: 0%;
     display: grid;
-    grid-template-rows:
-      20px auto 18px var(--graph-h, clamp(64px, 11svh, 132px))
-      auto;
+    grid-template-rows: 20px auto 18px;
+    grid-auto-rows: auto;
     gap: 6px;
     min-width: 0;
     padding: var(--space-3) var(--space-4) var(--space-3);
@@ -319,11 +285,12 @@
     font-weight: var(--w-strong);
   }
   .graph-slot {
+    height: var(--graph-h, clamp(64px, 11svh, 132px));
     min-height: 0;
   }
   .facts {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
     gap: var(--space-2) var(--space-3);
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);

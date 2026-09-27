@@ -900,11 +900,12 @@
     overflow: hidden;
   }
   /* A viewport too short for the instrument scrolls this column. */
+  /* The instrument takes the column's height and gives it back from the latency rows first. */
   .stage > :global(.gauge-panel) {
-    flex: 1 0 auto;
+    flex: 1 1 0;
     width: 100%;
     max-width: 1920px;
-    min-height: min(100%, 640px);
+    min-height: min-content;
     align-self: center;
   }
   .measurement-stage :global(:is(.gauge-face, .latency-slot, .results)),

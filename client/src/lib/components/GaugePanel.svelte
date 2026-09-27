@@ -330,10 +330,10 @@
   @container viz (min-width: 760px) {
     .instrument {
       grid-template:
-        "dial latency" minmax(220px, 1fr)
+        "dial latency" minmax(min-content, 1fr)
         "run run" auto
         "results results" auto
-        / minmax(260px, 5fr) minmax(0, 8fr);
+        / minmax(240px, 4fr) minmax(0, 8fr);
     }
     .instrument:not(:has(.latency-slot)) {
       grid-template:
@@ -351,11 +351,11 @@
     min-width: 0;
     min-height: 0;
   }
+  /* Never shorter than its content: a tight screen scrolls rather than overlapping the run bar. */
   .latency-slot {
     grid-area: latency;
     display: grid;
     min-width: 0;
-    min-height: 0;
   }
   .results {
     grid-area: results;
@@ -372,10 +372,8 @@
     gap: var(--space-3) var(--space-4);
   }
   .server-indicator {
-    position: absolute;
-    z-index: 1;
-    inset: 0 auto auto 0;
     display: flex;
+    flex: none;
     align-items: center;
     gap: 6px;
     color: var(--text-soft);

@@ -27,25 +27,22 @@
 
   --focus-ring: 2px solid var(--brand);
 
-  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.19 0.009 255));
-  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.232 0.011 255));
-  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.18 0.009 255));
+  --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
   --border: light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
   --field-edge: light-dark(
     oklch(0.48 0.014 255 / 0.7),
     oklch(0.7 0.014 255 / 0.62)
   );
 
-  --text: light-dark(oklch(0.255 0.012 255), oklch(0.925 0.007 255));
-  --text-muted: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
-  --text-inverse: light-dark(oklch(1 0 0), oklch(0.19 0.009 255));
+  --text: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
+  --text-muted: light-dark(oklch(0.38 0.012 258), oklch(0.8 0.008 258));
+  --text-inverse: light-dark(oklch(0.995 0 0), oklch(0.17 0.008 258));
 
-  --brand: light-dark(oklch(0.52 0.078 205), oklch(0.8 0.092 205));
-  --brand-strong: light-dark(oklch(0.42 0.064 205), oklch(0.88 0.07 205));
+  --brand: light-dark(oklch(0.26 0.012 258), oklch(0.93 0.005 258));
+  --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
   --edge-highlight: rgb(255 255 255 / 0.22);
-
-  --signal: light-dark(oklch(0.5 0.1 262), oklch(0.78 0.085 262));
-  --signal-soft: color-mix(in oklab, var(--signal) 14%, transparent);
 
   --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
   --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
@@ -63,9 +60,6 @@
 }
 @media (color-gamut: p3) {
   :root {
-    --brand: light-dark(oklch(0.52 0.084 205), oklch(0.8 0.1 205));
-    --brand-strong: light-dark(oklch(0.42 0.069 205), oklch(0.88 0.076 205));
-    --signal: light-dark(oklch(0.5 0.108 262), oklch(0.78 0.092 262));
     --ok: light-dark(oklch(0.5 0.138 155), oklch(0.78 0.15 155));
     --warn: light-dark(oklch(0.53 0.118 85), oklch(0.85 0.15 92));
     --err: light-dark(oklch(0.52 0.151 25), oklch(0.74 0.13 22));
@@ -263,9 +257,9 @@ form + .warn {
   color: var(--warn);
 }
 .notice {
-  border-color: color-mix(in oklab, var(--signal) 38%, transparent);
-  background: var(--signal-soft);
-  color: var(--signal);
+  border-color: var(--border);
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+  color: var(--text-muted);
 }
 .ok {
   border-color: color-mix(in oklab, var(--ok) 38%, transparent);
