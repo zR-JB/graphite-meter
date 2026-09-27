@@ -1,16 +1,8 @@
 //! HTTP/3 requests over the pinned Noq transport, with an explicitly owned driver.
-use std::{
-    net::SocketAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use crate::tls::config as tls_config;
-use bytes::{Buf, Bytes};
-use h3::error::Code;
+use bytes::Bytes;
+use graphite_meter_http3::{self as http3, Code, RecvHalf, SendHalf, WtCode};
 use http::{Request, Response, Uri};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -20,9 +12,11 @@ use tokio::{
 
 use crate::Error;
 
-type Sender = h3::client::SendRequest<h3_noq::OpenStreams, Bytes>;
-type Stream = h3::client::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
 const MAX_REQUESTS: usize = 256;
+/// Go's client ceilings; noq's credit is fixed, and a smaller window caps a 100 ms path below 1 Gbit/s.
+const STREAM_RECEIVE_BYTES: u32 = 32 * 1024 * 1024;
+const CONNECTION_RECEIVE_BYTES: u32 = 48 * 1024 * 1024;
+const DATAGRAM_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RequestLimits {
@@ -41,64 +35,47 @@ impl Default for RequestLimits {
     }
 }
 
-/// Holds the sole driver task. Request streams retain this owner, so connection
-/// work cannot outlive them. Requests never follow redirects or change authority.
-pub struct Http3Client {
-    endpoint: EndpointOwner,
-    connection: quinn::Connection,
-    sender: Option<Sender>,
-    driver: JoinSet<()>,
-    permits: Arc<Semaphore>,
-    origin: Origin,
-    driver_alive: Arc<AtomicBool>,
-}
-
 /// Close even when cancellation occurs before QUIC or HTTP/3 setup finishes.
-struct EndpointOwner(quinn::Endpoint);
-impl Drop for EndpointOwner {
+struct Endpoint(quinn::Endpoint);
+impl Drop for Endpoint {
     fn drop(&mut self) {
         self.0.close(0_u32.into(), b"client endpoint dropped");
     }
 }
 
-struct DriverAlive(Arc<AtomicBool>);
-impl Drop for DriverAlive {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
+/// One QUIC connection and its HTTP/3 driver, for requests or a WebTransport session; dropping it closes both.
+pub(crate) struct Connection {
+    endpoint: Endpoint,
+    quic: quinn::Connection,
+    driver: JoinSet<()>,
 }
 
-impl Http3Client {
-    pub async fn connect(uri: &Uri, insecure: bool, deadline: Duration) -> Result<Self, Error> {
-        let origin = Origin::from_uri(uri)?;
-        timeout(deadline, Self::connect_inner(origin, insecure)).await?
-    }
-
-    async fn connect_inner(origin: Origin, insecure: bool) -> Result<Self, Error> {
-        let tls = tls_config(insecure)?;
-        let crypto = quinn::crypto::rustls::QuicClientConfig::try_from(tls)?;
-        let mut config = quinn::ClientConfig::new(Arc::new(crypto));
+impl Connection {
+    /// Tries each address in turn; a silent one gets 3 s, so it cannot spend the whole attempt.
+    pub(crate) async fn dial(origin: &Origin, insecure: bool) -> Result<(Self, http3::client::SendRequest), Error> {
+        let tls = crate::tls::config(insecure)?;
+        let mut config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams(0_u32.into());
-        transport.max_concurrent_uni_streams(16_u32.into());
-        crate::quic_config::set_flow_control(&mut transport);
+        transport.max_concurrent_uni_streams(36_u32.into());
+        transport.stream_receive_window(STREAM_RECEIVE_BYTES.into());
+        transport.receive_window(CONNECTION_RECEIVE_BYTES.into());
+        transport.send_window(CONNECTION_RECEIVE_BYTES.into());
+        transport.datagram_receive_buffer_size(Some(DATAGRAM_BYTES));
         transport.max_idle_timeout(Some(Duration::from_secs(60).try_into()?));
         config.transport_config(Arc::new(transport));
-
-        let addresses = graphite_meter_net::resolve(&origin.host, origin.port).await?;
         let mut last_error: Option<Error> = None;
-        for address in addresses {
+        for address in graphite_meter_net::resolve(&origin.host, origin.port).await? {
             let bind: SocketAddr = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
-            let endpoint = EndpointOwner(quinn::Endpoint::new(
+            let endpoint = Endpoint(quinn::Endpoint::new(
                 quinn::EndpointConfig::default(),
                 None,
                 graphite_meter_core::socket::udp_socket(bind)?,
                 quinn::default_runtime().ok_or("no async runtime for QUIC")?,
             )?);
             let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
-            // A silent address must not consume the whole multi-address attempt.
-            let connection = match timeout(Duration::from_secs(3), connecting).await {
-                Ok(Ok(connection)) => connection,
+            let quic = match timeout(Duration::from_secs(3), connecting).await {
+                Ok(Ok(quic)) => quic,
                 Ok(Err(error)) => {
                     last_error = Some(error.into());
                     continue;
@@ -108,34 +85,88 @@ impl Http3Client {
                     continue;
                 }
             };
-            let mut owner = Self {
-                endpoint,
-                connection,
-                sender: None,
-                driver: JoinSet::new(),
-                permits: Arc::new(Semaphore::new(MAX_REQUESTS)),
-                origin,
-                driver_alive: Arc::new(AtomicBool::new(true)),
-            };
-            // Construct the owner before HTTP/3 setup can suspend, ensuring that
-            // cancellation closes QUIC even when peer stream credit is withheld.
-            let (mut driver, sender) = h3::client::builder()
-                .max_field_section_size(32 * 1024)
-                .build(h3_noq::Connection::new(owner.connection.clone()))
-                .await?;
-            owner.sender = Some(sender);
-            let alive = owner.driver_alive.clone();
-            owner.driver.spawn(async move {
-                let _alive = DriverAlive(alive);
-                let _ = driver.wait_idle().await;
+            let (mut driver, requests) = http3::client::new(quic.clone());
+            let mut tasks = JoinSet::new();
+            tasks.spawn(async move {
+                let _ = driver.drive().await;
             });
-            return Ok(owner);
+            return Ok((
+                Self {
+                    endpoint,
+                    quic,
+                    driver: tasks,
+                },
+                requests,
+            ));
         }
-        Err(last_error.unwrap_or_else(|| "HTTP/3 hostname resolved to no addresses".into()))
+        Err(last_error.unwrap_or_else(|| "QUIC hostname resolved to no addresses".into()))
     }
 
+    pub(crate) fn close_reason(&self) -> Option<quinn::ConnectionError> {
+        self.quic.close_reason()
+    }
+
+    pub(crate) async fn close(mut self, reason: &[u8]) {
+        self.quic.close(0_u32.into(), reason);
+        self.endpoint.0.close(0_u32.into(), reason);
+        self.driver.shutdown().await;
+        let _ = timeout(Duration::from_secs(1), self.endpoint.0.wait_idle()).await;
+    }
+}
+
+/// Transfers resume after a graceful close, a lost connection, a request refused after GOAWAY, or a
+/// stream the server cancelled, refused or ended with its session; protocol violations do not.
+pub(crate) fn retryable(error: &(dyn std::error::Error + 'static)) -> bool {
+    let lost = error
+        .downcast_ref::<quinn::ConnectionError>()
+        .map(|error| http3::Error::from(error.clone()));
+    match lost.as_ref().or_else(|| error.downcast_ref()) {
+        Some(http3::Error::Reset(code) | http3::Error::Stopped(code)) => [
+            Code::H3_NO_ERROR,
+            Code::H3_REQUEST_REJECTED,
+            Code::H3_REQUEST_CANCELLED,
+            Code::WT_SESSION_GONE,
+            WtCode(0).to_http(),
+        ]
+        .contains(code),
+        // The Go server stops with 0.
+        Some(http3::Error::Connection { local: false, code, .. }) => [
+            Code(0),
+            Code::H3_NO_ERROR,
+            Code::H3_REQUEST_REJECTED,
+            Code::H3_REQUEST_CANCELLED,
+        ]
+        .contains(code),
+        Some(http3::Error::Transport(quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut)) => true,
+        Some(http3::Error::Refused) => true,
+        _ => false,
+    }
+}
+
+/// Holds the sole driver task. Request streams retain this owner, so connection
+/// work cannot outlive them. Requests never follow redirects or change authority.
+pub struct Http3Client {
+    connection: Connection,
+    requests: http3::client::SendRequest,
+    permits: Arc<Semaphore>,
+    origin: Origin,
+}
+
+impl Http3Client {
+    pub async fn connect(uri: &Uri, insecure: bool, deadline: Duration) -> Result<Self, Error> {
+        let origin = Origin::from_uri(uri)?;
+        let (connection, requests) = timeout(deadline, Connection::dial(&origin, insecure)).await??;
+        Ok(Self {
+            connection,
+            requests,
+            permits: Arc::new(Semaphore::new(MAX_REQUESTS)),
+            origin,
+        })
+    }
+
+    /// The driver ends only with the connection.
     pub fn is_closed(&self) -> bool {
-        self.connection.close_reason().is_some() || !self.driver_alive.load(Ordering::Acquire)
+        self.connection.close_reason().is_some()
     }
 
     pub async fn open(self: &Arc<Self>, request: Request<()>, limits: RequestLimits) -> Result<Http3Stream, Error> {
@@ -146,94 +177,65 @@ impl Http3Client {
             .checked_add(limits.timeout)
             .ok_or("HTTP/3 timeout is too large")?;
         let permit = timeout_at(deadline, self.permits.clone().acquire_owned()).await??;
-        let mut sender = self.sender.as_ref().expect("connected client has sender").clone();
-        let stream = timeout_at(deadline, sender.send_request(request)).await??;
+        let (send, recv) = timeout_at(deadline, self.requests.send_request(request))
+            .await??
+            .split();
         Ok(Http3Stream {
-            stream,
+            send,
+            recv,
             deadline,
             limits,
             sent: 0,
             received: 0,
-            send_finished: false,
-            receive_finished: false,
-            response_received: false,
             _permit: permit,
             _owner: self.clone(),
         })
     }
 
-    pub async fn close(mut self) {
-        self.connection.close(0_u32.into(), b"client complete");
-        self.endpoint.0.close(0_u32.into(), b"client complete");
-        self.driver.shutdown().await;
-        let _ = timeout(Duration::from_secs(1), self.endpoint.0.wait_idle()).await;
-    }
-}
-
-impl Drop for Http3Client {
-    fn drop(&mut self) {
-        self.connection.close(0_u32.into(), b"client dropped");
-        self.endpoint.0.close(0_u32.into(), b"client dropped");
-        self.driver.abort_all();
+    pub async fn close(self) {
+        self.connection.close(b"client complete").await;
     }
 }
 
 pub struct Http3Stream {
-    stream: Stream,
+    send: SendHalf,
+    recv: RecvHalf,
     deadline: Instant,
     limits: RequestLimits,
     sent: u64,
     received: u64,
-    send_finished: bool,
-    receive_finished: bool,
-    response_received: bool,
     _permit: OwnedSemaphorePermit,
     _owner: Arc<Http3Client>,
 }
 
 impl Http3Stream {
     pub async fn send_data(&mut self, bytes: Bytes) -> Result<(), Error> {
-        if self.send_finished {
-            return Err("HTTP/3 request body already finished".into());
-        }
         self.sent = self
             .sent
             .checked_add(bytes.len() as u64)
             .filter(|&size| size <= self.limits.max_send_bytes)
             .ok_or("HTTP/3 request body exceeds limit")?;
-        timeout_at(self.deadline, self.stream.send_data(bytes)).await??;
-        Ok(())
+        Ok(timeout_at(self.deadline, self.send.send_data(bytes)).await??)
     }
 
     pub async fn finish(&mut self) -> Result<(), Error> {
-        timeout_at(self.deadline, self.stream.finish()).await??;
-        self.send_finished = true;
-        Ok(())
+        Ok(timeout_at(self.deadline, self.send.finish()).await??)
     }
 
     pub async fn response(&mut self) -> Result<Response<()>, Error> {
-        if self.response_received {
-            return Err("HTTP/3 response headers already received".into());
-        }
-        let response = timeout_at(self.deadline, self.stream.recv_response()).await??;
-        self.response_received = true;
-        Ok(response)
+        Ok(timeout_at(self.deadline, self.recv.response()).await??)
     }
 
     pub async fn recv_data(&mut self) -> Result<Option<Bytes>, Error> {
-        if !self.response_received {
-            return Err("receive HTTP/3 response headers before its body".into());
-        }
-        let Some(mut data) = timeout_at(self.deadline, self.stream.recv_data()).await?? else {
-            self.receive_finished = true;
+        let Some(data) = timeout_at(self.deadline, self.recv.data()).await?? else {
             return Ok(None);
         };
         self.received = self
             .received
-            .checked_add(data.remaining() as u64)
+            .checked_add(data.len() as u64)
             .filter(|&size| size <= self.limits.max_receive_bytes)
             .ok_or("HTTP/3 response body exceeds limit")?;
-        Ok(Some(data.copy_to_bytes(data.remaining())))
+        Ok(Some(data))
     }
 
     pub async fn recv_body(&mut self) -> Result<Bytes, Error> {
@@ -246,24 +248,13 @@ impl Http3Stream {
     }
 }
 
-impl Drop for Http3Stream {
-    fn drop(&mut self) {
-        if !self.send_finished {
-            self.stream.stop_stream(Code::H3_REQUEST_CANCELLED);
-        }
-        if !self.receive_finished {
-            self.stream.stop_sending(Code::H3_REQUEST_CANCELLED);
-        }
-    }
-}
-
 #[derive(PartialEq, Eq)]
-struct Origin {
+pub(crate) struct Origin {
     host: String,
     port: u16,
 }
 impl Origin {
-    fn from_uri(uri: &Uri) -> Result<Self, Error> {
+    pub(crate) fn from_uri(uri: &Uri) -> Result<Self, Error> {
         if uri.scheme_str() != Some("https") {
             return Err("HTTP/3 requires an absolute HTTPS URI".into());
         }
@@ -309,6 +300,36 @@ mod tests {
             assert!(Origin::from_uri(&uri.parse().unwrap()).is_err());
         }
     }
+
+    #[test]
+    fn transfer_retries_exclude_protocol_and_local_failures() {
+        let retryable: Vec<Error> = vec![
+            Box::new(http3::Error::Reset(WtCode(0).to_http())),
+            Box::new(http3::Error::Stopped(Code::WT_SESSION_GONE)),
+            Box::new(http3::Error::Reset(Code::H3_REQUEST_REJECTED)),
+            Box::new(http3::Error::Refused),
+            Box::new(quinn::ConnectionError::TimedOut),
+            Box::new(quinn::ConnectionError::Reset),
+        ];
+        for error in retryable {
+            assert!(super::retryable(error.as_ref()), "{error}");
+        }
+        let fatal: Vec<Error> = vec![
+            Box::new(http3::Error::Reset(WtCode(42).to_http())),
+            Box::new(http3::Error::Protocol(Code::H3_MESSAGE_ERROR)),
+            Box::new(http3::Error::Connection {
+                local: false,
+                code: Code::H3_FRAME_ERROR,
+                reason: Bytes::new(),
+            }),
+            Box::new(quinn::ConnectionError::VersionMismatch),
+            Box::new(quinn::ConnectionError::LocallyClosed),
+        ];
+        for error in fatal {
+            assert!(!super::retryable(error.as_ref()), "{error}");
+        }
+    }
+
     #[tokio::test]
     async fn native_streaming_and_body_limits() -> Result<(), Error> {
         use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
@@ -333,23 +354,22 @@ mod tests {
             let incoming = server.accept().await.unwrap();
             rejected.spawn(async move { incoming.await });
             let connection = server.accept().await.unwrap().await?;
-            let mut h3 = h3::server::builder()
-                .build::<_, Bytes>(h3_noq::Connection::new(connection))
-                .await?;
+            let mut h3 = http3::server::Connection::new(connection, None);
             for _ in 0..2 {
-                let (request, mut stream) = h3.accept().await?.ok_or("missing request")?.resolve_request().await?;
+                let (request, stream) = h3.next().await?.ok_or("missing request")?.resolve().await?;
                 assert_eq!(request.method(), http::Method::POST);
+                let (mut send, mut recv) = stream.split();
                 let mut body = Vec::new();
-                while let Some(mut chunk) = stream.recv_data().await? {
-                    body.extend_from_slice(&chunk.copy_to_bytes(chunk.remaining()));
+                while let Some(chunk) = recv.data().await? {
+                    body.extend_from_slice(&chunk);
                 }
                 assert_eq!(body, b"native upload");
-                stream.send_response(Response::builder().status(200).body(())?).await?;
-                stream.send_data(Bytes::from(body)).await?;
-                stream.finish().await?;
+                send.send_response(Response::builder().status(200).body(())?).await?;
+                send.send_data(Bytes::from(body)).await?;
+                send.finish().await?;
             }
             // Keep driving HTTP/3 until the client explicitly closes its owner.
-            let _ = h3.accept().await;
+            let _ = h3.next().await;
             Ok::<_, Error>(())
         });
         assert!(Http3Client::connect(&uri, false, Duration::from_secs(5)).await.is_err());

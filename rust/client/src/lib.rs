@@ -20,7 +20,6 @@ pub mod vocabulary;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
-mod quic_config;
 mod theme;
 mod tls;
 pub mod webtransport;

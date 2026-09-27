@@ -2,6 +2,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use graphite_meter_client::{Error, download::Download, net::Http, transport::Transport};
 use graphite_meter_core::discovery::{Protocol, ThroughputTarget, ThroughputTransport};
+use graphite_meter_http3::{self as http3, Code, WtCode};
 use http::Response;
 use http_body_util::StreamBody;
 use hyper::{body::Frame, service::service_fn};
@@ -89,45 +90,37 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             endpoint = Some(server.clone());
             servers.spawn(async move {
                 let quic = server.accept().await.ok_or("endpoint closed")?.await?;
-                let mut connection = h3::server::builder()
-                    .enable_extended_connect(true)
-                    .enable_datagram(true)
-                    .enable_webtransport(true)
-                    .max_webtransport_sessions(1)
-                    .build(h3_noq::Connection::new(quic.clone()))
-                    .await?;
+                let mut connection = http3::server::Connection::new(quic, None);
                 let mut requests = JoinSet::new();
                 let mut first = true;
                 loop {
                     tokio::select! {
-                        result = connection.accept() => {
+                        result = connection.next() => {
                             let Some(request) = result? else { break; };
                             let mut trigger = trigger.clone();
-                            let quic = quic.clone();
                             let progress = std::mem::replace(&mut first, false);
                             requests.spawn(async move {
-                                let (_, mut stream) = request.resolve_request().await?;
-                                stream.send_response(Response::new(())).await?;
+                                let (_, stream) = request.resolve().await?;
                                 if matches!(peer, Peer::WebTransport) {
-                                    let (queue, mut cleanup) = graphite_meter_webtransport::ResetQueue::new(1);
-                                    let code = quinn::VarInt::from_u64(0x52e4a40fa8db)?;
-                                    let mut data = queue.open(&quic, stream.send_id().into_inner(), code).await?;
+                                    let session = http3::webtransport::Session::accept(stream).await?;
+                                    let mut data = session.open_uni().await?;
                                     data.write_all(b"progress").await?;
                                     trigger.wait_for(|value| *value).await?;
                                     if reset {
-                                        data.reset(code);
-                                        if let Ok(reset) = cleanup.try_recv() { reset.complete().await?; }
+                                        data.reset(WtCode(0));
                                         loop {
                                             tokio::time::sleep(Duration::from_millis(200)).await;
-                                            queue.open(&quic, stream.send_id().into_inner(), code).await?.reset(code);
+                                            session.open_uni().await?.reset(WtCode(0));
                                         }
                                     }
                                     std::future::pending::<()>().await;
                                 } else {
-                                    if progress { stream.send_data(Bytes::from_static(b"progress")).await?; }
+                                    let (mut send, _recv) = stream.split();
+                                    send.send_response(Response::new(())).await?;
+                                    if progress { send.send_data(Bytes::from_static(b"progress")).await?; }
                                     trigger.wait_for(|value| *value).await?;
                                     if reset {
-                                        stream.stop_stream(h3::error::Code::H3_REQUEST_CANCELLED);
+                                        send.reset(Code::H3_REQUEST_CANCELLED);
                                     } else {
                                         std::future::pending::<()>().await;
                                     }
@@ -203,10 +196,8 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             assert!(started.elapsed() >= Duration::from_millis(1800), "{peer:?}: {error}");
             let cause = match peer {
                 Peer::H2 => error.is::<hyper::Error>(),
-                Peer::H3 => matches!(error.downcast_ref::<h3::error::StreamError>(),
-                    Some(h3::error::StreamError::RemoteTerminate { code }) if *code == h3::error::Code::H3_REQUEST_CANCELLED),
-                Peer::WebTransport => matches!(error.downcast_ref::<h3::quic::StreamErrorIncoming>(),
-                    Some(h3::quic::StreamErrorIncoming::StreamTerminated { error_code }) if *error_code == 0x52e4a40fa8db),
+                Peer::H3 => error.downcast_ref() == Some(&http3::Error::Reset(Code::H3_REQUEST_CANCELLED)),
+                Peer::WebTransport => error.downcast_ref() == Some(&http3::Error::Reset(WtCode(0).to_http())),
             };
             assert!(cause, "{peer:?}: {error:?}");
         }

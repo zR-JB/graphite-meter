@@ -152,27 +152,7 @@ impl Transport {
             }
             return error.is::<hyper::Error>() || error.is::<std::io::Error>();
         }
-        if let Some(stream) = error.downcast_ref::<h3::error::StreamError>() {
-            return match stream {
-                h3::error::StreamError::RemoteTerminate { code } => {
-                    matches!(
-                        *code,
-                        h3::error::Code::H3_NO_ERROR
-                            | h3::error::Code::H3_REQUEST_REJECTED
-                            | h3::error::Code::H3_REQUEST_CANCELLED
-                    )
-                }
-                h3::error::StreamError::RemoteClosing => true,
-                h3::error::StreamError::ConnectionError(error) => retryable_h3_connection(error),
-                _ => false,
-            };
-        }
-        error
-            .downcast_ref::<h3::error::ConnectionError>()
-            .is_some_and(retryable_h3_connection)
-            || error
-                .downcast_ref::<quinn::ConnectionError>()
-                .is_some_and(retryable_quic_connection)
+        crate::quic::retryable(error.as_ref())
     }
 
     async fn h3_client(&self) -> Result<Option<Arc<Http3Client>>, Error> {
@@ -372,40 +352,6 @@ impl Transport {
     }
 }
 
-fn retryable_h3_connection(error: &h3::error::ConnectionError) -> bool {
-    use h3::quic::ConnectionErrorIncoming;
-    match error {
-        h3::error::ConnectionError::Timeout => true,
-        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Timeout) => true,
-        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose { error_code }) => {
-            retryable_h3_code(*error_code)
-        }
-        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Undefined(error)) => error
-            .as_ref()
-            .downcast_ref::<quinn::ConnectionError>()
-            .is_some_and(retryable_quic_connection),
-        _ => false,
-    }
-}
-
-fn retryable_quic_connection(error: &quinn::ConnectionError) -> bool {
-    match error {
-        quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut => true,
-        quinn::ConnectionError::ApplicationClosed(close) => retryable_h3_code(close.error_code.into()),
-        _ => false,
-    }
-}
-
-fn retryable_h3_code(code: u64) -> bool {
-    [
-        h3::error::Code::H3_NO_ERROR,
-        h3::error::Code::H3_REQUEST_REJECTED,
-        h3::error::Code::H3_REQUEST_CANCELLED,
-    ]
-    .into_iter()
-    .any(|allowed| allowed.value() == code)
-}
-
 enum BodyInner {
     Http(crate::net::Response),
     H3(Box<Http3Stream>),
@@ -442,20 +388,5 @@ impl Body {
                 .ok_or("response exceeds byte limit")?;
         }
         Ok(chunk)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn transfer_retries_exclude_local_quic_and_h3_protocol_errors() {
-        assert!(retryable_quic_connection(&quinn::ConnectionError::Reset));
-        assert!(retryable_quic_connection(&quinn::ConnectionError::TimedOut));
-        assert!(!retryable_quic_connection(&quinn::ConnectionError::VersionMismatch));
-        assert!(!retryable_quic_connection(&quinn::ConnectionError::LocallyClosed));
-        assert!(retryable_h3_code(h3::error::Code::H3_REQUEST_REJECTED.value()));
-        assert!(!retryable_h3_code(h3::error::Code::H3_FRAME_ERROR.value()));
     }
 }
