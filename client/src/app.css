@@ -788,22 +788,6 @@
     }
   }
 
-  .tone-icon {
-    display: grid;
-    flex: none;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    border: var(--hairline) solid var(--tone-line, var(--border));
-    border-radius: var(--r-well);
-    background: var(--tone-wash, var(--surface-2));
-    color: var(--tone, var(--text-soft));
-  }
-  .tone-icon :where(svg) {
-    width: var(--icon-sm);
-    height: var(--icon-sm);
-  }
-
   /* A plate whose direct children are rows; a control sets its row's height. */
   .kv {
     display: grid;

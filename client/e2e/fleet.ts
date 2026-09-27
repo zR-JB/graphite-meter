@@ -4,7 +4,7 @@ import type { RunnerConfig } from "../src/lib/runner/contract";
 import { STAGES } from "../src/lib/runner/schedule";
 import { STAGE } from "../src/lib/presentation/vocabulary";
 import { describe, launch, type Server } from "./servers";
-import { expect, type Page } from "./webview";
+import { expect, settled, type Page } from "./webview";
 
 const env = JSON.parse(process.env.GM_E2E ?? '{ "fleet": [] }');
 export const fleet: Server[] = env.fleet;
@@ -90,6 +90,8 @@ export async function openSettings(page: Page) {
   await expect
     .poll(() => panel.all((els) => els.some((el) => !el.inert)))
     .toBe(true);
+  // The sheet slides in with its column; a pointer aimed mid-slide misses its row.
+  await page.evaluate(settled);
   return panel;
 }
 

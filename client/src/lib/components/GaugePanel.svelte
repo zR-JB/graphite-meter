@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
   import { catalogSelection } from "../presentation/serverAppearance";
   import { untrack } from "svelte";
   import { store } from "../state/store.svelte";
@@ -252,13 +251,8 @@
                 class:partial={terminal.dashed}
                 aria-hidden="true"
               >
-                <span class="terminal-direction">
-                  <span
-                    class="tone-icon terminal-icon"
-                    data-tone={terminal.direction}
-                  >
-                    <Icon name={STAGE[terminal.direction].icon} />
-                  </span>
+                <span class="terminal-direction" data-tone={terminal.direction}>
+                  <span class="terminal-dot"></span>
                   {STAGE[terminal.direction].label}
                 </span>
                 <span class="terminal-number">{terminal.value}</span>
@@ -478,9 +472,11 @@
       display: none;
     }
   }
-  .terminal-icon {
-    width: 20px;
-    height: 20px;
+  .terminal-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
   }
   .terminal-number {
     font-size: clamp(30px, 17cqmin, 76px);

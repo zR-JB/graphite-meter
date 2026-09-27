@@ -118,6 +118,13 @@ emphasised values, 600 titles and controls.
 Hairlines mark structure only: a plate's edge, row separators inside plates, a head once content scrolls under it,
 the axis under a graph and the facts' top edge in a card. Spacing separates everything else.
 
+## Icons
+
+Line drawings on a 24-unit grid with a 1.9 stroke and round caps and joins, in `currentColor`
+(`presentation/icons.ts`), at `--icon` 16 px or `--icon-sm` 13 px. One glyph per concept: download, upload,
+bidirectional and ping mark their stage in History's column heads. On the instrument a stage is named by a dot in its
+hue, never by a boxed icon.
+
 ## Motion
 
 - Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers), `--dur-sheet` 420 ms (sheets and their column),
@@ -142,7 +149,7 @@ the axis under a graph and the facts' top edge in a card. Spacing separates ever
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A pointer at rest, a press, or arrow keys show a readout: time into the
-  stage, rate, latency and its signed added value.
+  stage, the rate, and the latency replies measured then.
 - **Latency card** (`LatencyProfileView`): the idle median as the headline with Jitter, Range, Stability and Timeouts;
   then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
   tick, latest reply while live) and the added latency in its hue. Loaded rows carry the idle baseline and a span

@@ -249,7 +249,9 @@
                   !details.servers.some(({ server }) => server.id === id),
               )
               .map(({ id }) => id)}
-            aggregate="All {details.selection.length} servers"
+            aggregate={details.participants.length < details.selection.length
+              ? `${details.participants.length} of ${details.selection.length} servers`
+              : `All ${details.selection.length} servers`}
             label="Servers shown in this result"
           />
         </span>

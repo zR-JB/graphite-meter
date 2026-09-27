@@ -172,7 +172,7 @@ test("a completed run fits every layout and theme without serious violations", a
             ...document.querySelectorAll(".panel-body, .stage"),
           ].filter((el) => el.scrollWidth > el.clientWidth + 1);
           const stage = document
-            .querySelector(".gauge-panel .stage")!
+            .querySelector(".gauge-panel .dial")!
             .getBoundingClientRect();
           const gauge = document
             .querySelector(".gauge-face")!

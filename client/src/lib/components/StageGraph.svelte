@@ -1,6 +1,6 @@
 <script lang="ts">
   import { restDetector, warmUp } from "../actions/intent";
-  import { fmtAddedMs, fmtDuration, formatLatency } from "../format";
+  import { fmtDuration, formatLatency } from "../format";
   import {
     nearestAt,
     stageGraph,
@@ -74,11 +74,6 @@
       value: point ? rate(point.v) : "",
     }));
     if (near) rows.push({ label: "Latency", value: formatLatency(near.ms) });
-    if (near && baseline != null)
-      rows.push({
-        label: "Added",
-        value: `${fmtAddedMs(near.ms - baseline)} ms`,
-      });
     return {
       x: Math.min(width, Math.max(0, ((at - start) / (span || 1)) * width)),
       rows,

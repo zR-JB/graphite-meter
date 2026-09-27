@@ -590,8 +590,8 @@ const axeSource = resolve(
   import.meta.dir,
   "../node_modules/axe-core/axe.min.js",
 );
-// Contrast is judged on settled colours, not mid-way through a theme transition.
-function settled() {
+// Contrast and pointer targets are judged on settled layout, not mid-way through a transition.
+export function settled() {
   const finite = document
     .getAnimations()
     .filter(
