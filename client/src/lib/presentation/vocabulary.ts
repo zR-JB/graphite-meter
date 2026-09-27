@@ -187,13 +187,12 @@ export const JARGON = {
     "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
     "Ethernet, IP, TCP or QUIC, TLS and HTTP framing at a 1,500 B MTU\n" +
     "An estimate; a result's wire rate lists its parts on hover",
-  unitBits:
-    "Bits\nBits per second: kbit/s, Mbit/s, Gbit/s\nThe unit internet plans use",
-  unitBytes:
-    "Bytes\nBytes per second: kB/s, MB/s, GB/s\nOne byte is 8 bits, so values read 8× lower",
-  unitDecimal: "Decimal\n1,000 per step: k, M, G",
-  unitBinary:
-    "Binary\n1,024 per step: Ki, Mi, Gi\nThe same rate reads 4.6% lower in Mi than in M",
+  rateUnit:
+    "Rate unit\nBits: Mbit/s, the unit internet plans use\n" +
+    "Bytes: MB/s, 8× lower, the unit downloads show",
+  unitPrefix:
+    "Prefix\nDecimal: 1,000 per step (k, M, G)\n" +
+    "Binary: 1,024 per step (Ki, Mi, Gi), 4.6% lower at M",
   throughputPath:
     "Throughput path\nTransport and HTTP version that carry the test bytes\n" +
     "Verified before the test starts",

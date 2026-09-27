@@ -455,9 +455,6 @@
                   : descending
                     ? "descending"
                     : "ascending"}
-                {@attach tooltip(() =>
-                  column === "date" ? "" : COLUMN[column].help,
-                )}
                 onclick={() =>
                   setSort(
                     column,
@@ -468,7 +465,12 @@
                     class="head-icon"
                     data-tone={column}><Icon name={COLUMN[column].icon} /></span
                   >{/if}
-                <span>{column === "date" ? "Date" : COLUMN[column].short}</span>
+                <span
+                  {@attach column === "date"
+                    ? null
+                    : tooltip(() => COLUMN[column].help)}
+                  >{column === "date" ? "Date" : COLUMN[column].short}</span
+                >
                 {#if sort === column}<span class="sr-only"
                     >, {descending ? "descending" : "ascending"}</span
                   >{/if}
