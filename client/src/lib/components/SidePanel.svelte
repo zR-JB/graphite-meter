@@ -11,7 +11,6 @@
     open: boolean;
     side?: "left" | "right";
     title: string;
-    kicker?: string;
     docked?: boolean;
     dockWidth?: number;
     dockMaxWidth?: number;
@@ -24,7 +23,6 @@
     open,
     side = "right",
     title,
-    kicker,
     docked = false,
     dockWidth,
     dockMaxWidth = MAX_DOCK_WIDTH,
@@ -140,11 +138,8 @@
       <span class="sheet-grip" aria-hidden="true"></span>
     </div>
     <header class="panel-head">
-      <div class="title">
-        {#if kicker}<span class="caps">{kicker}</span>{/if}
-        <!-- svelte-ignore a11y_autofocus -->
-        <h2 tabindex="-1" autofocus>{title}</h2>
-      </div>
+      <!-- svelte-ignore a11y_autofocus -->
+      <h2 tabindex="-1" autofocus>{title}</h2>
       <button
         class="btn btn-icon btn-inset"
         aria-label={`Close ${title}`}
@@ -188,13 +183,13 @@
     flex-direction: column;
     gap: var(--space-3);
     padding: var(--space-4);
-    border-left: 1px solid var(--border-strong);
-    background: linear-gradient(180deg, var(--surface-2), var(--surface-1) 32%);
+    border-left: 1px solid var(--border);
+    background: var(--surface-1);
     color: var(--text);
   }
   .panel-layer > :global(dialog.panel.left) {
     border-left: 0;
-    border-right: 1px solid var(--border-strong);
+    border-right: 1px solid var(--border);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
@@ -320,7 +315,7 @@
       top: calc(-1 * var(--space-4));
       margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0;
       padding: var(--space-4);
-      background: var(--surface-2);
+      background: var(--surface-1);
     }
     .panel-layer:not(.docked) .panel-body {
       flex: none;
@@ -331,21 +326,14 @@
   .panel-head {
     display: flex;
     flex: none;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
     min-width: 0;
   }
-  .title {
-    min-width: 0;
-  }
-  .title .caps {
-    color: var(--brand-strong);
-    letter-spacing: var(--track-wide);
-  }
   h2 {
-    margin-top: 2px;
-    font: var(--w-strong) var(--type-xl) var(--font-display);
+    min-width: 0;
+    font: var(--w-strong) var(--type-lg) var(--font-display);
     letter-spacing: var(--track-tight);
     overflow-wrap: anywhere;
   }

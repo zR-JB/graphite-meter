@@ -252,7 +252,7 @@
 <div class="settings">
   <section class="group">
     <div class="group-head">
-      <h3 class="caps">Connection</h3>
+      <h3>Connection</h3>
       <span
         class="badge"
         data-readiness={readiness}
@@ -280,7 +280,7 @@
   </section>
 
   <section class="group">
-    <h3 class="caps">
+    <h3>
       <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
     </h3>
     <div class="kv">
@@ -352,7 +352,7 @@
   </section>
 
   <section class="group">
-    <h3 class="caps">Display</h3>
+    <h3>Display</h3>
     <div class="kv">
       <div class="row">
         <span>Rate unit</span>
@@ -428,7 +428,7 @@
 
   <section class="group">
     <div class="group-head">
-      <h3 class="caps">History</h3>
+      <h3>History</h3>
       <a
         class="btn btn-quiet"
         href="#/history"
@@ -452,7 +452,7 @@
   </section>
 
   <section class="group">
-    <h3 class="caps">Latency probes</h3>
+    <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
         <div>
@@ -485,7 +485,7 @@
   </section>
 
   <section class="group">
-    <h3 class="caps">Transfers</h3>
+    <h3>Transfers</h3>
     <div class="kv">
       {@render toggle(
         "Force exact stream count",
@@ -571,7 +571,7 @@
 <style>
   .settings {
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
     container: settings / inline-size;
   }
   .group-head {
@@ -589,7 +589,6 @@
     gap: var(--space-3);
     min-width: 0;
     min-height: var(--control-h);
-    font-size: var(--type-sm);
   }
   .switch-row > :global(.switch) {
     flex: 1;
@@ -597,15 +596,14 @@
     min-height: var(--control-h);
   }
   .value {
-    font: var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    font-weight: var(--w-normal);
   }
   .number {
     display: flex;
     align-items: center;
     gap: var(--space-2);
     color: var(--text-soft);
-    font: var(--type-xs) var(--font-mono);
+    font-size: var(--type-sm);
   }
   .row input {
     width: 7rem;
@@ -625,7 +623,6 @@
     flex: 0 1 12rem;
   }
   .settings-reset {
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
+    margin-top: var(--space-2);
   }
 </style>

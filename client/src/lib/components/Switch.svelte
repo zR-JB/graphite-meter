@@ -96,6 +96,5 @@
   .label {
     flex: 1 1 auto;
     min-width: 0;
-    font-size: var(--type-sm);
   }
 </style>

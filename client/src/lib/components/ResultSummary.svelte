@@ -55,7 +55,7 @@
   {#if details && details.selection.length > 1 && onscope}
     <div class="summary-scope">
       {#if details.participants.length < details.selection.length}<span
-          class="caps"
+          class="hint"
           >{details.participants.length} of {details.selection.length} servers</span
         >{/if}
       <ServerScope
@@ -121,7 +121,7 @@
   </div>
   {#if issues.length}
     <section class="group enter" aria-label="Issues">
-      <h3 class="caps">Issues</h3>
+      <h3>Issues</h3>
       <dl class="kv">
         {#each issues as issue, index (index)}
           <div>
@@ -216,7 +216,7 @@
   .facts,
   .stability {
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-xs) / 1.5 var(--font-mono);
+    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
     font-variant-numeric: tabular-nums;
   }
   /* Each fact wraps whole; its middot sits in the gap before it, clipped at a line start. */
@@ -240,7 +240,8 @@
   .fact::before {
     content: "·";
     position: absolute;
-    left: calc(var(--space-3) / 2 - 0.5ch);
+    left: calc(var(--space-3) / 2);
+    translate: -50%;
     color: var(--text-soft);
   }
   .fact-icon {
@@ -253,7 +254,6 @@
   }
   .fact-term {
     color: var(--text-soft);
-    font-weight: var(--w-normal);
     transition: color var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
