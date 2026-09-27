@@ -809,6 +809,29 @@ mod tests {
         (Arc::new(tls), client)
     }
 
+    fn held_udp_socket(address: std::net::SocketAddr) -> Option<std::path::PathBuf> {
+        let port = format!(":{:04X}", address.port());
+        let sockets: Vec<_> = std::fs::read_to_string("/proc/net/udp")
+            .unwrap()
+            .lines()
+            .filter_map(|line| {
+                let fields: Vec<_> = line.split_whitespace().collect();
+                fields[1]
+                    .ends_with(&port)
+                    .then(|| format!("socket:[{}]", fields[9]))
+            })
+            .collect();
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .flatten()
+            .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+            .find(|link| {
+                sockets
+                    .iter()
+                    .any(|socket| link.as_os_str() == socket.as_str())
+            })
+    }
+
     async fn download(
         quic: quinn::Connection,
         bytes: u64,
@@ -873,6 +896,7 @@ mod tests {
         assert_eq!(server.memory.available(), 0);
         drop(remaining);
         let address = endpoint.local_addr().unwrap();
+        let socket = held_udp_socket(address).unwrap();
         drop(endpoint);
         tokio::time::timeout(Duration::from_secs(5), async {
             while server.memory.available() != available {
@@ -881,7 +905,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert!(std::net::UdpSocket::bind(address).is_ok());
+        assert_ne!(held_udp_socket(address), Some(socket));
     }
 
     #[tokio::test]
@@ -923,9 +947,10 @@ mod tests {
         .await
         .unwrap();
         assert!(std::net::UdpSocket::bind(address).is_err());
+        let socket = held_udp_socket(address).unwrap();
         drop(sender);
         assert_eq!(memory.available(), 64 * 1024);
-        assert!(std::net::UdpSocket::bind(address).is_ok());
+        assert_ne!(held_udp_socket(address), Some(socket));
     }
 
     #[test]
