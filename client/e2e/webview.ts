@@ -302,6 +302,18 @@ try {
   afterAll(removeProfiles);
 } catch {}
 
+/** Browser work that never answers fails with its name, before the test timeout hides where it hung. */
+export function within<T>(label: string, work: Promise<T>, ms = 30_000) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} did not answer within ${ms / 1000} s`)),
+      ms,
+    );
+  });
+  return Promise.race([work, late]).finally(() => clearTimeout(timer));
+}
+
 export class Page {
   readonly raw: Bun.WebView;
   readonly errors: string[] = [];
@@ -332,18 +344,21 @@ export class Page {
     });
   }
   private init() {
-    this.ready ??= (async () => {
-      await this.raw.navigate("about:blank");
-      await this.raw.cdp("Runtime.enable");
-      for (const guard of [reportPolicyViolations, watchDisplay])
-        await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
-          source: `(${guard})()`,
+    this.ready ??= within(
+      "preparing the page",
+      (async () => {
+        await this.raw.navigate("about:blank");
+        await this.raw.cdp("Runtime.enable");
+        for (const guard of [reportPolicyViolations, watchDisplay])
+          await this.raw.cdp("Page.addScriptToEvaluateOnNewDocument", {
+            source: `(${guard})()`,
+          });
+        this.raw.addEventListener("Runtime.exceptionThrown", (event: any) => {
+          const details = event.data.exceptionDetails;
+          this.errors.push(details.exception?.description ?? details.text);
         });
-      this.raw.addEventListener("Runtime.exceptionThrown", (event: any) => {
-        const details = event.data.exceptionDetails;
-        this.errors.push(details.exception?.description ?? details.text);
-      });
-    })();
+      })(),
+    );
     return this.ready;
   }
   locator(value: string, options: { hasText?: Name } = {}) {
@@ -354,7 +369,7 @@ export class Page {
   }
   async cdp<T = any>(method: string, params?: Record<string, unknown>) {
     await this.init();
-    return this.raw.cdp<T>(method, params);
+    return within(`CDP ${method}`, this.raw.cdp<T>(method, params));
   }
   async addInitScript(fn: (arg: any) => unknown, arg?: unknown) {
     await this.cdp("Page.addScriptToEvaluateOnNewDocument", {
@@ -367,14 +382,16 @@ export class Page {
     // A same-document hash change never fires the load event navigate() awaits.
     if (url.includes("#") && document(url) === document(this.raw.url))
       await this.evaluate((href) => location.assign(href), url);
-    else await this.raw.navigate(url);
+    else await within(`navigating to ${url}`, this.raw.navigate(url));
   }
   reload() {
-    return this.raw.reload();
+    return within("reload", this.raw.reload());
   }
   evaluate<T>(fn: ((arg: any) => T) | string, arg?: unknown): Promise<T> {
-    return this.raw.evaluate<T>(
-      typeof fn === "string" ? fn : `(${fn})(${encode(arg)})`,
+    const source = typeof fn === "string" ? fn : `(${fn})(${encode(arg)})`;
+    return within(
+      `evaluate ${source.replace(/\s+/g, " ").slice(0, 80)}`,
+      this.raw.evaluate<T>(source),
     );
   }
   async setViewportSize(size: { width: number; height: number }) {
@@ -398,7 +415,11 @@ export class Page {
   }
   /** Views of one file share storage, so a closed view's app must not outlive its test. */
   async close() {
-    await this.raw.navigate("about:blank").catch(() => {});
+    await within(
+      "leaving the page",
+      this.raw.navigate("about:blank"),
+      5_000,
+    ).catch(() => {});
     this.raw.close();
   }
 }
