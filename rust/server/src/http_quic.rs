@@ -142,15 +142,26 @@ impl HttpServer {
                         let quic = tokio::select! {
                             biased;
                             _ = stopped(server.stopping.clone()) => return,
-                            result = tokio::time::timeout(Duration::from_secs(5), connecting) => {
-                                match result { Ok(Ok(quic)) => quic, _ => return }
+                            result = tokio::time::timeout(Duration::from_secs(5), connecting) => match result {
+                                Ok(Ok(quic)) => quic,
+                                Ok(Err(error)) => {
+                                    if !ended_normally(&error) {
+                                        server.peers.write(format_args!("[gm:h3] QUIC handshake error from {}: {error}", peer.ip().to_canonical()));
+                                    }
+                                    return;
+                                }
+                                Err(_) => {
+                                    server.peers.write(format_args!("[gm:h3] QUIC handshake error from {}: timed out", peer.ip().to_canonical()));
+                                    return;
+                                }
                             }
                         };
                         let stopping = server.stopping.clone();
-                        if let Err(error) = server.serve_quic_connection(quic, peer).await
+                        if let Err(error) = server.clone().serve_quic_connection(quic, peer).await
                             && !*stopping.borrow()
+                            && !ended_normally(&*error)
                         {
-                            eprintln!("[gm:h3] webtransport connection: {error:?}");
+                            server.peers.write(format_args!("[gm:h3] webtransport connection: {:?}", error.to_string()));
                         }
                     });
                 }
@@ -288,6 +299,29 @@ impl HttpServer {
                 }
             }
         }
+    }
+}
+
+fn ended_normally(error: &(dyn std::error::Error + 'static)) -> bool {
+    use h3::{
+        error::{ConnectionError as Http3, LocalError},
+        quic::ConnectionErrorIncoming as Quic,
+    };
+    let quic = |error: &quinn::ConnectionError| match error {
+        quinn::ConnectionError::ApplicationClosed(_)
+        | quinn::ConnectionError::TimedOut
+        | quinn::ConnectionError::LocallyClosed => true,
+        quinn::ConnectionError::ConnectionClosed(close) => close.error_code == quinn::TransportErrorCode::NO_ERROR,
+        _ => false,
+    };
+    match error.downcast_ref::<Http3>() {
+        Some(Http3::Remote(Quic::ApplicationClose { .. } | Quic::Timeout) | Http3::Timeout) => true,
+        Some(Http3::Remote(Quic::Undefined(error))) => error.downcast_ref().is_some_and(quic),
+        Some(error @ Http3::Local { error: local }) => {
+            error.is_h3_no_error() || matches!(local, LocalError::Closing { .. })
+        }
+        Some(_) => false,
+        None => error.downcast_ref().is_some_and(quic),
     }
 }
 
@@ -1070,6 +1104,43 @@ mod tests {
             assert!(accepted.close_reason().is_none());
             quic.close(0_u32.into(), b"done");
             active.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn peer_closes_end_connections_normally_and_protocol_errors_do_not() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, client_config) = tls();
+        let endpoint =
+            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = endpoint.local_addr().unwrap();
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(client_config);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let connect = || async {
+                let (peer, (accepted, from)) = tokio::join!(client.connect(address, "localhost").unwrap(), async {
+                    let incoming = endpoint.accept().await.unwrap();
+                    let from = incoming.remote_address();
+                    (incoming.await.unwrap(), from)
+                });
+                (peer.unwrap(), server.clone().serve_quic_connection(accepted, from))
+            };
+            let (peer, served) = connect().await;
+            peer.close(
+                quinn::VarInt::from_u64(h3::error::Code::H3_NO_ERROR.value()).unwrap(),
+                b"",
+            );
+            let error = served.await.unwrap_err();
+            assert!(ended_normally(&*error), "{error}");
+
+            let (peer, served) = connect().await;
+            let mut control = peer.open_uni().await.unwrap();
+            control.write_all(&[0x00, 0x00, 0x00]).await.unwrap();
+            let error = served.await.unwrap_err();
+            assert!(!ended_normally(&*error), "{error}");
         })
         .await
         .unwrap();
