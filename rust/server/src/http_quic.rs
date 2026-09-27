@@ -221,7 +221,7 @@ impl HttpServer {
                     if connection.requests.is_empty() {
                         window.release(&connection.quic);
                     } else {
-                        window.update(&connection.quic, self.memory.available());
+                        window.update(&connection.quic, &self.memory);
                     }
                 }
                 Some(plain) = connection.requests.next() => {
@@ -379,6 +379,10 @@ impl MemoryBudget {
     fn under_pressure(&self) -> bool {
         self.used.load(Ordering::Relaxed) >= self.limit / 4
     }
+
+    fn has_headroom(&self) -> bool {
+        self.used.load(Ordering::Relaxed) < self.limit / 4 * 3
+    }
 }
 
 impl SharedBudget for MemoryBudget {
@@ -433,13 +437,8 @@ impl ReceiveCredit {
 
     pub(super) fn admit(&self) -> Admitted {
         let mut admitted = self.0.admitted.lock().expect("receive credit poisoned");
-        if *admitted == 0 {
-            // Noq's reassembly pool may hold three times the window.
-            let window = (RECEIVE_WINDOW_FLOOR as usize + self.0.memory.available() / 3)
-                .min(RECEIVE_WINDOW as usize);
-            self.0
-                .quic
-                .set_receive_window(u32::try_from(window).expect("bounded window").into());
+        if *admitted == 0 && self.0.memory.has_headroom() {
+            self.0.quic.set_receive_window(RECEIVE_WINDOW.into());
         }
         *admitted += 1;
         Admitted(self.clone())
@@ -474,7 +473,7 @@ impl SendWindow {
         }
     }
 
-    fn update(&mut self, connection: &quinn::Connection, available: usize) {
+    fn update(&mut self, connection: &quinn::Connection, budget: &MemoryBudget) {
         // Read the aggregate first so a concurrent send on the initial path
         // cannot look like traffic on another path.
         let all_sent = connection.stats().udp_tx.bytes;
@@ -506,7 +505,7 @@ impl SendWindow {
                 }
             } else {
                 self.low_demand_since = None;
-                if let Some(window) = self.grow(target, available) {
+                if let Some(window) = self.grow(target, budget) {
                     connection.set_send_window(window);
                 }
             }
@@ -514,12 +513,9 @@ impl SendWindow {
         self.last = Some((now, sent));
     }
 
-    fn grow(&mut self, target: u64, available: usize) -> Option<u64> {
-        let granted = target
-            .min(MAX_SEND_WINDOW)
-            .saturating_sub(self.limit)
-            .min(available as u64);
-        if granted < SEND_WINDOW_STEP {
+    fn grow(&mut self, target: u64, budget: &MemoryBudget) -> Option<u64> {
+        let granted = target.min(MAX_SEND_WINDOW).saturating_sub(self.limit);
+        if granted < SEND_WINDOW_STEP || !budget.has_headroom() {
             return None;
         }
         self.limit += granted;
@@ -744,10 +740,7 @@ fn stop(mut stream: ReceiveStream) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MAX_SEND_WINDOW, MIN_SEND_WINDOW, SEND_WINDOW_STEP, SendWindow, Sessions,
-        desired_send_window,
-    };
+    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, SendWindow, Sessions, desired_send_window};
     use std::{sync::Arc, time::Duration};
 
     fn tls() -> (Arc<rustls::ServerConfig>, quinn::ClientConfig) {
@@ -944,14 +937,10 @@ mod tests {
             requests.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"ping");
 
+            let budget = super::MemoryBudget::new(usize::MAX);
             let mut window = SendWindow::new();
-            assert_eq!(
-                window.grow(MAX_SEND_WINDOW, (SEND_WINDOW_STEP - 1) as usize),
-                None,
-                "growth needs free budget"
-            );
-            server.set_send_window(window.grow(MAX_SEND_WINDOW, usize::MAX).unwrap());
-            window.update(&server, usize::MAX);
+            server.set_send_window(window.grow(MAX_SEND_WINDOW, &budget).unwrap());
+            window.update(&server, &budget);
             for sample in 0..5 {
                 replies.write_all(b"pong").await.unwrap();
                 response.read_exact(&mut ping).await.unwrap();
@@ -959,7 +948,7 @@ mod tests {
                 tokio::time::pause();
                 tokio::time::advance(Duration::from_millis(250)).await;
                 tokio::time::resume();
-                window.update(&server, usize::MAX);
+                window.update(&server, &budget);
                 if sample < 3 {
                     assert_eq!(
                         window.limit, MAX_SEND_WINDOW,
@@ -978,7 +967,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unadmitted_peer_buffers_at_most_the_floor_window() {
+    async fn receive_window_grows_only_for_admitted_work_with_headroom() {
         use super::*;
         use futures_util::FutureExt;
         let server = HttpServer::new(Arc::new(Config::default())).unwrap();
@@ -991,13 +980,18 @@ mod tests {
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(5), async {
-            let (quic, accepted) = tokio::join!(
-                client
-                    .connect(endpoint.local_addr().unwrap(), "localhost")
-                    .unwrap(),
-                async { endpoint.accept().await.unwrap().await.unwrap() },
-            );
-            let quic = quic.unwrap();
+            let connect = || async {
+                let (quic, accepted) = tokio::join!(
+                    client
+                        .connect(endpoint.local_addr().unwrap(), "localhost")
+                        .unwrap(),
+                    async { endpoint.accept().await.unwrap().await.unwrap() },
+                );
+                (quic.unwrap(), accepted)
+            };
+            let (quic, accepted) = connect().await;
+            let (active, active_server) = connect().await;
+            let admitted_active = server.receive_credit(active_server.clone()).admit();
             let idle = server.memory.available();
             let mut send = quic.open_uni().await.unwrap();
             let mut written = 0;
@@ -1012,11 +1006,50 @@ mod tests {
             eprintln!("unadmitted peer: {written} bytes sent, {charged} bytes charged");
             assert!(charged <= 3 * RECEIVE_WINDOW_FLOOR as usize);
 
+            let used = server.memory.limit - server.memory.available();
+            let pressure = server
+                .memory
+                .lease(server.memory.limit / 4 * 3 - used)
+                .unwrap();
+            assert!(!server.memory.has_headroom());
+            assert_eq!(
+                SendWindow::new().grow(MAX_SEND_WINDOW, &server.memory),
+                None
+            );
+            let admitted = server.receive_credit(accepted.clone()).admit();
+            let mut after_max_data = accepted.open_uni().await.unwrap();
+            after_max_data.write_all(b"x").await.unwrap();
+            after_max_data.finish().unwrap();
+            quic.accept_uni()
+                .await
+                .unwrap()
+                .read_to_end(1)
+                .await
+                .unwrap();
+            assert!(
+                send.write(&[7]).now_or_never().is_none(),
+                "window grew past the threshold"
+            );
+
+            let receiving = tokio::spawn(async move {
+                let mut upload = active_server.accept_uni().await.unwrap();
+                let received = upload.read_to_end(8 << 20).await.unwrap().len();
+                (active_server, received)
+            });
+            let mut upload = active.open_uni().await.unwrap();
+            upload.write_all(&vec![7; 4 << 20]).await.unwrap();
+            upload.finish().unwrap();
+            let (active_server, received) = receiving.await.unwrap();
+            assert_eq!(received, 4 << 20);
+            assert!(active_server.close_reason().is_none());
+
+            drop((admitted, admitted_active, pressure));
             let admitted = server.receive_credit(accepted.clone()).admit();
             send.write_all(&vec![7; 1024 * 1024]).await.unwrap();
             drop(admitted);
             assert!(accepted.close_reason().is_none());
             quic.close(0_u32.into(), b"done");
+            active.close(0_u32.into(), b"done");
         })
         .await
         .unwrap();

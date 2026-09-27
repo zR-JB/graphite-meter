@@ -67,10 +67,11 @@ unchanged per-connection caps. A refused charge closes only that connection with
 drops, including after connection destruction. Until the connection has an
 admitted operation or session, its receive window is 64 KiB, so a silent or
 unauthenticated peer can make Noq hold at most 192 KiB of reassembly. Admitted
-work raises the window to 16 MiB, or less when a third of the free budget is
-smaller, and it returns to 64 KiB after the last admitted operation ends.
-Credit already granted stays usable until it is consumed. Transmit windows grow
-from 2 MiB to 32 MiB only into budget that is free at that moment. Endpoint
+work raises the window to 16 MiB, and it returns to 64 KiB after the last
+admitted operation ends. Credit already granted stays usable until it is
+consumed. Transmit windows adapt between 2 MiB and 32 MiB. Neither window grows
+once three quarters of the budget is used, so pressure slows new transfers
+instead of closing running ones. Endpoint
 reservations cover the configured UDP socket buffers, receive batches and
 pending incoming packets until the socket and its senders drop. Additional
 incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The
