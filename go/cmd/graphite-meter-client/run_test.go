@@ -200,24 +200,31 @@ func TestQuitDuringARunStopsAndReports(t *testing.T) {
 	url, entered, left := hangingServer(t)
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = url
-	m := newModel(cfg)
-	t.Cleanup(m.controller.Close)
-	m, _ = modelAndCmd(m.startRun())
-	within(t, entered, "run never reached preparation")
-	m, cmd := modelAndCmd(m.Update(press("q")))
-	if cmd != nil || !m.quitting {
-		t.Fatal("q quit before the running test stopped")
-	}
-	within(t, left, "q left the run's request alive")
-	for !quits(cmd) {
-		msg := waitEvents(m.runSeq, m.events)()
-		if msg == nil {
-			t.Fatal("the run ended without its terminal event")
+	for _, k := range []string{"q", "ctrl+c"} {
+		m := newModel(cfg)
+		t.Cleanup(m.controller.Close)
+		m, _ = modelAndCmd(m.startRun())
+		within(t, entered, "run never reached preparation")
+		m, cmd := modelAndCmd(m.Update(press(k)))
+		if cmd != nil || !m.quitting {
+			t.Fatalf("%s quit before the running test stopped", k)
 		}
-		m, cmd = modelAndCmd(m.Update(msg))
+		within(t, left, k+" left the run's request alive")
+		for !quits(cmd) {
+			msg := waitEvents(m.runSeq, m.events)()
+			if msg == nil {
+				t.Fatal("the run ended without its terminal event")
+			}
+			m, cmd = modelAndCmd(m.Update(msg))
+		}
+		if m.running() || m.last != goclient.OutcomeStopped || m.interrupted != (k == "ctrl+c") {
+			t.Fatalf("%s before the first server report ended as %q", k, m.last)
+		}
 	}
-	if m.running() || m.last != goclient.OutcomeStopped {
-		t.Fatalf("quitting before the first server report ended as %q", m.last)
+	m := runModel(t, "a")
+	m, _ = modelAndCmd(m.Update(interruptMsg{}))
+	if _, cmd := modelAndCmd(m.Update(press("ctrl+c"))); !m.quitting || !quits(cmd) {
+		t.Fatal("a second interrupt did not quit at once")
 	}
 }
 
