@@ -60,11 +60,12 @@ mode; Chromium runs the shipped UI with product defaults. Every client discards 
 over WebSocket at the fast cadence. Netem on the router's two egress links adds half the RTT and the loss rate in
 each direction at 1 Gbit/s, with one bandwidth-delay product of queue (at least 1,000 packets).
 
-Each run appends one row to `matrix.ndjson`: build identity, load average, the server's CPU time and peak RSS
-(VmHWM), bytes delivered each way, and every client's own report, whose loaded-latency percentiles are P50 and P95.
-Logs stay under `matrix/`. The session ends with `matrix-summary.txt`, the Go and Rust medians and ranges per cell; a
-metric reads WORSE when Rust is worse in a one-sided exact Mann-Whitney test (p ≤ 0.05) and by more than 2 %. CPU
-per Gbit/s is compared only when both delivered the same load within 5 %.
+Each run appends one row to `matrix.ndjson`: build identity, load average, the server's peak RSS (VmHWM), its CPU
+time and the bytes delivered each way while the clients run (setup and warmup included), its TCP congestion control
+and buffer limits, and every client's own report, whose loaded-latency percentiles are P50 and P95. Logs stay under
+`matrix/`. The session ends with `matrix-summary.txt`, the Go and Rust medians and ranges per cell; a metric reads
+WORSE when Rust is worse in a one-sided exact Mann-Whitney test (p ≤ 0.05) and by more than 2 %. CPU per delivered
+Gbit is compared only when both delivered the same load within 5 %.
 
 | Environment | Default | Purpose |
 | --- | --- | --- |
@@ -78,4 +79,5 @@ GM_MULTI_BENCH_MATRIX='rtt=0,100 loss=0,1 count=1 transport=h2,h3 client=go,rust
 cat /tmp/a/matrix.ndjson /tmp/b/matrix.ndjson | python3 client/bench/server-matrix-summary.py  # sessions together
 ```
 
-The full matrix (1,440 cells, 3 repeats) takes about 16 hours.
+The full matrix (1,440 cells, 3 repeats) takes about 16 hours. Stop host tuners such as bpftune first: they change TCP
+congestion control per connection and buffer limits while the matrix runs.

@@ -60,6 +60,9 @@ def main():
         binaries = ", ".join(f"{name} {binary['sha256'][:12]}" for name, binary in identity["binaries"].items())
         print(f"commit {identity['commit'][:12]}{' (dirty)' if identity['dirty'] else ''} · {identity['rustc'].splitlines()[0]} · "
               f"kernel {identity['kernel']} · governor {'/'.join(identity['governors'])} · {binaries}")
+    congestion = sorted({algorithm for row in rows for algorithm in row.get("serverTcp", {}).get("congestion", [])})
+    buffers = sorted({" / ".join(row["serverTcp"]["buffers"]) for row in rows if row.get("serverTcp")})
+    print(f"server TCP congestion control {', '.join(congestion) or '-'}; rmem / wmem {'; '.join(buffers) or '-'}")
     valid = sum(row["valid"] for row in rows)
     print(f"{valid} valid runs, {len(rows) - valid} invalid; median [range] of valid runs, delta is Rust against Go\n")
     table = [["comparison", *CELL, "metric", "Go", "Rust", "delta", "runs", "verdict"]]
