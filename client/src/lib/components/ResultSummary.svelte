@@ -224,9 +224,6 @@
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--track-tight);
   }
-  .active .num {
-    min-width: 5ch;
-  }
   .unit {
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);

@@ -585,11 +585,13 @@
     color: var(--tone);
     font-size: var(--type-xs);
   }
-  /* A separate footer keeps transient notes from overlapping the dial. */
+  /* A separate footer keeps notes off the dial; it holds two lines, so a longer note never shrinks the ring. */
   .gauge-footer {
     display: grid;
     align-items: center;
-    min-height: 44px;
+    min-height: calc(
+      var(--space-2) + var(--space-3) + var(--space-1) + 2.7 * var(--type-sm)
+    );
     padding: var(--space-2) var(--space-3) var(--space-3);
   }
   .gauge-notes {
