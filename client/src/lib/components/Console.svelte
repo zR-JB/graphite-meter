@@ -40,7 +40,6 @@
   } from "../state/persistence";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
-  // The gauge and the footer hand off one named state together.
   const status = handoff(
     () => ({
       phase: store.phase,

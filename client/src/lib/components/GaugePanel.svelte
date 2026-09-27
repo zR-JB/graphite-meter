@@ -149,7 +149,6 @@
       ? { value: fmtSpeed(gaugeRate(rates.down + rates.up)), unit: gaugeUnit }
       : { value: MISSING, unit: "" });
   const display = $derived(rateDisplay(liveRates));
-  // Assistive text follows samples, not frames.
   const spoken = $derived(rateDisplay(liveTarget));
 
   const dialState = $derived.by<GaugeDialState>(() => {

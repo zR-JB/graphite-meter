@@ -42,7 +42,7 @@ export const nextFrame = (task: (now: number) => void): (() => void) =>
     return false;
   });
 
-/** Below a millionth, a change cannot show: CSS serializes six significant digits. */
+/** Subscribers write the DOM on every change; below a millionth none can show (CSS keeps six digits). */
 const unseen = (a: number, b: number) =>
   Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
 
@@ -113,7 +113,6 @@ export class Smoothed {
     if (!unseen(this.#from, value) || rate) this.#stop ??= animate(this.#frame);
   }
 
-  /** Subscribers write the DOM on every change, so an unseen one is skipped; the landing never is. */
   #publish(value: number): void {
     if (
       value === this.#to ? value !== this.current : !unseen(value, this.current)

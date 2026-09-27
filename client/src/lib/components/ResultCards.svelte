@@ -104,7 +104,6 @@
   }
 </script>
 
-<!-- A running test holds the scope row locked, so results arriving never move the cards. -->
 <ResultSummary
   {cards}
   details={details ?? store.serverDetails}

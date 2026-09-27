@@ -377,7 +377,6 @@
     right: auto;
     left: 0;
   }
-  /* One --sweep write per frame turns both halves and the head. */
   .rotor {
     position: absolute;
     top: 0;
