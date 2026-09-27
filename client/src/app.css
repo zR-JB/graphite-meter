@@ -900,9 +900,10 @@
       overlay var(--dur-hover) allow-discrete,
       display var(--dur-hover) allow-discrete;
   }
-  .popover:not(:popover-open),
+  /* Important, so no component display can keep a closed popover hit-testable. */
+  [popover]:not(:popover-open),
   dialog.float:not([open]) {
-    display: none;
+    display: none !important;
     opacity: 0;
     translate: 0 -3px;
   }
