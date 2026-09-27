@@ -988,6 +988,6 @@
 }
 
 /* Unlayered, so it outranks every layered ring; main.ts sets data-pointer. */
-:root[data-pointer] :is(:focus-visible, :has(> summary:focus-visible)) {
+:root[data-pointer] :is(:focus-visible, :has(> :focus-visible)) {
   outline: none;
 }

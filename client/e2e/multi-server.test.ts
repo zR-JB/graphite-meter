@@ -59,8 +59,9 @@ test("four servers share one run and keep separate receiver windows", async (pag
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  await page.getByRole("button", { name: /^Servers & paths/ }).click();
-  const servers = page.locator(".result-detail tbody tr");
+  const servers = page.locator(".result-detail section.group", {
+    hasText: "Address",
+  });
   await expect(servers).toHaveCount(4);
   await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
   expect(await savedResult(page)).toEqual(saved);
