@@ -36,6 +36,7 @@ WORKDIR /src/client
 COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
 COPY client/ ./
+COPY api/ /src/api/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 FROM rust-build AS server-build
