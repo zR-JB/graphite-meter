@@ -21,6 +21,6 @@ codegen-units = 1
 strip = "symbols"
 
 [patch.crates-io]
-h2 = { git = "https://github.com/zR-JB/h2", rev = "aabce4ddb8f0c128528e5d35a6959cad8dd3d7e6" }
+h2 = { git = "https://github.com/zR-JB/h2", rev = "b3b4a42caaf168c121c3edd1981f59ccf9f264a3" }
 h3 = { git = "https://github.com/zR-JB/h3", rev = "03874beb50d065f4ac8f946ddb7814d2432b7527" }
-noq = { git = "https://github.com/zR-JB/noq", rev = "3c974e6085de28009e76f5ee8694fc888cb51f8d" }
+noq = { git = "https://github.com/zR-JB/noq", rev = "b9855303b1c6662be2e790cc93013238f77e1db9" }
