@@ -83,7 +83,7 @@ impl Certificates {
             let origin = target_origin(&listener.public_origin)?.ok_or("expected TLS origin")?;
             names.push(ServerName::try_from(origin.host)?);
         }
-        let current = read_identity(&config.tls_cert, &config.tls_key, &names, now)?;
+        let current = read_identity(config.tls_cert.as_ref(), config.tls_key.as_ref(), &names, now)?;
         budget(handshake_bytes(&current.cert))?;
         log_certificate(&current, now);
         #[cfg(unix)]
@@ -92,8 +92,9 @@ impl Certificates {
             if let Ok(metadata) = std::fs::metadata(&config.tls_key) {
                 let permissions = metadata.permissions().mode() & 0o777;
                 if permissions & 0o77 != 0 {
-                    eprintln!(
-                        "[gm:tls] warning: private key permissions are {permissions:04o}; remove group/other access"
+                    crate::log!(
+                        "[gm:tls] warning: private key {} permissions are {permissions:04o}; remove group/other access",
+                        config.tls_key
                     );
                 }
             }
@@ -146,38 +147,53 @@ impl ResolvesServerCert for Certificates {
 
 fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
     let (_, expires) = validity(&identity.cert[0]).expect("validated certificate");
-    eprintln!(
-        "[gm:tls] certificate loaded; expires at {}",
-        httpdate::fmt_http_date(expires),
-    );
+    crate::log!("[gm:tls] certificate loaded; expires at {}", rfc3339(expires));
     let remaining = expires.duration_since(now).expect("validated certificate validity");
     if remaining < Duration::from_secs(30 * 24 * 60 * 60) {
-        let hours = remaining.as_secs().saturating_add(1800) / 3600;
-        eprintln!("[gm:tls] warning: certificate expires in {hours}h");
+        let hours = Duration::from_secs(remaining.as_secs().saturating_add(1800) / 3600 * 3600);
+        crate::log!(
+            "[gm:tls] warning: certificate expires in {}",
+            crate::config::go_duration(hours)
+        );
     }
 }
 
+fn rfc3339(time: SystemTime) -> String {
+    let [year, month, day, hour, minute, second] = crate::log::utc(time);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
 fn read_identity(
-    certificate_path: impl AsRef<std::path::Path>,
-    key_path: impl AsRef<std::path::Path>,
+    certificate_path: &std::path::Path,
+    key_path: &std::path::Path,
     names: &[ServerName<'static>],
     now: SystemTime,
 ) -> Result<CertifiedKey, ConfigError> {
-    let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
-    let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
-    let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
-    if now < not_before {
-        return Err("TLS certificate is not valid yet".into());
-    }
-    if now >= not_after {
-        return Err("TLS certificate has expired".into());
-    }
-    let parsed = ParsedCertificate::try_from(leaf)?;
-    for name in names {
-        rustls::client::verify_server_name(&parsed, name)?;
-    }
-    let key = PrivateKeyDer::from_pem_file(key_path)?;
-    Ok(CertifiedKey::from_der(chain, key, &crate::crypto::provider())?)
+    let identity = || -> Result<CertifiedKey, ConfigError> {
+        let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
+        let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
+        let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
+        if now < not_before {
+            return Err(format!("TLS certificate is not valid before {}", rfc3339(not_before)).into());
+        }
+        if now >= not_after {
+            return Err(format!("TLS certificate expired at {}", rfc3339(not_after)).into());
+        }
+        let parsed = ParsedCertificate::try_from(leaf)?;
+        for name in names {
+            rustls::client::verify_server_name(&parsed, name)?;
+        }
+        let key = PrivateKeyDer::from_pem_file(key_path)?;
+        Ok(CertifiedKey::from_der(chain, key, &crate::crypto::provider())?)
+    };
+    identity().map_err(|error| {
+        format!(
+            "TLS certificate {} or key {}: {error}",
+            certificate_path.display(),
+            key_path.display()
+        )
+        .into()
+    })
 }
 
 fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {
