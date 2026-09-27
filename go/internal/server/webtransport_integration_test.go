@@ -467,6 +467,38 @@ func TestSequentialWebTransportSessionsDoNotHoldConnectionSlots(t *testing.T) {
 	}
 }
 
+func TestShutdownClosesHTTP3ConnectionsWithH3NoError(t *testing.T) {
+	t.Parallel()
+	sockets := newTestListenerSockets(t)
+	cfg := config.Default()
+	cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+	cfg.TLSCert, cfg.TLSKey = runTestTLS(t)
+	stop := runUntilCancel(t, &cfg, sockets)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	conn, err := quic.DialAddr(ctx, cfg.Native.H3, &tls.Config{InsecureSkipVerify: true,
+		NextProtos: []string{http3.NextProtoH3}}, transport.NewQUICConfig()) //nolint:gosec // test certificate
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+cfg.Native.H3+"/probe", nil)
+	res, err := (&http3.Transport{}).NewClientConn(conn).RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	stop()
+	select {
+	case <-conn.Context().Done():
+		closed, ok := errors.AsType[*quic.ApplicationError](context.Cause(conn.Context()))
+		if !ok || !closed.Remote || closed.ErrorCode != quic.ApplicationErrorCode(http3.ErrCodeNoError) {
+			t.Fatalf("shutdown closed the connection with %v, want H3_NO_ERROR", context.Cause(conn.Context()))
+		}
+	case <-ctx.Done():
+		t.Fatal("shutdown left the connection open")
+	}
+}
+
 // A stream download's liveness is the peer draining its lanes, and that is the only thing keeping the session open.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	t.Parallel()

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -340,7 +341,7 @@ func (p *peerLog) Write(b []byte) (int, error) {
 // quicUse closes a handlerless connection: sessions-only at once, else after idle (a stalled stream stops H3's timer).
 type quicUse struct {
 	conn               *quic.Conn
-	carried            *sessionConns
+	conns              *quicConns
 	idle               time.Duration
 	unused             *time.Timer
 	mu                 sync.Mutex
@@ -353,10 +354,11 @@ const wtCloseLinger = time.Second
 
 type quicUseKey struct{}
 
-func withQUICUse(idle time.Duration, carried *sessionConns) func(context.Context, *quic.Conn) context.Context {
+func withQUICUse(idle time.Duration, conns *quicConns) func(context.Context, *quic.Conn) context.Context {
 	return func(ctx context.Context, conn *quic.Conn) context.Context {
-		u := &quicUse{conn: conn, carried: carried, idle: idle}
+		u := &quicUse{conn: conn, conns: conns, idle: idle}
 		u.unused = time.AfterFunc(idle, func() { u.closeIfIdle(true) })
+		conns.add(conn)
 		return context.WithValue(ctx, quicUseKey{}, u)
 	}
 }
@@ -410,7 +412,7 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) 
 	}
 	u.mu.Lock()
 	if !u.sessions {
-		u.carried.track(u.conn)
+		u.conns.trackSession(u.conn)
 	}
 	u.sessions = true
 	u.mu.Unlock()
@@ -424,41 +426,59 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool), cut func()) 
 	}, func() { _ = u.conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeNoError), "") }
 }
 
-// sessionConns counts open connections that carried a session, so a shutdown lets each end with its cause.
-type sessionConns struct {
-	mu      sync.Mutex
-	open    int
-	drained chan struct{} // closed while open is zero
+// quicConns lets a shutdown end sessions with their cause, then close every connection with H3_NO_ERROR, not 0.
+type quicConns struct {
+	mu       sync.Mutex
+	open     map[*quic.Conn]struct{}
+	carrying int
+	drained  chan struct{} // closed while carrying is zero
 }
 
-func newSessionConns() *sessionConns {
-	c := &sessionConns{drained: make(chan struct{})}
+func newQUICConns() *quicConns {
+	c := &quicConns{open: make(map[*quic.Conn]struct{}), drained: make(chan struct{})}
 	close(c.drained)
 	return c
 }
 
-func (c *sessionConns) track(conn *quic.Conn) {
+func (c *quicConns) add(conn *quic.Conn) {
 	c.mu.Lock()
-	if c.open++; c.open == 1 {
+	c.open[conn] = struct{}{}
+	c.mu.Unlock()
+	context.AfterFunc(conn.Context(), func() {
+		c.mu.Lock()
+		delete(c.open, conn)
+		c.mu.Unlock()
+	})
+}
+
+func (c *quicConns) trackSession(conn *quic.Conn) {
+	c.mu.Lock()
+	if c.carrying++; c.carrying == 1 {
 		c.drained = make(chan struct{})
 	}
 	c.mu.Unlock()
 	context.AfterFunc(conn.Context(), func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.open--; c.open == 0 {
+		if c.carrying--; c.carrying == 0 {
 			close(c.drained)
 		}
 	})
 }
 
-func (c *sessionConns) wait(ctx context.Context) {
+func (c *quicConns) close(ctx context.Context) {
 	c.mu.Lock()
 	drained := c.drained
 	c.mu.Unlock()
 	select {
 	case <-drained:
 	case <-ctx.Done():
+	}
+	c.mu.Lock()
+	open := slices.Collect(maps.Keys(c.open))
+	c.mu.Unlock()
+	for _, conn := range open {
+		_ = conn.CloseWithError(quic.ApplicationErrorCode(http3.ErrCodeNoError), "")
 	}
 }
 
@@ -481,8 +501,8 @@ func (b *listenerBuild) addH3() error {
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = countQUICUse(boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt},
 		nil, b.authn), auth.Listener{WebTransport: true}), b.e.controlTimeout))
-	carried := newSessionConns()
-	h3.ConnContext = withQUICUse(b.e.controlTimeout, carried)
+	conns := newQUICConns()
+	h3.ConnContext = withQUICUse(b.e.controlTimeout, conns)
 	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
@@ -504,7 +524,7 @@ func (b *listenerBuild) addH3() error {
 				}
 				return err
 			}, stop: func(ctx context.Context) error {
-				carried.wait(ctx)
+				conns.close(ctx)
 				err := wt.Close()
 				_ = quicListener.Close()
 				_ = quicTransport.Close()
