@@ -78,7 +78,9 @@ raises stage and status chroma only, so contrast holds on both. **Contrast modes
 strengthens subtle edges and `--text-soft`; it and `prefers-reduced-transparency` make glass opaque.
 
 The auth pages keep a pinned copy of the page, ink and text tokens (`go/internal/auth/assets/auth.css`), and
-`client/index.html` repeats `--canvas` and `--text` for the first paint.
+`client/index.html` repeats `--canvas` and `--text` for the first paint. The terminal client repeats the text, ink,
+stage and status tokens in sRGB (`go/cmd/graphite-meter-client/theme.go`); a terminal draws everything as text, so
+its light stage colours are each hue's `--tone-ink`.
 
 ## Type
 
