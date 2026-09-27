@@ -65,8 +65,8 @@ def main() -> None:
             address = None
             while time.monotonic() < deadline:
                 for line in server_log.read_text().splitlines():
-                    if line.startswith("graphite-meter Rust: http3 on "):
-                        address = line.removeprefix("graphite-meter Rust: http3 on ")
+                    if " listening on " in line and line.endswith("/tcp (http3)"):
+                        address = line.split(" listening on ", 1)[1].removesuffix("/tcp (http3)")
                 if address:
                     break
                 if server.poll() is not None:
@@ -150,7 +150,7 @@ def main() -> None:
         try:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                if f"graphite-meter Rust: http3 on 127.0.0.1:{h3_port}" in auth_log.read_text():
+                if f" listening on 127.0.0.1:{h3_port}/tcp (http3)" in auth_log.read_text():
                     break
                 if server.poll() is not None:
                     raise RuntimeError(auth_log.read_text())

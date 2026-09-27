@@ -70,6 +70,19 @@ impl Certificates {
             names.push(ServerName::try_from(origin.host)?);
         }
         let current = read_identity(&config.tls_cert, &config.tls_key, &names, now)?;
+        log_certificate(&current, now);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(metadata) = std::fs::metadata(&config.tls_key) {
+                let permissions = metadata.permissions().mode() & 0o777;
+                if permissions & 0o77 != 0 {
+                    eprintln!(
+                        "[gm:tls] warning: private key permissions are {permissions:04o}; remove group/other access"
+                    );
+                }
+            }
+        }
         Ok(Arc::new(Self {
             certificate_path: config.tls_cert.clone().into(),
             key_path: config.tls_key.clone().into(),
@@ -90,6 +103,9 @@ impl Certificates {
         )?);
         let mut current = self.current.write().expect("certificate state poisoned");
         let changed = current.cert != replacement.cert;
+        if changed {
+            log_certificate(&replacement, now);
+        }
         *current = replacement;
         Ok(changed)
     }
@@ -116,6 +132,21 @@ impl ResolvesServerCert for Certificates {
                 .expect("certificate state poisoned")
                 .clone(),
         )
+    }
+}
+
+fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
+    let (_, expires) = validity(&identity.cert[0]).expect("validated certificate");
+    eprintln!(
+        "[gm:tls] certificate loaded; expires at {}",
+        httpdate::fmt_http_date(expires),
+    );
+    let remaining = expires
+        .duration_since(now)
+        .expect("validated certificate validity");
+    if remaining < Duration::from_secs(30 * 24 * 60 * 60) {
+        let hours = remaining.as_secs().saturating_add(1800) / 3600;
+        eprintln!("[gm:tls] warning: certificate expires in {hours}h");
     }
 }
 

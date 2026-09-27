@@ -67,9 +67,10 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
     let mut services = FuturesUnordered::<Service>::new();
     for (kind, listener, identity) in listeners {
         eprintln!(
-            "graphite-meter Rust: {} on {}",
+            "graphite-meter {} listening on {}/tcp ({})",
+            crate::config::ENGINE_VERSION,
+            listener.local_addr()?,
             kind.name(),
-            listener.local_addr()?
         );
         let server = server.clone();
         let stopped = stopped.clone();
@@ -108,8 +109,9 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
     }
     if let Some(endpoint) = quic {
         eprintln!(
-            "graphite-meter Rust: http3 UDP on {}",
-            endpoint.local_addr()?
+            "graphite-meter {} listening on {}/udp (http3)",
+            crate::config::ENGINE_VERSION,
+            endpoint.local_addr()?,
         );
         let server = server.clone();
         let stopped = stopped.clone();
@@ -122,7 +124,9 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         services.push(Box::pin(async move {
             tls.watch(cancelled(stopped), |result| {
                 if let Err(error) = result {
-                    eprintln!("TLS certificate renewal rejected: {error}");
+                    eprintln!(
+                        "[gm:tls] renewal rejected; keeping last valid certificate: {error:?}"
+                    );
                 }
             })
             .await

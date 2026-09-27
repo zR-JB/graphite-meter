@@ -162,7 +162,12 @@ impl HttpServer {
                                 match result { Ok(Ok(quic)) => quic, _ => return }
                             }
                         };
-                        let _ = server.serve_quic_connection(quic, peer, window).await;
+                        let stopping = server.stopping.clone();
+                        if let Err(error) = server.serve_quic_connection(quic, peer, window).await
+                            && !*stopping.borrow()
+                        {
+                            eprintln!("[gm:h3] webtransport connection: {error:?}");
+                        }
                     });
                 }
             }
