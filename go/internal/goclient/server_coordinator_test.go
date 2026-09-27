@@ -64,6 +64,7 @@ type serverFixture struct {
 	checkpointDelayNanos atomic.Int64
 	handlers, conns      sync.WaitGroup
 	catalogReads         atomic.Int32
+	dropLatency          func()
 }
 
 func coordinatedFixture(t *testing.T, name string) *serverFixture {
@@ -117,7 +118,13 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 	}))
 	mux := http.NewServeMux()
 	registry.Mount(t.Context(), mux)
-	mux.Handle(route.Ping, pingHandler(answerAll, 0))
+	latency, dropLatency := context.WithCancel(t.Context())
+	mux.Handle(route.Ping, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		defer context.AfterFunc(latency, cancel)()
+		pingHandler(answerAll, 0).ServeHTTP(w, r.WithContext(ctx))
+	}))
 	f.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.handlers.Add(1)
 		defer f.handlers.Done()
@@ -155,6 +162,10 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 		}
 	}
 	f.server.Start()
+	f.dropLatency = func() {
+		dropLatency()
+		_ = f.server.Listener.Close()
+	}
 	f.catalog = wire.SingletonCatalog()
 	t.Cleanup(f.server.Close)
 	return f
@@ -324,6 +335,34 @@ func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
 	if err != nil || details == nil || details.Outcome != OutcomeIncomplete || len(details.Failures) != 1 ||
 		len(results) != 2 || !results[0].Unavailable || results[1].Unavailable {
 		t.Fatalf("a sole server's failed stage ended the run: %v %+v %+v", err, details, results)
+	}
+}
+
+func TestALatencyStageLossLeavesTheLaterStages(t *testing.T) {
+	t.Parallel()
+	a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+	cfg := fixtureConfig(a)
+	cfg.Stages = StageSet{Latency: true, Download: true}
+	prepared := prepareFixtureRun(t, cfg, a, b)
+	b.dropLatency()
+	var log eventLog
+	err := runSelected(t.Context(), cfg, prepared, log.emit)
+	details := log.details()
+	if err != nil || details == nil || details.Outcome != OutcomePartial ||
+		!slices.Equal(details.Participants, []string{"self"}) || len(details.Failures) != 1 {
+		t.Fatalf("the lost server stayed in the run: %v %+v", err, details)
+	}
+	lost := details.Failures[0]
+	if lost.ServerID != "b" || lost.Stage != StageLatency || lost.Reason != FailureConnectionLost {
+		t.Fatalf("failure = %+v", lost)
+	}
+	for _, own := range details.Servers[1].Results {
+		if own.Direction == Down && (!own.Unavailable || own.Err.Error() != "left the test during latency") {
+			t.Fatalf("the lost server's download does not name its cause: %+v", own)
+		}
+	}
+	if download := log.results()[0]; download.Unavailable {
+		t.Fatalf("the survivor measured no download: %+v", download)
 	}
 }
 

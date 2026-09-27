@@ -190,7 +190,7 @@ func (c *coordinator) missingResults() bool {
 func (c *coordinator) departure(id string, stage Stage) error {
 	for _, f := range slices.Backward(c.failures) {
 		switch {
-		case f.ServerID != id || f.Scope != ScopeThroughput:
+		case f.ServerID != id || f.Scope != ScopeThroughput && f.Stage != StageLatency:
 		case f.Stage == stage:
 			return f.Err
 		default:
@@ -209,7 +209,7 @@ func (c *coordinator) noSurvivors() error {
 
 func (c *coordinator) failure(server *stageServer, stage StagePlan, role string, err error, at time.Time,
 	preparing bool) {
-	scope := ScopeThroughput
+	scope, reason := ScopeThroughput, failureReason(err, preparing)
 	if role == roleLatency {
 		scope = ScopeLatency
 		if server.latencyFailed || server.removed {
@@ -217,6 +217,9 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		}
 		server.latencyFailed = true
 		server.cancelLatency(err)
+		// An unreachable server would hold each later stage's preparation until it timed out.
+		lost := reason == FailureConnectionLost || reason == FailureTimeout
+		server.removed = len(stage.Directions) == 0 && lost && len(c.ids()) > 1
 	} else {
 		if server.removed {
 			return
@@ -229,7 +232,7 @@ func (c *coordinator) failure(server *stageServer, stage StagePlan, role string,
 		ServerID: server.id(),
 		Stage:    stage.Name,
 		Scope:    scope,
-		Reason:   failureReason(err, preparing),
+		Reason:   reason,
 		Err:      err,
 		At:       at.Sub(c.started),
 	}

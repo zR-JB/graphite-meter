@@ -52,7 +52,8 @@ contributions share the client's connection and are not independent capacity tes
   for good, or its grant is refused (which asks for sign-in); only the refused grant removes it at the final
   boundary. The interval ends and the survivors start a `dropout` interval. A server that cannot prepare a stage
   leaves the same way, and the run fails only when none survives. A removed server stays out for the rest of the
-  run, except that a sole server retries at the next stage. A latency-only failure keeps throughput.
+  run, except that a sole server retries at the next stage. A latency-only failure keeps throughput, except in the
+  latency stage: a server lost there (connection lost or timed out) leaves the run while another remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes. After a late dropout the interval before it can hold the headline
   and the stage is Partial. With no such interval the stage fails with a [reason](#failure-reasons) and the run is
@@ -114,7 +115,6 @@ jitter, deadlines and added latency.
 | Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; `l` rotates the shown one |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter | Counts in RTT and jitter if before its deadline |
-| Server lost in the latency stage | Leaves later stages when others remain (connection lost or timed out) | Keeps its throughput stages |
 | Browser only | P10–P90 span, stability, wire-rate estimate, saved history | |
 
 ## Run outcomes
