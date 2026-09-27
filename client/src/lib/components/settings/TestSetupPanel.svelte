@@ -703,9 +703,6 @@
     color: var(--text-soft);
     font-size: var(--type-xs);
   }
-  .segmented > button {
-    flex: 1 0 auto;
-  }
   .settings-reset {
     margin-top: var(--space-1);
   }

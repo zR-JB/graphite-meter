@@ -801,8 +801,9 @@
     border-radius: var(--r-chrome);
     background: var(--track);
   }
+  /* Segments share spare width but never shrink below their word. */
   .segmented > button {
-    flex: 1;
+    flex: 1 0 auto;
     min-width: 0;
     padding-inline: var(--space-2);
     overflow: hidden;
