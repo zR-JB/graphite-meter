@@ -5,7 +5,6 @@
 
 <script lang="ts">
   import ResultSummary from "./ResultSummary.svelte";
-  import { getApplicationController } from "../runner/controllerContext";
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtMs, formatRate, resultRate } from "../format";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
@@ -20,7 +19,8 @@
     summaryCards,
     serverIssues,
     summaryEvidence,
-    tracePaths,
+    type CardGraph,
+    type CardScale,
     type SummaryCard,
     type SummaryRow,
   } from "../presentation/resultSummary";
@@ -29,15 +29,8 @@
 
   let { live }: { live: LiveReadout } = $props();
 
-  const controller = getApplicationController();
-  let shown = $state("");
+  const shown = $derived(store.resultScope);
   const details = $derived(store.result?.multiServer);
-
-  function selectScope(id: string) {
-    shown = id;
-    if (details?.servers.some((s) => s.server.id === id && s.latencyTarget))
-      controller.focusServer(id);
-  }
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const status = (key: Stage) => store.stagePresentation[key].status;
 
@@ -64,31 +57,66 @@
   const planned = $derived(
     CARD_ORDER.filter((key) => status(key) !== "disabled"),
   );
-  // The chart's series per stage, over its plan until complete; the run's, so a scoped server shows no throughput trace.
-  const traces = $derived.by(() => {
+  type Transfer = Exclude<Stage, "latency">;
+  // The run's series per stage, over its plan until settled; a scoped server has no series of its own.
+  const graphs = $derived.by(() => {
+    if (shown) return {} as Partial<Record<Transfer, CardGraph>>;
     const plan = (store.run?.config ?? store.config).duration;
-    const lane = (key: Stage, dir: "down" | "up") =>
+    const lane = (key: Transfer, dir: "down" | "up") =>
       store.throughput
         .filter((s) => s.phase === key && s.dir === dir)
         .map((s) => ({ t: s.t, v: s.bytesPerSec }));
-    const idle = store.latency.flatMap((b) =>
-      b.phase === "latency" && b.medianRttMs !== null
-        ? [{ t: b.t, v: b.medianRttMs }]
-        : [],
-    );
-    const trace = (key: Stage, series: { t: number; v: number }[][]) =>
-      tracePaths(series, status(key) === "complete" ? 0 : plan[`${key}Ms`]);
+    const graph = (key: Transfer): CardGraph => {
+      const lanes =
+        key === "bidirectional"
+          ? [lane(key, "down"), lane(key, "up")]
+          : [lane(key, key === "download" ? "down" : "up")];
+      const times = lanes.flat().map((point) => point.t);
+      const start = times.length ? Math.min(...times) : 0;
+      const measured = times.length ? Math.max(...times) - start : 0;
+      return {
+        lanes,
+        latency: store.latency.flatMap((b) =>
+          b.phase === key && b.medianRttMs !== null
+            ? [{ t: b.t, ms: b.medianRttMs }]
+            : [],
+        ),
+        start,
+        span:
+          Math.max(
+            measured,
+            status(key) === "active" || status(key) === "pending"
+              ? plan[`${key}Ms`]
+              : 0,
+          ) || 1,
+      };
+    };
     return {
-      latency: trace("latency", [idle]),
-      ...(!shown && {
-        download: trace("download", [lane("download", "down")]),
-        upload: trace("upload", [lane("upload", "up")]),
-        bidirectional: trace("bidirectional", [
-          lane("bidirectional", "down"),
-          lane("bidirectional", "up"),
-        ]),
-      }),
-    } as Partial<Record<Stage, SummaryCard["trace"]>>;
+      download: graph("download"),
+      upload: graph("upload"),
+      bidirectional: graph("bidirectional"),
+    };
+  });
+  // The running card's leading edge moves on the frame clock; the other graphs stay put.
+  const head = $derived.by(() => {
+    const key = live.phase;
+    const rates = live.rates;
+    if (!key || !rates || status(key) !== "active") return null;
+    return {
+      key,
+      t: store.phaseStartedAtMs + store.phaseClock.current,
+      values:
+        key === "bidirectional"
+          ? [rates.down, rates.up]
+          : [key === "download" ? rates.down : rates.up],
+    };
+  });
+  const scale = $derived<CardScale>({
+    ceiling: store.scales.chartBytesPerSec,
+    baseline:
+      store.latencyLanes.find((lane) => lane.key === "latency")?.center ?? null,
+    latencyTop: store.latencyScaleMs,
+    rate: (bytesPerSec) => formatRate(bytesPerSec, units),
   });
   const cards = $derived(
     (store.phase !== "complete" && store.phase !== "error"
@@ -96,7 +124,10 @@
           (key) => settled.find((card) => card.key === key) ?? liveCard(key),
         )
       : settled
-    ).map((card) => ({ ...card, trace: traces[card.key] })),
+    ).map((card) => ({
+      ...card,
+      graph: graphs[card.key as Transfer] ?? null,
+    })),
   );
 
   const view = handoff(
@@ -193,11 +224,10 @@
 
 <ResultSummary
   cards={view.shown.cards}
+  {scale}
+  {head}
   fade={view.opacity}
-  reserve
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
-  locked={!details}
   scope={details ? shown : ""}
-  onscope={selectScope}
 />

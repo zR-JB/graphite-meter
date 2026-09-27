@@ -178,6 +178,8 @@ class AppStore {
   );
   /** Display focus only; the saved latency headline is fixed by the runner. */
   latencyFocus = $state("self");
+  /** The lens over a multi-server result: "" shows all servers combined, else one server. */
+  resultScope = $state("");
   serverDetails = $state.raw<MultiServerResult | null>(null);
   /** Per-server presentation evidence; the focused server's is the latency view. */
   readonly latencyByServer = new Map<string, LatencyBucket[]>();
@@ -721,6 +723,7 @@ class AppStore {
       run: null,
       historyCandidate: null,
       liveStageBytes: 0,
+      resultScope: "",
     });
     this.#stageBase = { phase: "", bytes: 0, last: 0 };
     this.runSeq++;

@@ -5,7 +5,7 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
-  import { JARGON, READINESS } from "../../presentation/vocabulary";
+  import { JARGON, PATH_NOTE, READINESS } from "../../presentation/vocabulary";
   import { tooltip } from "../../actions/tooltip";
 
   interface Props {
@@ -94,7 +94,14 @@
           disabled={option.disabled || locked}
           onchange={() => select(option.value)}
         />
-        <span class="choice-label">{option.label}</span>
+        <span class="choice-label"
+          >{option.label}
+          {#if option.disabled || PATH_NOTE[role][option.value]}<small
+              >{option.disabled
+                ? option.detail
+                : PATH_NOTE[role][option.value]}</small
+            >{/if}</span
+        >
       </label>
     {/each}
     {#if folded.length}

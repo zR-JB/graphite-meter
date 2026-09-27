@@ -66,12 +66,12 @@
         {#each store.serverCatalog!.servers as server (server.id)}
           {@const checked = store.selectedServers.includes(server.id)}
           {@const readiness = store.servers.get(server.id)?.readiness}
-          {@const status =
+          {@const shown =
             !readiness ||
             readiness === "unchecked" ||
             (readiness === "verified" && !checked)
-              ? ""
-              : READINESS[readiness].label}
+              ? null
+              : READINESS[readiness]}
           {@const preflightMs = store.servers.get(server.id)?.discovery
             ?.preflightMs}
           {@const unavailable =
@@ -120,8 +120,9 @@
               >{server.name}{#if serverLabel(server) !== server.name}
                 <small>{server.location}</small>{/if}</span
             >
-            {#if status}<small class="server-status" data-state={readiness}
-                >{status}</small
+            {#if shown}<small class="server-status" data-state={readiness}
+                ><span class="status-dot inline" data-tone={shown.tone}
+                ></span>{shown.label}</small
               >{/if}
             {#if preflightMs != null && !["failed", "sign-in", "checking"].includes(readiness ?? "")}<small
                 class="server-preflight"
@@ -297,6 +298,7 @@
   .choices label:not(.checked):has(input:disabled) {
     opacity: 0.55;
   }
+  /* Name over its place, like every two-line choice. */
   .server-name {
     min-width: 0;
     overflow: hidden;
@@ -304,7 +306,15 @@
     white-space: nowrap;
   }
   .server-name small {
-    margin-inline-start: 6px;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .server-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
   }
   .server-status[data-state="failed"],
   .server-status[data-state="sign-in"] {
@@ -314,13 +324,13 @@
     grid-column: 4;
     justify-self: end;
     color: var(--text-muted);
-    font: var(--type-xs) / 1.3 var(--font-mono);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
   .server-preflight .unit {
     margin-inline-start: 2px;
     color: var(--text-soft);
-    font-size: var(--type-2xs);
   }
   .feedback-message {
     min-height: 1.5em;

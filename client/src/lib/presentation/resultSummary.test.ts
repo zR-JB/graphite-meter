@@ -1,10 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  cardLine,
-  summaryCards,
-  summaryEvidence,
-  tracePaths,
-} from "./resultSummary";
+import { cardLine, summaryCards, summaryEvidence } from "./resultSummary";
 
 test("run evidence keeps only stages with a result and names no single source", () => {
   const evidence = summaryEvidence(
@@ -134,18 +129,4 @@ test("the latency card groups signed added latency, even of a failed stage; ever
   const stability = (card: (typeof cards)[number]) =>
     card.rows.find((row) => row.label === "Stability")?.value;
   expect(cards.map(stability)).toEqual(["92%", "95%", "80%", undefined]);
-});
-
-test("a trace spans a stopped stage's share of its plan, all of an overrun, and only bins every lane measured", () => {
-  const lane = (v: number) =>
-    Array.from({ length: 11 }, (_, i) => ({ t: 1000 + i * 100, v }));
-  const trace = tracePaths([lane(30), lane(10)], 4000, 40)!;
-  expect(trace.head.x).toBeCloseTo(10.5 / 40);
-  expect(tracePaths([lane(30), []], 4000, 40)).toBeNull();
-  const ramp = tracePaths(
-    [[0, 1, 2, 3].map((i) => ({ t: i * 1000, v: i * 100 }))],
-    1000,
-    4,
-  )!;
-  expect(ramp.head).toEqual({ x: 7 / 8, y: 4 / 32 });
 });

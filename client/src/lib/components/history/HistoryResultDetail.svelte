@@ -259,7 +259,6 @@
   <div class="detail-body">
     <ResultSummary
       {cards}
-      reserve
       {details}
       scope={shown}
       onscope={(id) => (shown = id)}
@@ -268,22 +267,17 @@
 
     <div class="facts">
       {#if profile.length}
-        <section
-          class="group latency"
-          aria-labelledby={`result-${record.id}-latency`}
-        >
-          <div class="group-head">
-            <h3 id={`result-${record.id}-latency`}>Latency</h3>
-            {#if multiple && latencyServer}<span class="source"
-                >{latencyServer.server.name}</span
-              >{/if}
-          </div>
+        <div class="latency">
           <LatencyProfileView
             lanes={profile}
             variant="compact"
             label="Saved latency distributions"
+            added={latencyServer?.addedLatency ?? result.addedLatency}
+            stability={(latencyServer?.latency ?? result.latency)
+              ?.stabilityPct ?? null}
+            source={multiple ? latencyServer?.server.name : undefined}
           />
-        </section>
+        </div>
       {/if}
 
       {#each serverRows as row (row.id)}
@@ -441,10 +435,6 @@
   }
   .latency {
     grid-column: 1 / -1;
-  }
-  .source {
-    color: var(--text-soft);
-    font-size: var(--type-sm);
   }
   .status {
     display: flex;

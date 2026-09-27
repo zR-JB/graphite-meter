@@ -1,8 +1,8 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
+  import StageGraph from "./StageGraph.svelte";
   import {
-    cardLine,
     cardTip,
+    type CardScale,
     type SummaryCard,
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
@@ -13,8 +13,9 @@
 
   let {
     cards,
+    scale = null,
+    head = null,
     fade = 1,
-    reserve = false,
     details,
     issues = [],
     scope = "",
@@ -22,8 +23,11 @@
     locked = false,
   }: {
     cards: SummaryCard[];
+    /** Graphs share one rate and latency scale so their heights compare. */
+    scale?: CardScale | null;
+    /** The running stage's leading edge. */
+    head?: { key: string; t: number; values: (number | null)[] } | null;
     fade?: number;
-    reserve?: boolean;
     details?: MultiServerResult | null;
     issues?: {
       server: string;
@@ -35,18 +39,27 @@
     onscope?: (id: string) => void;
     locked?: boolean;
   } = $props();
-  const uid = $props.id();
-  // One shown server's reasons sit on the chips they failed; only All servers needs an attributed list.
+  // One shown server's reasons sit on the card they failed; only All servers needs an attributed list.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
-  const onChips = $derived(
+  const onCards = $derived(
     attributed ? [] : issues.filter((issue) => issue.throughput.length),
   );
   const listed = $derived(
     attributed ? issues : issues.filter((issue) => !issue.throughput.length),
   );
+  // Latency has its own card; this row holds the transfers.
+  const transfers = $derived(cards.filter((card) => card.key !== "latency"));
+  // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
+  const FACT_ORDER = ["Peak", "Stability", "Combined", "Transferred"];
+  const facts = (card: SummaryCard) =>
+    card.rows
+      .filter((row) => !row.stage)
+      .toSorted(
+        (a, b) => FACT_ORDER.indexOf(a.label) - FACT_ORDER.indexOf(b.label),
+      );
 </script>
 
-<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
+<div class="result-summary">
   {#if details && details.selection.length > 1 && onscope}
     <div class="summary-scope">
       {#if details.participants.length < details.selection.length}<span
@@ -68,98 +81,93 @@
       />
     </div>
   {/if}
-  <div class="result-cards" class:reserve data-tip-group {@attach tipGroup}>
-    {#each cards as card (card.key)}
+  <div class="result-cards" data-tip-group {@attach tipGroup}>
+    {#each transfers as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
-      {@const line = cardLine(card)}
-      {@const reason = line
-        ? ""
-        : onChips.find((issue) => issue.throughput.includes(card.key))?.reason}
+      {@const lanes = card.rows.filter((row) => row.stage)}
+      {@const reason = onCards.find((issue) =>
+        issue.throughput.includes(card.key),
+      )?.reason}
       <article
-        class="chip {card.status}"
+        class="card {card.status}"
         data-tone={card.key}
         style:--fade={fade}
       >
-        {#if card.trace}
-          {@const trace = card.trace}
-          <span class="trace" aria-hidden="true">
-            <svg viewBox="0 0 100 32" preserveAspectRatio="none">
-              <defs>
-                <linearGradient
-                  id="{uid}-{card.key}"
-                  x1="0"
-                  y1="0"
-                  x2="0"
-                  y2="1"
+        <header class="card-head">
+          <span class="dot" aria-hidden="true"></span>
+          <h3 {@attach tooltip(() => cardTip(card))}>
+            {STAGE[card.key].label}
+          </h3>
+          {#if tone || card.status === "active"}<span class="state"
+              >{#if tone && tone !== "neutral"}<span
+                  class="status-dot"
+                  data-tone={tone}
+                ></span>{/if}{card.status === "active"
+                ? STATUS.running
+                : STATUS[card.status as keyof typeof STATUS]}</span
+            >{/if}
+        </header>
+        {#key scope}
+          <div
+            class="headline enter"
+            class:quiet
+            aria-hidden={card.accessible ? "true" : undefined}
+          >
+            {#if card.key === "bidirectional" && lanes.length === 2 && !quiet}
+              {#each lanes as lane (lane.stage)}
+                <span class="pair" data-tone={lane.stage}
+                  ><span class="arrow" aria-hidden="true"
+                    >{lane.stage === "download" ? "↓" : "↑"}</span
+                  ><span class="num">{lane.short}</span></span
                 >
-                  <stop
-                    offset="0"
-                    stop-color="var(--tone)"
-                    stop-opacity="0.34"
-                  />
-                  <stop offset="1" stop-color="var(--tone)" stop-opacity="0" />
-                </linearGradient>
-              </defs>
-              <path class="area" d={trace.area} fill="url(#{uid}-{card.key})" />
-              <path class="line" d={trace.line} />
-            </svg>
-            {#if card.status === "active"}<span
-                class="head"
-                style:left="{trace.head.x * 100}%"
-                style:top="{trace.head.y * 100}%"
-              ></span>{/if}
-          </span>
-        {/if}
-        <span class="face" {@attach tooltip(() => cardTip(card))}>
-          <span class="name">
-            <Icon name={card.icon} />
-            {card.label}
-            {#if tone}<span class="status"
-                >{#if tone !== "neutral"}<span
-                    class="status-dot"
-                    data-tone={tone}
-                  ></span>{/if}{STATUS[
-                  card.status as keyof typeof STATUS
-                ]}</span
-              >{/if}
-          </span>
-          {#key scope}
-            <span
-              class="val enter"
-              class:quiet
-              aria-hidden={card.accessible ? "true" : undefined}
-            >
+              {/each}
+            {:else}
               <span class="num">{card.num}</span>
-              {#if card.unit}<span class="unit">{card.unit}</span>{/if}
-            </span>
-          {/key}
-        </span>
-        {#if line && !quiet}
-          <span class="facts">
-            {#if line.label}<span
-                class="label"
-                {@attach line.tip ? term(() => line.tip!) : null}
-                >{line.label}</span
-              >{/if}
-            {#each line.facts as fact, index (index)}
-              <span class="fact"
-                >{#if fact.stage}<span class="fact-icon" data-tone={fact.stage}
-                    ><Icon name={STAGE[fact.stage].icon} /></span
-                  ><span class="sr-only">{STAGE[fact.stage].short}</span
-                  >{/if}{fact.value}</span
-              >
-            {/each}
-            {#if line.mark}
-              {@const mark = line.mark}
-              <span class="mark" {@attach term(() => mark.tip)}
-                >{mark.text}</span
-              >
             {/if}
-          </span>
-        {:else if reason && !quiet}
-          <span class="facts"><span class="fact">{reason}</span></span>
-        {/if}
+            {#if card.unit && !quiet}<span class="unit">{card.unit}</span>{/if}
+          </div>
+        {/key}
+        <div class="line">
+          {#if reason && !quiet}
+            <span class="reason">{reason}</span>
+          {:else if card.wire}
+            {@const wire = card.wire}
+            <span class="wire"
+              ><span class="label" {@attach term(() => wire.tip)}>Wire</span>
+              {wire.value}
+              <span class="delta">{wire.overhead}</span></span
+            >
+          {/if}
+        </div>
+        <div class="graph-slot">
+          {#if card.graph && scale}
+            <StageGraph
+              tone={card.key as "download" | "upload" | "bidirectional"}
+              lanes={card.graph.lanes}
+              laneNames={card.key === "bidirectional"
+                ? [STAGE.download.short, STAGE.upload.short]
+                : []}
+              latency={card.graph.latency}
+              start={card.graph.start}
+              span={card.graph.span}
+              head={head?.key === card.key ? head : null}
+              ceiling={scale.ceiling}
+              baseline={scale.baseline}
+              latencyTop={scale.latencyTop}
+              rate={scale.rate}
+              label="{STAGE[card.key].label} over time"
+            />
+          {/if}
+        </div>
+        <dl class="facts">
+          {#each facts(card) as row (row.label)}
+            <div>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          {/each}
+        </dl>
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
@@ -179,167 +187,166 @@
 <style>
   .result-summary {
     display: grid;
-    gap: var(--space-2);
+    gap: var(--space-3);
     width: 100%;
-    max-width: calc(var(--cards) * 175px);
-    margin-inline: auto;
     container: results / inline-size;
   }
   .summary-scope {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     gap: var(--space-2);
   }
   .result-cards {
     display: grid;
-    grid-template-columns: repeat(var(--cards), minmax(0, 1fr));
-    gap: var(--space-2);
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: var(--space-4) var(--space-5);
   }
-  @container results (max-width: 480px) {
-    .result-cards {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-  }
-  .chip {
-    --edge: var(--border);
-    position: relative;
-    isolation: isolate;
+  /* A card is its stage's light on the page: a rule in its hue and a wash that fades out, no box. */
+  .card {
+    --wash: 0%;
     display: grid;
-    grid-template-rows: 14px 26px 15px;
-    align-content: start;
-    row-gap: 2px;
-    height: 74px;
-    padding: var(--space-2) var(--space-3) 0;
-    overflow: hidden;
-    border: var(--hairline) solid var(--edge);
-    border-radius: var(--r-chrome);
-    background:
-      linear-gradient(transparent 30%, var(--tone-wash)), var(--surface-1);
-    box-shadow: var(--elev-tile);
-    transition: var(--transition-control);
-  }
-  .reserve .chip {
-    height: 82px;
-  }
-  .chip.active {
-    --edge: color-mix(in srgb, var(--tone) 70%, var(--border));
-    box-shadow:
-      var(--elev-tile),
-      0 0 0 3px var(--tone-wash);
-  }
-  .chip:is(.pending, .not-run) {
-    --edge: var(--border-subtle);
-  }
-  .trace {
-    position: absolute;
-    inset: auto 0 0;
-    z-index: -1;
-    height: 14px;
-    opacity: var(--fade);
-  }
-  .trace svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .line {
-    fill: none;
-    stroke: var(--tone);
-    stroke-width: 1.5;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-  }
-  .head {
-    position: absolute;
-    width: 6px;
-    height: 6px;
-    border-radius: var(--r-full);
-    background: var(--tone);
-    box-shadow: 0 0 0 3px var(--tone-wash);
-    translate: -50% -50%;
-  }
-  .face {
-    display: grid;
-    grid-row: 1 / 3;
-    grid-template-rows: subgrid;
+    grid-template-rows:
+      20px auto 18px var(--graph-h, clamp(64px, 11svh, 132px))
+      auto;
+    gap: 6px;
     min-width: 0;
+    padding: var(--space-3) var(--space-4) var(--space-3);
+    border-top: 2px solid
+      color-mix(in oklab, var(--tone) var(--rule, 100%), transparent);
+    background: linear-gradient(
+      180deg,
+      color-mix(in oklab, var(--tone) var(--wash), transparent),
+      transparent 78%
+    );
+    transition:
+      --wash var(--dur-graph) var(--ease-out),
+      border-color var(--dur-graph) var(--ease-out);
   }
-  .name {
+  .card:is(.complete, .partial, .failed, .stopped) {
+    --wash: 9%;
+  }
+  .card.active {
+    --wash: 16%;
+  }
+  .card:is(.pending, .not-run) {
+    --rule: 30%;
+  }
+  .card-head {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-2);
     min-width: 0;
-    color: var(--tone-ink);
-    font: var(--w-strong) var(--type-sm) / 14px var(--font-sans);
+  }
+  .dot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+  }
+  h3 {
+    color: var(--text);
+    font: var(--w-strong) var(--type-md) / 20px var(--font-sans);
     white-space: nowrap;
   }
-  .name > :global(svg) {
-    flex: none;
-    width: 12px;
-    height: 12px;
-    color: var(--tone);
-  }
-  .status {
+  .state {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     margin-left: auto;
-    color: var(--text-muted);
-    font-size: var(--type-xs);
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
   }
-  .val,
+  .headline,
+  .line,
   .facts,
-  .status {
+  .graph-slot {
     opacity: var(--fade);
   }
-  .val {
+  .headline {
     display: flex;
     align-items: baseline;
-    gap: 5px;
+    gap: 10px;
     min-width: 0;
     white-space: nowrap;
   }
+  /* Light numerals read as measured values, not as headings. */
   .num {
-    font: var(--w-strong) var(--type-xl) / 26px var(--font-display);
-    letter-spacing: var(--track-tight);
+    font: 300 clamp(32px, 2.6vw, 46px) / 1 var(--font-display);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.025em;
+  }
+  .pair {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 2px;
+  }
+  .pair .num {
+    font-size: clamp(26px, 2vw, 36px);
+  }
+  .arrow {
+    color: var(--tone);
+    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
   }
   .quiet .num {
     color: var(--text-soft);
   }
   .unit {
-    color: var(--text-soft);
-    font: var(--w-heavy) var(--type-xs) var(--font-mono);
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-md) / 1 var(--font-sans);
   }
-  .facts {
+  .line {
     display: flex;
-    align-items: center;
-    gap: 6px;
+    align-items: baseline;
     min-width: 0;
     overflow: hidden;
     color: var(--text-muted);
-    font: var(--w-normal) var(--type-xs) / 15px var(--font-sans);
+    font: var(--w-normal) var(--type-body) / 18px var(--font-sans);
     white-space: nowrap;
   }
-  .label {
+  .wire .label {
     color: var(--text-soft);
   }
-  .fact {
-    display: inline-flex;
-    align-items: center;
-    gap: 1px;
-  }
-  .fact-icon {
-    display: inline-grid;
-    color: var(--tone);
-  }
-  .fact-icon :global(svg) {
-    width: 10px;
-    height: 10px;
-  }
-  .mark {
+  .delta {
+    margin-left: 4px;
     color: var(--tone-ink);
+    font-weight: var(--w-strong);
+  }
+  .reason {
+    color: var(--err);
+    font-weight: var(--w-strong);
+  }
+  .graph-slot {
+    min-height: 0;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    padding-top: var(--space-2);
+    border-top: var(--hairline) solid var(--border-subtle);
+  }
+  .facts:empty {
+    visibility: hidden;
+  }
+  .facts > div {
+    display: grid;
+    gap: 1px;
+    min-width: 0;
+  }
+  .facts dt {
+    overflow: hidden;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.3 var(--font-sans);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .facts dd {
+    font: var(--w-normal) var(--type-md) / 1.3 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
   }
   .issues {
     display: grid;
@@ -356,7 +363,8 @@
     color: var(--text);
     font-weight: var(--w-strong);
   }
-  .reason {
+  .issues .reason {
     color: var(--text-soft);
+    font-weight: var(--w-normal);
   }
 </style>

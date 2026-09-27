@@ -320,6 +320,26 @@ export function statusLabel(
 }
 
 /** Bare "webtransport" names the session: streams carry throughput, datagrams latency. */
+/** A path choice's second line: what it does, in a few words; availability stays in its tip. */
+export const PATH_NOTE: Record<
+  "throughput" | "latency",
+  Record<string, string>
+> = {
+  throughput: {
+    auto: "Best offered path; verifies the others",
+    "protocol:http1": "Parallel connections, one stream each",
+    "protocol:http2": "One connection, several streams",
+    "protocol:http3": "One QUIC connection, several streams",
+    "transport:webtransport": "Streams in one HTTP/3 session",
+    "transport:webtransport-datagram": "Experimental unreliable datagrams",
+  },
+  latency: {
+    auto: "WebTransport datagrams, else WebSocket",
+    "transport:websocket": "Reliable messages over one connection",
+    "transport:webtransport": "Datagrams in one HTTP/3 session",
+  },
+};
+
 export const TRANSPORT: Record<TransportKind, string> = {
   "fetch-stream": "Fetch streams",
   websocket: "WebSocket",

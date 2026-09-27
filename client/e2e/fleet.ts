@@ -157,7 +157,7 @@ export async function savedResult(page: Page, after = 0, timeout = 10_000) {
     if (status !== "not-run" && (await track.state()).length)
       await expect(track).toHaveAttribute(
         "class",
-        new RegExp(`\\bseg--${status}\\b`),
+        new RegExp(`\\bchip--${status}\\b`),
       );
   }
   return record!;

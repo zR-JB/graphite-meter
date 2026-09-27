@@ -163,9 +163,9 @@ test("switching the latency server after completion keeps the saved record", asy
   const source = saved.result.multiServer.latencyFocus;
   const other = source === "self" ? "server-1" : "self";
   const focus = page.getByRole("combobox", {
-    name: "Latency server shown in gauge, profile and chart",
+    name: "Servers shown in the results",
   });
-  await expect(focus).toHaveValue(source);
+  await expect(focus).toHaveValue("");
   await focus.fill(other);
   await expect(focus).toHaveValue(other);
   expect(await savedResult(page)).toEqual(saved);

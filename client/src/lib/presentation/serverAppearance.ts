@@ -3,10 +3,13 @@ import type { ServerCatalog, ServerIdentity } from "../servers/catalog";
 export function serverLabel(
   server: Pick<ServerIdentity, "name" | "location">,
 ): string {
-  return server.location &&
-    !server.name.toLowerCase().includes(server.location.toLowerCase())
-    ? `${server.name}, ${server.location}`
-    : server.name;
+  const name = server.name.toLowerCase();
+  const location = server.location?.toLowerCase() ?? "";
+  // A city-named server reads once: "Nuremberg, DE", not "Nuremberg, Nuremberg, DE".
+  if (!location || name.includes(location)) return server.name;
+  return location.startsWith(name)
+    ? server.location!
+    : `${server.name}, ${server.location}`;
 }
 
 export function serverName(

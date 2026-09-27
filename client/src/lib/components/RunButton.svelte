@@ -1,5 +1,4 @@
 <script lang="ts">
-  import Icon from "./Icon.svelte";
   // The visible text is the accessible name (WCAG 2.5.3); capitals are styling.
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
@@ -47,8 +46,6 @@
   <span class="run-button-content" style:opacity={action.opacity}>
     {#if running}
       <span class="stop-sq" aria-hidden="true"></span>
-    {:else if !action.shown.pending}
-      <span class="ico" aria-hidden="true"><Icon name="bolt" /></span>
     {/if}
     {label}
   </span>
@@ -65,40 +62,34 @@
 {/if}
 
 <style>
+  /* Graphite: the one primary action is ink, like every selected control; Stop steps back to an outline. */
   .run-button {
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    /* The label centres in the middle track; the estimate takes the end track, pushing the label rather than covering it. */
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: inline-flex;
     align-items: center;
-    width: 100%;
-    max-width: 320px;
-    min-height: 46px;
-    align-self: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-width: 176px;
+    height: 40px;
+    padding-inline: 20px;
     border: 0;
-    border-radius: var(--r-pill);
+    border-radius: var(--r-chrome);
     background: none;
-    box-shadow: 0 2px 8px
-      color-mix(
-        in srgb,
-        var(--brand) calc(10% * (1 - var(--stop))),
-        transparent
-      );
-    color: var(--text-inverse);
-    font-family: var(--font-display);
-    font-weight: var(--w-strong);
-    letter-spacing: var(--track-wide);
-    text-transform: uppercase;
+    color: color-mix(
+      in oklab,
+      var(--text-inverse) calc(100% * (1 - var(--stop))),
+      var(--text)
+    );
+    font: var(--w-strong) var(--type-md) / 1 var(--font-display);
     transition:
       transform var(--dur-hover) var(--ease-out),
       filter var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
     .run-button:hover:not(.pending, [aria-disabled="true"]) {
-      transform: translateY(-1px);
-      filter: brightness(1.04);
+      filter: brightness(1.08);
     }
   }
   .run-button:active {
@@ -108,20 +99,15 @@
     position: absolute;
     inset: 0;
     z-index: -1;
-    border: 1px solid var(--brand-line);
     border-radius: inherit;
-    background: linear-gradient(180deg, var(--brand-strong), var(--brand));
+    background: var(--brand);
     box-shadow: inset 0 1px 0 var(--edge-highlight);
     opacity: calc(1 - var(--stop));
   }
   .skin.stop {
-    border-color: var(--err-line);
-    background: var(--err-soft);
-    box-shadow: none;
+    background: none;
+    box-shadow: inset 0 0 0 1px var(--border-strong);
     opacity: var(--stop);
-  }
-  .run-button.running {
-    color: var(--err);
   }
   .run-button.pending,
   .run-button[aria-disabled="true"] {
@@ -132,32 +118,19 @@
     cursor: not-allowed;
   }
   .run-button-content {
-    grid-column: 2;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
   }
-  .run-button-content :global(svg) {
-    width: 18px;
-    height: 18px;
-  }
   .stop-sq {
-    width: 12px;
-    height: 12px;
-    border-radius: var(--r-well);
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
     background: currentColor;
   }
   .duration {
-    grid-column: 3;
-    justify-self: end;
-    margin-inline: var(--space-2) var(--space-3);
-    white-space: nowrap;
-    padding: var(--space-1) 6px;
-    border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-    border-radius: var(--r-well);
-    background: color-mix(in srgb, currentColor 8%, transparent);
-    font: var(--w-normal) var(--type-2xs) / 1 var(--font-mono);
-    letter-spacing: 0;
-    text-transform: none;
+    color: color-mix(in oklab, currentColor 62%, transparent);
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
+    font-variant-numeric: tabular-nums;
   }
 </style>

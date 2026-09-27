@@ -90,6 +90,30 @@
     U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
+/* The room's light glides between stages as a registered colour. */
+@property --amb {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: transparent;
+}
+/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping. */
+@property --dock-left {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+@property --dock-right {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+/* A stage's wash brightens while it runs and settles once measured. */
+@property --wash {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: 0%;
+}
+
 /* Theme: the stored preference stamps data-theme (store, index.html, and the
    auth pages' theme.js); without it the OS preference applies. Every palette
    token is one light-dark() pair, so switching is only color-scheme. */
@@ -119,6 +143,7 @@
   --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-hover: 120ms;
   --dur-slide: 180ms;
+  --dur-sheet: 420ms;
   --dur-graph: 280ms;
   --dur-pulse: 1100ms;
   --transition-control:
@@ -135,10 +160,9 @@
   --space-5: 24px;
   --space-6: 32px;
 
-  --r-well: 6px;
+  --r-well: 4px;
   --r-chrome: 8px;
   --r-surface: 12px;
-  --r-pill: 12px;
   --r-full: 999px;
   /* One device pixel on dense screens; field edges stay 1px for their 3:1 floor. */
   --hairline: 1px;
@@ -154,7 +178,7 @@
   --w-normal: 450;
   --w-strong: 600;
   --w-heavy: 700;
-  --role-row: var(--w-normal) var(--type-body) / 1.4 var(--font-sans);
+  --role-row: var(--w-normal) var(--type-md) / 1.35 var(--font-sans);
   --role-control: var(--w-strong) var(--type-sm) / 1.2 var(--font-sans);
   --role-title: var(--w-strong) var(--type-body) / 1.3 var(--font-sans);
   --role-caption: var(--w-normal) var(--type-xs) / 1.5 var(--font-sans);
@@ -169,11 +193,11 @@
   --z-panel: 51;
 
   --control-h: 32px;
-  --row-h: 36px;
+  --row-h: 42px;
   --kv-label: 6.75rem;
   --panel-pad: var(--space-4);
   --row-inset: var(--space-3);
-  --check: 14px;
+  --check: 18px;
   --hit: 44px;
   --icon: 16px;
   --icon-sm: 13px;
@@ -185,10 +209,16 @@
        pages need. A Go test pins its colours, --focus-ring and
        --edge-highlight against this file. */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
-  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.19 0.009 255));
-  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.232 0.011 255));
-  --surface-2: light-dark(oklch(0.972 0.004 255), oklch(0.265 0.012 255));
-  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.18 0.009 255));
+  --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
+  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));
+  --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
+  --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
+  --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
+  /* What floats over the instrument: sheets, popovers and menus. */
+  --sheet: light-dark(
+    oklch(0.985 0.003 258 / 0.88),
+    oklch(0.195 0.009 258 / 0.88)
+  );
   --sheen: linear-gradient(180deg, var(--surface-2), transparent);
 
   --border-subtle: light-dark(
@@ -201,25 +231,24 @@
     oklch(0.92 0.02 255 / 0.2)
   );
 
-  --text: light-dark(oklch(0.255 0.012 255), oklch(0.925 0.007 255));
-  --text-muted: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
-  --text-soft: light-dark(oklch(0.48 0.014 255), oklch(0.7 0.014 255));
-  --text-inverse: light-dark(oklch(1 0 0), oklch(0.19 0.009 255));
+  --text: light-dark(oklch(0.22 0.012 258), oklch(0.955 0.004 258));
+  --text-muted: light-dark(oklch(0.38 0.012 258), oklch(0.8 0.008 258));
+  --text-soft: light-dark(oklch(0.5 0.012 258), oklch(0.66 0.011 258));
+  --text-inverse: light-dark(oklch(0.995 0 0), oklch(0.17 0.008 258));
 
-  /* Hues sit inside sRGB here; the P3 block below only raises their chroma. */
-  --brand: light-dark(oklch(0.52 0.078 205), oklch(0.8 0.092 205));
-  --brand-strong: light-dark(oklch(0.42 0.064 205), oklch(0.88 0.07 205));
-  --brand-soft: color-mix(in oklab, var(--brand) 14%, transparent);
+  /* Graphite: controls and selection are ink, so a hue on screen always names a stage. */
+  --brand: light-dark(oklch(0.26 0.012 258), oklch(0.93 0.005 258));
+  --brand-strong: light-dark(oklch(0.2 0.012 258), oklch(0.97 0.004 258));
+  --brand-soft: color-mix(in oklab, var(--brand) 12%, transparent);
 
-  --signal: light-dark(oklch(0.5 0.1 262), oklch(0.78 0.085 262));
-  --signal-soft: color-mix(in oklab, var(--signal) 14%, transparent);
-
-  --phase-warmup: light-dark(oklch(0.52 0.012 255), oklch(0.66 0.012 255));
-  --phase-latency: var(--signal);
-  --phase-download: var(--brand);
-  --phase-upload: light-dark(oklch(0.54 0.108 55), oklch(0.82 0.1 64));
-  --phase-bidirectional: light-dark(oklch(0.5 0.125 302), oklch(0.77 0.1 302));
-  --phase-complete: var(--brand);
+  /* Four hue families a quarter turn apart; latency and bidirectional also part in
+     lightness, which colour-vision deficiency keeps. Hues sit inside sRGB; P3 lifts chroma. */
+  --phase-warmup: light-dark(oklch(0.52 0.012 258), oklch(0.66 0.012 258));
+  --phase-latency: light-dark(oklch(0.6 0.105 182), oklch(0.82 0.105 178));
+  --phase-download: light-dark(oklch(0.5 0.18 263), oklch(0.72 0.145 262));
+  --phase-upload: light-dark(oklch(0.63 0.15 58), oklch(0.83 0.125 66));
+  --phase-bidirectional: light-dark(oklch(0.47 0.17 352), oklch(0.7 0.155 350));
+  --phase-complete: var(--ok);
   /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
   --latency-loaded: var(--text);
 
@@ -244,7 +273,7 @@
   );
   --track: color-mix(in oklab, var(--text) 8%, transparent);
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
-  --selected-wash: color-mix(in oklab, var(--brand) 20%, transparent);
+  --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
   /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
      needs a denser shadow to read at all. The grain is a cached tile. */
@@ -295,13 +324,12 @@
 }
 @media (color-gamut: p3) {
   :root {
-    --brand: light-dark(oklch(0.52 0.084 205), oklch(0.8 0.1 205));
-    --brand-strong: light-dark(oklch(0.42 0.069 205), oklch(0.88 0.076 205));
-    --signal: light-dark(oklch(0.5 0.108 262), oklch(0.78 0.092 262));
-    --phase-upload: light-dark(oklch(0.54 0.117 55), oklch(0.82 0.108 64));
+    --phase-latency: light-dark(oklch(0.6 0.125 182), oklch(0.82 0.125 178));
+    --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.165 262));
+    --phase-upload: light-dark(oklch(0.63 0.17 58), oklch(0.83 0.145 66));
     --phase-bidirectional: light-dark(
-      oklch(0.5 0.135 302),
-      oklch(0.77 0.108 302)
+      oklch(0.47 0.19 352),
+      oklch(0.7 0.175 350)
     );
     --ok: light-dark(oklch(0.5 0.103 155), oklch(0.8 0.108 155));
     --warn: light-dark(oklch(0.53 0.103 85), oklch(0.86 0.108 92));
@@ -311,6 +339,11 @@
 @media (min-resolution: 2dppx) {
   :root {
     --hairline: 0.5px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-sheet: 0ms;
   }
 }
 @media (prefers-contrast: more) {
@@ -691,7 +724,7 @@
   }
 
   .notice {
-    --tone: var(--signal);
+    --tone: var(--text-soft);
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
@@ -859,9 +892,10 @@
     display: grid;
     grid-template-columns: var(--check) minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-2) 10px;
+    gap: var(--space-2) var(--space-3);
     min-width: 0;
-    min-height: var(--control-h);
+    min-height: var(--row-h);
+    padding-block: 5px;
     margin-inline: calc(2px - var(--row-inset));
     padding: 0 calc(var(--row-inset) - 2px);
     border-radius: calc(var(--r-chrome) - 2px);
@@ -884,10 +918,12 @@
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  .choices > label:has(> [type="radio"]:checked) {
-    background-color: var(--selected-wash);
-    box-shadow: var(--elev-tile);
-    color: var(--brand-strong);
+  /* A choice's second line says what it does; the ring alone marks the chosen one. */
+  .choices small {
+    display: block;
+    margin-top: 1px;
+    color: var(--text-soft);
+    font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
   }
   .link-row {
     align-items: center;
@@ -910,8 +946,8 @@
     place-content: center;
     width: var(--check);
     height: var(--check);
-    border: 1px solid var(--field-edge);
-    border-radius: 3px;
+    border: 1.5px solid var(--field-edge);
+    border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--brand-strong);
     cursor: inherit;
@@ -921,19 +957,20 @@
     border-radius: var(--r-full);
   }
   input.check[type="checkbox"]:checked {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
+    border-color: var(--brand);
+    background: var(--brand);
+    color: var(--text-inverse);
   }
   input.check[type="checkbox"]:checked::after {
     content: "";
-    width: 7px;
-    height: 4px;
-    border-left: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
+    width: 9px;
+    height: 5px;
+    border-left: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
     transform: translateY(-1px) rotate(-45deg);
   }
   input.check[type="radio"]:checked {
-    border: 4px solid var(--brand-strong);
+    border: 5.5px solid var(--brand);
   }
 
   .group {

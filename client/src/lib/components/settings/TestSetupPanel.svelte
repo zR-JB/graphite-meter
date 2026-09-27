@@ -19,6 +19,7 @@
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
+  import DurationStrip from "./DurationStrip.svelte";
   import {
     BLOCKED,
     JARGON,
@@ -165,16 +166,38 @@
   const rejection = $derived(
     store.startError || "This change cannot apply to the current run.",
   );
-  function setDuration(key: DurationKey, event: Event) {
-    commitNumber(
-      event,
-      "duration",
-      store.config.duration[key],
-      (value) => clampDuration(key, value),
-      (value) =>
-        controller.configureRun({
-          duration: { ...store.config.duration, [key]: value },
-        }),
+  // Stage times move in half seconds; warmup, a fraction of a second, in tenths.
+  const STEP_MS: Record<DurationKey, number> = {
+    warmupMs: 100,
+    latencyMs: 500,
+    downloadMs: 500,
+    uploadMs: 500,
+    bidirectionalMs: 500,
+  };
+  function applyDuration(key: DurationKey, value: number): boolean {
+    const current = store.config.duration[key];
+    const accepted =
+      value === current ||
+      controller.configureRun({
+        duration: { ...store.config.duration, [key]: value },
+      });
+    rejected = accepted ? null : "duration";
+    if (!accepted) announce(rejection);
+    return accepted;
+  }
+  function nudge(key: DurationKey, delta: number) {
+    applyDuration(key, clampDuration(key, store.config.duration[key] + delta));
+  }
+  function setSeconds(key: DurationKey, event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const step = STEP_MS[key];
+    const raw = input.valueAsNumber;
+    const value = Number.isFinite(raw)
+      ? clampDuration(key, Math.round((raw * 1000) / step) * step)
+      : store.config.duration[key];
+    const accepted = applyDuration(key, value);
+    input.value = String(
+      (accepted ? value : store.config.duration[key]) / 1000,
     );
   }
   function setBidirectional(enabled: boolean) {
@@ -282,17 +305,36 @@
     </p>{/if}
 {/snippet}
 
-{#snippet durationField(key: DurationKey)}
+{#snippet stepper(key: DurationKey, label: string)}
   {@const [min, max] = DURATION_LIMITS[key]}
-  <input
-    type="number"
-    {min}
-    {max}
-    step="500"
-    disabled={store.preparing}
-    value={store.config.duration[key]}
-    onchange={(event) => setDuration(key, event)}
-  />
+  {@const ms = store.config.duration[key]}
+  <span class="stepper" role="group" aria-label="{label} time">
+    <button
+      type="button"
+      class="btn btn-icon btn-quiet"
+      aria-label="Shorter {label}"
+      disabled={store.preparing || ms <= min}
+      onclick={() => nudge(key, -STEP_MS[key])}>−</button
+    >
+    <input
+      type="number"
+      min={min / 1000}
+      max={max / 1000}
+      step={STEP_MS[key] / 1000}
+      disabled={store.preparing}
+      value={ms / 1000}
+      aria-label="{label} in seconds"
+      onchange={(event) => setSeconds(key, event)}
+    />
+    <span class="unit">s</span>
+    <button
+      type="button"
+      class="btn btn-icon btn-quiet"
+      aria-label="Longer {label}"
+      disabled={store.preparing || ms >= max}
+      onclick={() => nudge(key, STEP_MS[key])}>+</button
+    >
+  </span>
 {/snippet}
 
 {#snippet toggle(
@@ -336,9 +378,10 @@
   </section>
 
   <section class="group">
-    <h3>
-      <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
-    </h3>
+    <div class="group-head">
+      <h3><span {@attach tooltip(() => JARGON.stageTime)}>Duration</span></h3>
+      <span class="aside">{fmtDuration(store.totalEtaMs, 0)} in total</span>
+    </div>
     <div class="kv">
       <div class="presets">
         <div class="segmented" role="group" aria-label="Duration preset">
@@ -353,55 +396,39 @@
           {/each}
         </div>
       </div>
-      <div class="stages">
+      <div class="strip-row">
+        <DurationStrip
+          stages={STAGE_FIELDS.filter(
+            ([key]) =>
+              key !== "bidirectionalMs" || store.config.stages.bidirectional,
+          ).map(([key, label, tone]) => ({
+            key,
+            label,
+            tone,
+            ms: store.config.duration[key],
+          }))}
+        />
+      </div>
+      {#if durationMode === "custom"}
         {#each STAGE_FIELDS as [key, label, tone] (key)}
-          {#if key === "bidirectionalMs" && !store.config.stages.bidirectional}
-            <div class="stage off">
-              <span class="caption">{label}</span>
-              <span class="value">Off</span>
-            </div>
-          {:else if durationMode === "custom"}
-            {@const [min, max] = DURATION_LIMITS[key]}
-            <label class="stage" data-tone={tone}>
-              <span class="caption"
-                ><span
-                  {@attach term(
-                    () =>
-                      `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`,
-                  )}>{label}</span
-                >
-                <span class="unit">ms</span></span
-              >
-              {@render durationField(key)}
-            </label>
-          {:else}
-            {@const [value, unit] = fmtDuration(
-              DURATION_PRESETS[durationMode][key],
-            ).split(" ")}
-            <div class="stage" data-tone={tone}>
-              <span class="caption">{label}</span>
-              <span class="value">{value}<span class="unit">{unit}</span></span>
+          {#if key !== "bidirectionalMs" || store.config.stages.bidirectional}
+            <div class="stage-row">
+              <span class="stage-name" data-tone={tone}>{label}</span>
+              {@render stepper(key, label)}
             </div>
           {/if}
         {/each}
-      </div>
-      {#if durationMode === "custom"}
-        <label>
-          <span {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span>
-          <span class="field-unit">
-            {@render durationField("warmupMs")}
-            <span class="unit">ms</span></span
-          >
-        </label>
-      {:else}
-        {@const [value, unit] = fmtDuration(
-          DURATION_PRESETS[durationMode].warmupMs,
-        ).split(" ")}
-        <div>
-          <span {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span>
-          <span>{value}<span class="unit">{unit}</span></span>
-        </div>
       {/if}
+      <div class="stage-row">
+        <span {@attach term(() => JARGON.warmup)}>{WARMUP_LABEL}</span>
+        {#if durationMode === "custom"}
+          {@render stepper("warmupMs", WARMUP_LABEL)}
+        {:else}
+          <span class="value"
+            >{fmtDuration(store.config.duration.warmupMs)}</span
+          >
+        {/if}
+      </div>
       {@render toggle(
         "Bidirectional stage",
         JARGON.bidirectionalStage,
@@ -634,9 +661,8 @@
     display: grid;
     gap: var(--space-5);
   }
-  /* Each stage time sits under a preset, where its custom field goes, so switching moves nothing. */
   .presets {
-    padding-block: var(--space-2) 0;
+    padding-block: var(--space-3) 0;
   }
   .presets .segmented {
     flex: 1;
@@ -645,63 +671,63 @@
     flex: 1 1 0;
     text-transform: capitalize;
   }
-  .kv > .stages {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 2px;
-    padding: var(--space-2) 2px var(--space-3);
-  }
-  .kv > .presets + .stages {
+  .kv > .presets + .strip-row {
     border-top: 0;
   }
-  .stage {
-    display: grid;
-    justify-items: center;
-    gap: 2px;
-    min-width: 0;
+  .strip-row {
+    display: block;
   }
-  .caption {
-    display: flex;
-    align-items: baseline;
-    gap: 3px;
-    color: var(--tone-ink, var(--text-soft));
-    font: var(--w-strong) var(--type-xs) / 1.4 var(--font-sans);
-    white-space: nowrap;
+  .stage-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .stage-name::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+  }
+  .stage-row {
+    align-items: center;
+  }
+  .stage-row .value {
+    font-variant-numeric: tabular-nums;
+  }
+  /* − time + : the field keeps its value editable, the buttons step it. */
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border-radius: var(--r-chrome);
+    background: var(--track);
+  }
+  .stepper .btn {
+    --control-h: 28px;
+    width: 28px;
+    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+  }
+  .kv .stepper input {
+    width: 3.5rem;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+    font-variant-numeric: tabular-nums;
+    text-align: end;
   }
   .unit {
-    margin-inline-start: 2px;
+    margin-inline: 2px 4px;
     color: var(--text-soft);
-    font: var(--w-normal) var(--type-2xs) / 1 var(--font-sans);
-  }
-  .caption .unit {
-    margin: 0;
-  }
-  .value {
-    display: flex;
-    align-items: baseline;
-    height: var(--control-h);
-    line-height: var(--control-h);
-    font-size: var(--type-md);
-  }
-  .off .value {
-    color: var(--text-soft);
-    font-size: var(--type-body);
-  }
-  @media (pointer: coarse) {
-    .value {
-      height: var(--hit);
-      line-height: var(--hit);
-    }
+    font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
   }
   .kv input[type="number"] {
     width: 5.5rem;
     text-align: end;
     appearance: textfield;
-  }
-  .stage input[type="number"] {
-    width: 100%;
-    padding-inline: 4px;
-    text-align: center;
   }
   .kv input::-webkit-inner-spin-button {
     appearance: none;

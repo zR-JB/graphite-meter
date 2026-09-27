@@ -106,7 +106,12 @@
   }
 </script>
 
-<div class="panel-layer" class:docked style:--panel-w="{flyoutWidth}px">
+<div
+  class="panel-layer"
+  class:docked
+  style:--panel-w="{flyoutWidth}px"
+  style:--dock-w="{dockWidth || flyoutWidth}px"
+>
   {#if !docked}<button
       class="scrim"
       class:open
@@ -183,49 +188,72 @@
   .panel-layer {
     display: contents;
   }
+  /* A sheet floats over the page: inset, rounded, frosted, with the one shadow the design allows. */
   .panel-layer > :global(dialog.panel) {
     max-width: none;
     max-height: none;
     margin: 0;
     flex-direction: column;
-    border: 0 solid var(--border);
-    border-inline-start-width: var(--hairline);
-    background: var(--bg);
+    overflow: hidden;
+    border: var(--hairline) solid var(--border-subtle);
+    border-radius: var(--r-surface);
+    background: var(--sheet);
+    -webkit-backdrop-filter: blur(28px) saturate(1.4);
+    backdrop-filter: blur(28px) saturate(1.4);
+    box-shadow: var(--elev-float);
     color: var(--text);
-  }
-  .panel-layer > :global(dialog.panel.left) {
-    border-inline-width: 0 var(--hairline);
   }
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
   }
+  /* Docked, the sheet keeps its width and slides in with its column, from its own edge. */
   .docked > :global(dialog.panel) {
+    --closed: translateX(calc(100% + var(--space-3)));
     grid-area: rightdock;
+    justify-self: end;
     position: relative;
-    width: auto;
-    height: 100%;
-    background: transparent;
+    width: calc(var(--dock-w) - var(--space-3));
+    height: auto;
+    margin: 0 var(--space-3) var(--space-3) 0;
+    transform: var(--closed);
+    transition:
+      transform var(--dur-sheet) var(--ease-out),
+      overlay var(--dur-sheet) allow-discrete,
+      display var(--dur-sheet) allow-discrete;
+  }
+  .docked > :global(dialog.panel.left) {
+    --closed: translateX(calc(-100% - var(--space-3)));
+    justify-self: start;
+    margin: 0 0 var(--space-3) var(--space-3);
+  }
+  .docked > :global(dialog.panel[open]) {
+    transform: none;
+  }
+  @starting-style {
+    .docked > :global(dialog.panel[open]) {
+      transform: var(--closed);
+    }
   }
   .docked > :global(dialog.panel.left) {
     grid-area: leftdock;
   }
   .panel-layer:not(.docked) > :global(dialog.panel) {
-    --closed: translateX(100%);
+    --closed: translateX(calc(100% + var(--space-4)));
     position: fixed;
     z-index: var(--z-panel);
-    inset: var(--topbar-h) 0 var(--statusbar-h) auto;
+    inset: var(--topbar-h) var(--space-2) var(--space-2) auto;
     width: min(var(--panel-w), 100vw - var(--space-6));
     height: auto;
     box-shadow: var(--elev-float);
     transform: var(--closed);
     transition:
-      transform var(--dur-slide) var(--ease-out),
-      overlay var(--dur-slide) allow-discrete,
-      display var(--dur-slide) allow-discrete;
+      transform var(--dur-sheet) var(--ease-out),
+      overlay var(--dur-sheet) allow-discrete,
+      display var(--dur-sheet) allow-discrete;
   }
   .panel-layer:not(.docked) > :global(dialog.panel.left) {
-    --closed: translateX(-100%);
-    inset: var(--topbar-h) auto var(--statusbar-h) 0;
+    --closed: translateX(calc(-100% - var(--space-4)));
+    inset: var(--topbar-h) auto var(--space-2) var(--space-2);
   }
   .panel-layer:not(.docked) > :global(dialog.panel[open]) {
     transform: none;

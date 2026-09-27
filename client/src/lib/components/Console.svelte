@@ -7,7 +7,6 @@
   const { cancelPendingStart, hasPendingStart, returnToStart, toggleRun } =
     getApplicationController();
   import GaugePanel from "./GaugePanel.svelte";
-  import ThroughputChart from "./ThroughputChart.svelte";
   import StatusBar from "./StatusBar.svelte";
   import SidePanel from "./SidePanel.svelte";
   import TestSetupPanel from "./settings/TestSetupPanel.svelte";
@@ -535,6 +534,7 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
+  data-lit={store.isRunning ? store.phaseStage : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
   <!-- Container queries move direct actions into More as the bar narrows. -->
@@ -567,7 +567,7 @@
       ><span class="brand-label">Graphite&nbsp;Meter</span></button
     >
     <button
-      class="btn btn-icon"
+      class="btn btn-icon btn-quiet"
       aria-label="Open settings"
       aria-expanded={settingsOpen}
       {@attach tooltip(() => "Settings — test and display (S)")}
@@ -598,7 +598,7 @@
       </button>{/if}
     {#if AccountControl}<AccountControl />{/if}
     {#if store.savingResults}<button
-        class="btn btn-icon direct-history"
+        class="btn btn-icon btn-quiet direct-history"
         type="button"
         aria-label={historyOpen ? "Close History" : "Open History"}
         aria-current={historyOpen ? "page" : undefined}
@@ -611,7 +611,7 @@
         ><Icon name="history" /></button
       >{/if}
     <button
-      class="btn btn-icon direct-theme"
+      class="btn btn-icon btn-quiet direct-theme"
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
         () =>
@@ -620,7 +620,7 @@
       onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
     <button
-      class="btn btn-icon direct-endpoint"
+      class="btn btn-icon btn-quiet direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
       {@attach tooltip(() => "Details — server and connection (D)")}
@@ -703,7 +703,7 @@
       tabindex="-1"
       inert={flyout}
     >
-      <GaugePanel /><ThroughputChart />
+      <GaugePanel />
     </section>
   {/if}
 
@@ -761,8 +761,34 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    background: var(--bg);
+    /* The room takes a little of the running stage's light, from above. */
+    --amb: transparent;
+    background:
+      var(--grain),
+      radial-gradient(120% 70% at 20% -14%, var(--amb), transparent 62%),
+      radial-gradient(
+        140% 90% at 50% 125%,
+        var(--canvas-deep),
+        transparent 70%
+      ),
+      var(--canvas);
     color: var(--text);
+    transition:
+      --amb 1100ms var(--ease-out),
+      --dock-left var(--dur-sheet) var(--ease-out),
+      --dock-right var(--dur-sheet) var(--ease-out);
+  }
+  #console[data-lit="latency"] {
+    --amb: color-mix(in oklab, var(--phase-latency) 14%, transparent);
+  }
+  #console[data-lit="download"] {
+    --amb: color-mix(in oklab, var(--phase-download) 16%, transparent);
+  }
+  #console[data-lit="upload"] {
+    --amb: color-mix(in oklab, var(--phase-upload) 14%, transparent);
+  }
+  #console[data-lit="bidirectional"] {
+    --amb: color-mix(in oklab, var(--phase-bidirectional) 16%, transparent);
   }
 
   .topbar {
@@ -771,7 +797,6 @@
     align-items: center;
     gap: var(--space-2);
     padding-inline: var(--space-4);
-    border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
   .topbar > :global(*) {
@@ -788,8 +813,8 @@
     padding: var(--space-1) 6px;
     margin-left: -6px;
     border-radius: var(--r-chrome);
-    font: var(--w-heavy) var(--type-md) / 1.4 var(--font-mono);
-    letter-spacing: var(--track-tight);
+    font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
+    letter-spacing: -0.01em;
     transition: color var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
@@ -865,7 +890,7 @@
     flex-direction: column;
     gap: var(--space-3);
     min-width: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-3) var(--space-5) var(--space-4);
     overflow-y: auto;
     /* Keep stage scrolling from chaining out to the document. */
     overscroll-behavior: contain;
@@ -874,29 +899,20 @@
     padding: 0;
     overflow: hidden;
   }
-  /* A viewport too short for the instruments scrolls this column. */
-  .stage > :global(:is(.gauge-panel, .chart)) {
+  /* A viewport too short for the instrument scrolls this column. */
+  .stage > :global(.gauge-panel) {
+    flex: 1 0 auto;
     width: 100%;
     max-width: 1920px;
+    min-height: min(100%, 640px);
     align-self: center;
   }
-  .stage > :global(.gauge-panel) {
-    flex: none;
-  }
-  /* The timeline uses spare height while the gauge remains stable. */
-  .stage > :global(.chart) {
-    --chart-min: clamp(120px, 100svh - 680px, 160px);
-    flex: 1 0 var(--chart-min);
-    min-height: var(--chart-min);
-    max-height: 360px;
-  }
-  .measurement-stage
-    :global(:is(.gauge-face, .latency-panel, .results-slot, .chart)),
+  .measurement-stage :global(:is(.gauge-face, .latency-slot, .results)),
   .status :global(:is(.elapsed, .transferred)) {
     transition: filter var(--dur-slide) var(--ease-out);
   }
   /* A failed start leaves the previous run on screen, dimmed; filter, as these fade by inline opacity. */
-  .previous :global(:is(.gauge-face, .latency-panel, .results-slot, .chart)),
+  .previous :global(:is(.gauge-face, .latency-slot, .results)),
   .previous ~ .status :global(:is(.elapsed, .transferred)) {
     filter: opacity(0.45);
   }
@@ -914,10 +930,10 @@
     min-width: 0;
     overflow: hidden;
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
-    border-top: var(--hairline) solid var(--border);
-    background: var(--surface-1);
+    border-top: var(--hairline) solid var(--border-subtle);
     color: var(--text-soft);
-    font: var(--type-xs) var(--font-mono);
+    font: var(--type-xs) var(--font-sans);
+    font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }
 
