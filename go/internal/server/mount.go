@@ -2,16 +2,20 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/quic-go/webtransport-go"
 	"github.com/zR-JB/graphite-meter/go/internal/auth"
 	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type muxTopology struct {
@@ -154,7 +158,7 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)
 		defer func() {
 			end := endpoint.EndOf(ctx, m.ctx)
-			_ = sess.CloseWithError(webtransport.SessionErrorCode(end.WT), end.Reason)
+			closeSession(sess, w.(http3.HTTPStreamer).HTTPStream(), end)
 			ended(end.WT == 0)
 		}()
 		// SendDatagram ignores ctx, so a peer that stops acknowledging could hold a flood past its end.
@@ -169,6 +173,27 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 		})
 		serve(ctx, sess, r, live)
 	})
+}
+
+const wtCloseSessionCapsule = 0x2843
+
+// closeSession stops reading only after the peer's FIN or a linger: browsers drop a close whose STOP_SENDING leads.
+// Without WebTransport flow control, webtransport-go writes nothing else to the CONNECT stream.
+func closeSession(sess *webtransport.Session, connect *http3.Stream, end wire.LaneEnd) {
+	capsule := quicvarint.Append(quicvarint.Append(nil, wtCloseSessionCapsule), uint64(4+len(end.Reason)))
+	capsule = append(binary.BigEndian.AppendUint32(capsule, end.WT), end.Reason...)
+	if connect.TryWriteAll(capsule) == nil {
+		_ = connect.Close()
+	} else {
+		connect.CancelWrite(webtransport.WTSessionGoneErrorCode)
+	}
+	linger := time.NewTimer(wtCloseLinger)
+	defer linger.Stop()
+	select {
+	case <-sess.Context().Done():
+	case <-linger.C:
+	}
+	connect.CancelRead(webtransport.WTSessionGoneErrorCode)
 }
 
 // linkedContext ends with parent or any of ends, keeping its cause; upgraded channels outlive their request.

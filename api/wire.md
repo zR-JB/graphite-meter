@@ -111,9 +111,12 @@ server keeps one aggregate per id, so the counters carry across.
 
 A server-ended bus or session names its cause ([laneendings.txt](laneendings.txt)); clients may treat any close as a
 reconnect. The browser acts only on `authentication required` (it asks for sign-in); the native client also redials
-idle and lifetime endings. A QUIC connection that carried only WebTransport sessions closes with `H3_NO_ERROR` once
-its last session ends (a second later when the server ended it, so the session's code arrives first), so it does not
-hold one of the client's connection slots.
+idle and lifetime endings. The server ends a session with its `WT_CLOSE_SESSION` capsule and FIN, and stops reading
+the CONNECT stream (`STOP_SENDING` `WT_SESSION_GONE`) only after the peer's FIN or a second without it: Chromium and
+Firefox drop the code of a close whose `STOP_SENDING` arrives first. A QUIC connection that carried only WebTransport
+sessions closes with `H3_NO_ERROR` once its last session ends (a second later when the server ended it, so the
+session's code arrives first), so it does not hold one of the client's connection slots. At shutdown the server gives
+those connections up to 5 s to close so, then closes every remaining QUIC connection with `H3_NO_ERROR` too.
 
 | Cause                        | WebSocket close                | WebTransport close          |
 | ---------------------------- | ------------------------------ | --------------------------- |
