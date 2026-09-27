@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   frankfurt,
   open,
   phase,
@@ -9,18 +10,12 @@ import {
   spawnPeer,
 } from "./fleet";
 import type { Subprocess } from "bun";
-import type { Server } from "./servers";
 import { expect, test, type Page } from "./webview";
 
 const long = {
   ...baseConfig,
   duration: { ...baseConfig.duration, downloadMs: 1500, uploadMs: 1000 },
 };
-
-const entry = ({ id, name, url }: Server) => ({ id, name, url });
-const catalog = (...servers: Server[]) => ({
-  GM_SERVER_CATALOG: JSON.stringify({ servers: servers.map(entry) }),
-});
 
 async function killDuringDownload(page: Page, ...peers: Subprocess[]) {
   await runButton(page, "Start test").click();

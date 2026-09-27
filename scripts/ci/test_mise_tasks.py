@@ -13,7 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER")
-# Records each tool's argv and the task environment variables the test inspects.
+# Records each tool's argv and the task environment variables the test inspects; the last call wins.
 SPY = """import json, os, sys
 with open(os.environ["GM_TASK_TRACE"], "a") as output:
     env = {key: os.environ[key] for key in %r if key in os.environ}
@@ -33,8 +33,9 @@ class MiseTaskTests(unittest.TestCase):
             source = (ROOT / "mise.toml").read_text()
             source = re.sub(r"(?ms)^\[(?:tools|tool_config)\]\n.*?(?=^\[|\Z)", "", source)
             (root / "mise.toml").write_text(source)
-            for name in ("client", "go", "bin", "config", "state", "data", "cache", "scripts"):
-                (root / name).mkdir()
+            for name in ("client/dist", "go/internal/static", "bin", "config", "state", "data",
+                         "cache", "scripts"):
+                (root / name).mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/build-version.sh", root / "scripts")
             for name in ("bun", "go", "python3"):
                 (root / "bin" / name).write_text(f"#!{sys.executable}\n{SPY % (KEYS,)}")
@@ -55,7 +56,7 @@ class MiseTaskTests(unittest.TestCase):
                 result = subprocess.run([mise, "run", task, *args], cwd=root, env=env | extra,
                                         text=True, capture_output=True, timeout=15)
                 self.assertEqual(result.returncode, status, result.stdout + result.stderr)
-                return json.loads(trace.read_text().splitlines()[0]) if trace.exists() else {}
+                return json.loads(trace.read_text().splitlines()[-1]) if trace.exists() else {}
 
             payload = f"quoted'\"; $(touch {canary}); `touch {canary}`"
             self.assertEqual(run("auth-preview", payload, "false")["args"][-2:],

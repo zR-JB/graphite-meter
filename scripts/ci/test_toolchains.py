@@ -66,7 +66,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path = root / "mise.toml"
         original = path.read_text()
         version = load_pins(root)["tools"]["bun"]
-        for value in ("latest", "../../other", "$(touch /tmp/tool-pins)", "1.0.0;echo bad"):
+        for value in ("latest", "1.4", "../../other", "$(touch /tmp/tool-pins)", "1.0.0;echo bad"):
             with self.subTest(value=value):
                 path.write_text(original.replace(f'bun = "{version}"', f'bun = "{value}"'))
                 with self.assertRaisesRegex(ValueError, "tools.bun"):
@@ -74,13 +74,6 @@ class ToolchainBoundaryTests(unittest.TestCase):
         path.write_text(original.replace("[tools]", '[tools]\nunexpected="1.2.3"'))
         with self.assertRaisesRegex(ValueError, "exactly"):
             load_pins(root)
-
-    def test_python_runtime_cannot_float_between_patch_releases(self) -> None:
-        root = self.copy_pins()
-        path = root / "mise.toml"
-        path.write_text(path.read_text().replace(f'python = "{runtime_pins(root)["python"]}"', 'python = "3.14"'))
-        with self.assertRaisesRegex(ValueError, "python must select an exact"):
-            runtime_pins(root)
 
 
 if __name__ == "__main__":

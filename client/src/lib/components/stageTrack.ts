@@ -1,11 +1,11 @@
 // StageTrack projects the shared stage presentation into rail styling. It does not infer result/failure status itself.
-import type { Phase, TransportRole } from "../runner/contract";
+import type { FailureReason, Phase, TransportRole } from "../runner/contract";
 import type {
   StagePresentation,
   StagePresentationStatus,
 } from "../state/stagePresentation";
 import type { StageKey } from "../state/store.svelte";
-import { STATUS } from "../presentation/vocabulary";
+import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
 
 type SegState = StagePresentationStatus | "warmup";
 
@@ -77,4 +77,43 @@ export function lockReason(
   if (phaseStage === stage)
     return state === "recovering" ? STATUS.recovering : STATUS.running;
   return phase === "complete" ? STATUS.complete : STATUS.upcoming;
+}
+
+const RESULT_STATES: Partial<Record<SegState, string>> = {
+  complete: STATUS.complete,
+  partial: STATUS.partial,
+  failed: STATUS.failed,
+};
+
+/** Title, then what the stage holds (its result, failure or status), then what a toggle does. */
+export function stageTip(input: {
+  stage: StageKey;
+  selected: boolean;
+  locked: boolean;
+  state: SegState;
+  reason: string | null;
+  failure: FailureReason | null;
+  value: string | null;
+}): string {
+  const { stage, selected, locked, state, reason, failure, value } = input;
+  const settled = RESULT_STATES[state];
+  const status = settled
+    ? [settled, value, failure && reasonLabel(failure)]
+        .filter(Boolean)
+        .join(" · ")
+    : (reason ?? STAGE[stage].about);
+  const action = locked
+    ? ["active", "recovering", "warmup"].includes(state)
+      ? "Locked while it runs"
+      : state === "pending"
+        ? "Locked while the test starts"
+        : "Locked until the run ends"
+    : !selected
+      ? "Toggle to include"
+      : stage === "bidirectional"
+        ? "Toggle to skip; Settings brings it back"
+        : settled
+          ? "Toggle to skip next run"
+          : "Toggle to skip";
+  return `${STAGE[stage].label}\n${status}\n${action}`;
 }

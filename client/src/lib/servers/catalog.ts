@@ -1,4 +1,4 @@
-import { displayText, type Preflight } from "../api/decode";
+import { displayText, isRecord, type Preflight } from "../api/decode";
 
 const MAX_SERVERS = 32;
 const MAX_SELECTED_SERVERS = 4;
@@ -64,9 +64,8 @@ export function browserOriginRestriction(
 }
 
 function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid server catalog");
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new Error("Invalid server catalog");
+  return value;
 }
 export function parseCatalog(value: unknown, origin: string): ServerCatalog {
   const input = object(value);

@@ -15,6 +15,9 @@ in both clients unless [client differences](#client-differences) says otherwise.
 | Jitter | Mean absolute change between consecutive replies, in ms. | Fewer than two comparable replies: "—". |
 | Probe timeouts | `timeouts / (replies + timeouts)`, as a percentage. | No resolved probe: "—", not zero. |
 | Paired server timing | Mean raw RTT and server handling over the same valid pairs. | No valid pair: absent. |
+| Rate stability (browser) | `100 × (1 − CV)` of the headline interval's 250 ms rate buckets, floored at 0 %. | Fewer than two buckets: 0 %. |
+| Latency stability (browser) | `100 × (1 − jitter / max(median, 1 ms))`, floored at 0 %, on the stage's own population. | No jitter: absent. |
+| Wire rate (browser) | The headline times a modelled overhead: HTTP/2, HTTP/3 or WebTransport framing, TLS 1.3 records, TCP (with timestamps) or UDP + QUIC headers, IPv4 or IPv6 and Ethernet framing, assuming a 1,500 B MTU. | Shown only from 0.5 % overhead. |
 
 - **Percentiles** cover replies within the stage's measured window. P50 is the midpoint median; P95 and the
   browser's P10–P90 span use nearest rank.
@@ -86,8 +89,8 @@ after three replies and timeouts.
 Cadence is a scheduling policy, not an observed sampling rate: reply-driven density depends on RTT, and no coverage
 is inferred from cadence and elapsed time. The idle headline is the full stage median, the base of added latency;
 it never falls back to loaded RTTs or preflight hints. A failed stage keeps its measured population, marked
-incomplete. The shown server starts at the one with the lowest preparation RTT; switching it never retargets probes
-or changes saved statistics.
+incomplete. The shown server starts at the chosen **Latency server**, or with **Combined** at the one with the
+lowest preparation RTT; switching it never retargets probes or changes saved statistics.
 
 ## Paired server timing
 
@@ -104,17 +107,21 @@ jitter, deadlines and added latency.
 | Rule | Browser | Native |
 | --- | --- | --- |
 | Skipping a stage | Duration 0 | `--stages` or the setup toggle |
-| Early finish | Optional: a stable window can end a stage once it has 800 ms of evidence; that window is then the headline | None: the full window |
+| Early finish | Optional, also for the idle latency stage: after 52 % of the stage, a stability score of at least 0.86 held for 1.1 s with enough samples ends it; that window is then the headline | None: the full window |
 | Duration changes | Live: a shortened stage ends at once and keeps its evidence | Fixed at start |
-| Stage readiness | 3.5 s: download bytes, a latency reply, a receiver checkpoint | 10 s: lanes open, upload feed advancing, latency can send |
-| Upload boundaries | Pushed progress feed, a checkpoint every 250 ms while quiet | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end) |
+| Stage readiness | 3.5 s from preparation: download bytes, a receiver checkpoint, then a latency reply; loaded latency that is not ready fails only its population | 10 s: lanes open, upload feed advancing, latency can send |
+| Upload boundaries | Pushed progress feed; over HTTP a checkpoint every 250 ms while the feed is quiet (1.5 s timeout); over WebTransport the session's feed alone | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end) |
 | Gap rule | Page-timer lateness; held during preparation and finalization; the interval before the gap still counts | Sampler-tick lateness; the interval before the gap no longer counts |
 | Silence limit | 1.5 s of active run time | 2 s, or three missed checkpoints in a row (not at the end) |
-| HTTP 429 / 503 | Retried until silence or the readiness budget lapses, then server at capacity | Retried for 2 s, then server at capacity |
+| HTTP 429 / 503 | Lanes and the upload feed retry until silence or the readiness budget lapses, then server at capacity; Retry-After in whole seconds | Retried for 2 s, then server at capacity |
+| Forced streams | At most 14 per direction over HTTP/2 and HTTP/3 and 16 per WebTransport session, within a server's 32 measurements per client | At most 14 per direction |
+| Automatic streams | HTTP/1.1 up to 4 per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1 | `--auto-streams`, default 6 |
+| Path freshness | A verified path older than 2 min is checked again before a run | Preparation is reused for 30 s |
+| Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply |
+| Warmup RTT | The latency focus server's path-check RTT | The highest RTT among active servers, updated to latency-stage medians |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
 | Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |
 | Latency cadence | Reply-driven, Fast, Medium or Slow | Also a custom spacing from 80 ms to 15 s |
-| Latency reconnect | Backoff 100 ms–2 s; fails after 7.3 s without recovery | Redials for 2 s, never past the stage end; a channel lost before its first reply fails at once |
 | Reply-driven backup timer | RTT-based, 8 ms–1 s | The probe deadline |
 | Reply after the stage end | Resolves the probe, stays out of RTT and jitter | Counts in RTT and jitter if before its deadline |
 | Browser only | P10–P90 span, stability, wire-rate estimate, saved history | |
@@ -129,9 +136,10 @@ jitter, deadlines and added latency.
 | Stopped | Cancelled by the user. |
 | Failed | Nothing was measured. |
 
-The latency result is the latency-focus server's population; if that server leaves, a surviving server that measured
-idle latency takes over. The run is Incomplete only when no focus population has a median; another server's failed
-latency population makes it Partial. A population or stage that ends without a result records `insufficient-evidence`.
+The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving
+server that measured latency. The latency stage is Incomplete only when no focus population has a median; latency
+failures on other servers make the run Partial. A population or stage that ends without a result records
+`insufficient-evidence`.
 
 ### Failure reasons
 
@@ -150,10 +158,11 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 ## Saved history
 
 The browser saves history schema 5: `{schemaVersion, id, completedAt, build, engine, result}`, where `result` is
-the run's own result and `engine` the latency-focus server's engine version. Schema 4 records are read as a
-one-server result without their old grade and stay unchanged in storage. Other or malformed records stay in storage
-but are skipped and reported; a database of another version is refused unchanged. Up to 2,000 results are kept;
-Complete, Partial and Incomplete runs are saved when saving is on.
+the run's own result and `engine` the latency-focus server's engine version. Schema 4 records are read with the
+servers they saved (one when they saved none), without their old grade, and stay unchanged in storage. Other or
+malformed records stay in storage but are skipped and reported; a database of another version is refused unchanged.
+Up to 2,000 readable results are kept, and unreadable records never count toward that or get pruned; Complete,
+Partial and Incomplete runs are saved when saving is on.
 
 A result holds the selected servers and survivors, per-server transport evidence and stage statuses, latency
 populations with exact probe counts and accounting completeness, aggregate and component windows (at most 128 recent
@@ -163,5 +172,7 @@ history or preferences.
 
 Before saving, a result must be coherent: every failure has one of the seven reasons; a failed or partial stage has
 a failure in its scope; a complete stage has none, every lane and, for transfers, an interval with 800 ms of evidence;
-a skipped stage has no evidence; some stage ran; and the outcome follows the stage statuses (any failed stage:
-Incomplete, else any failure: Partial). An incoherent result is logged as an error and saved as Incomplete.
+a skipped stage has no evidence; some stage ran; a complete transfer stage's intervals span, from first to last,
+at least 75 % of its planned time (52 % with early finish), so a hidden-page gap between them still counts; and the
+outcome follows the stage statuses (any failed stage: Incomplete, else any failure: Partial). An incoherent result
+is logged as an error and saved as Incomplete.

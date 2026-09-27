@@ -7,18 +7,22 @@ import {
   uploadPoolBytes,
 } from "./fetch-worker";
 
-test("a refused download lane reconnects; an admission refusal names the server busy", () => {
-  for (const [status, reason] of [
-    [429, "server-busy"],
-    [503, "server-busy"],
-    [500, "connection-lost"],
-    [403, "connection-lost"],
+test("only an admission refusal reconnects a download lane; its Retry-After is whole seconds", () => {
+  for (const [status, reason, retry] of [
+    [429, "server-busy", true],
+    [503, "server-busy", true],
+    [500, "protocol-error", false],
+    [403, "protocol-error", false],
   ] as const)
-    expect(downloadFailure(status)).toEqual({ reason, retry: true });
+    expect(downloadFailure(status)).toEqual({ reason, retry });
   const busy = (headers: HeadersInit) =>
     refusal(new Response(null, { status: 429, headers }), downloadFailure(429))
       .retryAfterMs;
-  expect([busy({ "Retry-After": "1" }), busy({})]).toEqual([1_000, undefined]);
+  expect(
+    (
+      [{ "Retry-After": "1" }, {}, { "Retry-After": "0.5" }] as HeadersInit[]
+    ).map((h) => busy(h)),
+  ).toEqual([1_000, undefined, undefined]);
 });
 
 test("download requests retain bearer credentials", () => {

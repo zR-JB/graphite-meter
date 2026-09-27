@@ -2,7 +2,7 @@
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel, serverName } from "../../presentation/serverAppearance";
-  import { tooltip } from "../../actions/tooltip";
+  import { tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -33,7 +33,6 @@
     probeAccountingSummary,
     hasProbeAccountingNotice,
   } from "../latencyProfile";
-  import MoreMenu from "../MoreMenu.svelte";
   import ResultSummary from "../ResultSummary.svelte";
   import LatencyProfileView from "../LatencyProfileView.svelte";
 
@@ -168,8 +167,8 @@
   const environment = $derived(
     [
       ["IP family", ipVersion ? `IPv${ipVersion}` : null],
-      ["Client build", record.build],
-      ["Server engine", record.engine],
+      ["Client", record.build],
+      ["Server", record.engine],
     ].filter((row): row is [string, string] => !!row[1]),
   );
 </script>
@@ -212,19 +211,15 @@
         )} transferred
       </p>
     </div>
-    <MoreMenu label="Result actions" danger>
-      {#snippet children(select)}
-        <button
-          type="button"
-          role="menuitem"
-          tabindex="-1"
-          onclick={() => select(onDelete)}
-        >
-          <span><Icon name="trash" /></span>
-          <span><strong>Delete this result</strong></span>
-        </button>
-      {/snippet}
-    </MoreMenu>
+    <button
+      class="btn btn-icon btn-inset"
+      type="button"
+      aria-label="Delete this result"
+      {@attach tooltip(() => "Delete this result")}
+      onclick={(event) => onDelete(event.currentTarget)}
+    >
+      <Icon name="trash" />
+    </button>
     <button
       class="btn btn-icon btn-inset close-detail"
       type="button"
@@ -263,7 +258,7 @@
       {#if accounting.length}
         <section class="group">
           <h3 class="caps">Probes</h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#each accounting as lane (lane.key)}
               {@const counts = probeAccountingSummary(lane)}
               <div
@@ -296,7 +291,7 @@
           <h3 class="caps">
             Server{#if multiple}<span class="name"> · {row.name}</span>{/if}
           </h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#if !multiple}<div>
                 <dt>Name</dt>
                 <dd>{row.name}</dd>
@@ -334,7 +329,7 @@
       {#if issues.length}
         <section class="group">
           <h3 class="caps">Issues</h3>
-          <dl class="kv">
+          <dl class="kv" data-tip-group {@attach tipGroup}>
             {#each issues as issue, index (index)}
               <div>
                 <dt>{issue.server}</dt>
@@ -346,8 +341,8 @@
       {/if}
 
       <section class="group">
-        <h3 class="caps">Environment</h3>
-        <dl class="kv">
+        <h3 class="caps">Build</h3>
+        <dl class="kv" data-tip-group {@attach tipGroup}>
           {#each environment as [label, value] (label)}
             <div>
               <dt>{label}</dt>

@@ -28,11 +28,6 @@ test("piecewise throughput transfer is monotonic, bounded, and invertible", () =
   }
 });
 
-test("gauge ticks stay compact", () => {
-  expect(fmtGaugeTick(1_234.5)).toBe("1235");
-  expect(fmtGaugeTick(0)).toBe("0");
-});
-
 test("SI, byte, and IEC gauge labels remain truthful and ungrouped", () => {
   for (const [base, kind] of [
     ["base10", "bits"],

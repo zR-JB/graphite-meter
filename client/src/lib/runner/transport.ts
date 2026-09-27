@@ -11,7 +11,7 @@ import type {
   RunnerConfig,
   StallInfo,
 } from "./contract";
-import { readJSONResponse, parseResponseToken } from "../api/decode";
+import { isCount, parseResponseToken, readJSONResponse } from "../api/decode";
 import {
   classifyServerAuthentication,
   measurementFetch,
@@ -34,17 +34,17 @@ import {
   ROUTES,
 } from "./paths";
 import {
-  BUSY_RESTART_CAP_MS,
   ESTABLISH_BUDGET_MS,
   ESTABLISH_MARGIN_MS,
-  LANE_RESTART_BACKOFF_MS,
   PROGRESS_FINAL_GRACE_MS,
+  restartDelayMs,
   STOP_GRACE_MS,
 } from "./real/budgets";
 import { LatencyChannel } from "./real/latencyChannel";
 import {
   classifyUploadFailure,
   readProgressFeed,
+  retryAfterMs,
   type ProgressEvent,
 } from "./workers/progressFeed";
 
@@ -101,7 +101,7 @@ const CHECKPOINT_TIMEOUT_MS = 1500;
 
 export type WorkerMsg =
   | { type: "established" | "stopped" | "auth-required" }
-  | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
+  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "alive"; bytes?: number; elapsedMs?: number }
   | ({ type: "error"; detail: string } & LaneFailure)
   | { type: "upload-progress"; msg: ProgressEvent };
@@ -125,8 +125,8 @@ export function openLane(
     if (!failed) on(msg);
     failed = true;
   };
-  const lost = (detail: string) =>
-    fail({ type: "error", detail, reason: "connection-lost", retry: true });
+  const lost = (detail: string, reason: FailureReason = "connection-lost") =>
+    fail({ type: "error", detail, reason, retry: true });
   const handle = (msg: WorkerMsg) => {
     if (msg.type === "established") clearTimeout(establish);
     if (msg.type === "stopped") stopped?.();
@@ -144,7 +144,7 @@ export function openLane(
   worker.postMessage({ type: "start", ...start });
   const establish = session
     ? setTimeout(
-        () => lost("webtransport session did not establish"),
+        () => lost("webtransport session did not establish", "timeout"),
         ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
       )
     : undefined;
@@ -181,7 +181,6 @@ export const laneWorker = (kind: "fetch" | "wt"): Worker =>
 class LaneSet {
   measuring = false;
   stalled = false;
-  busy = false;
   #lanes: (Lane | null)[] = [];
   #timers: ReturnType<typeof setTimeout>[] = [];
   #ready = new Set<number>();
@@ -234,7 +233,8 @@ class LaneSet {
     reason: FailureReason = "connection-lost",
     rotate?: boolean,
   ): void {
-    if (this.stalled === stalled) return;
+    // A rotation must reach the run even while this direction is already stalled.
+    if (this.stalled === stalled && !rotate) return;
     this.stalled = stalled;
     this.stage.stallChanged({ reason, detail, rotate, direction: this.dir });
   }
@@ -264,9 +264,10 @@ class LaneSet {
         msg.elapsedMs !== undefined
       )
         host.uploadHint(index, msg.bytes, msg.elapsedMs);
-    } else if (msg.type === "upload-progress")
-      this.stage.receiver?.accept(msg.msg);
-    else if (msg.type === "auth-required")
+    } else if (msg.type === "upload-progress") {
+      if (msg.msg.type === "fatal") this.#error(index, msg.msg);
+      else this.stage.receiver?.accept(msg.msg);
+    } else if (msg.type === "auth-required")
       this.stage.authenticationRequired("throughput");
     else if (msg.type === "error") this.#error(index, msg);
   }
@@ -281,17 +282,13 @@ class LaneSet {
         error.reason,
         `${this.dir} stream ${index} failed: ${error.detail}`,
       );
-    this.busy = error.reason === "server-busy";
+    const busy = (this.stage.busy = error.reason === "server-busy");
     if (this.measuring) this.setStalled(true, error.detail, error.reason);
     this.#lanes[index]?.discard();
     this.#lanes[index] = null;
-    const busyRestarts = this.busy ? (this.#busyRestarts[index] ?? 0) : 0;
-    this.#busyRestarts[index] = this.busy ? busyRestarts + 1 : 0;
-    const backoff = LANE_RESTART_BACKOFF_MS * 2 ** busyRestarts;
-    this.#schedule(
-      index,
-      Math.min(BUSY_RESTART_CAP_MS, Math.max(backoff, error.retryAfterMs ?? 0)),
-    );
+    const busyRestarts = busy ? (this.#busyRestarts[index] ?? 0) : 0;
+    this.#busyRestarts[index] = busy ? busyRestarts + 1 : 0;
+    this.#schedule(index, restartDelayMs(busyRestarts, error.retryAfterMs));
   }
 
   /** Graceful stop lets session lanes deliver terminal counters. */
@@ -322,11 +319,13 @@ export class ServerStage implements StageTransport {
   readonly #streams: Record<FlowDirection, number>;
   readonly #seed: string;
   readonly #abort = new AbortController();
+  #budget = AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS);
   #lanes: Partial<Record<FlowDirection, LaneSet>> = {};
   receiver: UploadReceiver | null = null;
   #checkpoint: Promise<ReceiverCheckpoint | null> | null = null;
   #latency: LatencyChannel | null = null;
   #stalled = false;
+  busy = false;
   readinessChanged = () => {};
 
   constructor({ host, paths, activity, streams, seed }: StageOptions) {
@@ -338,6 +337,9 @@ export class ServerStage implements StageTransport {
   }
 
   async prepare(): Promise<void> {
+    this.#budget = AbortSignal.timeout(
+      ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
+    );
     const { latency, credentials } = this.#paths;
     if (needsPings(this.#activity) && latency) {
       const cfg = this.host.config;
@@ -353,35 +355,41 @@ export class ServerStage implements StageTransport {
       throw new Error("server offers no supported latency transport");
     if (this.#activity.transfer.includes("down")) this.#open("down");
     if (this.#activity.transfer.includes("up"))
-      await this.#prepareUpload(this.#abort.signal);
+      await this.#prepareUpload(
+        AbortSignal.any([this.#abort.signal, this.#budget]),
+      );
   }
 
   async ready(owner: AbortSignal): Promise<void> {
-    const signal = AbortSignal.any([
-      owner,
-      this.#abort.signal,
-      AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS),
-    ]);
+    const signal = AbortSignal.any([owner, this.#abort.signal, this.#budget]);
+    let transferReady = false;
     try {
       for (;;) {
         const changed = new Promise<void>(
           (resolve) => (this.readinessChanged = resolve),
         );
-        if (
-          !(this.#lanes.down?.ready ?? true) ||
-          !(this.#latency?.ready ?? true)
-        ) {
+        transferReady = false;
+        if (!(this.#lanes.down?.ready ?? true)) {
           await abortable(changed, signal);
           continue;
         }
-        if (!this.#activity.transfer.includes("up")) return;
-        // Receiver evidence is checked last; a transient failure retries within this budget.
-        const checkpoint = await this.checkpoint(signal).catch(() => null);
-        if ((checkpoint?.nanos ?? 0) > 0) return;
-        await abortableDelay(50, signal);
+        if (this.#activity.transfer.includes("up")) {
+          // A transient checkpoint failure retries within this budget.
+          const checkpoint = await this.checkpoint(signal).catch(() => null);
+          if (!((checkpoint?.nanos ?? 0) > 0)) {
+            await abortableDelay(50, signal);
+            continue;
+          }
+        }
+        transferReady = true;
+        if (this.#latency?.ready ?? true) return;
+        await abortable(changed, signal);
       }
     } catch {
-      if (Object.values(this.#lanes).some((lanes) => lanes.busy))
+      // Loaded latency never holds back throughput; its channel reports its own stall.
+      if (transferReady && this.#activity.stage !== "latency" && !owner.aborted)
+        return;
+      if (this.busy)
         throw new ServerBusyError("Server refused the connections as busy");
       throw new Error("Primed measurement connections did not become ready", {
         cause: signal.reason,
@@ -440,7 +448,11 @@ export class ServerStage implements StageTransport {
 
   stallChanged(info: StallInfo): void {
     const stalled = Object.values(this.#lanes).some((lanes) => lanes.stalled);
-    if (this.#abort.signal.aborted || stalled === this.#stalled) return;
+    if (
+      this.#abort.signal.aborted ||
+      (stalled === this.#stalled && !info.rotate)
+    )
+      return;
     this.#stalled = stalled;
     if (stalled) this.host.stall(info);
     else this.host.resume();
@@ -480,8 +492,10 @@ export class ServerStage implements StageTransport {
     this.receiver = receiver;
     // A session lane carries its own feed; HTTP lanes write only after the feed is open.
     if (wt) this.#open("up", id, feed);
-    if (!(await receiver.opened))
-      throw new Error("upload progress feed did not open");
+    if (!(await abortable(receiver.opened, owner).catch(() => false)))
+      throw this.busy
+        ? new ServerBusyError("Server refused the upload as busy")
+        : new Error("upload progress feed did not open");
     if (!wt && receiver === this.receiver) this.#open("up", id);
   }
 
@@ -574,18 +588,12 @@ export class ServerStage implements StageTransport {
       string,
       unknown
     >;
-    if (
-      !Number.isSafeInteger(bytes) ||
-      !Number.isSafeInteger(nanos) ||
-      (bytes as number) < 0 ||
-      (nanos as number) < 0
-    )
-      return null;
+    if (!isCount(bytes) || !isCount(nanos)) return null;
     if (this.#abort.signal.aborted || receiver !== this.receiver) return null;
     const checkpoint = {
       id: receiver.id,
-      bytes: bytes as number,
-      nanos: nanos as number,
+      bytes,
+      nanos,
       requestedAtMs,
       receivedAtMs: this.host.now(),
     };
@@ -632,8 +640,9 @@ type FeedEvent =
 
 /** One upload id's receiver counters; replacing the id creates a new receiver. */
 class UploadReceiver {
-  readonly opened: Promise<boolean>;
-  #open!: (ready: boolean) => void;
+  readonly #opened = Promise.withResolvers<boolean>();
+  readonly opened = this.#opened.promise;
+  #timer: ReturnType<typeof setTimeout>;
   #bytes = 0;
   #nanos = 0;
   #closed = false;
@@ -651,16 +660,10 @@ class UploadReceiver {
     readonly credentials: ServerCredentials,
     readonly session: boolean,
   ) {
-    const timer = setTimeout(
+    this.#timer = setTimeout(
       () => this.#open(false),
       ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
     );
-    this.opened = new Promise((resolve) => {
-      this.#open = (ready) => {
-        clearTimeout(timer);
-        resolve(ready);
-      };
-    });
     if (session) return;
     const { headers } = requestOptions(credentials, url, "POST");
     const { credentials: mode } = requestOptions(credentials, url);
@@ -685,6 +688,11 @@ class UploadReceiver {
     }
   }
 
+  #open(ready: boolean): void {
+    clearTimeout(this.#timer);
+    this.#opened.resolve(ready);
+  }
+
   observe(checkpoint: ReceiverCheckpoint): void {
     if (this.#closed || checkpoint.id !== this.id) return;
     this.#open(true);
@@ -700,10 +708,11 @@ class UploadReceiver {
       this.stage.authenticationRequired("throughput");
     else if (event.type === "fatal") {
       this.#open(false);
-      if (measuring && (event.retry || event.rotate))
-        lanes!.setStalled(true, event.detail, event.reason, event.rotate);
+      if (measuring && event.rotate)
+        lanes!.setStalled(true, event.detail, event.reason, true);
       else this.stage.failed(event.reason, event.detail);
     } else if (event.type === "stall") {
+      this.stage.busy = event.reason === "server-busy";
       if (measuring) lanes!.setStalled(true, event.detail, event.reason);
     } else {
       this.#advance(event.n, event.t);
@@ -785,6 +794,7 @@ export function uploadFeed(options: {
   const redirect = redirectForCredentials(credentials);
   let finishing = false;
   let backoff = 0;
+  let refusals = 0;
   let wake: (() => void) | undefined;
 
   const dispose = () => {
@@ -806,14 +816,6 @@ export function uploadFeed(options: {
     const required = await sessionAuthenticationRequired(
       location.origin,
       signal,
-      (input, init) =>
-        fetch(input, {
-          ...init,
-          signal: AbortSignal.any([
-            signal,
-            ...(init?.signal ? [init.signal] : []),
-          ]),
-        }),
     );
     if (required && !signal.aborted) emit({ type: "auth-required" });
     return required && !signal.aborted;
@@ -822,6 +824,7 @@ export function uploadFeed(options: {
     while (!signal.aborted) {
       let detail = "progress stream closed";
       let reason: FailureReason | undefined;
+      let retryAfter: number | undefined;
       try {
         const response = await fetch(url, {
           priority: "high",
@@ -851,9 +854,10 @@ export function uploadFeed(options: {
         if (refusal && !refusal.retry)
           return emit({ type: "fatal", detail, ...refusal });
         reason = refusal?.reason;
+        retryAfter = retryAfterMs(response.headers);
         if (!response.ok || !response.body) throw new Error(detail);
         await readProgressFeed(response.body, counters, (event) => {
-          if (event.type === "open") backoff = 0;
+          if (event.type === "open") backoff = refusals = 0;
           emit(event);
         });
       } catch (error) {
@@ -862,7 +866,12 @@ export function uploadFeed(options: {
       }
       if (signal.aborted) return;
       emit({ type: "stall", detail, reason });
-      backoff = backoff ? Math.min(backoff * 2, 2000) : 100;
+      refusals = reason === "server-busy" ? refusals + 1 : 0;
+      backoff = refusals
+        ? restartDelayMs(refusals - 1, retryAfter)
+        : backoff
+          ? Math.min(backoff * 2, 2000)
+          : 100;
       await new Promise<void>((resolve) => {
         const timer = setTimeout((wake = resolve), backoff);
         if (signal.aborted) {

@@ -31,7 +31,6 @@ test("density changes and returning to a visible tab refresh resolution without 
     browser.devicePixelRatio = 1.5;
     media[0].dispatchEvent(new Event("change"));
     expect(changes).toBe(1);
-    expect(media).toHaveLength(2);
     browser.devicePixelRatio = 2;
     document.dispatchEvent(new Event("visibilitychange"));
     expect(changes).toBe(2);

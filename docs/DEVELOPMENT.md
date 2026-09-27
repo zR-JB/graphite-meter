@@ -67,7 +67,8 @@ mise run ci                 # everything CI runs, job by job
 ```
 
 Untagged builds identify as `GM_CLIENT_REVISION` (default: the short Git revision); `GM_CLIENT_BUILD_PROFILE` is
-`dev` or `prod`; release automation sets `VERSION` for the server and both clients.
+`dev` or `prod`; release automation sets `VERSION` for the server and both clients. A container build takes the
+browser's version from the `CLIENT_VERSION` build argument, so `VERSION` alone stamps only the server.
 
 ## Tests
 
@@ -103,8 +104,8 @@ an intentional dependency or artifact change.
 
 ## Local TLS and HTTP/3
 
-E2E creates its own certificate. Manual runs and benchmarks use an untracked `.dev-certs/` covering the hostnames
-and IPs you use; Chromium HTTP/3 also needs the leaf SPKI pin:
+E2E and the benchmarks create their own certificates. Manual runs use an untracked `.dev-certs/` covering the
+hostnames and IPs you use; Chromium HTTP/3 also needs the leaf SPKI pin:
 
 ```sh
 openssl x509 -in .dev-certs/localhost.pem -pubkey -noout | openssl pkey -pubin -outform der \

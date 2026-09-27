@@ -3,8 +3,7 @@
 # client) are stamped into the image at release time, so there is only runtime
 # config here. Install: see ./README.md.
 #
-# To build from source instead, use graphite-meter-source.container +
-# graphite-meter.build.
+# To build from source instead, see README.md.
 #
 # Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
 
@@ -33,8 +32,8 @@ PublishPort=7246:7246
 # significantly reduce throughput. For better performance, uncomment:
 # Network=host
 
-# All optional; sensible defaults are baked in. Set the PUBLIC_* origins when
-# running behind a reverse proxy so /preflight advertises reachable URLs.
+# All optional; sensible defaults are baked in. Set the GM_*_PUBLIC_ORIGIN
+# values behind a reverse proxy so /preflight advertises reachable URLs.
 Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_SERVER_LOCATION=fra
 # Environment=GM_H1_ADDR=:7246
@@ -44,7 +43,6 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_TLS_CERT=/etc/letsencrypt/live/graphite-meter/fullchain.pem
 # Environment=GM_TLS_KEY=/etc/letsencrypt/live/graphite-meter/privkey.pem
 # Volume=/etc/letsencrypt:/etc/letsencrypt:ro
-# Environment=GM_TRUSTED_PROXIES=127.0.0.1/32,::1/128
 # Environment=GM_H1_PUBLIC_ORIGIN=http://speed.example:7246
 # Environment=GM_H1_TLS_PUBLIC_ORIGIN=https://speed.example:7247
 # Environment=GM_H2_PUBLIC_ORIGIN=https://speed.example:7248
@@ -53,15 +51,17 @@ Environment=GM_SERVER_NAME=graphite-meter
 
 # Authentication, off by default. When enabled it gates every UI asset,
 # discovery request, probe, transfer, progress stream, and WebSocket. The lines
-# below assume a reverse proxy owns TLS on GM_AUTH_PUBLIC_URL: clear HTTP/1.1
-# must not be advertised, and every advertised origin must be HTTPS on that
-# hostname.
+# below assume a reverse proxy on this host owns TLS on GM_AUTH_PUBLIC_URL:
+# clear HTTP/1.1 must not be advertised, and every advertised origin must be
+# HTTPS on that hostname. Publish 7246 as 127.0.0.1:7246:7246 so only that
+# proxy can send forwarding headers, and trust only the address its
+# connections arrive from (127.0.0.1/32 with Network=host).
 # Setup and the podman secret commands: ./README.md#enable-authentication
 # Environment=GM_AUTH_MODE=password
 # Environment=GM_AUTH_PUBLIC_URL=https://meter.example.com
 # Environment=GM_ADVERTISED_NATIVE_ENDPOINTS=none
 # Environment=GM_PUBLIC_ORIGINS=self
-# Environment=GM_TRUSTED_PROXIES=172.30.0.0/24
+# Environment=GM_TRUSTED_PROXIES=127.0.0.1/32
 # Environment=GM_AUTH_PASSWORD_HASH_FILE=/run/secrets/gm-auth-password-hash
 # Secret=gm-auth-password-hash,type=mount
 #
@@ -75,11 +75,17 @@ Environment=GM_SERVER_NAME=graphite-meter
 # Environment=GM_AUTH_OIDC_PROVIDER_NAME=Authelia
 # Secret=gm-auth-oidc-client-secret,type=mount
 
+# The server writes nothing and binds unprivileged ports.
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+
 [Service]
 # docker-compose's `restart: unless-stopped` - systemd's closest is always.
 Restart=always
 RestartSec=5
 
 [Install]
-# Start at boot (`systemctl --user enable` / linger for rootless).
+# Quadlet applies this at generation; never `systemctl enable` the unit. Linger
+# keeps a rootless user manager, and so the service, running after logout.
 WantedBy=multi-user.target default.target

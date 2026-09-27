@@ -53,6 +53,7 @@ export const ROUTES = {
 export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
+export const FETCH_FORCED_MAX = 14;
 const BROWSER_CONNECTION_BUDGET = 6;
 export const MAX_STREAMS = 128;
 
@@ -213,6 +214,11 @@ function matchesGroup(target: AnyTarget, selection: string): boolean {
 
 const isGroup = (selection: string) =>
   selection.startsWith("protocol:") || selection.startsWith("transport:");
+
+export const selectionOrigin = (selection: string): string | null =>
+  selection === "auto" || isGroup(selection)
+    ? null
+    : selection.replace(/::(?:wt|wtdg)$/, "");
 
 /** A known browser policy restriction, only when it excludes every matching target. */
 export function blockedSelectionReason(
@@ -412,7 +418,7 @@ function streamCount(
 ): number {
   if (policy.mode === "forced")
     return Math.min(
-      webTransport ? WT_MAX_LANES : MAX_STREAMS,
+      webTransport ? WT_MAX_LANES : FETCH_FORCED_MAX,
       normalizeStreamCount(policy.count),
     );
   if (webTransport) return 1;
@@ -513,14 +519,6 @@ export function planServerStreams(
         }
       });
   }
-  for (const dir of activity.transfer)
-    if (
-      Object.values(plan).reduce((total, count) => total + count[dir], 0) >
-      MAX_STREAMS
-    )
-      throw new Error(
-        "The run exceeds 128 streams per direction. Reduce forced streams",
-      );
   return plan;
 }
 
@@ -544,10 +542,13 @@ export function describeTransferStreams(
 ): string {
   if (transport === "webtransport-datagram") return "Datagram flood · no lanes";
   const forced = normalizeStreamCount(policy.count);
-  if (policy.mode === "forced")
-    return transport === "webtransport" && forced > WT_MAX_LANES
-      ? `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
+  if (policy.mode === "forced") {
+    const session = transport === "webtransport";
+    const cap = session ? WT_MAX_LANES : FETCH_FORCED_MAX;
+    return forced > cap
+      ? `Forced · ${cap} per direction (capped from ${forced} by the ${session ? "session" : "server's per-client limit"})`
       : `Forced · ${forced} per direction`;
+  }
   if (transport === "webtransport")
     return "Automatic · 1 continuous stream per direction";
   const lanes = protocol && MULTIPLEXED[protocol];

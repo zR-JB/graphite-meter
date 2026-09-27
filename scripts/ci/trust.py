@@ -8,11 +8,10 @@ import re
 import subprocess
 from pathlib import Path
 
+import github_api as gh
 from github_api import (
-    APICall,
     JsonObject,
     JsonValue,
-    api as default_api,
     decode_json,
     expect_array,
     expect_object,
@@ -101,9 +100,9 @@ def _bound_to_pr(item: JsonObject, pr_number: int | None) -> bool:
     return numbers.count(pr_number) == 1
 
 
-def require_pr(repository: str, pr_number: int, sha: str, *, api: APICall = default_api) -> str:
+def require_pr(repository: str, pr_number: int, sha: str) -> str:
     """Return the head branch of an open same-repository PR at exactly `sha`."""
-    pr = expect_object(api(f"repos/{repository}/pulls/{pr_number}"), f"PR #{pr_number}")
+    pr = expect_object(gh.api(f"repos/{repository}/pulls/{pr_number}"), f"PR #{pr_number}")
     head = object_field(pr, "head", f"PR #{pr_number}")
     if pr.get("state") != "open" or object_field(pr, "base", "PR").get("ref") != "main":
         fail(f"PR #{pr_number} is not open against main")
@@ -114,36 +113,32 @@ def require_pr(repository: str, pr_number: int, sha: str, *, api: APICall = defa
     return str_field(head, "ref", "PR head")
 
 
-def current_main(repository: str, *, api: APICall = default_api) -> str:
-    sha = str_field(expect_object(api(f"repos/{repository}/commits/main"), "main"), "sha", "main")
+def current_main(repository: str) -> str:
+    sha = str_field(expect_object(gh.api(f"repos/{repository}/commits/main"), "main"), "sha", "main")
     if SHA_RE.fullmatch(sha) is None:
         fail("could not resolve current main SHA")
     return sha
 
 
-def require_exact_current_main(repository: str, sha: str, *, api: APICall = default_api) -> str:
-    if (main := current_main(repository, api=api)) != sha:
+def require_exact_current_main(repository: str, sha: str) -> str:
+    if (main := current_main(repository)) != sha:
         fail(f"{sha} is no longer current main; current main is {main}")
     return main
 
 
-def require_current_main(
-    repository: str, pr_number: int, sha: str, *, api: APICall = default_api,
-) -> str:
+def require_current_main(repository: str, pr_number: int, sha: str) -> str:
     """Require the PR head to contain current main and return that main SHA."""
-    main = current_main(repository, api=api)
-    comparison = expect_object(api(f"repos/{repository}/compare/{main}...{sha}"), "comparison")
+    main = current_main(repository)
+    comparison = expect_object(gh.api(f"repos/{repository}/compare/{main}...{sha}"), "comparison")
     base = str_field(object_field(comparison, "merge_base_commit", "comparison"), "sha", "base")
     if int_field(comparison, "behind_by", "comparison") != 0 or base != main:
         fail(f"PR #{pr_number} is behind current main {main}; update it and let CI pass again")
     return main
 
 
-def require_control_plane_matches_main(
-    repository: str, pr_sha: str, main_sha: str, *, api: APICall = default_api,
-) -> None:
+def require_control_plane_matches_main(repository: str, pr_sha: str, main_sha: str) -> None:
     def entries(ref: str) -> dict[str, JsonValue]:
-        tree = expect_object(api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
+        tree = expect_object(gh.api(f"repos/{repository}/git/trees/{ref}"), f"tree at {ref}")
         items = [expect_object(item, "entry") for item in expect_array(tree.get("tree"), "tree")]
         return {_text(item.get("path")): item.get("sha") for item in items}
 
@@ -154,12 +149,12 @@ def require_control_plane_matches_main(
 
 def require_dispatch_run(
     repository: str, owner: str, main_sha: str, run_id: int, workflow: str, title: str,
-    artifacts: dict[str, int], *, api: APICall = default_api,
+    artifacts: dict[str, int],
 ) -> None:
     """Bind a request run to its workflow, inputs, main, one attempt, the owner and artifacts."""
-    workflow_id = int_field(expect_object(api(f"repos/{repository}/actions/workflows/{workflow}"),
+    workflow_id = int_field(expect_object(gh.api(f"repos/{repository}/actions/workflows/{workflow}"),
                                           workflow), "id", workflow)
-    run = expect_object(api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
+    run = expect_object(gh.api(f"repos/{repository}/actions/runs/{run_id}"), "request run")
     if run.get("id") != run_id or run.get("workflow_id") != workflow_id:
         fail(f"run {run_id} is not a {workflow} run")
     if run.get("display_title") != title:
@@ -175,8 +170,8 @@ def require_dispatch_run(
     for key in ("actor", "triggering_actor"):
         if object_field(run, key, "request run").get("login") != owner:
             fail("request was not initiated by the repository owner")
-    pages = api(query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
-                paginate=True)
+    pages = gh.api(query(f"repos/{repository}/actions/runs/{run_id}/artifacts", per_page=100),
+                   paginate=True)
     unexpired = [item for item in _objects(pages, "artifacts") if item.get("expired") is False]
     for name, limit in artifacts.items():
         if len(matches := [item for item in unexpired if item.get("name") == name]) != 1:
@@ -187,11 +182,10 @@ def require_dispatch_run(
 
 def require_ci_gate(
     repository: str, sha: str, *, event: str, branch: str, pr_number: int | None = None,
-    api: APICall = default_api,
 ) -> int:
     """Require Gate in the newest `ci.yml` run for exactly this commit, branch and PR."""
-    pages = api(query(f"repos/{repository}/actions/workflows/ci.yml/runs",
-                      event=event, head_sha=sha, per_page=100), paginate=True)
+    pages = gh.api(query(f"repos/{repository}/actions/workflows/ci.yml/runs",
+                         event=event, head_sha=sha, per_page=100), paginate=True)
     identity = (sha, branch, event)
     runs = [run for run in _objects(pages, "workflow_runs") if _bound_to_pr(run, pr_number)
             and (run.get("head_sha"), run.get("head_branch"), run.get("event")) == identity]
@@ -205,8 +199,8 @@ def require_ci_gate(
     if (run.get("status"), run.get("conclusion")) != DONE:
         fail(f"latest CI run {run_id} for {scope} at {sha} is "
                f"{run.get('status')}/{run.get('conclusion')}")
-    pages = api(query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
-                      per_page=100), paginate=True)
+    pages = gh.api(query(f"repos/{repository}/actions/runs/{run_id}/jobs", filter="latest",
+                         per_page=100), paginate=True)
     jobs = _objects(pages, "jobs")
     gates = [job for job in jobs if job.get("name") == "Gate"]
     if [(gate.get("status"), gate.get("conclusion")) for gate in gates] != [DONE]:
@@ -219,10 +213,9 @@ def require_ci_gate(
 
 def require_check_run(
     repository: str, sha: str, *, name: str, app_slug: str, pr_number: int | None = None,
-    api: APICall = default_api,
 ) -> int:
-    pages = api(query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
-                      filter="all"), paginate=True)
+    pages = gh.api(query(f"repos/{repository}/commits/{sha}/check-runs", per_page=100,
+                         filter="all"), paginate=True)
     checks = [check for check in _objects(pages, "check_runs")
               if check.get("name") == name and _get(check.get("app"), "slug") == app_slug
               and _bound_to_pr(check, pr_number)]
@@ -237,10 +230,10 @@ def require_check_run(
     return int_field(check, "id", name)
 
 
-def require_main_codeql(repository: str, sha: str, *, api: APICall = default_api) -> None:
+def require_main_codeql(repository: str, sha: str) -> None:
     """Require the newest CodeQL analysis of every category at `sha` to be error-free."""
-    pages = api(query(f"repos/{repository}/code-scanning/analyses", ref="refs/heads/main",
-                      tool_name="CodeQL", per_page=100), paginate=True)
+    pages = gh.api(query(f"repos/{repository}/code-scanning/analyses", ref="refs/heads/main",
+                         tool_name="CodeQL", per_page=100), paginate=True)
     def order(item: JsonObject) -> tuple[str, int]:
         return _text(item.get("created_at")), _number(item.get("id"))
 
@@ -259,10 +252,10 @@ def require_main_codeql(repository: str, sha: str, *, api: APICall = default_api
             print(f"::warning::CodeQL analysis warning for {sha}: {warning}")
 
 
-def require_protected_environment(repository: str, *, api: APICall = default_api) -> None:
+def require_protected_environment(repository: str) -> None:
     """Require reviewers and a main-only deployment policy on the publishing environment."""
     path = f"repos/{repository}/environments/{ENVIRONMENT}"
-    environment = expect_object(api(path), ENVIRONMENT)
+    environment = expect_object(gh.api(path), ENVIRONMENT)
     rules = [expect_object(rule, "protection rule")
              for rule in expect_array(environment.get("protection_rules") or [], "rules")]
     if not any(rule.get("type") == "required_reviewers" and rule.get("reviewers")
@@ -270,7 +263,7 @@ def require_protected_environment(repository: str, *, api: APICall = default_api
         fail(f"{ENVIRONMENT} must require reviewers")
     if _get(environment.get("deployment_branch_policy"), "custom_branch_policies") is not True:
         fail(f"{ENVIRONMENT} must limit deployments to main")
-    policies = expect_object(api(f"{path}/deployment-branch-policies"), "branch policies")
+    policies = expect_object(gh.api(f"{path}/deployment-branch-policies"), "branch policies")
     branches = [(_get(item, "name"), _get(item, "type"))
                 for item in expect_array(policies.get("branch_policies"), "branch policies")]
     if branches != [("main", "branch")]:

@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import ServerScope from "./ServerScope.svelte";
-  import { reasonLabel } from "../presentation/vocabulary";
+  import { reasonLabel, STAGE, STATUS } from "../presentation/vocabulary";
   import { LATENCY_LANES, type LatencyProfileViewLane } from "./latencyProfile";
   import LatencyProfileView from "./LatencyProfileView.svelte";
 
@@ -30,9 +30,11 @@
       (meta) => store.stagePresentation[meta.key].configured,
     ).map((meta) => {
       const lane = store.latencyLanes.find((lane) => lane.key === meta.key)!;
+      // A settled lane draws like a saved one: the latest reply only marks a running stage.
       return {
         ...lane,
         ...meta,
+        current: lane.active ? lane.current : null,
       };
     }),
   );
@@ -53,9 +55,10 @@
   {/if}
   {#if store.stagePresentation.latency.status === "failed"}
     <p class="notice" data-tone="err" role="alert">
-      Latency skipped — {store.stagePresentation.latency.failure
-        ? reasonLabel(store.stagePresentation.latency.failure)
-        : "unavailable"}
+      {STAGE.latency.label} · {STATUS.failed}{store.stagePresentation.latency
+        .failure
+        ? ` · ${reasonLabel(store.stagePresentation.latency.failure)}`
+        : ""}
     </p>
   {/if}
 

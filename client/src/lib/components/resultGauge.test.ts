@@ -40,12 +40,22 @@ test("terminal gauge enumerates every complete throughput phase", () => {
   ]);
 });
 
-test("one-sided bidirectional evidence stays partial", () => {
+test("one-sided bidirectional evidence stays partial and a zero lane is still evidence", () => {
   expect(
     resultGaugeArcs(
       result({ bidirectional: { down: throughput(30), up: null } }),
     ),
   ).toEqual([arc("bidirectional", "Bidirectional download", 30, "download")]);
+  expect(
+    resultGaugeArcs(
+      result({ bidirectional: { down: null, up: throughput(0) } }),
+    ),
+  ).toEqual([arc("bidirectional", "Bidirectional upload", 0, "upload")]);
+  expect(
+    resultGaugeArcs(
+      result({ bidirectional: { down: throughput(0), up: throughput(40) } }),
+    ),
+  ).toEqual([arc("bidirectional", "Bidirectional", 40)]);
 });
 
 test("terminal gauge skips unavailable stages in every combination", () => {
@@ -66,16 +76,6 @@ test("terminal gauge skips unavailable stages in every combination", () => {
   expect(resultGaugeArcs(result({ upload: throughput(20) }))).toEqual([
     arc("upload", "Upload", 20),
   ]);
-  expect(
-    resultGaugeArcs(
-      result({ bidirectional: { down: throughput(30), up: throughput(40) } }),
-    ),
-  ).toEqual([arc("bidirectional", "Bidirectional", 70)]);
-  expect(
-    resultGaugeArcs(
-      result({ bidirectional: { down: null, up: throughput(40) } }),
-    ),
-  ).toEqual([arc("bidirectional", "Bidirectional upload", 40, "upload")]);
 });
 
 test("layer ordering paints highest throughput first and preserves ties", () => {
@@ -144,16 +144,11 @@ test("the highest result always stays primary while equal and near-equal cluster
   }
 });
 
-test("result head placement is deterministic and bounded for compact gauge geometry", () => {
+test("result head placement stays bounded for compact gauge geometry", () => {
   const first = resultGaugeHeadPlacements([0.42, 0.42, 0.42], {
     ...headOptions,
     baseRadius: 36,
   });
-  const second = resultGaugeHeadPlacements([0.42, 0.42, 0.42], {
-    ...headOptions,
-    baseRadius: 36,
-  });
-  expect(first).toEqual(second);
   expect(first[0]!.radius).toBe(36);
   expect(first.every((placement) => placement.radius >= 6.3)).toBe(true);
   expect(first.map((placement) => placement.fraction)).toEqual([

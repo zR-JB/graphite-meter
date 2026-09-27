@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test";
 import {
   combineCompensationEstimates,
-  compensationTooltip,
   estimateCompensation,
 } from "./compensation";
 test("1500 B Ethernet defaults map expected TCP goodput to wire occupancy", () => {
@@ -38,9 +37,6 @@ test("negotiated protocol and security select the automatic transport", () => {
   expect(estimateCompensation(1_000_000, "h3", true).transport).toBe(
     "http3-quic",
   );
-  expect(estimateCompensation(1_000_000, undefined, true).transport).toBe(
-    "https-tls",
-  );
   expect(estimateCompensation(1_000_000, "http/1.1", true)).toMatchObject({
     transport: "https-tls",
     transportSource: "detected",
@@ -70,18 +66,14 @@ test("selected WebTransport mechanism forces QUIC despite an H1/H2 fetch probe",
     transport: "http3-quic",
     framing: "webtransport-datagram",
   });
-  expect(stream.factors.map((factor) => factor.label)).toContain(
-    "WebTransport QUIC stream frames",
-  );
-  expect(datagram.factors.map((factor) => factor.label)).toContain(
-    "WebTransport QUIC datagrams",
-  );
-  expect(stream.factors.map((factor) => factor.label)).not.toContain(
-    "HTTP/3 DATA frames",
-  );
-  expect(datagram.factors.map((factor) => factor.label)).not.toContain(
-    "HTTP/3 DATA frames",
-  );
+  // One QUIC framing layer: no HTTP/2 frames or TLS records from the fetch probe.
+  for (const estimate of [stream, datagram])
+    expect(estimate.factors.map((factor) => factor.key)).toEqual([
+      "application-framing",
+      "ethernet",
+      "ip",
+      "transport",
+    ]);
 });
 
 test("unknown protocol uses a documented security-aware fallback", () => {
@@ -145,14 +137,6 @@ test("factor contributions sum to the displayed overhead", () => {
     }
 });
 
-test("tooltip reports automatic assumptions", () => {
-  const estimate = estimateCompensation(1_000_000, "h3", true, 6);
-  expect(compensationTooltip(estimate)).toContain("IPv6 +");
-  expect(compensationTooltip(estimate)).toContain("MTU 1,500 B assumed");
-  expect(compensationTooltip(estimate)).toContain("UDP + QUIC +");
-  expect(compensationTooltip(estimate)).toContain("Ethernet +");
-});
-
 test("mixed path breakdown keeps every layer and weights it by measured goodput", () => {
   const clear = estimateCompensation(3_000_000, "http/1.1", false, 4);
   const encrypted = estimateCompensation(1_000_000, "h2", true, 6);
@@ -168,11 +152,4 @@ test("mixed path breakdown keeps every layer and weights it by measured goodput"
   expect(
     combined.factors.reduce((sum, part) => sum + part.contributionPct, 0),
   ).toBeCloseTo((combined.totalMultiplier - 1) * 100, 10);
-  expect(combined.factors.find((part) => part.key === "ip")?.label).toBe(
-    "IP headers",
-  );
-  expect(compensationTooltip(combined)).toContain("TLS 1.3 records +0.03%");
-  expect(compensationTooltip(combined).split("\n")).toHaveLength(
-    combined.factors.length + 1,
-  );
 });

@@ -57,7 +57,7 @@ test("discovery rejects malformed origins before target construction", () => {
   }
 });
 
-test("discovery bounds lists and metadata and rejects unknown protocols", () => {
+test("discovery bounds lists and metadata", () => {
   for (const value of [
     null,
     [],
@@ -78,17 +78,23 @@ test("discovery bounds lists and metadata and rejects unknown protocols", () => 
         latency: [],
       },
     },
-    {
-      ...discovery(),
-      capabilities: {
-        throughput: [
-          { baseUrl: ".", transport: "fetch-stream", protocol: "http4" },
-        ],
-        latency: [],
-      },
-    },
   ])
     expect(() => parsePreflight(value)).toThrow();
+});
+
+test("discovery from a newer server skips unknown mechanisms and keeps the rest", () => {
+  const value = discovery();
+  value.capabilities.throughput.push(
+    { baseUrl: "https://x.example", transport: "quic-stream", protocol: "h4" },
+    { baseUrl: ".", transport: "fetch-stream", protocol: "http4" },
+    { baseUrl: ".", transport: "websocket", protocol: "http1" },
+  );
+  value.capabilities.latency.push({ baseUrl: "?", transport: "icmp" }, {
+    baseUrl: ".",
+  } as (typeof value.capabilities.latency)[number]);
+  expect(parsePreflight(value).capabilities).toEqual(
+    parsePreflight(discovery()).capabilities,
+  );
 });
 
 test("probe validates evidence and occupancy", () => {
@@ -207,19 +213,4 @@ test("only an explicit true advertises upload checkpoints", () => {
     false,
     undefined,
   ]);
-});
-
-test("discovery requires an explicit supported transport on every target", () => {
-  const throughput = discovery();
-  Object.assign(throughput.capabilities.throughput[0], {
-    transport: "websocket",
-  });
-  expect(() => parsePreflight(throughput)).toThrow();
-  for (const role of ["throughput", "latency"] as const) {
-    for (const transport of [undefined, null, "", "udp"]) {
-      const value = discovery();
-      Object.assign(value.capabilities[role][0]!, { transport });
-      expect(() => parsePreflight(value)).toThrow();
-    }
-  }
 });
