@@ -92,6 +92,8 @@ interface PhaseSpan {
   t1: number; // Infinity while open
 }
 type ThroughputLane = "download" | "upload" | "bidiDown" | "bidiUp";
+/** A result-rate label's box: ten-pixel mono figures and unit, such as "1003.2 Mbit/s". */
+const STAT_LABEL = { width: 90, height: 14 };
 const THROUGHPUT_LANES = [
   { samples: "download", area: "download" },
   { samples: "upload", area: "upload" },
@@ -304,7 +306,8 @@ export class ChartEngine {
   #retarget(): void {
     this.#dirty = true;
     this.#stopFrames ??= animate((now) => {
-      const more = this.#visible && this.render(now);
+      // Reduced motion draws each update once instead of following the clock.
+      const more = this.#visible && this.render(now) && !still();
       if (!more) this.#stopFrames = null;
       return more;
     });
@@ -630,22 +633,31 @@ export class ChartEngine {
             : [];
         })
       : [];
-    const phaseStats = this.#result
-      ? this.#phaseStats(data.resultRates).flatMap((stat) => {
-          const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
-          if (x1 <= x0) return [];
-          const y = this.#layout.throughputY(stat.bytesPerSec);
-          return [
-            {
-              lane: stat.lane,
-              tone: stat.area,
-              bytesPerSec: stat.bytesPerSec,
-              x: Math.min(x0 + 3, plot.right - 130),
-              y: y - 4 - 14 < plot.top ? y + 4 : y - 4 - 14,
-            },
-          ];
+    const phaseStats: ChartPresentation["phaseStats"][number][] = [];
+    // Left to right, a label sits above its line, else below; it moves past any it would cover or stays out.
+    const last = plot.right - STAT_LABEL.width;
+    for (const stat of this.#result ? this.#phaseStats(data.resultRates) : []) {
+      const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
+      if (x1 <= x0) continue;
+      const lineY = this.#layout.throughputY(stat.bytesPerSec);
+      const above = lineY - 4 - STAT_LABEL.height;
+      const place = (above < plot.top ? [lineY + 4] : [above, lineY + 4])
+        .map((y) => {
+          let x = Math.min(x0 + 3, last);
+          for (const other of phaseStats)
+            if (Math.abs(other.y - y) < STAT_LABEL.height)
+              x = Math.max(x, other.x + STAT_LABEL.width);
+          return { x, y };
         })
-      : [];
+        .find(({ x }) => x <= last);
+      if (place)
+        phaseStats.push({
+          lane: stat.lane,
+          tone: stat.area,
+          bytesPerSec: stat.bytesPerSec,
+          ...place,
+        });
+    }
     this.#onPresentation({
       layout: this.#layout,
       units: data.units,

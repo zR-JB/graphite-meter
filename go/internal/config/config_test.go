@@ -146,6 +146,8 @@ func TestValidate(t *testing.T) {
 			passwordAuth(c)
 			c.Auth.OIDCProviderName = "Auth\xffelia"
 		}},
+		{"server name escape", "GM_SERVER_NAME", func(c *Config) { c.ServerName = "bad\x1b[31mname" }},
+		{"long server location", "GM_SERVER_LOCATION", func(c *Config) { c.ServerLocation = strings.Repeat("a", 257) }},
 		{"clear public URL", "GM_AUTH_PUBLIC_URL", func(c *Config) {
 			passwordAuth(c)
 			c.Auth.PublicURL = "http://meter.example"

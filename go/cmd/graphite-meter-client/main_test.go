@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -429,7 +431,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 			launch()
 		}
 	}
-	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened {
+	if opened != 4 || m.edit != nil || m.auth == nil || !m.auth.opened || m.statusLabel() != "Checking sign-in" {
 		t.Fatalf("opened=%d edit=%v auth=%v", opened, m.edit != nil, m.auth)
 	}
 	for _, binding := range m.ShortHelp() {
@@ -437,12 +439,13 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 			t.Fatal("footer offered enter to a row while sign-in owns it")
 		}
 	}
-	if screen := view(m); !strings.Contains(screen, "ABCD") {
-		t.Fatalf("sign-in popup: %q", screen)
+	if screen := ansi.Strip(view(m)); !strings.Contains(screen, "ABCD") ||
+		!slices.Contains(strings.Split(screen, "\n"), pad(" "+pending.BrowserURL, 120)) {
+		t.Fatalf("sign-in link sits inside a frame: %q", screen)
 	}
 	seq := m.prepareSeq
 	m, _ = modelAndCmd(m.Update(press("esc")))
-	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != blocked || !strings.Contains(m.notice, "v") {
+	if m.auth != nil || m.prepareSeq == seq || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "v") {
 		t.Fatalf("esc did not cancel sign-in: auth=%v prepare=%v", m.auth, m.prepare)
 	}
 	if m, _ = modelAndCmd(m.Update(press("r"))); m.run != nil {
@@ -450,7 +453,7 @@ func TestSignInKeysOwnEnter(t *testing.T) {
 	}
 	m.auth = &signIn{pending: pending, since: time.Now()}
 	m, _ = modelAndCmd(m.Update(authTokenMsg{seq: m.prepareSeq, err: goclient.ErrApprovalExpired}))
-	if m.auth != nil || m.statusLabel() != "Test cannot start" || !strings.Contains(m.notice, "expired") {
+	if m.auth != nil || m.statusLabel() != "Sign in" || !strings.Contains(m.notice, "expired") {
 		t.Fatalf("expiry reads %q / %q", m.statusLabel(), m.notice)
 	}
 }
@@ -481,7 +484,7 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 	m.prepareSeq = 1
 	failed, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, err: remote}))
 	partial, _ := modelAndCmd(m.Update(preparationMsg{seq: 1, run: preparedFixture(nil, remote), err: remote}))
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	m.run.err, m.run.outcome = remote, goclient.OutcomeFailed
 	multi := runModel(t, "a", "b")
 	failure := goclient.ServerFailure{ServerID: "b", Scope: "throughput", Err: remote}
@@ -490,8 +493,8 @@ func TestRemoteErrorsCannotWriteTerminalControls(t *testing.T) {
 		{Kind: goclient.EventServerFailure, ServerID: "b", Failure: &failure},
 	}}))
 	views := []string{view(failed), view(partial), view(m), m.finalReport(), view(multi), multi.detailsView(120, true)}
-	for _, view := range views {
-		if !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
+	for i, view := range views {
+		if i < 4 && !strings.Contains(view, "closed") || strings.ContainsAny(view, "\a\r\u009b") ||
 			strings.Contains(view, "\x1b]") {
 			t.Fatalf("remote error reached the terminal unfiltered: %q", view)
 		}
@@ -522,5 +525,18 @@ func TestCertificateErrorsNameTheSkipSetting(t *testing.T) {
 	}
 	if got := errorText(errors.New("refused")); strings.Contains(got, "Skip TLS") {
 		t.Fatalf("an unrelated failure suggests skipping verification: %q", got)
+	}
+}
+
+func TestTransportErrorsReadAsReasons(t *testing.T) {
+	t.Parallel()
+	refused := &url.Error{Op: "Get", URL: "http://127.0.0.1:7246/servers?cb=1", Err: &net.OpError{Op: "dial",
+		Net: "tcp", Err: syscall.ECONNREFUSED}}
+	lost := fmt.Errorf("latency channel failed: %w", &url.Error{Op: "Post", URL: "http://127.0.0.1:7246/upload",
+		Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}})
+	for err, want := range map[error]string{refused: "Server could not be reached", lost: "Connection lost"} {
+		if got := errorText(err); got != want {
+			t.Errorf("errorText(%v) = %q, want %q", err, got, want)
+		}
 	}
 }

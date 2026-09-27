@@ -51,8 +51,10 @@ func directionLabel(r goclient.Result) string {
 }
 
 const (
-	notStarted = "Not started"
-	blocked    = "Test cannot start"
+	notStarted     = "Not started"
+	blocked        = "Test cannot start"
+	startFailed    = "Test could not start"
+	checkingSignIn = "Checking sign-in"
 )
 
 type pathState int
@@ -62,6 +64,7 @@ const (
 	pathChecking
 	pathStale
 	pathFailed
+	pathSignIn
 )
 
 var pathLabels = map[pathState]string{
@@ -69,6 +72,7 @@ var pathLabels = map[pathState]string{
 	pathChecking: "Checking",
 	pathStale:    "Recheck needed",
 	pathFailed:   "Failed",
+	pathSignIn:   "Sign in",
 }
 
 var outcomeLabels = map[goclient.Outcome]string{

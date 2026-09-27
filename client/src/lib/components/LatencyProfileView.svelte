@@ -43,9 +43,10 @@
   const live = $derived(variant === "bare");
   const ticks = handoff(
     () =>
-      [scale.min, scale.min + scale.span / 2, scale.min + scale.span].map(
-        (tick) => ({ left: pos(tick, scale), text: fmtGaugeTick(tick) }),
-      ),
+      [0, scale / 2, scale].map((tick) => ({
+        left: pos(tick, scale),
+        text: fmtGaugeTick(tick),
+      })),
     (ticks) => ticks.map((tick) => tick.text).join(),
   );
 
@@ -111,7 +112,7 @@
       1,
       Math.max(0, (x - rect.left - EDGE) / (rect.width - 2 * EDGE)),
     );
-    const metric = nearestMetric(lane, scale.min + ratio * scale.span);
+    const metric = nearestMetric(lane, ratio * scale);
     const px =
       metric && atPct(pos(metricValue(lane, metric), scale), rect.width);
     if (metric && Math.abs(px! - (x - rect.left)) <= 12)

@@ -69,7 +69,7 @@ func (u *Upload) serve(w http.ResponseWriter, r *http.Request, bound time.Durati
 		writeLaneRefusal(w, wire.LaneIdle, http.StatusRequestTimeout)
 		return
 	case err != nil:
-		return
+		panic(http.ErrAbortHandler)
 	}
 	noStoreJSON(w)
 	_, _ = io.WriteString(w, `{"bytes":`+strconv.FormatInt(n, 10)+`}`)

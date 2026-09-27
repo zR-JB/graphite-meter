@@ -64,6 +64,7 @@ func (s styles) grid(headers []string, rows [][]string, w int) string {
 		}
 		return strings.Join(lines, "\n")
 	}
+	lines = append(lines, s.muted.Render(headers[0]))
 	for _, row := range rows {
 		var facts []string
 		for i, cell := range row[1:] {
@@ -236,7 +237,9 @@ func (s styles) chart(lines []series, marks []mark, ax axis, span float64, w, h 
 		scale := ""
 		switch r {
 		case 0:
-			scale = ax.label(top * ax.scale)
+			if peak > 0 {
+				scale = ax.label(top * ax.scale)
+			}
 		case rows - 1:
 			scale = "0"
 		}

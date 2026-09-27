@@ -18,7 +18,7 @@ function request(): void {
 function run(now: number): void {
   frame = 0;
   lastFrame = now;
-  for (const task of tasks) if (!task(now) || still()) tasks.delete(task);
+  for (const task of tasks) if (!task(now)) tasks.delete(task);
   request();
 }
 

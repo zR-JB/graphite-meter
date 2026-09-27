@@ -19,7 +19,7 @@
   import { formatLatency, formatRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
-  import { STAGES } from "../runner/schedule";
+  import { planned, STAGES } from "../runner/schedule";
   import { handoff, type Handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
@@ -44,7 +44,8 @@
   const model = $derived(
     STAGES.map((key) => {
       const execution = store.stagePresentation[key];
-      const selected = store.config.stages[key];
+      // The run skips a stage without a duration, so the chip does too.
+      const selected = planned(store.config, key);
       const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
       const reason =

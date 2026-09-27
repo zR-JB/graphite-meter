@@ -14,7 +14,7 @@
   import RunButton from "./RunButton.svelte";
   import LatencyProfile from "./LatencyProfile.svelte";
   import ResultCards from "./ResultCards.svelte";
-  import { fmtSpeed, fmtMsTick } from "../format";
+  import { fmtSpeed } from "../format";
   import { gaugeLatency as latencyGauge } from "../presentation/scales";
   import { LiveReadout, liveTargets } from "../presentation/liveReadout.svelte";
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
@@ -34,11 +34,24 @@
     store.serverDetails?.selection ??
       catalogSelection(store.serverCatalog, store.selectedServers),
   );
+  // Who is in the run: the servers still measuring, counted like the result row.
+  const participants = $derived(
+    store.serverDetails
+      ? indicatedServers.filter(({ id }) =>
+          store.serverDetails!.participants.includes(id),
+        )
+      : indicatedServers,
+  );
+  const serverCount = $derived(
+    participants.length < indicatedServers.length
+      ? `${participants.length} of ${indicatedServers.length} servers`
+      : `${indicatedServers.length} servers`,
+  );
   const serverIndicator = $derived(
     store.isRunning
-      ? `Testing ${indicatedServers.length} servers`
+      ? `Testing ${serverCount}`
       : store.result
-        ? `Tested ${indicatedServers.length} servers`
+        ? `Tested ${serverCount}`
         : `${indicatedServers.length} servers selected`,
   );
   const phase = $derived(store.phase);
@@ -108,7 +121,7 @@
     if (msTicksActive)
       return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
         fraction,
-        label: fmtMsTick(gaugeLatency.scaleMs * fraction),
+        label: fmtGaugeTick(gaugeLatency.scaleMs * fraction),
       }));
     return GAUGE_LABEL_FRACTIONS.map((fraction) => ({
       fraction,
@@ -218,14 +231,14 @@
 </script>
 
 <section class="gauge-panel" data-phase={store.phase}>
-  <div class="instrument">
+  <div class="instrument" style:--results-height={`${resultsHeight.current}px`}>
     <div class="well stage">
       {#if indicatedServers.length > 1}
         <div class="server-indicator">
           <Icon name="server" />
           <span
             {@attach tooltip(() =>
-              indicatedServers.map((server) => server.name).join(", "),
+              participants.map((server) => server.name).join(", "),
             )}>{serverIndicator}</span
           >
         </div>
@@ -331,16 +344,13 @@
 </section>
 
 <style>
+  /* The container .instrument queries; a block, as a flex box here kept a stale height in Chromium. */
   .gauge-panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    /* Here, not on .instrument: a container query only styles descendants. */
     container: viz / inline-size;
   }
-  /* The dial yields to the rest of the stage (chrome, controls, cards, chart) before the page would scroll. */
+  /* The dial yields to the rest of the stage (chrome, controls, results, chart) before the page would scroll. */
   .instrument {
-    --rest-height: 575px;
+    --rest-height: calc(435px + var(--results-height));
     --gauge-well-height: clamp(
       200px,
       min(35svh, 100svh - var(--rest-height)),
@@ -380,7 +390,11 @@
   }
   @media (min-width: 1800px) and (min-height: 1000px) {
     .instrument {
-      --gauge-well-height: clamp(360px, min(43svh, 32cqw), 560px);
+      --gauge-well-height: clamp(
+        280px,
+        min(43svh, 32cqw, 100svh - var(--rest-height)),
+        560px
+      );
     }
   }
   @media (max-width: 759px) and (orientation: portrait) {
@@ -447,7 +461,7 @@
   }
   @media (max-height: 800px) {
     .instrument {
-      --rest-height: 505px;
+      --rest-height: calc(365px + var(--results-height));
       row-gap: var(--space-2);
     }
     .instrument-controls {
@@ -588,11 +602,13 @@
     color: var(--tone);
     font-size: var(--type-xs);
   }
-  /* A separate footer keeps transient notes from overlapping the dial. */
+  /* A separate footer keeps notes off the dial; it holds two lines, so a longer note never shrinks the ring. */
   .gauge-footer {
     display: grid;
     align-items: center;
-    min-height: 44px;
+    min-height: calc(
+      var(--space-2) + var(--space-3) + var(--space-1) + 2.7 * var(--type-sm)
+    );
     padding: var(--space-2) var(--space-3) var(--space-3);
   }
   .gauge-notes {

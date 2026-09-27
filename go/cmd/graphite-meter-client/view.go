@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -58,7 +59,7 @@ func (m model) layout() frame {
 		body = m.st.panel(title, content, inner, 0)
 	case m.auth != nil && m.run == nil:
 		title, content := m.signInView(inner - 4)
-		body = m.st.panel(title, content, inner, 0)
+		body = m.st.panel(title, content, inner, 0) + "\n\n" + m.signInLink(inner)
 	case m.run != nil:
 		body = m.runView(inner, f.bodyH)
 	default:
@@ -276,7 +277,8 @@ func (m model) planView(w int) string {
 	}
 	for _, r := range rows {
 		glyph := map[pathState]string{pathReady: m.st.ok.Render("●"), pathChecking: m.spin.View(),
-			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗")}[r.state]
+			pathStale: m.st.warn.Render("○"), pathFailed: m.st.err.Render("✗"),
+			pathSignIn: m.st.warn.Render("○")}[r.state]
 		name := pad(serverLabel(r.server.Name, r.server.Location), nameWidth)
 		lines = append(lines, glyph+" "+name+"  "+m.st.text.Render(pathLabels[r.state]))
 		if r.detail != "" {
@@ -340,34 +342,42 @@ func (m model) signInView(w int) (string, string) {
 	if issuer == "" {
 		issuer = m.cfg.BaseURL
 	}
-	status := "Open sign-in page"
+	status := m.st.accent.Render("Open the sign-in page below")
 	if m.auth.opened {
-		status = "Waiting for approval…"
+		status = m.spin.View() + " " + m.st.accent.Render("Waiting for approval…")
 	}
 	waited := m.now.Sub(m.auth.since)
 	code := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(m.st.border.GetForeground()).
 		Padding(0, 1).Render(m.st.value.Render(m.auth.pending.Code))
 	lines := []string{
-		m.spin.View() + " " + m.st.accent.Render(status),
+		status,
 		lipgloss.JoinHorizontal(lipgloss.Center, m.st.text.Render("Match this code "), code),
-		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s",
-			fmtClock(waited), fmtClock(goclient.AuthorizationTimeout-waited))), "",
-		m.st.muted.Width(w).Render(m.auth.pending.BrowserURL),
+		m.st.muted.Render(fmt.Sprintf("waited %s · expires in %s", fmtClock(waited),
+			fmtSetting((goclient.AuthorizationTimeout - waited).Round(time.Second)))),
 	}
 	return "Sign in to " + issuer, strings.Join(lines, "\n")
+}
+
+func (m model) signInLink(w int) string {
+	link := m.auth.pending.BrowserURL
+	lines := strings.Split(ansi.Hardwrap(link, w, false), "\n")
+	for i, line := range lines {
+		lines[i] = m.st.accent.Hyperlink(link).Render(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m model) runView(w, h int) string {
 	results := ""
 	if !m.run.live() {
-		results = m.resultsView(w - 4).view()
+		results = m.resultsView(w-4, "Latency").view()
 	}
 	if results == "" {
 		return m.stageView(w, h)
 	}
 	title := "Results"
 	if m.multipleRunServers() {
-		title += " · Combined throughput · latency to " + m.serverName(m.run.focus)
+		title += " · latency to " + m.serverName(m.run.latencyServer())
 	}
 	bottom := m.st.panel(title, results, w, 0)
 	if rw := max(lipgloss.Width(results), lipgloss.Width(title)+2) + 4; w >= twoColumnMin && w-1-rw >= 30 {
@@ -442,7 +452,7 @@ func (m model) testFields(w int) []string {
 			t := server.Throughput
 			throughputs = appendUnique(throughputs, connectionSummary(t.Transport, t.Protocol, t.TLS(), false))
 			streams = streamsLabel(m.cfg.TransferStreams, t.Protocol, t.Transport)
-			if l := server.LatencyTarget; server.Server.ID == r.focus && l != nil {
+			if l := server.LatencyTarget; server.Server.ID == r.latencyServer() && l != nil {
 				latency = connectionSummary(l.Transport, l.Protocol, l.TLS(), true)
 			}
 		}
@@ -538,11 +548,11 @@ func (m model) liveView(w, h int) string {
 		out = append(out, m.readings(stage))
 	}
 	if m.multipleRunServers() {
-		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.focus)+" · l switches server"))
+		out = append(out, m.st.muted.Render("Latency to "+m.serverName(r.latencyServer())+" · l switches server"))
 	}
 	chartH := h - len(out)
 	span := m.now.Sub(r.started).Seconds()
-	rtt := []series{{m.st.rtt, r.rtt[r.focus].points}}
+	rtt := []series{{m.st.rtt, r.rtt[r.latencyServer()].points}}
 	switch {
 	case chartH < 5:
 	case len(lines) == 0:
@@ -577,10 +587,10 @@ func (m model) readings(stage goclient.StagePlan) string {
 			label = "Idle latency "
 		}
 		value := m.st.muted.Render(missing)
-		if sample, ok := r.latest[r.focus]; ok {
+		if sample, ok := r.latest[r.latencyServer()]; ok {
 			value = m.st.value.Render(fmtMs(sample.RTT))
 		}
-		if streak := r.timeouts[r.focus]; streak > 0 {
+		if streak := r.timeouts[r.latencyServer()]; streak > 0 {
 			style := m.st.warn
 			if streak >= 3 {
 				style = m.st.err
@@ -604,30 +614,43 @@ func (r results) view() string {
 }
 
 func (m model) note(label string, facts []string, w int) []string {
-	var lines []string
-	for i, line := range wrapParts(facts, w-2) {
-		if i == 0 {
-			line = label + ": " + line
-			if lipgloss.Width(line) > w {
-				lines = append(lines, m.st.muted.Render(label+":"))
-				line = "  " + strings.TrimPrefix(line, label+": ")
-			}
-		} else {
+	lines := []string{label + ":"}
+	if first := label + ": " + facts[0]; lipgloss.Width(first) <= w-2 {
+		lines, facts = nil, append([]string{first}, facts[1:]...)
+	}
+	for _, line := range wrapParts(facts, w-2) {
+		if len(lines) > 0 {
 			line = "  " + line
 		}
-		lines = append(lines, m.st.muted.Render(line))
+		lines = append(lines, line)
+	}
+	for i, line := range lines {
+		lines[i] = m.st.muted.Render(line)
 	}
 	return lines
 }
 
 func (r *runState) unmeasured(i int) string {
-	if r.stages[i].state == stageStopped {
-		return "Stopped"
-	}
-	return missing
+	return cmp.Or(stageStatusLabels[r.stages[i].state], missing)
 }
 
-func (m model) resultsView(w int) results {
+func (r *runState) failureReason(stage goclient.Stage, err error) goclient.FailureReason {
+	if r.details != nil && errors.Is(err, context.Canceled) {
+		failures := r.details.Failures
+		i := slices.IndexFunc(failures, func(f goclient.ServerFailure) bool {
+			return f.Stage == stage && f.ServerID == r.latencyServer()
+		})
+		if i < 0 {
+			i = slices.IndexFunc(failures, func(f goclient.ServerFailure) bool { return f.Stage == stage })
+		}
+		if i >= 0 {
+			return failures[i].Reason
+		}
+	}
+	return goclient.ReasonOf(err)
+}
+
+func (m model) resultsView(w int, latencyHeading string) results {
 	r := m.run
 	latency := r.latencyPopulations()
 	var idle *goclient.LatencyStats
@@ -636,22 +659,26 @@ func (m model) resultsView(w int) results {
 	}
 	var out results
 	var throughput, latencyRows [][]string
-	failed := func(label string, err error) {
+	failed := func(stage goclient.Stage, label string, err error) {
 		switch {
-		case errors.Is(err, context.Canceled):
+		case err == nil:
+		case errors.Is(err, context.Canceled) && r.outcome == goclient.OutcomeStopped:
 			out.failures = append(out.failures, m.st.warn.Render(label+" stopped."))
-		case err != nil:
-			out.failures = append(out.failures, m.st.err.Render(label+": "+failureLabels[goclient.ReasonOf(err)]))
+		default:
+			out.failures = append(out.failures, m.st.err.Render(label+": "+failureLabels[r.failureReason(stage, err)]))
 		}
 	}
 	measured := false
 	for i, stage := range r.plan {
 		if len(stage.Directions) > 0 {
 			for _, result := range r.results {
-				if result.Stage == stage.Name {
-					out.notes = append(out.notes, m.note(directionLabel(result), throughputFacts(result, false), w)...)
-					failed(directionLabel(result), result.Err)
+				if result.Stage != stage.Name {
+					continue
 				}
+				if !result.Unavailable || result.TotalBytes > 0 {
+					out.notes = append(out.notes, m.note(directionLabel(result), throughputFacts(result, false), w)...)
+				}
+				failed(stage.Name, directionLabel(result), result.Err)
 			}
 			rates := r.meanRates(stage.Name)
 			measured = measured || rates != ""
@@ -681,7 +708,7 @@ func (m model) resultsView(w int) results {
 				label, facts := reflectorTimingFacts(timing)
 				out.notes = append(out.notes, m.note(label, facts, w)...)
 			}
-			failed(label, population.Err)
+			failed(stage.Name, label, population.Err)
 		case len(stage.Directions) == 0 && !r.live():
 			latencyRows = append(latencyRows, []string{compactPopulation(stage.Name), r.unmeasured(i)})
 		}
@@ -692,13 +719,23 @@ func (m model) resultsView(w int) results {
 	if out.added {
 		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
+	combined := ""
+	if m.multipleRunServers() {
+		combined = "Combined"
+	}
 	if len(throughput) > 0 {
-		out.throughput = m.st.grid([]string{"Throughput", ""}, throughput, w)
+		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
-		headers := []string{"Latency", "Median", "Added", "P95", "Jitter", "Probe timeouts"}
+		headers := []string{latencyHeading, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
 		for i, row := range latencyRows {
 			latencyRows[i] = append(row, make([]string, len(headers)-len(row))...)
+			if !out.added {
+				latencyRows[i] = slices.Delete(latencyRows[i], 2, 3)
+			}
+		}
+		if !out.added {
+			headers = slices.Delete(headers, 2, 3)
 		}
 		out.latency = m.st.grid(headers, latencyRows, w)
 	}
@@ -709,9 +746,16 @@ func (m model) finalReport() string {
 	if m.run == nil || m.running() {
 		return ""
 	}
+	run := *m.run
+	run.pick = ""
+	m.run = &run
 	w, _ := m.size()
 	blocks := []string{m.reportHeader()}
-	if results := m.resultsView(w); results.view() != "" {
+	heading := "Latency"
+	if m.multipleRunServers() {
+		heading += " to " + m.serverName(m.run.latencyServer())
+	}
+	if results := m.resultsView(w, heading); results.view() != "" {
 		blocks = append(blocks, m.throughputReport(w), results.latency, strings.Join(results.failures, "\n"),
 			m.reportNotes(w, results.added))
 	}

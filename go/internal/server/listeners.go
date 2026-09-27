@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -114,9 +115,10 @@ func publicH3Port(cfg *config.Config) string {
 	return port
 }
 
-func baseServer(handler http.Handler, protocols *http.Protocols, timeout time.Duration) *http.Server {
+func baseServer(handler http.Handler, protocols *http.Protocols, timeout time.Duration, peers *peerLog) *http.Server {
 	return &http.Server{Handler: boundedRequest(handler, timeout), ReadTimeout: timeout, WriteTimeout: timeout,
-		IdleTimeout: timeout, MaxHeaderBytes: 32 << 10, Protocols: protocols, HTTP2: &http.HTTP2Config{
+		IdleTimeout: timeout, MaxHeaderBytes: 32 << 10, Protocols: protocols, ErrorLog: log.New(peers, "", 0),
+		HTTP2: &http.HTTP2Config{
 			// Bound upload DATA frames so control requests can share a saturated connection.
 			MaxReadFrameSize: 16 << 10,
 			// The 1 MiB defaults cap an upload at 1 MiB per RTT; buffers fill lazily.
@@ -204,6 +206,7 @@ type listenerBuild struct {
 	cm          *certificateManager
 	connections *connectionAdmission
 	spa         http.Handler
+	peers       peerLog
 	services    []service
 	opened      []io.Closer
 	sockets     listenerSockets
@@ -262,7 +265,7 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 		spa = b.spa
 	}
 	s := baseServer(b.authn.Enforce(newMux(b.ctx, b.e, l.topo, spa, b.authn), l.listener), protocols,
-		b.e.controlTimeout)
+		b.e.controlTimeout, &b.peers)
 	ln, err := b.sockets.listenTCP(l.addr)
 	if err != nil {
 		return err
@@ -283,18 +286,55 @@ func (b *listenerBuild) addTCP(l tcpListener) error {
 	return nil
 }
 
-func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Listener) error {
+func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Listener, peers *peerLog) error {
 	for {
 		conn, err := ln.Accept(ctx)
 		if err != nil {
 			return err
 		}
 		go func() {
-			if err := wt.ServeQUICConn(conn); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Printf("[gm:h3] webtransport connection: %v", err)
+			err := wt.ServeQUICConn(conn)
+			var closed *quic.ApplicationError
+			var idle *quic.IdleTimeoutError
+			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.As(err, &idle) &&
+				!(errors.As(err, &closed) && closed.Remote) {
+				peers.printf("[gm:h3] webtransport connection: %q", err)
 			}
 		}()
 	}
+}
+
+// peerLog holds connection failures any unauthenticated peer can cause to one line a minute.
+type peerLog struct {
+	mu         sync.Mutex
+	next       time.Time
+	suppressed int
+}
+
+func (p *peerLog) printf(format string, args ...any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	if now.Before(p.next) {
+		p.suppressed++
+		return
+	}
+	if p.suppressed > 0 {
+		format += fmt.Sprintf(" (%d more peer connection failures since)", p.suppressed)
+	}
+	p.next, p.suppressed = now.Add(time.Minute), 0
+	log.Printf(format, args...)
+}
+
+// Write takes net/http's error log: panics and accept failures are the server's, the rest mostly a peer's doing.
+func (p *peerLog) Write(b []byte) (int, error) {
+	line := strings.TrimSuffix(string(b), "\n")
+	if strings.Contains(line, "panic serving") || strings.HasPrefix(line, "http: Accept error") {
+		log.Print(line)
+	} else {
+		p.printf("[gm:http] %s", line)
+	}
+	return len(b), nil
 }
 
 // quicUse closes a handlerless connection: sessions-only at once, else after idle (a stalled stream stops H3's timer).
@@ -457,7 +497,7 @@ func (b *listenerBuild) addH3() error {
 	b.services = append(b.services,
 		service{name: "HTTP/3: probe, transfers, progress, WebTransport", addr: b.cfg.Native.H3, network: "udp",
 			run: func() error {
-				err := serveWebTransport(b.ctx, wt, quicListener)
+				err := serveWebTransport(b.ctx, wt, quicListener, &b.peers)
 				if errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) ||
 					errors.Is(err, context.Canceled) {
 					return nil

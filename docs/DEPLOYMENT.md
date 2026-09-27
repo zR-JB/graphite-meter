@@ -42,7 +42,8 @@ export GM_PUBLIC_HOST=meter.example.com GM_CERT_NAME=meter.example.com GM_CERTIF
 docker compose -f container/docker-compose.yml -f container/docker-compose.tls.yml up -d
 ```
 
-It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only. For issuance and renewal, see the
+It publishes TCP 7247–7249 and UDP 7249 and mounts the tree read-only; the key must be readable by the
+[container user](#container-user). For issuance and renewal, see the
 [TLS Quadlet](../container/quadlet/graphite-meter-tls/README.md) (Cloudflare DNS-01).
 
 ### Authentication overlay
@@ -52,7 +53,8 @@ the host (its comments cover OIDC, hybrid and a proxy container). It needs Compo
 on `127.0.0.1` only and trusts only the network gateway the proxy's connections arrive from; stack no public ports
 on it, because loopback and IPv6 clients of a published port arrive from that gateway too.
 
-1. Save one [password hash](#authentication) line to `/etc/graphite-meter/auth-password-hash`.
+1. Save one [password hash](#authentication) line to `/etc/graphite-meter/auth-password-hash`, owned by the
+   [container user](#container-user).
 2. Edit the overlay's public URL and secret path.
 3. Configure [proxy forwarding](#reverse-proxies), then start both files:
 
@@ -69,6 +71,26 @@ mise run server-build-prod && ./go/graphite-meter                               
 
 Stop any container already bound to 7246 first. Source builds carry a development identity; release automation
 stamps the version and source revision.
+
+### Container user
+
+The image runs as the unprivileged user `65532:65532` and writes nothing. Mounted keys and secrets must be readable
+by it:
+
+- **Docker native TLS**: certbot keys are root `0600`; give the group read once and certbot keeps it on renewal.
+
+  ```sh
+  sudo chgrp -R 65532 /etc/letsencrypt/live /etc/letsencrypt/archive
+  sudo chmod -R g+rX /etc/letsencrypt/live /etc/letsencrypt/archive
+  ```
+
+- **Docker secrets**: `sudo chown 65532:65532 FILE && sudo chmod 0400 FILE`.
+- **Quadlet**: nothing. Podman secrets are world-readable inside the container, and the TLS and Tailscale units
+  map your user, which owns their keys, to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
+
+Rootful Docker gives container root the host's root. *Rootless Podman already maps root to my user, so why a
+non-root user?* Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
+files; the keep-id units run as your user, as root did before.
 
 ## Native listeners
 
@@ -205,7 +227,9 @@ the default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behi
 
 Sign-in is rate limited per client address (an IPv6 /64 whose /56 and /48 share two and four times the limit): 5
 password attempts per minute, at most 60 wrong passwords per minute across all clients, and 10 OIDC code exchanges
-and 10 sign-in approval pages per minute.
+and 10 sign-in approval pages per minute. A password sign-in also leaves a 30-day device cookie (signed with the
+password hash, so changing the password forgets every device); a browser holding it keeps its own address's limit but
+skips the bounds all clients share, so others' attempts cannot lock a known operator out.
 
 **Terminal clients** never see the operator password: the client shows a short code and an approval URL, and after
 browser approval receives an in-memory, measurement-only grant bound to that session and HTTPS origin. Sign-out
@@ -258,7 +282,8 @@ terminal and `NO_COLOR` is unset.
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
 group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
 current screen. **Latency server** chooses whose latency is the run's result (Automatic: the lowest preparation
-round trip); every selected server is still probed, and `l` switches the server shown.
+round trip); if that server leaves the test, a surviving one takes over. Every selected server is still probed, and
+`l` switches the server shown; the printed report keeps the result's.
 
 | Key | Where | Action |
 | --- | --- | --- |
@@ -272,7 +297,7 @@ round trip); every selected server is still probed, and `l` switches the server 
 | enter (r), esc | finished | Run again; back to setup. |
 | d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
 | ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. |
+| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 
@@ -281,6 +306,10 @@ treats the engine version as metadata, not a compatibility test. Existing deploy
 add a [catalogue](SERVERS.md). Browser history saves [schema 5](MEASUREMENTS.md#saved-history) and still reads
 schema 4; older records stay in storage but are skipped. Unknown or obsolete browser preferences fall back to
 defaults.
+
+The image now runs as [`65532:65532`](#container-user). Before pulling it, make Docker-mounted keys and secrets
+readable by that user and reinstall the TLS and Tailscale Quadlet units; their old copies, auto-updated or not,
+cannot read their keys.
 
 ## Troubleshooting
 
@@ -315,15 +344,15 @@ Environment loads first; a flag overrides it. `graphite-meter -h` lists every fl
 | `GM_PUBLIC_ORIGINS` | `--public-origins` | empty | Negotiated origins (or `self`) for throughput and latency. |
 | `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | empty | Negotiated throughput-only origins. |
 | `GM_PUBLIC_LATENCY_ORIGINS` | `--public-latency-origins` | empty | WebSocket latency-only origins. |
-| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients. |
-| `GM_SERVER_LOCATION` | `--location` | empty | Location label. |
+| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters. |
+| `GM_SERVER_LOCATION` | `--location` | empty | Location label, with the same limits. |
 | `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false` | Default for saving completed browser results on the device. |
 | `GM_VERBOSE` | `--verbose` | `false` | Log per-second throughput, admission counters and authentication debug lines. |
 | `GM_MAX_ACTIVE_MEASUREMENTS` | `--max-active-measurements` | `256` | Concurrent measurement handlers. |
 | `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32` | Handlers per client identity. |
 | `GM_MAX_ACTIVE_SESSIONS` | `--max-active-sessions` | `64` | WebTransport sessions, a share of the handler pool. |
 | `GM_MAX_SESSIONS_PER_CLIENT` | `--max-sessions-per-client` | `8` | WebTransport sessions per client identity. |
-| `GM_MAX_CONNECTIONS` | `--max-connections` | `512` | Concurrent TCP and QUIC connections. |
+| `GM_MAX_CONNECTIONS` | `--max-connections` | `4096` | Concurrent TCP and QUIC connections. |
 | `GM_MAX_CONNECTIONS_PER_CLIENT` | `--max-connections-per-client` | `64` | Connections per direct client. |
 | `GM_MAX_OPERATION_DURATION` | `--max-operation-duration` | `5m` | Request-shaped measurement lifetime. |
 | `GM_MAX_SESSION_DURATION` | `--max-session-duration` | `2h` | WebTransport transfer session lifetime. |

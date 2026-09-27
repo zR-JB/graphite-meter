@@ -59,6 +59,7 @@ func (s *Service) passwordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	s.rotateSuppliedSession(r, sess)
 	issueSessionCookies(w, raw, sess)
+	s.issueDeviceCookie(w)
 	s.count(countLocal)
 	dest := "/"
 	if challenge := r.FormValue("challenge"); validChallenge(challenge) {

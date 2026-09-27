@@ -9,12 +9,24 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 const maxCatalogBytes = 64 << 10
+
+// PublishedCatalog is the catalogue as served, with this server's own name and location as self.
+func (c Config) PublishedCatalog() wire.ServerCatalog {
+	catalog := c.ServerCatalog
+	if len(catalog.Servers) == 0 {
+		catalog = wire.SingletonCatalog()
+	}
+	catalog.Servers = slices.Clone(catalog.Servers)
+	catalog.Servers[0].Name, catalog.Servers[0].Location = c.ServerName, c.ServerLocation
+	return catalog
+}
 
 func loadServerCatalog() (wire.ServerCatalog, error) {
 	raw, inline := os.LookupEnv("GM_SERVER_CATALOG")
