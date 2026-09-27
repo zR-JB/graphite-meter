@@ -16,7 +16,6 @@ const (
 	reasonSessionCapacity  reason = "session_capacity"
 
 	reasonProviderNotReady      reason = "provider_not_ready"
-	reasonClientAddress         reason = "client_address"
 	reasonTransactionCapacity   reason = "transaction_capacity"
 	reasonExchangeRateLimited   reason = "exchange_rate_limited"
 	reasonCallbackParameters    reason = "callback_parameters"

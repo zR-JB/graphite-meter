@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -88,22 +89,31 @@ func TestCertificateValidation(t *testing.T) {
 	}
 }
 
-func TestCertificateReloadKeepsLastValid(t *testing.T) {
-	now := time.Now()
-	dir := t.TempDir()
-	cert, key := writeCertificate(t, dir, "live", "meter.example", now.Add(-time.Hour), now.Add(time.Hour))
-	m, err := newCertificateManager(tlsTestConfig(cert, key))
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := m.current.Load()
-	if err := os.WriteFile(cert, []byte("incomplete renewal"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.reload(now); err == nil {
-		t.Fatal("incomplete renewal accepted")
-	}
-	if m.current.Load() != previous {
-		t.Fatal("last valid certificate replaced")
-	}
+func TestCertificateRenewal(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		now := time.Now()
+		dir := t.TempDir()
+		cert, key := writeCertificate(t, dir, "live", "meter.example", now.Add(-time.Hour), now.Add(time.Hour))
+		m, err := newCertificateManager(tlsTestConfig(cert, key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		go m.run(t.Context())
+		first := m.current.Load()
+		if err := os.WriteFile(cert, []byte("incomplete renewal"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(certPollInterval)
+		synctest.Wait()
+		if m.current.Load() != first {
+			t.Fatal("an incomplete renewal replaced the last valid certificate")
+		}
+		renewed := now.Add(48 * time.Hour).Truncate(time.Second)
+		writeCertificate(t, dir, "live", "meter.example", now.Add(-time.Hour), renewed)
+		time.Sleep(certPollInterval)
+		synctest.Wait()
+		if got := m.current.Load(); !got.Leaf.NotAfter.Equal(renewed) {
+			t.Fatalf("serving a certificate until %v, want the renewal until %v", got.Leaf.NotAfter, renewed)
+		}
+	})
 }

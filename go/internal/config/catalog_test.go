@@ -58,7 +58,8 @@ func TestOriginCatalogueStableIdentityAndSources(t *testing.T) {
 	clearConfigEnv(t)
 	t.Setenv("GM_SERVER_CATALOG", `{"defaultSelection":["remote"],"servers":[{"id":"remote","name":"Remote",`+
 		`"url":"https://EXAMPLE.net:443","additionalOrigins":["https://transfer.example.net"]}]}`)
-	c, err := Load()
+	c := Default()
+	err := c.LoadEnv()
 	if got := c.ServerCatalog; err != nil || len(got.Servers) != 2 || got.Servers[0].ID != "self" ||
 		got.DefaultSelection[0] != "remote" || got.Servers[1].URL != "https://example.net" {
 		t.Fatalf("catalogue = %+v, %v", got, err)

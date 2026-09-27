@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/quic-go/webtransport-go"
@@ -15,6 +16,8 @@ import (
 
 type muxTopology struct {
 	spa, discovery, latency, transfers, bootstrap bool
+	// control mounts the upload and ticket routes alone, as browsers may fetch them over an H3 origin's TCP side.
+	control bool
 	// requiredProto confines transfer routes to one HTTP major version; 0 accepts any.
 	requiredProto int
 	wt            *webtransport.Server
@@ -39,10 +42,12 @@ func newMux(ctx context.Context, e *endpoints, topo muxTopology, spa http.Handle
 	} else {
 		m.http(route.Probe, e.probe, 0)
 	}
+	proto := topo.requiredProto
 	if topo.transfers {
-		proto := topo.requiredProto
 		m.http(route.Download, e.download.Handler(e.idleBound), proto)
 		m.http(route.Upload, e.upload.Handler(e.idleBound), proto)
+	}
+	if topo.transfers || topo.control {
 		m.http(route.UploadSession, http.HandlerFunc(e.upload.ServeSession), proto)
 		m.http(route.UploadCheckpoint, http.HandlerFunc(e.upload.ServeCheckpoint), proto)
 		m.http(route.UploadProgress, http.HandlerFunc(e.upload.ServeProgress), proto)
@@ -143,7 +148,7 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 			http.Error(w, "webtransport upgrade failed", http.StatusBadRequest)
 			return
 		}
-		ended := webTransportSession(r)
+		ended, cut := webTransportSession(r)
 		ctx, cancel := linkedContext(m.ctx, r.Context(), sess.Context())
 		defer cancel()
 		ctx, live := endpoint.WatchIdle(ctx, m.e.idleBound)
@@ -152,6 +157,16 @@ func (m *mounter) webTransport(server *webtransport.Server, serve endpoint.Sessi
 			_ = sess.CloseWithError(webtransport.SessionErrorCode(end.WT), end.Reason)
 			ended(end.WT == 0)
 		}()
+		// SendDatagram ignores ctx, so a peer that stops acknowledging could hold a flood past its end.
+		served := make(chan struct{})
+		defer close(served)
+		context.AfterFunc(ctx, func() {
+			select {
+			case <-served:
+			case <-time.After(wtCloseLinger):
+				cut()
+			}
+		})
 		serve(ctx, sess, r, live)
 	})
 }

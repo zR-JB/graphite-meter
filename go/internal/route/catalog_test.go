@@ -1,27 +1,15 @@
 package route
 
 import (
-	"os"
-	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestCatalogMatchesCrossLanguageRoutes(t *testing.T) {
-	data, err := os.ReadFile("../../../api/routes.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
 	seen := make(map[string]bool)
-	for line := range strings.SplitSeq(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		fields := strings.Split(line, "|")
-		if len(fields) != 3 {
-			t.Fatalf("invalid route pin: %s", line)
-		}
-		path, kind := strings.TrimSpace(fields[1]), strings.TrimSpace(fields[2])
+	for _, row := range apipin.Rows(t, "routes.txt", 3) {
+		path, kind := row[1], row[2]
 		if seen[path] {
 			t.Fatalf("duplicate pinned route %q", path)
 		}

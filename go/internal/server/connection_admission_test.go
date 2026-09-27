@@ -17,6 +17,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 	"github.com/zR-JB/graphite-meter/go/internal/transport"
 )
 
@@ -129,14 +130,23 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	})
 }
 
-// Under load a QUIC Initial holds a connection slot only once Retry has validated its source address.
+// Under load, or once its client holds a QUIC share, an Initial holds a slot only after Retry validated its source.
 func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 	_, cm := protocolTestTLS(t)
-	for _, loaded := range []bool{false, true} {
-		t.Run(map[bool]string{false: "idle", true: "loaded"}[loaded], func(t *testing.T) {
-			a := newConnectionAdmission(4, 4, nil)
-			if loaded {
-				release, _ := a.acquire(testAddr("192.0.2.1:1"), false)
+	for name, tc := range map[string]struct {
+		held     []string
+		quic     bool
+		verified bool
+	}{
+		"idle":                   {},
+		"loaded":                 {[]string{"192.0.2.1:1", "192.0.2.2:1"}, false, true},
+		"client holds QUIC":      {[]string{"127.0.0.1:1"}, true, true},
+		"client holds TCP alone": {[]string{"127.0.0.1:1"}, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newConnectionAdmission(8, 4, nil)
+			for _, addr := range tc.held {
+				release, _ := a.acquire(testAddr(addr), tc.quic)
 				defer release()
 			}
 			pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -164,8 +174,8 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 				t.Fatalf("dial: %v", err)
 			}
 			defer conn.CloseWithError(0, "")
-			if got := <-verified; got != loaded {
-				t.Fatalf("admitted with a validated source = %v, want %v", got, loaded)
+			if got := <-verified; got != tc.verified {
+				t.Fatalf("admitted with a validated source = %v, want %v", got, tc.verified)
 			}
 		})
 	}
@@ -278,10 +288,35 @@ func TestStalledPeersReleaseTheirConnectionSlots(t *testing.T) {
 			t.Fatal(err)
 		}
 		res.Body.Close()
-		for start := time.Now(); build.connections.stats().active != 0; time.Sleep(10 * time.Millisecond) {
-			if time.Since(start) > released {
-				t.Fatal("an idle HTTP/3 connection held its slot")
-			}
+		testkit.Eventually(t, released, "an idle HTTP/3 connection gives its slot back",
+			func() bool { return build.connections.stats().active == 0 })
+	})
+	t.Run("h3 stalled headers", func(t *testing.T) {
+		cfg, build := startListeners(t, func(cfg *config.Config, sockets *testListenerSockets) {
+			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+		}, shape)
+		quicConfig := transport.NewQUICConfig()
+		quicConfig.KeepAlivePeriod = timeout / 4
+		conn, err := quic.DialAddr(t.Context(), cfg.Native.H3,
+			&tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}}, //nolint:gosec // test certificate
+			quicConfig)
+		if err != nil {
+			t.Fatal(err)
 		}
+		defer conn.CloseWithError(0, "")
+		str, err := conn.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := str.Write([]byte{0x01}); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-conn.Context().Done():
+		case <-time.After(released):
+			t.Fatal("a request stream stalled before its headers held its connection")
+		}
+		testkit.Eventually(t, released, "a closed HTTP/3 connection gives its slot back",
+			func() bool { return build.connections.stats().active == 0 })
 	})
 }

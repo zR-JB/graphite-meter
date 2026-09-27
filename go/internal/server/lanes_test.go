@@ -5,27 +5,23 @@ import (
 	"encoding/json/v2"
 	"io"
 	"net/http"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 func laneServer(t *testing.T, operation time.Duration) (*endpoints, *http.Client) {
-	ctx, cancel := context.WithCancel(t.Context())
 	cfg := config.Default()
 	cfg.MaxOperationDuration = operation
-	e := buildEndpoints(ctx, &cfg)
-	ln := newPipeListener()
-	srv := &http.Server{Handler: newMux(ctx, e, muxTopology{transfers: true}, nil, publicAuth(t))}
-	go func() { _ = srv.Serve(ln) }()
-	t.Cleanup(func() {
-		cancel()
-		_ = srv.Close()
-	})
-	return e, ln.client(t)
+	build, sockets := pipeServer(t, &cfg, nil)
+	return build.e, sockets[cfg.Native.H1].client(t)
 }
 
 // Shutdown drains measurements for its grace period, then cuts the ones still open.
@@ -72,6 +68,18 @@ func TestShutdownCutsLanesThatOutliveTheDrain(t *testing.T) {
 	})
 }
 
+func pinnedRefusal(t *testing.T, res *http.Response, name string) {
+	t.Helper()
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	rows := apipin.Rows(t, "uploadrefusals.txt", 3)
+	i := slices.IndexFunc(rows, func(row []string) bool { return row[0] == name })
+	if i < 0 || strconv.Itoa(res.StatusCode) != rows[i][2] || strings.TrimSpace(string(body)) != rows[i][1] ||
+		res.Header.Get("X-Graphite-Upload-Refusal") != name {
+		t.Fatalf("%s refusal = %d %q %v, not as pinned", name, res.StatusCode, body, res.Header)
+	}
+}
+
 // An upload lane answered 408 when idle, or closed at its lifetime, keeps its bytes.
 func TestHTTPUploadLaneEndings(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -108,11 +116,13 @@ func TestHTTPUploadLaneEndings(t *testing.T) {
 			_, _ = w.Write(make([]byte, 1024))
 			time.Sleep(wire.IdleBound + time.Second)
 		})
-		if err != nil || res.StatusCode != http.StatusRequestTimeout ||
-			res.Header.Get("X-Graphite-Upload-Refusal") != "idle" || counted(id) != 1024 {
-			t.Fatalf("stalled lane = %v %v, want 408 idle keeping its 1024 bytes", res, err)
+		if err != nil {
+			t.Fatal(err)
 		}
-		res.Body.Close()
+		pinnedRefusal(t, res, "idle")
+		if counted(id) != 1024 {
+			t.Fatal("the idle lane lost its 1024 bytes")
+		}
 		// The lifetime is also the answer's write deadline, so the lane closes, answered or not.
 		res, id, took, err := upload(func(w io.Writer) {
 			for range 6 {
