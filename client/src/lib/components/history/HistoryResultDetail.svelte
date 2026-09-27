@@ -238,7 +238,7 @@
 
     {#if profile.length}
       <section class="group" aria-labelledby={`result-${record.id}-latency`}>
-        <h3 class="caps" id={`result-${record.id}-latency`}>
+        <h3 id={`result-${record.id}-latency`}>
           Latency{#if multiple && latencyServer}<span class="name">
               · {serverLabel(latencyServer.server)}</span
             >{/if}
@@ -254,7 +254,7 @@
     <div class="facts">
       {#if accounting.length}
         <section class="group">
-          <h3 class="caps">
+          <h3>
             <span
               {@attach tooltip(() =>
                 accounting.some((lane) => lane.accountingComplete === false)
@@ -288,7 +288,7 @@
 
       {#each serverRows as row (row.id)}
         <section class="group">
-          <h3 class="caps">
+          <h3>
             Server{#if multiple}<span class="name"> · {row.name}</span>{/if}
           </h3>
           <dl class="kv" data-tip-group {@attach tipGroup}>
@@ -333,7 +333,7 @@
       {/each}
 
       <section class="group">
-        <h3 class="caps">Build</h3>
+        <h3>Build</h3>
         <dl class="kv" data-tip-group {@attach tipGroup}>
           {#each environment as [label, value] (label)}
             <div>
@@ -379,8 +379,7 @@
   .title p {
     margin-top: 2px;
     color: var(--text-muted);
-    font: var(--type-xs) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    font-size: var(--type-xs);
   }
   .back {
     display: none;
@@ -392,10 +391,6 @@
   }
   .detail-body > :global(.result-summary) {
     max-width: none;
-  }
-  h3 > .name {
-    text-transform: none;
-    letter-spacing: 0;
   }
   .facts {
     display: grid;

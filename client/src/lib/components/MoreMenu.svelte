@@ -79,13 +79,10 @@
   .more-menu :global(:is(strong, small)) {
     display: block;
   }
-  .more-menu :global(strong) {
-    font-size: var(--type-xs);
-  }
   .more-menu :global(small) {
     margin-top: 2px;
     color: var(--text-muted);
-    font-size: var(--type-2xs);
+    font-size: var(--type-xs);
   }
   .danger .more-menu :global(button) {
     color: var(--err);

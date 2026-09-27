@@ -117,8 +117,8 @@
   }
   legend {
     margin-bottom: 6px;
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
+    color: var(--text-soft);
+    font-size: var(--type-body);
   }
   .options {
     display: grid;
@@ -177,15 +177,16 @@
     min-width: 0;
   }
   .copy strong {
-    font-size: var(--type-xs);
-    font-weight: var(--w-heavy);
+    font-size: var(--type-sm);
+    font-weight: var(--w-strong);
     overflow-wrap: anywhere;
   }
   .copy small {
     display: -webkit-box;
     overflow: hidden;
-    color: var(--text-soft);
-    font: var(--type-2xs) / 1.35 var(--font-mono);
+    color: var(--text-muted);
+    font-size: var(--type-xs);
+    line-height: 1.4;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
     line-clamp: 2;
@@ -200,7 +201,7 @@
     gap: var(--space-2);
     min-height: 28px;
     padding-inline: 3px;
-    font-size: var(--type-2xs);
+    font-size: var(--type-xs);
   }
   .validation-copy {
     display: flex;

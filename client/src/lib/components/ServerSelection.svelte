@@ -408,8 +408,7 @@
     display: grid;
     justify-items: start;
     gap: var(--space-1);
-    padding-block: 10px;
-    border-top: 1px solid var(--border);
+    padding-block: var(--space-1);
     font: var(--type-xs) / 1.5 var(--font-sans);
   }
   .server-feedback > div {

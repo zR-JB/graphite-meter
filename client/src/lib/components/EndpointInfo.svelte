@@ -185,7 +185,7 @@
 <section class="infra">
   <div class="group server-card">
     <div class="group-head">
-      <h3 class="caps">
+      <h3>
         {pathMode === "live" ? "Selected server" : "Tested server"}
       </h3>
       {#if availableServers.length > 1}
@@ -209,7 +209,7 @@
   </div>
 
   <div class="group">
-    <h3 class="caps">Connection</h3>
+    <h3>Connection</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
       {#each PATH_ROLES as role}
         {@const connection = connections[role]}
@@ -220,7 +220,7 @@
             {role === "throughput" ? "Throughput path" : "Latency path"}
           </dt>
           <dd>
-            {#if inTest}<span
+            {#if inTest && status.tone !== "neutral"}<span
                 class="status-dot"
                 data-tone={status.tone}
                 aria-hidden="true"
@@ -261,7 +261,7 @@
   </div>
 
   <div class="group">
-    <h3 class="caps">Server supports</h3>
+    <h3>Server supports</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row(
         "HTTP",
@@ -275,7 +275,7 @@
   </div>
 
   <div class="group">
-    <h3 class="caps">Build</h3>
+    <h3>Build</h3>
     <dl class="kv" data-tip-group {@attach tipGroup}>
       {@render row(
         "Client",
