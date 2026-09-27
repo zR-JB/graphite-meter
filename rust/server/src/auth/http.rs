@@ -64,8 +64,8 @@ impl Service {
             AuthMode::Oidc => "oidc",
             AuthMode::Hybrid => "hybrid",
         };
-        eprintln!(
-            "[gm:auth] mode={mode} origin={:?} provider={:?} issuer={:?} allowed-groups={} session-lifetime={}",
+        crate::log!(
+            "[gm:auth] mode={mode} origin={} provider={} issuer={} allowed-groups={} session-lifetime={}",
             config.public_url,
             config.oidc_provider_name,
             config.oidc_issuer,
@@ -89,7 +89,7 @@ impl Service {
             loop {
                 ticker.tick().await;
                 if let Some(line) = self.log.window(&mut last) {
-                    eprintln!("{line}");
+                    crate::log!("{line}");
                 }
             }
         };
@@ -849,29 +849,12 @@ fn clear_cookie(response: &mut Response<Bytes>, name: &str) {
     );
 }
 fn rfc3339(time: SystemTime) -> String {
-    let elapsed = time.duration_since(UNIX_EPOCH).expect("session expiry after epoch");
-    let (days, seconds) = (elapsed.as_secs() / 86_400, elapsed.as_secs() % 86_400);
-    let era_day = days + 719_468;
-    let (era, day_of_era) = (era_day / 146_097, era_day % 146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + u64::from(month <= 2);
-    let mut text = format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}",
-        seconds / 3600,
-        seconds / 60 % 60,
-        seconds % 60
-    );
-    if elapsed.subsec_nanos() != 0 {
+    let [year, month, day, hour, minute, second] = crate::log::utc(time);
+    let mut text = format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}");
+    let nanos = time.duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos();
+    if nanos != 0 {
         text.push('.');
-        text.push_str(format!("{:09}", elapsed.subsec_nanos()).trim_end_matches('0'));
+        text.push_str(format!("{nanos:09}").trim_end_matches('0'));
     }
     text.push('Z');
     text

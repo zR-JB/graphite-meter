@@ -74,6 +74,7 @@ pub struct HttpServer {
     memory: Arc<http_quic::MemoryBudget>,
     download_block: Bytes,
     download_meter: crate::meter::Meter,
+    peers: crate::log::PeerLog,
     _download_memory: http_quic::Lease,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
@@ -85,9 +86,12 @@ impl HttpServer {
     pub(crate) fn log_admission(&self) {
         let (active, maximum) = self.admission.load();
         let connections = self.connections.stats();
-        eprintln!(
+        crate::log!(
             "[gm:admission] measurements={active}/{maximum} connections={} peak={} refused-client={} refused-global={}",
-            connections.active, connections.peak, connections.rejected_client, connections.rejected_global
+            connections.active,
+            connections.peak,
+            connections.rejected_client,
+            connections.rejected_global
         );
     }
 
@@ -154,6 +158,7 @@ impl HttpServer {
             memory,
             download_block: block.into(),
             download_meter,
+            peers: Default::default(),
             _download_memory: download_memory,
             uploads,
             auth,
@@ -293,8 +298,19 @@ impl HttpServer {
                             let stream = tokio::select! {
                                 biased;
                                 _ = stopped(server.stopping.clone()) => return,
-                                result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket)) => {
-                                    match result { Ok(Ok(stream)) => stream, _ => return }
+                                result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket).into_fallible()) => {
+                                    let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+                                    match result {
+                                        Ok(Ok(stream)) => stream,
+                                        Ok(Err((error, _socket))) => {
+                                            server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: {error}"));
+                                            return;
+                                        }
+                                        Err(_) => {
+                                            server.peers.write(format_args!("[gm:http] http: TLS handshake error from {peer}: timed out"));
+                                            return;
+                                        }
+                                    }
                                 }
                             };
                             {

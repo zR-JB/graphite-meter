@@ -32,7 +32,7 @@ async fn main() {
         },
     };
     if let Some(failure) = failure {
-        eprintln!("{failure}");
+        graphite_meter_server::log!("{failure}");
         std::process::exit(1);
     }
 }
@@ -69,7 +69,7 @@ async fn serve(config: Config) -> Result<(), ConfigError> {
     {
         runtime::run(config, async {
             if let Err(error) = tokio::signal::ctrl_c().await {
-                eprintln!("shutdown signal listener failed: {error}");
+                graphite_meter_server::log!("shutdown signal listener failed: {error}");
             }
         })
         .await

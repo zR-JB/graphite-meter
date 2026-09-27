@@ -175,7 +175,7 @@ impl Oidc {
             .await
             .map_err(|_| "OIDC discovery timed out")??;
         if self.provider.set(Arc::new(provider)).is_ok() {
-            eprintln!("[gm:auth] OIDC provider ready");
+            crate::log!("[gm:auth] OIDC provider ready");
         }
         Ok(())
     }
@@ -186,9 +186,9 @@ impl Oidc {
                 return;
             }
             if failures == 0 {
-                eprintln!("[gm:auth] OIDC provider unavailable; local password remains available");
+                crate::log!("[gm:auth] OIDC provider unavailable; local password remains available");
             } else {
-                eprintln!("[gm:auth] OIDC provider retrying");
+                crate::log!("[gm:auth] OIDC provider retrying");
             }
             self.log.debug("OIDC discovery failed");
             tokio::time::sleep(Duration::from_secs(1 << failures.min(6)).min(Duration::from_secs(60))).await;

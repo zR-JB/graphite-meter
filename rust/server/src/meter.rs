@@ -32,7 +32,7 @@ impl Meter {
         let bytes = counts.bytes.swap(0, Ordering::Relaxed);
         let active = counts.active.load(Ordering::Relaxed);
         if bytes != 0 || active != 0 {
-            eprintln!(
+            crate::log!(
                 "[gm:server:{direction}] {:.2} Gbit/s · {active} conns · {:.2} MB this window",
                 bytes as f64 * 8.0 / window.as_secs_f64() / 1e9,
                 bytes as f64 / 1e6,

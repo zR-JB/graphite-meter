@@ -20,6 +20,7 @@ pub mod cors;
 pub mod crypto;
 pub mod discovery;
 pub mod http_server;
+pub mod log;
 mod meter;
 pub mod password;
 pub mod ping;

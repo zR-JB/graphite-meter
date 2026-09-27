@@ -15,6 +15,7 @@ PASSWORD_HASH = (
     "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$"
     "gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
 )
+H3_TCP = "/tcp (HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control)"
 
 
 def unused_port(kind: int) -> int:
@@ -65,8 +66,8 @@ def main() -> None:
             address = None
             while time.monotonic() < deadline:
                 for line in server_log.read_text().splitlines():
-                    if " listening on " in line and line.endswith("/tcp (http3)"):
-                        address = line.split(" listening on ", 1)[1].removesuffix("/tcp (http3)")
+                    if " listening on " in line and line.endswith(H3_TCP):
+                        address = line.split(" listening on ", 1)[1].removesuffix(H3_TCP)
                 if address:
                     break
                 if server.poll() is not None:
@@ -150,7 +151,7 @@ def main() -> None:
         try:
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                if f" listening on 127.0.0.1:{h3_port}/tcp (http3)" in auth_log.read_text():
+                if f" listening on 127.0.0.1:{h3_port}{H3_TCP}" in auth_log.read_text():
                     break
                 if server.poll() is not None:
                     raise RuntimeError(auth_log.read_text())

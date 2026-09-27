@@ -1,7 +1,7 @@
 //! Process-level ownership of listeners, certificate renewal, and shutdown.
 
 use crate::{
-    config::{Config, ConfigError, NativeKind},
+    config::{AuthMode, Config, ConfigError, NativeKind},
     http_server::HttpServer,
     tls::Certificates,
 };
@@ -67,11 +67,19 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
     let (stop, stopped) = watch::channel(false);
     let mut services = FuturesUnordered::<Service>::new();
     for (kind, listener, identity) in listeners {
-        eprintln!(
-            "graphite-meter {} listening on {}/tcp ({})",
+        let role = match kind {
+            NativeKind::H1 if config.auth.mode != AuthMode::Off => {
+                "HTTP/1.1 clear: trusted proxy upstream only; direct requests are refused, GET / redirects to HTTPS"
+            }
+            NativeKind::H1 => "HTTP/1.1 clear: UI, discovery, probe, transfers, WebSockets",
+            NativeKind::H1Tls => "HTTPS/WSS HTTP/1.1: UI, discovery, probe, transfers, WebSockets",
+            NativeKind::H2 => "HTTPS HTTP/2: measurement probe, transfers, progress only",
+            NativeKind::H3 => "HTTPS HTTP/1.1 companion: HTTP/3 bootstrap probe, upload and ticket control",
+        };
+        crate::log!(
+            "graphite-meter {} listening on {}/tcp ({role})",
             crate::config::ENGINE_VERSION,
             listener.local_addr()?,
-            kind.name(),
         );
         let server = server.clone();
         let stopped = stopped.clone();
@@ -97,8 +105,8 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         }));
     }
     if let Some(endpoint) = quic {
-        eprintln!(
-            "graphite-meter {} listening on {}/udp (http3)",
+        crate::log!(
+            "graphite-meter {} listening on {}/udp (HTTP/3: probe, transfers, progress, WebTransport)",
             crate::config::ENGINE_VERSION,
             endpoint.local_addr()?,
         );
@@ -113,13 +121,13 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         services.push(Box::pin(async move {
             tls.watch(cancelled(stopped), |result| {
                 if let Err(error) = result {
-                    eprintln!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
+                    crate::log!("[gm:tls] renewal rejected; keeping last valid certificate: {error}");
                 }
             })
             .await
         }));
     }
-    if config.auth.mode != crate::config::AuthMode::Off {
+    if config.auth.mode != AuthMode::Off {
         let server = server.clone();
         let stopped = stopped.clone();
         services.push(Box::pin(async move {

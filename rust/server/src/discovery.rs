@@ -79,14 +79,15 @@ impl Discovery {
                 .into_iter()
                 .filter(|origin| origin.starts_with("http://") || origin.starts_with("https://")),
         );
-        eprintln!(
-            "[gm:discovery] server catalogue for host {host:?}: {:?}",
-            local.additional_origins
-        );
-        catalog.validate()?;
         let data = serde_json::to_vec(&catalog)?;
-        if data.len() > 64 << 10 {
-            return Err("published catalogue exceeds 64 KiB".into());
+        let refused = match catalog.validate() {
+            Err(error) => Some(error.to_string()),
+            Ok(()) if data.len() > 64 << 10 => Some("published catalogue exceeds 64 KiB".into()),
+            Ok(()) => None,
+        };
+        if let Some(error) = refused {
+            crate::log!("[gm:discovery] server catalogue for host {host:?}: {error:?}");
+            return Err(error.into());
         }
         let responses = HostResponses {
             preflight: serde_json::to_vec(&self.preflight.build_for_host(host)?)?.into(),

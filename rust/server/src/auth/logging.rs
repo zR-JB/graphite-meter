@@ -74,12 +74,12 @@ impl SecurityLog {
     }
     pub fn debug(&self, message: &'static str) {
         if self.verbose.load(Ordering::Relaxed) {
-            eprintln!("[gm:auth:debug] {message}");
+            crate::log!("[gm:auth:debug] {message}");
         }
     }
     pub fn ceiling(&self, ceiling: Ceiling) {
         if self.ceiling_due(ceiling) {
-            eprintln!(
+            crate::log!(
                 "[gm:auth] global {} ceiling engaged; further attempts are refused until the window drains",
                 ceiling.name()
             );
