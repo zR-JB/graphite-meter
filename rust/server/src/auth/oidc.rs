@@ -17,7 +17,7 @@ use std::{
     collections::HashMap,
     net::IpAddr,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
@@ -109,6 +109,7 @@ struct Transaction {
 pub(super) struct Started {
     pub url: String,
     pub browser: String,
+    pub provider: Arc<Provider>,
 }
 pub(super) struct Identity {
     pub subject: String,
@@ -137,17 +138,12 @@ impl std::fmt::Display for OidcFailure {
 }
 impl std::error::Error for OidcFailure {}
 
-struct Discovery {
-    provider: Option<Arc<Provider>>,
-    retry: Instant,
-    failures: u32,
-}
 pub(super) struct Oidc {
     config: AuthConfig,
     log: Arc<super::logging::SecurityLog>,
     secret: Zeroizing<String>,
     http: ProviderHttp,
-    discovery: AsyncMutex<Discovery>,
+    provider: OnceLock<Arc<Provider>>,
     transactions: Mutex<HashMap<[u8; 32], Transaction>>,
     exchanges: Semaphore,
 }
@@ -165,11 +161,7 @@ impl Oidc {
             log,
             secret,
             http: ProviderHttp::new()?,
-            discovery: AsyncMutex::new(Discovery {
-                provider: None,
-                retry: Instant::now(),
-                failures: 0,
-            }),
+            provider: OnceLock::new(),
             transactions: Mutex::new(HashMap::new()),
             exchanges: Semaphore::new(8),
         })
@@ -177,59 +169,38 @@ impl Oidc {
     pub fn name(&self) -> &str {
         &self.config.oidc_provider_name
     }
-    pub fn ready(&self) -> Option<Arc<Provider>> {
-        self.discovery.try_lock().ok()?.provider.clone()
+    pub fn ready(&self) -> Option<&Arc<Provider>> {
+        self.provider.get()
     }
-    pub async fn provider(&self) -> Result<Arc<Provider>, ConfigError> {
-        let mut discovery = self
-            .discovery
-            .try_lock()
-            .map_err(|_| "OIDC discovery in progress")?;
-        if let Some(provider) = &discovery.provider {
-            return Ok(provider.clone());
+    pub async fn discover(&self) -> Result<(), ConfigError> {
+        let provider = tokio::time::timeout(Duration::from_secs(25), self.fetch_provider())
+            .await
+            .map_err(|_| "OIDC discovery timed out")??;
+        if self.provider.set(Arc::new(provider)).is_ok() {
+            eprintln!("[gm:auth] OIDC provider ready");
         }
-        if Instant::now() < discovery.retry {
-            return Err("OIDC provider unavailable".into());
-        }
-        let result = tokio::time::timeout(Duration::from_secs(25), self.discover()).await;
-        match result {
-            Ok(Ok(provider)) => {
-                let provider = Arc::new(provider);
-                discovery.provider = Some(provider.clone());
-                eprintln!("[gm:auth] OIDC provider ready");
-                Ok(provider)
-            }
-            _ => {
-                if discovery.failures == 0 {
-                    if self.config.mode.password() {
-                        eprintln!(
-                            "[gm:auth] OIDC provider unavailable; local password remains available"
-                        );
-                    } else {
-                        eprintln!("[gm:auth] OIDC provider unavailable");
-                    }
-                } else {
-                    eprintln!("[gm:auth] OIDC provider retrying");
-                }
-                self.log.debug("OIDC discovery failed");
-                discovery.retry = Instant::now()
-                    + Duration::from_secs(1u64 << discovery.failures.min(6))
-                        .min(Duration::from_secs(60));
-                discovery.failures = discovery.failures.saturating_add(1);
-                Err("OIDC provider discovery failed".into())
-            }
-        }
+        Ok(())
     }
     pub async fn retry_discovery(&self) {
-        loop {
-            if self.provider().await.is_ok() {
+        let mut failures = 0u32;
+        while self.provider.get().is_none() {
+            if self.discover().await.is_ok() {
                 return;
             }
-            let retry = self.discovery.lock().await.retry;
-            tokio::time::sleep_until(retry).await;
+            if failures == 0 {
+                eprintln!("[gm:auth] OIDC provider unavailable; local password remains available");
+            } else {
+                eprintln!("[gm:auth] OIDC provider retrying");
+            }
+            self.log.debug("OIDC discovery failed");
+            tokio::time::sleep(
+                Duration::from_secs(1 << failures.min(6)).min(Duration::from_secs(60)),
+            )
+            .await;
+            failures = failures.saturating_add(1);
         }
     }
-    async fn discover(&self) -> Result<Provider, ConfigError> {
+    async fn fetch_provider(&self) -> Result<Provider, ConfigError> {
         let issuer = &self.config.oidc_issuer;
         let separator = if issuer.ends_with('/') { "" } else { "/" };
         let response = self
@@ -251,7 +222,7 @@ impl Oidc {
         challenge: String,
         prior: Option<SessionLease>,
     ) -> Result<Started, OidcFailure> {
-        let provider = self.provider().await.map_err(|_| OidcFailure::Failed)?;
+        let provider = self.ready().ok_or(OidcFailure::Failed)?.clone();
         let browser = random_token::<32>().map_err(|_| OidcFailure::Failed)?;
         let state = random_token::<32>().map_err(|_| OidcFailure::Failed)?;
         let nonce = Zeroizing::new(random_token::<32>().map_err(|_| OidcFailure::Failed)?);
@@ -299,7 +270,7 @@ impl Oidc {
         transactions.insert(
             token_hash(&state),
             Transaction {
-                provider,
+                provider: provider.clone(),
                 browser: token_hash(&browser),
                 nonce,
                 verifier,
@@ -309,7 +280,11 @@ impl Oidc {
                 prior,
             },
         );
-        Ok(Started { url, browser })
+        Ok(Started {
+            url,
+            browser,
+            provider,
+        })
     }
     fn redirect_uri(&self) -> String {
         format!("{}/auth/oidc/callback", self.config.public_url)
@@ -591,20 +566,22 @@ impl ProviderHttp {
             let connection = connect(&self.proxy, &origin, Some(&self.tls)).await?;
             let (mut sender, driver) =
                 hyper::client::conn::http1::handshake(TokioIo::new(connection.stream)).await?;
-            tokio::spawn(driver);
-            let (parts, mut body) = sender.send_request(request).await?.into_parts();
-            let mut bytes = Vec::new();
-            while let Some(frame) =
-                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
-            {
-                if let Ok(data) = frame?.into_data() {
-                    if bytes.len() + data.len() > 1024 * 1024 {
-                        return Err("OIDC response too large".into());
+            let exchange = async move {
+                let (parts, mut body) = sender.send_request(request).await?.into_parts();
+                let mut bytes = Vec::new();
+                while let Some(frame) =
+                    std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+                {
+                    if let Ok(data) = frame?.into_data() {
+                        if bytes.len() + data.len() > 1024 * 1024 {
+                            return Err("OIDC response too large".into());
+                        }
+                        bytes.extend_from_slice(&data);
                     }
-                    bytes.extend_from_slice(&data);
                 }
-            }
-            Ok(Response::from_parts(parts, bytes))
+                Ok(Response::from_parts(parts, bytes))
+            };
+            tokio::join!(exchange, driver).0
         })
         .await
         .map_err(|_| "OIDC request timed out")?
@@ -612,11 +589,11 @@ impl ProviderHttp {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::config::AuthMode;
 
-    async fn ready() -> Oidc {
+    pub(in crate::auth) fn ready() -> Oidc {
         let oidc = Oidc::new(
             &AuthConfig {
                 mode: AuthMode::Oidc,
@@ -642,11 +619,7 @@ mod tests {
         .unwrap();
         let keys = Jwks::parse(br#"{"keys":[]}"#).unwrap();
         let provider = Provider::new(metadata, keys, "https://identity.example").unwrap();
-        *oidc.discovery.lock().await = Discovery {
-            provider: Some(Arc::new(provider)),
-            retry: Instant::now() + Duration::from_secs(30),
-            failures: 0,
-        };
+        assert!(oidc.provider.set(Arc::new(provider)).is_ok());
         oidc
     }
 
@@ -658,7 +631,7 @@ mod tests {
 
     #[tokio::test]
     async fn authorization_is_pkce_bound_bounded_and_consumed_before_browser_validation() {
-        let oidc = ready().await;
+        let oidc = ready();
         let address = "192.0.2.1".parse().unwrap();
         let started = oidc.start(address, String::new(), None).await.unwrap();
         let fields = query_fields(&started.url);
@@ -698,7 +671,7 @@ mod tests {
 
     #[tokio::test]
     async fn transactions_charge_wider_ipv6_shares_before_global_capacity() {
-        let oidc = ready().await;
+        let oidc = ready();
         for subnet in 0..2 {
             for host in 1..=8 {
                 let address = format!("2001:db8:1:{subnet:x}::{host}").parse().unwrap();
@@ -719,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn mismatched_response_issuer_cannot_redeem_a_code() {
-        let oidc = ready().await;
+        let oidc = ready();
         let started = oidc
             .start("192.0.2.2".parse().unwrap(), String::new(), None)
             .await

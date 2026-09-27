@@ -111,7 +111,7 @@ impl Service {
         if self.mode == AuthMode::Oidc
             && let Some(oidc) = &self.oidc
         {
-            oidc.provider().await?;
+            oidc.discover().await?;
         }
         Ok(())
     }
@@ -166,11 +166,7 @@ impl Service {
     }
 
     async fn login_page(&self, request: &Request<Bytes>) -> Response<Bytes> {
-        let provider = if let Some(oidc) = &self.oidc {
-            oidc.ready()
-        } else {
-            None
-        };
+        let provider = self.oidc.as_ref().and_then(|oidc| oidc.ready());
         let Ok(nonce) = random_token::<32>() else {
             return response(StatusCode::SERVICE_UNAVAILABLE);
         };
@@ -320,14 +316,10 @@ impl Service {
         match oidc.start(address, challenge.to_owned(), prior).await {
             Ok(started) => {
                 let mut result = redirect(&started.url);
-                if let Ok(provider) = oidc.provider().await {
-                    *result.headers_mut() = pages::security_headers(Some(&provider.origin))
-                        .expect("validated provider origin");
-                    result.headers_mut().insert(
-                        header::LOCATION,
-                        HeaderValue::from_str(&started.url).expect("authorization URL"),
-                    );
-                }
+                result.headers_mut().extend(
+                    pages::security_headers(Some(&started.provider.origin))
+                        .expect("validated provider origin"),
+                );
                 result.headers_mut().append(
                     header::SET_COOKIE,
                     HeaderValue::from_str(&format!(
@@ -1098,6 +1090,74 @@ mod tests {
                     std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::UnexpectedEof
                 ))
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_logins_always_see_the_discovered_provider() {
+        let mut service = Service::new(
+            &AuthConfig {
+                mode: AuthMode::Oidc,
+                public_url: "https://meter.example".into(),
+                oidc_issuer: "https://identity.example".into(),
+                oidc_client_id: "meter".into(),
+                oidc_client_secret: "secret".into(),
+                oidc_allowed_groups: vec!["operators".into()],
+                ..AuthConfig::default()
+            },
+            vec![],
+            None,
+        )
+        .unwrap();
+        service.oidc = Some(super::super::oidc::tests::ready());
+        let service = Arc::new(service);
+        let provider_csp = |response: &Response<Bytes>| {
+            response
+                .headers()
+                .get("content-security-policy")
+                .is_some_and(|csp| {
+                    csp.to_str()
+                        .unwrap()
+                        .contains("form-action 'self' https://identity.example")
+                })
+        };
+        let mut logins = tokio::task::JoinSet::new();
+        for _ in 0..8 {
+            let service = service.clone();
+            logins.spawn(async move {
+                for attempt in 0..500 {
+                    let page = call(&service, Method::GET, "/login", &[], String::new()).await;
+                    let body = std::str::from_utf8(page.body()).unwrap();
+                    assert!(!body.contains("temporarily unavailable"));
+                    assert!(provider_csp(&page));
+                    if attempt != 250 {
+                        continue;
+                    }
+                    let nonce = set_cookie_value(&page, "__Host-gm_login");
+                    let started = call(
+                        &service,
+                        Method::POST,
+                        "/auth/oidc/start",
+                        &[
+                            ("cookie", &format!("__Host-gm_login={nonce}")),
+                            ("origin", "https://meter.example"),
+                            ("content-type", "application/x-www-form-urlencoded"),
+                        ],
+                        encoded(&[("csrf", &nonce)]),
+                    )
+                    .await;
+                    assert!(
+                        started.headers()[header::LOCATION]
+                            .to_str()
+                            .unwrap()
+                            .starts_with("https://identity.example/authorize?")
+                    );
+                    assert!(provider_csp(&started));
+                }
+            });
+        }
+        while let Some(result) = logins.join_next().await {
+            result.unwrap();
+        }
     }
 
     #[tokio::test]

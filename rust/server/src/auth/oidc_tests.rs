@@ -298,6 +298,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
 
 impl ProviderDouble {
     async fn login(&self, claims: Claims) -> Result<Identity, OidcFailure> {
+        self.oidc.retry_discovery().await;
         let started = self
             .oidc
             .start("192.0.2.1".parse().unwrap(), "challenge".into(), None)
@@ -535,22 +536,27 @@ async fn unadvertised_signing_algorithms_are_refused() {
 }
 
 #[tokio::test]
-async fn unavailable_provider_respects_retry_deadline_and_recovers_once() {
+async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
     provider.twist.lock().unwrap().unavailable = true;
-    assert!(provider.oidc.provider().await.is_err());
-    assert_eq!(provider.oidc.discovery.lock().await.failures, 1);
-    tokio::time::pause();
-    assert!(provider.oidc.provider().await.is_err());
-    assert_eq!(provider.oidc.discovery.lock().await.failures, 1);
-    tokio::time::advance(Duration::from_secs(1)).await;
-    tokio::time::resume();
-    provider.twist.lock().unwrap().unavailable = false;
-    let ready = provider.oidc.provider().await.unwrap();
-    assert!(Arc::ptr_eq(
-        &ready,
-        &provider.oidc.provider().await.unwrap()
+    assert!(provider.oidc.discover().await.is_err());
+    let address = "192.0.2.1".parse().unwrap();
+    assert!(matches!(
+        provider.oidc.start(address, String::new(), None).await,
+        Err(OidcFailure::Failed)
     ));
+    provider.twist.lock().unwrap().unavailable = false;
+    provider.oidc.retry_discovery().await;
+    let ready = provider.oidc.ready().unwrap().clone();
+    provider.oidc.retry_discovery().await;
+    assert!(Arc::ptr_eq(&ready, provider.oidc.ready().unwrap()));
     assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), 1);
+    assert!(
+        provider
+            .oidc
+            .start(address, String::new(), None)
+            .await
+            .is_ok()
+    );
     provider.stop().await;
 }
