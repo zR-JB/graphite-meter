@@ -319,6 +319,22 @@ func TestAServerLostNearTheStageEndFailsIt(t *testing.T) {
 	}
 }
 
+func TestACancelledMeasurementCarriesItsCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, http.NotFoundHandler())
+		ctx, cancel := context.WithCancelCause(t.Context())
+		failure := errors.New("the server's transfer failed")
+		time.AfterFunc(100*time.Millisecond, func() { cancel(failure) })
+		s := &stageServer{participant: &participant{transport: r}}
+		plan := StagePlan{Name: StageUpload, Directions: []Direction{Up}, Duration: time.Second}
+		outcome := s.measure(ctx, plan, roleLatency, testStageGate(make(chan struct{})))
+		if !errors.Is(outcome.err, failure) || !errors.Is(outcome.result.Err, failure) {
+			t.Fatalf("a latency channel cancelled mid-redial by a failure = %v, want that failure", outcome.err)
+		}
+	})
+}
+
 func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
 	t.Parallel()
 	a := coordinatedFixture(t, "a")

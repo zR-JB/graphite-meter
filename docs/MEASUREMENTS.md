@@ -137,7 +137,7 @@ jitter, deadlines and added latency.
 | Complete | Every planned stage finished with every server. |
 | Partial | Every stage has its results, but a server or latency population failed. |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
-| Stopped | Cancelled by the user. |
+| Stopped | Cancelled by the user; work a failure cancels carries that failure, never "stopped". |
 | Failed | Nothing was measured. |
 
 The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving

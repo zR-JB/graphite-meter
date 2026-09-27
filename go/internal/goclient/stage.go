@@ -577,14 +577,21 @@ func (s *stageRun) finish(stageErr error) {
 
 func (s *stageServer) measure(ctx context.Context, stage StagePlan, role string, gate *stageGate) resourceOutcome {
 	outcome := resourceOutcome{server: s, role: role}
-	if role == roleLatency {
-		stats, err := s.transport.measureLatency(ctx, stage.Name, len(stage.Directions) > 0, stage.Duration, gate)
-		outcome.result = Result{Stage: stage.Name, Latency: stats, Elapsed: stats.Elapsed, Err: err}
-		outcome.err = err
-	} else if Direction(role) == Down {
+	var stats LatencyStats
+	switch {
+	case role == roleLatency:
+		stats, outcome.err = s.transport.measureLatency(ctx, stage.Name, len(stage.Directions) > 0, stage.Duration, gate)
+	case Direction(role) == Down:
 		outcome.err = s.transport.measureDownload(ctx, gate)
-	} else {
+	default:
 		outcome.err = s.transport.measureUpload(ctx, gate)
+	}
+	// Only a user stop reads as stopped; a cancellation a failure caused carries that failure.
+	if errors.Is(outcome.err, context.Canceled) && ctx.Err() != nil {
+		outcome.err = context.Cause(ctx)
+	}
+	if role == roleLatency {
+		outcome.result = Result{Stage: stage.Name, Latency: stats, Elapsed: stats.Elapsed, Err: outcome.err}
 	}
 	if outcome.err != nil {
 		gate.cancel(outcome.err)
