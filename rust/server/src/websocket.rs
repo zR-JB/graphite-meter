@@ -145,8 +145,8 @@ async fn exchange<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let mut idle = tokio::time::Instant::now() + Duration::from_secs(30);
     loop {
-        let idle = tokio::time::Instant::now() + Duration::from_secs(30);
         let message = match tokio::time::timeout_at(idle.min(deadline), socket.next()).await {
             Ok(Some(message)) => message,
             Ok(None) => return Ok(CloseReason::Finished),
@@ -160,8 +160,8 @@ where
         };
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
+                idle = tokio::time::Instant::now() + Duration::from_secs(30);
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
-                    let idle = tokio::time::Instant::now() + Duration::from_secs(30);
                     match tokio::time::timeout_at(
                         idle.min(deadline),
                         socket.send(Message::Text(reply.into())),

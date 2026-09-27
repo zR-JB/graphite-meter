@@ -161,6 +161,23 @@ async fn oversized_messages_and_revocation_send_distinct_close_codes() -> Result
 }
 
 #[tokio::test(start_paused = true)]
+async fn control_frames_do_not_extend_the_idle_bound() -> Result<(), TestError> {
+    let (mut socket, _stop, task) = session().await;
+    socket.send(Message::Text("PING,1".into())).await?;
+    assert!(receive(&mut socket).await?.is_text());
+    tokio::time::advance(Duration::from_secs(20)).await;
+    socket.send(Message::Ping(Vec::new().into())).await?;
+    assert!(receive(&mut socket).await?.is_pong());
+    tokio::time::advance(Duration::from_secs(10)).await;
+    let Message::Close(Some(frame)) = receive(&mut socket).await? else {
+        panic!("expected idle close");
+    };
+    assert_eq!(frame.reason, "idle");
+    task.await?;
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
 async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), TestError> {
     // A one-byte output buffer blocks the response while the client stops
     // reading. The deadline must interrupt the send as well as the read loop.
