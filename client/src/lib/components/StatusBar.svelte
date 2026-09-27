@@ -3,7 +3,7 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
-  import type { Handoff } from "../presentation/motion.svelte";
+  import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
   import { CONNECTIVITY, STATUS_LABEL_CH } from "../presentation/vocabulary";
 
@@ -19,6 +19,19 @@
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const recovering = $derived(store.effectiveConnectivity === "recovering");
+  // A new run's counters replace the last run's only while faded out.
+  const counters = handoff(
+    () => ({
+      run: store.runSeq,
+      elapsedMs,
+      bytes: fmtBytes(store.bytesTransferred, store.unitBase),
+    }),
+    (shown) => shown.run,
+  );
+  const left = handoff(
+    () => ({ show: showRemaining, recovering, ms: remainingMs }),
+    (shown) => `${shown.show}:${shown.recovering}`,
+  );
   const { status } = $derived(store.preparation);
   const refused = $derived(status === "blocked" || status === "failed");
 </script>
@@ -31,24 +44,31 @@
     ? tooltip(() => store.startError || store.startBlocker)
     : null}>{label.shown.label}</span
 >
-<span class="elapsed" class:secondary={showRemaining}
+<span
+  class="elapsed"
+  class:secondary={left.shown.show}
+  style:opacity={counters.opacity}
   ><span class="caption">elapsed&nbsp;</span><span class="readout"
-    >{fmtDuration(elapsedMs)}</span
+    >{fmtDuration(counters.shown.elapsedMs)}</span
   ></span
 >
-<span class="transferred"
-  ><span class="readout"
-    >{fmtBytes(store.bytesTransferred, store.unitBase)}</span
-  ><span class="caption">&nbsp;transferred</span></span
+<span class="transferred" style:opacity={counters.opacity}
+  ><span class="readout">{counters.shown.bytes}</span><span class="caption"
+    >&nbsp;transferred</span
+  ></span
 >
-{#if showRemaining}
+{#if left.shown.show}
   <span
     class="remaining"
-    data-tone={recovering ? CONNECTIVITY.recovering.tone : undefined}
+    data-tone={left.shown.recovering ? CONNECTIVITY.recovering.tone : undefined}
+    style:opacity={left.opacity}
   >
-    {#if recovering}{CONNECTIVITY.recovering.label}<span class="caption">
-        · {fmtDuration(remainingMs)} left</span
-      >{:else}<span class="readout">{fmtDuration(remainingMs)}</span> left{/if}
+    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}<span
+        class="caption"
+      >
+        · {fmtDuration(left.shown.ms)} left</span
+      >{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
+      left{/if}
   </span>
 {/if}
 <span class="build">{BUILD.identity}</span>

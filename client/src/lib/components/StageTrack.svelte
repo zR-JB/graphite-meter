@@ -20,7 +20,7 @@
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
   import { STAGES } from "../runner/schedule";
-  import { handoff } from "../presentation/motion.svelte";
+  import { handoff, type Handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
 
@@ -41,10 +41,8 @@
       : formatRate(bytes, { base: store.unitBase, kind: store.unitKind });
   }
 
-  const segments = $derived(
-    STAGES.filter((key) =>
-      stageShown(key, store.config.stages[key], store.stagePresentation[key]),
-    ).map((key) => {
+  const model = $derived(
+    STAGES.map((key) => {
       const execution = store.stagePresentation[key];
       const selected = store.config.stages[key];
       const locked = !store.canToggleStage(key);
@@ -70,11 +68,37 @@
       };
     }),
   );
-  const track = handoff(
-    () => segments,
-    (list) => list.map((s) => `${s.state}:${s.reason}`).join(),
+  const segments = $derived(
+    model.filter((s) =>
+      stageShown(s.key, s.selected, store.stagePresentation[s.key]),
+    ),
   );
-  const shown = $derived(new Map(track.shown.map((s) => [s.key, s])));
+  // Each segment hands off its own look, so a change in one leaves the others still.
+  const look = (key: StageKey) => {
+    const s = model.find((s) => s.key === key)!;
+    const live = s.state === "active" && store.phaseBudgetMs > 0;
+    return {
+      state: s.state,
+      reason: s.reason,
+      tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
+      live,
+      progress:
+        s.state === "warmup" || s.state === "failed"
+          ? 1
+          : live
+            ? store.phaseClock.current / store.phaseBudgetMs
+            : s.fill / 100,
+    };
+  };
+  const looks = Object.fromEntries(
+    STAGES.map((key) => [
+      key,
+      handoff(
+        () => look(key),
+        (shown) => `${shown.state}:${shown.reason}`,
+      ),
+    ]),
+  ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
 <fieldset class="stage-track" class:quad={segments.length === 4}>
@@ -84,7 +108,8 @@
     ></legend
   >
   {#each segments as s (s.key)}
-    {@const look = shown.get(s.key) ?? s}
+    {@const view = looks[s.key]}
+    {@const look = view.shown}
     <button
       type="button"
       class="seg seg--{s.state}"
@@ -101,25 +126,16 @@
       onclick={() => controller.toggleStage(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">
-        {#if s.state === "warmup" && look.state === "warmup"}
-          <span class="seg-fill seg-fill--warmup"></span>
-        {:else if s.state === "failed"}
-          <span class="seg-fill seg-fill--failed"></span>
-        {:else if s.state === "active" || s.state === "recovering" || s.state === "complete" || s.state === "partial"}
-          {@const live = s.state === "active" && store.phaseBudgetMs > 0}
-          <span
-            class="seg-fill"
-            data-tone={s.state === "recovering"
-              ? STATUS_TONE.recovering
-              : s.key}
-            class:is-partial={s.state === "partial"}
-            class:is-stalled={s.state === "recovering"}
-            class:is-live={live}
-            style:--progress={live
-              ? store.phaseClock.current / store.phaseBudgetMs
-              : s.fill / 100}
-          ></span>
-        {/if}
+        <span
+          class="seg-fill"
+          data-tone={look.tone}
+          class:seg-fill--warmup={look.state === "warmup"}
+          class:seg-fill--failed={look.state === "failed"}
+          class:is-partial={look.state === "partial"}
+          class:is-stalled={look.state === "recovering"}
+          class:is-live={look.live}
+          style:--progress={look.progress}
+        ></span>
       </div>
       <span class="seg-row">
         <span class="seg-main">
@@ -130,10 +146,10 @@
           <span
             class="seg-tag"
             data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
-            style:opacity={track.opacity}>{look.reason}</span
+            style:opacity={view.opacity}>{look.reason}</span
           >
         {:else if look.state === "complete"}
-          <span class="seg-ico seg-check" style:opacity={track.opacity}
+          <span class="seg-ico seg-check" style:opacity={view.opacity}
             ><Icon name="check" /></span
           >
         {/if}
@@ -231,7 +247,6 @@
     );
   }
   .seg-fill--failed {
-    --progress: 1;
     background: var(--err);
     opacity: 0.45;
   }
@@ -244,7 +259,6 @@
     }
   }
   .seg-fill--warmup {
-    --progress: 1;
     width: 45%;
     background: color-mix(in srgb, var(--brand) 55%, transparent);
     animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
