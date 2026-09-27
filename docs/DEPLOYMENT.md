@@ -204,8 +204,8 @@ the default `GM_ADVERTISED_NATIVE_ENDPOINTS=all` includes it, so set `none` behi
 `http1-tls,http2,http3`, or the server refuses to start.
 
 Sign-in is rate limited per client address (an IPv6 /64 whose /56 and /48 share two and four times the limit): 5
-password attempts per minute, with 60 per minute across all clients, and 10 OIDC code exchanges and 10 sign-in
-approval pages per minute.
+password attempts per minute, at most 60 wrong passwords per minute across all clients, and 10 OIDC code exchanges
+and 10 sign-in approval pages per minute.
 
 **Terminal clients** never see the operator password: the client shows a short code and an approval URL, and after
 browser approval receives an in-memory, measurement-only grant bound to that session and HTTPS origin. Sign-out

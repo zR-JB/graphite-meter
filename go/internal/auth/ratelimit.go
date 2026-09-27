@@ -43,12 +43,10 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 		}
 	}
 	if global != nil {
-		*global = recentAttempts(*global, now)
-		if len(*global) >= maxGlobalAttempts {
+		if *global = recentAttempts(*global, now); len(*global) >= maxGlobalAttempts {
 			s.noteCeilingLocked(name, now)
 			return false
 		}
-		*global = append(*global, now)
 	}
 	for _, key := range keys {
 		store[key] = append(store[key], now)
@@ -58,6 +56,13 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 
 func (s *Service) allowAttempt(r *http.Request) bool {
 	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, &s.globalAttempts)
+}
+
+// Only a wrong password spends the global ceiling, so addresses that merely try cannot lock the operator out.
+func (s *Service) noteFailedPassword() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.globalAttempts = append(recentAttempts(s.globalAttempts, time.Now()), time.Now())
 }
 
 func (s *Service) allowExchange(r *http.Request) bool {

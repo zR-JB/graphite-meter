@@ -69,6 +69,14 @@ func TestSignInRefusalPaths(t *testing.T) {
 			}
 		})
 	}
+	t.Run("only a wrong password spends the global ceiling", func(t *testing.T) {
+		s := testService(t)
+		testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=secret", true))
+		testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=wrong", true))
+		if len(s.globalAttempts) != 1 {
+			t.Fatalf("global ceiling holds %d attempts, want only the wrong password", len(s.globalAttempts))
+		}
+	})
 	t.Run("password sign-in outside password mode", func(t *testing.T) {
 		s := newFakeOIDC(t).service(t)
 		rr := testkit.Record(s.passwordLogin, post(s, "/auth/password", "password=secret", true))

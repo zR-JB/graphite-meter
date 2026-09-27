@@ -78,23 +78,22 @@ func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
 	}
 }
 
-func TestPasswordCeilingIsGlobalAndLogsOncePerWindow(t *testing.T) {
+func TestPasswordCeilingCountsOnlyFailuresAndLogsOncePerWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := testService(t)
-		for i := range 61 {
-			if got := s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "192.0.2.1:1234")); got != (i < 5) {
-				t.Fatalf("attempt %d allowed=%v", i+1, got)
+		for i := range maxGlobalAttempts + 20 {
+			if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(i%200))) {
+				t.Fatalf("attempt %d without a wrong password met the global ceiling", i+1)
 			}
-		}
-		if len(s.globalAttempts) != maxAddressAttempts {
-			t.Fatalf("per-address refusals spent the global budget: %d", len(s.globalAttempts))
 		}
 		var out bytes.Buffer
 		log.SetOutput(&out)
 		t.Cleanup(func() { log.SetOutput(os.Stderr) })
 		spend := func() {
 			for i := range maxGlobalAttempts + 20 {
-				s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(i%200)))
+				if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(200+i%200))) {
+					s.noteFailedPassword()
+				}
 			}
 		}
 		for _, want := range []int{1, 1} {
