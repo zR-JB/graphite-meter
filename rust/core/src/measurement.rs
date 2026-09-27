@@ -10,7 +10,7 @@ pub const CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_mil
 pub const FINAL_CHECKPOINT_BUDGET: std::time::Duration = std::time::Duration::from_millis(500);
 pub const CLIENT_STALL: std::time::Duration = std::time::Duration::from_millis(1500);
 
-pub const MIN_SURVIVOR_NANOS: u64 = 800_000_000;
+const MIN_SURVIVOR_NANOS: u64 = 800_000_000;
 const MIN_PEAK_NANOS: u64 = 500_000_000;
 pub const MAX_INTERVALS: usize = 128;
 
@@ -112,7 +112,6 @@ impl AggregateWindow {
 
 #[derive(Debug, Clone)]
 pub struct AggregationInterval {
-    pub id: usize,
     pub stage: Stage,
     pub participants: Vec<String>,
     pub start_nanos: u64,
@@ -215,7 +214,6 @@ impl AggregateMeasurements {
             self.omitted_intervals += 1;
         }
         self.intervals.push_back(AggregationInterval {
-            id: self.omitted_intervals + self.intervals.len(),
             stage,
             participants,
             start_nanos: at_nanos,
