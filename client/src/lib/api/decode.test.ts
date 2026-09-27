@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import preflightGolden from "../../../../api/preflight.golden.json";
 import probeGolden from "../../../../api/probe.golden.json";
+import forwardGolden from "../../../../api/preflight.forward.golden.json";
 import {
   MAX_CONTROL_BYTES,
   parsePreflight,
@@ -82,19 +83,13 @@ test("discovery bounds lists and metadata", () => {
     expect(() => parsePreflight(value)).toThrow();
 });
 
-test("discovery from a newer server skips unknown mechanisms and keeps the rest", () => {
-  const value = discovery();
-  value.capabilities.throughput.push(
-    { baseUrl: "https://x.example", transport: "quic-stream", protocol: "h4" },
-    { baseUrl: ".", transport: "fetch-stream", protocol: "http4" },
-    { baseUrl: ".", transport: "websocket", protocol: "http1" },
-  );
-  value.capabilities.latency.push({ baseUrl: "?", transport: "icmp" }, {
-    baseUrl: ".",
-  } as (typeof value.capabilities.latency)[number]);
-  expect(parsePreflight(value).capabilities).toEqual(
-    parsePreflight(discovery()).capabilities,
-  );
+test("discovery from a newer server skips unknown mechanisms and refuses missing ones", () => {
+  const { document, decoded } = forwardGolden;
+  expect(parsePreflight(document).capabilities).toMatchObject(decoded);
+  expect(parsePreflight(document).capabilities.throughput).toHaveLength(2);
+  const missing = structuredClone(document);
+  delete (missing.capabilities.latency[0] as { transport?: string }).transport;
+  expect(() => parsePreflight(missing)).toThrow();
 });
 
 test("probe validates evidence and occupancy", () => {
