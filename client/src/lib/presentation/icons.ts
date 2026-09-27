@@ -14,6 +14,7 @@ export const ICON = {
   moon: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>`,
   contrast: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" stroke="none"/></svg>`,
   check: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M20 6 9 17l-5-5"/></svg>`,
+  chevron: `<svg viewBox="0 0 24 24" ${STROKE}><path d="m9 5 7 7-7 7"/></svg>`,
   close: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M18 6 6 18M6 6l12 12"/></svg>`,
   info: `<svg viewBox="0 0 24 24" ${STROKE}><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`,
   history: `<svg viewBox="0 0 24 24" ${STROKE}><path d="M4 7h16v13H4z"/><path d="M8 4h8"/><path d="M8 11h8M8 15h5"/></svg>`,

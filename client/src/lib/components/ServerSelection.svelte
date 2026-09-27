@@ -51,14 +51,14 @@
 </script>
 
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
-  <div class="server-setting kv">
-    <div class="servers">
-      <div class="server-heading">
-        <span {@attach tooltip(() => JARGON.testServers)}>Test servers</span>
-        <small>{selected.length} selected, up to 4</small>
-      </div>
+  <div class="servers">
+    <div class="list-label">
+      <span {@attach tooltip(() => JARGON.testServers)}>Test servers</span>
+      <small>{selected.length} selected, up to 4</small>
+    </div>
+    <div class="kv">
       <div
-        class="server-choices"
+        class="choices"
         role="group"
         aria-label="Servers to test"
         aria-busy={store.serverMetadataLoading}
@@ -85,8 +85,19 @@
               };
             }}
             class:checked
+            {@attach tooltip(() =>
+              [
+                server.name,
+                new URL(server.url).host,
+                server.location,
+                preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
+              ]
+                .filter(Boolean)
+                .join("\n"),
+            )}
           >
             <input
+              class="check"
               type="checkbox"
               {checked}
               disabled={unavailable}
@@ -105,18 +116,7 @@
                     : [...store.selectedServers, server.id],
                 )}
             />
-            <span
-              class="server-name"
-              {@attach tooltip(() =>
-                [
-                  server.name,
-                  new URL(server.url).host,
-                  server.location,
-                  preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
-                ]
-                  .filter(Boolean)
-                  .join("\n"),
-              )}
+            <span class="server-name"
               >{server.name}{#if serverLabel(server) !== server.name}
                 <small>{server.location}</small>{/if}</span
             >
@@ -127,37 +127,38 @@
                 class="server-preflight"
                 ><span class="sr-only">Preflight request </span>{fmtMs(
                   preflightMs,
-                )}<span>ms</span></small
+                )}<span class="unit">ms</span></small
               >{/if}
           </label>
         {/each}
       </div>
-      <span class="sr-only" id={descriptionId}
-        >Preflight request times include connection setup and the response. They
-        are not latency measurements.</span
-      >
+      {#if selected.length > 1 && store.latencyEnabled}
+        <label>
+          <span {@attach tooltip(() => JARGON.latencyServer)}
+            >Latency server</span
+          >
+          <ServerScope
+            servers={selected}
+            value={store.latencySelection.mode === "all"
+              ? ""
+              : store.primaryLatencyServer}
+            label="Latency measurement servers"
+            aggregate="Combined"
+            hint="Measure latency to every server"
+            disabled={locked}
+            onchange={(id) =>
+              controller.configureLatency(
+                id ? "primary" : "all",
+                id || store.primaryLatencyServer,
+              )}
+          />
+        </label>
+      {/if}
     </div>
-    {#if selected.length > 1 && store.latencyEnabled}
-      <label class="latency-policy">
-        <span {@attach tooltip(() => JARGON.latencyServer)}>Latency server</span
-        >
-        <ServerScope
-          servers={selected}
-          value={store.latencySelection.mode === "all"
-            ? ""
-            : store.primaryLatencyServer}
-          label="Latency measurement servers"
-          aggregate="Combined"
-          hint="Measure latency to every server"
-          disabled={locked}
-          onchange={(id) =>
-            controller.configureLatency(
-              id ? "primary" : "all",
-              id || store.primaryLatencyServer,
-            )}
-        />
-      </label>
-    {/if}
+    <span class="sr-only" id={descriptionId}
+      >Preflight request times include connection setup and the response. They
+      are not latency measurements.</span
+    >
   </div>
 {/if}
 {#if store.unresolvedServers.length}
@@ -269,93 +270,41 @@
 {/each}
 
 <style>
-  .kv > .servers {
+  .servers {
     display: grid;
-    gap: 2px;
-    padding-block: 2px 6px;
+    gap: 6px;
   }
-  .server-heading {
+  .list-label {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    align-items: baseline;
     justify-content: space-between;
-    gap: var(--space-1) var(--space-3);
-    min-height: var(--control-h);
+    gap: var(--space-3);
+    padding-inline: var(--row-inset);
   }
   small {
     color: var(--text-soft);
-    font-size: var(--type-xs);
+    font: var(--role-caption);
   }
-  .latency-policy {
-    --scope-width: auto;
-    justify-content: space-between;
-  }
-  .server-choices {
-    display: grid;
-    gap: 2px;
-    max-height: 220px;
-    margin-inline: -9px;
-    overflow-y: auto;
-  }
-  .server-choices label {
+  .choices label {
     --ring-offset: -2px;
     display: grid;
-    grid-template-columns: 14px minmax(0, 1fr) auto 5ch;
-    align-items: center;
-    gap: 10px;
-    min-width: 0;
-    min-height: var(--control-h);
-    padding: 4px 9px;
-    border-radius: var(--r-well);
+    grid-template-columns: var(--check) minmax(0, 1fr) auto 7ch;
     color: var(--text-muted);
   }
-  @media (pointer: coarse) {
-    .server-choices label {
-      min-height: var(--hit);
-    }
-  }
-  .server-choices label.checked {
+  .choices label.checked {
     color: var(--text);
   }
-  .server-choices input {
-    appearance: none;
-    display: grid;
-    place-content: center;
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--field-edge);
-    border-radius: 3px;
-    color: var(--brand-strong);
-    cursor: inherit;
-  }
-  .server-choices input:checked {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
-  }
-  .server-choices input:checked::after {
-    content: "";
-    width: 7px;
-    height: 4px;
-    border-left: 1.5px solid currentColor;
-    border-bottom: 1.5px solid currentColor;
-    transform: translateY(-1px) rotate(-45deg);
-  }
-  .server-choices label:has(input:disabled) {
-    cursor: default;
-  }
-  .server-choices label:not(.checked):has(input:disabled) {
+  .choices label:not(.checked):has(input:disabled) {
     opacity: 0.55;
   }
   .server-name {
-    font-size: var(--type-body);
-    font-weight: var(--w-normal);
-    overflow-wrap: anywhere;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .server-name small {
-    margin-inline-start: 4px;
-  }
-  .server-status {
-    font-size: var(--type-xs);
+    margin-inline-start: 6px;
   }
   .server-status[data-state="failed"],
   .server-status[data-state="sign-in"] {
@@ -363,15 +312,13 @@
   }
   .server-preflight {
     grid-column: 4;
-    display: flex;
-    justify-content: end;
-    align-items: baseline;
-    gap: 2px;
+    justify-self: end;
     color: var(--text-muted);
     font: var(--type-xs) / 1.3 var(--font-mono);
     white-space: nowrap;
   }
-  .server-preflight span {
+  .server-preflight .unit {
+    margin-inline-start: 2px;
     color: var(--text-soft);
     font-size: var(--type-2xs);
   }
@@ -386,8 +333,8 @@
     display: grid;
     justify-items: start;
     gap: var(--space-1);
-    padding: var(--space-1) var(--space-3);
-    font: var(--type-xs) / 1.5 var(--font-sans);
+    padding-inline: var(--row-inset);
+    font: var(--role-caption);
   }
   .server-feedback {
     grid-template-columns: minmax(0, 1fr) auto;

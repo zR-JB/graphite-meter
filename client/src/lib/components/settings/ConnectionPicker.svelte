@@ -14,6 +14,7 @@
     locked?: boolean;
   }
   let { role, options, locked = false }: Props = $props();
+  const labelId = $props.id();
 
   const selected = $derived(
     role === "throughput"
@@ -72,14 +73,20 @@
   }
 </script>
 
-<fieldset>
-  <legend {@attach tooltip(() => JARGON[`${role}Path`])}>
-    {title}
-  </legend>
-  <div class="options">
+<div class="picker" role="group" aria-labelledby={labelId}>
+  <span
+    class="list-label"
+    id={labelId}
+    {@attach tooltip(() => JARGON[`${role}Path`])}>{title}</span
+  >
+  <div class="kv choices">
     {#each shown as option (option.value)}
-      <label class="choice tile" class:unavailable={option.disabled || locked}>
+      <label
+        class:unavailable={option.disabled || locked}
+        {@attach tooltip(() => `${option.label}\n${option.detail}`)}
+      >
         <input
+          class="check"
           type="radio"
           name={`${role}-target`}
           value={option.value}
@@ -87,44 +94,43 @@
           disabled={option.disabled || locked}
           onchange={() => select(option.value)}
         />
-        <span class="radio-dot" aria-hidden="true"></span>
-        <span class="copy">
-          <strong>{option.label}</strong>
-          <small>{option.detail}</small>
-        </span>
+        <span class="choice-label">{option.label}</span>
       </label>
     {/each}
+    {#if folded.length}
+      <button
+        class="fold"
+        type="button"
+        aria-expanded={unfolded}
+        {@attach tooltip(() =>
+          [
+            "Unavailable paths",
+            ...folded.map((option) => `${option.label}: ${option.detail}`),
+          ].join("\n"),
+        )}
+        onclick={() => (unfolded = !unfolded)}
+        >{unfolded
+          ? "Hide unavailable"
+          : `${folded.length} more unavailable`}</button
+      >
+    {/if}
   </div>
-  {#if folded.length}
-    <button
-      class="fold"
-      type="button"
-      aria-expanded={unfolded}
-      {@attach tooltip(() =>
-        [
-          "Unavailable paths",
-          ...folded.map((option) => `${option.label}: ${option.detail}`),
-        ].join("\n"),
-      )}
-      onclick={() => (unfolded = !unfolded)}
-      >{unfolded
-        ? "Hide unavailable"
-        : `${folded.length} more unavailable`}</button
-    >
-  {/if}
-  {#if offerAutomatic}
-    <button class="btn" type="button" onclick={() => select("auto")}
-      >Use Automatic</button
-    >
-  {/if}
-  {#if unlisted.length}<div class="validation">
-      <span class="status-dot" data-tone={READINESS[validation].tone}></span>
-      <span class="validation-copy">
-        <strong>{locked ? "In use" : READINESS[validation].label}</strong>
-        <small>{summary}</small>
-      </span>
-      {#if !locked && (validation === "failed" || validation === "stale")}
-        <!-- Both pickers mount at once and a <legend> does not name a descendant
+  {#if unlisted.length || offerAutomatic}<div class="validation">
+      {#if unlisted.length}
+        <p>
+          <span class="status-dot inline" data-tone={READINESS[validation].tone}
+          ></span>
+          <strong>{locked ? "In use" : READINESS[validation].label}</strong>
+          {summary}
+        </p>
+      {/if}
+      {#if offerAutomatic}
+        <button class="btn" type="button" onclick={() => select("auto")}
+          >Use Automatic</button
+        >
+      {/if}
+      {#if unlisted.length && !locked && (validation === "failed" || validation === "stale")}
+        <!-- Both pickers mount at once and a group's name does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
         <button
           class="btn"
@@ -134,111 +140,56 @@
         >
       {/if}
     </div>{/if}
-</fieldset>
+</div>
 
 <style>
-  fieldset {
+  .picker {
     display: grid;
     gap: 6px;
     min-width: 0;
-    margin-top: 6px;
+    margin-top: var(--space-3);
   }
-  legend {
-    margin-bottom: 6px;
-    padding-inline: var(--space-3);
-    color: var(--text-soft);
-    font-size: var(--type-body);
-  }
-  .options {
-    display: grid;
-    gap: 6px;
-  }
-  .choice {
-    --ring-offset: 1px;
-    position: relative;
-    display: grid;
-    grid-template-columns: 14px minmax(0, 1fr);
-    align-items: center;
-    gap: 10px;
+  .choice-label {
     min-width: 0;
-    padding: 7px 10px;
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-chrome);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .choice.unavailable {
+  .unavailable {
     cursor: not-allowed;
   }
-  .choice.unavailable > :not(input) {
-    opacity: 0.56;
-  }
-  .choice input {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-  }
-  .radio-dot {
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--field-edge);
-    border-radius: var(--r-full);
-  }
-  .choice:has(> input:checked) .radio-dot {
-    border: 4px solid var(--brand-strong);
-    background: var(--surface-1);
-  }
-  .copy {
-    display: grid;
-    gap: 1px;
-    min-width: 0;
-    line-height: 1.35;
-  }
-  .copy strong {
-    font-size: var(--type-sm);
-    font-weight: var(--w-strong);
-    overflow-wrap: anywhere;
-  }
-  .copy small {
-    color: var(--text-muted);
-    font-size: var(--type-xs);
+  .unavailable > * {
+    opacity: 0.5;
   }
   .fold {
-    justify-self: start;
-    min-height: 24px;
-    padding-inline: var(--space-3);
+    justify-content: start;
+    padding-inline-start: calc(var(--row-inset) + var(--check) + 8px);
     color: var(--text-soft);
-    font-size: var(--type-xs);
+    font: var(--role-caption);
   }
   @media (hover: hover) {
     .fold:hover {
       color: var(--text);
     }
   }
-  .btn {
-    justify-self: start;
-  }
   .validation {
-    display: grid;
-    grid-template-columns: 8px minmax(0, 1fr) auto;
+    display: flex;
     align-items: center;
     gap: var(--space-2);
     min-height: 24px;
-    padding-inline: var(--space-3);
-    font-size: var(--type-xs);
+    padding-inline: var(--row-inset);
+    font: var(--role-caption);
   }
-  .validation-copy {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0 6px;
-    min-width: 0;
-  }
-  .validation-copy strong {
-    flex: none;
-    font-weight: var(--w-heavy);
-  }
-  .validation-copy small {
+  .validation p {
+    flex: 1;
     min-width: 0;
     color: var(--text-soft);
-    font-size: inherit;
+  }
+  .validation strong {
+    color: var(--text);
+    font-weight: var(--w-strong);
+  }
+  .validation .status-dot {
+    margin-inline-end: 4px;
   }
 </style>
