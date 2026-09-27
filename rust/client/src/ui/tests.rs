@@ -108,6 +108,24 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
 }
 
+#[test]
+fn reenabled_stage_runs_in_canonical_order() {
+    let (commands, mut received) = mpsc::channel(4);
+    let mut ui = Ui::new(Config::default(), Snapshot::default());
+    let latency = ui
+        .fields()
+        .iter()
+        .position(|field| *field == Field::LatencyStage);
+    ui.rows.select(latency);
+    for code in [KeyCode::Char(' '), KeyCode::Char(' '), KeyCode::Char('r')] {
+        ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    }
+    let Ok(Command::Run(config)) = received.try_recv() else {
+        panic!("run was not requested");
+    };
+    assert_eq!(config.stages, Config::default().stages);
+}
+
 #[tokio::test(start_paused = true)]
 async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
     use crate::model::AuthPrompt;

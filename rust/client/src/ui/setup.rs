@@ -302,6 +302,7 @@ impl Ui {
                 self.config.stages.retain(|existing| *existing != stage);
             } else {
                 self.config.stages.push(stage);
+                self.config.stages.sort_unstable();
             }
             return;
         }

@@ -142,27 +142,19 @@ fn duration(value: &str) -> Result<Duration, Error> {
 }
 
 fn stages(value: &str) -> Result<Vec<Stage>, Error> {
-    let mut selected = [false; 4];
-    for part in value.split(',') {
-        let index = match part.trim().to_ascii_lowercase().as_str() {
-            "latency" | "ping" => 0,
-            "download" | "down" => 1,
-            "upload" | "up" => 2,
-            "bidirectional" | "bidi" => 3,
-            _ => return Err(format!("unknown measurement stage: {part}").into()),
-        };
-        selected[index] = true;
-    }
-    Ok([
-        Stage::Latency,
-        Stage::Download,
-        Stage::Upload,
-        Stage::Bidirectional,
-    ]
-    .into_iter()
-    .zip(selected)
-    .filter_map(|(stage, enabled)| enabled.then_some(stage))
-    .collect())
+    let mut stages = value
+        .split(',')
+        .map(|part| match part.trim().to_ascii_lowercase().as_str() {
+            "latency" | "ping" => Ok(Stage::Latency),
+            "download" | "down" => Ok(Stage::Download),
+            "upload" | "up" => Ok(Stage::Upload),
+            "bidirectional" | "bidi" => Ok(Stage::Bidirectional),
+            _ => Err(format!("unknown measurement stage: {part}")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    stages.sort_unstable();
+    stages.dedup();
+    Ok(stages)
 }
 
 pub const HELP: &str = "Graphite Meter experimental Rust client

@@ -2,7 +2,7 @@ use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport, Protocol, 
 use graphite_meter_core::origin::target_origin;
 use std::{collections::VecDeque, time::Duration};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     Latency,
     Download,
