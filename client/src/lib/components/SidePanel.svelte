@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  // Docked column on wide layouts; elsewhere a flyout or sheet over a scrim that leaves the topbar usable.
+  // Docked column on wide layouts; elsewhere a flyout or sheet over a scrim below the topbar.
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
