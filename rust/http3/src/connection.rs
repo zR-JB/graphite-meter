@@ -168,8 +168,9 @@ pub(crate) struct Connection {
     critical: [bool; 3],
     /// Streams still covered by [`CONNECTION_BYTES`] instead of a charge.
     floor: u8,
-    /// Server: the lowest request stream ID not yet accepted, and the GOAWAY drain deadline.
+    /// Server: the lowest request stream ID not yet accepted, GOAWAY, and the shutdown's deadline.
     next_request: u64,
+    goaway_sent: bool,
     drain: Option<Instant>,
     timer: Pin<Box<Sleep>>,
     closed: bool,
@@ -256,6 +257,7 @@ impl Connection {
             critical: [false; 3],
             floor: 3,
             next_request: 0,
+            goaway_sent: false,
             drain: None,
             timer: Box::pin(tokio::time::sleep(Duration::ZERO)),
             closed: false,
@@ -263,16 +265,24 @@ impl Connection {
         }
     }
 
-    /// Server: sends GOAWAY and ends every session with `code` and `reason`; later requests are
-    /// refused, and the connection closes once the others end or 5 s pass.
-    pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
-        if self.drain.is_none() && !self.closed {
+    /// Server: sends GOAWAY; later requests are refused, and the connection closes once the others end.
+    pub(crate) fn goaway(&mut self) {
+        if !self.goaway_sent && !self.closed {
+            self.goaway_sent = true;
             frame::put_header(
                 frame::GOAWAY,
                 varint::len(self.next_request) as u64,
                 &mut self.control.pending,
             );
             varint::put(self.next_request, &mut self.control.pending);
+            self.shared.state().wake();
+        }
+    }
+
+    /// Server: [`Self::goaway`], every session ends with `code` and `reason`, and 5 s bound the rest.
+    pub(crate) fn shutdown(&mut self, code: u32, reason: &str) {
+        self.goaway();
+        if self.drain.is_none() && !self.closed {
             self.drain = Some(Instant::now() + DRAIN);
             let mut state = self.shared.state();
             state.sessions.shutdown(code, reason);
@@ -394,7 +404,7 @@ impl Connection {
     /// Refused past GOAWAY or over the budget: the new stream gets H3_REQUEST_REJECTED.
     fn admit_request(&mut self, mut send: noq::SendStream, mut recv: noq::RecvStream) -> Option<RequestStream> {
         let id: u64 = recv.id().into();
-        let late = self.drain.is_some() && id >= self.next_request;
+        let late = self.goaway_sent && id >= self.next_request;
         self.next_request = self.next_request.max(id + 4);
         match stream::charges(&self.shared.budget) {
             Some(charges) if !late => Some(RequestStream::new(
@@ -519,7 +529,7 @@ impl Connection {
         let server = self.shared.role == Role::Server;
         let idle = (server && live == 0).then_some(idle_since + IDLE);
         // A connection that only carried sessions ends with its last one: browsers would hold its slot.
-        let done = live == 0 && linger.is_none() && (self.drain.is_some() || server && sessions_only);
+        let done = live == 0 && linger.is_none() && (self.goaway_sent || server && sessions_only);
         if done || self.drain.is_some_and(|drain| drain <= now) || idle.is_some_and(|idle| idle <= now) {
             self.shared.close(Code::H3_NO_ERROR);
             return Poll::Ready(Ok(None));

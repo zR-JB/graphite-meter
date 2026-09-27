@@ -35,8 +35,13 @@ impl Connection {
         poll_fn(|cx| self.poll_next(cx)).await
     }
 
-    /// Sends GOAWAY and ends the session with `code` and `reason`, even one accepted later; later
-    /// requests are refused, and the connection closes once the others end or 5 s pass.
+    /// Sends GOAWAY: later requests are refused, and the connection closes once the others end.
+    pub fn goaway(&mut self) {
+        self.0.goaway();
+    }
+
+    /// Also ends the session with `code` and `reason`, even one accepted later, and closes the
+    /// connection once the other requests end or 5 s pass.
     pub fn shutdown(&mut self, code: u32, reason: &str) {
         self.0.shutdown(code, reason);
     }
