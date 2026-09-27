@@ -34,6 +34,11 @@ type serverFixture struct {
 	upload               atomic.Pointer[endpoint.Upload]
 }
 
+func (f *serverFixture) kill() {
+	f.dropLatency()
+	f.server.CloseClientConnections()
+}
+
 func (f *serverFixture) restart() {
 	f.upload.Store(endpoint.NewUpload(nil, nil))
 	f.server.CloseClientConnections()
@@ -256,7 +261,7 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 				log.emit(e)
 			})
 			result, details := log.results()[0], log.details()
-			if scenario.all && !errors.Is(err, errNoSurvivors) || !scenario.all && err != nil {
+			if scenario.all && !errors.Is(err, ErrNoSurvivors) || !scenario.all && err != nil {
 				t.Fatalf("outcome=%v", err)
 			}
 			if result.Unavailable == scenario.available {
@@ -280,6 +285,54 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAServerLostNearTheStageEndFailsIt(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []Stage{StageDownload, StageUpload} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Download: stage == StageDownload, Upload: stage == StageUpload}
+			cfg.DownloadDuration, cfg.UploadDuration = 2*time.Second, 2*time.Second
+			prepared := prepareFixtureRun(t, cfg, a, b)
+			var log eventLog
+			samples := 0
+			err := runSelected(t.Context(), cfg, prepared, func(e Event) {
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable {
+					if samples++; samples == 4 {
+						b.kill()
+					}
+				}
+				log.emit(e)
+			})
+			details := log.details()
+			if err != nil || details.Outcome != OutcomePartial || !slices.ContainsFunc(details.Failures,
+				func(f ServerFailure) bool { return f.ServerID == "b" && f.Stage == stage && f.Scope == ScopeThroughput }) {
+				t.Fatalf("a server lost before the stage end passed as measured: %v %+v", err, details)
+			}
+			if first := details.Intervals[0]; first.End-first.Start >= 1500*time.Millisecond {
+				t.Errorf("the interval kept the lost server's silence: %v-%v", first.Start, first.End)
+			}
+		})
+	}
+}
+
+func TestACancelledMeasurementCarriesItsCause(t *testing.T) {
+	t.Parallel()
+	synctest.Test(t, func(t *testing.T) {
+		r := pipedRunner(t, http.NotFoundHandler())
+		ctx, cancel := context.WithCancelCause(t.Context())
+		failure := errors.New("the server's transfer failed")
+		time.AfterFunc(100*time.Millisecond, func() { cancel(failure) })
+		s := &stageServer{participant: &participant{transport: r}}
+		plan := StagePlan{Name: StageUpload, Directions: []Direction{Up}, Duration: time.Second}
+		outcome := s.measure(ctx, plan, roleLatency, testStageGate(make(chan struct{})))
+		if !errors.Is(outcome.err, failure) || !errors.Is(outcome.result.Err, failure) {
+			t.Fatalf("a latency channel cancelled mid-redial by a failure = %v, want that failure", outcome.err)
+		}
+	})
 }
 
 func TestASoleServerRetriesAtItsNextStage(t *testing.T) {
@@ -371,8 +424,8 @@ func TestARestartedServerGetsOneReplacementReceiver(t *testing.T) {
 			if restarts == 1 && (details.Outcome != OutcomeComplete || log.results()[0].Unavailable) {
 				t.Fatalf("one restart lost the upload: %+v %+v", details, log.results())
 			}
-			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureConnectionLost) {
-				t.Fatalf("a second unknown id = %+v, want the server lost as connection-lost", details.Failures)
+			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureProtocol) {
+				t.Fatalf("a second unknown id = %+v, want the server lost as protocol-error", details.Failures)
 			}
 		})
 	}

@@ -926,7 +926,7 @@ test("an aborted stage end delivers no late events", async () => {
   h.run.dispose();
 });
 
-test("evidence that stops below the silence limit ends with its stage, and a sole server stalls the run", async () => {
+test("evidence that stops below the silence limit ends with its stage unless a failure is still unrecovered there", async () => {
   const silent = (activity: PhaseActivity, ms: number) =>
     activity.stage === "download" && ms >= 400;
   const stall = (host: ParticipantHost, activity: PhaseActivity) => {
@@ -936,6 +936,16 @@ test("evidence that stops below the silence limit ends with its stage, and a sol
         400,
       );
   };
+  const quiet = await harness(
+    two({ silent }),
+    { download: true, upload: true },
+    { downloadMs: 1_000, uploadMs: 1_000 },
+  );
+  quiet.start();
+  const kept = await quiet.result();
+  expect(kept.multiServer.failures).toEqual([]);
+  expect(kept.multiServer.participants).toEqual(["a", "b"]);
+
   const h = await harness(
     two({ silent, measure: stall }),
     { download: true, upload: true },
@@ -943,10 +953,17 @@ test("evidence that stops below the silence limit ends with its stage, and a sol
   );
   h.start();
   const result = await h.result();
-  expect(result.multiServer.failures).toEqual([]);
-  expect(result.multiServer.participants).toEqual(["a", "b"]);
-  expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(2);
+  expect(result.multiServer.failures[0]).toMatchObject({
+    serverId: "a",
+    stage: "download",
+    reason: "connection-lost",
+    message: "quiet",
+  });
+  expect(result.multiServer.participants).toEqual(["b"]);
+  expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(1);
   expect(h.events.some((event) => event.type === "stall")).toBe(false);
+  const [download] = result.multiServer.intervals;
+  expect(download.endMs - download.startMs).toBeLessThan(500);
 
   // Evidence silent past the progress window leaves the interval within the stage, reported or not.
   const early = await harness(

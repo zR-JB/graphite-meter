@@ -32,7 +32,7 @@ func controlJSON(
 	return res, readControlJSON(res.Body, out)
 }
 
-func unexpectedStatus(res *http.Response) error { return statusOf(res, res.Request.URL.Redacted()) }
+func unexpectedStatus(res *http.Response) error { return statusOf(res, res.Request.URL.Path) }
 
 // statusOf takes the source from the caller: dial responses carry no Request.
 func statusOf(res *http.Response, from string) error {

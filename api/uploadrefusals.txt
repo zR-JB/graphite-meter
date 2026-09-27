@@ -24,6 +24,8 @@
 #   TS — client/src/lib/runner/workers/progressFeed.test.ts (the fatal records
 #        the progress feed surfaces)
 #
+# The failure reason each refusal ends a stage with is pinned in uploadrefusalreasons.txt.
+#
 # uploadAccessOK is the deliberate omission: it is not a refusal, carries no
 # message, and never reaches writeUploadAccessError. Its absence below is the
 # documented exception, not a missing row.

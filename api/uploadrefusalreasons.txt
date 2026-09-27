@@ -1,0 +1,18 @@
+# Graphite Meter — upload refusal failure reason pin (shared across Go / TS / Rust).
+#
+# Format (one refusal per non-comment, non-blank line):
+#   <name> | <failure reason>
+#
+#   name   = a refusal name from uploadrefusals.txt; rows are matched by name, never by position
+#   reason = the failurereasons.txt reason a client records when that refusal ends a server's stage
+#            (`invalid` first replaces the receiver once per server and run)
+#
+# Every refusal in uploadrefusals.txt has exactly one row. Read by go/internal/goclient/refusal_test.go and
+# client/src/lib/runner/workers/progressFeed.test.ts.
+
+invalid | protocol-error
+globalFull | server-busy
+clientFull | server-busy
+ownerMismatch | protocol-error
+idle | timeout
+revoked | sign-in-required

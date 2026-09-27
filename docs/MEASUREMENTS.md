@@ -52,11 +52,15 @@ contributions share the client's connection and are not independent capacity tes
   or regressing receiver closes its interval, which no longer counts, and starts an `evidence-resumed` one. A final
   boundary where any server's direction moved no bytes is skipped, so the result ends at the last good one.
 - **Dropouts:** a server leaves the stage where its measured bytes stop growing for the silence limit, a lane fails
-  for good, or its grant is refused (which asks for sign-in); only the refused grant removes it at the final
-  boundary. The interval ends and the survivors start a `dropout` interval. A server that cannot prepare a stage
-  leaves the same way, and the run fails only when none survives. A removed server stays out for the rest of the
-  run, except that a sole server retries at the next stage. A latency-only failure keeps throughput, except in the
-  latency stage: a server lost there (connection lost or timed out) leaves the run while another remains.
+  for good, or its grant is refused (which asks for sign-in). At the final boundary a refused grant removes it, and
+  so does a stream still retrying a failure while that direction's bytes have not moved for 500 ms; the stage then
+  records that failure. The interval ends at the boundary where the departing server's bytes last moved (in a
+  bidirectional stage, where its first direction stopped; at its first boundary, without a window, if they never
+  moved), so its silence is never measured, and the survivors' `dropout` interval starts there. A server that cannot
+  prepare a stage leaves the same way, and the run fails only when none survives. A removed server stays out for the
+  rest of the run, except that a sole server retries at the next stage. A latency-only failure keeps throughput,
+  except in the latency stage: a server lost there (connection lost or timed out) leaves the run while another
+  remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes. After a late dropout the interval before it can hold the headline
   and the stage is Partial. With no such interval the stage fails with a [reason](#failure-reasons) and the run is
@@ -110,14 +114,14 @@ jitter, deadlines and added latency.
 | Early finish | Optional, also for the idle latency stage: after 52 % of the stage, a stability score of at least 0.86 held for 1.1 s with enough samples ends it; that window is then the headline | None: the full window |
 | Duration changes | Live: a shortened stage ends at once and keeps its evidence | Fixed at start |
 | Stage readiness | 3.5 s from preparation: download bytes, a receiver checkpoint, then a latency reply; loaded latency that is not ready fails only its population | 10 s: lanes open, upload feed advancing, latency can send |
-| Upload boundaries | Pushed progress feed; over HTTP a checkpoint every 250 ms while the feed is quiet (1.5 s timeout); over WebTransport the session's feed alone | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end) |
+| Upload boundaries | Pushed progress feed; over HTTP a checkpoint every 250 ms while the feed is quiet (1.5 s timeout); over WebTransport the session's feed alone; the final checkpoint retries a miss every 100 ms within 1.5 s | A checkpoint batch every 250 ms tick (1.5 s budget, 500 ms at the end), retrying a miss every 100 ms |
 | Gap rule | Page-timer lateness; held during preparation and finalization; the interval before the gap still counts | Sampler-tick lateness; the interval before the gap no longer counts |
 | Silence limit | 1.5 s of active run time | 2 s, or three missed checkpoints in a row (not at the end) |
 | HTTP 429 / 503 | Lanes and the upload feed retry until silence or the readiness budget lapses, then server at capacity; Retry-After in whole seconds | Retried for 2 s, then server at capacity |
 | Forced streams | At most 14 per direction over HTTP/2 and HTTP/3 and 16 per WebTransport session, within a server's 32 measurements per client | At most 14 per direction |
 | Automatic streams | HTTP/1.1 up to 4 per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1 | `--auto-streams`, default 6 |
 | Path freshness | A verified path older than 2 min is checked again before a run | Preparation is reused for 30 s |
-| Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply |
+| Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down |
 | Warmup RTT | The latency focus server's path-check RTT | The highest RTT among active servers, updated to latency-stage medians |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
 | Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |
@@ -133,7 +137,7 @@ jitter, deadlines and added latency.
 | Complete | Every planned stage finished with every server. |
 | Partial | Every stage has its results, but a server or latency population failed. |
 | Incomplete | A planned result is missing after measurement began, including every server failing. |
-| Stopped | Cancelled by the user. |
+| Stopped | Cancelled by the user; work a failure cancels carries that failure, never "stopped". |
 | Failed | Nothing was measured. |
 
 The latency result is the latency-focus server's population. If that server leaves, the focus moves to a surviving
@@ -152,7 +156,7 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 | `timeout` | Stopped delivering data | A timed-out path, the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending. |
 | `sign-in-required` | Sign-in required | Sign-out or a revoked grant. |
 | `server-busy` | Server at capacity | Admission refused with 429 or 503; retries wait 300 ms doubling, or Retry-After, up to 1.2 s. |
-| `protocol-error` | Unexpected server response | An unexpected status or a refused upload owner. |
+| `protocol-error` | Unexpected server response | An unexpected status, a refused upload owner, or an upload id the server still does not know after one replacement receiver. |
 | `insufficient-evidence` | Too little measured time | No interval with 800 ms of evidence or moved bytes. |
 
 ## Saved history

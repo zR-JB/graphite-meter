@@ -633,6 +633,14 @@ interface OpenInterval {
   servers: Map<string, Series>;
   peakFrom: Boundary | null;
   peaks: Map<string, Partial<Record<FlowDirection, number>>>;
+  moved: Map<string, Partial<Record<FlowDirection, Mark>>>;
+}
+interface Mark {
+  boundary: Boundary;
+  full: AggregateWindow | null;
+  headline: AggregateWindow | null;
+  peaks: OpenInterval["peaks"];
+  buckets: [RateBuckets, number][];
 }
 type Totals = Record<FlowDirection, number>;
 
@@ -655,6 +663,7 @@ export class ThroughputAggregate {
   #closed = new Map<number, OpenInterval>();
   #stageTotals = new Map<TransferStage, Map<string, Totals>>();
   #ledgers = new Map<string, Map<string, number>>();
+  #latest: { boundary: Boundary; final: boolean } | null = null;
 
   get current(): AggregationInterval | null {
     return this.#open?.record ?? null;
@@ -671,7 +680,10 @@ export class ThroughputAggregate {
     reason: AggregationInterval["reason"] = "stage-start",
   ): void {
     this.close();
-    if (reason === "stage-start") this.#ledgers.clear();
+    if (reason === "stage-start") {
+      this.#ledgers.clear();
+      this.#latest = null;
+    }
     if (this.intervals.length >= INTERVAL_LIMIT) {
       this.#closed.delete(this.intervals.shift()!.id);
       this.omittedIntervals++;
@@ -699,6 +711,60 @@ export class ThroughputAggregate {
       servers: new Map(participants.map((id) => [id, series()])),
       peakFrom: null,
       peaks: new Map(),
+      moved: new Map(participants.map((id) => [id, {}])),
+    };
+  }
+
+  /** Ends the interval where a departed server last moved, so its silence never counts; survivors continue from there. */
+  dropout(survivors: string[], atMs: number): void {
+    const open = this.#open;
+    if (!open || survivors.length === open.record.participants.length) return;
+    const { stage } = open.record;
+    let end: Mark | undefined;
+    for (const [id, moved] of open.moved)
+      if (!survivors.includes(id))
+        for (const mark of Object.values(moved))
+          if (!end || mark.boundary.atMs < end.boundary.atMs) end = mark;
+    if (!end) {
+      if (survivors.length) this.begin(stage, survivors, atMs, "dropout");
+      return;
+    }
+    Object.assign(open.record, {
+      endMs: end.boundary.atMs,
+      full: end.full,
+      headline: end.headline,
+    });
+    open.peaks = end.peaks;
+    for (const [buckets, length] of end.buckets) buckets.rates.length = length;
+    if (!survivors.length) return;
+    const latest = this.#latest;
+    this.begin(stage, survivors, end.boundary.atMs, "dropout");
+    this.#start(this.#open!, end.boundary);
+    if (latest && latest.boundary.atMs > end.boundary.atMs)
+      this.observe(latest.boundary, latest.final);
+  }
+
+  #start(open: OpenInterval, boundary: Boundary): void {
+    open.first = open.last = open.peakFrom = boundary;
+    open.record.startMs = open.record.endMs = boundary.atMs;
+    const start = this.#mark(open, boundary);
+    for (const moved of open.moved.values())
+      for (const dir of directions(open.record.stage)) moved[dir] = start;
+  }
+
+  #mark(open: OpenInterval, boundary: Boundary): Mark {
+    const { record } = open;
+    return {
+      boundary,
+      full: record.full,
+      headline: record.headline,
+      peaks: new Map([...open.peaks].map(([id, peak]) => [id, { ...peak }])),
+      buckets: [open.total, ...open.servers.values()].flatMap((series) =>
+        directions(record.stage).map((dir): [RateBuckets, number] => [
+          series[dir],
+          series[dir].rates.length,
+        ]),
+      ),
     };
   }
 
@@ -760,6 +826,7 @@ export class ThroughputAggregate {
       const up = boundary.up[id];
       if (up && isCount(up.bytes)) this.#observeUpload(record.stage, id, up);
     }
+    this.#latest = { boundary, final };
     const valid =
       record.participants.length > 0 &&
       record.participants.every((id) =>
@@ -771,8 +838,7 @@ export class ThroughputAggregate {
       );
     if (!valid) return null;
     if (!open.first || !open.last) {
-      open.first = open.last = open.peakFrom = boundary;
-      record.startMs = record.endMs = boundary.atMs;
+      this.#start(open, boundary);
       return null;
     }
     const last = open.last;
@@ -845,6 +911,11 @@ export class ThroughputAggregate {
     record.headline = open.stable
       ? window(open.stable, boundary, record)
       : full;
+    const mark = this.#mark(open, boundary);
+    for (const dir of dirs)
+      for (const component of sample[dir]!)
+        if (component.bytes > 0)
+          open.moved.get(component.serverId)![dir] = mark;
     return sample;
   }
 

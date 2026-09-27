@@ -110,7 +110,7 @@ func failureReason(err error, preparing bool) FailureReason {
 		return FailureTimeout
 	case errors.Is(err, errInsufficientEvidence), errors.Is(err, errNoBytes):
 		return FailureInsufficientEvidence
-	case network || ended || errors.Is(err, errUploadInvalid):
+	case network || ended:
 		return FailureConnectionLost
 	case answered, errors.Is(err, errProtocol):
 		return FailureProtocol

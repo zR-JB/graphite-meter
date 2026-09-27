@@ -21,9 +21,10 @@ import (
 
 func TestUploadRefusalCodesActTheSameOnEveryTransport(t *testing.T) {
 	t.Parallel()
-	want := map[string]FailureReason{"invalid": FailureConnectionLost, "globalFull": FailureServerBusy,
-		"clientFull": FailureServerBusy, "ownerMismatch": FailureProtocol, "idle": FailureTimeout,
-		"revoked": FailureSignIn}
+	want := map[string]FailureReason{}
+	for _, fields := range apipin.Rows(t, "uploadrefusalreasons.txt", 2) {
+		want[fields[0]] = FailureReason(fields[1])
+	}
 	retried := map[string]bool{"globalFull": true, "clientFull": true, "idle": true}
 	for _, fields := range apipin.Rows(t, "uploadrefusals.txt", 3) {
 		code := fields[0]
@@ -33,7 +34,8 @@ func TestUploadRefusalCodesActTheSameOnEveryTransport(t *testing.T) {
 			"HTTP":         statusOf(&http.Response{StatusCode: status, Header: header}, "fixture"),
 			"WebTransport": uploadRefusal(code, statusError{from: "fixture"}),
 		} {
-			if reason := failureReason(err, false); reason != want[code] || permanent(err) == retried[code] {
+			if reason := failureReason(err, false); want[code] == "" || reason != want[code] ||
+				permanent(err) == retried[code] {
 				t.Errorf("%s over %s = %v (%s, permanent %v), want %s", code, transport, err, reason,
 					permanent(err), want[code])
 			}
@@ -41,7 +43,7 @@ func TestUploadRefusalCodesActTheSameOnEveryTransport(t *testing.T) {
 		delete(want, code)
 	}
 	if len(want) > 0 {
-		t.Errorf("the refusal pin no longer lists %v", want)
+		t.Errorf("reasons pinned for refusals the server no longer sends: %v", want)
 	}
 }
 

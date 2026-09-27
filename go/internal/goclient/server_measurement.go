@@ -52,6 +52,14 @@ type AggregationInterval struct {
 	Window       *AggregateWindow
 	combined     windowStats
 	servers      map[string]*windowStats
+	moved        map[string]*byDirection[*intervalMark]
+}
+
+type intervalMark struct {
+	boundary measurementBoundary
+	window   *AggregateWindow
+	combined windowStats
+	servers  map[string]windowStats
 }
 
 type windowStats struct {
@@ -101,10 +109,11 @@ type aggregateMeasurements struct {
 	stage                 Stage
 	servers               map[string]*serverLedger
 	first, last, peakFrom *measurementBoundary
+	latest                *measurementBoundary
 }
 
 func (a *aggregateMeasurements) beginStage(stage Stage, ids []string, at time.Duration) {
-	a.stage, a.servers = stage, map[string]*serverLedger{}
+	a.stage, a.servers, a.latest = stage, map[string]*serverLedger{}, nil
 	for _, id := range ids {
 		a.servers[id] = &serverLedger{}
 	}
@@ -117,9 +126,11 @@ func (a *aggregateMeasurements) restart(ids []string, at time.Duration, reason I
 		a.omitted++
 	}
 	interval := AggregationInterval{Stage: a.stage, Participants: slices.Clone(ids), Start: at, End: at,
-		Complete: true, Reason: reason, servers: map[string]*windowStats{}}
+		Complete: true, Reason: reason, servers: map[string]*windowStats{},
+		moved: map[string]*byDirection[*intervalMark]{}}
 	for _, id := range ids {
 		interval.servers[id] = &windowStats{}
+		interval.moved[id] = &byDirection[*intervalMark]{}
 	}
 	a.intervals = append(a.intervals, interval)
 	a.first, a.last, a.peakFrom = nil, nil, nil
@@ -186,6 +197,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 		return nil, false
 	}
 	a.credit(b)
+	a.latest = new(b)
 	if a.first != nil && b.stalled {
 		return nil, a.resume(interval, b)
 	}
@@ -196,8 +208,7 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 		return nil, false
 	}
 	if a.first == nil {
-		a.first, a.last, a.peakFrom = new(b), new(b), new(b)
-		interval.Start, interval.End = b.at, b.at
+		a.start(interval, b)
 		return nil, false
 	}
 	// A final boundary where a direction stood still ends the result at the last good boundary.
@@ -225,7 +236,76 @@ func (a *aggregateMeasurements) observe(b measurementBoundary) (*AggregateWindow
 		a.peakFrom = new(b)
 		interval.recordPeak(peak)
 	}
+	mark := interval.mark(b)
+	for _, dir := range []Direction{Down, Up} {
+		components, _ := sample.direction(dir)
+		for _, c := range components {
+			if c.Bytes > 0 {
+				interval.moved[c.ServerID].set(dir, mark)
+			}
+		}
+	}
 	return sample, false
+}
+
+func (a *aggregateMeasurements) start(interval *AggregationInterval, b measurementBoundary) {
+	a.first, a.last, a.peakFrom = new(b), new(b), new(b)
+	interval.Start, interval.End = b.at, b.at
+	start := interval.mark(b)
+	for _, moved := range interval.moved {
+		if a.stage != StageUpload {
+			moved.down = start
+		}
+		if a.stage != StageDownload {
+			moved.up = start
+		}
+	}
+}
+
+func (interval *AggregationInterval) mark(b measurementBoundary) *intervalMark {
+	m := &intervalMark{boundary: b, window: interval.Window, combined: interval.combined,
+		servers: map[string]windowStats{}}
+	for id, stats := range interval.servers {
+		m.servers[id] = *stats
+	}
+	return m
+}
+
+func (a *aggregateMeasurements) dropout(survivors []string, at time.Duration) {
+	interval := a.current()
+	if interval == nil || len(survivors) == len(interval.Participants) {
+		return
+	}
+	var end *intervalMark
+	for id, moved := range interval.moved {
+		if slices.Contains(survivors, id) {
+			continue
+		}
+		for _, m := range []*intervalMark{moved.down, moved.up} {
+			if m != nil && (end == nil || m.boundary.at < end.boundary.at) {
+				end = m
+			}
+		}
+	}
+	if end == nil {
+		if len(survivors) > 0 {
+			a.restart(survivors, at, ReasonDropout)
+		}
+		return
+	}
+	interval.End, interval.Window, interval.combined = end.boundary.at, end.window, end.combined
+	for id, stats := range end.servers {
+		*interval.servers[id] = stats
+	}
+	if len(survivors) == 0 {
+		return
+	}
+	latest := a.latest
+	a.restart(survivors, end.boundary.at, ReasonDropout)
+	a.start(a.current(), end.boundary)
+	if latest.at > end.boundary.at {
+		a.observe(*latest)
+	}
 }
 
 func (w *AggregateWindow) shortest() time.Duration {

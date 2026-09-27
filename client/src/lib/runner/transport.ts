@@ -17,6 +17,7 @@ import {
   measurementFetch,
   reportServerAuthentication,
   requestOptions,
+  ServerAuthenticationRequired,
   socketMint,
   type ServerCredentials,
 } from "../servers/credentials";
@@ -79,10 +80,10 @@ export interface StageTransport {
   finish(): Promise<void>;
   /** Immediate release; `incomplete` reports unknown probe outcomes first. */
   discard(incomplete?: boolean): void;
-  /** `fresh` issues a request at or after this call instead of joining one in flight. */
+  /** `final` issues fresh requests, retrying a miss within the checkpoint bound, instead of joining one in flight. */
   checkpoint(
     signal: AbortSignal,
-    fresh?: boolean,
+    final?: boolean,
   ): Promise<ReceiverCheckpoint | null>;
   replaceUpload?(signal: AbortSignal): Promise<void>;
 }
@@ -97,6 +98,7 @@ export interface StageOptions {
 
 const LANE_STAGGER_MS = 75;
 const CHECKPOINT_TIMEOUT_MS = 1500;
+const CHECKPOINT_RETRY_MS = 100;
 
 export type WorkerMsg =
   | { type: "established" | "stopped" | "auth-required" }
@@ -556,16 +558,38 @@ export class ServerStage implements StageTransport {
 
   checkpoint(
     signal: AbortSignal,
-    fresh = false,
+    final = false,
   ): Promise<ReceiverCheckpoint | null> {
     signal.throwIfAborted();
-    if (fresh || !this.#checkpoint) {
-      const task = this.#requestCheckpoint().finally(() => {
-        if (this.#checkpoint === task) this.#checkpoint = null;
-      });
-      this.#checkpoint = task;
+    if (final)
+      return this.#finalCheckpoint(
+        AbortSignal.any([signal, AbortSignal.timeout(CHECKPOINT_TIMEOUT_MS)]),
+      );
+    return abortable(this.#checkpoint ?? this.#freshCheckpoint(), signal);
+  }
+
+  #freshCheckpoint(): Promise<ReceiverCheckpoint | null> {
+    const task = this.#requestCheckpoint().finally(() => {
+      if (this.#checkpoint === task) this.#checkpoint = null;
+    });
+    return (this.#checkpoint = task);
+  }
+
+  async #finalCheckpoint(
+    signal: AbortSignal,
+  ): Promise<ReceiverCheckpoint | null> {
+    for (;;) {
+      const checkpoint = await abortable(this.#freshCheckpoint(), signal).catch(
+        (cause: unknown) => {
+          if (signal.aborted || cause instanceof ServerAuthenticationRequired)
+            throw cause;
+          return null;
+        },
+      );
+      if (checkpoint || !this.receiver || this.#abort.signal.aborted)
+        return checkpoint;
+      await abortableDelay(CHECKPOINT_RETRY_MS, signal);
     }
-    return abortable(this.#checkpoint, signal);
   }
 
   async #requestCheckpoint(): Promise<ReceiverCheckpoint | null> {

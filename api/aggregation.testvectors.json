@@ -155,15 +155,76 @@
       {"atMs": 2000, "down": {"a": 2000, "b": 2000, "c": 2000, "d": 2000}, "up": {}},
       {"atMs": 2250, "dropout": ["d"], "down": {"a": 2250, "b": 2250, "c": 2250}, "up": {}},
       {"atMs": 2500, "down": {"a": 2500, "b": 2500, "c": 2500}, "up": {}},
-      {"atMs": 2750, "down": {"a": 2750, "b": 2750, "c": 2750}, "up": {}},
-      {"atMs": 3000, "down": {"a": 3000, "b": 3000, "c": 3000}, "up": {}}
+      {"atMs": 2750, "down": {"a": 2750, "b": 2750, "c": 2750}, "up": {}}
     ],
     "result": {"down": {"bytesPerSec": 4000, "peakBytesPerSec": 4000}, "up": null},
     "intervals": [
       {"reason": "stage-start", "complete": true,
        "window": {"startMs": 0, "endMs": 2000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
       {"reason": "dropout", "complete": true,
-       "window": {"startMs": 2250, "endMs": 3000, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+       "window": {"startMs": 2000, "endMs": 2750, "downBytesPerSec": 3000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "a dropout splits the stage where the departed server last moved",
+    "stage": "download",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0}, "up": {}},
+      {"atMs": 250, "down": {"a": 250, "b": 750}, "up": {}},
+      {"atMs": 500, "down": {"a": 500, "b": 1500}, "up": {}},
+      {"atMs": 750, "down": {"a": 750, "b": 2250}, "up": {}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 3000}, "up": {}},
+      {"atMs": 1250, "down": {"a": 1250, "b": 3000}, "up": {}},
+      {"atMs": 1500, "down": {"a": 1500, "b": 3000}, "up": {}},
+      {"atMs": 1750, "down": {"a": 1750, "b": 3000}, "up": {}},
+      {"atMs": 2000, "down": {"a": 2000, "b": 3000}, "up": {}},
+      {"atMs": 2250, "dropout": ["b"], "down": {"a": 2250}, "up": {}},
+      {"atMs": 2500, "down": {"a": 2500}, "up": {}},
+      {"atMs": 2750, "down": {"a": 2750}, "up": {}},
+      {"atMs": 3000, "down": {"a": 3000}, "up": {}}
+    ],
+    "result": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}, "up": null},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 4000, "upBytesPerSec": null}},
+      {"reason": "dropout", "complete": true,
+       "window": {"startMs": 1000, "endMs": 3000, "downBytesPerSec": 1000, "upBytesPerSec": null}}
+    ]
+  },
+  {
+    "name": "the departed server's first direction to stop splits the stage",
+    "stage": "bidirectional",
+    "participants": ["a", "b"],
+    "boundaries": [
+      {"atMs": 0, "down": {"a": 0, "b": 0},
+       "up": {"a": {"id": "ra", "bytes": 0, "nanos": 1000000000}, "b": {"id": "rb", "bytes": 0, "nanos": 1000000000}}},
+      {"atMs": 250, "down": {"a": 250, "b": 500},
+       "up": {"a": {"id": "ra", "bytes": 250, "nanos": 1250000000}, "b": {"id": "rb", "bytes": 500, "nanos": 1250000000}}},
+      {"atMs": 500, "down": {"a": 500, "b": 1000},
+       "up": {"a": {"id": "ra", "bytes": 500, "nanos": 1500000000}, "b": {"id": "rb", "bytes": 1000, "nanos": 1500000000}}},
+      {"atMs": 750, "down": {"a": 750, "b": 1500},
+       "up": {"a": {"id": "ra", "bytes": 750, "nanos": 1750000000}, "b": {"id": "rb", "bytes": 1500, "nanos": 1750000000}}},
+      {"atMs": 1000, "down": {"a": 1000, "b": 2000},
+       "up": {"a": {"id": "ra", "bytes": 1000, "nanos": 2000000000}, "b": {"id": "rb", "bytes": 2000, "nanos": 2000000000}}},
+      {"atMs": 1250, "down": {"a": 1250, "b": 2500},
+       "up": {"a": {"id": "ra", "bytes": 1250, "nanos": 2250000000}, "b": {"id": "rb", "bytes": 2000, "nanos": 2250000000}}},
+      {"atMs": 1500, "down": {"a": 1500, "b": 3000},
+       "up": {"a": {"id": "ra", "bytes": 1500, "nanos": 2500000000}, "b": {"id": "rb", "bytes": 2000, "nanos": 2500000000}}},
+      {"atMs": 1750, "down": {"a": 1750, "b": 3000},
+       "up": {"a": {"id": "ra", "bytes": 1750, "nanos": 2750000000}, "b": {"id": "rb", "bytes": 2000, "nanos": 2750000000}}},
+      {"atMs": 2000, "dropout": ["b"], "down": {"a": 2000}, "up": {"a": {"id": "ra", "bytes": 2000, "nanos": 3000000000}}},
+      {"atMs": 2250, "down": {"a": 2250}, "up": {"a": {"id": "ra", "bytes": 2250, "nanos": 3250000000}}},
+      {"atMs": 2500, "down": {"a": 2500}, "up": {"a": {"id": "ra", "bytes": 2500, "nanos": 3500000000}}},
+      {"atMs": 2750, "down": {"a": 2750}, "up": {"a": {"id": "ra", "bytes": 2750, "nanos": 3750000000}}}
+    ],
+    "result": {"down": {"bytesPerSec": 1000, "peakBytesPerSec": 1000},
+               "up": {"bytesPerSec": 1000, "peakBytesPerSec": 1000}},
+    "intervals": [
+      {"reason": "stage-start", "complete": true,
+       "window": {"startMs": 0, "endMs": 1000, "downBytesPerSec": 3000, "upBytesPerSec": 3000}},
+      {"reason": "dropout", "complete": true,
+       "window": {"startMs": 1000, "endMs": 2750, "downBytesPerSec": 1000, "upBytesPerSec": 1000}}
     ]
   },
   {

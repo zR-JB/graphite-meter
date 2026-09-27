@@ -711,9 +711,9 @@ func wtClientConfig(httpBase string) goclient.Config {
 func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	t.Parallel()
 	_, httpBase, e := wtServer(t, func(c *config.Config) {
-		// The session bound kills the stage's session early in the window.
-		c.MaxOperationDuration = 500 * time.Millisecond
-		c.MaxSessionDuration = 500 * time.Millisecond
+		// The session bound kills the stage's session after it measured 800 ms of the window.
+		c.MaxOperationDuration = 1500 * time.Millisecond
+		c.MaxSessionDuration = 1500 * time.Millisecond
 	}, nil)
 
 	clientCfg := wtClientConfig(httpBase)
@@ -765,8 +765,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		t.Fatalf("stage err = %q, want it to name the unreplaced session or its stall", result.Err)
 	}
 	if details == nil || details.Outcome != goclient.OutcomePartial || len(details.Failures) != 1 ||
-		len(details.Intervals) < 2 ||
-		details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
+		len(details.Intervals) != 1 || details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
 		t.Fatalf("earlier receiver window lost: %+v", details)
 	}
 }

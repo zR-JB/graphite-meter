@@ -5,7 +5,7 @@ import {
   type ProgressEvent,
   type ProgressFeedState,
 } from "./progressFeed";
-import type { LaneFailure } from "../contract";
+import type { FailureReason, LaneFailure } from "../contract";
 import { readPin } from "../../test-helpers.testutil";
 
 function feedOf(...lines: string[]): ReadableStream<Uint8Array> {
@@ -82,13 +82,16 @@ test("blank heartbeats and truncated lines are not measurements", async () => {
   expect(end).toBe("eof");
 });
 
-const DISPOSITION: Record<string, LaneFailure> = {
-  invalid: { reason: "connection-lost", retry: false, rotate: true },
-  globalFull: { reason: "server-busy", retry: true },
-  clientFull: { reason: "server-busy", retry: true },
-  ownerMismatch: { reason: "protocol-error", retry: false },
-  idle: { reason: "timeout", retry: true },
-  revoked: { reason: "sign-in-required", retry: false },
+const reasons = Object.fromEntries(
+  (await readPin("uploadrefusalreasons.txt")) as [string, FailureReason][],
+);
+const DISPOSITION: Record<string, Omit<LaneFailure, "reason">> = {
+  invalid: { retry: false, rotate: true },
+  globalFull: { retry: true },
+  clientFull: { retry: true },
+  ownerMismatch: { retry: false },
+  idle: { retry: true },
+  revoked: { retry: false },
 };
 
 // Every refusal the server can send must reach the caller as a fatal carrying that exact text, not just the owner.
@@ -98,10 +101,17 @@ test("every pinned upload refusal surfaces as a fatal", async () => {
       feedOf(refusalRecord(name, message), ""),
     );
     expect(end, name).toBe("fatal");
+    expect(reasons[name], name).toBeDefined();
     expect(events, name).toEqual([
-      { type: "fatal", detail: message, ...DISPOSITION[name] },
+      {
+        type: "fatal",
+        detail: message,
+        reason: reasons[name],
+        ...DISPOSITION[name],
+      },
     ]);
   }
+  expect(Object.keys(reasons).sort()).toEqual(Object.keys(refusals).sort());
 });
 
 // A record split across two reads must not be parsed twice or dropped.
