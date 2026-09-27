@@ -45,6 +45,7 @@ type serverFixture struct {
 	server               *httptest.Server
 	catalog              wire.ServerCatalog
 	failed, revoked      atomic.Bool
+	silent               atomic.Bool
 	checkpointFailed     atomic.Bool
 	checkpointRefusals   atomic.Int32
 	checkpointDelayNanos atomic.Int64
@@ -109,7 +110,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
 		defer context.AfterFunc(latency, cancel)()
-		pingHandler(answerAll, 0).ServeHTTP(w, r.WithContext(ctx))
+		pingHandler(func(uint32) bool { return !f.silent.Load() }, 0).ServeHTTP(w, r.WithContext(ctx))
 	}))
 	f.server = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.handlers.Add(1)
@@ -394,6 +395,35 @@ func TestARestartedServerGetsOneReplacementReceiver(t *testing.T) {
 			}
 			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureConnectionLost) {
 				t.Fatalf("a second unknown id = %+v, want the server lost as connection-lost", details.Failures)
+			}
+		})
+	}
+}
+
+func TestTheLatencyResultFollowsTheFocusServer(t *testing.T) {
+	t.Parallel()
+	for _, silentFocus := range []bool{false, true} {
+		t.Run(fmt.Sprint("silent focus ", silentFocus), func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Latency: true}
+			prepared := prepareFixtureRun(t, cfg, a, b)
+			prepared.LatencyFocus = "b"
+			silent, id, want := a, "self", OutcomePartial
+			if silentFocus {
+				silent, id, want = b, "b", OutcomeIncomplete
+			}
+			silent.silent.Store(true)
+			var log eventLog
+			err := runSelected(t.Context(), cfg, prepared, log.emit)
+			details := log.details()
+			if err != nil || details == nil || details.Outcome != want || len(details.Failures) != 1 {
+				t.Fatalf("%v: %+v", err, details)
+			}
+			if f := details.Failures[0]; f.Reason != FailureInsufficientEvidence || f.Scope != ScopeLatency ||
+				f.ServerID != id {
+				t.Fatalf("a silent population = %+v, want its reason recorded", f)
 			}
 		})
 	}

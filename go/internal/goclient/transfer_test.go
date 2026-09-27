@@ -139,7 +139,7 @@ func TestLanePersistence(t *testing.T) {
 		{"unavailable", both, status(http.StatusServiceUnavailable, nil), time.Minute, FailureServerBusy, 4},
 		{"gone", both, status(http.StatusGone, nil), time.Minute, FailureProtocol, 1},
 		{"unreachable", both, refused, time.Minute, FailureConnectionLost, 5},
-		{"empty", []Direction{Down}, status(http.StatusOK, nil), time.Minute, FailureInsufficientEvidence, 5},
+		{"empty", []Direction{Down}, status(http.StatusOK, nil), time.Minute, FailureTimeout, 5},
 		{"dropped mid-transfer", both, dropped, 1250 * time.Millisecond, "", 3},
 		{"idle upload redials", []Direction{Up}, idle, time.Second, "", 2},
 		{"timed-out upload", []Direction{Up}, status(http.StatusRequestTimeout, nil), time.Minute, FailureProtocol, 1},

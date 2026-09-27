@@ -94,13 +94,15 @@ func laneEnding(err error) error {
 	return laneEnd(wire.LaneEnds[i])
 }
 
+// ReasonOf names why a result failed.
+func ReasonOf(err error) FailureReason { return failureReason(err, false) }
+
 func failureReason(err error, preparing bool) FailureReason {
 	status, answered := errors.AsType[statusError](err)
 	end, ended := errors.AsType[laneEnd](err)
-	_, auth := errors.AsType[*AuthRequiredError](err)
 	_, network := errors.AsType[*net.OpError](err)
 	switch {
-	case auth:
+	case IsAuthRequired(err):
 		return FailureSignIn
 	case answered && status.busy():
 		return FailureServerBusy

@@ -148,8 +148,15 @@ func (s *stageRun) close(err error, handover bool) {
 	for outcome := range s.outcomes {
 		s.c.retainLatency(outcome, err == nil)
 	}
-	if s.transfer() && (s.measuring || errors.Is(err, errStageSkipped)) {
+	switch {
+	case s.transfer() && (s.measuring || errors.Is(err, errStageSkipped)):
 		s.finish(err)
+	case !s.transfer() && s.measuring:
+		for _, p := range s.c.active() {
+			if !p.measured(s.plan.Name) {
+				s.c.insufficient(s.plan.Name, ScopeLatency, p.id())
+			}
+		}
 	}
 }
 
@@ -415,8 +422,7 @@ func (s *stageRun) dropsServer(id string, err error, final bool) bool {
 		return false
 	}
 	s.misses[id]++
-	_, auth := errors.AsType[*AuthRequiredError](err)
-	return auth || s.misses[id] >= 3 && !final
+	return IsAuthRequired(err) || s.misses[id] >= 3 && !final
 }
 
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
@@ -529,6 +535,11 @@ func (s *stageRun) finish(stageErr error) {
 			result.Err = stageErr
 		}
 		c.emit(Event{Kind: EventResult, At: time.Now(), Stage: s.plan.Name, Direction: dir, Result: new(result)})
+		if result.Unavailable && s.measuring && !c.failed(s.plan.Name, ScopeThroughput, "") {
+			for _, id := range c.aggregate.current().Participants {
+				c.insufficient(s.plan.Name, ScopeThroughput, id)
+			}
+		}
 		for _, server := range c.servers {
 			own := Result{Stage: s.plan.Name, Direction: dir, Unavailable: true}
 			if s.measuring {

@@ -63,8 +63,7 @@ func (r refusal) Unwrap() error { return r.error }
 
 func permanent(err error) bool {
 	_, refused := errors.AsType[refusal](err)
-	_, auth := errors.AsType[*AuthRequiredError](err)
-	return refused || auth
+	return refused || IsAuthRequired(err)
 }
 
 // persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
@@ -86,7 +85,7 @@ func persist(ctx context.Context, attempt func(context.Context) (progressed bool
 			failingSince = started
 		}
 		if !progressed && time.Since(failingSince) >= redialWindow {
-			return cmp.Or(err, errNoBytes)
+			return cmp.Or(err, errStalled)
 		}
 		var delay time.Duration
 		if status, ok := errors.AsType[statusError](err); ok && status.busy() {
@@ -202,7 +201,7 @@ func (r *runner) runLanes(
 func (r *runner) receiverCheckpoint(ctx context.Context) (*ReceiverSnapshot, error) {
 	for {
 		snapshot, err := r.receiverCheckpointOnce(ctx)
-		if _, authRequired := errors.AsType[*AuthRequiredError](err); err == nil || authRequired {
+		if err == nil || IsAuthRequired(err) {
 			return snapshot, err
 		}
 		if !pause(ctx, 100*time.Millisecond) {
