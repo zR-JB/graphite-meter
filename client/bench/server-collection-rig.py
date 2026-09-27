@@ -369,9 +369,9 @@ def matrix_run(env, output, router, node, hosts, paths, cell, run, seed):
         for i, host in enumerate(hosts[:count]):
             with (directory / f"client-{i}.out").open("w") as out, (directory / f"client-{i}.err").open("w") as err:
                 clients.append(subprocess.Popen(["nsenter", "-t", str(host), "-n", "--", *argv], env=client_env, stdout=out, stderr=err))
-        # Tuners such as bpftune still override congestion control per connection, so record what the server used.
+        # Tuners such as bpftune still override congestion control per connection, so record what both ends used.
         time.sleep(max(0.0, started + WARMUP_S + MEASURE_S / 2 - time.monotonic()))
-        sockets = command("ss", "-tin", "state", "established", namespace=node, capture_output=True, text=True).stdout.split()
+        sockets = [word for end in (node, hosts[0]) for word in command("ss", "-tin", "state", "established", namespace=end, capture_output=True, text=True).stdout.split()]
         tcp = {"congestion": sorted(set(sockets) & set(Path("/proc/sys/net/ipv4/tcp_available_congestion_control").read_text().split())),
                "buffers": command("sysctl", "-n", "net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem", namespace=node, capture_output=True, text=True).stdout.split("\n")[:2]}
         for client in clients:
@@ -385,7 +385,7 @@ def matrix_run(env, output, router, node, hosts, paths, cell, run, seed):
         stop(clients + [server])
     results = [client_result(cell, (directory / f"client-{i}.out").read_text(), client.returncode) for i, client in enumerate(clients)]
     row = {"run": run, **cell, "valid": error is None and len(results) == count and all(result["valid"] for result in results),
-           "error": error, "serverExit": server.returncode, "serverTcp": tcp, "clients": results}
+           "error": error, "serverExit": server.returncode, "tcp": tcp, "clients": results}
     if measured:
         ((user0, system0, _), (down0, up0)), ((user1, system1, peak), (down1, up1)), wall = measured
         tick = os.sysconf("SC_CLK_TCK")

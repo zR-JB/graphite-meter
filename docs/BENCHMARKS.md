@@ -59,12 +59,12 @@ address behind one bridge, for one transport (`h1`, `h2`, `h3`, `wt`) and one di
 mode; Chromium runs the shipped UI with product defaults. Every client discards a 4 s warmup, measures 8 s and pings
 over WebSocket at the fast cadence. Netem on the router's two egress links adds half the RTT and the loss rate in
 each direction at 1 Gbit/s, with one bandwidth-delay product of queue (at least 1,000 packets). Every namespace sets
-cubic and 128 MiB TCP buffer limits whatever the host tuned; stop tuners that override congestion control per
-connection, such as bpftune, first.
+cubic and 128 MiB TCP buffer limits whatever the host tuned. Stop tuners that override congestion control per
+connection, such as bpftune, first: the summary leaves out HTTP/1.1 and HTTP/2 runs whose TCP used another.
 
-Each run appends one row to `matrix.ndjson`: build identity, load average, the server's peak RSS (VmHWM), its CPU
-time and the bytes delivered each way while the clients run (setup and warmup included), its TCP congestion control
-and buffer limits, and every client's own report, whose loaded-latency percentiles are P50 and P95. Logs stay under
+Each run appends one row to `matrix.ndjson`: build identity, load average, the server's peak RSS (VmHWM), its CPU time
+and the bytes delivered each way while the clients run (setup and warmup included), the TCP congestion control and
+buffer limits in use, and every client's own report, whose loaded-latency percentiles are P50 and P95. Logs stay under
 `matrix/`. The session ends with `matrix-summary.txt`, the Go and Rust medians and ranges per cell; a metric reads
 WORSE when Rust is worse in a one-sided exact Mann-Whitney test (p ≤ 0.05) and by more than 2 %. CPU per delivered
 Gbit is compared only when both delivered the same load within 5 %.

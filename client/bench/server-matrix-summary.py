@@ -2,6 +2,7 @@
 
 A metric reads WORSE when Rust is worse in a one-sided exact Mann-Whitney test (p <= 0.05) and its
 median is more than 2 % worse than Go's, so a flag needs at least three valid runs on each side.
+HTTP/1.1 and HTTP/2 runs count only when their TCP used the rig's cubic at both ends.
 """
 
 import collections
@@ -46,6 +47,10 @@ def p_worse(go, rust, higher_better):
     return sum(count for total, count in ways[-1].items() if total >= observed) / sum(ways[-1].values())
 
 
+def usable(row):
+    return row["valid"] and (row["transport"] not in ("h1", "h2") or row.get("tcp", {}).get("congestion") == ["cubic"])
+
+
 def spread(values):
     return f"{statistics.median(values):.4g} [{min(values):.4g}-{max(values):.4g}]"
 
@@ -60,11 +65,12 @@ def main():
         binaries = ", ".join(f"{name} {binary['sha256'][:12]}" for name, binary in identity["binaries"].items())
         print(f"commit {identity['commit'][:12]}{' (dirty)' if identity['dirty'] else ''} · {identity['rustc'].splitlines()[0]} · "
               f"kernel {identity['kernel']} · governor {'/'.join(identity['governors'])} · {binaries}")
-    congestion = sorted({algorithm for row in rows for algorithm in row.get("serverTcp", {}).get("congestion", [])})
-    buffers = sorted({" / ".join(row["serverTcp"]["buffers"]) for row in rows if row.get("serverTcp")})
-    print(f"server TCP congestion control {', '.join(congestion) or '-'}; rmem / wmem {'; '.join(buffers) or '-'}")
-    valid = sum(row["valid"] for row in rows)
-    print(f"{valid} valid runs, {len(rows) - valid} invalid; median [range] of valid runs, delta is Rust against Go\n")
+    congestion = sorted({algorithm for row in rows for algorithm in row.get("tcp", {}).get("congestion", [])})
+    buffers = sorted({" / ".join(row["tcp"]["buffers"]) for row in rows if row.get("tcp")})
+    print(f"TCP congestion control {', '.join(congestion) or '-'}; rmem / wmem {'; '.join(buffers) or '-'}")
+    valid, tuned = sum(row["valid"] for row in rows), sum(row["valid"] and not usable(row) for row in rows)
+    print(f"{valid} valid runs ({tuned} left out for other TCP congestion control), {len(rows) - valid} invalid; "
+          "median [range] of the rest, delta is Rust against Go\n")
     table = [["comparison", *CELL, "metric", "Go", "Rust", "delta", "runs", "verdict"]]
     flagged = []
     number = lambda value: float(value) if re.fullmatch(r"[\d.]+", value) else value
@@ -77,8 +83,8 @@ def main():
             medians = {}
             for key in metrics:
                 name, scale, higher = METRICS[key]
-                go = [row[key] * scale for row in go_rows if row["valid"] and row.get(key) is not None]
-                rust = [row[key] * scale for row in rust_rows if row["valid"] and row.get(key) is not None]
+                go = [row[key] * scale for row in go_rows if usable(row) and row.get(key) is not None]
+                rust = [row[key] * scale for row in rust_rows if usable(row) and row.get(key) is not None]
                 runs = f"{len(go)}/{len(go_rows)}:{len(rust)}/{len(rust_rows)}"
                 if not go or not rust:
                     table.append([label, *cell, name, spread(go) if go else "-", spread(rust) if rust else "-", "", runs, "no data"])
