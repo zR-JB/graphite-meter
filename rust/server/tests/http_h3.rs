@@ -1,7 +1,8 @@
 //! Real QUIC coverage for the shared HTTP/3 measurement adapter.
 mod support;
 
-use bytes::{Buf, Bytes};
+use bytes::Bytes;
+use graphite_meter_http3::{RecvHalf, client};
 use graphite_meter_server::{config::Config, http_server::HttpServer};
 use http::Request;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
@@ -21,7 +22,7 @@ async fn h3_shared_upload_routes_and_stalled_stream_deadline_preserve_siblings()
 async fn exercise() -> Result<(), TestError> {
     let mut transport = quinn::TransportConfig::default();
     transport.stream_receive_window(4096_u32.into());
-    let (mut sender, driver, stop, task) = serve_quic(
+    let (requests, driver, stop, task) = serve_quic(
         Config {
             max_operation_duration: Duration::from_millis(250),
             ..Config::default()
@@ -29,82 +30,46 @@ async fn exercise() -> Result<(), TestError> {
         transport,
     )
     .await?;
-    let request = |method: &str, path: &str| {
-        Request::builder()
-            .method(method)
-            .uri(format!("https://localhost{path}"))
-            .body(())
-            .unwrap()
-    };
     for path in ["/preflight", "/servers", "/ws/session", "/ws/ping"] {
-        let mut stream = sender.send_request(request("GET", path)).await?;
-        stream.finish().await?;
-        assert_eq!(stream.recv_response().await?.status(), 404, "{path}");
+        let (response, _) = send(&requests, "GET", path, b"").await?;
+        assert_eq!(response.status(), 404, "{path}");
     }
-    let mut probe = sender.send_request(request("GET", "/probe")).await?;
-    probe.finish().await?;
-    let response = probe.recv_response().await?;
+    let (response, mut probe) = send(&requests, "GET", "/probe", b"").await?;
     assert_eq!(response.status(), 200);
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert!(!response.headers().contains_key("alt-svc"));
     assert!(!response.headers().contains_key("connection"));
-    let mut body = Vec::new();
-    while let Some(mut data) = probe.recv_data().await? {
-        body.extend_from_slice(&data.copy_to_bytes(data.remaining()));
-    }
     assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body)?["protocolNegotiated"],
+        serde_json::from_slice::<serde_json::Value>(&read(&mut probe).await?)?["protocolNegotiated"],
         "h3"
     );
-    let mut mint = sender.send_request(request("POST", "/upload/session")).await?;
-    mint.finish().await?;
-    assert_eq!(mint.recv_response().await?.status(), 200);
-    let mut bytes = Vec::new();
-    while let Some(mut data) = mint.recv_data().await? {
-        bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
-    }
-    let id = serde_json::from_slice::<serde_json::Value>(&bytes)?["uploadId"]
+    let session = body(&requests, "POST", "/upload/session", b"").await?;
+    let id = serde_json::from_slice::<serde_json::Value>(&session)?["uploadId"]
         .as_str()
         .unwrap()
         .to_owned();
-    let mut upload = sender
-        .send_request(request("POST", &format!("/upload?id={id}")))
-        .await?;
-    upload.send_data(Bytes::from_static(b"QUIC upload")).await?;
-    upload.finish().await?;
-    assert_eq!(upload.recv_response().await?.status(), 200);
-    let mut bytes = Vec::new();
-    while let Some(mut data) = upload.recv_data().await? {
-        bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
-    }
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes)?["bytes"], 11);
-    let mut stalled = sender.send_request(request("GET", "/download?bytes=10000000")).await?;
-    stalled.finish().await?;
-    assert_eq!(stalled.recv_response().await?.status(), 200);
+    let upload = body(&requests, "POST", &format!("/upload?id={id}"), b"QUIC upload").await?;
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&upload)?["bytes"], 11);
+    let (response, mut stalled) = send(&requests, "GET", "/download?bytes=10000000", b"").await?;
+    assert_eq!(response.status(), 200);
     advance(Duration::from_millis(350)).await;
     loop {
-        match stalled.recv_data().await {
+        match stalled.data().await {
             Ok(Some(_)) => continue,
             Err(_) => break,
             Ok(None) => panic!("flow-controlled transfer must be reset at its deadline"),
         }
     }
-    let mut sibling = sender.send_request(request("GET", "/download?bytes=13")).await?;
-    sibling.finish().await?;
-    assert_eq!(sibling.recv_response().await?.status(), 200);
-    let mut count = 0;
-    while let Some(data) = sibling.recv_data().await? {
-        count += data.remaining();
-    }
-    assert_eq!(count, 13);
+    assert_eq!(body(&requests, "GET", "/download?bytes=13", b"").await?.len(), 13);
     stop.send(()).unwrap();
     task.await??;
     driver.abort();
     Ok(())
 }
+
 type Served = (
-    h3::client::SendRequest<h3_noq::OpenStreams, Bytes>,
-    tokio::task::JoinHandle<h3::error::ConnectionError>,
+    client::SendRequest,
+    tokio::task::JoinHandle<Result<(), graphite_meter_http3::Error>>,
     oneshot::Sender<()>,
     tokio::task::JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>,
 );
@@ -137,38 +102,52 @@ async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Se
     config.transport_config(Arc::new(client));
     let client = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
     let connection = client.connect_with(config, address, "localhost")?.await?;
-    let (mut driver, sender) = h3::client::new(h3_noq::Connection::new(connection)).await?;
-    let driving = tokio::spawn(async move { driver.wait_idle().await });
-    Ok((sender, driving, stop, task))
+    let (mut driver, requests) = client::new(connection);
+    let driving = tokio::spawn(async move { driver.drive().await });
+    Ok((requests, driving, stop, task))
 }
 
-async fn body(
-    sender: &mut h3::client::SendRequest<h3_noq::OpenStreams, Bytes>,
-    method: http::Method,
+async fn send(
+    requests: &client::SendRequest,
+    method: &str,
     path: &str,
     upload: &'static [u8],
-) -> Result<Vec<u8>, TestError> {
+) -> Result<(http::Response<()>, RecvHalf), TestError> {
     let request = Request::builder()
         .method(method)
         .uri(format!("https://localhost{path}"))
         .body(())?;
-    let mut request = sender.send_request(request).await?;
+    let (mut send, mut recv) = requests.send_request(request).await?.split();
     if !upload.is_empty() {
-        request.send_data(Bytes::from_static(upload)).await?;
+        send.send_data(Bytes::from_static(upload)).await?;
     }
-    request.finish().await?;
-    assert_eq!(request.recv_response().await?.status(), http::StatusCode::OK);
+    send.finish().await?;
+    Ok((recv.response().await?, recv))
+}
+
+async fn read(recv: &mut RecvHalf) -> Result<Vec<u8>, TestError> {
     let mut bytes = Vec::new();
-    while let Some(mut data) = request.recv_data().await? {
-        bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
+    while let Some(data) = recv.data().await? {
+        bytes.extend_from_slice(&data);
     }
     Ok(bytes)
 }
 
+async fn body(
+    requests: &client::SendRequest,
+    method: &str,
+    path: &str,
+    upload: &'static [u8],
+) -> Result<Vec<u8>, TestError> {
+    let (response, mut recv) = send(requests, method, path, upload).await?;
+    assert_eq!(response.status(), http::StatusCode::OK);
+    read(&mut recv).await
+}
+
 #[tokio::test]
 async fn idle_http3_connection_does_not_consume_the_shutdown_drain() -> Result<(), TestError> {
-    let (mut sender, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
-    body(&mut sender, http::Method::GET, "/download?bytes=1", b"").await?;
+    let (requests, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
+    body(&requests, "GET", "/download?bytes=1", b"").await?;
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), task).await???;
     driving.abort();
@@ -184,39 +163,37 @@ async fn advance(duration: Duration) {
 
 #[tokio::test]
 async fn admitted_work_keeps_leftover_credit_and_probes_do_not() -> Result<(), TestError> {
-    let (mut sender, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
-    let session = body(&mut sender, http::Method::POST, "/upload/session", b"").await?;
+    let (requests, driving, stop, task) = serve_quic(Config::default(), quinn::TransportConfig::default()).await?;
+    let session = body(&requests, "POST", "/upload/session", b"").await?;
     let session: serde_json::Value = serde_json::from_slice(&session)?;
     let path = format!("https://localhost/upload?id={}", session["uploadId"].as_str().unwrap());
-    let mut upload = sender.send_request(Request::post(path).body(())?).await?;
+    let (mut upload, mut reply) = requests.send_request(Request::post(path).body(())?).await?.split();
     upload.send_data(Bytes::from_static(b"abc")).await?;
     // A round trip later the server is still admitted, awaiting the body's end.
-    body(&mut sender, http::Method::GET, "/probe", b"").await?;
+    body(&requests, "GET", "/probe", b"").await?;
     upload.finish().await?;
-    assert_eq!(upload.recv_response().await?.status(), http::StatusCode::OK);
-    while upload.recv_data().await?.is_some() {}
+    assert_eq!(reply.response().await?.status(), http::StatusCode::OK);
+    read(&mut reply).await?;
     advance(Duration::from_secs(10)).await;
     let bytes = 8 * 1024 * 1024;
-    let request = Request::get(format!("https://localhost/download?bytes={bytes}")).body(())?;
-    let mut download = sender.send_request(request).await?;
-    download.finish().await?;
-    assert_eq!(download.recv_response().await?.status(), http::StatusCode::OK);
+    let (response, mut download) = send(&requests, "GET", &format!("/download?bytes={bytes}"), b"").await?;
+    assert_eq!(response.status(), http::StatusCode::OK);
     for _ in 0..2 {
         advance(Duration::from_secs(6)).await;
     }
-    let mut received = 0;
-    while let Some(data) = download.recv_data().await? {
-        received += data.remaining();
-    }
-    assert_eq!(received, bytes, "leftover credit cut an admitted download");
+    assert_eq!(
+        read(&mut download).await?.len(),
+        bytes,
+        "leftover credit cut an admitted download"
+    );
     for _ in 0..2 {
         advance(Duration::from_secs(7)).await;
-        body(&mut sender, http::Method::GET, "/probe", b"").await?;
+        body(&requests, "GET", "/probe", b"").await?;
     }
     advance(Duration::from_secs(2)).await;
     tokio::time::timeout(Duration::from_secs(2), driving)
         .await
-        .expect("probes kept the post-upload connection alive")?;
+        .expect("probes kept the post-upload connection alive")??;
     drop(stop);
     task.abort();
     Ok(())

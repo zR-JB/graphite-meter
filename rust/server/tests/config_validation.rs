@@ -26,14 +26,11 @@ fn authentication_constrains_advertised_origins_and_secret_sources() {
     };
     memory.validate().expect("HTTP/1 connections hold no floor");
     memory.native[NativeKind::H2 as usize].address = ":8444".into();
-    assert!(
-        memory
-            .validate()
-            .unwrap_err()
-            .to_string()
-            .starts_with("GM_MAX_BUFFER_BYTES")
-    );
-    memory.max_buffer_bytes = 1024 * 1024 * 1024;
+    let error = memory.validate().unwrap_err().to_string();
+    memory.max_buffer_bytes = error
+        .strip_prefix("GM_MAX_BUFFER_BYTES (1048576) must be at least ")
+        .and_then(|rest| rest.split_once(':')?.0.parse().ok())
+        .unwrap_or_else(|| panic!("{error}"));
     memory.validate().expect("HTTP/2 floors fit without the QUIC endpoint");
     memory.native[NativeKind::H3 as usize].address = ":8443".into();
     let error = memory.validate().unwrap_err().to_string();

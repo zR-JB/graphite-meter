@@ -62,11 +62,13 @@ and binding the QUIC socket check the actual terms, and a reload that does not
 fit keeps the previous chain.
 QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until Noq drops the connection, a QUIC connection
-holds a floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3
-frame and copy block outside Noq, plus the TLS handshake: five server flights of
-the loaded certificate chain and a copy of it, and the floor Noq charges itself,
-481 KiB at the default limits. With the default 67 streams and a
-two-certificate chain that is 5.7 MiB.
+holds a floor for the TLS handshake, five server flights of the loaded
+certificate chain and a copy of it, and for the HTTP/3 layer's fixed state
+(2.5 KiB), plus the floor Noq charges itself, 481 KiB at the default limits:
+about 0.5 MiB with a two-certificate chain. The layer retains no payload and
+charges each request's and session's own state as it arrives; a request the
+budget cannot cover is refused with `H3_REQUEST_REJECTED`, while running
+transfers finish from their floors.
 An HTTP/2 connection holds a 1.5 MiB floor from accept until its task ends:
 512 KiB of TLS and codec buffers and a 1 MiB allowance for decoded headers,
 buffered DATA frames and queued response metadata, charged as they fill. A
@@ -169,10 +171,11 @@ negotiation, WebTransport transfers, and immediate reset without modifying the
 shipped Go implementation.
 
 `browser_transports.py` drives Chromium 153 and Playwright's Firefox 153 build
-through HTTP/3 downloads and uploads and WebTransport datagrams, streams and a
-server-ended session's close code; WebKitGTK, which has neither, is the negative
-control. It binds fixed loopback ports, so run it in a private network namespace.
-Against the Go server, both browsers report that close as a failure instead.
+through HTTP/3 downloads and uploads and WebTransport datagrams, streams and the
+close codes of sessions the server ends at their lifetime and when it stops;
+WebKitGTK, which has neither, is the negative control. It binds fixed loopback
+ports, so run it in a private network namespace. The Go server passes the same
+checks.
 
 `client_interop.py` starts an unchanged Go product server and runs the Rust
 measurement engine through all four stages with WebTransport streams and datagram latency,
@@ -188,12 +191,13 @@ lost the final prefix byte when a read returned that byte with a reset error.
 The current-only Go probe exercises the draft-09+ transport parameter; it is
 not evidence of Safari browser parity.
 
-The server uses exact revisions of the [Noq](https://github.com/zR-JB/noq),
+The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq),
 [HTTP/3](https://github.com/zR-JB/h3) and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
 revisions and each commit's purpose. `rust-check` validates locked sources offline;
 `scripts/legal/check_git_sources.py --verify` checks fork branches, upstream tags
 and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
-The shared `webtransport` crate owns association-preserving cancellation, with
-plain RESET fallback when peers do not support reliable reset. The forks remain
+The server's own `http3` crate, and the client's `webtransport` crate, keep a
+cancelled stream's association header, with plain RESET fallback when peers do
+not support reliable reset. The forks remain
 experimental; current-codepoint tests do not establish Safari compatibility.

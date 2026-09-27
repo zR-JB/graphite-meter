@@ -174,7 +174,8 @@ func probeSharedConnection(ctx context.Context, wt *webtransport.Transport, tlsC
 		return err
 	}
 	defer first.CloseWithError(0, "probe complete")
-	_, second, err := client.Dial(ctx, base+"/wt/ping", nil)
+	// A connection carries one session at a time, so the concurrent one gets its own.
+	_, second, err := wt.Dial(ctx, base+"/wt/ping", nil)
 	if err != nil {
 		return err
 	}

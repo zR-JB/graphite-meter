@@ -1,53 +1,23 @@
 //! HTTP/3 adapts streams to the same authorized measurement dispatcher.
-use super::*;
-use bytes::Buf;
-use h3::error::Code;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use super::{http_quic::ReceiveCredit, *};
+use graphite_meter_http3::{self as http3, RecvHalf, RequestStream, SendHalf};
 
-pub type Http3RequestStream = h3::server::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
-type Receive = h3::server::RequestStream<h3_noq::RecvStream, Bytes>;
-type Send = h3::server::RequestStream<h3_noq::SendStream<Bytes>, Bytes>;
 const DATA_BYTES: usize = 16 * 1024;
 const FAIRNESS_LANES: usize = 16;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Http3RequestKind {
-    Measurement,
-    WebTransport,
-    InvalidConnect,
-}
-
 impl HttpServer {
-    /// Classification consumes neither credentials nor request DATA. The
-    /// connection owner hands valid CONNECT requests to its session engine,
-    /// which must authorize them before accepting the session.
-    pub fn classify_http3_request(request: &Request<()>) -> Http3RequestKind {
-        if request.method() != Method::CONNECT {
-            Http3RequestKind::Measurement
-        } else if request.extensions().get::<h3::ext::Protocol>() == Some(&h3::ext::Protocol::WEB_TRANSPORT) {
-            Http3RequestKind::WebTransport
-        } else {
-            Http3RequestKind::InvalidConnect
-        }
-    }
-
     /// `peer` must be the actual accepted QUIC peer. QUIC supplies TLS; this
     /// native listener deliberately has no authority to serve login/UI routes.
-    pub async fn serve_http3_request(
+    pub(super) async fn serve_http3_request(
         &self,
         request: Request<()>,
-        stream: Http3RequestStream,
+        stream: RequestStream,
         peer: SocketAddr,
-        credit: super::http_quic::ReceiveCredit,
+        credit: ReceiveCredit,
         active_responses: Arc<AtomicUsize>,
     ) -> io::Result<()> {
         let head = request.method() == Method::HEAD;
-        let connect = request.method() == Method::CONNECT;
-        let (send, receive) = stream.split();
-        let mut send = ResponseStream {
-            stream: send,
-            finished: false,
-        };
+        let (mut send, receive) = stream.split();
         let operations: Operations = Arc::new(Mutex::new(Vec::new()));
         let work = credit.work().clone();
         let exchange = async {
@@ -58,84 +28,52 @@ impl HttpServer {
                 operations: operations.clone(),
                 funded: false,
             };
-            let response = if connect {
-                // CONNECT belongs to the session dispatcher. A mistaken call
-                // cannot execute an ordinary measurement under CONNECT.
-                text_response(StatusCode::BAD_REQUEST)
-            } else {
-                self.respond_incoming(
-                    request.map(|()| body),
-                    Connection {
-                        peer,
-                        tls: true,
-                        listener: Listener {
-                            ui: false,
-                            webtransport: true,
-                        },
-                    },
-                    &operations,
-                    None,
-                )
-                .await?
+            let connection = Connection {
+                peer,
+                tls: true,
+                listener: Listener {
+                    ui: false,
+                    webtransport: true,
+                },
             };
-            send.response(response, head, active_responses).await
+            let response = self
+                .respond_incoming(request.map(|()| body), connection, &operations, None)
+                .await?;
+            respond(&mut send, response, head, active_responses).await
         };
         self.guard(&operations, &work, exchange).await
     }
 }
 
 struct RequestBody {
-    stream: Receive,
+    stream: RecvHalf,
     finished: bool,
-    credit: super::http_quic::ReceiveCredit,
+    credit: ReceiveCredit,
     operations: Operations,
     funded: bool,
 }
 
 impl Body for RequestBody {
     type Data = Bytes;
-    type Error = io::Error;
+    type Error = http3::Error;
 
-    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, http3::Error>>> {
         if self.finished {
             return Poll::Ready(None);
         }
         if !self.funded {
             self.funded = holds_permit(&self.operations) && self.credit.fund();
         }
-        let result = match ready!(self.stream.poll_recv_data(cx)) {
-            Ok(Some(mut data)) => Some(Ok(Frame::data(data.copy_to_bytes(data.remaining())))),
-            Ok(None) => None,
-            Err(error) => Some(Err(io::Error::other(error))),
-        };
-        if result.is_none() || result.as_ref().is_some_and(Result::is_err) {
-            self.finished = true;
-        }
-        Poll::Ready(result)
+        let frame = ready!(self.stream.poll_data(cx))
+            .transpose()
+            .map(|data| data.map(Frame::data));
+        self.finished = !matches!(frame, Some(Ok(_)));
+        Poll::Ready(frame)
     }
 
     fn is_end_stream(&self) -> bool {
         self.finished
     }
-}
-
-impl Drop for RequestBody {
-    fn drop(&mut self) {
-        if !self.finished {
-            // A route may ignore a bodyless request. Check for FIN at the
-            // last possible moment: stopping an already finished request
-            // makes some HTTP/3 clients report a reset after a full response.
-            let mut cx = Context::from_waker(std::task::Waker::noop());
-            if !matches!(self.stream.poll_recv_data(&mut cx), Poll::Ready(Ok(None))) {
-                self.stream.stop_sending(Code::H3_REQUEST_CANCELLED);
-            }
-        }
-    }
-}
-
-struct ResponseStream {
-    stream: Send,
-    finished: bool,
 }
 
 struct ActiveResponse(Arc<AtomicUsize>);
@@ -157,57 +95,42 @@ impl Drop for ActiveResponse {
     }
 }
 
-impl ResponseStream {
-    async fn response(
-        &mut self,
-        response: Response<ResponseBody>,
-        head: bool,
-        active_responses: Arc<AtomicUsize>,
-    ) -> io::Result<()> {
-        let (parts, mut body) = response.into_parts();
-        let active = (!head && body.size_hint().upper().is_some_and(|size| size > 1024 * 1024))
-            .then(|| ActiveResponse::new(active_responses));
-        self.stream
-            .send_response(Response::from_parts(parts, ()))
-            .await
-            .map_err(io::Error::other)?;
-        let idle = tokio::time::sleep(Duration::from_secs(30));
-        tokio::pin!(idle);
-        if !head {
-            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
-                if let Ok(mut data) = frame?.into_data() {
-                    while !data.is_empty() {
-                        let chunk = data.split_to(data.len().min(DATA_BYTES));
-                        tokio::select! {
-                            biased;
-                            _ = &mut idle => return Err(io::ErrorKind::TimedOut.into()),
-                            result = self.stream.send_data(chunk) => result.map_err(io::Error::other)?,
-                        }
-                        idle.as_mut()
-                            .reset(tokio::time::Instant::now() + Duration::from_secs(30));
-                        if active.as_ref().is_some_and(ActiveResponse::contended) {
-                            // Only a crowded connection needs a scheduler
-                            // handoff; per-chunk yields halve ordinary H3
-                            // download throughput on this workload.
-                            tokio::task::yield_now().await;
-                        }
+async fn respond(
+    send: &mut SendHalf,
+    response: Response<ResponseBody>,
+    head: bool,
+    active_responses: Arc<AtomicUsize>,
+) -> io::Result<()> {
+    let (parts, mut body) = response.into_parts();
+    let active = (!head && body.size_hint().upper().is_some_and(|size| size > 1024 * 1024))
+        .then(|| ActiveResponse::new(active_responses));
+    send.send_response(Response::from_parts(parts, ()))
+        .await
+        .map_err(io::Error::other)?;
+    let idle = tokio::time::sleep(Duration::from_secs(30));
+    tokio::pin!(idle);
+    if !head {
+        while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+            if let Ok(mut data) = frame?.into_data() {
+                while !data.is_empty() {
+                    let chunk = data.split_to(data.len().min(DATA_BYTES));
+                    tokio::select! {
+                        biased;
+                        _ = &mut idle => return Err(io::ErrorKind::TimedOut.into()),
+                        result = send.send_data(chunk) => result.map_err(io::Error::other)?,
+                    }
+                    idle.as_mut()
+                        .reset(tokio::time::Instant::now() + Duration::from_secs(30));
+                    if active.as_ref().is_some_and(ActiveResponse::contended) {
+                        // Only a crowded connection needs a scheduler
+                        // handoff; per-chunk yields halve ordinary H3
+                        // download throughput on this workload.
+                        tokio::task::yield_now().await;
                     }
                 }
             }
         }
-        // Keep both the response body and registry alive until h3 drains its
-        // DATA framing into QUIC and queues FIN. Noq's send_window bounds the
-        // remaining retransmission queue; h3 exposes no per-stream ACK future.
-        self.stream.finish().await.map_err(io::Error::other)?;
-        self.finished = true;
-        Ok(())
     }
-}
-
-impl Drop for ResponseStream {
-    fn drop(&mut self) {
-        if !self.finished {
-            self.stream.stop_stream(Code::H3_REQUEST_CANCELLED);
-        }
-    }
+    // The layer resets a response it has not finished, so a failure above never reads as complete.
+    send.finish().await.map_err(io::Error::other)
 }

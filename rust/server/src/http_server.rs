@@ -8,8 +8,7 @@ mod http_h3;
 mod http_quic;
 #[path = "http_wt.rs"]
 mod http_wt;
-pub use http_h3::{Http3RequestKind, Http3RequestStream};
-pub use http_quic::{QuicEndpoint, ReceiveCredit};
+pub use http_quic::QuicEndpoint;
 #[path = "http_websocket.rs"]
 mod http_websocket;
 #[path = "http_upload.rs"]
@@ -1230,8 +1229,7 @@ fn check_buffer_budget(
     quic_endpoint_bytes: Option<usize>,
 ) -> Result<(), ConfigError> {
     let quic = match quic_endpoint_bytes {
-        Some(_) => http_quic::connection_floor(&config.limits, handshake_bytes)
-            .saturating_add(http_quic::noq_floor(&config.limits)?),
+        Some(_) => http_quic::connection_floor(handshake_bytes).saturating_add(http_quic::noq_floor(&config.limits)?),
         None => 0,
     };
     let h2 = if config.listener(crate::config::NativeKind::H2).address.is_empty() {

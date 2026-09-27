@@ -76,7 +76,7 @@ def main() -> None:
     binary = args.server
     if binary is None:
         subprocess.run(BUILD, cwd=ROOT / "rust", check=True)
-        binary = ROOT / "rust/target/debug/examples/h3_interop"
+        binary = ROOT / "rust/target/debug/examples/interop"
     binary = binary.resolve()
     with tempfile.TemporaryDirectory(prefix="gm-rust-interop-") as temporary:
         directory = Path(temporary)

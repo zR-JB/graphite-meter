@@ -4,8 +4,9 @@
 
 BINARY is a Rust or Go server; both take the shared GM_* flags. The browsers need fixed loopback
 ports 17246-17248, so run this in a private network namespace with loopback up. Chromium and
-Firefox must use HTTP/3 and WebTransport and see a server-ended session's close code and reason.
-WebKitGTK has neither, so it is the negative control: no WebTransport, fetch over HTTP/2.
+Firefox must use HTTP/3 and WebTransport and see the close code and reason of a session the server
+ends at its lifetime and when it stops. WebKitGTK has neither, so it is the negative control: no
+WebTransport, fetch over HTTP/2. Each browser gets its own server, since the last check stops it.
 """
 
 import argparse
@@ -36,6 +37,7 @@ TRANSPORT_CHECKS = {
     "wt_download": lambda d: d == 65536,
     "wt_upload": lambda d: isinstance(d, int) and d >= 65536,
     "wt_close": lambda d: d == {"closeCode": 2, "reason": "lifetime"},
+    "wt_shutdown": lambda d: d == {"closeCode": 4, "reason": "shutdown"},
 }
 NEGATIVE_CHECKS = {
     "webtransport": lambda d: d == "undefined",
@@ -123,6 +125,12 @@ const transport = {
     await within(wt.ready, 5000);
     return await within(wt.closed, 10000);
   },
+  async wt_shutdown() {
+    const wt = new WebTransport(base + "/wt/ping", options);
+    await within(wt.ready, 5000);
+    await fetch("/stop", { method: "POST" });
+    return await within(wt.closed, 10000);
+  },
 };
 const negative = {
   webtransport: async () => typeof WebTransport,
@@ -168,6 +176,7 @@ class Pages(http.server.ThreadingHTTPServer):
     def __init__(self, context: ssl.SSLContext) -> None:
         super().__init__(("127.0.0.2", PAGE), Handler)
         self.context, self.report, self.received = context, {}, threading.Event()
+        self.measured: subprocess.Popen | None = None
 
     def get_request(self) -> tuple[socket.socket, object]:
         # The handshake runs in the handler thread, so a stalled client cannot block accept.
@@ -187,10 +196,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:
-        self.server.report = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        if self.path == "/stop":
+            os.killpg(self.server.measured.pid, signal.SIGTERM)
+        else:
+            self.server.report = json.loads(body)
+            self.server.received.set()
         self.send_response(204)
         self.end_headers()
-        self.server.received.set()
 
     def log_message(self, *_: object) -> None:
         pass
@@ -299,29 +312,33 @@ def main() -> None:
     context.load_cert_chain(leaf, key)
     pages = Pages(context)
     threading.Thread(target=pages.serve_forever, daemon=True).start()
-    server = start([str(args.server.resolve()), "--h1-addr=127.0.0.1:0", "--h1-tls-addr=",
-                    f"--h2-addr=127.0.0.1:{H2}", f"--h3-addr=127.0.0.1:{H3}",
-                    f"--tls-cert={leaf}", f"--tls-key={key}"], directory / "server.log",
-                   {"PATH": os.environ["PATH"], "HOME": str(directory), "GM_AUTH_MODE": "off",
-                    "GM_MAX_OPERATION_DURATION": "2s", "GM_MAX_SESSION_DURATION": "3s"})
+    command = [str(args.server.resolve()), "--h1-addr=127.0.0.1:0", "--h1-tls-addr=",
+               f"--h2-addr=127.0.0.1:{H2}", f"--h3-addr=127.0.0.1:{H3}", f"--tls-cert={leaf}", f"--tls-key={key}"]
+    environment = {"PATH": os.environ["PATH"], "HOME": str(directory), "GM_AUTH_MODE": "off",
+                   "GM_MAX_OPERATION_DURATION": "2s", "GM_MAX_SESSION_DURATION": "3s"}
     runners = {"chromium": lambda: chromium(directory, pages, leaf),
                "firefox": lambda: firefox(directory, pages, ca),
                "webkit": lambda: webkit(directory, pages)}
     failed = []
     try:
-        deadline = time.monotonic() + 15
-        while True:
-            with socket.socket() as probe:
-                if probe.connect_ex(("127.0.0.1", H2)) == 0:
-                    break
-            if server.poll() is not None or time.monotonic() > deadline:
-                raise SystemExit(f"server did not start: {(directory / 'server.log').read_text()}")
-            time.sleep(0.05)
         for browser in args.browsers.split(","):
+            log = directory / f"server-{browser}.log"
+            pages.measured = server = start(command, log, environment)
             try:
-                report = runners[browser]()
-            except (OSError, TimeoutError, subprocess.CalledProcessError) as error:
-                report = {"ua": str(error), "checks": {}}
+                deadline = time.monotonic() + 15
+                while True:
+                    with socket.socket() as probe:
+                        if probe.connect_ex(("127.0.0.1", H2)) == 0:
+                            break
+                    if server.poll() is not None or time.monotonic() > deadline:
+                        raise SystemExit(f"server did not start: {log.read_text()}")
+                    time.sleep(0.05)
+                try:
+                    report = runners[browser]()
+                except (OSError, TimeoutError, subprocess.CalledProcessError) as error:
+                    report = {"ua": str(error), "checks": {}}
+            finally:
+                stop(server)
             (directory / f"{browser}.json").write_text(json.dumps(report, indent=1))
             print(f"{browser}: {report['ua']}", flush=True)
             for name, accept in (NEGATIVE_CHECKS if browser == "webkit" else TRANSPORT_CHECKS).items():
@@ -331,7 +348,6 @@ def main() -> None:
                 if not passed:
                     failed.append(f"{browser} {name}")
     finally:
-        stop(server)
         pages.shutdown()
     if failed:
         raise SystemExit(f"failed: {', '.join(failed)}")

@@ -1,32 +1,26 @@
 //! A CONNECT task owns every application lane; dropping it cancels all session IO.
-//! The connection advertises no INITIAL_MAX_* settings, so session flow control
+//! The connection advertises no WT_INITIAL_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
-use super::http_quic::{Datagram, Sessions};
-use super::*;
-use crate::{
-    webtransport::{ReceiveStream, TransportError},
-    webtransport_send::ResetQueue,
-};
-use bytes::Buf;
+use super::{http_quic::ReceiveCredit, *};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
-    capsule::{self, Capsule},
     failure::LaneEnding,
     wire::{self, UploadProgress},
 };
-use tokio::{io::AsyncReadExt, time::Instant};
+use graphite_meter_http3::{
+    self as http3, RequestStream,
+    webtransport::{RecvStream, Session},
+};
+use tokio::time::Instant;
 
-pub(super) type H3RequestStream = h3::server::RequestStream<h3_noq::BidiStream<Bytes>, Bytes>;
 const MAX_LANES: usize = 16;
 // A ready datagram send need not yield. Bound each burst so sibling sessions
 // still get executor time without paying a scheduler round-trip per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
 const IDLE: Duration = Duration::from_secs(30);
 const REFUSAL_LINGER: Duration = Duration::from_secs(2);
-const MAX_CONNECT_DATA: u64 = 1024 * 1024;
-const MAX_CONNECT_FRAMES: u64 = 1024;
-const RESET: u64 = 0x52e4a40fa8db;
-type Lane = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
+type Failure = Box<dyn std::error::Error + Send + Sync>;
+type Lane<'a> = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send + 'a>>;
 type Activity = Arc<Mutex<Instant>>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,20 +38,12 @@ impl HttpServer {
     pub(super) async fn serve_webtransport(
         self: Arc<Self>,
         request: Request<()>,
-        mut stream: H3RequestStream,
-        credit: super::http_quic::ReceiveCredit,
+        stream: RequestStream,
+        credit: ReceiveCredit,
         peer: SocketAddr,
-        resets: ResetQueue,
-        sessions: Sessions,
-    ) -> Result<(), TransportError> {
-        let quic = credit.quic().clone();
-        if request.method() != Method::CONNECT
-            || request.extensions().get::<h3::ext::Protocol>() != Some(&h3::ext::Protocol::WEB_TRANSPORT)
-        {
-            return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
-        }
+    ) -> Result<(), http3::Error> {
         if let Some(response) = self.validate_request(&request) {
-            return refuse(&mut stream, response.status()).await;
+            return refuse(stream, response.status()).await;
         }
         let connection = Connection {
             peer,
@@ -72,33 +58,29 @@ impl HttpServer {
                 Ok(guard) => {
                     let (request, authorization, _, _) = guard.into_parts();
                     let Authorization::Authenticated(lease) = authorization else {
-                        return refuse(&mut stream, StatusCode::FORBIDDEN).await;
+                        return refuse(stream, StatusCode::FORBIDDEN).await;
                     };
                     (request, Some(lease))
                 }
                 Err(rejected) => {
-                    let response = self.auth_refusal(rejected.request(), rejected.reason(), connection);
-                    let mut response = response.map(|_| ());
+                    let mut response = self
+                        .auth_refusal(rejected.request(), rejected.reason(), connection)
+                        .map(|_| ());
                     response.headers_mut().remove(header::CONNECTION);
-                    return tokio::time::timeout(Duration::from_secs(10), async {
-                        stream.send_response(response).await?;
-                        stream.finish().await?;
-                        Ok::<_, TransportError>(())
-                    })
-                    .await?;
+                    return answer(stream, response).await;
                 }
             }
         } else {
             (request, None)
         };
         if lease.is_none() && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
-            return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
+            return refuse(stream, StatusCode::BAD_REQUEST).await;
         }
         let route = match request.uri().path() {
             "/wt/ping" => SessionRoute::Ping,
             "/wt/download" => SessionRoute::Download,
             "/wt/upload" => SessionRoute::Upload,
-            _ => return refuse(&mut stream, StatusCode::NOT_FOUND).await,
+            _ => return refuse(stream, StatusCode::NOT_FOUND).await,
         };
         let owner = lease
             .as_ref()
@@ -110,7 +92,7 @@ impl HttpServer {
                 .expect("WT admission class");
         let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
             Ok(permit) => permit,
-            Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
+            Err(error) => return refuse(stream, StatusCode::from_u16(error.status()).expect("known status")).await,
         };
         let _admitted = credit.work().admit();
         let lifetime = if class == Class::Session {
@@ -119,20 +101,11 @@ impl HttpServer {
             self.config.max_operation_duration
         };
         let deadline = Instant::now() + lifetime;
-        let session_id = stream.send_id().into_inner();
-        let Some((_registration, mut events)) = sessions.register(session_id) else {
-            stream.stop_sending(h3::error::Code::H3_REQUEST_REJECTED);
-            stream.stop_stream(h3::error::Code::H3_REQUEST_REJECTED);
-            return Ok(());
-        };
-        tokio::select! {
+        let session = tokio::select! {
             biased;
             _ = lease_ended(lease.clone()) => return Ok(()),
-            result = tokio::time::timeout(
-                Duration::from_secs(10),
-                stream.send_response(Response::builder().status(200).body(())?),
-            ) => result??,
-        }
+            session = Session::accept(stream) => session?,
+        };
         let query = request.uri().query().unwrap_or("");
         let params: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
         let value = |name: &str| {
@@ -153,9 +126,7 @@ impl HttpServer {
         let mut awaiting_credit = false;
         if route == SessionRoute::Download && !verify {
             if datagrams {
-                let quic = quic.clone();
-                let block = self.download_block.clone();
-                let meter = self.download_meter.clone();
+                let (session, block, meter) = (&session, self.download_block.clone(), &self.download_meter);
                 lanes.push(Box::pin(async move {
                     let transfer = meter.open();
                     let mut since_yield = 0;
@@ -163,8 +134,7 @@ impl HttpServer {
                         let mut remaining = count;
                         while remaining > 0 {
                             let size = remaining.min(1000).min(block.len() as u64) as usize;
-                            quic.send_datagram_wait(frame_datagram(session_id, &block[..size])?)
-                                .await?;
+                            session.send_datagram_wait(&block[..size]).await?;
                             if let Some(transfer) = &transfer {
                                 transfer.record(size);
                             }
@@ -185,13 +155,11 @@ impl HttpServer {
                     .min(MAX_LANES as i64);
                 for _ in 0..count_lanes {
                     lanes.push(Box::pin(download_lane(
-                        quic.clone(),
-                        resets.clone(),
-                        session_id,
+                        &session,
                         count,
                         self.download_block.clone(),
                         activity.clone(),
-                        self.download_meter.clone(),
+                        &self.download_meter,
                     )));
                 }
             }
@@ -199,12 +167,7 @@ impl HttpServer {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
             refused = subscription.is_err();
             awaiting_credit = !refused && !credit.fund();
-            controls.push(Box::pin(progress(
-                quic.clone(),
-                resets.clone(),
-                session_id,
-                subscription,
-            )));
+            controls.push(Box::pin(progress(&session, subscription)));
             if datagrams {
                 datagram_lane = self.uploads.begin(&upload_id, &owner).ok();
             }
@@ -214,128 +177,100 @@ impl HttpServer {
             None => Box::pin(std::future::pending()),
         };
         tokio::pin!(datagram_finished);
-        let mut decoder = capsule::Decoder::new();
-        let mut connect_bytes = 0_u64;
-        let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
         let mut settle = verify.then(|| Instant::now() + Duration::from_secs(5));
         let mut ending = LaneEnding::Finished;
-        let stopping = stopped(self.stopping.clone());
-        tokio::pin!(stopping);
-        let result: Result<(), TransportError> = async {
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut stopping => { ending = LaneEnding::Shutdown; break; },
-                    _ = lease_ended(lease.clone()) => { ending = LaneEnding::Revoked; break; },
-                    _ = tick.tick() => {
-                        if awaiting_credit {
-                            awaiting_credit = !credit.fund();
-                        }
-                        let last = *activity.lock().expect("WT activity poisoned");
-                        if Instant::now().duration_since(last) >= IDLE {
-                            ending = LaneEnding::Idle;
-                            break;
-                        }
+        loop {
+            tokio::select! {
+                biased;
+                // The peer ended the session, or the connection's shutdown did.
+                _ = session.closed() => break,
+                _ = lease_ended(lease.clone()) => { ending = LaneEnding::Revoked; break; },
+                _ = tick.tick() => {
+                    if awaiting_credit {
+                        awaiting_credit = !credit.fund();
                     }
-                    _ = tokio::time::sleep_until(deadline) => { ending = LaneEnding::Lifetime; break; },
-                    _ = tokio::time::sleep_until(settle.unwrap_or(deadline)), if settle.is_some() => break,
-                    _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
-                    data = stream.recv_data() => {
-                        let Some(mut data) = data? else { decoder.finish()?; break; };
-                        connect_bytes = connect_bytes.saturating_add(data.remaining() as u64);
-                        connect_frames += 1;
-                        if connect_bytes > MAX_CONNECT_DATA || connect_frames > MAX_CONNECT_FRAMES {
-                            return Err("WebTransport CONNECT control-data budget exceeded".into());
-                        }
-                        let data = data.copy_to_bytes(data.remaining());
-                        if decoder.feed(&data)?.iter().any(|capsule| matches!(capsule, Capsule::CloseSession { .. })) {
-                            break;
-                        }
+                    let last = *activity.lock().expect("WT activity poisoned");
+                    if Instant::now().duration_since(last) >= IDLE {
+                        ending = LaneEnding::Idle;
+                        break;
                     }
-                    Some(_) = lanes.next(), if !lanes.is_empty() => {
-                        // A download ends with its last lane; later client
-                        // streams may replace finished upload lanes.
-                        if route == SessionRoute::Download && lanes.is_empty() {
-                            break;
-                        }
+                }
+                _ = tokio::time::sleep_until(deadline) => { ending = LaneEnding::Lifetime; break; },
+                _ = tokio::time::sleep_until(settle.unwrap_or(deadline)), if settle.is_some() => break,
+                _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
+                Some(_) = lanes.next(), if !lanes.is_empty() => {
+                    // A download ends with its last lane; later client
+                    // streams may replace finished upload lanes.
+                    if route == SessionRoute::Download && lanes.is_empty() {
+                        break;
                     }
-                    Some(_) = controls.next(), if !controls.is_empty() => {
-                        if refused && settle.is_none() {
-                            settle = Some(Instant::now() + REFUSAL_LINGER);
-                        }
+                }
+                Some(_) = controls.next(), if !controls.is_empty() => {
+                    if refused && settle.is_none() {
+                        settle = Some(Instant::now() + REFUSAL_LINGER);
                     }
-                    event = events.datagrams.recv() => {
-                        let Some(Datagram { payload, _budget }) = event else { break };
-                        match route {
-                            SessionRoute::Ping => {
+                }
+                payload = session.read_datagram() => {
+                    let Some(payload) = payload else { break };
+                    match route {
+                        SessionRoute::Ping => {
+                            touch(&activity);
+                            if let Some(reply) = crate::ping::reply(&payload) {
+                                let _ = session.send_datagram(reply.as_bytes());
+                            }
+                        }
+                        SessionRoute::Download if datagrams => touch(&activity),
+                        SessionRoute::Upload => {
+                            if let Some(lane) = &mut datagram_lane {
+                                lane.record(payload.len());
                                 touch(&activity);
-                                if let Some(reply) = crate::ping::reply(&payload) {
-                                    let _ = quic.send_datagram(frame_datagram(session_id, reply.as_bytes())?);
-                                }
                             }
-                            SessionRoute::Download if datagrams => touch(&activity),
-                            SessionRoute::Upload => {
-                                if let Some(lane) = &mut datagram_lane {
-                                    lane.record(payload.len());
-                                    touch(&activity);
-                                }
-                            }
-                            _ => {} // A route without a datagram lane gets no idle credit.
                         }
+                        _ => {} // A route without a datagram lane gets no idle credit.
                     }
-                    incoming = events.streams.recv() => {
-                        let Some(mut incoming) = incoming else { break };
-                        if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
-                            h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
-                            continue;
-                        }
-                        match self.uploads.begin(&upload_id, &owner) {
-                            Ok(lane) => lanes.push(Box::pin(upload_lane(incoming, lane, activity.clone()))),
-                            Err(error) => {
-                                h3::quic::RecvStream::stop_sending(&mut incoming, RESET);
-                                if controls.len() < 2 {
-                                    controls.push(Box::pin(progress(quic.clone(), resets.clone(), session_id, Err(error))));
-                                }
-                            }
-                        }
+                }
+                incoming = session.accept_uni() => {
+                    // A dropped stream is refused as a cancelled lane.
+                    let Some(incoming) = incoming else { break };
+                    if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
+                        continue;
+                    }
+                    match self.uploads.begin(&upload_id, &owner) {
+                        Ok(lane) => lanes.push(Box::pin(upload_lane(incoming, lane, activity.clone()))),
+                        Err(error) if controls.len() < 2 => controls.push(Box::pin(progress(&session, Err(error)))),
+                        Err(_) => {}
                     }
                 }
             }
-            Ok(())
-        }.await;
-        drop(lanes);
-        drop(controls);
-        drop(datagram_lane);
-        // The peer's FIN shows the close capsule arrived before the connection may close.
-        let _ = tokio::time::timeout(Duration::from_secs(1), async {
-            stream
-                .send_data(Bytes::from(capsule::encode_close(
-                    ending.webtransport_code(),
-                    ending.reason(),
-                )))
-                .await?;
-            stream.finish().await?;
-            while stream.recv_data().await?.is_some() {}
-            Ok::<_, TransportError>(())
-        })
-        .await;
-        result
+        }
+        drop((lanes, controls, datagram_lane));
+        session.close(ending.webtransport_code(), ending.reason()).await;
+        Ok(())
     }
 }
 
-async fn refuse(stream: &mut H3RequestStream, status: StatusCode) -> Result<(), TransportError> {
-    let mut response = Response::builder().status(status);
+async fn refuse(stream: RequestStream, status: StatusCode) -> Result<(), http3::Error> {
+    let mut response = Response::new(());
+    *response.status_mut() = status;
     if status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE {
-        response = response.header(header::RETRY_AFTER, "1");
+        response
+            .headers_mut()
+            .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
     }
-    tokio::time::timeout(Duration::from_secs(10), async {
-        stream.send_response(response.body(())?).await?;
-        stream.finish().await?;
-        Ok::<_, TransportError>(())
-    })
-    .await?
+    answer(stream, response).await
 }
+
+async fn answer(stream: RequestStream, response: Response<()>) -> Result<(), http3::Error> {
+    let (mut send, _receive) = stream.split();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        send.send_response(response).await?;
+        send.finish().await
+    })
+    .await
+    .map_err(|_| http3::Error::TimedOut)?
+}
+
 fn datagram_mode(value: &str) -> bool {
     let value = value.trim();
     if let Ok(number) = value.parse::<i64>() {
@@ -343,23 +278,16 @@ fn datagram_mode(value: &str) -> bool {
     }
     !matches!(value.to_ascii_lowercase().as_str(), "false" | "off" | "no")
 }
-fn frame_datagram(id: u64, payload: &[u8]) -> Result<Bytes, TransportError> {
-    let mut frame = Vec::with_capacity(8 + payload.len());
-    capsule::encode_varint(id / 4, &mut frame)?;
-    frame.extend_from_slice(payload);
-    Ok(frame.into())
-}
+
 async fn download_lane(
-    quic: quinn::Connection,
-    resets: ResetQueue,
-    id: u64,
+    session: &Session,
     count: u64,
     block: Bytes,
     activity: Activity,
-    meter: crate::meter::Meter,
-) -> Result<(), TransportError> {
+    meter: &crate::meter::Meter,
+) -> Result<(), Failure> {
     loop {
-        let mut stream = resets.open(&quic, id, quinn::VarInt::from_u64(RESET)?).await?;
+        let mut stream = session.open_uni().await?;
         let transfer = meter.open();
         let mut remaining = count;
         while remaining > 0 {
@@ -381,37 +309,24 @@ async fn download_lane(
         tokio::task::yield_now().await;
     }
 }
+
 async fn upload_lane(
-    stream: ReceiveStream,
+    mut stream: RecvStream,
     mut lane: crate::upload::UploadLane,
     activity: Activity,
-) -> Result<(), TransportError> {
-    let mut stream = IncomingLane(stream);
-    let mut block = vec![0; 64 * 1024];
-    loop {
-        match tokio::time::timeout(Duration::from_secs(30), stream.0.read(&mut block)).await {
-            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-            Ok(Ok(count)) => {
-                lane.record(count);
-                touch(&activity);
-            }
-        }
+) -> Result<(), Failure> {
+    while let Ok(Ok(Some(chunk))) = tokio::time::timeout(Duration::from_secs(30), stream.read_chunk()).await {
+        lane.record(chunk.len());
+        touch(&activity);
     }
     Ok(())
 }
-struct IncomingLane(ReceiveStream);
-impl Drop for IncomingLane {
-    fn drop(&mut self) {
-        h3::quic::RecvStream::stop_sending(&mut self.0, RESET);
-    }
-}
+
 async fn progress(
-    quic: quinn::Connection,
-    resets: ResetQueue,
-    id: u64,
+    session: &Session,
     subscription: Result<crate::upload::UploadSubscription, crate::upload::UploadError>,
-) -> Result<(), TransportError> {
-    let mut stream = resets.open(&quic, id, quinn::VarInt::from_u64(RESET)?).await?;
+) -> Result<(), Failure> {
+    let mut stream = session.open_uni().await?;
     let mut subscription = match subscription {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -422,8 +337,7 @@ async fn progress(
             stream
                 .write_all(format!("{}\n", wire::encode_upload_progress(&event)?).as_bytes())
                 .await?;
-            stream.finish()?;
-            return Ok(());
+            return Ok(stream.finish()?);
         }
     };
     loop {
@@ -433,6 +347,5 @@ async fn progress(
         };
         stream.write_all(message.as_bytes()).await?;
     }
-    stream.finish()?;
-    Ok(())
+    Ok(stream.finish()?)
 }

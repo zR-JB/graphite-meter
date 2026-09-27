@@ -31,5 +31,3 @@ pub mod runtime;
 pub mod tls;
 pub mod upload;
 pub mod websocket;
-pub mod webtransport;
-pub mod webtransport_send;
