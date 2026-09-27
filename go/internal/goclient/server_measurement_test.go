@@ -339,7 +339,10 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 		co.aggregate.observe(initial)
 		s.beginSampling(time.Now(), initial)
 		s.startSampler()
-		defer func() { s.sampler.cancel(); s.sampling.Wait() }()
+		defer func() {
+			s.sampler.cancel()
+			s.sampling.Wait()
+		}()
 		observe := func(n int) {
 			for range n {
 				s.observe(<-s.results())

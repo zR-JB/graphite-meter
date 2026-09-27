@@ -203,7 +203,12 @@ func TestRunServicesStopsEveryServiceTogether(t *testing.T) {
 					<-block
 				}
 				return err
-			}, stop: func(context.Context) error { draining.Done(); draining.Wait(); close(block); return nil }}
+			}, stop: func(context.Context) error {
+				draining.Done()
+				draining.Wait()
+				close(block)
+				return nil
+			}}
 		}
 		done := make(chan error, 1)
 		go func() {
