@@ -452,7 +452,7 @@ fn warmup_and_poststage_probes_do_not_enter_measurement() {
             &mut latest,
         );
     }
-    assert!(!accumulator.snapshot().has_observations());
+    assert_eq!(accumulator.snapshot(), Default::default());
 }
 
 #[test]

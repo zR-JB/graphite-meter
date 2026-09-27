@@ -41,10 +41,6 @@ impl LatencySummary {
         let resolved = self.count + self.timeouts;
         (resolved > 0).then(|| self.timeouts as f64 / resolved as f64)
     }
-
-    pub fn has_observations(self) -> bool {
-        self.count + self.timeouts + self.unresolved + self.send_failures > 0
-    }
 }
 
 /// Probe deadline SRTT + 4·max(RTTVAR, 1 ms) within 250 ms–10 s, learning from every
