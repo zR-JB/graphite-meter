@@ -27,7 +27,7 @@ const lost: LaneFailure = { reason: "connection-lost", retry: true };
 const busy: LaneFailure = { reason: "server-busy", retry: true };
 const signIn: LaneFailure = { reason: "sign-in-required", retry: false };
 const REFUSALS: Record<string, LaneFailure> = {
-  invalid: { reason: "connection-lost", retry: false, rotate: true },
+  invalid: { reason: "protocol-error", retry: false, rotate: true },
   ownerMismatch: { reason: "protocol-error", retry: false },
   globalFull: busy,
   clientFull: busy,

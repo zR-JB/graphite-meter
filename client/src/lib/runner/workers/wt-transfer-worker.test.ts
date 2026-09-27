@@ -255,7 +255,7 @@ test("a later upload refusal stream preserves its disposition", async () => {
     msg: {
       type: "fatal",
       detail: "unknown upload id",
-      reason: "connection-lost",
+      reason: "protocol-error",
       retry: false,
       rotate: true,
     },

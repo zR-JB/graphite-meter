@@ -424,8 +424,8 @@ func TestARestartedServerGetsOneReplacementReceiver(t *testing.T) {
 			if restarts == 1 && (details.Outcome != OutcomeComplete || log.results()[0].Unavailable) {
 				t.Fatalf("one restart lost the upload: %+v %+v", details, log.results())
 			}
-			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureConnectionLost) {
-				t.Fatalf("a second unknown id = %+v, want the server lost as connection-lost", details.Failures)
+			if restarts == 2 && (len(details.Failures) != 1 || details.Failures[0].Reason != FailureProtocol) {
+				t.Fatalf("a second unknown id = %+v, want the server lost as protocol-error", details.Failures)
 			}
 		})
 	}

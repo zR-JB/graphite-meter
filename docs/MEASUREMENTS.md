@@ -156,7 +156,7 @@ Both clients name a failure with one of seven reasons (labels in `vocabulary.ts`
 | `timeout` | Stopped delivering data | A timed-out path, the silence limit, a lane that moves nothing for 2 s, or an idle or lifetime lane ending. |
 | `sign-in-required` | Sign-in required | Sign-out or a revoked grant. |
 | `server-busy` | Server at capacity | Admission refused with 429 or 503; retries wait 300 ms doubling, or Retry-After, up to 1.2 s. |
-| `protocol-error` | Unexpected server response | An unexpected status or a refused upload owner. |
+| `protocol-error` | Unexpected server response | An unexpected status, a refused upload owner, or an upload id the server still does not know after one replacement receiver. |
 | `insufficient-evidence` | Too little measured time | No interval with 800 ms of evidence or moved bytes. |
 
 ## Saved history
