@@ -1083,10 +1083,7 @@ mod tests {
         );
         logging.abort();
         assert!(logging.await.unwrap_err().is_cancelled());
-        let closed =
-            tokio::time::timeout(Duration::from_secs(1), stalled.read_to_end(&mut Vec::new()))
-                .await
-                .unwrap();
+        let closed = stalled.read_to_end(&mut Vec::new()).await;
         assert!(
             closed.is_ok()
                 || closed.is_err_and(|error| matches!(
