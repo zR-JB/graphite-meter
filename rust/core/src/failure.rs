@@ -37,61 +37,54 @@ pub enum LaneEnding {
 }
 
 impl LaneEnding {
+    fn row(self) -> [&'static str; 4] {
+        let mut fields = include_str!("../../../api/laneendings.txt")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .nth(self as usize)
+            .expect("lane endings are pinned")
+            .split('|')
+            .map(str::trim);
+        [
+            fields.next().unwrap(),
+            fields.next().unwrap(),
+            fields.next().unwrap(),
+            fields.next().unwrap(),
+        ]
+    }
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Finished => "finished",
-            Self::Idle => "idle",
-            Self::Lifetime => "lifetime",
-            Self::Revoked => "revoked",
-            Self::Shutdown => "shutdown",
-        }
+        self.row()[0]
     }
     pub fn websocket_code(self) -> u16 {
-        match self {
-            Self::Finished => 1000,
-            Self::Idle => 4001,
-            Self::Lifetime => 4002,
-            Self::Revoked => 1008,
-            Self::Shutdown => 1001,
-        }
+        self.row()[1].parse().expect("pinned WebSocket code")
     }
     pub fn webtransport_code(self) -> u32 {
-        match self {
-            Self::Finished => 0,
-            Self::Idle => 1,
-            Self::Lifetime => 2,
-            Self::Revoked => 3,
-            Self::Shutdown => 4,
-        }
+        self.row()[2].parse().expect("pinned WebTransport code")
     }
     pub fn reason(self) -> &'static str {
-        match self {
-            Self::Finished => "",
-            Self::Idle => "idle",
-            Self::Lifetime => "lifetime",
-            Self::Revoked => "authentication required",
-            Self::Shutdown => "shutdown",
-        }
+        self.row()[3]
     }
     pub fn from_websocket_code(code: u16) -> Option<Self> {
-        match code {
-            1000 => Some(Self::Finished),
-            4001 => Some(Self::Idle),
-            4002 => Some(Self::Lifetime),
-            1008 => Some(Self::Revoked),
-            1001 => Some(Self::Shutdown),
-            _ => None,
-        }
+        [
+            Self::Finished,
+            Self::Idle,
+            Self::Lifetime,
+            Self::Revoked,
+            Self::Shutdown,
+        ]
+        .into_iter()
+        .find(|ending| ending.websocket_code() == code)
     }
     pub fn from_webtransport_code(code: u32) -> Option<Self> {
-        match code {
-            0 => Some(Self::Finished),
-            1 => Some(Self::Idle),
-            2 => Some(Self::Lifetime),
-            3 => Some(Self::Revoked),
-            4 => Some(Self::Shutdown),
-            _ => None,
-        }
+        [
+            Self::Finished,
+            Self::Idle,
+            Self::Lifetime,
+            Self::Revoked,
+            Self::Shutdown,
+        ]
+        .into_iter()
+        .find(|ending| ending.webtransport_code() == code)
     }
 }
 
@@ -106,45 +99,39 @@ pub enum UploadRefusal {
 }
 
 impl UploadRefusal {
+    fn row(self) -> [&'static str; 3] {
+        let mut fields = include_str!("../../../api/uploadrefusals.txt")
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .nth(self as usize)
+            .expect("upload refusals are pinned")
+            .split('|')
+            .map(str::trim);
+        [
+            fields.next().unwrap(),
+            fields.next().unwrap(),
+            fields.next().unwrap(),
+        ]
+    }
     pub fn name(self) -> &'static str {
-        match self {
-            Self::Invalid => "invalid",
-            Self::GlobalFull => "globalFull",
-            Self::ClientFull => "clientFull",
-            Self::OwnerMismatch => "ownerMismatch",
-            Self::Idle => "idle",
-            Self::Revoked => "revoked",
-        }
+        self.row()[0]
     }
     pub fn message(self) -> &'static str {
-        match self {
-            Self::Invalid => "unknown upload id",
-            Self::GlobalFull => "upload capacity exhausted",
-            Self::ClientFull => "client upload capacity exhausted",
-            Self::OwnerMismatch => "upload id belongs to another client",
-            Self::Idle => "idle",
-            Self::Revoked => "authentication required",
-        }
+        self.row()[1]
     }
     pub fn status(self) -> u16 {
-        match self {
-            Self::Invalid => 400,
-            Self::GlobalFull => 503,
-            Self::ClientFull => 429,
-            Self::OwnerMismatch => 403,
-            Self::Idle => 408,
-            Self::Revoked => 403,
-        }
+        self.row()[2].parse().expect("pinned refusal status")
     }
     pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "invalid" => Some(Self::Invalid),
-            "globalFull" => Some(Self::GlobalFull),
-            "clientFull" => Some(Self::ClientFull),
-            "ownerMismatch" => Some(Self::OwnerMismatch),
-            "idle" => Some(Self::Idle),
-            "revoked" => Some(Self::Revoked),
-            _ => None,
-        }
+        [
+            Self::Invalid,
+            Self::GlobalFull,
+            Self::ClientFull,
+            Self::OwnerMismatch,
+            Self::Idle,
+            Self::Revoked,
+        ]
+        .into_iter()
+        .find(|refusal| refusal.name() == name)
     }
 }
