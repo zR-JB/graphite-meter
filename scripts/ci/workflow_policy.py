@@ -37,9 +37,10 @@ ORDERED = {
     "workflows/release-request.yml": (
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "run: python3 scripts/ci/release.py prepare",
-        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
+        "VERSION= mise run legal-check\n",
         "uses: ./.github/actions/build-oci",
         "source-sha: ${{ steps.request.outputs.remote_sha }}",
+        'python3 scripts/ci/verify_release_assets.py "$VERSION"',
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",

@@ -1,7 +1,7 @@
 name: Request release
 run-name: >-
   Release request · ${{ inputs.mode }} · ${{ inputs.tag }} ·
-  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }}
+  ${{ inputs.pr && format('PR #{0} @ {1}', inputs.pr, inputs.sha) || 'main' }} · ${{ github.sha }} · Rust ${{ inputs.rust }}
 
 # LOW AUTHORITY: dispatch may select any ref, so this build has read-only access,
 # no secrets or caches, and no path to publication. Release accepts its output
@@ -29,6 +29,12 @@ on:
         default: validate
         type: choice
         options: [validate, publish]
+
+      rust:
+        description: Experimental Rust artifacts (Go remains included)
+        type: choice
+        default: none
+        options: [none, server, tui, both]
 
 permissions:
   contents: read
@@ -72,6 +78,7 @@ jobs:
           PR: ${{ inputs.pr }}
           SHA: ${{ inputs.sha }}
           MODE: ${{ inputs.mode }}
+          RUST: ${{ inputs.rust }}
           OUT_DIR: ${{ runner.temp }}/release-request
         run: python3 scripts/ci/release.py prepare
 
@@ -86,16 +93,13 @@ jobs:
           bun-cache: 'false'
           cache: 'false'
 
-      - name: Build and verify stable native artifacts and third-party source
+      - name: Check and generate stable legal outputs
         if: steps.request.outputs.stable == 'true'
         env:
           VERSION: ${{ steps.request.outputs.version }}
-          RELEASE_DIST: ${{ runner.temp }}/release-assets
         run: |
           VERSION= mise run legal-check
           mise run legal-generate
-          mise run release-artifacts "$VERSION"
-          python3 scripts/ci/verify_release_assets.py "$VERSION"
 
       # A prerelease never checks PR files out here: BuildKit fetches that exact
       # commit remotely and receives no GitHub credential.
@@ -108,9 +112,92 @@ jobs:
           source-sha: ${{ steps.request.outputs.remote_sha }}
           client-validate: ${{ steps.request.outputs.client_validate }}
 
+      - name: Build and verify stable native artifacts and third-party source
+        if: steps.request.outputs.stable == 'true'
+        env:
+          VERSION: ${{ steps.request.outputs.version }}
+          RELEASE_DIST: ${{ runner.temp }}/release-assets
+          RUST: ${{ steps.request.outputs.rust }}
+        run: |
+          mise run release-artifacts "$VERSION"
+          python3 scripts/ci/verify_release_assets.py "$VERSION"
+
+      - name: Build experimental Rust AMD64 OCI archive
+        if: steps.request.outputs.rust_server == 'true'
+        uses: ./.github/actions/build-oci
+        with:
+          implementation: rust
+          version: ${{ steps.request.outputs.version }}-rust
+          revision: ${{ steps.request.outputs.sha }}
+          output: ${{ runner.temp }}/release-request/graphite-meter-rust.oci.tar
+          source-sha: ${{ steps.request.outputs.remote_sha }}
+          client-validate: ${{ steps.request.outputs.client_validate }}
+
+      - name: Export prerelease Rust source from the exact remote commit
+        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust_server == 'true'
+        uses: ./.github/actions/build-oci
+        with:
+          implementation: rust
+          target: server-artifacts
+          output-type: local
+          version: ${{ steps.request.outputs.version }}-rust
+          revision: ${{ steps.request.outputs.sha }}
+          output: ${{ runner.temp }}/rust-source
+          source-sha: ${{ steps.request.outputs.remote_sha }}
+          client-validate: '1'
+
+      - name: Export prerelease Rust TUI from the exact remote commit
+        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust_tui == 'true'
+        uses: ./.github/actions/build-oci
+        with:
+          implementation: rust
+          target: tui-artifacts
+          output-type: local
+          version: ${{ steps.request.outputs.version }}-rust
+          revision: ${{ steps.request.outputs.sha }}
+          output: ${{ runner.temp }}/rust-tui
+          source-sha: ${{ steps.request.outputs.remote_sha }}
+
+      - name: Stage prerelease Rust source offer
+        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust != 'none'
+        env:
+          VERSION: ${{ steps.request.outputs.version }}
+          SOURCE_DIR: ${{ runner.temp }}/rust-source
+          DIST: ${{ runner.temp }}/rust-assets
+          TUI_DIR: ${{ runner.temp }}/rust-tui
+          RUST_SERVER: ${{ steps.request.outputs.rust_server }}
+          RUST_TUI: ${{ steps.request.outputs.rust_tui }}
+        run: |
+          mkdir -p "$DIST"
+          name="graphite-meter-server_${VERSION}_linux_amd64_rust_third-party-source.tar.gz"
+          if [ "$RUST_SERVER" = true ]; then
+            cp "$SOURCE_DIR/THIRD_PARTY_SOURCE.tar.gz" "$DIST/$name"
+          fi
+          if [ "$RUST_TUI" = true ]; then
+            base="graphite-meter-client_${VERSION}_linux_amd64_rust"
+            cp "$TUI_DIR/$base.tar.gz" "$TUI_DIR/${base}_third-party-source.tar.gz" "$DIST/"
+          fi
+          cd "$DIST"
+          sha256sum ./*.tar.gz | sed 's@  ./@  @' >checksums.txt
+
+      - name: Upload untrusted prerelease Rust source offer
+        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust != 'none'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rust-assets-${{ github.run_id }}
+          path: ${{ runner.temp }}/rust-assets/
+          if-no-files-found: error
+          retention-days: 35
+
       - name: Record the OCI checksum
         working-directory: ${{ runner.temp }}/release-request
-        run: sha256sum graphite-meter.oci.tar >graphite-meter.oci.tar.sha256
+        env:
+          RUST_SERVER: ${{ steps.request.outputs.rust_server }}
+        run: |
+          sha256sum graphite-meter.oci.tar >graphite-meter.oci.tar.sha256
+          if [ "$RUST_SERVER" = true ]; then
+            sha256sum graphite-meter-rust.oci.tar >graphite-meter-rust.oci.tar.sha256
+          fi
 
       - name: Upload untrusted request and OCI archive
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

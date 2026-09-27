@@ -108,7 +108,7 @@ def build_container(version: str, output: Path) -> None:
         if "," in temporary:
             raise ValueError("container artifact path must not contain commas")
         subprocess.run([
-            "docker", "buildx", "build", "--platform", "linux/amd64",
+            "docker", "buildx", "build", "--no-cache", "--platform", "linux/amd64",
             "--target", "tui-artifacts", "-f", "container/Dockerfile.rust",
             "--build-arg", f"VERSION={version}", "--output", f"type=local,dest={temporary}", ".",
         ], cwd=REPO, check=True)

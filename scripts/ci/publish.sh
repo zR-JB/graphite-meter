@@ -21,7 +21,13 @@ registry() {
 }
 
 publish_image() {
-  [[ "$IMAGE_TAG" =~ ^$STABLE(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$ ]] || fail "invalid image tag: $IMAGE_TAG"
+  local suffix=''
+  case "${IMPLEMENTATION:-go}" in
+    go) ;;
+    rust) suffix=-rust ;;
+    *) fail "invalid image implementation" ;;
+  esac
+  [[ "$IMAGE_TAG" =~ ^$STABLE(-(alpha|beta|rc)\.(0|[1-9][0-9]*))?$suffix$ ]] || fail "invalid image tag: $IMAGE_TAG"
   [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "invalid verified digest"
   registry '
     archive=oci-archive:/work/graphite-meter.oci.tar

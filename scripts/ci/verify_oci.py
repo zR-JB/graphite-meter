@@ -33,7 +33,7 @@ ARCHIVE = "oci-archive:/work/image.oci.tar"
 ENGINES = ("docker", "podman")
 
 
-def validate_index_descriptors(index: JsonObject) -> list[str]:
+def validate_index_descriptors(index: JsonObject, platforms: set[str] = PLATFORMS) -> list[str]:
     """Return the provenance manifest digests, exactly one linked to each runnable image."""
     if index.get("schemaVersion") != 2 or index.get("mediaType") != INDEX_TYPE:
         fail(f"OCI index must be a schemaVersion 2 {INDEX_TYPE}")
@@ -49,7 +49,7 @@ def validate_index_descriptors(index: JsonObject) -> list[str]:
         digest = str_field(manifest, "digest", context)
         if DIGEST_RE.fullmatch(digest) is None or manifest.get("mediaType") != MANIFEST_TYPE:
             fail(f"{context} must be an OCI manifest with a sha256 digest")
-        if system == "linux" and arch in PLATFORMS and arch not in runnable:
+        if system == "linux" and arch in platforms and arch not in runnable:
             runnable[arch] = digest
         elif (system, arch) == ("unknown", "unknown"):
             annotations = object_field(manifest, "annotations", context)
@@ -59,8 +59,9 @@ def validate_index_descriptors(index: JsonObject) -> list[str]:
             attestations.append(digest)
         else:
             fail(f"unexpected or duplicate OCI platform {system}/{arch}")
-    if runnable.keys() != PLATFORMS:
-        fail(f"OCI archive needs linux/amd64 and linux/arm64, got {runnable}")
+    if runnable.keys() != platforms:
+        required = " and ".join(f"linux/{arch}" for arch in sorted(platforms))
+        fail(f"OCI archive needs {required}, got {runnable}")
     if sorted(attested) != sorted(runnable.values()):
         fail("OCI archive needs one provenance attestation per image")
     return attestations
@@ -142,7 +143,7 @@ def skopeo(engine: str, image: str, *args: str, archive: Path | None = None) -> 
                image, *args)
 
 
-def verify(version: str, revision: str, archive: Path) -> str:
+def verify(version: str, revision: str, archive: Path, platforms: set[str] = PLATFORMS) -> str:
     """Verify the archive and return its manifest digest."""
     if archive.is_symlink() or not archive.is_file() or archive.stat().st_size == 0:
         fail(f"OCI archive is missing, empty, or not a regular file: {archive}")
@@ -153,7 +154,7 @@ def verify(version: str, revision: str, archive: Path) -> str:
         output = skopeo(engine, image, "inspect", *args, ARCHIVE, archive=archive)
         return expect_object(decode_json(output, "skopeo inspect"), "skopeo inspect")
 
-    attestations = validate_index_descriptors(inspect("--raw"))
+    attestations = validate_index_descriptors(inspect("--raw"), platforms)
     try:
         with tarfile.open(archive, mode="r:") as tar:
             sources = set().union(*(provenance_sources(tar, digest, repository)
@@ -171,7 +172,7 @@ def verify(version: str, revision: str, archive: Path) -> str:
         "org.opencontainers.image.version": version,
         "org.opencontainers.image.licenses": "AGPL-3.0-or-later",
     }
-    for arch in sorted(PLATFORMS):
+    for arch in sorted(platforms):
         labels = inspect("--override-os", "linux", "--override-arch", arch,
                          "--format", "{{json .Labels}}")
         for key, value in expected.items():

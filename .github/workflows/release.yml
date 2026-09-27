@@ -41,6 +41,9 @@ jobs:
       oci_sha256: ${{ steps.verify.outputs.oci_sha256 }}
       digest: ${{ steps.verify.outputs.digest }}
       assets_sha256: ${{ steps.verify.outputs.assets_sha256 }}
+      rust: ${{ steps.verify.outputs.rust }}
+      rust_digest: ${{ steps.verify.outputs.rust_digest }}
+      rust_oci_sha256: ${{ steps.verify.outputs.rust_oci_sha256 }}
     steps:
       - name: Checkout trusted release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -85,6 +88,17 @@ jobs:
         with:
           name: release-image
           path: ${{ runner.temp }}/handoff/image/graphite-meter.oci.tar
+          if-no-files-found: error
+          retention-days: 35
+          compression-level: 0
+          overwrite: true
+
+      - name: Upload verified Rust image handoff
+        if: steps.verify.outputs.publish == 'true' && steps.verify.outputs.rust_digest != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rust-image
+          path: ${{ runner.temp }}/handoff/rust-image/graphite-meter.oci.tar
           if-no-files-found: error
           retention-days: 35
           compression-level: 0
@@ -146,6 +160,13 @@ jobs:
           name: release-assets
           path: ${{ runner.temp }}/handoff/assets
 
+      - name: Download verified Rust image handoff
+        if: needs.verify.outputs.rust_digest != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-rust-image
+          path: ${{ runner.temp }}/handoff/rust-image
+
       - name: Recheck handoff, source, main, Gate and CodeQL after approval
         env:
           GH_TOKEN: ${{ github.token }}
@@ -156,6 +177,8 @@ jobs:
           PR: ${{ needs.verify.outputs.pr }}
           OCI_SHA256: ${{ needs.verify.outputs.oci_sha256 }}
           ASSETS_SHA256: ${{ needs.verify.outputs.assets_sha256 }}
+          RUST: ${{ needs.verify.outputs.rust }}
+          RUST_OCI_SHA256: ${{ needs.verify.outputs.rust_oci_sha256 }}
           HANDOFF_DIR: ${{ runner.temp }}/handoff
         run: python3 scripts/ci/release.py recheck
 
@@ -167,6 +190,18 @@ jobs:
           IMAGE_TAG: ${{ needs.verify.outputs.version }}
           DIGEST: ${{ needs.verify.outputs.digest }}
           ARCHIVE_DIR: ${{ runner.temp }}/handoff/image
+        run: scripts/ci/publish.sh image
+
+      - name: Publish the exact experimental Rust version tag
+        if: needs.verify.outputs.rust_digest != ''
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          REGISTRY_ACTOR: ${{ github.repository_owner }}
+          REPOSITORY: ${{ github.repository }}
+          IMPLEMENTATION: rust
+          IMAGE_TAG: ${{ needs.verify.outputs.version }}-rust
+          DIGEST: ${{ needs.verify.outputs.rust_digest }}
+          ARCHIVE_DIR: ${{ runner.temp }}/handoff/rust-image
         run: scripts/ci/publish.sh image
 
       - id: app

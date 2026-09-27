@@ -181,18 +181,154 @@ def verify_tui_version(version: str, dist: Path) -> None:
         fail(f"{name} reports {result.stdout.strip()!r} {result.stderr.strip()}")
 
 
-def verify_artifacts(version: str, dist: Path) -> None:
+RUST_TARGET = "x86_64-unknown-linux-gnu"
+
+
+def expected_rust_artifacts(version: str, selection: str) -> set[str]:
+    if selection not in ("none", "server", "tui", "both"):
+        fail("invalid Rust artifact selection")
+    names: set[str] = set()
+    if selection in ("server", "both"):
+        names.add(f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz")
+    if selection in ("tui", "both"):
+        base = f"graphite-meter-client_{version}_linux_amd64_rust"
+        names |= {f"{base}.tar.gz", f"{base}_third-party-source.tar.gz"}
+    return names
+
+
+def read_tar_text(path: Path, name: str, limit: int = 4 * 1024 * 1024) -> str:
+    try:
+        with tarfile.open(path, "r:gz") as archive:
+            item = archive.getmember(name)
+            if not item.isfile() or item.size > limit:
+                fail(f"{name} is not a regular file or exceeds limit {limit}")
+            return member(archive, name).decode()
+    except (KeyError, UnicodeDecodeError, tarfile.TarError) as exc:
+        raise ControlPlaneError(f"cannot read {path.name}/{name}: {exc}") from exc
+
+
+def verify_rust_source(path: Path, package: str, lock_sha256: str | None = None) -> dict:
+    names = archive_names(path)
+    inventory = decode_json(read_tar_text(path, "inventory.json"), path.name)
+    if not isinstance(inventory, dict) or any(inventory.get(key) != value for key, value in {
+        "schemaVersion": 1, "package": package, "profile": "release", "target": RUST_TARGET,
+    }.items()):
+        fail(f"{path.name} has invalid Rust build identity")
+    lock = inventory.get("cargoLockSha256")
+    if not isinstance(lock, str) or re.fullmatch(r"[0-9a-f]{64}", lock) is None:
+        fail("invalid Rust Cargo lock identity")
+    if lock != (lock_sha256 or file_sha256(Path("rust/Cargo.lock"))):
+        fail("Rust source inventory does not match release Cargo lock")
+    components = inventory.get("components")
+    browser = inventory.get("browserComponents", [])
+    if not isinstance(components, list) or not components or not isinstance(browser, list):
+        fail(f"{path.name} has no valid dependency inventory")
+    trees: set[str] = set()
+    for item in components:
+        if not isinstance(item, dict) or not isinstance(item.get("component"), dict):
+            fail("invalid Rust dependency component")
+        component = item["component"]
+        trees.add(f"third_party/cargo/{component.get('name')}-{component.get('version')}/")
+    browser_manual = []
+    for component in browser:
+        if not isinstance(component, dict):
+            fail("invalid Rust browser component")
+        if component.get("ecosystem") == "npm":
+            trees.add(f"third_party/npm/{component.get('name')}-{component.get('version')}/")
+        else:
+            browser_manual.append(component)
+    allowed = {"inventory.json", "LEGAL.txt", "legal/rust-forks.json"}
+    if decode_json(read_tar_text(path, "legal/rust-forks.json"), "Rust forks") != decode_json(
+            Path("legal/rust-forks.json").read_text(), "release Rust forks"):
+        fail("Rust source fork identities differ from release tooling")
+    manual_sources = {}
+    for filename, scope in (("legal/rust-provenance.json", "rust"),
+                            ("legal/provenance.json", "server/browser")):
+        if scope == "server/browser" and package != "graphite-meter-server":
+            continue
+        for entry in decode_json(Path(filename).read_text(), filename):
+            if scope in entry.get("artifactScopes", []):
+                identity = (entry["ecosystem"], entry["name"], entry["version"])
+                files = {file["name"] for file in entry.get("localLegalFiles", [])}
+                files.update(entry.get("localPaths", []))
+                manual_sources[identity] = files
+                allowed.update(files)
+    for component in browser_manual:
+        identity = (component.get("ecosystem"), component.get("name"), component.get("version"))
+        if identity not in manual_sources:
+            fail("Rust browser inventory contains unreviewed manual source")
+        if missing := manual_sources[identity] - names:
+            fail(f"Rust browser source offer is missing reviewed inputs: {sorted(missing)}")
+    for tree in trees:
+        if not any(name.startswith(tree) for name in names):
+            fail(f"{path.name} lacks declared dependency source {tree}")
+    for name in names:
+        upstream = any(name.startswith(tree) or name == tree.rstrip("/") for tree in trees)
+        directory = any(tree.startswith(name + "/") for tree in trees)
+        if not upstream and not directory and name not in allowed:
+            fail(f"{path.name} contains undeclared source {name}")
+        if TLS_NAME.search(name) and not upstream:
+            fail(f"{path.name} contains certificate/key material outside dependency source")
+    if not read_tar_text(path, "LEGAL.txt").strip():
+        fail("Rust source offer has empty notices")
+    return inventory
+
+
+def verify_rust_server_source(dist: Path, version: str, lock_sha256: str | None = None) -> None:
+    name = f"graphite-meter-server_{version}_linux_amd64_rust_third-party-source.tar.gz"
+    verify_rust_source(dist / name, "graphite-meter-server", lock_sha256)
+
+
+def verify_rust_client_archive(dist: Path, version: str, lock_sha256: str | None = None) -> None:
+    base = f"graphite-meter-client_{version}_linux_amd64_rust"
+    path = dist / f"{base}.tar.gz"
+    names = archive_names(path)
+    required = {f"{base}/{name}" for name in (
+        "graphite-meter-client", "BUILD.json", "LEGAL.txt", "LICENSE", "COPYRIGHT", "SOURCE.txt")}
+    require_same("Rust TUI archive files", required | {base}, names)
+    metadata = decode_json(read_tar_text(path, f"{base}/BUILD.json"), path.name)
+    if not isinstance(metadata, dict) or any(metadata.get(key) != value for key, value in {
+        "schemaVersion": 1, "implementation": "rust", "version": version + "-rust",
+        "target": RUST_TARGET,
+    }.items()):
+        fail("invalid Rust TUI build identity")
+    if not isinstance(metadata.get("minimumGlibc"), str) or re.fullmatch(
+            r"[0-9]+\.[0-9]+", metadata["minimumGlibc"]) is None:
+        fail("invalid Rust TUI glibc requirement")
+    libraries = metadata.get("neededLibraries")
+    if not isinstance(libraries, list) or not libraries or any(
+            not isinstance(name, str) or SAFE_NAME.fullmatch(name) is None for name in libraries):
+        fail("invalid Rust TUI shared library requirements")
+    inventory = verify_rust_source(dist / f"{base}_third-party-source.tar.gz",
+                                   "graphite-meter-client", lock_sha256)
+    if not isinstance(metadata.get("rustc"), str) or metadata["rustc"] != inventory.get("rustc"):
+        fail("Rust TUI compiler does not match source inventory")
+    for filename in ("LICENSE", "COPYRIGHT"):
+        if read_tar_text(path, f"{base}/{filename}") != Path(filename).read_text():
+            fail(f"Rust TUI {filename} differs from release source")
+    if f"{base}_third-party-source.tar.gz" not in read_tar_text(path, f"{base}/SOURCE.txt"):
+        fail("Rust TUI source notice lacks matching source archive")
+    if read_tar_text(path, f"{base}/LEGAL.txt") != read_tar_text(
+            dist / f"{base}_third-party-source.tar.gz", "LEGAL.txt"):
+        fail("Rust TUI notices differ from source offer")
+
+
+def verify_artifacts(version: str, dist: Path, rust: str = "none") -> None:
     source = f"graphite-meter_{version}_third-party-source.tar.gz"
     checksummed = verify_checksums(dist)
-    require_same("checksummed release artifacts", {source, *tui_archives(version, TARGETS)},
+    require_same("checksummed release artifacts", {source, *tui_archives(version, TARGETS), *expected_rust_artifacts(version, rust)},
                  checksummed)
     verify_release_file_set(dist, checksummed)
     verify_third_party_source_archive(dist, version)
     verify_client_archives(dist, version, TARGETS)
+    if rust in ("server", "both"):
+        verify_rust_server_source(dist, version)
+    if rust in ("tui", "both"):
+        verify_rust_client_archive(dist, version)
 
 
 def verify(version: str, dist: Path) -> None:
-    verify_artifacts(version, dist)
+    verify_artifacts(version, dist, os.environ.get("RUST", "none"))
     verify_tui_version(version, dist)
     print(f"release asset verification passed: {version}")
 

@@ -438,7 +438,7 @@ class RequestTests(unittest.TestCase):
 
     def test_consumer_binds_the_request_artifact_to_its_trusted_run(self) -> None:
         request: dict[str, object] = {
-            "schemaVersion": 2, "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
+            "schemaVersion": 3, "rust": "none", "repository": REPO, "tag": "v1.2.3", "sourceSha": MAIN, "pr": 0,
             "mode": "publish", "requestRunId": 4242, "requestRunAttempt": 1,
         }
         prerelease = {"tag": "v1.2.3-rc.1", "sourceSha": HEAD, "pr": 101}
@@ -493,7 +493,7 @@ def write_request(root: Path, stable: bool, mode: str) -> tuple[Path, JsonObject
     candidate = request_dir / "release-request-4242"
     candidate.mkdir(parents=True)
     (candidate / "request.json").write_text(json.dumps({
-        "schemaVersion": 2, "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
+        "schemaVersion": 3, "rust": "none", "repository": REPO, "tag": release.tag, "sourceSha": release.sha,
         "pr": release.pr, "mode": mode, "requestRunId": 4242, "requestRunAttempt": 1,
     }))
     oci = write_oci(candidate / OCI, REPO, release.sha, remote=not stable)

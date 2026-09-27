@@ -187,6 +187,20 @@ class RegistryTests(unittest.TestCase):
                     self.assertIn(error, output)
                     self.assertNotEqual(tags.get("1.2.3"), VERIFIED)
 
+    def test_implementation_tags_cannot_overwrite_each_other(self) -> None:
+        for implementation, tag, accepted in (
+            ("rust", "1.2.3-rust", True), ("rust", "1.2.3-rc.1-rust", True),
+            ("rust", "1.2.3", False), ("go", "1.2.3-rust", False),
+            ("unknown", "1.2.3", False),
+        ):
+            with self.subTest(implementation=implementation, tag=tag):
+                status, output, tags = self.run_script("image", {"1.2.3": OTHER},
+                    IMPLEMENTATION=implementation, IMAGE_TAG=tag)
+                self.assertEqual(status == 0, accepted, output)
+                self.assertEqual(tags["1.2.3"], OTHER)
+                if accepted:
+                    self.assertEqual(tags[tag], VERIFIED)
+
     def test_aliases_follow_the_highest_published_releases(self) -> None:
         for releases, series, latest in (
             ("v1.1.9 v1.2.3", VERIFIED, VERIFIED),

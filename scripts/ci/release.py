@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -65,7 +67,7 @@ DELAYS = (0.25, 0.5, 1, 2, 4, 8)
 T = TypeVar("T")
 REQUEST_KEYS = {
     "schemaVersion", "repository", "tag", "sourceSha", "pr", "mode", "requestRunId",
-    "requestRunAttempt",
+    "requestRunAttempt", "rust",
 }
 
 
@@ -74,6 +76,11 @@ class Release:
     tag: str
     sha: str
     pr: int
+    rust: str = "none"
+
+    @property
+    def rust_server(self) -> bool:
+        return self.rust in ("server", "both")
 
     @property
     def stable(self) -> bool:
@@ -92,19 +99,21 @@ def assets_sha256(directory: Path) -> str:
     return hashlib.sha256(listing.encode()).hexdigest()
 
 
-def parse_release(tag: str, sha: str, pr: int) -> Release:
+def parse_release(tag: str, sha: str, pr: int, rust: str = "none") -> Release:
     match = TAG_RE.fullmatch(tag)
     if pr < 0 or match is None or (match.group(1) is None) != (pr == 0):
         fail("stable tags are vMAJOR.MINOR.PATCH; PR prereleases add -{alpha,beta,rc}.N")
     if SHA_RE.fullmatch(sha) is None:
         fail("release source must be a 40-character commit SHA")
-    return Release(tag, sha, pr)
+    if rust not in ("none", "server", "tui", "both"):
+        fail("rust must be none, server, tui or both")
+    return Release(tag, sha, pr, rust)
 
 
 def request_title(mode: str, release: Release, main: str) -> str:
     """The run-name that release-request.yml derives from its dispatch inputs."""
     source = f"PR #{release.pr} @ {release.sha}" if release.pr else "main"
-    return f"Release request · {mode} · {release.tag} · {source} · {main}"
+    return f"Release request · {mode} · {release.tag} · {source} · {main} · Rust {release.rust}"
 
 
 def main_workflow(repository: str, name: str) -> str:
@@ -188,11 +197,12 @@ def command_prepare() -> None:
     pr = env_int("PR") if os.environ.get("PR") else 0
     if not pr and os.environ.get("SHA"):
         fail("stable releases build current main; leave sha empty")
-    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr)
+    release = parse_release(env("TAG"), env_sha("SHA") if pr else main, pr,
+                            os.environ.get("RUST", "none"))
     out = runner_path("OUT_DIR")
     out.mkdir(parents=True, exist_ok=True)
     request = {
-        "schemaVersion": 2, "repository": repository, "tag": release.tag,
+        "schemaVersion": 3, "repository": repository, "tag": release.tag, "rust": release.rust,
         "sourceSha": release.sha, "pr": pr, "mode": mode,
         "requestRunId": env_int("REQUEST_RUN_ID"), "requestRunAttempt": 1,
     }
@@ -200,7 +210,9 @@ def command_prepare() -> None:
     append_output(
         tag=release.tag, version=release.version, sha=release.sha,
         stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
-        client_validate="0" if release.stable else "1",
+        client_validate="0" if release.stable else "1", rust=release.rust,
+        rust_server=str(release.rust_server).lower(),
+        rust_tui=str(release.rust in ("tui", "both")).lower(),
     )
 
 
@@ -214,21 +226,29 @@ def verify_request(request_dir: Path, *, api: APICall = default_api) -> tuple[Re
     require_exact_current_main(repository, publisher, api=api)
     require_checkout(publisher)
     candidate = request_dir / f"release-request-{run_id}"
-    exact_files(candidate, {"request.json", OCI, f"{OCI}.sha256"})
-    request = read_record(candidate / "request.json", REQUEST_KEYS, {
-        "schemaVersion": 2, "repository": repository, "requestRunId": run_id,
+    request_files = {"request.json", OCI, f"{OCI}.sha256"}
+    request_path = candidate / "request.json"
+    if request_path.is_symlink() or not request_path.is_file() or request_path.stat().st_size > 1024 * 1024:
+        fail("request.json must be a bounded regular file")
+    request = read_record(request_path, REQUEST_KEYS, {
+        "schemaVersion": 3, "repository": repository, "requestRunId": run_id,
         "requestRunAttempt": 1,
     })
     release = parse_release(str_field(request, "tag", "request"),
                             str_field(request, "sourceSha", "request"),
-                            int_field(request, "pr", "request"))
+                            int_field(request, "pr", "request"), str_field(request, "rust", "request"))
+    if release.rust_server:
+        request_files |= {"graphite-meter-rust.oci.tar", "graphite-meter-rust.oci.tar.sha256"}
+    exact_files(candidate, request_files)
     if request["mode"] not in ("validate", "publish"):
         fail("request mode must be validate or publish")
     if release.stable and release.sha != publisher:
         fail("a stable release must build the trusted main commit")
-    artifacts = {candidate.name: OCI_LIMIT + 1024 * 1024}
+    artifacts = {candidate.name: OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024}
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
+    elif release.rust != "none":
+        artifacts[f"release-rust-assets-{run_id}"] = ASSETS_LIMIT
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts, api=api)
@@ -249,21 +269,55 @@ def command_verify() -> None:
     if (candidate / f"{OCI}.sha256").read_text(encoding="utf-8") != f"{digest}  {OCI}\n":
         fail("OCI archive does not match the request checksum")
     manifest = verify_oci.verify(release.version, release.sha, candidate / OCI)
+    rust_digest = rust_manifest = ""
+    if release.rust_server:
+        rust_archive = candidate / "graphite-meter-rust.oci.tar"
+        if rust_archive.stat().st_size > OCI_LIMIT:
+            fail("Rust OCI archive exceeds size limit")
+        rust_digest = file_sha256(rust_archive)
+        checksum = (candidate / "graphite-meter-rust.oci.tar.sha256").read_text(encoding="utf-8")
+        if checksum != f"{rust_digest}  graphite-meter-rust.oci.tar\n":
+            fail("Rust OCI archive does not match the request checksum")
+        rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive, {"amd64"})
     assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
     if release.stable:
-        verify_release_assets.verify_artifacts(release.version, assets)
+        verify_release_assets.verify_artifacts(release.version, assets, release.rust)
+    if not release.stable and release.rust != "none":
+        rust_assets = request_dir / f"release-rust-assets-{env_int('REQUEST_RUN_ID')}"
+        checksummed = verify_release_assets.verify_checksums(rust_assets)
+        verify_release_assets.require_same("Rust source artifacts",
+            verify_release_assets.expected_rust_artifacts(release.version, release.rust), checksummed)
+        verify_release_assets.verify_release_file_set(rust_assets, checksummed)
+        lock_path = f"repos/{env('REPOSITORY')}/contents/rust/Cargo.lock?ref={release.sha}"
+        record = expect_object(default_api(lock_path), "Cargo lock")
+        content = str_field(record, "content", "Cargo lock")
+        if record.get("encoding") != "base64" or len(content) > 4 * 1024 * 1024:
+            fail("source Cargo lock is not bounded base64 content")
+        try:
+            lock = base64.b64decode(content.replace("\n", ""), validate=True)
+            lock_sha256 = hashlib.sha256(lock).hexdigest()
+        except binascii.Error as exc:
+            raise ControlPlaneError("source Cargo lock is invalid base64") from exc
+        if release.rust_server:
+            verify_release_assets.verify_rust_server_source(rust_assets, release.version, lock_sha256)
+        if release.rust in ("tui", "both"):
+            verify_release_assets.verify_rust_client_archive(rust_assets, release.version, lock_sha256)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         fail("main moved during verification; start a fresh request")
 
     (handoff / "image").mkdir(parents=True, exist_ok=True)
     shutil.copyfile(candidate / OCI, handoff / "image" / OCI)
+    if release.rust_server:
+        (handoff / "rust-image").mkdir()
+        shutil.copyfile(candidate / "graphite-meter-rust.oci.tar", handoff / "rust-image" / OCI)
     if release.stable:
         shutil.copytree(assets, handoff / "assets")
     append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
-        oci_sha256=digest, digest=manifest,
+        oci_sha256=digest, digest=manifest, rust=release.rust,
+        rust_oci_sha256=rust_digest, rust_digest=rust_manifest,
         assets_sha256=assets_sha256(handoff / "assets") if release.stable else "",
     )
     append_summary(
@@ -278,7 +332,7 @@ def command_verify() -> None:
 def command_recheck() -> None:
     main = env_sha("MAIN_SHA")
     pr = env_int("PR") if os.environ.get("PR") else 0
-    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr)
+    release = parse_release(env("TAG"), env_sha("SOURCE_SHA"), pr, os.environ.get("RUST", "none"))
     require_checkout(main)
     handoff = runner_path("HANDOFF_DIR")
     exact_files(handoff / "image", {OCI})
@@ -286,6 +340,10 @@ def command_recheck() -> None:
         fail("approved OCI handoff does not match the verified archive")
     if release.stable and assets_sha256(handoff / "assets") != env("ASSETS_SHA256"):
         fail("approved asset handoff does not match the verified assets")
+    if release.rust_server:
+        exact_files(handoff / "rust-image", {OCI})
+        if file_sha256(handoff / "rust-image" / OCI) != env("RUST_OCI_SHA256"):
+            fail("approved Rust OCI handoff does not match the verified archive")
     current, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if current != main:
         fail("main moved after verification; start a fresh request")
@@ -331,6 +389,10 @@ def command_publish() -> None:
     if source not in local:
         fail(f"release handoff is missing the third-party source asset {source}")
     notice = source_notice(release, source)
+    rust_sources = sorted(name for name in names if name.endswith("_rust_third-party-source.tar.gz"))
+    if rust_sources:
+        notice += "\n\nMatching experimental Rust dependency sources: " + ", ".join(
+            f"**{name}**" for name in rust_sources) + "."
 
     def require_tag() -> None:
         if (sha := converge(f"{tag} visibility", lambda: release_tag_target(repository, tag))) != release.sha:
