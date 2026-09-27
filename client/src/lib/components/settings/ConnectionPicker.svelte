@@ -59,6 +59,14 @@
       (validation === "failed" ||
         !!options.find((option) => option.value === selected)?.disabled),
   );
+  // Unavailable choices fold into one line; the selected one always shows.
+  let unfolded = $state(false);
+  const folded = $derived(
+    options.filter((option) => option.disabled && option.value !== selected),
+  );
+  const shown = $derived(
+    unfolded ? options : options.filter((option) => !folded.includes(option)),
+  );
   function select(value: string) {
     controller.selectConnection(role, value);
   }
@@ -69,12 +77,8 @@
     {title}
   </legend>
   <div class="options">
-    {#each options as option (option.value)}
-      <label
-        class="choice"
-        class:selected={selected === option.value}
-        class:unavailable={option.disabled || locked}
-      >
+    {#each shown as option (option.value)}
+      <label class="choice tile" class:unavailable={option.disabled || locked}>
         <input
           type="radio"
           name={`${role}-target`}
@@ -91,13 +95,30 @@
       </label>
     {/each}
   </div>
+  {#if folded.length}
+    <button
+      class="fold"
+      type="button"
+      aria-expanded={unfolded}
+      {@attach tooltip(() =>
+        [
+          "Unavailable paths",
+          ...folded.map((option) => `${option.label}: ${option.detail}`),
+        ].join("\n"),
+      )}
+      onclick={() => (unfolded = !unfolded)}
+      >{unfolded
+        ? "Hide unavailable"
+        : `${folded.length} more unavailable`}</button
+    >
+  {/if}
   {#if offerAutomatic}
     <button class="btn" type="button" onclick={() => select("auto")}
       >Use Automatic</button
     >
   {/if}
   {#if unlisted.length}<div class="validation">
-      <span class="dot" data-tone={READINESS[validation].tone}></span>
+      <span class="status-dot" data-tone={READINESS[validation].tone}></span>
       <span class="validation-copy">
         <strong>{locked ? "In use" : READINESS[validation].label}</strong>
         <small>{summary}</small>
@@ -120,9 +141,11 @@
     display: grid;
     gap: 6px;
     min-width: 0;
+    margin-top: 6px;
   }
   legend {
     margin-bottom: 6px;
+    padding-inline: var(--space-3);
     color: var(--text-soft);
     font-size: var(--type-body);
   }
@@ -130,37 +153,23 @@
     display: grid;
     gap: 6px;
   }
-  @container settings (min-width: 372px) {
-    .options {
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
-    }
-  }
   .choice {
+    --ring-offset: 1px;
     position: relative;
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-2);
-    min-height: 52px;
+    gap: 10px;
     min-width: 0;
-    padding: var(--space-2);
-    border: 1px solid var(--border);
+    padding: 7px 10px;
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
-    background: var(--surface-1);
-    transition: var(--transition-control);
-  }
-  @media (hover: hover) {
-    .choice:hover:not(.unavailable) {
-      border-color: var(--brand-line);
-    }
-  }
-  .choice.selected {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
   }
   .choice.unavailable {
-    opacity: 0.56;
     cursor: not-allowed;
+  }
+  .choice.unavailable > :not(input) {
+    opacity: 0.56;
   }
   .choice input {
     position: absolute;
@@ -170,17 +179,18 @@
   .radio-dot {
     width: 14px;
     height: 14px;
-    border: 1px solid var(--text-soft);
+    border: 1px solid var(--field-edge);
     border-radius: var(--r-full);
   }
-  .choice.selected .radio-dot {
+  .choice:has(> input:checked) .radio-dot {
     border: 4px solid var(--brand-strong);
     background: var(--surface-1);
   }
   .copy {
     display: grid;
-    gap: 2px;
+    gap: 1px;
     min-width: 0;
+    line-height: 1.35;
   }
   .copy strong {
     font-size: var(--type-sm);
@@ -190,18 +200,29 @@
   .copy small {
     color: var(--text-muted);
     font-size: var(--type-xs);
-    line-height: 1.4;
+  }
+  .fold {
+    justify-self: start;
+    min-height: 24px;
+    padding-inline: var(--space-3);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+  }
+  @media (hover: hover) {
+    .fold:hover {
+      color: var(--text);
+    }
   }
   .btn {
     justify-self: start;
   }
   .validation {
     display: grid;
-    grid-template-columns: 7px minmax(0, 1fr) auto;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-2);
-    min-height: 28px;
-    padding-inline: 3px;
+    min-height: 24px;
+    padding-inline: var(--space-3);
     font-size: var(--type-xs);
   }
   .validation-copy {
@@ -219,11 +240,5 @@
     min-width: 0;
     color: var(--text-soft);
     font-size: inherit;
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: var(--r-full);
-    background: var(--tone);
   }
 </style>

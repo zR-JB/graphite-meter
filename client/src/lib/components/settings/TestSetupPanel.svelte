@@ -117,11 +117,11 @@
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
   const DURATION_FIELDS = [
-    ["warmupMs", phaseLabel("warmup")],
-    ["latencyMs", STAGE.latency.label],
-    ["downloadMs", STAGE.download.label],
-    ["uploadMs", STAGE.upload.label],
-    ["bidirectionalMs", STAGE.bidirectional.label],
+    ["warmupMs", phaseLabel("warmup"), "warmup"],
+    ["latencyMs", STAGE.latency.label, "latency"],
+    ["downloadMs", STAGE.download.label, "download"],
+    ["uploadMs", STAGE.upload.label, "upload"],
+    ["bidirectionalMs", STAGE.bidirectional.short, "bidirectional"],
   ] as const;
   type DurationKey = (typeof DURATION_FIELDS)[number][0];
   function sameDuration(
@@ -189,10 +189,19 @@
     const name = preset[0].toUpperCase() + preset.slice(1);
     if (preset === "custom") return `${name}\nSet each stage's time`;
     const times = DURATION_PRESETS[preset];
-    return `${name}\n${activeDurationFields
-      .map(([key, label]) => `${label} ${fmtDuration(times[key])}`)
-      .join(" · ")}`;
+    return [
+      name,
+      ...activeDurationFields.map(
+        ([key, label]) => `${label} ${fmtDuration(times[key])}`,
+      ),
+    ].join("\n");
   }
+  const unitsTip = [
+    "Units",
+    ...[JARGON.rateUnit, JARGON.unitPrefix].flatMap((tip) =>
+      tip.split("\n").slice(1),
+    ),
+  ].join("\n");
 
   const forced = $derived(store.config.transferStreams.mode === "forced");
   const queuedStreams = $derived(
@@ -278,9 +287,7 @@
   onToggle: (next: boolean) => void,
   disabled = false,
 )}
-  <div class="switch-row">
-    <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
-  </div>
+  <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
 {/snippet}
 
 <div class="settings">
@@ -318,7 +325,8 @@
       <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
     </h3>
     <div class="kv">
-      <div>
+      <div class="row">
+        <span>Preset</span>
         <div
           class="segmented presets"
           role="group"
@@ -335,41 +343,45 @@
           {/each}
         </div>
       </div>
-      {#each activeDurationFields as [key, label] (key)}
-        {@const [min, max] = DURATION_LIMITS[key]}
-        {@const tip =
-          key === "warmupMs"
-            ? JARGON.warmup
-            : durationMode === "custom"
-              ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
-              : ""}
-        {#if durationMode === "custom"}
-          <div>
-            <label class="row">
-              <span {@attach tip ? term(() => tip) : null}>{label}</span>
-              <span class="number">
-                <input
-                  type="number"
-                  {min}
-                  {max}
-                  step="500"
-                  disabled={store.preparing}
-                  value={store.config.duration[key]}
-                  onchange={(event) => setDuration(key, event)}
-                />
-                <span>ms</span>
-              </span>
+      <div class="stages" data-count={activeDurationFields.length}>
+        {#each activeDurationFields as [key, label, tone] (key)}
+          {@const [min, max] = DURATION_LIMITS[key]}
+          {@const tip =
+            key === "warmupMs"
+              ? JARGON.warmup
+              : durationMode === "custom"
+                ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
+                : ""}
+          {#if durationMode === "custom"}
+            <label class="stage" data-tone={tone}>
+              <span class="caption"
+                ><span {@attach tip ? term(() => tip) : null}>{label}</span>
+                <span class="unit">ms</span></span
+              >
+              <input
+                type="number"
+                {min}
+                {max}
+                step="500"
+                disabled={store.preparing}
+                value={store.config.duration[key]}
+                onchange={(event) => setDuration(key, event)}
+              />
             </label>
-          </div>
-        {:else}
-          <div class="row">
-            <span {@attach tip ? term(() => tip) : null}>{label}</span>
-            <span class="value"
-              >{fmtDuration(DURATION_PRESETS[durationMode][key])}</span
-            >
-          </div>
-        {/if}
-      {/each}
+          {:else}
+            {@const [value, unit] = fmtDuration(
+              DURATION_PRESETS[durationMode][key],
+            ).split(" ")}
+            <div class="stage" data-tone={tone}>
+              <span class="caption"
+                ><span {@attach tip ? term(() => tip) : null}>{label}</span>
+                <span class="unit">{unit}</span></span
+              >
+              <span class="value">{value}</span>
+            </div>
+          {/if}
+        {/each}
+      </div>
       {@render toggle(
         "Bidirectional stage",
         JARGON.bidirectionalStage,
@@ -395,33 +407,33 @@
     <h3>Display</h3>
     <div class="kv">
       <div class="row">
-        <span {@attach tooltip(() => JARGON.rateUnit)}>Rate unit</span>
-        <div class="segmented" role="group" aria-label="Rate unit">
-          <button
-            type="button"
-            aria-pressed={store.unitKind === "bits"}
-            onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
-          >
-          <button
-            type="button"
-            aria-pressed={store.unitKind === "bytes"}
-            onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
-          >
-        </div>
-      </div>
-      <div class="row">
-        <span {@attach tooltip(() => JARGON.unitPrefix)}>Prefix</span>
-        <div class="segmented" role="group" aria-label="Prefix scale">
-          <button
-            type="button"
-            aria-pressed={store.unitBase === "base10"}
-            onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
-          >
-          <button
-            type="button"
-            aria-pressed={store.unitBase === "base2"}
-            onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
-          >
+        <span {@attach tooltip(() => unitsTip)}>Units</span>
+        <div class="controls">
+          <div class="segmented" role="group" aria-label="Rate unit">
+            <button
+              type="button"
+              aria-pressed={store.unitKind === "bits"}
+              onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
+            >
+            <button
+              type="button"
+              aria-pressed={store.unitKind === "bytes"}
+              onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
+            >
+          </div>
+          <div class="segmented" role="group" aria-label="Prefix scale">
+            <button
+              type="button"
+              aria-pressed={store.unitBase === "base10"}
+              onclick={() => store.prefer({ unitBase: "base10" })}
+              >Decimal</button
+            >
+            <button
+              type="button"
+              aria-pressed={store.unitBase === "base2"}
+              onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
+            >
+          </div>
         </div>
       </div>
       {@render toggle(
@@ -443,20 +455,18 @@
         setVizAuto,
       )}
       {#if !vizAuto}
-        <div>
-          <label class="row">
-            <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
-            <span class="number">
-              <input
-                type="number"
-                min="1"
-                value={vizDisplay}
-                onchange={setVizMax}
-              />
-              <span>{vizUnit}</span>
-            </span>
-          </label>
-        </div>
+        <label class="row">
+          <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
+          <span class="measure">
+            <input
+              type="number"
+              min="1"
+              value={vizDisplay}
+              onchange={setVizMax}
+            />
+            <span>{vizUnit}</span>
+          </span>
+        </label>
       {/if}
     </div>
     {@render rejectedHint("gauge")}
@@ -491,23 +501,21 @@
     <h3>Latency probes</h3>
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
-        <div>
-          <label class="row">
-            <span {@attach tooltip(() => tip)}>{label}</span>
-            <select
-              value={store.config[key]}
-              onchange={(event) =>
-                controller.configureRun({
-                  [key]: event.currentTarget.value as PingCadence,
-                })}
-              disabled={running || store.preparing}
-            >
-              {#each Object.entries(PING_CADENCE) as [value, name] (value)}
-                <option {value}>{name}</option>
-              {/each}
-            </select>
-          </label>
-        </div>
+        <label class="row">
+          <span {@attach tooltip(() => tip)}>{label}</span>
+          <select
+            value={store.config[key]}
+            onchange={(event) =>
+              controller.configureRun({
+                [key]: event.currentTarget.value as PingCadence,
+              })}
+            disabled={running || store.preparing}
+          >
+            {#each Object.entries(PING_CADENCE) as [value, name] (value)}
+              <option {value}>{name}</option>
+            {/each}
+          </select>
+        </label>
       {/each}
       {@render toggle(
         "Skip loaded latency when latency is off",
@@ -530,34 +538,32 @@
         (on) => streams({ mode: on ? "forced" : "auto" }),
         running || store.preparing,
       )}
-      <div>
-        <label class="row">
-          <span
-            {@attach term(() =>
-              forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+      <label class="row">
+        <span
+          {@attach term(() =>
+            forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+          )}
+          >{forced
+            ? "Streams per server and direction"
+            : "Maximum H1 streams per direction"}</span
+        >
+        <input
+          type="number"
+          min="1"
+          max="128"
+          step="1"
+          disabled={running || store.preparing}
+          value={store.config.transferStreams.count}
+          onchange={(event) =>
+            commitNumber(
+              event,
+              "streams",
+              store.config.transferStreams.count,
+              normalizeStreamCount,
+              (count) => streams({ count }),
             )}
-            >{forced
-              ? "Streams per server and direction"
-              : "Maximum H1 streams per direction"}</span
-          >
-          <input
-            type="number"
-            min="1"
-            max="128"
-            step="1"
-            disabled={running || store.preparing}
-            value={store.config.transferStreams.count}
-            onchange={(event) =>
-              commitNumber(
-                event,
-                "streams",
-                store.config.transferStreams.count,
-                normalizeStreamCount,
-                (count) => streams({ count }),
-              )}
-          />
-        </label>
-      </div>
+        />
+      </label>
       {@render toggle(
         "Datagram throughput (experimental)",
         JARGON.datagramThroughput,
@@ -613,59 +619,91 @@
 <style>
   .settings {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-5);
     container: settings / inline-size;
   }
-  .group-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  /* One row per setting: its name on the left, its control on the right. */
   .row {
-    display: flex;
-    flex: 1;
-    align-items: center;
     justify-content: space-between;
-    gap: var(--space-3);
-    min-width: 0;
-    min-height: var(--control-h);
-  }
-  .switch-row > :global(.switch) {
-    flex: 1;
-    flex-direction: row-reverse;
-    justify-content: space-between;
-    min-height: var(--control-h);
-  }
-  .value {
-    font-weight: var(--w-normal);
-  }
-  .number {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-soft);
-    font-size: var(--type-sm);
   }
   .row input {
-    width: 7rem;
+    width: 6rem;
     text-align: end;
   }
   .row select {
     width: auto;
     max-width: 11rem;
   }
-  .presets {
-    flex: 1;
-  }
   .presets > button {
     text-transform: capitalize;
   }
-  .row > .segmented {
-    flex: 0 1 12rem;
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  .stages {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--space-3) var(--space-2);
+    padding-block: var(--space-2);
+  }
+  .stages[data-count="5"] {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @container settings (min-width: 420px) {
+    .stages[data-count="5"] {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+  }
+  .stage {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+  }
+  .stage::before {
+    content: "";
+    height: 3px;
+    margin-bottom: 6px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+  }
+  .caption {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-1);
+  }
+  .unit {
+    font-size: var(--type-2xs);
+  }
+  /* A preset time sits where its custom field goes, so switching moves nothing. */
+  .value {
+    height: var(--control-h);
+    color: var(--text);
+    font-size: var(--type-body);
+    line-height: var(--control-h);
+  }
+  @media (pointer: coarse) {
+    .value {
+      height: var(--hit);
+      line-height: var(--hit);
+    }
+  }
+  .stage input {
+    appearance: textfield;
+  }
+  .stage input::-webkit-inner-spin-button {
+    appearance: none;
+  }
+  .measure {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
   }
   .settings-reset {
-    margin-top: var(--space-2);
+    margin-top: var(--space-1);
   }
 </style>

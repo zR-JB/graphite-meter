@@ -206,9 +206,9 @@
   .seg:active:not(:disabled) {
     transform: none;
   }
+  /* Selected reads by fill, like every selected control; no lit outline. */
   .seg.on {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
+    background: var(--selected-wash);
     color: var(--text);
   }
   /* A deselected stage stays operable, so it reads soft rather than dimmed; only a locked one dims. */

@@ -50,6 +50,7 @@
     position: relative;
     display: flex;
     flex-direction: row-reverse;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
