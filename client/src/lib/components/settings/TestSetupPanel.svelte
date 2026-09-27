@@ -33,12 +33,17 @@
   } from "../../presentation/announcer.svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
 
-  let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
+  let {
+    open,
+    onOpenHistory,
+  }: { open: boolean; onOpenHistory: (invoker: HTMLElement) => void } =
     $props();
   const running = $derived(store.isRunning);
   let resetConfirmOpen = $state(false);
+  // The panel stays mounted when closed; server discovery runs only while it shows.
   $effect(() => {
     if (
+      open &&
       store.serverCatalog &&
       !store.catalogLoading &&
       !store.isRunning &&
@@ -47,6 +52,10 @@
       untrack(() => controller.loadServerMetadata());
       return () => controller.cancelServerMetadata();
     }
+  });
+  // A confirmation belongs to the visible panel; closing the panel dismisses it.
+  $effect(() => {
+    if (!open) resetConfirmOpen = false;
   });
   function resetSettings() {
     resetConfirmOpen = false;
@@ -214,7 +223,12 @@
   const readiness = $derived(
     store.startBlocker ? "blocked" : store.selectionValidation,
   );
-  announceChanges(() => `Connection paths: ${READINESS[readiness].label}`);
+  // Settings stays mounted: only a path problem is worth interrupting for.
+  announceChanges(() =>
+    READINESS[readiness].tone === "err" || readiness === "blocked"
+      ? `Connection paths: ${READINESS[readiness].label}`
+      : "",
+  );
 </script>
 
 {#snippet rejectedHint(field: typeof rejected)}
@@ -377,6 +391,12 @@
         JARGON.wireRate,
         store.showWireEstimates,
         (showWireEstimates) => store.prefer({ showWireEstimates }),
+      )}
+      {@render toggle(
+        "Keyboard shortcuts",
+        JARGON.keyShortcuts,
+        store.keyShortcuts,
+        (keyShortcuts) => store.prefer({ keyShortcuts }),
       )}
       {@render toggle(
         "Scale throughput automatically",

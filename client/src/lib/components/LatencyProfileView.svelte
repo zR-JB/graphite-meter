@@ -430,6 +430,12 @@
     height: 20px;
     color: var(--warn);
   }
+  @media (pointer: coarse) {
+    .timing-info {
+      width: 24px;
+      height: 24px;
+    }
+  }
   .timing-info :global(svg) {
     width: 12px;
     height: 12px;

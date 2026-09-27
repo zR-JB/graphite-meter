@@ -29,8 +29,6 @@ test("focus styles answer the keyboard only", async () => {
   expect(await offenders(/:focus(?![-\w])/)).toEqual([]);
 });
 
-test("only the disclosure primitive renders <details>", async () => {
-  expect(
-    await offenders(/<details\b/, ["lib/components/Disclosure.svelte"]),
-  ).toEqual([]);
+test("facts sit in grouped lists, never behind <details>", async () => {
+  expect(await offenders(/<details\b/)).toEqual([]);
 });

@@ -72,14 +72,13 @@ const PHASE: Record<Phase, string> = {
   error: "Failed",
 };
 
+export type Tone = "ok" | "brand" | "warn" | "err" | "neutral";
+
 export const BLOCKED = "Test cannot start";
 export const counted = (count: number, noun: string) =>
   `${count} ${count === 1 ? noun : `${noun}s`}`;
 type Readiness = ConnectionValidationState | "sign-in" | "blocked";
-export const READINESS: Record<
-  Readiness,
-  { label: string; tone: "ok" | "brand" | "warn" | "err" }
-> = {
+export const READINESS: Record<Readiness, { label: string; tone: Tone }> = {
   verified: { label: "Ready", tone: "ok" },
   checking: { label: "Checking", tone: "brand" },
   stale: { label: "Recheck needed", tone: "warn" },
@@ -100,14 +99,6 @@ export const READINESS_TIP: Record<Exclude<Readiness, "blocked">, string> = {
 
 export const START_FAILED = "Test could not start";
 
-export const CONNECTIVITY: Record<ConnectivityState | "checking", string> = {
-  connected: "Connected",
-  degraded: "Degraded",
-  unstable: "Unstable",
-  offline: "Offline",
-  checking: "Checking",
-};
-
 /** Stage statuses, saved and live; the stage track adds its lock reasons. */
 export const STATUS = {
   complete: "Complete",
@@ -118,7 +109,30 @@ export const STATUS = {
   recovering: "Recovering",
   upcoming: "Upcoming",
   next: "Next run",
+  stopped: PHASE.aborted,
 } as const satisfies Record<StageStatus, string> & Record<string, string>;
+
+/** One tone per status and outcome on every surface; the rest stay neutral. */
+export const STATUS_TONE = {
+  partial: "warn",
+  incomplete: "warn",
+  failed: "err",
+  recovering: "warn",
+  stopped: "neutral",
+} as const satisfies Partial<Record<keyof typeof STATUS | Outcome, Tone>>;
+
+/** A stalled run is "Recovering" wherever it shows: footer, toast, stage and topbar. */
+export const CONNECTIVITY: Record<
+  ConnectivityState | "checking" | "recovering",
+  { label: string; tone: Tone }
+> = {
+  connected: { label: "Connected", tone: "ok" },
+  degraded: { label: "Degraded", tone: "warn" },
+  unstable: { label: "Unstable", tone: "err" },
+  offline: { label: "Offline", tone: "err" },
+  checking: { label: "Checking", tone: "neutral" },
+  recovering: { label: STATUS.recovering, tone: STATUS_TONE.recovering },
+};
 
 /** A stage without a value shows its status; a complete one shows "—". */
 export const stageStatusLabel = (status: StageStatus) =>
@@ -174,6 +188,9 @@ export const JARGON = {
     "Jitter\nMean absolute change between consecutive replies\nProbe timeouts are left out",
   latencyMedian: "Median\nHalf of the stage's replies were faster, half slower",
   latencyRange: "Range\nFastest to slowest reply in the stage",
+  keyShortcuts:
+    "Keyboard shortcuts\nS, D, H, R and T act on the page when no field has focus\n" +
+    "Turn off if speech input or single keys trigger them",
   wireRate:
     "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
     "Ethernet, IP, TCP or QUIC, TLS and HTTP framing at a 1,500 B MTU\n" +
@@ -285,6 +302,18 @@ export const OUTCOME: Record<Outcome, string> = {
 export const phaseLabel = (phase: Phase, outcome: Outcome = "complete") =>
   phase === "complete" ? OUTCOME[outcome] : PHASE[phase];
 
+const CHECKING_SIGN_IN = "Checking sign-in";
+/** Characters of the longest statusLabel, so the footer never shifts. */
+export const STATUS_LABEL_CH = Math.max(
+  ...[
+    ...Object.values(PHASE),
+    ...Object.values(OUTCOME),
+    BLOCKED,
+    START_FAILED,
+    CHECKING_SIGN_IN,
+  ].map((label) => label.length),
+);
+
 /** The footer and the gauge name one state: a refused start, preparation, else the phase. */
 export function statusLabel(
   preparation: PreparationState["status"],
@@ -293,7 +322,7 @@ export function statusLabel(
 ): string {
   if (preparation === "blocked") return BLOCKED;
   if (preparation === "failed") return START_FAILED;
-  if (preparation === "authenticating") return "Checking sign-in";
+  if (preparation === "authenticating") return CHECKING_SIGN_IN;
   if (preparation === "checking" || preparation === "launching")
     return PHASE.connecting;
   return phaseLabel(phase, outcome);

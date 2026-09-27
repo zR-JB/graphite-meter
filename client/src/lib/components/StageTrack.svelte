@@ -10,7 +10,12 @@
     stageTip,
     stageTrackModel,
   } from "./stageTrack";
-  import { STAGE, STATUS } from "../presentation/vocabulary";
+  import {
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+    type Tone,
+  } from "../presentation/vocabulary";
   import { formatLatency, formatRate } from "../format";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import type { StageKey } from "../state/store.svelte";
@@ -104,8 +109,10 @@
           {@const live = s.state === "active" && store.phaseBudgetMs > 0}
           <span
             class="seg-fill"
-            data-tone={s.key}
-            class:is-done={s.state === "complete" || s.state === "partial"}
+            data-tone={s.state === "recovering"
+              ? STATUS_TONE.recovering
+              : s.key}
+            class:is-partial={s.state === "partial"}
             class:is-stalled={s.state === "recovering"}
             class:is-live={live}
             style:--progress={live
@@ -120,8 +127,10 @@
           <span class="seg-label">{s.label}</span>
         </span>
         {#if look.reason}
-          <span class="seg-tag" style:opacity={track.opacity}
-            >{look.reason}</span
+          <span
+            class="seg-tag"
+            data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
+            style:opacity={track.opacity}>{look.reason}</span
           >
         {:else if look.state === "complete"}
           <span class="seg-ico seg-check" style:opacity={track.opacity}
@@ -183,7 +192,11 @@
     background: var(--brand-soft);
     color: var(--text);
   }
+  /* A deselected stage stays operable, so it reads soft rather than dimmed; only a locked one dims. */
   .seg--disabled {
+    color: var(--text-soft);
+  }
+  .seg:disabled {
     opacity: 0.5;
   }
 
@@ -209,8 +222,13 @@
   .seg-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
-  .seg-fill.is-done {
-    background: var(--ok);
+  /* A finished stage keeps its phase tone; partial is hatched like the gauge's dashed arc. */
+  .seg-fill.is-partial {
+    background: repeating-linear-gradient(
+      90deg,
+      var(--tone) 0 6px,
+      transparent 6px 9px
+    );
   }
   .seg-fill--failed {
     --progress: 1;
@@ -218,7 +236,6 @@
     opacity: 0.45;
   }
   .seg-fill.is-stalled {
-    background: var(--err);
     animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
   }
   @keyframes stall-pulse {
@@ -298,10 +315,9 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  .seg--failed .seg-tag,
-  .seg--partial .seg-tag {
-    border-color: var(--err-line);
-    color: var(--err);
+  .seg-tag[data-tone] {
+    border-color: var(--tone-line);
+    color: var(--tone);
   }
   @container viz (max-width: 680px) {
     .seg {

@@ -9,6 +9,28 @@ type HealthBucket = Pick<
 const STALE_MS = 3_000;
 const WINDOW_MS = 4_000;
 
+/** The probes of the last 4 s of evidence: what the indicator judges and states. */
+export function recentProbes(buckets: readonly HealthBucket[]) {
+  const latest = buckets.at(-1);
+  const recent = latest
+    ? buckets
+        .slice(
+          buckets.findLastIndex(
+            (bucket) => bucket.endT < latest.endT - WINDOW_MS,
+          ) + 1,
+        )
+        .filter((bucket) => bucket.pingCount > 0)
+    : [];
+  return {
+    recent,
+    replies: recent.flatMap((bucket) =>
+      bucket.medianRttMs === null ? [] : [bucket.medianRttMs],
+    ),
+    probes: recent.reduce((sum, bucket) => sum + bucket.pingCount, 0),
+    timeouts: recent.reduce((sum, bucket) => sum + bucket.timeoutCount, 0),
+  };
+}
+
 /** A live indicator, not the run's timeout or jitter statistic; evidence older than 3 s at `nowT` is stale. */
 export function connectionQuality(
   buckets: readonly HealthBucket[],
@@ -16,15 +38,7 @@ export function connectionQuality(
 ): ConnectivityState | "checking" {
   const latest = buckets.at(-1);
   if (!latest || nowT - latest.endT > STALE_MS) return "checking";
-  const recent = buckets
-    .slice(
-      buckets.findLastIndex((bucket) => bucket.endT < latest.endT - WINDOW_MS) +
-        1,
-    )
-    .filter((bucket) => bucket.pingCount > 0);
-  const replies = recent.flatMap((bucket) =>
-    bucket.medianRttMs === null ? [] : [bucket.medianRttMs],
-  );
+  const { recent, replies, probes, timeouts } = recentProbes(buckets);
   const variationThreshold = Math.max(20, median(replies) * 0.3);
 
   // A clean tail of replies and elapsed time supersedes an old spike at any cadence.
@@ -47,11 +61,9 @@ export function connectionQuality(
       return "connected";
   }
 
-  const timeouts = recent.reduce((sum, bucket) => sum + bucket.timeoutCount, 0);
-  const count = recent.reduce((sum, bucket) => sum + bucket.pingCount, 0);
   // One timeout is too little evidence, above all at the sparse idle cadence.
-  if (timeouts >= 2 && timeouts / count >= 0.2) return "unstable";
-  if (timeouts >= 2 && timeouts / count >= 0.02) return "degraded";
+  if (timeouts >= 2 && timeouts / probes >= 0.2) return "unstable";
+  if (timeouts >= 2 && timeouts / probes >= 0.02) return "degraded";
   const changes = replies.slice(1).map((rtt, i) => Math.abs(rtt - replies[i]));
   // An isolated spike produces two large changes; require repeated variation.
   if (

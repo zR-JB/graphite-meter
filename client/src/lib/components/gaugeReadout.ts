@@ -4,7 +4,6 @@ import type { PreparationState } from "../state/store.svelte";
 import {
   MISSING,
   phaseLabel,
-  READINESS,
   reasonLabel,
   statusLabel,
 } from "../presentation/vocabulary";
@@ -22,7 +21,6 @@ export interface GaugeReadoutInput {
   latencyMs: number;
   hasLatencyResult: boolean;
   unusable: boolean;
-  arcs: ResultGaugeArc[];
   headline: ResultGaugeArc | null;
   rate: (bytesPerSec: number) => string;
   unit: string;
@@ -79,27 +77,13 @@ export function gaugeReadout(input: GaugeReadoutInput) {
     : phase === "idle" || phase === "connecting" || phase === "warmup"
       ? phaseLabel(phase)
       : "";
-  const path = (role: "throughput" | "latency") => {
-    const state = preparation[role];
-    return state === "disabled" ? "Not needed" : READINESS[state].label;
-  };
-  const statusText = input.preparing
-    ? `${preparationLabel}. Throughput path: ${path("throughput")}; ` +
-      `Latency path: ${path("latency")}`
-    : failure
-      ? `${failure.headline} — ${failure.detail}`
-      : status
-        ? `${status.headline} — ${status.action}`
-        : hint;
-  const results =
-    phase === "complete"
-      ? input.arcs
-          .map(
-            (arc) =>
-              `${arc.label} ${input.rate(arc.bytesPerSec)} ${input.unit}${arc.dashed ? ", partial" : ""}`,
-          )
-          .join("; ")
+  const statusText = failure
+    ? `${failure.headline} — ${failure.detail}`
+    : status
+      ? `${status.headline} — ${status.action}`
       : "";
+  // Preparation speaks only through its outcome; the result cards announce a completed run.
+  const quiet = input.preparing || phase === "idle" || phase === "complete";
   return {
     display: displayed(input),
     terminal,
@@ -107,6 +91,6 @@ export function gaugeReadout(input: GaugeReadoutInput) {
     failure,
     status,
     hint,
-    announcement: statusText || results || phaseLabel(phase),
+    announcement: statusText || (quiet ? "" : phaseLabel(phase)),
   };
 }

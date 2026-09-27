@@ -1,8 +1,9 @@
 <script lang="ts">
   import Dialog from "./Dialog.svelte";
-  import Disclosure from "./Disclosure.svelte";
+  import Icon from "./Icon.svelte";
+  import { tooltip } from "../actions/tooltip";
   import { loadLegal, retryLegal } from "../legal/loader";
-  import type { LegalAbout, LegalComponent } from "../legal/types";
+  import type { LegalAbout } from "../legal/types";
 
   interface Props {
     open: boolean;
@@ -25,10 +26,6 @@
       });
   }
 
-  function componentTitle(component: LegalComponent): string {
-    return `${component.name} (${component.ecosystem})`;
-  }
-
   $effect(() => {
     if (open) load();
   });
@@ -43,7 +40,13 @@
 >
   <header class="surface-head legal-head">
     <h2 id="legal-dialog-title">About &amp; legal</h2>
-    <button class="btn btn-inset" type="button" onclick={onClose}>Close</button>
+    <button
+      class="btn btn-icon btn-inset"
+      type="button"
+      aria-label="Close"
+      {@attach tooltip(() => "Close (Esc)")}
+      onclick={onClose}><Icon name="close" /></button
+    >
   </header>
 
   <div class="legal-body">
@@ -59,20 +62,28 @@
         >
       </div>
     {:else if data}
-      <section
-        class="surface-inset project-legal"
-        aria-labelledby="project-legal-title"
-      >
+      <section class="group" aria-labelledby="project-legal-title">
         <h3 class="caps" id="project-legal-title">{data.project.name}</h3>
-        <p class="copyright">
-          Copyright © {data.project.copyrightYears}
-          {data.project.copyrightHolder}
-        </p>
-        <p>{data.project.licenseExpression}</p>
-        <p>
-          Graphite Meter is free software. It comes with absolutely no warranty,
-          to the extent permitted by applicable law.
-        </p>
+        <dl class="kv">
+          <div>
+            <dt>Copyright</dt>
+            <dd>
+              © {data.project.copyrightYears}
+              {data.project.copyrightHolder}
+            </dd>
+          </div>
+          <div>
+            <dt>License</dt>
+            <dd>{data.project.licenseExpression}</dd>
+          </div>
+          <div>
+            <dt>Warranty</dt>
+            <dd>
+              Graphite Meter is free software. It comes with absolutely no
+              warranty, to the extent permitted by applicable law.
+            </dd>
+          </div>
+        </dl>
         <p class="legal-links">
           <a
             class="btn"
@@ -95,42 +106,26 @@
         </p>
       </section>
 
-      <section aria-labelledby="third-party-title">
+      <section class="group" aria-labelledby="third-party-title">
         <h3 class="caps" id="third-party-title">Third-party software</h3>
-        {#each data.components as component (component.ecosystem + component.name + component.version)}
-          <article class="component">
-            <Disclosure class="surface" open>
-              {#snippet summary()}
-                <span class="disclosure-facts">{componentTitle(component)}</span
+        <dl class="kv components">
+          {#each data.components as component (component.ecosystem + component.name + component.version)}
+            <div class="component">
+              <dt>{component.name}</dt>
+              <dd>
+                {component.ecosystem} · {component.version} · {component.selectedLicenseExpression}
+                · {component.modified
+                  ? "Modified by Graphite Meter"
+                  : "Unmodified"}
+                <a
+                  href={component.source}
+                  target="_blank"
+                  rel="noopener noreferrer">{component.source}</a
                 >
-              {/snippet}
-              <dl class="kv">
-                <div>
-                  <dt>Version</dt>
-                  <dd>{component.version}</dd>
-                </div>
-                <div>
-                  <dt>License</dt>
-                  <dd>{component.selectedLicenseExpression}</dd>
-                </div>
-                <div>
-                  <dt>Source</dt>
-                  <dd>
-                    <a
-                      href={component.source}
-                      target="_blank"
-                      rel="noopener noreferrer">{component.source}</a
-                    >
-                  </dd>
-                </div>
-                <div>
-                  <dt>Modified by Graphite Meter</dt>
-                  <dd>{component.modified ? "yes" : "no"}</dd>
-                </div>
-              </dl>
-            </Disclosure>
-          </article>
-        {/each}
+              </dd>
+            </div>
+          {/each}
+        </dl>
       </section>
     {/if}
   </div>
@@ -153,57 +148,36 @@
     letter-spacing: var(--track-tight);
   }
   .legal-body {
+    display: grid;
+    gap: var(--space-5);
     min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: var(--space-5);
-    color: var(--text-muted);
-    font-size: var(--type-sm);
-    line-height: 1.55;
-  }
-  section + section {
-    margin-top: var(--space-5);
-  }
-  h3 {
-    color: var(--brand-strong);
-  }
-  .project-legal {
-    padding: var(--space-4);
-  }
-  .project-legal p {
-    margin-top: var(--space-2);
-  }
-  .copyright {
-    color: var(--text);
-    font: var(--type-xs) var(--font-mono);
   }
   .legal-links {
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
   }
-  .component {
-    margin-top: var(--space-2);
+  /* Names, not field labels: the column fits a module path. */
+  .components {
+    --kv-label: 17rem;
   }
-  .kv {
-    --kv-label: 190px;
-    gap: 2px;
-    font-family: var(--font-mono);
-  }
-  .kv :is(dt, dd) {
-    font-size: var(--type-xs);
+  .components a {
+    display: block;
+    width: fit-content;
   }
   .legal-status {
     display: grid;
     place-items: start;
     gap: var(--space-3);
     min-height: 10rem;
+    color: var(--text-muted);
+    font-size: var(--type-sm);
   }
   @media (max-width: 759px) {
     .legal-body {
-      padding: var(--space-3);
-    }
-    .project-legal {
       padding: var(--space-3);
     }
   }

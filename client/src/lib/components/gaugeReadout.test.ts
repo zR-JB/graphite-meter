@@ -12,7 +12,6 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   latencyMs: 12,
   hasLatencyResult: false,
   unusable: false,
-  arcs: [],
   headline: null,
   rate: (bytesPerSec) => String(bytesPerSec),
   unit: "B/s",
