@@ -116,7 +116,7 @@ func New(ctx context.Context, cfg config.AuthConfig, trusted []netip.Prefix, ver
 		if e != nil {
 			return nil, fmt.Errorf("OIDC client secret: %w", e)
 		}
-		s.oidc = newOIDCState(cfg, secret, s.verbose)
+		s.oidc = newOIDCState(ctx, cfg, secret, s.verbose)
 		if !password {
 			discovery, err := s.oidc.discover(ctx, s.public)
 			if err != nil {

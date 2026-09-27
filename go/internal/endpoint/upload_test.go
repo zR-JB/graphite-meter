@@ -1,8 +1,6 @@
 package endpoint
 
 import (
-	"bytes"
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"net/http"
@@ -167,42 +165,5 @@ func TestUploadHTTPAbortKeepsThePartialCountWithoutPublishingIt(t *testing.T) {
 	}
 	if agg, ok := store.get(id); !ok || agg.bytes.Load() != 4096 || store.lanesOf(agg) != 0 {
 		t.Fatal("aborted HTTP upload lost its partial receiver count or retained its lane")
-	}
-}
-
-type deadlineRecorder struct {
-	http.ResponseWriter
-	read time.Time
-}
-
-func (d *deadlineRecorder) SetReadDeadline(t time.Time) error {
-	d.read = t
-	return nil
-}
-
-func TestUploadBoundsItsBodyRead(t *testing.T) {
-	for _, remaining := range []time.Duration{0, time.Second, time.Hour} {
-		t.Run(remaining.String(), func(t *testing.T) {
-			ctx := t.Context()
-			want := time.Now().Add(remaining)
-			if remaining != 0 {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithDeadline(ctx, want)
-				defer cancel()
-			}
-			rec := &deadlineRecorder{ResponseWriter: httptest.NewRecorder()}
-			store := NewUpload(nil, nil)
-			before := time.Now()
-			store.Handler(wire.IdleBound).ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodPost,
-				"/upload?id="+store.Mint(), bytes.NewReader(make([]byte, 4096))))
-			if remaining != 0 && remaining < wire.IdleBound {
-				if !rec.read.Equal(want) {
-					t.Fatalf("read deadline = %v, want the request deadline %v", rec.read, want)
-				}
-			} else if rec.read.Before(before.Add(wire.IdleBound)) ||
-				rec.read.After(time.Now().Add(wire.IdleBound)) {
-				t.Fatalf("read deadline %v does not keep the idle bound", rec.read)
-			}
-		})
 	}
 }

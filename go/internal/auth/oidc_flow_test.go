@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/zR-JB/graphite-meter/go/internal/config"
@@ -37,17 +38,26 @@ type fakeOIDC struct {
 	badAccessHash bool
 	badSignature  bool
 	tokenStatus   int
+	tokenRedirect bool
+	hugeUserinfo  bool
 	discoveries   int
 	mistypedMeta  bool
 }
 
-func newFakeOIDC(t *testing.T) *fakeOIDC {
-	t.Helper()
+// Signing keys are generated once per package; each takes a noticeable fraction of a second.
+var providerKey, strangerKey = sync.OnceValue(newRSAKey), sync.OnceValue(newRSAKey)
+
+func newRSAKey() *rsa.PrivateKey {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
-	f := &fakeOIDC{key: key, audience: "client", subject: "subject", userinfoSub: "subject",
+	return key
+}
+
+func newFakeOIDC(t *testing.T) *fakeOIDC {
+	t.Helper()
+	f := &fakeOIDC{key: providerKey(), audience: "client", subject: "subject", userinfoSub: "subject",
 		groups: []string{"allowed"}, expires: time.Now().Add(time.Hour), accessToken: "access-token"}
 	f.server = httptest.NewTLSServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(f.server.Close)
@@ -78,8 +88,12 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, jose.JSONWebKeySet{Keys: []jose.JSONWebKey{key}})
 	case "/token":
 		f.mu.Lock()
-		status := f.tokenStatus
+		status, redirect := f.tokenStatus, f.tokenRedirect
 		f.mu.Unlock()
+		if redirect && r.URL.Query().Get("hop") == "" {
+			http.Redirect(w, r, "/token?hop=1", http.StatusTemporaryRedirect)
+			return
+		}
 		if status != 0 {
 			http.Error(w, "temporarily unavailable", status)
 			return
@@ -108,7 +122,7 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		signingKey := f.key
 		if badSignature {
-			signingKey, _ = rsa.GenerateKey(rand.Reader, 2048)
+			signingKey = strangerKey()
 		}
 		signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: signingKey},
 			(&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "test"))
@@ -119,9 +133,13 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 	case "/userinfo":
 		f.mu.Lock()
-		subject, groups := f.userinfoSub, slices.Clone(f.groups)
+		subject, groups, huge := f.userinfoSub, slices.Clone(f.groups), f.hugeUserinfo
 		f.mu.Unlock()
-		writeJSON(w, map[string]any{"sub": subject, "name": "Example User", "groups": groups})
+		padding := ""
+		if huge {
+			padding = strings.Repeat("x", 1<<20)
+		}
+		writeJSON(w, map[string]any{"sub": subject, "name": "Example User", "groups": groups, "padding": padding})
 	default:
 		http.NotFound(w, r)
 	}
@@ -129,10 +147,7 @@ func (f *fakeOIDC) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeOIDC) service(t *testing.T) *Service {
 	t.Helper()
-	previous := http.DefaultTransport
-	http.DefaultTransport = f.server.Client().Transport
-	t.Cleanup(func() { http.DefaultTransport = previous })
-	ctx, cancel := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(oidc.ClientContext(t.Context(), f.server.Client()))
 	t.Cleanup(cancel)
 	s, err := New(ctx, config.AuthConfig{
 		Mode: "oidc", PublicURL: "https://meter.example", OIDCIssuer: f.server.URL, OIDCClientID: "client",
@@ -221,6 +236,14 @@ func TestOIDCTransactionsAreBoundedPerClient(t *testing.T) {
 	if location := start("[2001:db8:1:3::1]:40000"); strings.HasPrefix(location, "/login") {
 		t.Fatalf("another client was refused: %s", location)
 	}
+	s.oidc.mu.Lock()
+	for i := len(s.oidc.tx); i < maxOIDCTransactions; i++ {
+		s.oidc.tx[[32]byte{byte(i), byte(i >> 8)}] = oidcTransaction{expires: time.Now().Add(time.Hour)}
+	}
+	s.oidc.mu.Unlock()
+	if location := start("[2001:db8:1:4::1]:40000"); location != "/login?error=busy" {
+		t.Fatalf("sign-in past the global table = %q, want a busy refusal", location)
+	}
 }
 
 // Every refused callback shows only the generic notice and leaves the provider usable without rediscovery.
@@ -231,20 +254,25 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 		mutate func(*fakeOIDC)
 		edit   func(url.Values)
 		replay bool
+		expire bool
 	}{
-		{"valid", nil, nil, false},
-		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, nil, false},
-		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, nil, false},
-		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, nil, false},
-		{"group case mismatch", func(f *fakeOIDC) { f.groups = []string{"Allowed"} }, nil, false},
-		{"bad access hash", func(f *fakeOIDC) { f.badAccessHash = true }, nil, false},
-		{"bad signature", func(f *fakeOIDC) { f.badSignature = true }, nil, false},
-		{"wrong nonce", func(f *fakeOIDC) { f.nonce = "wrong" }, nil, false},
-		{"token endpoint unavailable", func(f *fakeOIDC) { f.tokenStatus = http.StatusServiceUnavailable }, nil, false},
-		{"missing issuer", nil, func(q url.Values) { q.Del("iss") }, false},
-		{"duplicate state", nil, repeat("state"), false},
-		{"duplicate code", nil, repeat("code"), false},
-		{"replay", nil, nil, true},
+		{"valid", nil, nil, false, false},
+		{"wrong audience", func(f *fakeOIDC) { f.audience = "other" }, nil, false, false},
+		{"expired", func(f *fakeOIDC) { f.expires = time.Now().Add(-time.Minute) }, nil, false, false},
+		{"userinfo subject mismatch", func(f *fakeOIDC) { f.userinfoSub = "other" }, nil, false, false},
+		{"group case mismatch", func(f *fakeOIDC) { f.groups = []string{"Allowed"} }, nil, false, false},
+		{"bad access hash", func(f *fakeOIDC) { f.badAccessHash = true }, nil, false, false},
+		{"bad signature", func(f *fakeOIDC) { f.badSignature = true }, nil, false, false},
+		{"wrong nonce", func(f *fakeOIDC) { f.nonce = "wrong" }, nil, false, false},
+		{"token endpoint unavailable", func(f *fakeOIDC) { f.tokenStatus = http.StatusServiceUnavailable }, nil,
+			false, false},
+		{"token endpoint redirects", func(f *fakeOIDC) { f.tokenRedirect = true }, nil, false, false},
+		{"userinfo past 1 MiB", func(f *fakeOIDC) { f.hugeUserinfo = true }, nil, false, false},
+		{"missing issuer", nil, func(q url.Values) { q.Del("iss") }, false, false},
+		{"duplicate state", nil, repeat("state"), false, false},
+		{"duplicate code", nil, repeat("code"), false, false},
+		{"replay", nil, nil, true, false},
+		{"expired transaction", nil, nil, false, true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -255,6 +283,12 @@ func TestOIDCLoginSecurityChecks(t *testing.T) {
 				f.mu.Lock()
 				test.mutate(f)
 				f.mu.Unlock()
+			}
+			if test.expire {
+				for k, tx := range s.oidc.tx {
+					tx.expires = time.Now().Add(-time.Second)
+					s.oidc.tx[k] = tx
+				}
 			}
 			if test.replay {
 				if rr := finishOIDC(s, state, cookie, nil); rr.Code != http.StatusOK {

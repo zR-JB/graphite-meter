@@ -47,6 +47,7 @@ type oidcState struct {
 	discovered atomic.Pointer[oidcDiscovery] // nil until discovery succeeds
 	mu         sync.Mutex
 	tx         map[[32]byte]oidcTransaction
+	client     *http.Client // bounded; its transport is New's oauth2.HTTPClient's, else the default
 }
 
 type oidcDiscovery struct {
@@ -56,8 +57,17 @@ type oidcDiscovery struct {
 	responseIssuer bool
 }
 
-func newOIDCState(cfg config.AuthConfig, secret string, verbose bool) *oidcState {
-	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: verbose}
+func newOIDCState(ctx context.Context, cfg config.AuthConfig, secret string, verbose bool) *oidcState {
+	base := http.DefaultTransport
+	if c, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && c.Transport != nil {
+		base = c.Transport
+	}
+	return &oidcState{cfg: cfg, secret: secret, tx: map[[32]byte]oidcTransaction{}, verbose: verbose,
+		client: &http.Client{
+			Timeout:       10 * time.Second,
+			Transport:     limitTransport{base: base},
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		}}
 }
 
 func (o *oidcState) ready() bool { return o.discovered.Load() != nil }
@@ -84,16 +94,8 @@ func (t limitTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-func providerHTTPClient() *http.Client {
-	return &http.Client{
-		Timeout:       10 * time.Second,
-		Transport:     limitTransport{base: http.DefaultTransport},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-}
-
 func (o *oidcState) discover(ctx context.Context, public *url.URL) (*oidcDiscovery, error) {
-	ctx = oidc.ClientContext(ctx, providerHTTPClient())
+	ctx = oidc.ClientContext(ctx, o.client)
 	p, err := oidc.NewProvider(ctx, o.cfg.OIDCIssuer)
 	if err != nil {
 		debugln(o.verbose, "OIDC discovery failed: "+err.Error())
@@ -233,7 +235,7 @@ func (s *Service) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	subject, name, why := s.verifyOIDCUser(oidc.ClientContext(ctx, providerHTTPClient()), tx, code)
+	subject, name, why := s.verifyOIDCUser(oidc.ClientContext(ctx, s.oidc.client), tx, code)
 	if why != "" {
 		s.oidcLoginFailure(w, r, why)
 		return

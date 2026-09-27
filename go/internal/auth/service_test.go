@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -38,14 +39,19 @@ func quietService(t *testing.T) *Service {
 	return s
 }
 
-func serviceWithin(t *testing.T, ctx context.Context) *Service {
-	t.Helper()
+// secretHash is hashed once per package: Argon2id is deliberately slow.
+var secretHash = sync.OnceValue(func() string {
 	h, err := HashPassword("secret")
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
+	return h
+})
+
+func serviceWithin(t *testing.T, ctx context.Context) *Service {
+	t.Helper()
 	s, err := New(ctx, config.AuthConfig{
-		Mode: "password", PublicURL: "https://meter.example", PasswordHash: h, OIDCProviderName: "Authelia",
+		Mode: "password", PublicURL: "https://meter.example", PasswordHash: secretHash(), OIDCProviderName: "Authelia",
 	}, nil, false)
 	if err != nil {
 		t.Fatal(err)
