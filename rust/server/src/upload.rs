@@ -1,6 +1,6 @@
 //! Receiver-owned upload totals shared by HTTP and WebTransport lanes.
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use graphite_meter_core::wire::UploadProgress;
+use graphite_meter_core::{failure::UploadRefusal, wire::UploadProgress};
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha2::Sha256;
@@ -77,22 +77,21 @@ pub enum UploadError {
     RandomUnavailable,
 }
 impl UploadError {
-    pub fn code(self) -> &'static str {
+    fn refusal(self) -> Option<UploadRefusal> {
         match self {
-            Self::Invalid => "invalid",
-            Self::GlobalFull => "globalFull",
-            Self::ClientFull => "clientFull",
-            Self::OwnerMismatch => "ownerMismatch",
-            Self::RandomUnavailable => "unavailable",
+            Self::Invalid => Some(UploadRefusal::Invalid),
+            Self::GlobalFull => Some(UploadRefusal::GlobalFull),
+            Self::ClientFull => Some(UploadRefusal::ClientFull),
+            Self::OwnerMismatch => Some(UploadRefusal::OwnerMismatch),
+            Self::RandomUnavailable => None,
         }
     }
+    pub fn code(self) -> &'static str {
+        self.refusal().map_or("unavailable", UploadRefusal::name)
+    }
     pub fn status(self) -> http::StatusCode {
-        match self {
-            Self::Invalid => http::StatusCode::BAD_REQUEST,
-            Self::GlobalFull | Self::RandomUnavailable => http::StatusCode::SERVICE_UNAVAILABLE,
-            Self::ClientFull => http::StatusCode::TOO_MANY_REQUESTS,
-            Self::OwnerMismatch => http::StatusCode::FORBIDDEN,
-        }
+        http::StatusCode::from_u16(self.refusal().map_or(503, UploadRefusal::status))
+            .expect("known upload status")
     }
     pub fn retry(self) -> bool {
         matches!(self, Self::GlobalFull | Self::ClientFull)
@@ -100,13 +99,10 @@ impl UploadError {
 }
 impl fmt::Display for UploadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Invalid => "unknown upload id",
-            Self::GlobalFull => "upload capacity exhausted",
-            Self::ClientFull => "client upload capacity exhausted",
-            Self::OwnerMismatch => "upload id belongs to another client",
-            Self::RandomUnavailable => "upload session mint failed",
-        })
+        f.write_str(
+            self.refusal()
+                .map_or("upload session mint failed", UploadRefusal::message),
+        )
     }
 }
 impl std::error::Error for UploadError {}
@@ -132,6 +128,7 @@ struct UploadEntries {
     by_id: HashMap<String, Arc<Mutex<Aggregate>>>,
     // Counts retained aggregates, including finished ones, by admission budget.
     by_client: HashMap<String, usize>,
+    tombstones: HashMap<String, Instant>,
 }
 struct Aggregate {
     owner: Owner,
@@ -217,7 +214,7 @@ impl UploadStore {
         let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
             aggregate.clone()
         } else {
-            if !create || !self.valid(id) {
+            if !create || entries.tombstones.contains_key(id) || !self.valid(id) {
                 return Err(UploadError::Invalid);
             }
             if crate::client_address::share_full(
@@ -228,7 +225,41 @@ impl UploadStore {
                 return Err(UploadError::ClientFull);
             }
             if entries.by_id.len() >= MAX_LIVE_UPLOADS {
-                return Err(UploadError::GlobalFull);
+                if entries.tombstones.len() >= MAX_LIVE_UPLOADS {
+                    return Err(UploadError::GlobalFull);
+                }
+                let victim = entries
+                    .by_id
+                    .iter()
+                    .filter_map(|(id, aggregate)| {
+                        let state = aggregate.lock().expect("upload aggregate lock");
+                        (state.lanes == 0 && state.bytes == 0 && !state.finished)
+                            .then(|| (id.clone(), state.touched))
+                    })
+                    .min_by_key(|(_, touched)| *touched);
+                let Some((victim, _)) = victim else {
+                    return Err(UploadError::GlobalFull);
+                };
+                let aggregate = entries
+                    .by_id
+                    .remove(&victim)
+                    .expect("selected receiver exists");
+                let mut state = aggregate.lock().expect("upload aggregate lock");
+                for key in state.owner.client_keys() {
+                    let count = entries
+                        .by_client
+                        .get_mut(key)
+                        .expect("indexed upload owner");
+                    *count -= 1;
+                    if *count == 0 {
+                        entries.by_client.remove(key);
+                    }
+                }
+                state.expired = true;
+                state.changed.notify_waiters();
+                entries
+                    .tombstones
+                    .insert(victim, Instant::now() + TOKEN_TTL);
             }
             let aggregate = Arc::new(Mutex::new(Aggregate {
                 owner: owner.clone(),
@@ -317,7 +348,10 @@ impl UploadStore {
     /// Also permits a caller-owned maintenance loop; no background task is spawned.
     pub fn sweep_at(&self, now: Instant) {
         let mut entries = self.inner.entries.lock().expect("upload store lock");
-        let UploadEntries { by_id, by_client } = &mut *entries;
+        entries.tombstones.retain(|_, until| *until >= now);
+        let UploadEntries {
+            by_id, by_client, ..
+        } = &mut *entries;
         by_id.retain(|_, aggregate| {
             let mut state = aggregate.lock().expect("upload aggregate lock");
             if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
@@ -385,7 +419,6 @@ impl UploadLane {
         let now = Instant::now();
         state.first_chunk.get_or_insert(now);
         state.bytes = state.bytes.saturating_add(bytes as u64);
-        state.touched = now;
         self.bytes = self.bytes.saturating_add(bytes as u64);
     }
     pub fn bytes(&self) -> u64 {
@@ -396,6 +429,7 @@ impl Drop for UploadLane {
     fn drop(&mut self) {
         let mut state = self.aggregate.lock().expect("upload aggregate lock");
         state.lanes -= 1;
+        state.touched = Instant::now();
         state.changed.notify_waiters();
     }
 }
@@ -426,14 +460,20 @@ impl UploadSubscription {
             self.store.sweep_if_due();
             {
                 let state = self.aggregate.lock().expect("upload aggregate lock");
-                if state.expired
-                    || !state
-                        .claim
-                        .as_ref()
-                        .is_some_and(|claim| Arc::ptr_eq(claim, &self.claim))
+                if !state
+                    .claim
+                    .as_ref()
+                    .is_some_and(|claim| Arc::ptr_eq(claim, &self.claim))
                 {
                     self.ended = true;
                     return None;
+                }
+                if state.expired {
+                    self.ended = true;
+                    return Some(UploadProgress::Error {
+                        message: UploadRefusal::Invalid.message().into(),
+                        code: UploadRefusal::Invalid.name().into(),
+                    });
                 }
                 if !self.ready {
                     self.ready = true;

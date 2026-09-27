@@ -58,7 +58,7 @@ impl AuthLease {
     pub fn owner(&self) -> crate::upload::Owner {
         match &self.browser {
             Some(grant) => crate::upload::Owner::delegated(self.session().subject(), &grant.id),
-            None if self.bearer => crate::upload::Owner::delegated(
+            None if self.issued != 0 => crate::upload::Owner::delegated(
                 self.session().subject(),
                 format!("{}:{}", self.session().id(), self.issued),
             ),

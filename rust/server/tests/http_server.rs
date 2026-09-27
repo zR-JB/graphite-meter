@@ -614,3 +614,45 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
     stop.send(()).unwrap();
     serving.await.unwrap().unwrap();
 }
+
+#[tokio::test]
+async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
+    let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = oneshot::channel();
+    let serving = tokio::spawn(server.serve_http1(listener, async {
+        let _ = stopped.await;
+    }));
+    let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
+    let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
+    let id = session["uploadId"].as_str().unwrap();
+    let mut socket = TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nConnection: close\r\n\r\na").as_bytes()).await.unwrap();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(31)).await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::resume();
+    let mut response = Vec::new();
+    let _ = socket.read_to_end(&mut response).await;
+    let response = String::from_utf8(response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 408"), "{response}");
+    assert!(response.contains("x-graphite-upload-refusal: idle"));
+    let (_, checkpoint) = upload_request(
+        address,
+        "POST",
+        &format!("/upload/checkpoint?id={id}"),
+        "",
+        b"",
+    )
+    .await;
+    let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
+    assert_eq!(checkpoint["bytes"], 1);
+    stop.send(()).unwrap();
+    serving.await.unwrap().unwrap();
+}

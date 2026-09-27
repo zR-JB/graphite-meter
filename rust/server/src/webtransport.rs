@@ -58,6 +58,11 @@ impl Connection {
         })
     }
 
+    pub async fn shutdown(&mut self) -> Result<(), TransportError> {
+        self.http.shutdown(0).await?;
+        Ok(())
+    }
+
     pub fn quic(&self) -> &quinn::Connection {
         &self.quic
     }

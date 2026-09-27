@@ -59,14 +59,16 @@ impl Discovery {
                     ));
                 }
                 let authority = authority(request)?;
-                if authority.contains('@') {
-                    return Err("request authority must not contain credentials".into());
-                }
-                let authority: Authority = authority.parse()?;
-                let host = authority
-                    .host()
-                    .trim_start_matches('[')
-                    .trim_end_matches(']');
+                let authority = (!authority.contains('@'))
+                    .then(|| authority.parse::<Authority>().ok())
+                    .flatten();
+                let host = authority.as_ref().map_or("localhost", |authority| {
+                    authority
+                        .host()
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                });
+                let host = crate::preflight::discovery_host(host);
                 let mut catalog = self.config.server_catalog.clone();
                 let local = &mut catalog.servers[0];
                 local.name.clone_from(&self.config.server_name);

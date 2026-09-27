@@ -12,6 +12,20 @@ impl Config {
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
         if self
+            .limits
+            .operations_per_client
+            .checked_add(self.limits.sessions_per_client)
+            .and_then(|streams| streams.checked_add(4))
+            .is_none_or(|streams| u32::try_from(streams).is_err())
+        {
+            return Err("per-client stream budgets exceed the QUIC stream limit".into());
+        }
+        if self.max_buffer_bytes < crate::http_server::minimum_buffer_bytes()
+            || self.max_buffer_bytes > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            return Err("GM_MAX_BUFFER_BYTES must cover one connection and the shared payload within semaphore limits".into());
+        }
+        if self
             .trusted_proxies
             .iter()
             .any(|prefix| prefix.prefix_len() == 0)

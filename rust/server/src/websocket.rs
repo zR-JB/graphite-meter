@@ -14,11 +14,7 @@ use tokio_tungstenite::{
     },
 };
 
-#[derive(Clone, Copy, Debug)]
-pub enum CloseReason {
-    Finished,
-    AuthenticationRequired,
-}
+pub use graphite_meter_core::failure::LaneEnding as CloseReason;
 
 /// Authorization must run before this protocol handshake. In public mode the
 /// caller supplies no origin restriction; authenticated browser sessions carry
@@ -114,12 +110,10 @@ where
     let mut socket = WebSocketStream::from_raw_socket(stream, Role::Server, Some(config)).await;
     let close = tokio::select! {
         biased;
-        reason = stopped => match reason {
-            CloseReason::Finished => (CloseCode::Normal, ""),
-            CloseReason::AuthenticationRequired => (CloseCode::Policy, "authentication required"),
-        },
+        reason = stopped => (CloseCode::from(reason.websocket_code()), reason.reason()),
         result = exchange(&mut socket) => match result {
-            Ok(()) | Err(Error::ConnectionClosed | Error::AlreadyClosed) => return,
+            Ok(reason) => (CloseCode::from(reason.websocket_code()), reason.reason()),
+            Err(Error::ConnectionClosed | Error::AlreadyClosed) => return,
             Err(Error::Capacity(_)) => (CloseCode::Size, "message too big"),
             Err(Error::Utf8(_)) => (CloseCode::Invalid, "invalid text"),
             Err(Error::Protocol(_)) => (CloseCode::Protocol, "protocol error"),
@@ -137,24 +131,36 @@ where
     .await;
 }
 
-async fn exchange<S>(socket: &mut WebSocketStream<S>) -> Result<(), Error>
+async fn exchange<S>(socket: &mut WebSocketStream<S>) -> Result<CloseReason, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    while let Some(message) = socket.next().await {
+    loop {
+        let message = match tokio::time::timeout(Duration::from_secs(30), socket.next()).await {
+            Ok(Some(message)) => message,
+            Ok(None) => return Ok(CloseReason::Finished),
+            Err(_) => return Ok(CloseReason::Idle),
+        };
         match message? {
             message @ (Message::Text(_) | Message::Binary(_)) => {
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
-                    socket.send(Message::Text(reply.into())).await?;
+                    match tokio::time::timeout(
+                        Duration::from_secs(30),
+                        socket.send(Message::Text(reply.into())),
+                    )
+                    .await
+                    {
+                        Ok(result) => result?,
+                        Err(_) => return Ok(CloseReason::Idle),
+                    }
                 }
             }
             Message::Ping(_) => socket.flush().await?,
             Message::Close(_) => {
                 socket.flush().await?;
-                return Ok(());
+                return Ok(CloseReason::Finished);
             }
             Message::Pong(_) | Message::Frame(_) => {}
         }
     }
-    Ok(())
 }

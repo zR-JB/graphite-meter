@@ -137,3 +137,27 @@ fn oversized_published_catalogue_is_rejected_before_response() {
         .unwrap_err();
     assert_eq!(error.to_string(), "published catalogue exceeds 64 KiB");
 }
+
+#[test]
+fn invalid_request_hosts_fall_back_to_localhost() {
+    let discovery = Discovery::new(Arc::new(Config::default()), None, None).unwrap();
+    for host in [
+        "bad_name",
+        "-bad.example",
+        "bad-.example",
+        "[fe80::1%eth0]",
+        "user@meter.example",
+    ] {
+        for path in ["/servers", "/preflight"] {
+            let request = Request::builder()
+                .uri(path)
+                .header("host", host)
+                .body(())
+                .unwrap();
+            let response = respond(&discovery, request);
+            assert_eq!(response.status(), StatusCode::OK);
+            let text = std::str::from_utf8(response.body()).unwrap();
+            assert!(text.contains("http://localhost:7246"), "{host}: {text}");
+        }
+    }
+}

@@ -11,6 +11,7 @@ use bytes::Buf;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
     capsule::{self, Capsule},
+    failure::LaneEnding,
     wire::{self, UploadProgress},
 };
 use tokio::{io::AsyncReadExt, time::Instant};
@@ -57,9 +58,6 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request) {
             return refuse(&mut stream, response.status()).await;
         }
-        if !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
-            return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
-        }
         let connection = Connection {
             peer,
             tls: true,
@@ -93,6 +91,12 @@ impl HttpServer {
         } else {
             (request, None)
         };
+        if lease.is_none()
+            && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies)
+                .usable
+        {
+            return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
+        }
         let route = match request.uri().path() {
             "/wt/ping" => SessionRoute::Ping,
             "/wt/download" => SessionRoute::Download,
@@ -103,11 +107,11 @@ impl HttpServer {
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let class = if route == SessionRoute::Ping {
-            Class::Request
-        } else {
-            Class::Session
-        };
+        let class = crate::route::spec(
+            graphite_meter_core::route::lookup(request.uri().path()).expect("validated WT route"),
+        )
+        .admission
+        .expect("WT admission class");
         let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
             Ok(permit) => permit,
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
@@ -207,29 +211,33 @@ impl HttpServer {
         let mut connect_bytes = 0_u64;
         let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let verify_deadline = Instant::now() + IDLE;
+        let verify_deadline = Instant::now() + Duration::from_secs(5);
+        let mut ending = LaneEnding::Finished;
+        let stopping = stopped(self.stopping.clone());
+        tokio::pin!(stopping);
         let result: Result<(), TransportError> = async {
             loop {
                 // A peer may keep CONNECT DATA continuously ready. Let Tokio
                 // rotate ready work so that it cannot starve session streams
                 // and datagrams. Recheck authorization before each operation;
                 // the revocation future below wakes a blocked loop promptly.
-                if lease.as_ref().is_some_and(|lease| !lease.is_active())
-                    || Instant::now() >= deadline
-                {
+                if lease.as_ref().is_some_and(|lease| !lease.is_active()) {
+                    ending = LaneEnding::Revoked;
                     break;
                 }
                 tokio::select! {
-                    _ = lease_ended(lease.clone()) => break,
-                    _ = tokio::time::sleep_until(deadline) => break,
+                    biased;
+                    _ = &mut stopping => { ending = LaneEnding::Shutdown; break; },
+                    _ = lease_ended(lease.clone()) => { ending = LaneEnding::Revoked; break; },
                     _ = tick.tick() => {
-                        if verify && Instant::now() >= verify_deadline {
-                            break;
-                        }
-                        if !verify && activity.lock().expect("WT activity poisoned").elapsed() >= IDLE {
+                        let last = *activity.lock().expect("WT activity poisoned");
+                        if Instant::now().duration_since(last) >= IDLE {
+                            ending = LaneEnding::Idle;
                             break;
                         }
                     }
+                    _ = tokio::time::sleep_until(deadline) => { ending = LaneEnding::Lifetime; break; },
+                    _ = tokio::time::sleep_until(verify_deadline), if verify => break,
                     _ = &mut datagram_finished, if datagram_lane.is_some() => { datagram_lane = None; }
                     data = stream.recv_data() => {
                         let Some(mut data) = data? else { decoder.finish()?; break; };
@@ -299,7 +307,10 @@ impl HttpServer {
         // Close is bounded even when the peer stops reading the CONNECT stream.
         let _ = tokio::time::timeout(Duration::from_secs(1), async {
             stream
-                .send_data(Bytes::from(capsule::encode_close(0, "")))
+                .send_data(Bytes::from(capsule::encode_close(
+                    ending.webtransport_code(),
+                    ending.reason(),
+                )))
                 .await?;
             stream.finish().await?;
             Ok::<_, TransportError>(())

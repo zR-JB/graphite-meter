@@ -6,8 +6,8 @@ use h2::{Reason, RecvStream, SendStream, server::SendResponse};
 pub(super) const BUFFER_BYTES: u32 = 36 * 1024 * 1024;
 const MAX_STREAMS: u32 = 256;
 const FRAME_BYTES: usize = 16 * 1024;
-const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
-const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
+const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 type StreamFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 impl HttpServer {
@@ -27,7 +27,7 @@ impl HttpServer {
             .max_header_list_size(MAX_HEADER_BYTES as u32)
             .max_concurrent_streams(MAX_STREAMS)
             .max_send_buffer_size(FRAME_BYTES);
-        let stream = WriteProgressIo::new(stream, self.config.max_operation_duration);
+        let stream = WriteProgressIo::new(stream, Duration::from_secs(30));
         let Ok(Ok(mut connection)) = tokio::time::timeout(
             Duration::from_secs(10),
             builder.handshake::<_, Bytes>(stream),
@@ -41,7 +41,13 @@ impl HttpServer {
         let mut streams = FuturesUnordered::<StreamFuture>::new();
         let mut idle = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
         let mut closing: Option<Pin<Box<Sleep>>> = None;
+        let mut stopping = Box::pin(stopped(self.stopping.clone()));
+        let mut draining = false;
         std::future::poll_fn(|cx| {
+            if !draining && stopping.as_mut().poll(cx).is_ready() {
+                draining = true;
+                connection.graceful_shutdown();
+            }
             while let Poll::Ready(Some(())) = Pin::new(&mut streams).poll_next(cx) {}
             match connection.poll_accept(cx) {
                 Poll::Ready(Some(Ok((request, mut reply)))) => {
@@ -228,14 +234,14 @@ impl Body for H2Body {
 /// A stream window can stall independently of its siblings, but a blocked TLS
 /// writer stalls the entire connection. Bound only actual pending IO, including
 /// queued END_STREAM output whose endpoint future has already completed.
-struct WriteProgressIo<T> {
+pub(super) struct WriteProgressIo<T> {
     inner: T,
     timeout: Duration,
     stalled: Option<Pin<Box<Sleep>>>,
 }
 
 impl<T> WriteProgressIo<T> {
-    fn new(inner: T, timeout: Duration) -> Self {
+    pub(super) fn new(inner: T, timeout: Duration) -> Self {
         Self {
             inner,
             timeout,

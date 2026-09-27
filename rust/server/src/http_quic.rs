@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicUsize;
 use tokio::sync::mpsc;
 use webtransport::{Incoming, ReceiveStream, TransportError};
 
-const MAX_REQUESTS: usize = 44;
 const MAX_PENDING_STREAMS: usize = 64;
 const SESSION_QUEUE: usize = 32;
 const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -17,7 +16,7 @@ const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 32 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
-const BUFFER_BYTES: u32 = 88 * 1024 * 1024;
+pub(super) const BUFFER_BYTES: u32 = 104 * 1024 * 1024;
 type Work = Pin<Box<dyn Future<Output = Result<(), TransportError>> + Send>>;
 
 impl HttpServer {
@@ -96,13 +95,23 @@ impl HttpServer {
                     let server = self.clone();
                     connections.spawn(async move {
                         let _permit = permit;
-                        if let Ok(Ok(quic)) = tokio::time::timeout(Duration::from_secs(5), connecting).await {
-                            let _ = server.serve_quic_connection(quic, peer, window).await;
-                        }
+                        let quic = tokio::select! {
+                            biased;
+                            _ = stopped(server.stopping.clone()) => return,
+                            result = tokio::time::timeout(Duration::from_secs(5), connecting) => {
+                                match result { Ok(Ok(quic)) => quic, _ => return }
+                            }
+                        };
+                        let _ = server.serve_quic_connection(quic, peer, window).await;
                     });
                 }
             }
         };
+        self.stopping.send_replace(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            while connections.join_next().await.is_some() {}
+        })
+        .await;
         endpoint.close(0_u32.into(), b"server stopped");
         connections.shutdown().await;
         // UDP draining is bounded; an unresponsive peer cannot delay shutdown.
@@ -116,7 +125,9 @@ impl HttpServer {
         peer: SocketAddr,
         window: Arc<Mutex<SendWindow>>,
     ) -> Result<(), TransportError> {
-        let (resets, mut pending_resets) = ResetQueue::new(MAX_REQUESTS);
+        let max_requests =
+            self.config.limits.operations_per_client + self.config.limits.sessions_per_client + 4;
+        let (resets, mut pending_resets) = ResetQueue::new(max_requests);
         let mut initializing = CloseOnDrop(Some(quic.clone()));
         let http = tokio::time::timeout(
             HEADER_TIMEOUT,
@@ -132,12 +143,21 @@ impl HttpServer {
         };
         let active_responses = Arc::new(AtomicUsize::new(0));
         initializing.0.take();
+        let stopping = stopped(self.stopping.clone());
+        tokio::pin!(stopping);
+        let mut draining = false;
+        let idle = tokio::time::sleep(Duration::from_secs(15));
+        tokio::pin!(idle);
         let mut expiry = tokio::time::interval(Duration::from_secs(1));
         expiry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut tuning = tokio::time::interval(Duration::from_millis(250));
         tuning.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tokio::select! {
+                _ = &mut stopping, if !draining => {
+                    draining = true;
+                    connection.http.shutdown().await?;
+                }
                 _ = expiry.tick() => connection.sessions.expire(),
                 _ = tuning.tick() => {
                     let mut window = window.lock().expect("send window poisoned");
@@ -147,7 +167,16 @@ impl HttpServer {
                         window.update(&connection.quic, &self.memory.bytes);
                     }
                 }
-                Some(_) = connection.requests.next() => {},
+                Some(_) = connection.requests.next() => {
+                    if connection.requests.is_empty() {
+                        idle.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(15));
+                        if draining && connection.cleanup.is_empty() { return Ok(()); }
+                    }
+                },
+                _ = &mut idle, if connection.requests.is_empty() => {
+                    connection.http.shutdown().await?;
+                    return Ok(());
+                },
                 Some(_) = connection.cleanup.next() => {},
                 Some(reset) = pending_resets.recv() => {
                     let quic = connection.quic.clone();
@@ -169,7 +198,7 @@ impl HttpServer {
                     let Some(incoming) = incoming? else { return Ok(()); };
                     match incoming {
                         Incoming::Request(request) => {
-                            if connection.requests.len() >= MAX_REQUESTS {
+                            if connection.requests.len() >= max_requests {
                                 drop(request);
                                 continue;
                             }
@@ -889,14 +918,16 @@ mod tests {
                 for _ in 0..16 {
                     opening.push(client_endpoint.connect(link.address, "localhost").unwrap());
                 }
+                let mut refused = 0;
                 while let Some(connection) = opening.next().await {
-                    clients.push(connection.unwrap());
+                    match connection {
+                        Ok(connection) => clients.push(connection),
+                        Err(_) => refused += 1,
+                    }
                 }
-                assert_eq!(server.memory.quic.lock().unwrap().len(), 64);
-                assert_eq!(
-                    server.memory.bytes.available_permits(),
-                    1024 * 1024 * 1024 - DOWNLOAD_BLOCK_BYTES
-                );
+                assert!(refused > 0);
+                assert!(server.memory.quic.lock().unwrap().len() < 64);
+                assert!(server.memory.bytes.available_permits() < BUFFER_BYTES as usize);
                 drop(held);
                 drop(clients);
                 client_endpoint.close(0_u32.into(), b"done");

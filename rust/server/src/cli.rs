@@ -128,6 +128,11 @@ const FLAGS: &[Flag] = &[
         kind: Integer,
     },
     Flag {
+        name: "max-buffer-bytes",
+        env: "GM_MAX_BUFFER_BYTES",
+        kind: Integer,
+    },
+    Flag {
         name: "max-connections",
         env: "GM_MAX_CONNECTIONS",
         kind: Integer,

@@ -148,7 +148,7 @@ async fn oversized_messages_and_revocation_send_distinct_close_codes() -> Result
     task.await?;
 
     let (mut socket, stop, task) = session().await;
-    stop.send(CloseReason::AuthenticationRequired).unwrap();
+    stop.send(CloseReason::Revoked).unwrap();
     let Message::Close(Some(frame)) = receive(&mut socket).await? else {
         panic!("expected authentication close");
     };
@@ -286,7 +286,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
 }
 
 #[tokio::test]
-async fn quiet_upgraded_websocket_survives_http_idle_interval() -> Result<(), TestError> {
+async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError> {
     use graphite_meter_server::{config::Config, http_server::HttpServer};
     use std::sync::Arc;
     use tokio::net::{TcpListener, TcpStream};
@@ -309,11 +309,14 @@ async fn quiet_upgraded_websocket_survives_http_idle_interval() -> Result<(), Te
     tokio::time::advance(Duration::from_secs(61)).await;
     tokio::task::yield_now().await;
     tokio::time::resume();
-    socket.send(Message::Text("PING,42".into())).await?;
-    let pong = tokio::time::timeout(Duration::from_secs(1), socket.next())
+    let close = tokio::time::timeout(Duration::from_secs(1), socket.next())
         .await?
         .unwrap()?;
-    assert_eq!(decode_pong(pong.to_text()?)?.id, 42);
+    let Message::Close(Some(close)) = close else {
+        panic!("expected idle close")
+    };
+    assert_eq!(u16::from(close.code), 4001);
+    assert_eq!(close.reason, "idle");
     stop.send(()).unwrap();
     task.await??;
     Ok(())

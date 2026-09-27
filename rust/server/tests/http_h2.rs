@@ -265,7 +265,7 @@ async fn expired_flow_controlled_stream_does_not_cancel_healthy_sibling() {
 
 #[tokio::test]
 async fn shutdown_drops_active_h2_stream_futures() {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(7), async {
         let mut harness = Harness::start(Duration::from_secs(30)).await;
         let reply = response(
             &mut harness.client,

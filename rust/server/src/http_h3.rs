@@ -33,10 +33,6 @@ impl HttpServer {
         }
     }
 
-    /// Serve an already resolved ordinary request. The connection owner must
-    /// bound header resolution to 10s, field sections to 32KiB, and the number
-    /// of owned request futures to 256. No stream task is spawned here.
-    ///
     /// `peer` must be the actual accepted QUIC peer. QUIC supplies TLS; this
     /// native listener deliberately has no authority to serve login/UI routes.
     pub async fn serve_http3_request(

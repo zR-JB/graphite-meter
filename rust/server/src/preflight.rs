@@ -24,18 +24,20 @@ impl Preflight {
     }
 
     pub fn build(&self, authority: &str) -> Result<Document, ConfigError> {
-        if authority.contains('@') {
-            return Err("request authority must not contain credentials".into());
-        }
-        let authority: http::uri::Authority = authority.parse()?;
-        let host = authority
-            .host()
-            .trim_start_matches('[')
-            .trim_end_matches(']');
+        let authority = (!authority.contains('@'))
+            .then(|| authority.parse::<http::uri::Authority>().ok())
+            .flatten();
+        let host = authority.as_ref().map_or("localhost", |authority| {
+            authority
+                .host()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+        });
         self.build_for_host(host)
     }
 
     pub fn build_for_host(&self, host: &str) -> Result<Document, ConfigError> {
+        let host = discovery_host(host);
         let config = &self.config;
         let mut capabilities = Capabilities {
             upload_checkpoint: true,
@@ -179,4 +181,27 @@ fn native_origin(kind: NativeKind, host: &str, address: &str) -> Result<String, 
     };
     target_origin(&origin)?;
     Ok(origin)
+}
+
+pub(super) fn discovery_host(host: &str) -> &str {
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return host;
+    }
+    let name = host.strip_suffix('.').unwrap_or(host);
+    if !name.is_empty()
+        && name.len() <= 253
+        && name.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+    {
+        host
+    } else {
+        "localhost"
+    }
 }

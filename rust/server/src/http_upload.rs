@@ -1,9 +1,13 @@
 //! HTTP upload adapters; aggregate timing and ownership remain in UploadStore.
 use super::*;
 use crate::upload::{Owner, UploadError, UploadSubscription};
-use graphite_meter_core::wire::{UploadProgress, encode_upload_progress};
+use graphite_meter_core::{
+    failure::UploadRefusal,
+    wire::{UploadProgress, encode_upload_progress},
+};
 use http::HeaderValue;
 use serde::Serialize;
+use tokio::time::Instant;
 
 impl HttpServer {
     pub(super) fn upload_owner<B>(&self, request: &Request<B>, peer: SocketAddr) -> Owner {
@@ -80,7 +84,7 @@ impl HttpServer {
                         .insert("x-accel-buffering", HeaderValue::from_static("no"));
                     response
                 } else {
-                    empty_response(StatusCode::METHOD_NOT_ALLOWED)
+                    method_not_allowed("GET, DELETE")
                 };
                 attach_operation(&mut response, operation);
                 response
@@ -138,25 +142,30 @@ impl HttpServer {
             }
         };
         let mut body = request.into_body();
-        let receive = async {
-            while let Some(frame) =
-                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
-            {
-                let frame = frame.map_err(io::Error::other)?;
-                if let Ok(data) = frame.into_data() {
-                    lane.record(data.len());
+        let deadline = Instant::now() + self.config.max_operation_duration;
+        let mut idle = Instant::now() + Duration::from_secs(30);
+        loop {
+            let frame = tokio::time::timeout_at(
+                deadline.min(idle),
+                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)),
+            )
+            .await;
+            let frame = match frame {
+                Ok(Some(frame)) => frame.map_err(io::Error::other)?,
+                Ok(None) => break,
+                Err(_) if idle < deadline => {
+                    return Ok(lane_refusal(UploadRefusal::Idle));
+                }
+                Err(_) => return Err(io::ErrorKind::TimedOut.into()),
+            };
+            if let Ok(data) = frame.into_data() {
+                lane.record(data.len());
+                if !data.is_empty() {
+                    idle = Instant::now() + Duration::from_secs(30);
                 }
             }
-            Ok::<_, io::Error>(lane.bytes())
-        };
-        let bytes = tokio::time::timeout(
-            self.config
-                .max_operation_duration
-                .min(Duration::from_secs(120)),
-            receive,
-        )
-        .await
-        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))??;
+        }
+        let bytes = lane.bytes();
         drop(lane);
         let mut response = json_response(&serde_json::json!({"bytes": bytes}));
         attach_operation(&mut response, operation);
@@ -279,4 +288,20 @@ fn next_progress(mut subscription: UploadSubscription) -> NextProgress {
         let event = subscription.next().await;
         (subscription, event)
     })
+}
+
+pub(super) fn lane_refusal(refusal: UploadRefusal) -> Response<ResponseBody> {
+    let mut response =
+        text_response(StatusCode::from_u16(refusal.status()).expect("known refusal status"));
+    *response.body_mut() = ResponseBody::bytes(Bytes::from(format!("{}\n", refusal.message())));
+    response.headers_mut().insert(
+        "x-graphite-upload-refusal",
+        HeaderValue::from_static(refusal.name()),
+    );
+    if refusal == UploadRefusal::Revoked {
+        response
+            .headers_mut()
+            .insert("graphite-meter-auth", HeaderValue::from_static("required"));
+    }
+    response
 }

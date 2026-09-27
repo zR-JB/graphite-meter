@@ -21,6 +21,13 @@ fn password() -> Config {
 #[test]
 fn authentication_constrains_advertised_origins_and_secret_sources() {
     password().validate().unwrap();
+    let mut memory = Config {
+        max_buffer_bytes: 104 * 1024 * 1024,
+        ..Config::default()
+    };
+    assert!(memory.validate().is_err());
+    memory.max_buffer_bytes += 256 * 1024;
+    memory.validate().unwrap();
     let invalid_cases: [InvalidConfigCase; 10] = [
         ("insecure auth origin", |config| {
             config.auth.public_url = "http://meter.example".into()

@@ -145,6 +145,7 @@ impl Config {
                 "GM_MAX_SESSIONS_PER_CLIENT",
                 &mut config.limits.sessions_per_client,
             ),
+            ("GM_MAX_BUFFER_BYTES", &mut config.max_buffer_bytes),
             ("GM_MAX_CONNECTIONS", &mut config.max_connections),
             (
                 "GM_MAX_CONNECTIONS_PER_CLIENT",

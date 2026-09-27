@@ -69,6 +69,7 @@ pub struct HttpServer {
     discovery: Discovery,
     admission: Admission,
     connections: Connections,
+    stopping: tokio::sync::watch::Sender<bool>,
     memory: http_quic::MemoryBudget,
     download_block: Bytes,
     _download_memory: tokio::sync::OwnedSemaphorePermit,
@@ -87,7 +88,8 @@ impl HttpServer {
     }
 
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
-        Self::with_memory(config, 8 * 1024 * 1024 * 1024)
+        let bytes = config.max_buffer_bytes;
+        Self::with_memory(config, bytes)
     }
 
     fn with_memory(config: Arc<Config>, bytes: usize) -> Result<Self, ConfigError> {
@@ -125,6 +127,7 @@ impl HttpServer {
             discovery,
             admission,
             connections,
+            stopping: tokio::sync::watch::channel(false).0,
             memory,
             download_block: block.into(),
             _download_memory: download_memory,
@@ -267,9 +270,14 @@ impl HttpServer {
                         let _permit = permit;
                         let _memory = memory;
                         if let Some(tls) = tls {
-                            if let Ok(Ok(stream)) = tokio::time::timeout(
-                                Duration::from_secs(10), tls.accept(socket),
-                            ).await {
+                            let stream = tokio::select! {
+                                biased;
+                                _ = stopped(server.stopping.clone()) => return,
+                                result = tokio::time::timeout(Duration::from_secs(15), tls.accept(socket)) => {
+                                    match result { Ok(Ok(stream)) => stream, _ => return }
+                                }
+                            };
+                            {
                                 let connection = Connection {
                                     peer,
                                     tls: true,
@@ -303,6 +311,11 @@ impl HttpServer {
                 }
             }
         };
+        self.stopping.send_replace(true);
+        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+            while tasks.join_next().await.is_some() {}
+        })
+        .await;
         tasks.shutdown().await;
         result
     }
@@ -315,6 +328,7 @@ impl HttpServer {
     ) where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
+        let stopping = self.stopping.clone();
         let operations = Arc::new(Mutex::new(Vec::new()));
         let upgrade = Arc::new(Mutex::new(None));
         let pending_upgrade = upgrade.clone();
@@ -324,7 +338,7 @@ impl HttpServer {
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
         let io = DeadlineIo {
-            inner: stream,
+            inner: http_h2::WriteProgressIo::new(stream, Duration::from_secs(30)),
             operations: operations.clone(),
             lifecycle: Some(lifecycle.clone()),
         };
@@ -380,7 +394,8 @@ impl HttpServer {
                 Ok::<_, io::Error>(response.map(|inner| Http1Body { inner, lifecycle }))
             }
         });
-        let _ = hyper::server::conn::http1::Builder::new()
+        let mut builder = hyper::server::conn::http1::Builder::new();
+        let serving = builder
             .timer(TokioTimer::new())
             // Hyper's header timer also covers keepalive waiting. The IO
             // lifecycle below separates 60s idle from 10s partial headers.
@@ -390,8 +405,15 @@ impl HttpServer {
             .header_read_timeout(None)
             .max_buf_size(MAX_HEADER_BYTES)
             .serve_connection(TokioIo::new(io), service)
-            .with_upgrades()
-            .await;
+            .with_upgrades();
+        tokio::pin!(serving);
+        tokio::select! {
+            _ = stopped(stopping.clone()) => {
+                serving.as_mut().graceful_shutdown();
+                let _ = serving.await;
+            },
+            _ = &mut serving => {},
+        }
         let pending = upgrade.lock().expect("WebSocket upgrade poisoned").take();
         if let Some(upgrade) = pending {
             upgrade.run().await;
@@ -484,15 +506,6 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request) {
             return Ok(response);
         }
-        if !client_address::resolve(
-            connection.peer,
-            request.headers(),
-            &self.config.trusted_proxies,
-        )
-        .usable
-        {
-            return Ok(text_response(StatusCode::BAD_REQUEST));
-        }
         if !connection.listener.ui
             && matches!(
                 request.uri().path(),
@@ -572,11 +585,22 @@ impl HttpServer {
         } else {
             request
         };
+        if lease.is_none()
+            && !client_address::resolve(
+                connection.peer,
+                request.headers(),
+                &self.config.trusted_proxies,
+            )
+            .usable
+        {
+            return Ok(text_response(StatusCode::BAD_REQUEST));
+        }
         let owner = lease.as_ref().map_or_else(
             || self.upload_owner(&request, connection.peer),
             AuthLease::owner,
         );
         let measurement = graphite_meter_core::route::lookup(request.uri().path()).is_some();
+        let upload = request.uri().path() == "/upload" && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
             if graphite_meter_core::route::lookup(request.uri().path()).is_none() {
@@ -620,7 +644,13 @@ impl HttpServer {
         };
         let mut response = tokio::select! {
             biased;
-            _ = lease_ended(guard) => return Err(io::ErrorKind::PermissionDenied.into()),
+            _ = lease_ended(guard) => {
+                if upload {
+                    upload_http::lane_refusal(graphite_meter_core::failure::UploadRefusal::Revoked)
+                } else {
+                    return Err(io::ErrorKind::PermissionDenied.into());
+                }
+            },
             result = dispatch => result?,
         };
         if measurement && let (Some(lease), Some(origin)) = (&lease, &origin) {
@@ -633,7 +663,13 @@ impl HttpServer {
         } else if measurement && self.auth.is_none() {
             Access::Public.apply_measurement(response.headers_mut());
         }
-        self.retain_auth(&mut response, lease, operations);
+        if response
+            .headers()
+            .get("x-graphite-upload-refusal")
+            .is_none_or(|code| code != "revoked")
+        {
+            self.retain_auth(&mut response, lease, operations);
+        }
         Ok(response)
     }
 
@@ -1111,6 +1147,17 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for DeadlineIo<T> {
         self.check_deadlines(cx)?;
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
+}
+
+async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
+    let mut receiver = stopping.subscribe();
+    if !*receiver.borrow_and_update() {
+        let _ = receiver.changed().await;
+    }
+}
+
+pub(crate) const fn minimum_buffer_bytes() -> usize {
+    http_quic::BUFFER_BYTES as usize + DOWNLOAD_BLOCK_BYTES
 }
 
 #[cfg(test)]

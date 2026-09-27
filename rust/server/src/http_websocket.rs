@@ -8,6 +8,7 @@ pub(super) struct Upgrade {
     deadline: tokio::time::Instant,
     _permit: Permit,
     lease: Option<AuthLease>,
+    stopping: tokio::sync::watch::Sender<bool>,
 }
 
 impl Upgrade {
@@ -25,8 +26,9 @@ impl Upgrade {
         websocket::serve_ping(TokioIo::new(stream), async {
             tokio::select! {
                 biased;
-                _ = lease_ended(self.lease) => CloseReason::AuthenticationRequired,
-                _ = tokio::time::sleep_until(self.deadline) => CloseReason::Finished,
+                _ = stopped(self.stopping) => CloseReason::Shutdown,
+                _ = lease_ended(self.lease) => CloseReason::Revoked,
+                _ = tokio::time::sleep_until(self.deadline) => CloseReason::Lifetime,
             }
         })
         .await;
@@ -76,6 +78,7 @@ impl HttpServer {
                 deadline: tokio::time::Instant::now() + self.config.max_operation_duration,
                 _permit: permit,
                 lease,
+                stopping: self.stopping.clone(),
             });
         }
         response.map(|()| ResponseBody::empty())

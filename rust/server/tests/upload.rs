@@ -240,6 +240,9 @@ async fn retention_preserves_active_lanes_and_expires_observers() {
     drop(lane);
     store.sweep_at(future);
     assert_eq!(store.retained(), 0);
+    assert!(
+        matches!(observer.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid")
+    );
     assert_eq!(observer.next().await, None);
     assert_eq!(
         store.checkpoint(&id, &Owner::principal("a")),
