@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -63,10 +63,10 @@ func wtDial(ctx context.Context, cred credential, origin, path string, query url
 	response, sess, err := wtTransport.Dial(ctx, u, hdr)
 	if err != nil {
 		_ = wtTransport.Close()
-		if authErr := authResponseError(response); authErr != nil {
-			return nil, authErr
+		if response != nil && response.StatusCode >= http.StatusBadRequest {
+			return nil, statusOf(response, parsed.Redacted())
 		}
-		return nil, fmt.Errorf("webtransport dial %s: %w", u, err)
+		return nil, fmt.Errorf("webtransport dial %s: %w", parsed.Redacted(), err)
 	}
 	return &wtSession{Session: sess, transport: wtTransport, lifetime: sess.Context()}, nil
 }
@@ -107,11 +107,13 @@ func newWTStageSession(
 	establish func(ctx context.Context, sess *wtSession) error,
 ) (*wtStageSession, error) {
 	w := &wtStageSession{dial: dial, establish: establish}
-	sess, err := w.open(ctx)
+	err := restore(ctx, time.Now().Add(redialWindow), "webtransport session", func(ctx context.Context) (err error) {
+		w.sess, err = w.open(ctx)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	w.sess = sess
 	return w, nil
 }
 
@@ -231,23 +233,20 @@ func uploadLaneWT(ctx context.Context, sess *wtSession, block []byte, ready func
 	return progressed, nil
 }
 
-func acceptUploadProgressWT(ctx context.Context, sess *wtSession) (*webtransport.ReceiveStream, error) {
-	acceptCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+func wtProgressFeed(ctx, lifetime context.Context, sess *wtSession) (progressFeed, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	str, err := sess.AcceptUniStream(acceptCtx)
+	str, err := sess.AcceptUniStream(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("upload progress stream: %w", err)
+		return progressFeed{}, fmt.Errorf("upload progress stream: %w", err)
 	}
-	return str, nil
-}
-
-func wtProgressFeed(lifetime context.Context, stream *webtransport.ReceiveStream) io.ReadCloser {
 	interrupt := func() {
-		stream.CancelRead(0)
-		_ = stream.SetReadDeadline(time.Now())
+		str.CancelRead(0)
+		_ = str.SetReadDeadline(time.Now())
 	}
 	stop := context.AfterFunc(lifetime, interrupt)
-	return progressFeed{stream, func() { stop(); interrupt() }}
+	defer context.AfterFunc(ctx, interrupt)()
+	return openFeed(str, "upload progress", func() { stop(); interrupt() })
 }
 
 func laneStopError(ctx context.Context, err error) error {

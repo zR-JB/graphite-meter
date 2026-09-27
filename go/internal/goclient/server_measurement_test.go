@@ -221,7 +221,8 @@ func TestSilentDirectionsLeaveAfterTheRedialWindow(t *testing.T) {
 		co.aggregate.beginStage(stage.Name, []string{"a"}, 0)
 		own := &stageServer{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}
 		s := &stageRun{c: co, plan: stage, servers: []*stageServer{own}}
-		s.beginSampling(time.Now().Add(-redialWindow), measurementBoundary{down: map[string]uint64{"a": 100}})
+		co.aggregate.observe(nativeBoundary(0, map[string]uint64{"a": 100}, nil))
+		s.beginSampling(time.Now().Add(-redialWindow))
 		s.observe(sampledBoundary{boundary: nativeBoundary(1000, map[string]uint64{"a": 100 + c.moved}, nil)})
 		if p.removed != c.removed {
 			t.Errorf("%s: removed = %v, want %v", c.name, p.removed, c.removed)
@@ -337,7 +338,7 @@ func TestOnlyALateTickResumesEvidence(t *testing.T) {
 		initial, _ := s.collect(t.Context(), co.active(), checkpointBudget)
 		co.aggregate.beginStage(StageUpload, []string{"a"}, initial.at)
 		co.aggregate.observe(initial)
-		s.beginSampling(time.Now(), initial)
+		s.beginSampling(time.Now())
 		s.startSampler()
 		defer func() {
 			s.sampler.cancel()
@@ -396,7 +397,7 @@ func TestLiveRatesRestartOnlyWithTheInterval(t *testing.T) {
 	co.aggregate.observe(initial)
 	own := []*stageServer{{participant: p, cancelTransfer: func(error) {}, cancelLatency: func(error) {}}}
 	s := &stageRun{c: co, plan: stage, servers: own}
-	s.beginSampling(time.Now(), initial)
+	s.beginSampling(time.Now())
 	for i, step := range []struct {
 		receiver *ReceiverSnapshot
 		want     []ThroughputSample

@@ -66,7 +66,6 @@ type stageRun struct {
 	sampler      *sampler
 	sampling     sync.WaitGroup
 	ending       bool
-	lastBytes    map[string]byDirection[uint64]
 	lastMovement map[string]*byDirection[time.Time]
 	misses       map[string]int
 }
@@ -117,7 +116,7 @@ func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
 			gate := &stageGate{
 				cancel:      ownCancel,
 				start:       s.start,
-				reportReady: func() { s.reports <- readyResource{p.id(), role} },
+				reportReady: sync.OnceFunc(func() { s.reports <- readyResource{p.id(), role} }),
 			}
 			s.gates = append(s.gates, gate)
 			s.work.Go(func() { s.outcomes <- server.measure(own, plan, role, gate) })
@@ -149,7 +148,7 @@ func (s *stageRun) close(err error, handover bool) {
 	for outcome := range s.outcomes {
 		s.c.retainLatency(outcome, err == nil)
 	}
-	if s.transfer() && s.measuring {
+	if s.transfer() && (s.measuring || errors.Is(err, errStageSkipped)) {
 		s.finish(err)
 	}
 }
@@ -189,7 +188,7 @@ func (s *stageRun) handle(outcome resourceOutcome) error {
 	return nil
 }
 
-// lost ends the stage once no server is left in it; a sole server that measured before retries next stage.
+// lost ends the stage once none is left; a sole server that measured retries next stage unless it needs sign-in.
 func (s *stageRun) lost() error {
 	c := s.c
 	if len(c.ids()) > 0 {
@@ -198,8 +197,8 @@ func (s *stageRun) lost() error {
 	if s.measuring && s.transfer() {
 		c.aggregate.restart(nil, time.Since(c.started), ReasonDropout)
 	}
-	if c.hasMeasured && len(c.servers) == 1 {
-		return fmt.Errorf("%w: %w", errStageSkipped, c.failures[len(c.failures)-1].Err)
+	if last := c.failures[len(c.failures)-1]; c.hasMeasured && len(c.servers) == 1 && last.Reason != FailureSignIn {
+		return fmt.Errorf("%w: %w", errStageSkipped, last.Err)
 	}
 	return c.noSurvivors()
 }
@@ -260,7 +259,7 @@ func (s *stageRun) warmup() error {
 }
 
 func (s *stageRun) window() error {
-	started, initial, err := s.open()
+	started, err := s.open()
 	if err != nil {
 		return err
 	}
@@ -273,7 +272,7 @@ func (s *stageRun) window() error {
 	end := time.NewTimer(time.Until(started.Add(s.plan.Duration)))
 	defer end.Stop()
 	if s.transfer() {
-		s.beginSampling(started, initial)
+		s.beginSampling(started)
 		s.startSampler()
 	}
 	for {
@@ -320,7 +319,7 @@ func (s *stageRun) final() error {
 	}
 }
 
-func (s *stageRun) open() (time.Time, measurementBoundary, error) {
+func (s *stageRun) open() (time.Time, error) {
 	c := s.c
 	initial, _ := s.collect(s.ctx, c.active(), checkpointBudget)
 	if slices.Contains(s.plan.Directions, Up) {
@@ -330,14 +329,14 @@ func (s *stageRun) open() (time.Time, measurementBoundary, error) {
 			}
 		}
 		if err := s.lost(); err != nil {
-			return time.Time{}, initial, err
+			return time.Time{}, err
 		}
 	}
 	for drained := false; !drained; {
 		select {
 		case outcome := <-s.outcomes:
 			if err := s.handle(outcome); err != nil {
-				return time.Time{}, initial, err
+				return time.Time{}, err
 			}
 		default:
 			drained = true
@@ -352,18 +351,12 @@ func (s *stageRun) open() (time.Time, measurementBoundary, error) {
 		c.aggregate.beginStage(s.plan.Name, c.ids(), initial.at)
 		c.aggregate.observe(initial)
 	}
-	return started, initial, nil
+	return started, nil
 }
 
-func (s *stageRun) beginSampling(started time.Time, initial measurementBoundary) {
-	s.lastBytes, s.misses = map[string]byDirection[uint64]{}, map[string]int{}
-	s.lastMovement = map[string]*byDirection[time.Time]{}
+func (s *stageRun) beginSampling(started time.Time) {
+	s.misses, s.lastMovement = map[string]int{}, map[string]*byDirection[time.Time]{}
 	for _, p := range s.c.active() {
-		bytes := byDirection[uint64]{down: initial.down[p.id()]}
-		if snapshot := initial.up[p.id()]; snapshot != nil {
-			bytes.up = snapshot.Bytes
-		}
-		s.lastBytes[p.id()] = bytes
 		s.lastMovement[p.id()] = &byDirection[time.Time]{started, started}
 	}
 }
@@ -428,6 +421,11 @@ func (s *stageRun) dropsServer(id string, err error, final bool) bool {
 
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	c := s.c
+	before := map[string]byDirection[uint64]{}
+	for id, ledger := range c.aggregate.servers {
+		before[id] = ledger.bytes
+	}
+	window, restarted := c.aggregate.observe(sample.boundary)
 	removed, final := false, sample.boundary.final
 	for _, server := range s.servers {
 		if server.removed {
@@ -439,15 +437,10 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			removed = true
 			continue
 		}
-		bytes := byDirection[uint64]{down: sample.boundary.down[id]}
-		if snapshot := sample.boundary.up[id]; snapshot != nil {
-			bytes.up = snapshot.Bytes
-		} else {
-			bytes.up = sample.boundary.observedUp[id].maximum
-		}
+		moved := c.aggregate.servers[id].bytes
 		for _, dir := range s.plan.Directions {
 			switch {
-			case bytes.of(dir) > s.lastBytes[id].of(dir):
+			case moved.of(dir) > before[id].of(dir):
 				s.lastMovement[id].set(dir, time.Now())
 			case !s.ending && time.Since(s.lastMovement[id].of(dir)) >= redialWindow:
 				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
@@ -455,9 +448,8 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 				removed = true
 			}
 		}
-		s.lastBytes[id] = bytes
 	}
-	if window, restarted := c.aggregate.observe(sample.boundary); window != nil || restarted {
+	if window != nil || restarted {
 		s.emitRates(window)
 	}
 	if err := s.lost(); err != nil {
@@ -528,14 +520,20 @@ func (s *stageRun) emitRates(window *AggregateWindow) {
 func (s *stageRun) finish(stageErr error) {
 	c := s.c
 	for _, dir := range s.plan.Directions {
-		result := c.aggregate.result(dir)
+		result := Result{Stage: s.plan.Name, Direction: dir, Unavailable: true}
+		if s.measuring {
+			result = c.aggregate.result(dir)
+		}
 		c.unavailable = c.unavailable || result.Unavailable
 		if stageErr != nil {
 			result.Err = stageErr
 		}
 		c.emit(Event{Kind: EventResult, At: time.Now(), Stage: s.plan.Name, Direction: dir, Result: new(result)})
 		for _, server := range c.servers {
-			own := c.aggregate.serverResult(server.id(), dir)
+			own := Result{Stage: s.plan.Name, Direction: dir, Unavailable: true}
+			if s.measuring {
+				own = c.aggregate.serverResult(server.id(), dir)
+			}
 			if server.removed {
 				own.Err = c.departure(server.id(), s.plan.Name)
 			}
@@ -554,6 +552,9 @@ func (s *stageServer) measure(ctx context.Context, stage StagePlan, role string,
 		outcome.err = s.transport.measureDownload(ctx, gate)
 	} else {
 		outcome.err = s.transport.measureUpload(ctx, gate)
+	}
+	if outcome.err != nil {
+		gate.cancel(outcome.err)
 	}
 	outcome.at = time.Now()
 	return outcome

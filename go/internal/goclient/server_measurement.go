@@ -266,6 +266,7 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 		return nil, errStaleBoundary
 	}
 	window := &AggregateWindow{Start: first.at, End: last.at}
+	stale := false
 	for _, id := range a.current().Participants {
 		if a.stage != StageUpload {
 			start, ok := first.down[id]
@@ -278,16 +279,20 @@ func (a *aggregateMeasurements) window(first, last measurementBoundary) (*Aggreg
 		}
 		if a.stage != StageDownload {
 			start, end := first.up[id], last.up[id]
-			if start.ID == end.ID && end.Bytes >= start.Bytes && end.Nanos == start.Nanos {
-				return nil, errStaleBoundary
-			}
 			if start.ID != end.ID || end.Bytes < start.Bytes || end.Nanos < start.Nanos {
 				return nil, errors.New("replaced or regressing receiver counter")
+			}
+			if end.Nanos == start.Nanos {
+				stale = true
+				continue
 			}
 			duration := time.Duration(end.Nanos - start.Nanos)
 			rate := float64(end.Bytes-start.Bytes) / duration.Seconds()
 			window.Up = append(window.Up, ComponentWindow{id, end.Bytes - start.Bytes, duration, rate})
 		}
+	}
+	if stale {
+		return nil, errStaleBoundary
 	}
 	window.DownBytesPerSec, window.UpBytesPerSec = sumRates(window.Down), sumRates(window.Up)
 	return window, nil

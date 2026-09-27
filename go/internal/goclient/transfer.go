@@ -41,7 +41,7 @@ func restore(ctx context.Context, deadline time.Time, what string, attempt func(
 		err := attempt(ctx)
 		if restored = err == nil; restored {
 			cancel()
-		} else if !errors.Is(err, context.DeadlineExceeded) || cause == nil {
+		} else if windowCtx.Err() == nil || cause == nil {
 			cause = err
 		}
 		return false, err
@@ -165,14 +165,9 @@ func (r *runner) runLanes(
 	dir Direction,
 	progress *uploadProgress,
 	lane laneFunc,
-) (failure error) {
+) error {
 	lanes := r.startLanes(ctx, r.streams.of(dir), lane)
 	defer lanes.stop()
-	defer func() {
-		if failure != nil {
-			gate.cancel(failure)
-		}
-	}()
 	var progressFailed <-chan struct{}
 	wait := func(until <-chan struct{}) error {
 		select {
@@ -226,15 +221,16 @@ func (r *runner) receiverCheckpointOnce(ctx context.Context) (*ReceiverSnapshot,
 		return nil, err
 	}
 	var count struct {
-		Bytes uint64 `json:"bytes"`
-		Nanos uint64 `json:"nanos"`
+		Bytes *uint64 `json:"bytes"`
+		Nanos *uint64 `json:"nanos"`
 	}
 	target := withUploadID(endpoint, id)
 	if _, err := controlJSON(ctx, r.http, http.MethodPost, target, "receiver checkpoint", &count); err != nil {
 		return nil, err
 	}
-	if count.Nanos == 0 || count.Nanos > uint64(1<<63-1) {
-		return nil, fmt.Errorf("%w: invalid receiver clock", errProtocol)
+	const exact = 1<<53 - 1
+	if count.Bytes == nil || count.Nanos == nil || *count.Nanos == 0 || max(*count.Bytes, *count.Nanos) > exact {
+		return nil, fmt.Errorf("%w: invalid receiver counters", errProtocol)
 	}
-	return &ReceiverSnapshot{ID: id, Bytes: count.Bytes, Nanos: count.Nanos}, nil
+	return &ReceiverSnapshot{ID: id, Bytes: *count.Bytes, Nanos: *count.Nanos}, nil
 }

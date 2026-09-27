@@ -58,8 +58,8 @@ func dialLatencyBus(
 		CompressionMode: websocket.CompressionDisabled,
 	})
 	if err != nil {
-		if authErr := authResponseError(response); authErr != nil {
-			return nil, authErr
+		if response != nil && response.StatusCode >= http.StatusBadRequest {
+			return nil, statusOf(response, u)
 		}
 		return nil, fmt.Errorf("latency WebSocket connection failed: %w", err)
 	}
@@ -121,8 +121,8 @@ func (r *runner) measureLatency(
 	underLoad bool,
 	duration time.Duration,
 	gate *stageGate,
-) (result LatencyStats, failure error) {
-	conn, err := r.dialPingBus(ctx)
+) (LatencyStats, error) {
+	conn, err := r.redialPingBus(ctx, time.Now().Add(redialWindow))
 	if err != nil {
 		return LatencyStats{}, err
 	}
@@ -153,11 +153,6 @@ func (r *runner) measureLatency(
 		cancel()
 		readers.Wait()
 		conn.Close()
-	}()
-	defer func() {
-		if failure != nil {
-			gate.cancel(failure)
-		}
 	}()
 	finish := func(err error) (LatencyStats, error) { return probes.finish(time.Now(), duration), err }
 	emit := func(at time.Time, sample LatencySample) {

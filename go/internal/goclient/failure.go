@@ -27,9 +27,10 @@ const (
 )
 
 var (
-	errStalled  = errors.New("stopped delivering bytes")
-	errNoBytes  = errors.New("no bytes moved")
-	errProtocol = errors.New("unexpected server response")
+	errStalled       = errors.New("stopped delivering bytes")
+	errNoBytes       = errors.New("no bytes moved")
+	errProtocol      = errors.New("unexpected server response")
+	errUploadInvalid = errors.New("unknown upload id")
 )
 
 type statusError struct {
@@ -50,6 +51,29 @@ func laneRefusal(res *http.Response) error {
 		return err
 	}
 	return refusal{err}
+}
+
+// uploadRefusal acts on a refusal code (api/uploadrefusals.txt) like the browser, before the status.
+func uploadRefusal(code string, status statusError) error {
+	switch code {
+	case "invalid":
+		return refusal{fmt.Errorf("%w: %w", errUploadInvalid, status)}
+	case "ownerMismatch":
+		return refusal{fmt.Errorf("%w: upload id belongs to another client: %w", errProtocol, status)}
+	case "globalFull":
+		status.code = http.StatusServiceUnavailable
+	case "clientFull":
+		status.code = http.StatusTooManyRequests
+	case "idle":
+		return laneEnd(wire.LaneIdle)
+	case "revoked":
+		return &AuthRequiredError{}
+	default:
+		if status.code == 0 {
+			return refusal{fmt.Errorf("%w: upload refused (%q) by %s", errProtocol, code, status.from)}
+		}
+	}
+	return status
 }
 
 type laneEnd wire.LaneEnd
@@ -85,7 +109,7 @@ func failureReason(err error, preparing bool) FailureReason {
 		return FailureTimeout
 	case errors.Is(err, errInsufficientEvidence), errors.Is(err, errNoBytes):
 		return FailureInsufficientEvidence
-	case network || ended:
+	case network || ended || errors.Is(err, errUploadInvalid):
 		return FailureConnectionLost
 	case answered, errors.Is(err, errProtocol):
 		return FailureProtocol
