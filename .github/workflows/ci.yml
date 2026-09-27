@@ -289,11 +289,56 @@ jobs:
         working-directory: rust
         run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-webtransport
 
+  rust-e2e:
+    name: Experimental Rust browser E2E
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - id: toolchain
+        name: Set up E2E toolchain
+        uses: ./.github/actions/setup-project
+        with: {bun: 'true', client-deps: 'true'}
+      - id: chrome
+        name: Install pinned Chrome for Testing
+        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
+        with:
+          chrome-version: ${{ steps.toolchain.outputs.chrome-version }}
+          install-dependencies: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          version: v0.37.1
+          driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
+          cache-binary: 'false'
+          buildkitd-flags: --log-level=info
+      - name: Build the Rust server with reviewed browser and runtime notices
+        run: docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-e2e --build-arg VERSION=0.0.0-dev --output type=local,dest=rust/target/e2e .
+      - name: Run the shared browser suite against Rust
+        env:
+          BUN_CHROME_ARGS: --no-sandbox
+          BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
+        run: python3 rust/tests/browser_interop.py --server rust/target/e2e/graphite-meter-server
+      - name: Upload E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rust-e2e-failures
+          path: |
+            client/test-results/webview
+            client/test-results/servers
+          if-no-files-found: ignore
+
   gate:
     name: Gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop]
+    needs: [plan, tooling, core, go, e2e, smoke, release, security, secret-scan, rust, rust-interop, rust-e2e]
     steps:
       - name: Require every selected job
         env:
