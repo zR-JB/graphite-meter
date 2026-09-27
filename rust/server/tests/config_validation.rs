@@ -22,7 +22,7 @@ fn password() -> Config {
 fn authentication_constrains_advertised_origins_and_secret_sources() {
     password().validate().unwrap();
     let mut memory = Config {
-        max_buffer_bytes: 104 * 1024 * 1024,
+        max_buffer_bytes: 120 * 1024 * 1024,
         ..Config::default()
     };
     assert!(memory.validate().is_err());

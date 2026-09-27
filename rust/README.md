@@ -63,8 +63,11 @@ local stream futures, and buffers.
 The Noq fork shares a 48 MiB allowance across receive metadata, owned payload
 backing and overlapping defragmentation copies. Returned byte slices keep that
 charge until their last owner drops, including after connection destruction;
-application-retained bytes therefore consume this allowance. The shared
-256 KiB download block is charged once.
+application-retained bytes therefore consume this allowance. Endpoint reservations
+cover the configured UDP socket buffers, receive batches and pending incoming
+packets until the socket and its senders drop. Additional incoming packets are
+capped at 64 KiB per handshake and 4 MiB per endpoint. The shared 256 KiB
+download block is charged once.
 Admission refuses a connection or transmit-window increase when the budget
 cannot cover it; connection limits alone do not guarantee admission.
 
