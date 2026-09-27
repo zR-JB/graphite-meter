@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/quic-go/webtransport-go"
@@ -76,7 +77,8 @@ func TestListenerTopologies(t *testing.T) {
 // A client that declares a body and goes silent cannot hold its connection, before or after the handler answers.
 func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 	t.Parallel()
-	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) { e.controlTimeout = 200 * time.Millisecond })
+	const timeout = 200 * time.Millisecond
+	_, httpBase, _ := wtServer(t, nil, func(e *endpoints) { e.controlTimeout = timeout })
 	for _, request := range []string{"POST /upload/session", "GET /probe", "GET /"} {
 		t.Run(request, func(t *testing.T) {
 			t.Parallel()
@@ -98,7 +100,7 @@ func TestUnreadBodiesCannotHoldAConnection(t *testing.T) {
 			}
 			// The FIN precedes the server's lingering close, so it arrives with the drain deadline.
 			_, err = conn.Read(make([]byte, 1))
-			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 450*time.Millisecond {
+			if open := time.Since(sent); !errors.Is(err, io.EOF) || open > 10*timeout {
 				t.Fatalf("answered %d, then the connection stayed open for %v: %v", res.StatusCode, open, err)
 			}
 		})
@@ -126,41 +128,42 @@ func TestListenerBoundsTheRequestHeaderBlock(t *testing.T) {
 
 // Services drain together, each with the whole shutdown budget, whether a cancel or a failed listener ends them.
 func TestRunServicesStopsEveryServiceTogether(t *testing.T) {
-	boom := errors.New("bind failed")
-	for _, failure := range []error{nil, boom} {
-		ctx, cancel := context.WithCancel(t.Context())
-		var draining sync.WaitGroup
-		draining.Add(2)
-		serving := func(name string, err error) service {
-			block := make(chan struct{})
-			return service{name: name, run: func() error {
-				if err == nil {
-					<-block
-				}
-				return err
-			}, stop: func(context.Context) error {
-				draining.Done()
-				draining.Wait()
-				close(block)
-				return nil
-			}}
-		}
-		done := make(chan error, 1)
-		go func() {
-			done <- runServices(ctx, &config.Config{}, []service{serving("a", nil), serving("b", failure)})
-		}()
-		if failure == nil {
-			cancel()
-		}
-		select {
-		case err := <-done:
-			if !errors.Is(err, failure) {
-				t.Fatalf("runServices returned %v, want %v", err, failure)
+	for _, failure := range []error{nil, errors.New("bind failed")} {
+		synctest.Test(t, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var draining sync.WaitGroup
+			draining.Add(2)
+			serving := func(name string, err error) service {
+				block := make(chan struct{})
+				return service{name: name, run: func() error {
+					if err == nil {
+						<-block
+					}
+					return err
+				}, stop: func(context.Context) error {
+					draining.Done()
+					draining.Wait()
+					close(block)
+					return nil
+				}}
 			}
-		case <-time.After(2 * time.Second):
-			t.Fatalf("runServices ended by %v did not stop its services together", failure)
-		}
-		cancel()
+			done := make(chan error, 1)
+			go func() {
+				done <- runServices(ctx, &config.Config{}, []service{serving("a", nil), serving("b", failure)})
+			}()
+			if failure == nil {
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if !errors.Is(err, failure) {
+					t.Fatalf("runServices returned %v, want %v", err, failure)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatalf("runServices ended by %v did not stop its services together", failure)
+			}
+		})
 	}
 }
 

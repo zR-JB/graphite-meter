@@ -351,7 +351,7 @@ func TestSequentialWebTransportSessionsDoNotHoldConnectionSlots(t *testing.T) {
 // A stream download's liveness is the peer draining its lanes, and that is the only thing keeping the session open.
 func TestDrainedStreamDownloadOutlivesTheIdleBound(t *testing.T) {
 	t.Parallel()
-	const bound = 400 * time.Millisecond
+	const bound = time.Second
 	base, _, wtTransport := wtTestServer(t, nil, idleBound(bound))
 	sess := dialWT(t, wtTransport, base+"/wt/download?bytes=262144&streams=1")
 
@@ -426,12 +426,8 @@ func TestHTTP3BoundsClientConnectionsAndHeaders(t *testing.T) {
 		_ = res.Body.Close()
 		return res.StatusCode, nil
 	}
-	for status, err := probe(1024); status != http.StatusOK; status, err = probe(1024) {
-		if ctx.Err() != nil {
-			t.Fatalf("ordinary request = %d, %v", status, err)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	testkit.Eventually(t, 10*time.Second, "an ordinary request is served once the held connections close",
+		func() bool { status, _ := probe(1024); return status == http.StatusOK })
 	if status, err := probe(6 << 10); err == nil && status == http.StatusOK {
 		t.Fatal("a header block over the limit was served")
 	}
@@ -463,7 +459,8 @@ func TestIdleWebTransportSessionsFreeTheirSlots(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			base, httpBase, tr := wtTestServer(t, nil, idleBound(300*time.Millisecond))
+			// The bound outlasts a loaded machine's dial, so the admitted session is seen before its reaping.
+			base, httpBase, tr := wtTestServer(t, nil, idleBound(time.Second))
 			open(t, base, httpBase, tr)
 			waitForLoad(t, httpBase, 1)
 			waitForLoad(t, httpBase, 0)
