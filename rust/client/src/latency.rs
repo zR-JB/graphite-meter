@@ -576,8 +576,11 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let http = Http::new(false)?;
-        let date =
-            httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_millis(900));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+        let date_lead = Duration::from_millis(500);
+        let whole_second = Duration::from_secs((now + date_lead).as_secs() + 1);
+        tokio::time::sleep(whole_second - date_lead - now).await;
+        let date = httpdate::fmt_http_date(std::time::UNIX_EPOCH + whole_second);
         let refusal = format!(
             "HTTP/1.1 429 Too Many Requests\r\nRetry-After: {date}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
