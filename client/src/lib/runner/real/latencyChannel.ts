@@ -141,12 +141,7 @@ export class LatencyChannel {
       (msg) => {
         if (this.#worker === worker) this.#onMessage(msg);
       },
-      (detail) => {
-        if (this.#worker !== worker) return;
-        this.#deps.host.latencyIncomplete();
-        this.#onMessage({ type: "stall", detail });
-        if (this.#worker === worker) this.teardown();
-      },
+      (detail) => this.#abandon(worker, detail),
     );
     this.#worker = worker;
   }
@@ -167,29 +162,32 @@ export class LatencyChannel {
     const worker = this.#worker;
     this.#clearEstablishTimer();
     this.#cutoffEpochMs = this.#timeOriginMs + pageMs();
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => {
-      resolve = done;
-    });
-    const timer = setTimeout(() => {
-      if (this.#worker !== worker) return;
-      this.#deps.host.latencyIncomplete();
-      this.#deps.host.stallLatency(
-        "latency worker did not finish its pending probes",
-      );
-      if (this.#worker === worker) this.teardown();
-    }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const timer = setTimeout(
+      () =>
+        this.#abandon(
+          worker,
+          "latency worker did not finish its pending probes",
+        ),
+      PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS,
+    );
     this.#finishing = { promise, resolve, timer };
     try {
       worker.postMessage({ type: "stop", cutoffEpochMs: this.#cutoffEpochMs });
     } catch {
-      this.#deps.host.latencyIncomplete();
-      this.#deps.host.stallLatency(
+      this.#abandon(
+        worker,
         "latency worker could not finalize its pending probes",
       );
-      if (this.#worker === worker) this.teardown();
     }
     return promise;
+  }
+
+  #abandon(worker: Worker, detail: string): void {
+    if (this.#worker !== worker) return;
+    this.#deps.host.latencyIncomplete();
+    this.#deps.host.stallLatency(detail);
+    this.teardown();
   }
 
   /** Hard stage failure cannot establish which buffered or pending outcomes were discarded. */

@@ -1,6 +1,10 @@
 import type { store as applicationStore } from "../state/store.svelte";
 import type { HistoryRecord } from "./types";
-import { announceHistoryChanged, HistoryRepository } from "./repository";
+import {
+  announceHistoryChanged,
+  HistoryRefusal,
+  HistoryRepository,
+} from "./repository";
 
 /** Owns optional result persistence for one mounted application: saves in order, retrying transient failures. */
 export function mountHistoryPersistence(
@@ -9,8 +13,9 @@ export function mountHistoryPersistence(
   let disposed = false;
   let draining = false;
   const repository = new HistoryRepository();
-  // Each result remembers the clear count it was queued under; unreadable storage counts as none.
-  const pending: { record: HistoryRecord; clears: Promise<number> }[] = [];
+  // Each result remembers the clear count it was queued under; an unread count is read before its write.
+  const pending: { record: HistoryRecord; clears: Promise<number | null> }[] =
+    [];
   const settle = (record: HistoryRecord) => {
     pending.shift();
     if (store.historyCandidate?.id === record.id) store.historyCandidate = null;
@@ -20,26 +25,25 @@ export function mountHistoryPersistence(
     draining = true;
     try {
       while (!disposed && pending.length) {
-        const { record, clears } = pending[0];
+        const entry = pending[0];
+        const { record } = entry;
         try {
-          const written = await repository.put(record, await clears);
+          const clears = (await entry.clears) ?? (await repository.clears());
+          entry.clears = Promise.resolve(clears);
+          const written = await repository.put(record, clears);
           if (disposed) return;
           settle(record);
           store.historyWarning = "";
           if (written) announceHistoryChanged();
         } catch (error) {
           if (disposed) return;
-          // A value storage cannot clone never succeeds on retry.
-          if (!(
-            error instanceof DOMException && error.name === "DataCloneError"
-          )) {
+          if (!(error instanceof HistoryRefusal)) {
             store.historyWarning =
               "Unable to save this result locally. Future writes will be retried.";
             return;
           }
           settle(record);
-          store.historyWarning =
-            "This result could not be saved in browser storage.";
+          store.historyWarning = error.message;
         }
       }
     } finally {
@@ -56,7 +60,7 @@ export function mountHistoryPersistence(
         return;
       pending.push({
         record: candidate,
-        clears: repository.clears().catch(() => 0),
+        clears: repository.clears().catch(() => null),
       });
       void drain();
     });

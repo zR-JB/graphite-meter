@@ -80,7 +80,9 @@ afterEach(() => {
 });
 
 /** An HTTP server: minted upload ids, NDJSON progress feeds and checkpoints. */
-async function http(options: { checkpoint?: () => Response } = {}) {
+async function http(
+  options: { checkpoint?: () => Response; feed?: () => Response } = {},
+) {
   FakeWorker.all = [];
   const mints: {
     signal: AbortSignal;
@@ -105,6 +107,7 @@ async function http(options: { checkpoint?: () => Response } = {}) {
         feeds.get(id)?.write({ type: "complete", ...feeds.get(id)!.terminal });
         return new Response(null, { status: 204 });
       }
+      if (options.feed) return options.feed();
       let writer!: ReadableStreamDefaultController<Uint8Array>;
       const signal = init!.signal!;
       const body = new ReadableStream<Uint8Array>({
@@ -147,10 +150,13 @@ async function http(options: { checkpoint?: () => Response } = {}) {
     fail: (_reason, message) => failures.push(message),
     stall: (info) => stalls.push(info.rotate ? "rotate" : info.detail),
   });
-  const stage = (phase: PhaseActivity) =>
+  const stage = (
+    phase: PhaseActivity,
+    paths = testPreparedPaths({ latency: null }),
+  ) =>
     new ServerStage({
       host,
-      paths: testPreparedPaths({ latency: null }),
+      paths,
       activity: phase,
       streams: { down: 1, up: 1 },
       seed: "t",
@@ -222,18 +228,25 @@ test("a late mint from a discarded stage cannot adopt resources", async () => {
   expect(workers("upload")).toHaveLength(0);
 });
 
-test("upload refusals fail the stage, an unknown id stalls, and one replacement receiver takes over", async () => {
+test("upload refusals fail the stage, an unknown id stalls even mid-recovery, and one replacement receiver takes over", async () => {
   const h = await http();
   const stage = h.stage(activity("bidirectional"));
   const preparing = stage.prepare();
   await h.open(0, "first");
   await preparing;
   stage.measure();
+  await until(() => workers("upload").length === 1);
+  workers("upload")[0].emit({
+    type: "error",
+    reason: "connection-lost",
+    retry: true,
+    detail: "reset",
+  });
   h.feeds
     .get("first")!
     .write({ type: "error", code: "invalid", message: "unknown upload" });
-  await until(() => h.stalls.length === 1);
-  expect(h.stalls).toEqual(["rotate"]);
+  await until(() => h.stalls.length === 2);
+  expect(h.stalls).toEqual(["reset", "rotate"]);
   const replacing = stage.replaceUpload(new AbortController().signal);
   expect(h.feeds.get("first")!.signal.aborted).toBe(true);
   await h.open(1, "second");
@@ -396,6 +409,30 @@ test("WebTransport sessions carry download bytes and relay the upload receiver f
     });
   expect(receivers.map((checkpoint) => checkpoint.bytes)).toEqual([100, 250]);
   up.discard();
+
+  jest.useFakeTimers();
+  const refused = create(activity("upload"));
+  const refusing = refused
+    .prepare()
+    .catch((cause: Error) => cause.constructor.name);
+  await until(() => workers("wt-transfer").length === 3);
+  const first = session();
+  first.emit({
+    type: "upload-progress",
+    msg: {
+      type: "fatal",
+      detail: "client upload capacity exhausted",
+      reason: "server-busy",
+      retry: true,
+    },
+  });
+  expect(first.terminated).toBe(true);
+  jest.advanceTimersByTime(300);
+  expect(workers("wt-transfer")).toHaveLength(4);
+  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  jest.advanceTimersByTime(3_200);
+  expect(await refusing).toBe("ServerBusyError");
+  refused.discard();
 });
 
 test("the HTTP receiver feed keeps its counters, retries a busy server and classifies refusals once", async () => {
@@ -500,6 +537,71 @@ test("a busy lane reconnects with a doubling, capped delay, and lapsed readiness
   } finally {
     jest.useRealTimers();
   }
+});
+
+test("a busy upload feed during preparation retries with the busy backoff, then names the server busy", async () => {
+  let gets = 0;
+  const h = await http({
+    feed: () => {
+      gets++;
+      return new Response(null, {
+        status: 429,
+        headers: { "Retry-After": "1" },
+      });
+    },
+  });
+  jest.useFakeTimers();
+  const stage = h.stage(activity("upload"));
+  const preparing = stage
+    .prepare()
+    .catch((cause: Error) => cause.constructor.name);
+  await until(() => h.mints.length === 1);
+  h.mints[0].resolve(Response.json({ uploadId: "busy" }));
+  await until(() => gets === 1);
+  const flush = async () => {
+    for (let turn = 0; turn < 100; turn++) await Promise.resolve();
+  };
+  await flush();
+  jest.advanceTimersByTime(999);
+  await flush();
+  expect(gets).toBe(1);
+  jest.advanceTimersByTime(1);
+  await until(() => gets === 2);
+  jest.advanceTimersByTime(3_500);
+  expect(await preparing).toBe("ServerBusyError");
+  expect(h.failures).toEqual([]);
+  stage.discard();
+});
+
+test("loaded latency that never answers leaves throughput ready; the latency stage still fails", async () => {
+  const h = await http();
+  jest.useFakeTimers();
+  const loaded = h.stage(
+    { ...activity("download"), loadedLatency: true },
+    testPreparedPaths(),
+  );
+  await loaded.prepare();
+  const ready = loaded.ready(new AbortController().signal);
+  workers("download")[0].emit({ type: "progress", bytes: 10 });
+  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  jest.advanceTimersByTime(3_500);
+  await ready;
+  expect(h.failures).toEqual([]);
+  loaded.discard();
+
+  const idle = h.stage(
+    { stage: "latency", transfer: [], loadedLatency: false },
+    testPreparedPaths(),
+  );
+  await idle.prepare();
+  const waiting = idle
+    .ready(new AbortController().signal)
+    .catch((cause: Error) => cause.message);
+  jest.advanceTimersByTime(3_500);
+  expect(await waiting).toBe(
+    "Primed measurement connections did not become ready",
+  );
+  idle.discard();
 });
 
 test("stage readiness wakes on the first bytes of every download lane", async () => {

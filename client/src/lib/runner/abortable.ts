@@ -19,21 +19,16 @@ export async function withinBudget<T>(
   run: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   owner.throwIfAborted();
-  const deadline = new AbortController();
-  const signal = AbortSignal.any([owner, deadline.signal]);
-  const timer = setTimeout(
-    () =>
-      deadline.abort(
-        new DOMException("Connection check timed out", "TimeoutError"),
-      ),
-    milliseconds,
-  );
+  const deadline = AbortSignal.timeout(milliseconds);
+  const signal = AbortSignal.any([owner, deadline]);
   try {
     const value = await abortable(run(signal), signal);
     signal.throwIfAborted();
     return value;
-  } finally {
-    clearTimeout(timer);
+  } catch (error) {
+    if (!owner.aborted && error === deadline.reason)
+      throw new DOMException("Connection check timed out", "TimeoutError");
+    throw error;
   }
 }
 

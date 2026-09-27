@@ -279,7 +279,7 @@ test("a schema 4 record reads as a one-server result with its grade and wire mod
     engine: "e4",
   });
   expect(record.result).toMatchObject({
-    outcome: "partial",
+    outcome: "incomplete",
     stages: { latency: "complete", upload: "failed", bidirectional: "not-run" },
     bidirectional: null,
     latencyByStage: { download: { p50Ms: 18, probeCount: 50 }, upload: null },

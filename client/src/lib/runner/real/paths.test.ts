@@ -1,5 +1,5 @@
 import { stubGlobals } from "../../test-helpers.testutil";
-import { test, expect, jest, spyOn } from "bun:test";
+import { test, expect, jest } from "bun:test";
 import {
   needsPings,
   laneStaggerMs,
@@ -585,16 +585,22 @@ test("Automatic falls back to a verified advertised path, while explicit HTTP1 r
   }
 });
 
+async function onFakeClock<T>(start: () => Promise<T>): Promise<T> {
+  jest.useFakeTimers();
+  try {
+    let settled = false;
+    const running = start().finally(() => (settled = true));
+    for (let ms = 0; ms < 10_000 && !settled; ms += 10) {
+      jest.advanceTimersByTime(10);
+      for (let turn = 0; turn < 20; turn++) await Promise.resolve();
+    }
+    return await running;
+  } finally {
+    jest.useRealTimers();
+  }
+}
+
 test("an unresponsive HTTP1 candidate cannot prevent Automatic from trying HTTP2", async () => {
-  const originalTimeout = globalThis.setTimeout;
-  const timer = spyOn(globalThis, "setTimeout").mockImplementation(((
-    ...[run, delay, ...args]: Parameters<typeof setTimeout>
-  ) =>
-    originalTimeout(
-      run,
-      delay === 2000 ? 1 : delay,
-      ...args,
-    )) as typeof setTimeout);
   let candidateSignal: AbortSignal | undefined;
   const document = {
     ...preflightDocument,
@@ -618,18 +624,19 @@ test("an unresponsive HTTP1 candidate cannot prevent Automatic from trying HTTP2
   );
   try {
     const harness = await preparationHarness();
-    const paths = await harness.check(
-      {
-        ...probeConfig(false),
-        transports: { throughputTarget: "auto", latencyTarget: "auto" },
-      },
-      ["throughput"],
+    const paths = await onFakeClock(() =>
+      harness.check(
+        {
+          ...probeConfig(false),
+          transports: { throughputTarget: "auto", latencyTarget: "auto" },
+        },
+        ["throughput"],
+      ),
     );
     expect(candidateSignal?.aborted).toBe(true);
     expect(paths.throughput.target.origin).toBe("https://meter.test:7248");
   } finally {
     restore();
-    timer.mockRestore();
   }
 });
 
@@ -658,15 +665,17 @@ test("HTTP3 bootstrap allows time for the browser upgrade instead of exhausting 
   );
   try {
     const harness = await preparationHarness();
-    const paths = await harness.check(
-      {
-        ...probeConfig(false),
-        transports: {
-          throughputTarget: "protocol:http3",
-          latencyTarget: "auto",
+    const paths = await onFakeClock(() =>
+      harness.check(
+        {
+          ...probeConfig(false),
+          transports: {
+            throughputTarget: "protocol:http3",
+            latencyTarget: "auto",
+          },
         },
-      },
-      ["throughput"],
+        ["throughput"],
+      ),
     );
     expect(attempts).toBeGreaterThan(3);
     expect(paths.throughput.browserProtocol).toBe("h3");
