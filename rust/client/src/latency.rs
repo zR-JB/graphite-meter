@@ -607,11 +607,53 @@ mod tests {
         Ok(())
     }
 
+    async fn echo<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+        mut socket: tokio_tungstenite::WebSocketStream<S>,
+        delay: Duration,
+    ) {
+        while let Some(Ok(Message::Text(text))) = socket.next().await {
+            let id = wire::decode_ping(&text).unwrap();
+            tokio::time::sleep(delay).await;
+            if socket
+                .send(Message::Text(wire::encode_pong(id, 0).into()))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    }
+
+    async fn outcomes(bus: Bus, interval: u64, duration: u64) -> Result<(usize, usize), Error> {
+        let (observations, mut receiver) = mpsc::channel(16);
+        let (_stop, mut cancelled) = watch::channel(Stop::Running);
+        measure(
+            bus,
+            Duration::from_millis(interval),
+            16,
+            Instant::now() + Duration::from_millis(duration),
+            &mut DeadlineEstimator::default(),
+            &observations,
+            &mut cancelled,
+        )
+        .await?;
+        let (mut replies, mut timeouts) = (0, 0);
+        while let Ok(event) = receiver.try_recv() {
+            match event {
+                Observation::Sample { .. } => replies += 1,
+                Observation::Lost {
+                    outcome: ProbeOutcome::Timeout,
+                    ..
+                } => timeouts += 1,
+                _ => panic!("unexpected outcome"),
+            }
+        }
+        Ok((replies, timeouts))
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn deadlines_learn_from_late_replies_and_drain_at_the_stage_boundary() -> Result<(), Error> {
-        for (delay, interval, duration, expected) in
-            [(150, 80, 100, (2, 0)), (300, 80, 100, (0, 2)), (400, 500, 1600, (3, 1))]
-        {
+    async fn replies_count_until_their_deadline_after_the_stage_boundary() -> Result<(), Error> {
+        for (delay, expected) in [(150, (2, 0)), (300, (0, 2))] {
             let (client, server) = tokio::io::duplex(4096);
             let socket = Socket::from_raw_socket(
                 Box::new(client),
@@ -620,51 +662,42 @@ mod tests {
             )
             .await;
             let peer = tokio::spawn(async move {
-                let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+                let server = tokio_tungstenite::WebSocketStream::from_raw_socket(
                     server,
                     tokio_tungstenite::tungstenite::protocol::Role::Server,
                     None,
                 )
                 .await;
-                while let Some(Ok(Message::Text(text))) = socket.next().await {
-                    let id = wire::decode_ping(&text).unwrap();
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
-                    if socket
-                        .send(Message::Text(wire::encode_pong(id, 0).into()))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
+                echo(server, Duration::from_millis(delay)).await;
             });
-            let (observations, mut receiver) = mpsc::channel(16);
-            let (_stop, mut cancelled) = watch::channel(Stop::Running);
-            measure(
-                Bus::WebSocket(Box::new(socket)),
-                Duration::from_millis(interval),
-                16,
-                Instant::now() + Duration::from_millis(duration),
-                &mut DeadlineEstimator::default(),
-                &observations,
-                &mut cancelled,
-            )
-            .await?;
-            let mut replies = 0;
-            let mut timeouts = 0;
-            while let Ok(event) = receiver.try_recv() {
-                match event {
-                    Observation::Sample { .. } => replies += 1,
-                    Observation::Lost {
-                        outcome: ProbeOutcome::Timeout,
-                        ..
-                    } => timeouts += 1,
-                    _ => panic!("unexpected outcome"),
-                }
-            }
-            assert_eq!((replies, timeouts), expected, "{delay} ms echo");
+            assert_eq!(
+                outcomes(Bus::WebSocket(Box::new(socket)), 80, 100).await?,
+                expected,
+                "{delay} ms echo"
+            );
             peer.abort();
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_late_reply_over_a_real_socket_extends_later_deadlines() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            echo(
+                tokio_tungstenite::accept_async(stream).await?,
+                Duration::from_millis(400),
+            )
+            .await;
+            Ok::<_, Error>(())
+        });
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        let bus = connect(&Http::new(false)?, &origin, false, &mut cancel, Kind::WebSocket).await?;
+        assert_eq!(outcomes(bus.ok_or("no latency channel")?, 500, 1600).await?, (3, 1));
+        peer.abort();
         Ok(())
     }
 
