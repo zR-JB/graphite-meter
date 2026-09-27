@@ -965,6 +965,17 @@
     width: var(--icon);
     height: var(--icon);
   }
+  .menu > button :where(strong, small) {
+    display: block;
+  }
+  .menu > button :where(strong) {
+    font-weight: var(--w-strong);
+  }
+  .menu > button :where(small) {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font: var(--role-caption);
+  }
   /* Focus keeps the global ring, inset; the wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
