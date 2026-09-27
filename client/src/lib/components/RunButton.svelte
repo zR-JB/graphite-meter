@@ -6,6 +6,7 @@
   const controller = getApplicationController();
   import { tooltip } from "../actions/tooltip";
   import { fmtDuration } from "../format";
+  import { handoff } from "../presentation/motion.svelte";
   import {
     BLOCKED,
     resolvedPhase,
@@ -15,7 +16,15 @@
   const pending = $derived(store.preparing);
   const idle = $derived(!store.isRunning && !pending);
   const resolved = $derived(resolvedPhase(store.phase));
-  const label = $derived(runActionLabel(pending, store.isRunning, store.phase));
+  const action = handoff(
+    () => ({
+      label: runActionLabel(pending, store.isRunning, store.phase),
+      running: store.isRunning,
+      pending,
+    }),
+    (shown) => shown.label,
+  );
+  const { label, running } = $derived(action.shown);
   const eta = $derived(fmtDuration(store.totalEtaMs, 0));
   const blocker = $derived(
     idle && !store.catalogLoading ? store.startBlocker : "",
@@ -24,8 +33,8 @@
 
 <button
   class="run-button"
-  class:running={store.isRunning}
-  class:pending
+  class:running
+  class:pending={action.shown.pending}
   aria-busy={pending}
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
@@ -42,16 +51,14 @@
             : "Start the test (Space)"),
   )}
 >
-  {#key label}
-    <span class="run-button-content enter">
-      {#if store.isRunning}
-        <span class="stop-sq" aria-hidden="true"></span>
-      {:else if !pending}
-        <span class="ico" aria-hidden="true"><Icon name="bolt" /></span>
-      {/if}
-      {label}
-    </span>
-  {/key}
+  <span class="run-button-content" style:opacity={action.opacity}>
+    {#if running}
+      <span class="stop-sq" aria-hidden="true"></span>
+    {:else if !action.shown.pending}
+      <span class="ico" aria-hidden="true"><Icon name="bolt" /></span>
+    {/if}
+    {label}
+  </span>
   {#if idle}
     <span class="duration" aria-hidden="true">~{eta}</span>
   {/if}
