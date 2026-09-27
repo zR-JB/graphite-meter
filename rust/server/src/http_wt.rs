@@ -359,7 +359,7 @@ async fn download_lane(
             .await?;
         let mut remaining = count;
         while remaining > 0 {
-            let size = remaining.min(block.len() as u64) as usize;
+            let size = remaining.min(16 * 1024).min(block.len() as u64) as usize;
             // Noq retains queued stream data for retransmission. Reuse the
             // shared immutable block instead of copying every write into its
             // send buffer; `write_chunk` handles partial flow-control writes.
@@ -385,7 +385,7 @@ async fn upload_lane(
     let mut stream = IncomingLane(stream);
     let mut block = vec![0; 64 * 1024];
     loop {
-        match tokio::time::timeout(Duration::from_secs(120), stream.0.read(&mut block)).await {
+        match tokio::time::timeout(Duration::from_secs(30), stream.0.read(&mut block)).await {
             Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
             Ok(Ok(count)) => {
                 lane.record(count);

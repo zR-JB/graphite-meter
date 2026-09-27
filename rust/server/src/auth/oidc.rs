@@ -622,6 +622,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transactions_charge_wider_ipv6_shares_before_global_capacity() {
+        let oidc = ready().await;
+        for subnet in 0..2 {
+            for host in 1..=8 {
+                let address = format!("2001:db8:1:{subnet:x}::{host}").parse().unwrap();
+                oidc.start(address, String::new(), None).await.unwrap();
+            }
+        }
+        assert!(
+            oidc.start("2001:db8:1:2::1".parse().unwrap(), String::new(), None)
+                .await
+                .is_err()
+        );
+        assert!(
+            oidc.start("2001:db8:2::1".parse().unwrap(), String::new(), None)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn mismatched_response_issuer_cannot_redeem_a_code() {
         let oidc = ready().await;
         let started = oidc

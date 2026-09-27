@@ -189,6 +189,8 @@ impl ResponseStream {
             .send_response(Response::from_parts(parts, ()))
             .await
             .map_err(io::Error::other)?;
+        let idle = tokio::time::sleep(Duration::from_secs(30));
+        tokio::pin!(idle);
         if !head {
             while let Some(frame) =
                 std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
@@ -196,10 +198,13 @@ impl ResponseStream {
                 if let Ok(mut data) = frame?.into_data() {
                     while !data.is_empty() {
                         let chunk = data.split_to(data.len().min(DATA_BYTES));
-                        self.stream
-                            .send_data(chunk)
-                            .await
-                            .map_err(io::Error::other)?;
+                        tokio::select! {
+                            biased;
+                            _ = &mut idle => return Err(io::ErrorKind::TimedOut.into()),
+                            result = self.stream.send_data(chunk) => result.map_err(io::Error::other)?,
+                        }
+                        idle.as_mut()
+                            .reset(tokio::time::Instant::now() + Duration::from_secs(30));
                         if active.as_ref().is_some_and(ActiveResponse::contended) {
                             // Only a crowded connection needs a scheduler
                             // handoff; per-chunk yields halve ordinary H3

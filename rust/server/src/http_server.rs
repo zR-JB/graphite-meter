@@ -80,6 +80,18 @@ pub struct HttpServer {
 }
 
 impl HttpServer {
+    pub(crate) fn log_admission(&self) {
+        let (active, maximum) = self.admission.load();
+        let connections = self.connections.stats();
+        eprintln!(
+            "[gm:admission] measurements={active}/{maximum} connections={} peak={} refused-client={} refused-global={}",
+            connections.active,
+            connections.peak,
+            connections.rejected_client,
+            connections.rejected_global
+        );
+    }
+
     pub async fn initialize_auth(&self) -> Result<(), ConfigError> {
         if let Some(auth) = &self.auth {
             auth.initialize().await?;
@@ -333,7 +345,7 @@ impl HttpServer {
         let upgrade = Arc::new(Mutex::new(None));
         let pending_upgrade = upgrade.clone();
         let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(
-            tokio::time::sleep(Duration::from_secs(10)),
+            tokio::time::sleep(Duration::from_secs(15)),
         ))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
@@ -369,9 +381,6 @@ impl HttpServer {
                         .headers_mut()
                         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
                 }
-                if head && let Some(operation) = &response.body().auth_operation {
-                    operation.lock().expect("operation poisoned").body_complete = true;
-                }
                 if let Some(operation) = &response.body().operation {
                     if head {
                         operation.lock().expect("operation poisoned").body_complete = true;
@@ -397,11 +406,6 @@ impl HttpServer {
         let mut builder = hyper::server::conn::http1::Builder::new();
         let serving = builder
             .timer(TokioTimer::new())
-            // Hyper's header timer also covers keepalive waiting. The IO
-            // lifecycle below separates 60s idle from 10s partial headers.
-            // Hyper exposes no unread-buffer hook: a partial pipelined header
-            // prefetched during the preceding request can retain the 60s bound
-            // until another socket read, rather than Go's 10s header bound.
             .header_read_timeout(None)
             .max_buf_size(MAX_HEADER_BYTES)
             .serve_connection(TokioIo::new(io), service)
@@ -646,6 +650,9 @@ impl HttpServer {
             biased;
             _ = lease_ended(guard) => {
                 if upload {
+                    for operation in operations.lock().expect("operations poisoned").iter() {
+                        operation.lock().expect("operation poisoned").body_complete = true;
+                    }
                     upload_http::lane_refusal(graphite_meter_core::failure::UploadRefusal::Revoked)
                 } else {
                     return Err(io::ErrorKind::PermissionDenied.into());
@@ -680,18 +687,29 @@ impl HttpServer {
         operations: &Operations,
     ) {
         if let Some(lease) = lease {
-            let operation = Arc::new(Mutex::new(Operation {
-                permit: None,
-                deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
-                body_complete: response.body().is_end_stream(),
-                revocation: Some(Box::pin(async move { lease.ended().await })),
-                revoked: false,
-            }));
-            operations
-                .lock()
-                .expect("operations poisoned")
-                .push(operation.clone());
-            response.body_mut().auth_operation = Some(operation);
+            let complete = response.body().is_end_stream();
+            let operation = response
+                .body_mut()
+                .operation
+                .get_or_insert_with(|| {
+                    Arc::new(Mutex::new(Operation {
+                        permit: None,
+                        deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
+                        body_complete: complete,
+                        revocation: None,
+                        revoked: false,
+                    }))
+                })
+                .clone();
+            operation.lock().expect("operation poisoned").revocation =
+                Some(Box::pin(async move { lease.ended().await }));
+            let mut operations = operations.lock().expect("operations poisoned");
+            if !operations
+                .iter()
+                .any(|entry| Arc::ptr_eq(entry, &operation))
+            {
+                operations.push(operation);
+            }
         }
     }
 
@@ -787,7 +805,6 @@ impl HttpServer {
             block: self.download_block.clone(),
             remaining: count,
             progress: None,
-            auth_operation: None,
             operation: Some(Arc::new(Mutex::new(Operation {
                 permit: Some(permit),
                 deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
@@ -890,7 +907,6 @@ pub struct ResponseBody {
     remaining: u64,
     progress: Option<ProgressBody>,
     operation: Option<Arc<Mutex<Operation>>>,
-    auth_operation: Option<Arc<Mutex<Operation>>>,
 }
 
 impl ResponseBody {
@@ -902,7 +918,6 @@ impl ResponseBody {
             remaining: block.len() as u64,
             block,
             progress: None,
-            auth_operation: None,
             operation: None,
         }
     }
@@ -919,34 +934,21 @@ impl Body for ResponseBody {
         if self.is_end_stream() {
             return Poll::Ready(None);
         }
-        if let Some(operation) = &self.auth_operation
-            && operation
+        if let Some(operation) = &self.operation {
+            let error = operation
                 .lock()
                 .expect("operation poisoned")
                 .check(cx)
-                .is_err()
-        {
-            return Poll::Ready(Some(Err(io::ErrorKind::PermissionDenied.into())));
-        }
-        if let Some(operation) = &self.operation
-            && operation
-                .lock()
-                .expect("operation poisoned")
-                .deadline
-                .as_mut()
-                .poll(cx)
-                .is_ready()
-        {
-            self.remaining = 0;
-            return Poll::Ready(Some(Err(io::ErrorKind::TimedOut.into())));
+                .err();
+            if let Some(error) = error {
+                self.remaining = 0;
+                return Poll::Ready(Some(Err(error)));
+            }
         }
         if let Some(progress) = &mut self.progress {
             let frame = progress.poll_frame(cx);
             let done = progress.done;
             if done && let Some(operation) = &self.operation {
-                operation.lock().expect("operation poisoned").body_complete = true;
-            }
-            if done && let Some(operation) = &self.auth_operation {
                 operation.lock().expect("operation poisoned").body_complete = true;
             }
             return frame;
@@ -955,11 +957,6 @@ impl Body for ResponseBody {
         self.remaining -= length as u64;
         if self.remaining == 0
             && let Some(operation) = &self.operation
-        {
-            operation.lock().expect("operation poisoned").body_complete = true;
-        }
-        if self.remaining == 0
-            && let Some(operation) = &self.auth_operation
         {
             operation.lock().expect("operation poisoned").body_complete = true;
         }
@@ -1068,7 +1065,7 @@ impl<T> DeadlineIo<T> {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Active { complete: true }) {
                 *lifecycle =
-                    Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(60))));
+                    Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
             } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
                 *lifecycle = Http1Lifecycle::Upgraded;
             }
@@ -1106,7 +1103,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
                 *lifecycle =
-                    Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(Duration::from_secs(10))));
+                    Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
             }
         }
         result

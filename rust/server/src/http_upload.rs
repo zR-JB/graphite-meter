@@ -69,7 +69,6 @@ impl HttpServer {
                                 block: Bytes::new(),
                                 remaining: 0,
                                 operation: None,
-                                auth_operation: None,
                                 progress: Some(ProgressBody::new(subscription)),
                             })
                             .expect("static progress response"),
@@ -154,7 +153,9 @@ impl HttpServer {
                 Ok(Some(frame)) => frame.map_err(io::Error::other)?,
                 Ok(None) => break,
                 Err(_) if idle < deadline => {
-                    return Ok(lane_refusal(UploadRefusal::Idle));
+                    let mut response = lane_refusal(UploadRefusal::Idle);
+                    attach_operation(&mut response, operation);
+                    return Ok(response);
                 }
                 Err(_) => return Err(io::ErrorKind::TimedOut.into()),
             };

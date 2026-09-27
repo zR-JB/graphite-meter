@@ -462,7 +462,7 @@ async fn advance_http1_clock(duration: Duration) {
 }
 
 #[tokio::test]
-async fn keepalive_idle_uses_sixty_seconds_and_releases_connection_capacity() {
+async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() {
     let server = Arc::new(
         HttpServer::new(Arc::new(Config {
             max_connections: 1,
@@ -484,12 +484,12 @@ async fn keepalive_idle_uses_sixty_seconds_and_releases_connection_capacity() {
         .unwrap();
     let mut socket = tokio::io::BufReader::new(socket);
     assert!(read_headers(&mut socket).await.starts_with("HTTP/1.1 200"));
-    advance_http1_clock(Duration::from_secs(59)).await;
+    advance_http1_clock(Duration::from_secs(14)).await;
     assert!(
         tokio::time::timeout(Duration::from_millis(20), socket.read(&mut [0; 1]))
             .await
             .is_err(),
-        "keepalive closed before 60 seconds"
+        "keepalive closed before 15 seconds"
     );
     let mut rejected = TcpStream::connect(address).await.unwrap();
     assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
@@ -508,7 +508,7 @@ async fn keepalive_idle_uses_sixty_seconds_and_releases_connection_capacity() {
 }
 
 #[tokio::test]
-async fn partial_headers_keep_the_ten_second_bound_after_keepalive_idle() {
+async fn partial_headers_keep_the_fifteen_second_bound_after_keepalive_idle() {
     let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -531,7 +531,7 @@ async fn partial_headers_keep_the_ten_second_bound_after_keepalive_idle() {
         .unwrap();
     // Let the actual socket read establish the partial-header deadline.
     tokio::time::sleep(Duration::from_millis(10)).await;
-    advance_http1_clock(Duration::from_secs(11)).await;
+    advance_http1_clock(Duration::from_secs(16)).await;
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(1), socket.read(&mut [0; 1]))
             .await
@@ -629,9 +629,24 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let id = session["uploadId"].as_str().unwrap();
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket.write_all(format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nConnection: close\r\n\r\na").as_bytes()).await.unwrap();
-    for _ in 0..20 {
-        tokio::task::yield_now().await;
-    }
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let (_, checkpoint) = upload_request(
+                address,
+                "POST",
+                &format!("/upload/checkpoint?id={id}"),
+                "",
+                b"",
+            )
+            .await;
+            let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
+            if checkpoint["bytes"] == 1 {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(31)).await;
     for _ in 0..20 {

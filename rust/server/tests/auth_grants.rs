@@ -94,7 +94,7 @@ fn cli_capacity_evicts_only_the_oldest_native_grant() {
         .collect();
     let (new, _) = store.issue_cli_grant(&session).unwrap();
     assert!(store.lookup_bearer(&first).is_none());
-    assert!(lease.is_active());
+    assert!(!lease.is_active());
     assert!(store.lookup_bearer(&second).is_some());
     assert!(store.lookup_bearer(&new).is_some());
     for (token, lease) in browsers {
@@ -104,13 +104,13 @@ fn cli_capacity_evicts_only_the_oldest_native_grant() {
 }
 
 #[tokio::test]
-async fn cli_revocation_denies_new_requests_but_active_work_remains_parent_bound() {
+async fn cli_revocation_ends_active_work_and_denies_new_requests() {
     let store = SessionStore::new();
     let (_, session) = store.create("subject", "Name", "local", None).unwrap();
     let (token, cli) = store.issue_cli_grant(&session).unwrap();
     assert!(store.revoke_grant(&token));
     assert!(store.lookup_bearer(&token).is_none());
-    assert!(cli.is_active());
+    assert!(!cli.is_active());
     store.revoke(&session);
     tokio::time::timeout(Duration::from_secs(1), cli.ended())
         .await

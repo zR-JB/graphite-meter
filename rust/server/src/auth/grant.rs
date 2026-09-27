@@ -16,8 +16,8 @@ pub enum GrantError {
     RandomUnavailable,
 }
 
-struct BrowserGrant {
-    origin: String,
+struct Grant {
+    origin: Option<String>,
     id: String,
     revoked: watch::Sender<bool>,
 }
@@ -29,7 +29,7 @@ pub struct AuthLease {
     bearer: bool,
     issued: u64,
     provider: Option<&'static str>,
-    browser: Option<Arc<BrowserGrant>>,
+    grant: Option<Arc<Grant>>,
 }
 
 impl AuthLease {
@@ -39,7 +39,7 @@ impl AuthLease {
             bearer: false,
             issued: 0,
             provider: None,
-            browser: None,
+            grant: None,
         }
     }
 
@@ -50,18 +50,16 @@ impl AuthLease {
         self.bearer
     }
     pub fn browser_origin(&self) -> Option<&str> {
-        self.browser.as_ref().map(|grant| grant.origin.as_str())
+        self.grant
+            .as_ref()
+            .and_then(|grant| grant.origin.as_deref())
     }
     pub fn provider(&self) -> &str {
         self.provider.unwrap_or(self.session().provider())
     }
     pub fn owner(&self) -> crate::upload::Owner {
-        match &self.browser {
+        match &self.grant {
             Some(grant) => crate::upload::Owner::delegated(self.session().subject(), &grant.id),
-            None if self.issued != 0 => crate::upload::Owner::delegated(
-                self.session().subject(),
-                format!("{}:{}", self.session().id(), self.issued),
-            ),
             None => crate::upload::Owner::login(self.session().subject(), self.session().id()),
         }
     }
@@ -71,12 +69,12 @@ impl AuthLease {
     pub(super) fn active_at(&self, now: Instant) -> bool {
         self.session.0.active_at(now)
             && self
-                .browser
+                .grant
                 .as_ref()
                 .is_none_or(|grant| !*grant.revoked.borrow())
     }
     pub(super) fn revoke_grant(&self) {
-        if let Some(grant) = &self.browser {
+        if let Some(grant) = &self.grant {
             grant.revoked.send_replace(true);
         }
     }
@@ -86,10 +84,8 @@ impl AuthLease {
         lease
     }
 
-    /// Browser grant eviction ends its active work; CLI grant eviction only denies
-    /// future authorization. All active work also ends with the parent session.
     pub async fn ended(&self) {
-        let Some(grant) = &self.browser else {
+        let Some(grant) = &self.grant else {
             return self.session.ended().await;
         };
         let mut revoked = grant.revoked.subscribe();
@@ -197,7 +193,7 @@ impl State {
                     .grants
                     .iter()
                     .filter(|(_, grant)| {
-                        grant.session.0.hash == session.0.hash && grant.browser.is_none()
+                        grant.session.0.hash == session.0.hash && grant.browser_origin().is_none()
                     })
                     .min_by_key(|(_, grant)| grant.issued)
                     .map(|(key, _)| key)
@@ -208,16 +204,12 @@ impl State {
         };
         // Generate before changing capacity, so RNG failure preserves current grants.
         let token = random_token::<32>().map_err(grant_random_error)?;
-        let browser = if let Some(origin) = origin {
-            let (revoked, _) = watch::channel(false);
-            Some(Arc::new(BrowserGrant {
-                origin: origin.into(),
-                id: random_token::<16>().map_err(grant_random_error)?,
-                revoked,
-            }))
-        } else {
-            None
-        };
+        let (revoked, _) = watch::channel(false);
+        let grant = Some(Arc::new(Grant {
+            origin: origin.map(str::to_owned),
+            id: random_token::<16>().map_err(grant_random_error)?,
+            revoked,
+        }));
         if let Some(key) = evict {
             self.remove_grant(&key);
         }
@@ -227,7 +219,7 @@ impl State {
             bearer: true,
             issued: self.grant_sequence,
             provider: Some(if origin.is_some() { "browser" } else { "cli" }),
-            browser,
+            grant,
         };
         self.grants.insert(token_hash(&token), lease.clone());
         Ok((token, lease))

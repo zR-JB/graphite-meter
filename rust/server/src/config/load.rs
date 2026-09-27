@@ -128,8 +128,8 @@ impl Config {
         ] {
             if let Some(raw) = env.get(name) {
                 *dst = match raw.trim().to_ascii_lowercase().as_str() {
-                    "1" | "true" => true,
-                    "0" | "false" => false,
+                    "1" | "t" | "true" => true,
+                    "0" | "f" | "false" => false,
                     _ => return Err(format!("{name} must be true/false or 1/0").into()),
                 };
             }

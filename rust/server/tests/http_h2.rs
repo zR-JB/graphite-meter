@@ -291,7 +291,7 @@ async fn advance_clock(duration: Duration) {
 }
 
 #[tokio::test]
-async fn sixty_seconds_idle_closes_h2_and_releases_connection_capacity() {
+async fn fifteen_seconds_idle_closes_h2_and_releases_connection_capacity() {
     let mut harness = Harness::start_config(Config {
         max_connections: 1,
         max_connections_per_client: 1,
@@ -303,10 +303,10 @@ async fn sixty_seconds_idle_closes_h2_and_releases_connection_capacity() {
     collect(probe.into_body()).await;
     let mut rejected = TcpStream::connect(harness.address).await.unwrap();
     assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
-    advance_clock(Duration::from_secs(59)).await;
+    advance_clock(Duration::from_secs(14)).await;
     assert!(
         !harness.driver.is_finished(),
-        "closed before 60 seconds idle"
+        "closed before 15 seconds idle"
     );
     advance_clock(Duration::from_secs(2)).await;
     tokio::time::timeout(Duration::from_secs(2), &mut harness.driver)
@@ -363,7 +363,7 @@ async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished(
             .unwrap()
             .contains("complete")
     );
-    advance_clock(Duration::from_secs(59)).await;
+    advance_clock(Duration::from_secs(14)).await;
     assert!(
         !harness.driver.is_finished(),
         "active lifetime was charged to idle timeout"

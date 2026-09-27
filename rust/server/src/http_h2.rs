@@ -4,7 +4,7 @@ use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
 
 pub(super) const BUFFER_BYTES: u32 = 36 * 1024 * 1024;
-const MAX_STREAMS: u32 = 256;
+const MAX_STREAMS: u32 = 250;
 const FRAME_BYTES: usize = 16 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -17,7 +17,7 @@ impl HttpServer {
     {
         // h2 keeps queued END_STREAM frames in its concurrency count until
         // pending frames and buffered DATA drain (Stream::is_closed). Together
-        // these limits bound queued DATA to 256 * 16 KiB, even after handlers
+        // these limits bound queued DATA to 250 * 16 KiB, even after handlers
         // release admission. Header/codec/TLS buffers have separate bounds.
         let mut builder = h2::server::Builder::new();
         builder

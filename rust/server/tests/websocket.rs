@@ -210,15 +210,20 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
 
     stop.send(()).unwrap();
     tokio::time::timeout(Duration::from_secs(2), task).await???;
-    assert!(matches!(
-        tokio::time::timeout(Duration::from_secs(2), socket.next()).await?,
-        None | Some(Err(_))
-    ));
+    let close = tokio::time::timeout(Duration::from_secs(2), socket.next())
+        .await?
+        .unwrap()?;
+    let Message::Close(Some(close)) = close else {
+        panic!("expected shutdown close")
+    };
+    assert_eq!(u16::from(close.code), 1001);
+    assert_eq!(close.reason, "shutdown");
     let response = server.respond(
         Request::builder().uri("/download?bytes=1").body(())?,
         address,
     );
     assert_eq!(response.status(), StatusCode::OK);
+
     Ok(())
 }
 

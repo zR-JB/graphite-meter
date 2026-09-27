@@ -132,7 +132,7 @@ fn invalid_environment_identifies_the_setting() {
     for (name, value) in [
         ("GM_VERBOSE", ""),
         ("GM_VERBOSE", "yes"),
-        ("GM_RESULT_HISTORY_DEFAULT", "t"),
+        ("GM_RESULT_HISTORY_DEFAULT", "on"),
         ("GM_MAX_CONNECTIONS", ""),
         ("GM_MAX_CONNECTIONS", "1.5"),
         ("GM_MAX_CONNECTIONS", "9223372036854775808"),

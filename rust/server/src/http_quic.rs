@@ -108,14 +108,14 @@ impl HttpServer {
             }
         };
         self.stopping.send_replace(true);
-        let _ = tokio::time::timeout(Duration::from_secs(5), async {
+        let drain_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let _ = tokio::time::timeout_at(drain_deadline, async {
             while connections.join_next().await.is_some() {}
         })
         .await;
         endpoint.close(0_u32.into(), b"server stopped");
         connections.shutdown().await;
-        // UDP draining is bounded; an unresponsive peer cannot delay shutdown.
-        let _ = tokio::time::timeout(Duration::from_secs(1), endpoint.wait_idle()).await;
+        let _ = tokio::time::timeout_at(drain_deadline, endpoint.wait_idle()).await;
         result
     }
 
@@ -131,7 +131,7 @@ impl HttpServer {
         let mut initializing = CloseOnDrop(Some(quic.clone()));
         let http = tokio::time::timeout(
             HEADER_TIMEOUT,
-            webtransport::Connection::new(quic.clone(), 1),
+            webtransport::Connection::new(quic.clone(), (1 << 62) - 1),
         )
         .await??;
         let mut connection = OwnedConnection {

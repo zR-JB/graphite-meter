@@ -73,9 +73,16 @@ fn delegated_owners_share_capacity_but_not_access() {
                 .unwrap(),
         );
     }
+    for _ in 0..MAX_UPLOADS_PER_CLIENT {
+        drop(
+            store
+                .begin(&store.mint().unwrap(), &Owner::delegated("a", "browser:3"))
+                .unwrap(),
+        );
+    }
     assert_eq!(
         store
-            .begin(&store.mint().unwrap(), &Owner::delegated("a", "browser:3"))
+            .begin(&store.mint().unwrap(), &Owner::delegated("a", "browser:4"))
             .err(),
         Some(UploadError::ClientFull)
     );
@@ -103,11 +110,11 @@ fn delegated_owners_share_capacity_but_not_access() {
 fn global_capacity_is_bounded() {
     let store = UploadStore::new().unwrap();
     for index in 0..MAX_LIVE_UPLOADS {
-        drop(
-            store
-                .begin(&store.mint().unwrap(), &Owner::principal(index.to_string()))
-                .unwrap(),
-        );
+        let mut lane = store
+            .begin(&store.mint().unwrap(), &Owner::principal(index.to_string()))
+            .unwrap();
+        lane.record(1);
+        drop(lane);
     }
     assert_eq!(
         store
@@ -347,10 +354,9 @@ async fn lifecycle_changes_wake_without_waiting_for_progress_tick() {
         flag.0.swap(false, Ordering::SeqCst),
         "expiry must wake the feed"
     );
-    assert!(matches!(
-        pending.as_mut().poll(&mut context),
-        Poll::Ready(None)
-    ));
+    assert!(
+        matches!(pending.as_mut().poll(&mut context), Poll::Ready(Some(UploadProgress::Error { code, .. })) if code == "invalid")
+    );
 }
 
 #[test]
@@ -393,4 +399,32 @@ fn anonymous_owners_canonicalize_ipv4_and_share_ipv6_prefix() {
     assert_eq!(first.budget_key(), "2001:db8:1:2::/64");
     assert_ne!(first, other);
     assert_ne!(ipv4, Owner::principal("192.0.2.1"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn empty_receiver_eviction_refuses_reopening_and_ends_its_feed() {
+    let store = UploadStore::new().unwrap();
+    tokio::time::advance(Duration::from_nanos(1)).await;
+    let victim = store.mint().unwrap();
+    let owner = Owner::principal("victim");
+    drop(store.begin(&victim, &owner).unwrap());
+    let mut feed = store.subscribe(&victim, &owner).unwrap();
+    assert_eq!(feed.next().await, Some(UploadProgress::Ready));
+    tokio::time::advance(Duration::from_millis(1)).await;
+    for index in 0..999 {
+        let owner = Owner::principal(format!("client-{}", index / 31));
+        drop(store.begin(&store.mint().unwrap(), &owner).unwrap());
+    }
+    drop(
+        store
+            .begin(&store.mint().unwrap(), &Owner::principal("replacement"))
+            .unwrap(),
+    );
+    assert!(
+        matches!(feed.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid")
+    );
+    assert_eq!(
+        store.begin(&victim, &owner).err(),
+        Some(UploadError::Invalid)
+    );
 }

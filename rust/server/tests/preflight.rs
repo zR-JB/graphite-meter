@@ -96,5 +96,13 @@ fn ipv6_request_authority_advertises_valid_bracketed_origins() {
         document.capabilities.throughput[0].base_url,
         "http://[2001:db8::1]:7246"
     );
-    assert!(preflight.build("user@meter.example").is_err());
+    assert_eq!(
+        preflight
+            .build("user@meter.example")
+            .unwrap()
+            .capabilities
+            .throughput[0]
+            .base_url,
+        "http://localhost:7246"
+    );
 }

@@ -123,6 +123,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         }));
     }
     if let Some(tls) = tls {
+        let stopped = stopped.clone();
         services.push(Box::pin(async move {
             tls.watch(cancelled(stopped), |result| {
                 if let Err(error) = result {
@@ -130,6 +131,20 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
                 }
             })
             .await
+        }));
+    }
+    if config.verbose {
+        let server = server.clone();
+        let stopped = stopped.clone();
+        services.push(Box::pin(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            ticker.tick().await;
+            tokio::select! {
+                _ = cancelled(stopped) => {},
+                _ = async { loop { ticker.tick().await; server.log_admission(); } } => {},
+            }
+            Ok(())
         }));
     }
     tokio::pin!(shutdown);

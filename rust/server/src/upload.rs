@@ -23,28 +23,24 @@ pub const UPLOAD_RETENTION: Duration = TOKEN_TTL;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Owner {
     client_keys: Vec<String>,
-    browser_grant: Option<String>,
 }
 
 impl Owner {
     pub fn anonymous(address: std::net::IpAddr) -> Self {
         Self {
             client_keys: crate::client_address::client_keys(address),
-            browser_grant: None,
         }
     }
 
     pub fn login(subject: &str, session: &str) -> Self {
         Self {
             client_keys: vec![format!("login:{session}"), format!("principal:{subject}")],
-            browser_grant: None,
         }
     }
 
     pub fn principal(subject: impl Into<String>) -> Self {
         Self {
             client_keys: vec![format!("principal:{}", subject.into())],
-            browser_grant: None,
         }
     }
 
@@ -55,7 +51,6 @@ impl Owner {
                 format!("grant:{grant_id}"),
                 format!("principal:{}", subject.into()),
             ],
-            browser_grant: Some(grant_id),
         }
     }
 
