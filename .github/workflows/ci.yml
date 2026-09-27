@@ -279,14 +279,26 @@ jobs:
           driver-opts: image=docker.io/moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3
           cache-binary: 'false'
           buildkitd-flags: --log-level=info
-      - name: Build the Rust server with reviewed browser and runtime notices
-        run: docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server-e2e --build-arg VERSION=0.0.0-dev --build-arg PROFILE=ci --output type=local,dest=rust/target/e2e .
-      - name: Run the shared browser suite against Rust
+      - name: Build the Rust server image with reviewed browser and runtime notices
+        run: >-
+          docker buildx build --platform linux/amd64 --file container/Dockerfile.rust --target server
+          --build-arg VERSION=0.0.0-dev --build-arg PROFILE=ci --label org.opencontainers.image.licenses=AGPL-3.0-or-later
+          --load --tag graphite-meter-rust:smoke .
+      - name: Smoke-test the Rust server image like the Go image
+        env:
+          VERSION: 0.0.0-dev
+          ENGINE_VERSION: 0.0.0-dev-rust
+          GM_CLIENT_REVISION: source
+        run: scripts/verify-container.sh graphite-meter-rust:smoke
+      - name: Run the shared browser suite against the image's server
         env:
           BUN_CHROME_ARGS: --no-sandbox
           BUN_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
           GM_EXPECTED_CHROME_VERSION: ${{ steps.toolchain.outputs.chrome-version }}
-        run: python3 rust/tests/browser_interop.py --server rust/target/e2e/graphite-meter-server
+        run: |
+          docker create --name rust-e2e graphite-meter-rust:smoke
+          docker cp rust-e2e:/graphite-meter "$RUNNER_TEMP/graphite-meter-server"
+          python3 rust/tests/browser_interop.py --server "$RUNNER_TEMP/graphite-meter-server"
       - name: Upload E2E failure diagnostics
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

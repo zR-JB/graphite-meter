@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-image=${1:?usage: VERSION=... GM_CLIENT_REVISION=... scripts/verify-container.sh IMAGE}
+image=${1:?usage: VERSION=... GM_CLIENT_REVISION=... [ENGINE_VERSION=...] scripts/verify-container.sh IMAGE}
 version=${VERSION:?}
 revision=${GM_CLIENT_REVISION:?}
 engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || true)}
@@ -37,7 +37,7 @@ for _ in $(seq 30); do
 done
 
 origin="http://127.0.0.1:7246"
-curl -fsS "$base/preflight" | jq -e --arg origin "$origin" --arg version "$version" '
+curl -fsS "$base/preflight" | jq -e --arg origin "$origin" --arg version "${ENGINE_VERSION:-$version}" '
   .engineVersion == $version and (.generation | type == "string" and length > 0)
   and .capabilities.throughput == [{"baseUrl": $origin, "transport": "fetch-stream", "protocol": "http1"}]
   and .capabilities.latency == [{"baseUrl": $origin, "transport": "websocket"}]
@@ -53,12 +53,12 @@ while read -r path marker; do
     tar -xOf "$tmp/rootfs.tar" "$path" | grep -F -- "$marker" >/dev/null
 done <<'EOF'
 etc/ssl/certs/ca-certificates.crt
-usr/share/licenses/ca-certificates/COPYRIGHT
 usr/share/licenses/graphite-meter/LICENSE GNU AFFERO GENERAL PUBLIC LICENSE
 usr/share/licenses/graphite-meter/COPYRIGHT Graphite Meter
 usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt THIRD-PARTY SOFTWARE NOTICES
 usr/share/licenses/graphite-meter/SOURCE.txt https://github.com/zR-JB/graphite-meter
 EOF
+tar -tf "$tmp/rootfs.tar" | grep -Ex 'usr/share/(licenses/ca-certificates/COPYRIGHT|doc/ca-certificates/copyright)' >/dev/null
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
 test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532

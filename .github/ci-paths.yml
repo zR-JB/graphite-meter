@@ -41,3 +41,4 @@ rust:
   - 'go/**'
   - 'client/**'
   - 'legal/**'
+  - 'container/Dockerfile.rust'

@@ -71,9 +71,6 @@ RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' s
         "$VERSION" "graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz" >/SOURCE.txt
 
 # Export matching source separately for the GitHub release; it is not runtime data.
-FROM scratch AS server-e2e
-COPY --from=server-build /graphite-meter /graphite-meter-server
-
 FROM scratch AS server-artifacts
 ARG VERSION
 ARG TARGETARCH
