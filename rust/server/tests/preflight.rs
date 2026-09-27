@@ -6,6 +6,30 @@ use graphite_meter_server::{
 use std::{collections::BTreeSet, sync::Arc};
 
 #[test]
+fn native_and_public_discovery_match_shared_golden() {
+    let mut config = Config {
+        server_location: "fra".into(),
+        engine_version: "0.1.0-test".into(),
+        ..Config::default()
+    };
+    config.native[NativeKind::H3 as usize].address = ":7249".into();
+    config.tls_cert = "test-cert.pem".into();
+    config.tls_key = "test-key.pem".into();
+    config.public.both.push("self".into());
+    let preflight = Preflight::new(Arc::new(config)).unwrap();
+    let document = preflight.build("speed.example:7246").unwrap();
+    let mut expected: serde_json::Value =
+        serde_json::from_str(include_str!("../../../api/preflight.golden.json")).unwrap();
+    expected["generation"] = document.generation.clone().into();
+    expected["capabilities"]["uploadCheckpoint"] = true.into();
+    assert_eq!(serde_json::to_value(&document).unwrap(), expected);
+    assert_eq!(
+        preflight.build("other.example").unwrap().generation,
+        document.generation
+    );
+}
+
+#[test]
 fn authentication_does_not_disable_configured_webtransport() {
     let mut config = Config {
         advertised_native: Some(BTreeSet::from([NativeKind::H3])),
