@@ -22,7 +22,11 @@
   import { MISSING, OUTCOME, STAGE } from "../presentation/vocabulary";
   import { announceChanges } from "../presentation/announcer.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { handoff, Smoothed } from "../presentation/motion.svelte";
+  import { Smoothed, type Handoff } from "../presentation/motion.svelte";
+  import type { Phase } from "../runner/contract";
+
+  let { status: view }: { status: Handoff<{ phase: Phase; label: string }> } =
+    $props();
 
   const indicatedServers = $derived(
     store.serverDetails?.selection ??
@@ -36,8 +40,7 @@
         : `${indicatedServers.length} servers selected`,
   );
   // The instrument presents the phase it hands off to, never a flash of one it passes through.
-  const view = handoff(() => store.phase);
-  const phase = $derived(view.shown);
+  const phase = $derived(view.shown.phase);
   let resultsBody = $state(0);
   const resultsHeight = new Smoothed();
   $effect(() => {

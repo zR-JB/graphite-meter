@@ -18,7 +18,12 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import LegalDialog from "./LegalDialog.svelte";
   import TopbarMore from "./TopbarMore.svelte";
-  import { resolvedPhase, THEME } from "../presentation/vocabulary";
+  import {
+    resolvedPhase,
+    statusLabel,
+    THEME,
+  } from "../presentation/vocabulary";
+  import { handoff } from "../presentation/motion.svelte";
   import { tooltip } from "../actions/tooltip";
   import { canFocus, activeModal } from "../actions/focus";
   import { MediaQuery } from "svelte/reactivity";
@@ -35,6 +40,18 @@
   } from "../state/persistence";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
+  // The gauge and the footer hand off one named state together.
+  const status = handoff(
+    () => ({
+      phase: store.phase,
+      label: statusLabel(
+        store.preparation.status,
+        store.phase,
+        store.result?.outcome,
+      ),
+    }),
+    (shown) => shown.label,
+  );
   import { returnToLiveIndicator } from "../history/returnToLive";
   import { announcements } from "../presentation/announcer.svelte";
   import {
@@ -671,12 +688,12 @@
       aria-label="Measurement workspace"
       tabindex="-1"
     >
-      <GaugePanel /><ThroughputChart />
+      <GaugePanel {status} /><ThroughputChart />
     </section>
   {/if}
 
   <footer class="status">
-    <StatusBar />
+    <StatusBar {status} />
     <ShortcutHints />
   </footer>
 

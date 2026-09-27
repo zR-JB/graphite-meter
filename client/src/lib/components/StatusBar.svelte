@@ -3,8 +3,11 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
-  import { statusLabel } from "../presentation/vocabulary";
-  import { handoff } from "../presentation/motion.svelte";
+  import type { Handoff } from "../presentation/motion.svelte";
+  import type { Phase } from "../runner/contract";
+
+  let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
+    $props();
 
   const elapsedMs = $derived(
     store.result?.durationMs ?? store.runClock.current,
@@ -16,9 +19,6 @@
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
   const { status } = $derived(store.preparation);
   const refused = $derived(status === "blocked" || status === "failed");
-  const label = handoff(() =>
-    statusLabel(status, store.phase, store.result?.outcome),
-  );
 </script>
 
 {#if refused}
@@ -26,10 +26,10 @@
     class="label"
     style:opacity={label.opacity}
     {@attach tooltip(() => store.startError || store.startBlocker)}
-    >{label.shown}</span
+    >{label.shown.label}</span
   >
 {:else}
-  <span class="label" style:opacity={label.opacity}>{label.shown}</span>
+  <span class="label" style:opacity={label.opacity}>{label.shown.label}</span>
 {/if}
 <span
   class="elapsed"
