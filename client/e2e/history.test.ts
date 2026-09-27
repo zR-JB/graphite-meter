@@ -332,6 +332,23 @@ test("History never waits on another version's connection and never changes its 
   await page.evaluate(() => (location.hash = "#/history"));
   await expect(refusal).toBeVisible();
   await page.evaluate(() => (window as any).older.close());
+  // An open cannot be cancelled: read once History's queued upgrade has been refused and left version 1.
+  await expect
+    .poll(
+      async () => {
+        const { databases, opens } = await page.storage();
+        const settled = /^(success|error)/;
+        const pending = opens.filter(
+          ({ events }) => !events.some((event) => settled.test(event)),
+        );
+        return { databases, pending };
+      },
+      { timeout: 10_000 },
+    )
+    .toEqual({
+      databases: [{ name: HISTORY_DB.name, version: 1 }],
+      pending: [],
+    });
   expect(await stored(page)).toEqual(before);
 });
 
