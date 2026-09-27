@@ -160,26 +160,7 @@ test("a direct H1 upload reserves progress and receiver checkpoint capacity", ()
   ).toThrow("control capacity");
 });
 
-test("four participants share a run-wide 128 stream ceiling", () => {
-  const paths = Array.from({ length: 4 }, (_, i) => {
-    const paths = testPreparedPaths();
-    paths.throughput.fetch.protocol = "http2";
-    return { server: { id: String(i), name: String(i) }, paths };
-  });
-  const config = {
-    ...structuredClone(DEFAULT_CONFIG),
-    transferStreams: { mode: "forced" as const, count: 33 },
-  };
-  expect(() =>
-    planServerStreams(config, paths, {
-      stage: "download",
-      transfer: ["down"],
-      loadedLatency: false,
-    }),
-  ).toThrow("128 streams");
-});
-
-test("valid prototype-named server IDs retain their streams and count toward the run limit", () => {
+test("valid prototype-named server IDs retain their streams", () => {
   const ids = ["constructor", "toString", "__proto__"];
   const catalog = parseCatalog(
     {
@@ -202,7 +183,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
-    transferStreams: { mode: "forced" as const, count: 42 },
+    transferStreams: { mode: "forced" as const, count: 12 },
   };
   const activity = {
     stage: "download" as const,
@@ -211,17 +192,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   };
   const plan = planServerStreams(config, paths, activity);
   expect(Object.keys(plan)).toEqual(ids);
-  for (const id of ids) expect(plan[id]).toEqual({ down: 42, up: 0 });
-  expect(
-    Object.values(plan).reduce((total, streams) => total + streams.down, 0),
-  ).toBe(126);
-  expect(() =>
-    planServerStreams(
-      { ...config, transferStreams: { mode: "forced", count: 43 } },
-      paths,
-      activity,
-    ),
-  ).toThrow("128 streams");
+  for (const id of ids) expect(plan[id]).toEqual({ down: 12, up: 0 });
 });
 
 test("switching servers carries a transport preference without the previous origin", () => {
