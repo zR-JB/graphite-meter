@@ -117,7 +117,14 @@ pub async fn resolve(host: &str, port: u16) -> io::Result<Vec<SocketAddr>> {
         .collect())
 }
 
+/// Go's dialer gives up after 10 s; a second less keeps the client's 10 s control deadline from ending the dial.
 async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
+    tokio::time::timeout(Duration::from_secs(9), dial(host, port))
+        .await
+        .unwrap_or_else(|_| Err(unreachable(io::ErrorKind::TimedOut.into())))
+}
+
+async fn dial(host: &str, port: u16) -> io::Result<TcpStream> {
     let addresses = resolve(host, port).await?;
     let (v6, v4): (Vec<_>, Vec<_>) = addresses.into_iter().partition(SocketAddr::is_ipv6);
     let mut ordered = Vec::with_capacity(v6.len() + v4.len());

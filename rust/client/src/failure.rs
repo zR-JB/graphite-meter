@@ -202,4 +202,23 @@ mod tests {
         assert_eq!(reason(&plain, true), FailureReason::PreparationFailed);
         assert_eq!(reason(&plain, false), FailureReason::ConnectionLost);
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_silent_server_reads_as_unreachable() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let socket = tokio::net::TcpSocket::new_v4()?;
+        socket.bind("127.0.0.1:0".parse()?)?;
+        // A full accept queue drops further handshakes, as a blackholed server does.
+        let listener = socket.listen(0)?;
+        let address = listener.local_addr()?;
+        let _queued = tokio::net::TcpStream::connect(address).await?;
+        let http = crate::net::Http::new(false)?;
+        let error = http
+            .discover(&format!("http://{address}"))
+            .await
+            .err()
+            .ok_or("discovery succeeded")?;
+        assert_eq!(text(error.as_ref()), "Server could not be reached");
+        Ok(())
+    }
 }
