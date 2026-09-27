@@ -140,17 +140,10 @@ func (c ServerCatalog) ConnectSources() []string {
 			out = append(out, "http://"+host+":*", "https://"+host+":*", "ws://"+host+":*", "wss://"+host+":*")
 		}
 		for _, raw := range s.AdditionalOrigins {
-			if BrowserConnectSourceSupported(raw) {
-				out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
-			}
+			out = append(out, raw, strings.Replace(raw, "http", "ws", 1))
 		}
 	}
 	return out
-}
-
-// BrowserConnectSourceSupported excludes IPv6 literals, which CSP host sources cannot express.
-func BrowserConnectSourceSupported(raw string) bool {
-	return !strings.Contains(raw, "://[")
 }
 
 // CatalogOrigin canonicalizes a catalogue origin, which servers.schema.json lets end in one slash.

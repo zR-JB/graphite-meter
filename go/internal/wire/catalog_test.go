@@ -3,13 +3,12 @@ package wire
 import (
 	"encoding/json/v2"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
-func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
+func TestCatalogConnectSources(t *testing.T) {
 	c := SingletonCatalog()
 	c.Servers = append(c.Servers,
 		ServerEntry{ID: "ipv6", Name: "IPv6", URL: "https://[2001:db8::1]",
@@ -21,9 +20,6 @@ func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	sources := c.ConnectSources()
-	if strings.Contains(strings.Join(sources, " "), "[") {
-		t.Fatalf("IPv6 literal leaked into CSP sources: %v", sources)
-	}
 	for _, source := range []string{"https://meter.example:*", "wss://meter.example:*", "https://bulk.example:7249",
 		"wss://bulk.example:7249"} {
 		if !slices.Contains(sources, source) {
@@ -32,7 +28,7 @@ func TestCatalogConnectSourcesKeepIPv6InDiscoveryOnly(t *testing.T) {
 	}
 	if !c.Servers[1].AllowsOrigin("https://[2001:db8::1]:7249") ||
 		!c.Servers[2].AllowsOrigin("https://[2001:db8::2]:7248") {
-		t.Fatal("browser CSP filtering altered the native discovery boundary")
+		t.Fatal("an IPv6 literal left the discovery boundary")
 	}
 }
 

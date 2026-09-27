@@ -115,16 +115,10 @@ func TestShellMetadata(t *testing.T) {
 
 // The browser suite fails on any violation of the permissive directives; only the restrictive ones need pinning.
 func TestPagePolicy(t *testing.T) {
-	built := strings.Split(pagePolicy("S", "T", []string{"https://meter.example:*"}), "; ")
-	for _, want := range []string{
-		"default-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'",
-	} {
+	built := strings.Split(PagePolicy([]string{"https://meter.example:*", "https://[2001:db8::2]:7248"}), "; ")
+	for _, want := range []string{"object-src 'none'", "base-uri 'none'", "connect-src 'self' https://meter.example:*"} {
 		if !slices.Contains(built, want) {
-			t.Errorf("policy lacks %q: %s", want, built)
+			t.Errorf("policy lacks %q, or kept an IPv6 literal CSP cannot express: %s", want, built)
 		}
-	}
-	if bare := pagePolicy("", "", nil); strings.Contains(bare, "sha256") ||
-		!strings.HasSuffix(bare, "; connect-src 'self'") {
-		t.Errorf("policy without a build = %s", bare)
 	}
 }

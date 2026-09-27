@@ -11,7 +11,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,7 +18,6 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/static"
-	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
 
 type counter int
@@ -71,9 +69,7 @@ func authModes(mode string) (password, oidc bool) {
 }
 
 func (s *Service) SetConnectOrigins(origins []string) {
-	s.pagePolicy = static.PagePolicy(slices.DeleteFunc(slices.Clone(origins), func(origin string) bool {
-		return !wire.BrowserConnectSourceSupported(origin)
-	}))
+	s.pagePolicy = static.PagePolicy(origins)
 }
 
 // PagePolicy is the client shell's policy under authentication, or "" in public mode.
