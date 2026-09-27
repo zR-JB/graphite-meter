@@ -163,7 +163,7 @@
   --phase-warmup: light-dark(#70767d, #858c94);
   --phase-latency: light-dark(#4b6076, #8ba3ba);
   --phase-download: light-dark(#2f717a, #6db0b8);
-  --phase-upload: light-dark(#85683a, #bda36c);
+  --phase-upload: light-dark(#7a5f34, #bda36c);
   --phase-bidirectional: light-dark(#6d5e94, #a695c8);
   --phase-complete: light-dark(#445f79, #7590a5);
 
