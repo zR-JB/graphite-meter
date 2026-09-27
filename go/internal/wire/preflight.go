@@ -145,7 +145,7 @@ func targetOrigin(raw string) (*url.URL, error) {
 func (p Preflight) Validate() error {
 	if len(p.Server.Name) > 256 || len(p.Server.Location) > 256 || len(p.EngineVersion) > 256 ||
 		len(p.Generation) == 0 || len(p.Generation) > 256 ||
-		!SafeText(p.Server.Name+p.Server.Location+p.EngineVersion+p.Generation) {
+		!SafeText(p.Server.Name, p.Server.Location, p.EngineVersion, p.Generation) {
 		return fmt.Errorf("invalid discovery metadata")
 	}
 	throughput, latency := p.Capabilities.ThroughputTargets, p.Capabilities.LatencyTargets

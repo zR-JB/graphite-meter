@@ -38,3 +38,16 @@ func TestUploadRefusalDetailIsCleanedAtDecode(t *testing.T) {
 		t.Fatalf("refusal = %+v, %v", event, err)
 	}
 }
+
+// A C1 control split across fields is valid UTF-8 only when concatenated; each field renders on its own.
+func TestServerTextIsValidatedPerField(t *testing.T) {
+	t.Parallel()
+	name, location := "A\xe2", "\x9b\x80B"
+	preflight := Preflight{Server: ServerInfo{Name: name, Location: location}, Generation: "a",
+		Capabilities: Capabilities{ThroughputTargets: []ThroughputTarget{}, LatencyTargets: []LatencyTarget{}}}
+	catalog := SingletonCatalog()
+	catalog.Servers[0].Name, catalog.Servers[0].Location = name, location
+	if preflight.Validate() == nil || catalog.Validate() == nil {
+		t.Fatal("accepted a control split across server name and location")
+	}
+}
