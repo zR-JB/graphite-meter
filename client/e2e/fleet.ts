@@ -90,6 +90,10 @@ export async function openSettings(page: Page) {
 export async function closeSettings(page: Page) {
   const panel = page.locator('[aria-label="Settings"]');
   await panel.getByRole("button", { name: "Close Settings" }).click();
+  // The close transition must finish, or a reopen sees a panel that is still open.
+  await expect
+    .poll(() => panel.all((els) => els.every((el) => el.inert)))
+    .toBe(true);
 }
 
 export async function ready(page: Page) {
