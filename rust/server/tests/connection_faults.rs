@@ -353,21 +353,16 @@ async fn quic_retry_only_under_load() -> Result<(), TestError> {
         },
     )
     .await?;
-    let one_way = Duration::from_millis(50);
-    let rtt = 2.0 * one_way.as_secs_f64();
     let client = quic_client(&tls, true)?;
     let mut held = Vec::new();
     for load in 0..3 {
-        let link = test_link::Link::udp(address, one_way).await?;
-        let started = tokio::time::Instant::now();
+        let link = test_link::Link::udp(address, Duration::ZERO).await?;
         let connection = client.connect(link.address, "localhost")?.await?;
-        let round_trips = started.elapsed().as_secs_f64() / rtt;
-        eprintln!("handshake with {load} held connections: {round_trips:.2} RTT");
-        if load < 2 {
-            assert!(round_trips < 1.5, "Retry below a quarter of the limit");
-        } else {
-            assert!(round_trips >= 1.8, "no Retry at a quarter of the limit");
-        }
+        assert_eq!(
+            link.retries() > 0,
+            load >= 2,
+            "Retry only from a quarter of the limit"
+        );
         held.push((link, connection));
     }
     stop.send(()).ok();

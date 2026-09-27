@@ -832,6 +832,28 @@ mod tests {
             })
     }
 
+    async fn settled(memory: &super::MemoryBudget, peers: &[&quinn::Connection]) -> usize {
+        let activity = || {
+            let datagrams = peers.iter().map(|peer| {
+                let stats = peer.stats();
+                (stats.udp_tx.datagrams, stats.udp_rx.datagrams)
+            });
+            (memory.available(), datagrams.collect::<Vec<_>>())
+        };
+        let mut last = activity();
+        loop {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            for _ in 0..16 {
+                tokio::task::yield_now().await;
+            }
+            let now = activity();
+            if now == last {
+                return now.0;
+            }
+            last = now;
+        }
+    }
+
     async fn download(
         quic: quinn::Connection,
         bytes: u64,
@@ -1054,14 +1076,14 @@ mod tests {
             let (quic, accepted) = connect().await;
             let (active, active_server) = connect().await;
             let admitted_active = server.receive_credit(active_server.clone()).admit();
-            let idle = server.memory.available();
+            let idle = settled(&server.memory, &[&quic, &active]).await;
             let mut send = quic.open_uni().await.unwrap();
             let mut written = 0;
             while let Some(Ok(count)) = send.write(&[7; 16 * 1024]).now_or_never() {
                 written += count;
             }
             assert_eq!(written, RECEIVE_WINDOW_FLOOR as usize);
-            while idle - server.memory.available() < written {
+            while server.memory.available() + written > idle {
                 tokio::task::yield_now().await;
             }
             let charged = idle - server.memory.available();
@@ -1140,7 +1162,7 @@ mod tests {
             let floor = connection_floor(&server.config.limits);
             let filler = server
                 .memory
-                .lease(server.memory.available() - 4096)
+                .lease(settled(&server.memory, &[&requesting, &sibling]).await - 4096)
                 .unwrap();
             assert!(
                 download(requesting.clone(), 64 * 1024 * 1024)
@@ -1309,17 +1331,17 @@ mod tests {
             client_endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
                 quinn::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
             )));
-            let unloaded = crate::test_link::Link::udp(quic_address, Duration::from_millis(50))
+            let unloaded = crate::test_link::Link::udp(quic_address, Duration::ZERO)
                 .await
                 .unwrap();
-            let started = tokio::time::Instant::now();
             let quic = client_endpoint
                 .connect(unloaded.address, "localhost")
                 .unwrap()
                 .await
                 .unwrap();
-            assert!(
-                started.elapsed() < Duration::from_millis(150),
+            assert_eq!(
+                unloaded.retries(),
+                0,
                 "Retry below a quarter of the memory budget"
             );
             let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic))
@@ -1331,14 +1353,18 @@ mod tests {
                 .unwrap()
                 .await
                 .unwrap();
+            let admission_leases = 2 * floor + http_h2::BUFFER_BYTES as usize;
+            let refundable = server.memory.limit - server.memory.available() - admission_leases;
             let exhausted = server
                 .memory
-                .lease(server.memory.available() + 1 - floor.min(http_h2::BUFFER_BYTES as usize))
+                .lease(
+                    server.memory.available() + refundable + 1
+                        - floor.min(http_h2::BUFFER_BYTES as usize),
+                )
                 .unwrap();
-            let pressured = crate::test_link::Link::udp(quic_address, Duration::from_millis(50))
+            let pressured = crate::test_link::Link::udp(quic_address, Duration::ZERO)
                 .await
                 .unwrap();
-            let started = tokio::time::Instant::now();
             assert!(
                 client_endpoint
                     .connect(pressured.address, "localhost")
@@ -1347,7 +1373,7 @@ mod tests {
                     .is_err()
             );
             assert!(
-                started.elapsed() >= Duration::from_millis(180),
+                pressured.retries() > 0,
                 "no Retry under memory pressure below the connection threshold"
             );
             assert!(

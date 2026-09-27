@@ -1,5 +1,13 @@
 use bytes::Bytes;
-use std::{io, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    io,
+    net::SocketAddr,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
@@ -18,15 +26,22 @@ pub enum Fault {
     Reset,
 }
 
+const QUIC_RETRY_HEADER: u8 = 0xF0;
+
 pub struct Link {
     pub address: SocketAddr,
     fault: watch::Sender<Fault>,
+    retries: Arc<AtomicUsize>,
     _tasks: JoinSet<()>,
 }
 
 impl Link {
     pub fn inject(&self, fault: Fault) {
         self.fault.send_replace(fault);
+    }
+
+    pub fn retries(&self) -> usize {
+        self.retries.load(Ordering::Relaxed)
     }
 
     pub async fn tcp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
@@ -56,6 +71,7 @@ impl Link {
         Ok(Self {
             address,
             fault,
+            retries: Arc::default(),
             _tasks: tasks,
         })
     }
@@ -88,10 +104,14 @@ impl Link {
                 }
             }
         });
-        let (reader, open) = (back.clone(), faults.clone());
+        let retries = Arc::new(AtomicUsize::new(0));
+        let (reader, open, counted) = (back.clone(), faults.clone(), retries.clone());
         tasks.spawn(async move {
             let mut buffer = vec![0; 65536];
             while let Ok(count) = reader.recv(&mut buffer).await {
+                if buffer[0] & QUIC_RETRY_HEADER == QUIC_RETRY_HEADER {
+                    counted.fetch_add(1, Ordering::Relaxed);
+                }
                 let forward = *open.borrow() == Fault::None;
                 if forward {
                     let packet = Bytes::copy_from_slice(&buffer[..count]);
@@ -121,6 +141,7 @@ impl Link {
         Ok(Self {
             address,
             fault,
+            retries,
             _tasks: tasks,
         })
     }
