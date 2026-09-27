@@ -24,7 +24,12 @@
   const issue = $derived(
     issues.length > 1
       ? `${issues.length} measurement issues — details under the results`
-      : issues.map(({ server, text }) => `${server} · ${text}`).join(""),
+      : issues.map(({ stages, reason }) => `${stages}: ${reason}`).join(""),
+  );
+  const kicker = $derived(
+    issues.length === 1 && (store.serverDetails?.selection.length ?? 0) > 1
+      ? `Issue on ${issues[0].server}`
+      : "Issue",
   );
 
   // Only failures and issues: the status bar already names every phase.
@@ -45,8 +50,7 @@
     const added = issues.length > seenIssues;
     seenIssues = issues.length;
     if (phase === "idle") show(null);
-    else if (added)
-      show({ kicker: "Issue", message: issue, tone: STATUS_TONE.failed });
+    else if (added) show({ kicker, message: issue, tone: STATUS_TONE.failed });
     else if (phase === "error")
       show({
         kicker: phaseLabel(phase),
@@ -57,7 +61,7 @@
   $effect(() => () => clearTimeout(timer));
   const shown = $derived(stalled ? stall : toast);
   announceChanges(() => (stalled ? `${stall.kicker}: ${stall.message}` : ""));
-  announceChanges(() => issue);
+  announceChanges(() => issue && `${kicker}: ${issue}`);
 </script>
 
 <div
