@@ -17,8 +17,12 @@ inputs:
     description: Install frozen client dependencies
     required: false
     default: 'false'
+  rust:
+    description: Include the pinned Rust toolchain
+    required: false
+    default: 'false'
   cache:
-    description: Cache mise tools, Go modules and build results, and Bun packages
+    description: Cache mise tools, Go modules and build results, Bun packages, and Cargo downloads and dependency builds
     required: false
     default: 'true'
   staticcheck:
@@ -127,3 +131,27 @@ runs:
       if: inputs.client-deps == 'true'
       shell: bash
       run: cd client && bun install --frozen-lockfile --prefer-offline
+
+    - name: Install pinned experimental Rust toolchain
+      if: inputs.rust == 'true'
+      shell: bash
+      run: |
+        version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+        rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
+
+    - name: Cache Cargo downloads and dependency builds
+      if: inputs.rust == 'true' && inputs.cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          rust/target
+        key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-${{ hashFiles('rust/Cargo.lock') }}
+        restore-keys: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml') }}-
+
+    - name: Drop cached builds of changed Cargo packages
+      if: inputs.rust == 'true' && inputs.cache == 'true'
+      shell: bash
+      run: python3 scripts/ci/cargo_prune.py
