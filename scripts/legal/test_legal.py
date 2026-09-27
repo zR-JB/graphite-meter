@@ -205,7 +205,7 @@ class LegalTests(unittest.TestCase):
             return [f"{os}/{arch}" for scope, os, arch in targets if scope == component]
 
         self.assertEqual(built("server"), ["linux/amd64", "linux/arm64"])
-        self.assertEqual(built("tui"), (ROOT / "scripts/tui-targets.txt").read_text().splitlines())
+        self.assertEqual(built("tui"), [line.split()[0] for line in (ROOT / "scripts/tui-targets.txt").read_text().splitlines()])
         entries = [Provenance("go", "replacement", "v1", artifactScopes=["server/browser"])]
         self.assertFalse(has_go_replacement_provenance([], "replacement", "v1", "server"))
         self.assertTrue(has_go_replacement_provenance(entries, "replacement", "v1", "server"))

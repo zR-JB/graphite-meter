@@ -473,5 +473,6 @@ usage = 'arg "[version]" default="development"'
 run = '''
 #!/usr/bin/env sh
 set -eu
-python3 scripts/package-rust.py "$usage_version" --output "${RELEASE_DIST:-go/dist}" --supplement "${GM_RUST_PLATFORM_SUPPLEMENT:-legal/rust-platform-linux-gnu.json}"
+python3 scripts/package-rust.py "$usage_version" --platform linux/amd64 --output "${RELEASE_DIST:-go/dist}" \
+  --supplement "${GM_RUST_PLATFORM_SUPPLEMENT:-legal/rust-platform-linux-gnu.json}"
 '''

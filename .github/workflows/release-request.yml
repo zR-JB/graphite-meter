@@ -45,6 +45,10 @@ jobs:
     if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      sha: ${{ steps.request.outputs.sha }}
+      version: ${{ steps.request.outputs.version }}
+      rust_tui: ${{ steps.request.outputs.rust_tui }}
     steps:
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,8 +103,8 @@ jobs:
           VERSION= mise run legal-check
           mise run legal-generate
 
-      # A prerelease never checks PR files out here: BuildKit fetches that exact
-      # commit remotely and receives no GitHub credential.
+      # This job never checks PR files out: BuildKit fetches that exact commit remotely,
+      # and the macOS job builds it, both without a GitHub credential.
       - id: source
         name: Resolve the OCI build context
         env:
@@ -169,12 +173,11 @@ jobs:
         env:
           VERSION: ${{ steps.request.outputs.version }}
           RELEASE_DIST: ${{ runner.temp }}/release-assets
-          RUST: ${{ steps.request.outputs.rust }}
         run: |
           mise run release-artifacts "$VERSION"
           python3 scripts/ci/verify_release_assets.py "$VERSION"
 
-      - name: Build experimental Rust AMD64 OCI archive
+      - name: Build experimental Rust linux/amd64 + linux/arm64 OCI archive
         if: steps.request.outputs.rust_server == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
@@ -182,7 +185,7 @@ jobs:
         with:
           context: ${{ steps.source.outputs.context }}
           file: container/Dockerfile.rust
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           outputs: type=oci,dest=${{ runner.temp }}/release-request/graphite-meter-rust.oci.tar
           no-cache: true
           provenance: mode=max
@@ -197,27 +200,27 @@ jobs:
             GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
             GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
 
-      - name: Export prerelease Rust source from the exact remote commit
-        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust_server == 'true'
+      - name: Export experimental Rust server sources from the exact commit
+        if: steps.request.outputs.rust_server == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
         with:
           context: ${{ steps.source.outputs.context }}
           file: container/Dockerfile.rust
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           target: server-artifacts
-          outputs: type=local,dest=${{ runner.temp }}/rust-source
+          outputs: type=local,dest=${{ runner.temp }}/rust-export/server
           no-cache: true
           provenance: mode=max
           github-token: ''
           build-args: |
             VERSION=${{ steps.request.outputs.version }}
             GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
-            GM_CLIENT_VALIDATE=1
+            GM_CLIENT_VALIDATE=${{ steps.request.outputs.client_validate }}
 
-      - name: Export prerelease Rust TUI from the exact remote commit
-        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust_tui == 'true'
+      - name: Export experimental Rust Linux and Windows TUIs from the exact commit
+        if: steps.request.outputs.rust_tui == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         env:
           DOCKER_BUILD_RECORD_UPLOAD: 'false'
@@ -226,7 +229,7 @@ jobs:
           file: container/Dockerfile.rust
           platforms: linux/amd64
           target: tui-artifacts
-          outputs: type=local,dest=${{ runner.temp }}/rust-tui
+          outputs: type=local,dest=${{ runner.temp }}/rust-export/tui
           no-cache: true
           provenance: mode=max
           github-token: ''
@@ -234,30 +237,19 @@ jobs:
             VERSION=${{ steps.request.outputs.version }}
             GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}
 
-      - name: Stage prerelease Rust source offer
-        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust != 'none'
+      - name: Stage experimental Rust artifacts
+        if: steps.request.outputs.rust != 'none'
         env:
-          VERSION: ${{ steps.request.outputs.version }}
-          SOURCE_DIR: ${{ runner.temp }}/rust-source
+          EXPORT: ${{ runner.temp }}/rust-export
           DIST: ${{ runner.temp }}/rust-assets
-          TUI_DIR: ${{ runner.temp }}/rust-tui
-          RUST_SERVER: ${{ steps.request.outputs.rust_server }}
-          RUST_TUI: ${{ steps.request.outputs.rust_tui }}
         run: |
           mkdir -p "$DIST"
-          name="graphite-meter-server_${VERSION}_linux_amd64_rust_third-party-source.tar.gz"
-          if [ "$RUST_SERVER" = true ]; then
-            cp "$SOURCE_DIR/THIRD_PARTY_SOURCE.tar.gz" "$DIST/$name"
-          fi
-          if [ "$RUST_TUI" = true ]; then
-            base="graphite-meter-client_${VERSION}_linux_amd64_rust"
-            cp "$TUI_DIR/$base.tar.gz" "$TUI_DIR/${base}_third-party-source.tar.gz" "$DIST/"
-          fi
+          find "$EXPORT" -type f -exec cp {} "$DIST/" \;
           cd "$DIST"
-          sha256sum ./*.tar.gz | sed 's@  ./@  @' >checksums.txt
+          sha256sum ./* | sed 's@  ./@  @' >checksums.txt
 
-      - name: Upload untrusted prerelease Rust source offer
-        if: steps.request.outputs.stable != 'true' && steps.request.outputs.rust != 'none'
+      - name: Upload untrusted experimental Rust artifacts
+        if: steps.request.outputs.rust != 'none'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-rust-assets-${{ github.run_id }}
@@ -293,3 +285,45 @@ jobs:
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+
+  darwin:
+    name: Build untrusted Rust macOS TUIs
+    needs: build
+    if: needs.build.outputs.rust_tui == 'true'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Checkout the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+          persist-credentials: false
+
+      - name: Set up pinned mise and Python
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        env:
+          MISE_AUTO_INSTALL: '0'
+        with:
+          version: 2026.9.14
+          install_args: --locked python
+          cache: false
+
+      - name: Build the macOS TUIs with reviewed notices and matching source
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          DIST: ${{ runner.temp }}/rust-darwin
+          DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+        run: |
+          (cd rust && rustup toolchain install)
+          python3 scripts/package-rust.py "$VERSION" --output "$DIST" --supplement legal/rust-platform-macos.json \
+            --platform $(awk '$1 ~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
+          cd "$DIST"
+          shasum -a 256 ./* | sed 's@  ./@  @' >checksums.txt
+
+      - name: Upload untrusted macOS TUIs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rust-darwin-${{ github.run_id }}
+          path: ${{ runner.temp }}/rust-darwin/
+          if-no-files-found: error
+          retention-days: 35

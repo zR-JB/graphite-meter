@@ -19,7 +19,7 @@ do not establish real-WAN, packet-loss, many-user, or sustained-memory superiori
 The release server embeds one reviewed third-party notice payload for both
 `--legal` and the browser About endpoint.
 The packaged TUI keeps its reviewed notice compressed inside the executable and
-expands it only for `--legal`; the archive also carries the readable `LEGAL.txt`.
+expands it only for `--legal`; the archive also carries it as `THIRD_PARTY_NOTICES.txt`.
 
 Run `mise run rust-client-run -- --url https://your-server` to open the experimental TUI.
 Start test is focused initially. Tab/Shift-Tab changes focus, arrows adjust
@@ -34,10 +34,11 @@ or `dark` to override the background choice. `NO_COLOR` disables color.
 The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` creates an experimental Linux amd64 GNU
-archive with reviewed dependency notices and matching source. Release automation
-can opt into the additional TUI archive. Stable release requests can also opt into
-a separate Linux amd64 server image tagged `VERSION-rust`, with a matching source
-offer. Go remains the release default; Rust prerelease integration remains gated.
+archive with reviewed dependency notices and matching source. Release requests can
+opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
+with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
+`VERSION-rust`. Every binary has a matching source offer. Go remains the release
+default; Rust prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`. The port remains
 blocked from merging until a human decides its design.
 

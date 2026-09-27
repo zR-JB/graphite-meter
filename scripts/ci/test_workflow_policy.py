@@ -36,6 +36,9 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "BuildKit frontend"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
+    (W + "ci.yml", "        with: {persist-credentials: false}\n",
+     "        with:\n          ref: ${{ needs.build.outputs.sha }}\n          persist-credentials: false\n",
+     "triggering github.sha"),
     (W + "release.yml", "cache: false", "cache: true", "cache: false"),
     (SETUP, "install_args:", "args:", "install_args"),
     (REQUEST, "cache: 'false'", "cache: 'true'", "disable every cache"),
@@ -126,7 +129,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
     (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
      "GM_CLIENT_REVISION"),
-    (REQUEST, "/rust-tui\n          no-cache: true\n", "/rust-tui\n", "every image build must declare no-cache"),
+    (REQUEST, "/rust-export/tui\n          no-cache: true\n", "/rust-export/tui\n", "every image build must declare no-cache"),
 )
 
 

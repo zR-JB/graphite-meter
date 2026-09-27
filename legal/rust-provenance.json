@@ -24,5 +24,36 @@
       }
     ],
     "reviewNotes": "Candidate only. The crate and exact upstream commit omit license files. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT OR Apache-2.0. LICENSE-APACHE was fetched from https://www.apache.org/licenses/LICENSE-2.0.txt. Proposed selection: Apache-2.0. Source declaration: https://github.com/Eolu/enum-assoc/blob/351b306939b150601451df752a183b077b0de85a/Cargo.toml. No upstream NOTICE file exists at that revision."
+  },
+  {
+    "ecosystem": "cargo",
+    "name": "winapi-x86_64-pc-windows-gnu",
+    "version": "0.4.0",
+    "upstream": "registry+https://github.com/rust-lang/crates.io-index",
+    "upstreamRevision": "",
+    "licenseExpression": "MIT/Apache-2.0",
+    "modified": false,
+    "artifactScopes": [
+      "rust"
+    ],
+    "localPaths": [],
+    "localLegalFiles": [
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/Cargo.toml.upstream",
+        "sha256": "d158846cdb1259d606bfbeb050e386484cb18f14db41478568114eddb76ec43e",
+        "kind": "notice"
+      },
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/LICENSE-APACHE",
+        "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+        "kind": "license"
+      },
+      {
+        "name": "legal/manual/rust/winapi-x86_64-pc-windows-gnu/LICENSE-MIT",
+        "sha256": "ce7bc3499fee93d5022ef430d5e4201e79a6d9154f3974e42f41349f0569e09b",
+        "kind": "license"
+      }
+    ],
+    "reviewNotes": "The crate and its package omit license files and VCS metadata. Cargo.toml.upstream is byte-identical to the published Cargo.toml.orig and declares MIT/Apache-2.0 for https://github.com/retep998/winapi-rs. LICENSE-MIT and LICENSE-APACHE are the repository texts packaged in winapi 0.3.9 (revision 796a8e6c2971dc2ff1bcff166e6671284f9b5b6b), the crate that depends on this one. Selection: MIT."
   }
 ]

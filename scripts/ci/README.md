@@ -38,7 +38,9 @@ deployment when the Release run asks.
    stable build checks the committed legal outputs, stamps the version and
    builds the native archives, the third-party source archive and the OCI
    image from main; a prerelease builds only the image, which BuildKit fetches
-   as the exact remote commit without a token.
+   as the exact remote commit without a token. The `rust` input adds the
+   experimental Rust image and archives, built the same way, and a macOS job
+   that builds the macOS archives from the validated commit without a token.
 2. **Trusted verification.** `release.yml` runs main's tooling on
    `workflow_run` for main dispatches only and never executes the requested
    source. It binds `request.json` to the run title, the owner, the first

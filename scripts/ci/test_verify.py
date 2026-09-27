@@ -117,14 +117,14 @@ class ReleaseAssetTests(unittest.TestCase):
 
     def test_tui_archives_follow_targets_and_require_the_binary(self) -> None:
         targets = self.dist / "targets.txt"
-        targets.write_text("linux/amd64\nwindows/amd64\n")
+        targets.write_text("linux/amd64 x86_64-unknown-linux-gnu\nwindows/amd64 x86_64-pc-windows-gnu\n")
         linux = "graphite-meter-client_1.2.3_linux_amd64"
         windows = "graphite-meter-client_1.2.3_windows_amd64"
         self.assertEqual(tui_archives("1.2.3", targets), {
             f"{linux}.tar.gz": (linux, "graphite-meter-client"),
             f"{windows}.zip": (windows, "graphite-meter-client.exe"),
         })
-        targets.write_text("linux/amd64\n")
+        targets.write_text("linux/amd64 x86_64-unknown-linux-gnu\n")
         legal = ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.txt", "SOURCE.txt")
         write_tar(self.dist / f"{linux}.tar.gz", {f"{linux}/{name}": b"x" for name in legal})
         with self.assertRaisesRegex(ControlPlaneError, "graphite-meter-client"):

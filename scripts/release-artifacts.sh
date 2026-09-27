@@ -10,7 +10,7 @@ LEGAL_THIRD_PARTY_SOURCE_OUT="$dist/graphite-meter_${version}_third-party-source
     VERSION=$version mise run _legal-run third-party-source-bundle
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
-while IFS=/ read -r goos goarch; do
+while IFS='/ ' read -r goos goarch _; do
     [ -n "$goos" ] || continue
     base="graphite-meter-client_${version}_${goos}_${goarch}"
     binary=graphite-meter-client
@@ -26,20 +26,5 @@ while IFS=/ read -r goos goarch; do
         *) tar -czf "$dist/$base.tar.gz" -C "$stage" "$base" ;;
     esac
 done < scripts/tui-targets.txt
-case ${RUST:-none} in
-    none) ;;
-    server|tui|both)
-        if [ "$RUST" != server ]; then
-            python3 scripts/package-rust.py "$version" --container --output "$dist"
-        fi
-        if [ "$RUST" != tui ]; then
-            docker buildx build --no-cache --platform linux/amd64 --target server-artifacts \
-                -f container/Dockerfile.rust --build-arg VERSION="$version" \
-                --output "type=local,dest=$stage/rust-server" .
-            cp "$stage/rust-server/THIRD_PARTY_SOURCE.tar.gz" \
-                "$dist/graphite-meter-server_${version}_linux_amd64_rust_third-party-source.tar.gz"
-        fi ;;
-    *) echo "invalid Rust release selection" >&2; exit 1 ;;
-esac
 cd "$dist"
 find . -maxdepth 1 -type f ! -name checksums.txt -printf '%f\n' | sort | xargs sha256sum > checksums.txt

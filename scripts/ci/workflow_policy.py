@@ -86,6 +86,7 @@ CONTEXT = {
         "RUST": "needs.verify.outputs.rust",
     },
 }
+CHECKOUT_REFS = {"workflows/release-request.yml": ("github.sha", "needs.build.outputs.sha")}
 IMAGE_BUILD = (
     "no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n",
     "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
@@ -137,8 +138,9 @@ def check_actions(root: Path) -> None:
             fail(f"{name}: run scripts must read expressions through env, not interpolate them")
         for step in STEP.split(text):
             if "uses: actions/checkout@" in step:
-                if re.search(r"\bref: (?!\$\{\{ github\.sha \}\}$)", step, re.M):
-                    fail(f"{name}: checkout may only select the triggering github.sha")
+                refs = {f"${{{{ {ref} }}}}" for ref in CHECKOUT_REFS.get(name, ("github.sha",))}
+                if set(re.findall(r"(?m)\bref: (.*)$", step)) - refs:
+                    fail(f"{name}: checkout may only select the triggering github.sha or the commit release.py validated")
             if "uses: jdx/mise-action@" in step:
                 required = [mise, "install_args: --locked ", "cache:", "MISE_AUTO_INSTALL: '0'"]
                 if name.startswith("workflows/"):

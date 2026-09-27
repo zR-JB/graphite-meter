@@ -1,10 +1,9 @@
 # Experimental only; container/Dockerfile remains the default Go build.
 ARG VERSION=0.0.0-dev
-
-FROM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS python
-FROM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS rust-build
 ARG TARGETARCH
-RUN test "$TARGETARCH" = amd64
+
+FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS python
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS rust-amd64
 COPY --from=python /usr/local /usr/local
 ENV LD_LIBRARY_PATH=/usr/local/lib
 WORKDIR /src
@@ -14,17 +13,27 @@ COPY legal/ legal/
 COPY rust/ rust/
 COPY api/ api/
 COPY go/internal/auth/assets/ go/internal/auth/assets/
-RUN python3 --version && cargo +1.98.1 --version
 
-FROM rust-build AS tui-build
+FROM rust-amd64 AS rust-arm64
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu=4:12.2.0-3 libc6-dev-arm64-cross=2.36-8cross1 \
+    && rm -rf /var/lib/apt/lists/* && rustup target add aarch64-unknown-linux-gnu
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+
+# Apple's SDK is licensed for Apple hardware only; the release workflow builds macOS natively.
+FROM rust-arm64 AS tui-build
 ARG VERSION
-RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist \
-    --supplement legal/rust-platform-debian-bookworm.json
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
+    && rm -rf /var/lib/apt/lists/* && rustup target add x86_64-pc-windows-gnu
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
+RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
+    --platform $(awk '$1 !~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
 
 FROM scratch AS tui-artifacts
 COPY --from=tui-build /src/dist/ /
 
-FROM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS browser
+FROM --platform=$BUILDPLATFORM docker.io/oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS browser
 ARG VERSION
 ARG GM_CLIENT_REVISION=source
 ARG GM_CLIENT_VALIDATE=1
@@ -41,8 +50,9 @@ COPY api/ /src/api/
 COPY go/internal/auth/assets/ /src/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
-FROM rust-build AS server-build
+FROM rust-${TARGETARCH} AS server-build
 ARG VERSION
+ARG TARGETARCH
 ARG PROFILE=release
 ENV GM_ENGINE_VERSION=${VERSION}-rust \
     GM_RUST_ASSET_DIR=/src/client/dist
@@ -51,26 +61,29 @@ COPY --from=browser /src/client/ /src/client/
 # Keep the same paths so the legal scan reads the exact bundled packages.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
-RUN python3 -m scripts.legal.rust --package graphite-meter-server \
-    --target x86_64-unknown-linux-gnu --profile "$PROFILE" --out /src/rust/target/server-notices \
-    --reviews legal/rust-reviewed-components.json \
-    --supplement legal/rust-platform-debian-bookworm.json \
-    --browser-scan /tmp/browser-modules.json
-RUN cp "rust/target/x86_64-unknown-linux-gnu/$PROFILE/graphite-meter-server" /graphite-meter \
-    && /graphite-meter --legal > /tmp/embedded-notices.txt \
-    && cmp /tmp/embedded-notices.txt rust/target/server-notices/LEGAL.txt
+RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+    && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
+        --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
+        --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \
+    && cp "rust/target/$target/$PROFILE/graphite-meter-server" /graphite-meter \
+    && printf 'Graphite Meter source: https://github.com/zR-JB/graphite-meter\nMatching release: v%s\nDependency source archive: %s\n' \
+        "$VERSION" "graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz" >/SOURCE.txt
 
 # Export matching source separately for the GitHub release; it is not runtime data.
 FROM scratch AS server-e2e
 COPY --from=server-build /graphite-meter /graphite-meter-server
 
 FROM scratch AS server-artifacts
-COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz /
-COPY --from=server-build /src/rust/target/server-notices/inventory.json /
+ARG VERSION
+ARG TARGETARCH
+COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz \
+    /graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz
 
 # The GNU build needs libc and libgcc; the standard Rust runtime includes CA roots.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97 AS server
 COPY --from=server-build /graphite-meter /graphite-meter
 COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
+COPY --from=server-build /src/rust/target/server-notices/LEGAL.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
 EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
 ENTRYPOINT ["/graphite-meter"]

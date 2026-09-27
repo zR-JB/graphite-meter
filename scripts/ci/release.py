@@ -68,6 +68,10 @@ class Release:
         return self.rust in ("server", "both")
 
     @property
+    def rust_tui(self) -> bool:
+        return self.rust in ("tui", "both")
+
+    @property
     def stable(self) -> bool:
         return self.pr == 0
 
@@ -82,6 +86,17 @@ def assets_sha256(directory: Path) -> str:
     exact_files(directory, {entry.name for entry in entries})
     listing = "".join(f"{entry.name}\t{gh.file_sha256(entry)}\n" for entry in entries)
     return hashlib.sha256(listing.encode()).hexdigest()
+
+
+def merge(source: Path, destination: Path) -> set[str]:
+    names = verify_release_assets.verify_checksums(source)
+    verify_release_assets.verify_release_file_set(source, names)
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        if (destination / name).exists():
+            gh.fail(f"{name} arrives in more than one artifact")
+        shutil.copyfile(source / name, destination / name)
+    return names
 
 
 def parse_release(tag: str, sha: str, pr: int, rust: str = "none") -> Release:
@@ -191,7 +206,7 @@ def command_prepare() -> None:
         stable=str(release.stable).lower(), remote_sha="" if release.stable else release.sha,
         client_validate="0" if release.stable else "1", rust=release.rust,
         rust_server=str(release.rust_server).lower(),
-        rust_tui=str(release.rust in ("tui", "both")).lower(),
+        rust_tui=str(release.rust_tui).lower(),
     )
 
 
@@ -226,8 +241,10 @@ def verify_request(request_dir: Path) -> tuple[Release, bool]:
     artifacts = {candidate.name: OCI_LIMIT * (2 if release.rust_server else 1) + 1024 * 1024}
     if release.stable:
         artifacts[f"release-assets-{run_id}"] = ASSETS_LIMIT
-    elif release.rust != "none":
+    if release.rust != "none":
         artifacts[f"release-rust-assets-{run_id}"] = ASSETS_LIMIT
+    if release.rust_tui:
+        artifacts[f"release-rust-darwin-{run_id}"] = ASSETS_LIMIT
     require_dispatch_run(repository, env("REPOSITORY_OWNER"), publisher, run_id,
                          "release-request.yml", request_title(str(request["mode"]), release,
                                                               publisher), artifacts)
@@ -241,7 +258,8 @@ def command_verify() -> None:
     release, publish = verify_request(request_dir)
     if publish:
         require_protected_environment(env("REPOSITORY"))
-    candidate = request_dir / f"release-request-{env_int('REQUEST_RUN_ID')}"
+    run_id, assets = env_int("REQUEST_RUN_ID"), request_dir / "verified-assets"
+    candidate = request_dir / f"release-request-{run_id}"
     if (candidate / OCI).stat().st_size > OCI_LIMIT:
         gh.fail(f"OCI archive exceeds {OCI_LIMIT} bytes")
     digest = gh.file_sha256(candidate / OCI)
@@ -257,30 +275,31 @@ def command_verify() -> None:
         checksum = (candidate / "graphite-meter-rust.oci.tar.sha256").read_text(encoding="utf-8")
         if checksum != f"{rust_digest}  graphite-meter-rust.oci.tar\n":
             gh.fail("Rust OCI archive does not match the request checksum")
-        rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive, {"amd64"})
-    assets = request_dir / f"release-assets-{env_int('REQUEST_RUN_ID')}"
+        rust_manifest = verify_oci.verify(release.version + "-rust", release.sha, rust_archive)
     if release.stable:
-        verify_release_assets.verify_artifacts(release.version, assets, release.rust)
-    if not release.stable and release.rust != "none":
-        rust_assets = request_dir / f"release-rust-assets-{env_int('REQUEST_RUN_ID')}"
-        checksummed = verify_release_assets.verify_checksums(rust_assets)
-        verify_release_assets.require_same("Rust source artifacts",
-            verify_release_assets.expected_rust_artifacts(release.version, release.rust), checksummed)
-        verify_release_assets.verify_release_file_set(rust_assets, checksummed)
-        lock_path = f"repos/{env('REPOSITORY')}/contents/rust/Cargo.lock?ref={release.sha}"
-        record = gh.expect_object(gh.api(lock_path), "Cargo lock")
-        content = gh.str_field(record, "content", "Cargo lock")
-        if record.get("encoding") != "base64" or len(content) > 4 * 1024 * 1024:
-            gh.fail("source Cargo lock is not bounded base64 content")
-        try:
-            lock = base64.b64decode(content.replace("\n", ""), validate=True)
-            lock_sha256 = hashlib.sha256(lock).hexdigest()
-        except binascii.Error as exc:
-            raise gh.ControlPlaneError("source Cargo lock is invalid base64") from exc
-        if release.rust_server:
-            verify_release_assets.verify_rust_server_source(rust_assets, release.version, lock_sha256)
-        if release.rust in ("tui", "both"):
-            verify_release_assets.verify_rust_client_archive(rust_assets, release.version, lock_sha256)
+        verify_release_assets.verify_artifacts(release.version, request_dir / f"release-assets-{run_id}")
+        merge(request_dir / f"release-assets-{run_id}", assets)
+    if release.rust != "none":
+        rust = merge(request_dir / f"release-rust-assets-{run_id}", assets)
+        if release.rust_tui:
+            rust |= merge(request_dir / f"release-rust-darwin-{run_id}", assets)
+        verify_release_assets.require_same(
+            "Rust artifacts", verify_release_assets.expected_rust_artifacts(release.version, release.rust), rust)
+        lock_sha256 = None
+        if not release.stable:
+            lock_path = f"repos/{env('REPOSITORY')}/contents/rust/Cargo.lock?ref={release.sha}"
+            record = gh.expect_object(gh.api(lock_path), "Cargo lock")
+            content = gh.str_field(record, "content", "Cargo lock")
+            if record.get("encoding") != "base64" or len(content) > 4 * 1024 * 1024:
+                gh.fail("source Cargo lock is not bounded base64 content")
+            try:
+                lock_sha256 = hashlib.sha256(base64.b64decode(content.replace("\n", ""), validate=True)).hexdigest()
+            except binascii.Error as exc:
+                raise gh.ControlPlaneError("source Cargo lock is invalid base64") from exc
+        verify_release_assets.verify_rust_artifacts(assets, release.version, release.rust, lock_sha256)
+    if assets.exists():
+        listing = "".join(f"{gh.file_sha256(path)}  {path.name}\n" for path in sorted(assets.iterdir()))
+        (assets / "checksums.txt").write_text(listing)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -290,16 +309,14 @@ def command_verify() -> None:
     if release.rust_server:
         (handoff / "rust-image").mkdir()
         shutil.copyfile(candidate / "graphite-meter-rust.oci.tar", handoff / "rust-image" / OCI)
-    if release.stable:
+    if assets.exists():
         shutil.copytree(assets, handoff / "assets")
-    elif release.rust != "none":
-        shutil.copytree(rust_assets, handoff / "assets")
     gh.append_output(
         tag=release.tag, version=release.version, stable=str(release.stable).lower(),
         publish=str(publish).lower(), sha=release.sha, main_sha=main, pr=release.pr or "",
         oci_sha256=digest, digest=manifest, rust=release.rust,
         rust_oci_sha256=rust_digest, rust_digest=rust_manifest,
-        assets_sha256=assets_sha256(handoff / "assets") if release.stable or release.rust != "none" else "",
+        assets_sha256=assets_sha256(handoff / "assets") if assets.exists() else "",
     )
     gh.append_summary(
         f"### {'Stable release' if release.stable else f'PR #{release.pr} prerelease'} verified"

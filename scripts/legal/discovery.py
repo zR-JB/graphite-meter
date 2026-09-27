@@ -42,7 +42,7 @@ def go_discovery_targets(repo: Path) -> list[tuple[str, str, str]]:
     targets: list[tuple[str, str, str]] = []
     seen: set[str] = set()
     for line in (repo / "scripts/tui-targets.txt").read_text().splitlines():
-        line = line.strip()
+        line = (line.split() or [""])[0]
         if not line or line.startswith("#"):
             continue
         parts = line.split("/")
