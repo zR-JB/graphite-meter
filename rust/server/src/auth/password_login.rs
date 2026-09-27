@@ -73,10 +73,7 @@ impl PasswordLogin {
         })
     }
 
-    pub async fn attempt(
-        &self,
-        attempt: PasswordAttempt<'_>,
-    ) -> Result<(String, SessionLease), LoginFailure> {
+    pub async fn attempt(&self, attempt: PasswordAttempt<'_>) -> Result<(String, SessionLease), LoginFailure> {
         if attempt.origin.is_empty() || attempt.origin != self.public_origin {
             return Err(LoginFailure::Failed);
         }
@@ -91,11 +88,7 @@ impl PasswordLogin {
         if !self.attempts.allow(Budget::Password, client) {
             return Err(LoginFailure::Throttled);
         }
-        let permit = self
-            .slots
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| LoginFailure::Busy)?;
+        let permit = self.slots.clone().try_acquire_owned().map_err(|_| LoginFailure::Busy)?;
         crate::password::validate_password(attempt.password).map_err(|_| LoginFailure::Password)?;
         let hash = self.hash.clone();
         let password = Zeroizing::new(attempt.password.to_owned());
@@ -113,12 +106,7 @@ impl PasswordLogin {
         // No login is issued by an abandoned worker: only this awaiting request
         // may commit the session and rotate its explicitly supplied predecessor.
         self.sessions
-            .create(
-                "local-operator",
-                "Local operator",
-                "local",
-                attempt.prior_session,
-            )
+            .create("local-operator", "Local operator", "local", attempt.prior_session)
             .map_err(|failure| match failure {
                 super::SessionError::Capacity => LoginFailure::Capacity,
                 super::SessionError::RandomUnavailable => LoginFailure::Busy,
@@ -126,11 +114,7 @@ impl PasswordLogin {
     }
 }
 
-pub(super) fn read_secret(
-    inline: &str,
-    path: &str,
-    limit: u64,
-) -> Result<Zeroizing<String>, ConfigError> {
+pub(super) fn read_secret(inline: &str, path: &str, limit: u64) -> Result<Zeroizing<String>, ConfigError> {
     if !inline.is_empty() {
         return Ok(Zeroizing::new(inline.trim().to_owned()));
     }
@@ -192,17 +176,11 @@ mod tests {
         for _ in 0..10 {
             let mut request = attempt(&wrong);
             request.origin = "https://attacker.example";
-            assert!(matches!(
-                login.attempt(request).await,
-                Err(LoginFailure::Failed)
-            ));
+            assert!(matches!(login.attempt(request).await, Err(LoginFailure::Failed)));
         }
         let mut request = attempt(&wrong);
         request.nonce_cookie = None;
-        assert!(matches!(
-            login.attempt(request).await,
-            Err(LoginFailure::Stale)
-        ));
+        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Stale)));
         let (token, _) = login.attempt(attempt(&password)).await.unwrap();
         assert!(login.sessions.lookup(&token).is_some());
     }
@@ -213,10 +191,7 @@ mod tests {
         let wrong = random_password();
         let _occupied = login.slots.clone().acquire_many_owned(2).await.unwrap();
         for _ in 0..5 {
-            assert!(matches!(
-                login.attempt(attempt(&wrong)).await,
-                Err(LoginFailure::Busy)
-            ));
+            assert!(matches!(login.attempt(attempt(&wrong)).await, Err(LoginFailure::Busy)));
         }
         assert!(matches!(
             login.attempt(attempt(&wrong)).await,
@@ -224,10 +199,7 @@ mod tests {
         ));
         let mut request = attempt(&wrong);
         request.client = None;
-        assert!(matches!(
-            login.attempt(request).await,
-            Err(LoginFailure::Throttled)
-        ));
+        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Throttled)));
     }
 
     #[tokio::test]
@@ -235,18 +207,11 @@ mod tests {
         let store = SessionStore::new();
         let (login, password) = verifier(store.clone());
         let wrong = random_password();
-        let (prior, old) = store
-            .create("local-operator", "Local operator", "local", None)
-            .unwrap();
-        let (_, sibling) = store
-            .create("local-operator", "Local operator", "local", None)
-            .unwrap();
+        let (prior, old) = store.create("local-operator", "Local operator", "local", None).unwrap();
+        let (_, sibling) = store.create("local-operator", "Local operator", "local", None).unwrap();
         let mut request = attempt(&wrong);
         request.prior_session = Some(&prior);
-        assert!(matches!(
-            login.attempt(request).await,
-            Err(LoginFailure::Password)
-        ));
+        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Password)));
         assert!(old.is_active());
         let mut request = attempt(&password);
         request.prior_session = Some(&prior);

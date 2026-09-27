@@ -11,10 +11,7 @@ fn password() -> Config {
     config.auth.mode = AuthMode::Password;
     config.auth.public_url = "https://meter.example".into();
     config.auth.password_hash = "test-hash".into();
-    config
-        .public
-        .throughput
-        .push("https://meter.example".into());
+    config.public.throughput.push("https://meter.example".into());
     config
 }
 
@@ -45,9 +42,7 @@ fn authentication_constrains_advertised_origins_and_secret_sources() {
         ("OIDC secret in password mode", |config| {
             config.auth.oidc_client_secret = "test-secret".into()
         }),
-        ("missing password source", |config| {
-            config.auth.password_hash.clear()
-        }),
+        ("missing password source", |config| config.auth.password_hash.clear()),
         ("provider name with control character", |config| {
             config.auth.oidc_provider_name = "invalid\nprovider".into()
         }),
@@ -140,14 +135,8 @@ fn listeners_and_advertisements_cannot_claim_conflicting_protocols() {
     config.tls_key = "test-key.pem".into();
     config.native[NativeKind::H2 as usize].public_origin = "https://meter.example".into();
     config.validate().unwrap();
-    config
-        .public
-        .throughput
-        .push("https://METER.example:443".into());
-    assert!(
-        config.validate().is_err(),
-        "native and negotiated origin overlap"
-    );
+    config.public.throughput.push("https://METER.example:443".into());
+    assert!(config.validate().is_err(), "native and negotiated origin overlap");
     config.public.throughput.clear();
     config.native[NativeKind::H3 as usize].address = ":7249".into();
     config.native[NativeKind::H3 as usize].public_origin = "https://meter.example:443".into();

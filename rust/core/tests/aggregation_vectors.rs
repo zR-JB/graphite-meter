@@ -11,8 +11,7 @@ fn close(actual: Option<f64>, expected: &Value) {
 
 #[test]
 fn shared_aggregation_contract() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("../../../api/aggregation.testvectors.json")).unwrap();
+    let cases: Vec<Value> = serde_json::from_str(include_str!("../../../api/aggregation.testvectors.json")).unwrap();
     for case in cases {
         let stage = match case["stage"].as_str().unwrap() {
             "download" => Stage::Download,
@@ -30,14 +29,8 @@ fn shared_aggregation_contract() {
         for value in case["boundaries"].as_array().unwrap() {
             let at_nanos = value["atMs"].as_u64().unwrap() * 1_000_000;
             if let Some(dropout) = value["dropout"].as_array() {
-                participants
-                    .retain(|id| !dropout.iter().any(|removed| removed.as_str() == Some(id)));
-                engine.begin(
-                    stage,
-                    participants.clone(),
-                    at_nanos,
-                    IntervalReason::Dropout,
-                );
+                participants.retain(|id| !dropout.iter().any(|removed| removed.as_str() == Some(id)));
+                engine.begin(stage, participants.clone(), at_nanos, IntervalReason::Dropout);
             }
             let mut boundary = Boundary {
                 at_nanos,
@@ -65,14 +58,8 @@ fn shared_aggregation_contract() {
         }
         for (name, direction) in [("down", Direction::Down), ("up", Direction::Up)] {
             let result = engine.result(stage, direction);
-            close(
-                result.mean_bytes_per_sec,
-                &case["result"][name]["bytesPerSec"],
-            );
-            close(
-                result.peak_bytes_per_sec,
-                &case["result"][name]["peakBytesPerSec"],
-            );
+            close(result.mean_bytes_per_sec, &case["result"][name]["bytesPerSec"]);
+            close(result.peak_bytes_per_sec, &case["result"][name]["peakBytesPerSec"]);
         }
         let expected = case["intervals"].as_array().unwrap();
         assert_eq!(engine.intervals().len(), expected.len(), "{}", case["name"]);
@@ -87,14 +74,8 @@ fn shared_aggregation_contract() {
                 window.end_nanos,
                 expected["window"]["endMs"].as_u64().unwrap() * 1_000_000
             );
-            close(
-                window.down_bytes_per_sec,
-                &expected["window"]["downBytesPerSec"],
-            );
-            close(
-                window.up_bytes_per_sec,
-                &expected["window"]["upBytesPerSec"],
-            );
+            close(window.down_bytes_per_sec, &expected["window"]["downBytesPerSec"]);
+            close(window.up_bytes_per_sec, &expected["window"]["upBytesPerSec"]);
         }
     }
 }

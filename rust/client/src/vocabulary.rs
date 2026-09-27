@@ -164,9 +164,7 @@ pub fn protocol(value: Option<graphite_meter_core::discovery::Protocol>) -> Term
     }
 }
 
-pub fn throughput_transport(
-    value: Option<graphite_meter_core::discovery::ThroughputTransport>,
-) -> Term {
+pub fn throughput_transport(value: Option<graphite_meter_core::discovery::ThroughputTransport>) -> Term {
     use graphite_meter_core::discovery::ThroughputTransport;
     match value {
         None => Term {
@@ -202,9 +200,7 @@ pub fn latency_transport(value: Option<graphite_meter_core::discovery::LatencyTr
     }
 }
 
-pub fn throughput_facts(
-    measurement: &graphite_meter_core::measurement::MeasurementResult,
-) -> String {
+pub fn throughput_facts(measurement: &graphite_meter_core::measurement::MeasurementResult) -> String {
     let mut facts: Vec<_> = measurement
         .peak_bytes_per_sec
         .map(|peak| format!("{} {}", PEAK.label, graphite_meter_core::format::rate(peak)))

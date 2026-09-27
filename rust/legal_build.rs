@@ -67,9 +67,7 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     let identity_path = directory.join("build-identity.txt");
     println!("cargo:rerun-if-changed={}", identity_path.display());
     if fs::read_to_string(identity_path)? != identity {
-        return Err(
-            "notice features, compiler flags, or build profile do not match this build".into(),
-        );
+        return Err("notice features, compiler flags, or build profile do not match this build".into());
     }
     for (name, expected) in [
         ("package.txt", env::var("CARGO_PKG_NAME")?),
@@ -126,13 +124,10 @@ pub fn embed(share_browser_notices: bool) -> Result<()> {
     };
     // Copy the checked build input so rustc does not reopen a mutable source file.
     fs::write(output.join(name), legal)?;
-    let mut generated = format!(
-        "const LEGAL: Option<&str> = Some(include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")));\n"
-    );
+    let mut generated =
+        format!("const LEGAL: Option<&str> = Some(include_str!(concat!(env!(\"OUT_DIR\"), \"/{name}\")));\n");
     if share_browser_notices {
-        generated.push_str(&format!(
-            "const LEGAL_USES_BROWSER_NOTICES: bool = {shared};\n"
-        ));
+        generated.push_str(&format!("const LEGAL_USES_BROWSER_NOTICES: bool = {shared};\n"));
     }
     fs::write(output.join("legal.rs"), generated)?;
     Ok(())

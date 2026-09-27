@@ -12,9 +12,7 @@ fn entry(id: &str, url: &str) -> ServerEntry {
 #[test]
 fn discovery_boundary_is_host_exact_but_port_independent() {
     let mut server = entry("remote", "https://meter.example");
-    server
-        .additional_origins
-        .push("https://transfer.example:7248".into());
+    server.additional_origins.push("https://transfer.example:7248".into());
     for (raw, allowed) in [
         (".", true),
         ("https://meter.example:7249", true),
@@ -34,11 +32,9 @@ fn discovery_boundary_is_host_exact_but_port_independent() {
 fn ipv6_stays_in_discovery_but_not_csp() {
     let mut catalog = ServerCatalog::default();
     let mut ipv6 = entry("ipv6", "https://[2001:db8::1]");
-    ipv6.additional_origins
-        .push("https://bulk.example:7249".into());
+    ipv6.additional_origins.push("https://bulk.example:7249".into());
     let mut dns = entry("dns", "https://meter.example");
-    dns.additional_origins
-        .push("https://[2001:db8::2]:7248".into());
+    dns.additional_origins.push("https://[2001:db8::2]:7248".into());
     catalog.servers.extend([ipv6, dns]);
     catalog.validate().unwrap();
     let sources = catalog.connect_sources();
@@ -62,9 +58,7 @@ fn rejects_duplicate_ids_and_equivalent_origins() {
         entry("other", "https://REMOTE.example:443"),
     ] {
         let mut catalog = ServerCatalog::default();
-        catalog
-            .servers
-            .push(entry("remote", "https://remote.example"));
+        catalog.servers.push(entry("remote", "https://remote.example"));
         catalog.servers.push(remote);
         assert_eq!(catalog.validate(), Err(CatalogError::DuplicateServer));
     }
@@ -80,12 +74,7 @@ fn enforces_identity_origin_and_size_limits() {
         catalog.servers.push(invalid);
         assert_eq!(catalog.validate(), Err(CatalogError::InvalidIdentity));
     }
-    for name in [
-        "x".repeat(257),
-        "é".repeat(129),
-        "line\n".into(),
-        "del\u{7f}".into(),
-    ] {
+    for name in ["x".repeat(257), "é".repeat(129), "line\n".into(), "del\u{7f}".into()] {
         let mut invalid = ServerCatalog::default();
         invalid.servers[0].name = name.clone();
         assert_eq!(invalid.validate(), Err(CatalogError::InvalidIdentity));
@@ -103,11 +92,7 @@ fn enforces_identity_origin_and_size_limits() {
         let mut invalid = ServerCatalog::default();
         invalid.servers[0].url = "https://self.example".into();
         invalid.servers.push(entry("remote", url));
-        assert_eq!(
-            invalid.validate(),
-            Err(CatalogError::InvalidOrigin),
-            "{url}"
-        );
+        assert_eq!(invalid.validate(), Err(CatalogError::InvalidOrigin), "{url}");
     }
     let mut full = ServerCatalog::default();
     for i in 1..32 {
@@ -115,8 +100,7 @@ fn enforces_identity_origin_and_size_limits() {
             .push(entry(&format!("s{i}"), &format!("https://s{i}.example")));
     }
     full.validate().unwrap();
-    full.servers
-        .push(entry("overflow", "https://overflow.example"));
+    full.servers.push(entry("overflow", "https://overflow.example"));
     assert_eq!(full.validate(), Err(CatalogError::InvalidServers));
     let mut additional = ServerCatalog::default();
     additional.servers[0].additional_origins = vec!["https://extra.example".into(); 32];
@@ -124,10 +108,7 @@ fn enforces_identity_origin_and_size_limits() {
     additional.servers[0]
         .additional_origins
         .push("https://extra.example".into());
-    assert_eq!(
-        additional.validate(),
-        Err(CatalogError::TooManyAdditionalOrigins)
-    );
+    assert_eq!(additional.validate(), Err(CatalogError::TooManyAdditionalOrigins));
     additional.servers[0].additional_origins = vec![".".into()];
     assert_eq!(additional.validate(), Err(CatalogError::InvalidOrigin));
     let mut missing = ServerCatalog::default();

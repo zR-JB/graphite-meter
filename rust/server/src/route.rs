@@ -18,18 +18,14 @@ impl Spec {
 
 pub const fn spec(route: Route) -> Spec {
     let admission = match route {
-        Route::Download | Route::Upload | Route::UploadProgress | Route::Ping | Route::WtPing => {
-            Some(Class::Request)
-        }
+        Route::Download | Route::Upload | Route::UploadProgress | Route::Ping | Route::WtPing => Some(Class::Request),
         Route::WtDownload | Route::WtUpload => Some(Class::Session),
         _ => None,
     };
     let cors_methods: &'static [&'static str] = match route {
-        Route::Upload
-        | Route::UploadCheckpoint
-        | Route::UploadSession
-        | Route::WtSession
-        | Route::WsSession => &["POST"],
+        Route::Upload | Route::UploadCheckpoint | Route::UploadSession | Route::WtSession | Route::WsSession => {
+            &["POST"]
+        }
         Route::UploadProgress => &["GET", "DELETE"],
         Route::WtDownload | Route::WtUpload | Route::WtPing => &["CONNECT"],
         _ => &["GET"],

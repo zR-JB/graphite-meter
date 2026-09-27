@@ -5,24 +5,11 @@ use std::time::Duration;
 #[test]
 fn credentials_are_random_and_metadata_is_stable() {
     let store = SessionStore::new();
-    let (token, lease) = store
-        .create("subject", "Display name", "local", None)
-        .unwrap();
-    let (other, second) = store
-        .create("subject", "Display name", "local", None)
-        .unwrap();
+    let (token, lease) = store.create("subject", "Display name", "local", None).unwrap();
+    let (other, second) = store.create("subject", "Display name", "local", None).unwrap();
     assert_eq!(URL_SAFE_NO_PAD.decode(&token).unwrap().len(), 32);
-    assert_eq!(
-        URL_SAFE_NO_PAD
-            .decode(lease.session().csrf())
-            .unwrap()
-            .len(),
-        32
-    );
-    assert_eq!(
-        URL_SAFE_NO_PAD.decode(lease.session().id()).unwrap().len(),
-        16
-    );
+    assert_eq!(URL_SAFE_NO_PAD.decode(lease.session().csrf()).unwrap().len(), 32);
+    assert_eq!(URL_SAFE_NO_PAD.decode(lease.session().id()).unwrap().len(), 16);
     assert_ne!(token, other);
     assert_ne!(lease.session().csrf(), second.session().csrf());
     assert_ne!(lease.session().id(), second.session().id());
@@ -44,9 +31,7 @@ async fn rotation_revokes_only_supplied_login_and_notifies_existing_and_late_wai
     let active = lease.clone();
     let waiting = tokio::spawn(async move { active.ended().await });
     tokio::task::yield_now().await;
-    let (replacement, new) = store
-        .create("subject", "name", "local", Some(&old))
-        .unwrap();
+    let (replacement, new) = store.create("subject", "name", "local", Some(&old)).unwrap();
     tokio::time::timeout(Duration::from_secs(1), waiting)
         .await
         .unwrap()
@@ -88,9 +73,7 @@ async fn oldest_subject_eviction_precedes_global_capacity_and_failed_rotation_pr
         siblings.push(store.create("subject", "name", "local", None).unwrap().1);
     }
     for i in 8..1024 {
-        store
-            .create(&format!("subject-{i}"), "name", "local", None)
-            .unwrap();
+        store.create(&format!("subject-{i}"), "name", "local", None).unwrap();
     }
     let (token, replacement) = store.create("subject", "name", "local", None).unwrap();
     assert!(!oldest.is_active());
@@ -124,8 +107,6 @@ async fn revocation_cannot_be_lost_between_creating_and_polling_waiters() {
         let (_, lease) = store.create("subject", "name", "local", None).unwrap();
         let ended = lease.ended();
         assert!(store.revoke(&lease));
-        tokio::time::timeout(Duration::from_secs(1), ended)
-            .await
-            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), ended).await.unwrap();
     }
 }

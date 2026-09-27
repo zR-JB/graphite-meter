@@ -44,9 +44,7 @@ pub enum CatalogError {
 impl fmt::Display for CatalogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::InvalidServers => {
-                "catalogue requires self followed by at most 31 additional servers"
-            }
+            Self::InvalidServers => "catalogue requires self followed by at most 31 additional servers",
             Self::InvalidIdentity => "invalid catalogue server identity",
             Self::DuplicateServer => "duplicate catalogue server",
             Self::InvalidOrigin => "invalid catalogue origin",
@@ -77,10 +75,7 @@ impl ServerCatalog {
     }
 
     pub fn validate(&self) -> Result<(), CatalogError> {
-        if self.servers.is_empty()
-            || self.servers.len() > MAX_CATALOG_SERVERS
-            || self.servers[0].id != "self"
-        {
+        if self.servers.is_empty() || self.servers.len() > MAX_CATALOG_SERVERS || self.servers[0].id != "self" {
             return Err(CatalogError::InvalidServers);
         }
         for (index, entry) in self.servers.iter().enumerate() {
@@ -176,16 +171,8 @@ impl ServerCatalog {
 impl ServerEntry {
     pub fn validate_discovery(&self, preflight: &Preflight) -> Result<(), DiscoveryError> {
         preflight.validate()?;
-        let throughput_origins = preflight
-            .capabilities
-            .throughput
-            .iter()
-            .map(|target| &target.base_url);
-        let latency_origins = preflight
-            .capabilities
-            .latency
-            .iter()
-            .map(|target| &target.base_url);
+        let throughput_origins = preflight.capabilities.throughput.iter().map(|target| &target.base_url);
+        let latency_origins = preflight.capabilities.latency.iter().map(|target| &target.base_url);
         for origin in throughput_origins.chain(latency_origins) {
             if !self.allows_origin(origin) {
                 return Err(DiscoveryError::UnapprovedOrigin);
@@ -209,8 +196,6 @@ impl ServerEntry {
         if base.is_some_and(|base| origin.host.eq_ignore_ascii_case(&base.host)) {
             return true;
         }
-        self.additional_origins
-            .iter()
-            .any(|allowed| key(raw) == key(allowed))
+        self.additional_origins.iter().any(|allowed| key(raw) == key(allowed))
     }
 }

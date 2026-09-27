@@ -3,16 +3,11 @@
 use crate::{Error, config::Config};
 use graphite_meter_core::{
     catalog::{ServerCatalog, ServerEntry},
-    discovery::{
-        LatencyTarget, LatencyTransport, Preflight, Protocol, ThroughputTarget, ThroughputTransport,
-    },
+    discovery::{LatencyTarget, LatencyTransport, Preflight, Protocol, ThroughputTarget, ThroughputTransport},
     origin::canonical_origin,
 };
 
-pub fn servers<'a>(
-    catalog: &'a ServerCatalog,
-    config: &Config,
-) -> Result<Vec<&'a ServerEntry>, Error> {
+pub fn servers<'a>(catalog: &'a ServerCatalog, config: &Config) -> Result<Vec<&'a ServerEntry>, Error> {
     catalog.validate()?;
     let ids = if config.servers.is_empty() {
         &catalog.default_selection
@@ -31,18 +26,9 @@ pub fn servers<'a>(
         .collect()
 }
 
-pub fn throughput(
-    config: &Config,
-    entry: &ServerEntry,
-    preflight: &Preflight,
-) -> Result<ThroughputTarget, Error> {
+pub fn throughput(config: &Config, entry: &ServerEntry, preflight: &Preflight) -> Result<ThroughputTarget, Error> {
     let order = config.throughput_transport.map_or_else(
-        || {
-            vec![
-                ThroughputTransport::FetchStream,
-                ThroughputTransport::WebTransport,
-            ]
-        },
+        || vec![ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
         |transport| vec![transport],
     );
     let mut first_error = None;
@@ -85,17 +71,14 @@ fn throughput_candidate(
         .iter()
         .filter(|target| {
             target.transport == transport
-                && config.throughput_protocol.is_none_or(|protocol| {
-                    target.protocol == Protocol::Negotiated || target.protocol == protocol
-                })
+                && config
+                    .throughput_protocol
+                    .is_none_or(|protocol| target.protocol == Protocol::Negotiated || target.protocol == protocol)
         })
         .collect::<Vec<_>>();
-    let Some(target) = choose(
-        &candidates,
-        config.throughput_origin.as_deref(),
-        &entry.url,
-        |target| &target.base_url,
-    )?
+    let Some(target) = choose(&candidates, config.throughput_origin.as_deref(), &entry.url, |target| {
+        &target.base_url
+    })?
     else {
         return Ok(None);
     };
@@ -109,11 +92,7 @@ fn throughput_candidate(
     Ok(Some(target))
 }
 
-pub fn latency(
-    config: &Config,
-    entry: &ServerEntry,
-    preflight: &Preflight,
-) -> Result<LatencyTarget, Error> {
+pub fn latency(config: &Config, entry: &ServerEntry, preflight: &Preflight) -> Result<LatencyTarget, Error> {
     select_latency(config, entry, preflight, config.latency_transport)
 }
 
@@ -144,12 +123,9 @@ fn select_latency(
             .iter()
             .filter(|target| target.transport == transport)
             .collect::<Vec<_>>();
-        if let Some(target) = choose(
-            &candidates,
-            config.latency_origin.as_deref(),
-            &entry.url,
-            |target| &target.base_url,
-        )? {
+        if let Some(target) = choose(&candidates, config.latency_origin.as_deref(), &entry.url, |target| {
+            &target.base_url
+        })? {
             return Ok((*target).clone());
         }
     }

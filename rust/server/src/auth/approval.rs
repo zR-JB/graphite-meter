@@ -5,9 +5,7 @@ use super::{
 };
 use base64::{
     Engine as _, alphabet,
-    engine::{
-        DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD,
-    },
+    engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::URL_SAFE_NO_PAD},
 };
 use sha2::{Digest, Sha256};
 use std::{net::IpAddr, time::Duration};
@@ -71,11 +69,7 @@ pub(super) struct Approval {
 
 impl Approval {
     pub(super) fn active_at(&self, now: Instant) -> bool {
-        now < self.deadline
-            && self
-                .session
-                .as_ref()
-                .is_none_or(|session| session.0.active_at(now))
+        now < self.deadline && self.session.as_ref().is_none_or(|session| session.0.active_at(now))
     }
     fn belongs_to(&self, session: &SessionLease) -> bool {
         self.session
@@ -206,35 +200,19 @@ impl SessionStore {
                 {
                     return Err(ApprovalError::Capacity);
                 }
-                state
-                    .approvals
-                    .get_mut(challenge)
-                    .expect("approval exists")
-                    .session = Some(session.clone());
+                state.approvals.get_mut(challenge).expect("approval exists").session = Some(session.clone());
             }
             if state.grant_count(session) >= MAX_SESSION_GRANTS {
                 return Err(ApprovalError::GrantCapacity);
             }
         }
-        Ok(state
-            .approvals
-            .get(challenge)
-            .expect("approval exists")
-            .view())
+        Ok(state.approvals.get(challenge).expect("approval exists").view())
     }
 
-    pub fn approve(
-        &self,
-        session: &SessionLease,
-        challenge: &str,
-        kind: ApprovalKind,
-    ) -> Result<(), ApprovalError> {
+    pub fn approve(&self, session: &SessionLease, challenge: &str, kind: ApprovalKind) -> Result<(), ApprovalError> {
         let mut state = self.0.lock().expect("session mutex poisoned");
         let now = Instant::now();
-        let approval = state
-            .approvals
-            .get(challenge)
-            .ok_or(ApprovalError::InvalidApproval)?;
+        let approval = state.approvals.get(challenge).ok_or(ApprovalError::InvalidApproval)?;
         if !approval.active_at(now)
             || !approval.belongs_to(session)
             || !state.contains(session)
@@ -245,11 +223,7 @@ impl SessionStore {
         if kind == ApprovalKind::Browser && state.grant_count(session) >= MAX_SESSION_GRANTS {
             return Err(ApprovalError::GrantCapacity);
         }
-        state
-            .approvals
-            .get_mut(challenge)
-            .expect("approval exists")
-            .approved = true;
+        state.approvals.get_mut(challenge).expect("approval exists").approved = true;
         Ok(())
     }
 
@@ -275,11 +249,7 @@ impl SessionStore {
         self.exchange_at(verifier, None, Instant::now())
     }
 
-    pub fn exchange_browser(
-        &self,
-        verifier: &str,
-        origin: &str,
-    ) -> Result<Exchange, ExchangeError> {
+    pub fn exchange_browser(&self, verifier: &str, origin: &str) -> Result<Exchange, ExchangeError> {
         if !secure_browser_origin(origin) {
             return Err(ExchangeError::InvalidOrigin);
         }
@@ -289,12 +259,7 @@ impl SessionStore {
         self.exchange_at(verifier, Some(origin), Instant::now())
     }
 
-    fn exchange_at(
-        &self,
-        verifier: &str,
-        origin: Option<&str>,
-        now: Instant,
-    ) -> Result<Exchange, ExchangeError> {
+    fn exchange_at(&self, verifier: &str, origin: Option<&str>, now: Instant) -> Result<Exchange, ExchangeError> {
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
         let mut state = self.0.lock().expect("session mutex poisoned");
         let Some(approval) = state.approvals.get(&challenge) else {
@@ -374,12 +339,7 @@ mod tests {
         let (_, session) = store.create("subject", "name", "local", None).unwrap();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(b"verifier"));
         store
-            .begin_browser_approval(
-                &challenge,
-                "https://client.example",
-                None,
-                "192.0.2.1".parse().unwrap(),
-            )
+            .begin_browser_approval(&challenge, "https://client.example", None, "192.0.2.1".parse().unwrap())
             .unwrap();
         let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
         store
@@ -390,10 +350,7 @@ mod tests {
                 "192.0.2.1".parse().unwrap(),
             )
             .unwrap();
-        assert_eq!(
-            store.0.lock().unwrap().approvals[&challenge].deadline,
-            deadline
-        );
+        assert_eq!(store.0.lock().unwrap().approvals[&challenge].deadline, deadline);
         store.revoke(&session);
         assert!(store.0.lock().unwrap().approvals.is_empty());
         assert!(store.browser_approval_redirect(&challenge).is_none());
@@ -407,14 +364,7 @@ mod tests {
         store
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
             .unwrap();
-        store
-            .0
-            .lock()
-            .unwrap()
-            .approvals
-            .get_mut(&challenge)
-            .unwrap()
-            .deadline = Instant::now();
+        store.0.lock().unwrap().approvals.get_mut(&challenge).unwrap().deadline = Instant::now();
         assert_eq!(
             store.approve(&session, &challenge, ApprovalKind::Cli),
             Err(ApprovalError::InvalidApproval)
@@ -430,18 +380,13 @@ mod tests {
         store
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
             .unwrap();
-        store
-            .approve(&session, &challenge, ApprovalKind::Cli)
-            .unwrap();
+        store.approve(&session, &challenge, ApprovalKind::Cli).unwrap();
         let deadline = store.0.lock().unwrap().approvals[&challenge].deadline;
         assert!(matches!(
             store.exchange_at(&verifier, None, deadline).unwrap(),
             Exchange::Pending
         ));
-        assert!(matches!(
-            store.exchange_cli("unknown").unwrap(),
-            Exchange::Pending
-        ));
+        assert!(matches!(store.exchange_cli("unknown").unwrap(), Exchange::Pending));
         let state = store.0.lock().unwrap();
         assert!(state.approvals.is_empty());
         assert!(state.grants.is_empty());

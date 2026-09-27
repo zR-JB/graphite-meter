@@ -1,8 +1,6 @@
 //! Stage-wide lane allocation, resolved before starting transfer requests.
 use crate::{Error, config::Config, model::Stage};
-use graphite_meter_core::discovery::{
-    LatencyTarget, Protocol, ThroughputTarget, ThroughputTransport,
-};
+use graphite_meter_core::discovery::{LatencyTarget, Protocol, ThroughputTarget, ThroughputTransport};
 use std::collections::{BTreeMap, HashSet};
 
 pub const MAX_STREAMS: usize = 14;
@@ -30,11 +28,7 @@ enum Direction {
     Upload,
 }
 impl StageLanePlan {
-    pub fn new(
-        config: &Config,
-        stage: Stage,
-        participants: &[Participant<'_>],
-    ) -> Result<Self, Error> {
+    pub fn new(config: &Config, stage: Stage, participants: &[Participant<'_>]) -> Result<Self, Error> {
         config.validate()?;
         let mut ids = HashSet::new();
         if participants.is_empty()
@@ -63,9 +57,7 @@ impl StageLanePlan {
             }
             counts.insert(participant.id.to_owned(), assigned);
         }
-        Ok(Self {
-            participants: counts,
-        })
+        Ok(Self { participants: counts })
     }
 
     pub fn lanes(&self, id: &str) -> Option<LaneCounts> {
@@ -75,11 +67,7 @@ impl StageLanePlan {
 
 fn desired(config: &Config, target: &ThroughputTarget, direction: Direction) -> usize {
     if target.transport == ThroughputTransport::WebTransport {
-        return if config.streams > 0 {
-            config.streams
-        } else {
-            1
-        };
+        return if config.streams > 0 { config.streams } else { 1 };
     }
     if config.streams > 0 {
         return config.streams;

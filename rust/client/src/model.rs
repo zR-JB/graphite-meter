@@ -65,10 +65,7 @@ pub struct StageResult {
 
 impl StageResult {
     pub fn down_bps(&self) -> Option<f64> {
-        self.down
-            .as_ref()?
-            .mean_bytes_per_sec
-            .map(|rate| rate * 8.0)
+        self.down.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
     }
     pub fn up_bps(&self) -> Option<f64> {
         self.up.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
@@ -82,11 +79,7 @@ impl StageResult {
     pub fn status(&self) -> StageStatus {
         let measured = (!self.stage.downloads() || self.down_bps().is_some())
             && (!self.stage.uploads() || self.up_bps().is_some())
-            && (self.stage != Stage::Latency
-                || self
-                    .server_latencies
-                    .iter()
-                    .any(|host| host.median().is_some()));
+            && (self.stage != Stage::Latency || self.server_latencies.iter().any(|host| host.median().is_some()));
         match (measured, self.complete) {
             (false, _) => StageStatus::Failed,
             (true, false) => StageStatus::Partial,
@@ -138,10 +131,7 @@ pub struct ServerContribution {
 
 impl ServerContribution {
     pub fn down_bps(&self) -> Option<f64> {
-        self.down
-            .as_ref()?
-            .mean_bytes_per_sec
-            .map(|rate| rate * 8.0)
+        self.down.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
     }
     pub fn up_bps(&self) -> Option<f64> {
         self.up.as_ref()?.mean_bytes_per_sec.map(|rate| rate * 8.0)
@@ -167,9 +157,7 @@ impl ServerLatencyResult {
         if self.error.is_some() && self.summary.count + self.summary.timeouts < 3 {
             return None;
         }
-        self.summary
-            .distribution
-            .map(|distribution| distribution.p50)
+        self.summary.distribution.map(|distribution| distribution.p50)
     }
 }
 
@@ -204,26 +192,19 @@ impl ServerSummary {
         let target = self.throughput.as_ref()?;
         let transport = crate::vocabulary::throughput_transport(Some(target.transport)).label;
         let protocol = crate::vocabulary::protocol(Some(target.protocol)).label;
-        Some(format!(
-            "{transport} · {protocol} · {}",
-            security(&target.base_url)
-        ))
+        Some(format!("{transport} · {protocol} · {}", security(&target.base_url)))
     }
 
     pub fn latency_label(&self) -> Option<String> {
         let target = self.latency.as_ref()?;
         let transport = crate::vocabulary::latency_transport(Some(target.transport)).label;
-        let protocol =
-            crate::vocabulary::protocol(Some(if target.transport == LatencyTransport::WebSocket {
-                Protocol::Http1
-            } else {
-                Protocol::Http3
-            }))
-            .label;
-        Some(format!(
-            "{transport} · {protocol} · {}",
-            security(&target.base_url)
-        ))
+        let protocol = crate::vocabulary::protocol(Some(if target.transport == LatencyTransport::WebSocket {
+            Protocol::Http1
+        } else {
+            Protocol::Http3
+        }))
+        .label;
+        Some(format!("{transport} · {protocol} · {}", security(&target.base_url)))
     }
 
     pub fn connection_label(&self) -> String {
@@ -269,17 +250,8 @@ pub struct Snapshot {
 
 impl Snapshot {
     pub fn added_ms(&self, loaded: &StageResult, id: &str) -> Option<f64> {
-        let median = |result: &StageResult| {
-            result
-                .server_latencies
-                .iter()
-                .find(|host| host.id == id)?
-                .median()
-        };
-        let idle = self
-            .results
-            .iter()
-            .find(|result| result.stage == Stage::Latency)?;
+        let median = |result: &StageResult| result.server_latencies.iter().find(|host| host.id == id)?.median();
+        let idle = self.results.iter().find(|result| result.stage == Stage::Latency)?;
         if loaded.stage == Stage::Latency {
             return None;
         }
@@ -293,9 +265,11 @@ impl Snapshot {
         error: &crate::Error,
     ) -> Option<graphite_meter_core::failure::FailureReason> {
         let stage = self.stage?;
-        if self.failures.iter().any(|failure| {
-            failure.server_id == id && failure.stage == stage && failure.scope == scope
-        }) {
+        if self
+            .failures
+            .iter()
+            .any(|failure| failure.server_id == id && failure.stage == stage && failure.scope == scope)
+        {
             return None;
         }
         let reason = crate::failure::reason(error.as_ref(), self.phase != Phase::Measuring);
@@ -305,23 +279,14 @@ impl Snapshot {
             scope,
             reason,
             message: error.to_string(),
-            at: self
-                .results
-                .iter()
-                .map(|result| result.elapsed)
-                .sum::<Duration>()
-                + self.latest.elapsed,
+            at: self.results.iter().map(|result| result.elapsed).sum::<Duration>() + self.latest.elapsed,
         });
         Some(reason)
     }
 
     pub fn sample(&mut self, mut point: Point) {
         self.latest = point.clone();
-        point.elapsed += self
-            .results
-            .iter()
-            .map(|result| result.elapsed)
-            .sum::<Duration>();
+        point.elapsed += self.results.iter().map(|result| result.elapsed).sum::<Duration>();
         self.history.add(point);
     }
 }
@@ -367,9 +332,9 @@ fn merge(first: &mut Point, second: Point) {
         (&mut first.up_bps, second.up_bps),
         (&mut first.latency_ms, second.latency_ms),
     ] {
-        *a = a.zip(b).map(|(a, b)| {
-            (a * first.sample_count as f64 + b * second.sample_count as f64) / total as f64
-        });
+        *a = a
+            .zip(b)
+            .map(|(a, b)| (a * first.sample_count as f64 + b * second.sample_count as f64) / total as f64);
     }
     first.sample_count = total;
 }

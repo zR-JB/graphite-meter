@@ -33,10 +33,7 @@ async fn download_body_owns_capacity_and_options_does_not_consume_it() {
 
     let mut options = request("/download");
     *options.method_mut() = Method::OPTIONS;
-    assert_eq!(
-        server.respond(options, peer).status(),
-        StatusCode::NO_CONTENT
-    );
+    assert_eq!(server.respond(options, peer).status(), StatusCode::NO_CONTENT);
     drop(held);
     assert_eq!(
         server.respond(request("/download?bytes=0"), peer).status(),
@@ -176,12 +173,8 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         advance_http1_clock(Duration::from_millis(550)).await;
         loop {
             let probe = fetch(address, "/probe").await;
-            let boundary = probe
-                .windows(4)
-                .position(|part| part == b"\r\n\r\n")
-                .unwrap();
-            let document: serde_json::Value =
-                serde_json::from_slice(&probe[boundary + 4..]).unwrap();
+            let boundary = probe.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
+            let document: serde_json::Value = serde_json::from_slice(&probe[boundary + 4..]).unwrap();
             if document["load"]["active"] == 0 {
                 break;
             }
@@ -234,10 +227,7 @@ async fn oversized_http1_headers_are_rejected() {
 async fn fetch(address: SocketAddr, path: &str) -> Vec<u8> {
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(
-            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-                .as_bytes(),
-        )
+        .write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").as_bytes())
         .await
         .unwrap();
     let mut response = Vec::new();
@@ -256,14 +246,22 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async { let _ = stopped.await; }));
+        let serving = tokio::spawn(server.serve_http1(listener, async {
+            let _ = stopped.await;
+        }));
         let (headers, session) = upload_request(address, "POST", "/upload/session", "192.0.2.1", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert!(headers.contains("access-control-allow-origin: *"));
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
         let mut socket = TcpStream::connect(address).await.unwrap();
-        socket.write_all(format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 192.0.2.1\r\n\r\n").as_bytes()).await.unwrap();
+        socket
+            .write_all(
+                format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\nX-Real-IP: 192.0.2.1\r\n\r\n")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
         let mut progress = tokio::io::BufReader::new(socket);
         let headers = read_headers(&mut progress).await;
         assert!(headers.contains("application/x-ndjson"));
@@ -302,7 +300,14 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         assert!(headers.starts_with("HTTP/1.1 405"));
         assert!(headers.contains("allow: POST\r\n"), "{headers}");
 
-        let (headers, body) = upload_request(address, "DELETE", &format!("/upload/progress?id={id}"), "192.0.2.1", b"").await;
+        let (headers, body) = upload_request(
+            address,
+            "DELETE",
+            &format!("/upload/progress?id={id}"),
+            "192.0.2.1",
+            b"",
+        )
+        .await;
         assert!(headers.starts_with("HTTP/1.1 204"));
         assert!(body.is_empty());
         loop {
@@ -315,25 +320,39 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
         drop(progress);
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
-    }).await.expect("upload lifecycle stalled");
+    })
+    .await
+    .expect("upload lifecycle stalled");
 }
 
 #[tokio::test]
 async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let config = Config { max_operation_duration: Duration::from_millis(200), ..Config::default() };
+        let config = Config {
+            max_operation_duration: Duration::from_millis(200),
+            ..Config::default()
+        };
         let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
-        let serving = tokio::spawn(server.serve_http1(listener, async { let _ = stopped.await; }));
+        let serving = tokio::spawn(server.serve_http1(listener, async {
+            let _ = stopped.await;
+        }));
         let (_, session) = upload_request(address, "POST", "/upload/session", "", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
         let mut stalled = TcpStream::connect(address).await.unwrap();
-        stalled.write_all(format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\nabc").as_bytes()).await.unwrap();
+        stalled
+            .write_all(
+                format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n\r\nabc")
+                    .as_bytes(),
+            )
+            .await
+            .unwrap();
         loop {
-            let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
+            let (_, checkpoint) =
+                upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
             if serde_json::from_slice::<serde_json::Value>(&checkpoint).is_ok_and(|value| value["bytes"] == 3) {
                 break;
             }
@@ -343,38 +362,45 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
         loop {
             let (_, probe) = upload_request(address, "GET", "/probe", "", b"").await;
             let probe: serde_json::Value = serde_json::from_slice(&probe).unwrap();
-            if probe["load"]["active"] == 0 { break; }
+            if probe["load"]["active"] == 0 {
+                break;
+            }
             tokio::task::yield_now().await;
         }
         let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"], 3);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
+            3
+        );
         drop(stalled);
         stop.send(()).unwrap();
         serving.await.unwrap().unwrap();
-    }).await.expect("upload read deadline failed to release capacity");
+    })
+    .await
+    .expect("upload read deadline failed to release capacity");
 }
 
-async fn upload_request(
-    address: SocketAddr,
-    method: &str,
-    path: &str,
-    owner: &str,
-    body: &[u8],
-) -> (String, Vec<u8>) {
+async fn upload_request(address: SocketAddr, method: &str, path: &str, owner: &str, body: &[u8]) -> (String, Vec<u8>) {
     let mut socket = TcpStream::connect(address).await.unwrap();
     let owner = if owner.is_empty() {
         String::new()
     } else {
         format!("X-Real-IP: {owner}\r\n")
     };
-    socket.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n{owner}Content-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+    socket
+        .write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\n{owner}Content-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
     socket.write_all(body).await.unwrap();
     let mut response = Vec::new();
     socket.read_to_end(&mut response).await.unwrap();
-    let boundary = response
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .unwrap();
+    let boundary = response.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
     (
         String::from_utf8(response[..boundary].to_vec()).unwrap(),
         response[boundary + 4..].to_vec(),
@@ -441,41 +467,22 @@ async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered()
         "ready"
     );
     let second = server.respond(request(&path), neighbor);
-    assert_eq!(
-        second.status(),
-        StatusCode::OK,
-        "same IPv6 /64 shares upload ownership"
-    );
+    assert_eq!(second.status(), StatusCode::OK, "same IPv6 /64 shares upload ownership");
     assert_eq!(
         server.respond(request("/download?bytes=1"), peer).status(),
         StatusCode::TOO_MANY_REQUESTS
     );
-    for path in [
-        "/upload",
-        "/upload/session",
-        "/upload/checkpoint",
-        "/upload/progress",
-    ] {
+    for path in ["/upload", "/upload/session", "/upload/checkpoint", "/upload/progress"] {
         let mut options = request(path);
         *options.method_mut() = Method::OPTIONS;
-        assert_eq!(
-            server.respond(options, peer).status(),
-            StatusCode::NO_CONTENT
-        );
+        assert_eq!(server.respond(options, peer).status(), StatusCode::NO_CONTENT);
     }
     let mut checkpoint = request(&format!("/upload/checkpoint?id={id}"));
     *checkpoint.method_mut() = Method::POST;
     let refused = server.respond(checkpoint, foreign);
     assert_eq!(refused.status(), StatusCode::FORBIDDEN);
-    assert_eq!(
-        refused.headers()["x-graphite-upload-refusal"],
-        "ownerMismatch"
-    );
-    assert!(
-        poll_fn(|cx| Pin::new(first.body_mut()).poll_frame(cx))
-            .await
-            .is_none()
-    );
+    assert_eq!(refused.headers()["x-graphite-upload-refusal"], "ownerMismatch");
+    assert!(poll_fn(|cx| Pin::new(first.body_mut()).poll_frame(cx)).await.is_none());
     drop(first);
     assert_eq!(
         server.respond(request("/download?bytes=1"), peer).status(),
@@ -557,23 +564,14 @@ async fn active_http1_progress_survives_an_idle_interval() {
     let id = session["uploadId"].as_str().unwrap();
     let mut socket = TcpStream::connect(address).await.unwrap();
     socket
-        .write_all(
-            format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes(),
-        )
+        .write_all(format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
         .await
         .unwrap();
     let mut progress = tokio::io::BufReader::new(socket);
     read_headers(&mut progress).await;
     assert_eq!(progress_event(&mut progress).await["type"], "ready");
     advance_http1_clock(Duration::from_secs(61)).await;
-    let (headers, _) = upload_request(
-        address,
-        "DELETE",
-        &format!("/upload/progress?id={id}"),
-        "",
-        b"",
-    )
-    .await;
+    let (headers, _) = upload_request(address, "DELETE", &format!("/upload/progress?id={id}"), "", b"").await;
     assert!(headers.starts_with("HTTP/1.1 204"));
     assert_eq!(progress_event(&mut progress).await["type"], "complete");
     drop(progress);
@@ -591,7 +589,10 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
         let _ = stopped.await;
     }));
     let mut socket = TcpStream::connect(address).await.unwrap();
-    socket.write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /probe HTTP/1.1\r\nHost:").await.unwrap();
+    socket
+        .write_all(b"GET /download?bytes=0 HTTP/1.1\r\nHost: localhost\r\n\r\nGET /probe HTTP/1.1\r\nHost:")
+        .await
+        .unwrap();
     let mut socket = tokio::io::BufReader::new(socket);
     assert!(read_headers(&mut socket).await.starts_with("HTTP/1.1 200"));
     // Hyper can prefetch this partial next header during the first request.
@@ -622,17 +623,19 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
     let id = session["uploadId"].as_str().unwrap();
     let mut socket = TcpStream::connect(address).await.unwrap();
-    socket.write_all(format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nConnection: close\r\n\r\na").as_bytes()).await.unwrap();
+    socket
+        .write_all(
+            format!(
+                "POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\nConnection: close\r\n\r\na"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            let (_, checkpoint) = upload_request(
-                address,
-                "POST",
-                &format!("/upload/checkpoint?id={id}"),
-                "",
-                b"",
-            )
-            .await;
+            let (_, checkpoint) =
+                upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
             let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
             if checkpoint["bytes"] == 1 {
                 break;
@@ -652,14 +655,7 @@ async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
     let response = String::from_utf8(response).unwrap();
     assert!(response.starts_with("HTTP/1.1 408"), "{response}");
     assert!(response.contains("x-graphite-upload-refusal: idle"));
-    let (_, checkpoint) = upload_request(
-        address,
-        "POST",
-        &format!("/upload/checkpoint?id={id}"),
-        "",
-        b"",
-    )
-    .await;
+    let (_, checkpoint) = upload_request(address, "POST", &format!("/upload/checkpoint?id={id}"), "", b"").await;
     let checkpoint: serde_json::Value = serde_json::from_slice(&checkpoint).unwrap();
     assert_eq!(checkpoint["bytes"], 1);
     stop.send(()).unwrap();

@@ -4,9 +4,7 @@ use crate::{
     config::{AuthMode, Config, ConfigError},
     preflight::Preflight,
 };
-use graphite_meter_core::origin::{
-    browser_connect_source_supported, canonical_origin, target_origin,
-};
+use graphite_meter_core::origin::{browser_connect_source_supported, canonical_origin, target_origin};
 use http::{HeaderMap, HeaderValue, uri::Authority};
 use std::sync::Arc;
 
@@ -18,11 +16,7 @@ pub struct AppSecurity {
 }
 
 impl AppSecurity {
-    pub fn new(
-        config: Arc<Config>,
-        script_hash: Option<&str>,
-        style_hash: Option<&str>,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(config: Arc<Config>, script_hash: Option<&str>, style_hash: Option<&str>) -> Result<Self, ConfigError> {
         config.validate()?;
         let authenticated_host = if config.auth.mode == AuthMode::Off {
             None
@@ -58,17 +52,13 @@ impl AppSecurity {
         if authority.as_str().contains('@') {
             return Err("request authority must not contain credentials".into());
         }
-        let host = self.authenticated_host.as_deref().unwrap_or_else(|| {
-            authority
-                .host()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-        });
+        let host = self
+            .authenticated_host
+            .as_deref()
+            .unwrap_or_else(|| authority.host().trim_start_matches('[').trim_end_matches(']'));
         let mut sources = self.configured_sources.clone();
         for source in self.preflight.connect_origins(host)? {
-            let http_origin = source
-                .replacen("wss://", "https://", 1)
-                .replacen("ws://", "http://", 1);
+            let http_origin = source.replacen("wss://", "https://", 1).replacen("ws://", "http://", 1);
             if canonical_origin(&http_origin).is_ok() && browser_connect_source_supported(&source) {
                 sources.push(source);
             }
@@ -86,10 +76,7 @@ impl AppSecurity {
         let mut headers = HeaderMap::new();
         headers.insert("content-security-policy", HeaderValue::from_str(&csp)?);
         headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
-        headers.insert(
-            "x-content-type-options",
-            HeaderValue::from_static("nosniff"),
-        );
+        headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
         headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
         headers.insert(
             "permissions-policy",

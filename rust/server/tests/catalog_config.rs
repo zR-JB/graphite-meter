@@ -45,10 +45,7 @@ fn source_presence_and_inline_file_equivalence() {
     assert_eq!(inline.servers[0].id, "self");
     assert_eq!(inline.default_selection, ["remote"]);
     assert_eq!(inline.servers[1].url, "https://example.net");
-    assert_eq!(
-        inline.servers[1].additional_origins,
-        ["https://transfer.example.net"]
-    );
+    assert_eq!(inline.servers[1].additional_origins, ["https://transfer.example.net"]);
 }
 
 #[test]
@@ -60,11 +57,7 @@ fn null_and_missing_defaults_match_go() {
         r#"{"servers":[]}"#,
         "[]",
     ] {
-        assert_eq!(
-            parse(raw.as_bytes()).unwrap(),
-            load(None, None).unwrap(),
-            "{raw}"
-        );
+        assert_eq!(parse(raw.as_bytes()).unwrap(), load(None, None).unwrap(), "{raw}");
     }
     for raw in [
         r#"{"defaultSelection":[]}"#,
@@ -133,10 +126,7 @@ fn canonical_origin_hash_ids_are_stable_across_order_and_source() {
     assert_eq!(first.servers[2].id, second.servers[1].id);
     assert_eq!(first.servers[1].name, "example.net");
     assert_eq!(first.servers[2].name, "[::1]:8080");
-    assert_eq!(
-        first.servers[1].id,
-        "server-35d5ef135871623822d3d4779a9ecac1"
-    );
+    assert_eq!(first.servers[1].id, "server-35d5ef135871623822d3d4779a9ecac1");
     let file = TempFile::new(br#"["https://example.net"]"#);
     assert_eq!(
         load(None, Some(file.0.to_str().unwrap())).unwrap().servers[1].id,
@@ -160,10 +150,5 @@ fn bounds_raw_and_normalized_sizes() {
         .collect();
     let bytes = serde_json::to_vec(&origins).unwrap();
     assert!(bytes.len() < 64 << 10);
-    assert!(
-        parse(&bytes)
-            .unwrap_err()
-            .to_string()
-            .contains("normalized catalogue")
-    );
+    assert!(parse(&bytes).unwrap_err().to_string().contains("normalized catalogue"));
 }

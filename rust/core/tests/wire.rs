@@ -2,8 +2,8 @@ use graphite_meter_core::{
     failure::{FailureReason, LaneEnding, UploadRefusal},
     route,
     wire::{
-        MAX_UPLOAD_COUNTER, UploadProgress, decode_ping, decode_pong, decode_upload_progress,
-        encode_ping, encode_pong, encode_upload_progress,
+        MAX_UPLOAD_COUNTER, UploadProgress, decode_ping, decode_pong, decode_upload_progress, encode_ping, encode_pong,
+        encode_upload_progress,
     },
 };
 use serde::Deserialize;
@@ -51,22 +51,15 @@ struct ProgressCase {
 
 #[test]
 fn upload_progress_conforms_to_shared_corpus() {
-    let cases: Vec<ProgressCase> = serde_json::from_str(include_str!(
-        "../../../api/upload-progress.testvectors.json"
-    ))
-    .unwrap();
+    let cases: Vec<ProgressCase> =
+        serde_json::from_str(include_str!("../../../api/upload-progress.testvectors.json")).unwrap();
     for case in cases {
         let raw = serde_json::to_vec(&case.record).unwrap();
         let decoded = decode_upload_progress(&raw);
         assert_eq!(decoded.is_ok(), case.valid, "{}: {decoded:?}", case.name);
         if let Ok(event) = decoded {
             let encoded = encode_upload_progress(&event).unwrap();
-            assert_eq!(
-                decode_upload_progress(encoded.as_bytes()),
-                Ok(event),
-                "{}",
-                case.name
-            );
+            assert_eq!(decode_upload_progress(encoded.as_bytes()), Ok(event), "{}", case.name);
         }
     }
 }
@@ -89,16 +82,8 @@ fn progress_requires_exact_counters_and_rejects_duplicate_fields() {
         assert!(decode_upload_progress(raw.as_bytes()).is_err(), "{raw}");
     }
     let event = decode_upload_progress(br#"{"type":"progress","bytes":1e3,"nanos":0.0}"#).unwrap();
-    assert_eq!(
-        event,
-        UploadProgress::Progress {
-            bytes: 1000,
-            nanos: 0
-        }
-    );
-    let event =
-        decode_upload_progress(br#"{"type":"complete","bytes":9007199254740991,"nanos":1E+2}"#)
-            .unwrap();
+    assert_eq!(event, UploadProgress::Progress { bytes: 1000, nanos: 0 });
+    let event = decode_upload_progress(br#"{"type":"complete","bytes":9007199254740991,"nanos":1E+2}"#).unwrap();
     assert_eq!(
         event,
         UploadProgress::Complete {
@@ -179,8 +164,7 @@ fn vocabularies_match_shared_pins_by_name() {
     let failures = pin(include_str!("../../../api/uploadrefusalreasons.txt"));
     assert_eq!(failures.len(), UploadRefusal::ALL.len());
     let pinned: BTreeMap<_, _> = failures.iter().map(|row| (row[0], row[1])).collect();
-    let mapped =
-        UploadRefusal::ALL.map(|refusal| (refusal.name(), refusal.failure_reason().name()));
+    let mapped = UploadRefusal::ALL.map(|refusal| (refusal.name(), refusal.failure_reason().name()));
     assert_eq!(pinned, BTreeMap::from(mapped));
 }
 
@@ -191,11 +175,7 @@ fn routes_match_shared_pin_exactly() {
     for row in routes {
         let route = route::lookup(row[1]).expect("pinned route is mounted");
         assert_eq!([route.name(), route.path(), route.kind().as_str()], row[..]);
-        for near in [
-            format!("{}/", row[1]),
-            format!("{}?x=1", row[1]),
-            row[1].to_uppercase(),
-        ] {
+        for near in [format!("{}/", row[1]), format!("{}?x=1", row[1]), row[1].to_uppercase()] {
             assert_eq!(route::lookup(&near), None, "{near}");
         }
     }

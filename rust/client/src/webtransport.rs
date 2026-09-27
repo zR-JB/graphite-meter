@@ -83,9 +83,7 @@ impl Session {
             if insecure {
                 return Err("authenticated operation refuses insecure TLS".into());
             }
-            request
-                .headers_mut()
-                .insert(http::header::AUTHORIZATION, auth);
+            request.headers_mut().insert(http::header::AUTHORIZATION, auth);
         }
         match Self::connect(request, insecure, deadline).await {
             Err(error) => {
@@ -99,16 +97,10 @@ impl Session {
     }
     /// Request must be an absolute HTTPS URL. Authorization headers are sent only
     /// to that URL; redirects are never followed. One session owns one connection.
-    pub async fn connect(
-        mut request: Request<()>,
-        insecure: bool,
-        deadline: Duration,
-    ) -> Result<Self, Error> {
+    pub async fn connect(mut request: Request<()>, insecure: bool, deadline: Duration) -> Result<Self, Error> {
         timeout(deadline, async {
             let uri = request.uri();
-            if uri.scheme_str() != Some("https")
-                || uri.authority().is_none_or(|a| a.as_str().contains('@'))
-            {
+            if uri.scheme_str() != Some("https") || uri.authority().is_none_or(|a| a.as_str().contains('@')) {
                 return Err("WebTransport requires an HTTPS URL without userinfo".into());
             }
             let host = uri
@@ -124,9 +116,8 @@ impl Session {
             };
             let addresses: Vec<_> = tokio::net::lookup_host((host, port)).await?.collect();
             let tls = crate::tls::config(insecure)?;
-            let mut config = quinn::ClientConfig::new(Arc::new(
-                quinn::crypto::rustls::QuicClientConfig::try_from(tls)?,
-            ));
+            let mut config =
+                quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
             let mut transport = quinn::TransportConfig::default();
             transport.max_concurrent_bidi_streams(0_u32.into());
             transport.max_concurrent_uni_streams(36_u32.into());
@@ -142,12 +133,7 @@ impl Session {
                     quinn::EndpointConfig::default(),
                     None,
                     graphite_meter_core::socket::udp_socket(
-                        if address.is_ipv6() {
-                            "[::]:0"
-                        } else {
-                            "0.0.0.0:0"
-                        }
-                        .parse()?,
+                        if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?,
                     )?,
                     quinn::default_runtime().ok_or("no async runtime for QUIC")?,
                 )?);
@@ -165,9 +151,8 @@ impl Session {
                     Err(error) => last_error = Some(error.into()),
                 }
             }
-            let (endpoint, connection) = connected.ok_or_else(|| {
-                last_error.unwrap_or_else(|| "WebTransport hostname has no addresses".into())
-            })?;
+            let (endpoint, connection) = connected
+                .ok_or_else(|| last_error.unwrap_or_else(|| "WebTransport hostname has no addresses".into()))?;
             let (resets, reset_rx) = ResetQueue::new(QUEUE);
             let (stream_tx, stream_rx) = mpsc::channel(QUEUE);
             let (datagram_tx, datagram_rx) = mpsc::channel(QUEUE);
@@ -195,16 +180,7 @@ impl Session {
             let (id_tx, id_rx) = oneshot::channel();
             let quic = owner.connection.clone();
             owner.driver.spawn(async move {
-                let result = drive(
-                    http,
-                    quic.clone(),
-                    ready_tx,
-                    id_rx,
-                    stream_tx,
-                    datagram_tx,
-                    reset_rx,
-                )
-                .await;
+                let result = drive(http, quic.clone(), ready_tx, id_rx, stream_tx, datagram_tx, reset_rx).await;
                 quic.close(
                     0_u32.into(),
                     if result.is_ok() {
@@ -214,22 +190,15 @@ impl Session {
                     },
                 );
             });
-            ready_rx
-                .await
-                .map_err(|_| "peer did not negotiate WebTransport")?;
+            ready_rx.await.map_err(|_| "peer did not negotiate WebTransport")?;
             *request.method_mut() = http::Method::CONNECT;
+            request.extensions_mut().insert(h3::ext::Protocol::WEB_TRANSPORT);
             request
-                .extensions_mut()
-                .insert(h3::ext::Protocol::WEB_TRANSPORT);
-            request.headers_mut().insert(
-                "sec-webtransport-http3-draft02",
-                http::HeaderValue::from_static("1"),
-            );
+                .headers_mut()
+                .insert("sec-webtransport-http3-draft02", http::HeaderValue::from_static("1"));
             let mut stream = sender.send_request(request).await?;
             owner.id = stream.id().into_inner();
-            id_tx
-                .send(owner.id)
-                .map_err(|_| "WebTransport driver stopped")?;
+            id_tx.send(owner.id).map_err(|_| "WebTransport driver stopped")?;
             owner.sender = Some(sender);
             let response = stream.recv_response().await?;
             if !response.status().is_success() {
@@ -248,9 +217,7 @@ impl Session {
                             match capsule {
                                 capsule::Capsule::CloseSession { .. } => return Ok(()),
                                 _ => {
-                                    return Err(
-                                        "unnegotiated WebTransport flow control capsule".into()
-                                    );
+                                    return Err("unnegotiated WebTransport flow control capsule".into());
                                 }
                             }
                         }
@@ -305,18 +272,14 @@ impl Session {
     }
     pub fn retryable_failure(&self, error: &Error) -> bool {
         match self.connection.close_reason() {
-            Some(reason) => {
-                self.graceful_connect_close.load(Ordering::Acquire) || retryable_quic_close(&reason)
-            }
+            Some(reason) => self.graceful_connect_close.load(Ordering::Acquire) || retryable_quic_close(&reason),
             None => retryable_stream_error(error),
         }
     }
     pub fn max_datagram_size(&self) -> Option<usize> {
         let mut prefix = Vec::new();
         capsule::encode_varint(self.id / 4, &mut prefix).ok()?;
-        self.connection
-            .max_datagram_size()?
-            .checked_sub(prefix.len())
+        self.connection.max_datagram_size()?.checked_sub(prefix.len())
     }
     pub async fn send_datagram(&self, payload: &[u8]) -> Result<(), Error> {
         let max = self
@@ -393,13 +356,7 @@ impl SessionSlot {
         if !failed.is_closed() {
             return Err("WebTransport stream failed while its session remained open".into());
         }
-        let session = Session::dial(
-            &self.http,
-            &self.target,
-            self.insecure,
-            Duration::from_secs(10),
-        )
-        .await?;
+        let session = Session::dial(&self.http, &self.target, self.insecure, Duration::from_secs(10)).await?;
         *current = Arc::new(session);
         Ok(current.clone())
     }
@@ -432,9 +389,7 @@ pub fn retryable_stream_error(error: &Error) -> bool {
             _ => false,
         };
     }
-    if let Some(quinn::SendDatagramError::ConnectionLost(error)) =
-        error.downcast_ref::<quinn::SendDatagramError>()
-    {
+    if let Some(quinn::SendDatagramError::ConnectionLost(error)) = error.downcast_ref::<quinn::SendDatagramError>() {
         return retryable_quic_close(error);
     }
     error
@@ -460,8 +415,7 @@ fn retryable_quic_close(error: &quinn::ConnectionError) -> bool {
     match error {
         quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut => true,
         quinn::ConnectionError::ApplicationClosed(close) => {
-            close.error_code.into_inner() == 0
-                || close.error_code.into_inner() == h3::error::Code::H3_NO_ERROR.value()
+            close.error_code.into_inner() == 0 || close.error_code.into_inner() == h3::error::Code::H3_NO_ERROR.value()
         }
         _ => false,
     }
@@ -517,11 +471,7 @@ fn poll_incoming(
     {
         let _ = ready.send(());
     }
-    let ids: Vec<_> = http
-        .inner
-        .pending_recv_stream_ids()
-        .map(|id| id.into_inner())
-        .collect();
+    let ids: Vec<_> = http.inner.pending_recv_stream_ids().map(|id| id.into_inner()).collect();
     pending.retain(|id, _| ids.contains(id));
     for id in ids {
         pending
@@ -536,10 +486,7 @@ fn poll_incoming(
     if id.is_some()
         && let Some((session, stream)) = http.inner.accepted_streams_mut().wt_uni_streams.pop()
     {
-        return Poll::Ready(Ok(Some((
-            h3::quic::StreamId::from(session).into_inner(),
-            stream,
-        ))));
+        return Poll::Ready(Ok(Some((h3::quic::StreamId::from(session).into_inner(), stream))));
     }
     Poll::Pending
 }
@@ -619,19 +566,14 @@ impl UploadProgress {
         const MAX_LINE: usize = 16 * 1024;
         loop {
             if self.pending.is_empty() {
-                self.pending = self
-                    .stream
-                    .read_chunk()
-                    .await?
-                    .ok_or("upload progress stream closed")?;
+                self.pending = self.stream.read_chunk().await?.ok_or("upload progress stream closed")?;
             }
             let end = self.pending.iter().position(|&byte| byte == b'\n');
             let count = end.map_or(self.pending.len(), |end| end + 1);
             if self.buffered.len() + count > MAX_LINE {
                 return Err("upload progress line exceeds limit".into());
             }
-            self.buffered
-                .extend_from_slice(&self.pending.split_to(count));
+            self.buffered.extend_from_slice(&self.pending.split_to(count));
             if end.is_some() {
                 let line = std::mem::take(&mut self.buffered);
                 if let Ok(event) = graphite_meter_core::wire::decode_upload_progress(&line) {

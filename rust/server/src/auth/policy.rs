@@ -77,10 +77,7 @@ impl<B> AuthorizedRequest<B> {
 
     /// Collect or adapt a body without changing the authority or route checked
     /// by the policy. The caller supplies the size and time bounds.
-    pub async fn try_map_body<C, E>(
-        self,
-        map: impl AsyncFnOnce(B) -> Result<C, E>,
-    ) -> Result<AuthorizedRequest<C>, E> {
+    pub async fn try_map_body<C, E>(self, map: impl AsyncFnOnce(B) -> Result<C, E>) -> Result<AuthorizedRequest<C>, E> {
         let (parts, body) = self.request.into_parts();
         Ok(AuthorizedRequest {
             request: Request::from_parts(parts, map(body).await?),
@@ -93,12 +90,7 @@ impl<B> AuthorizedRequest<B> {
     /// Only the transport dispatcher may split the checked request from its
     /// lease. It must retain that lease through the complete IO lifetime.
     pub(crate) fn into_parts(self) -> (Request<B>, Authorization, Connection, Option<Route>) {
-        (
-            self.request,
-            self.authorization,
-            self.connection,
-            self.route,
-        )
+        (self.request, self.authorization, self.connection, self.route)
     }
 
     /// Observe revocation before polling the operation, including a lease that
@@ -152,27 +144,16 @@ pub struct Policy {
 }
 
 impl Policy {
-    pub fn new(
-        public: &str,
-        mode: AuthMode,
-        trusted: Vec<IpNet>,
-        sessions: SessionStore,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(public: &str, mode: AuthMode, trusted: Vec<IpNet>, sessions: SessionStore) -> Result<Self, ConfigError> {
         let origin = target_origin(public)?.ok_or("authentication requires a public origin")?;
-        if mode == AuthMode::Off || origin.scheme != "https" || canonical_origin(public)? != public
-        {
-            return Err(
-                "authentication requires an enabled mode and canonical HTTPS origin".into(),
-            );
+        if mode == AuthMode::Off || origin.scheme != "https" || canonical_origin(public)? != public {
+            return Err("authentication requires an enabled mode and canonical HTTPS origin".into());
         }
         Ok(Self {
             public: public.into(),
             public_header: HeaderValue::from_str(public)?,
             hostname: origin.host,
-            authority: public
-                .strip_prefix("https://")
-                .expect("validated scheme")
-                .into(),
+            authority: public.strip_prefix("https://").expect("validated scheme").into(),
             mode,
             trusted,
             sessions,
@@ -217,12 +198,7 @@ impl Policy {
         request: Request<B>,
         connection: Connection,
     ) -> Result<AuthorizedRequest<B>, Box<RejectedRequest<B>>> {
-        match self.evaluate(
-            &request,
-            connection.peer,
-            connection.tls,
-            connection.listener,
-        ) {
+        match self.evaluate(&request, connection.peer, connection.tls, connection.listener) {
             Ok(authorization) => Ok(AuthorizedRequest {
                 route: route::lookup(request.uri().path()),
                 request,
@@ -248,18 +224,11 @@ impl Policy {
         let route = route::lookup(path);
         if request.method() == Method::OPTIONS {
             if trust.secure && trust.canonical && path == "/auth/browser/token" {
-                return self
-                    .browser_preflight(request.headers())
-                    .map(Authorization::Preflight);
+                return self.browser_preflight(request.headers()).map(Authorization::Preflight);
             }
             if route.is_some() {
-                let access = cors::authenticated_preflight(
-                    &self.public_header,
-                    trust.secure,
-                    route,
-                    request.headers(),
-                )
-                .ok_or(Refusal::Forbidden)?;
+                let access = cors::authenticated_preflight(&self.public_header, trust.secure, route, request.headers())
+                    .ok_or(Refusal::Forbidden)?;
                 let mut headers = HeaderMap::new();
                 access.apply_measurement(&mut headers);
                 return Ok(Authorization::Preflight(headers));
@@ -275,9 +244,7 @@ impl Policy {
             let ticket = query(request, "token");
             let bearer = self.bearer(request.headers());
             // A bearer-authenticated CONNECT still burns a supplied ticket.
-            let redeemed = ticket
-                .as_deref()
-                .and_then(|token| self.consume_ticket(request, token));
+            let redeemed = ticket.as_deref().and_then(|token| self.consume_ticket(request, token));
             let lease = bearer.or(redeemed).ok_or(Refusal::AuthenticationRequired)?;
             if !self.valid_origin(request, &lease) {
                 return Err(Refusal::AuthenticationRequired);
@@ -297,13 +264,8 @@ impl Policy {
         if !trust.secure {
             return Err(Refusal::AuthenticationRequired);
         }
-        let lease = self
-            .authenticate(request)
-            .ok_or(Refusal::AuthenticationRequired)?;
-        if lease.is_bearer()
-            && (route.is_none()
-                || lease.browser_origin().is_some() && route == Some(Route::Servers))
-        {
+        let lease = self.authenticate(request).ok_or(Refusal::AuthenticationRequired)?;
+        if lease.is_bearer() && (route.is_none() || lease.browser_origin().is_some() && route == Some(Route::Servers)) {
             return Err(Refusal::Forbidden);
         }
         if !self.valid_origin(request, &lease) {
@@ -327,9 +289,8 @@ impl Policy {
     }
 
     fn bearer(&self, headers: &HeaderMap) -> Option<AuthLease> {
-        self.sessions.lookup_bearer(
-            single_header(headers, header::AUTHORIZATION.as_str())?.strip_prefix("Bearer ")?,
-        )
+        self.sessions
+            .lookup_bearer(single_header(headers, header::AUTHORIZATION.as_str())?.strip_prefix("Bearer ")?)
     }
 
     fn consume_ticket<B>(&self, request: &Request<B>, token: &str) -> Option<AuthLease> {
@@ -360,9 +321,7 @@ impl Policy {
         let Some(site) = text(request.headers(), "sec-fetch-site") else {
             return false;
         };
-        if !matches!(site, "" | "same-origin" | "same-site" | "none")
-            || site == "same-site" && origin != self.public
-        {
+        if !matches!(site, "" | "same-origin" | "same-site" | "none") || site == "same-site" && origin != self.public {
             return false;
         }
         let safe = matches!(*request.method(), Method::GET | Method::HEAD);
@@ -387,22 +346,17 @@ impl Policy {
         if !raw.starts_with("https://")
             || canonical_origin(raw).ok().as_deref() != Some(raw)
             || text(headers, header::ACCESS_CONTROL_REQUEST_METHOD.as_str()) != Some("POST")
-            || !text(headers, header::ACCESS_CONTROL_REQUEST_HEADERS.as_str()).is_some_and(
-                |value| {
-                    value.split(',').all(|name| {
-                        name.trim().is_empty() || name.trim().eq_ignore_ascii_case("content-type")
-                    })
-                },
-            )
+            || !text(headers, header::ACCESS_CONTROL_REQUEST_HEADERS.as_str()).is_some_and(|value| {
+                value
+                    .split(',')
+                    .all(|name| name.trim().is_empty() || name.trim().eq_ignore_ascii_case("content-type"))
+            })
         {
             return Err(Refusal::Forbidden);
         }
         let mut response = HeaderMap::new();
         Access::Bearer(origin).apply_response(&mut response);
-        response.insert(
-            header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("POST"),
-        );
+        response.insert(header::ACCESS_CONTROL_ALLOW_METHODS, HeaderValue::from_static("POST"));
         response.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
             HeaderValue::from_static("Content-Type"),
@@ -434,14 +388,7 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     let values = headers.get_all(header::COOKIE);
     let count: usize = values
         .iter()
-        .map(|value| {
-            value
-                .as_bytes()
-                .iter()
-                .filter(|byte| **byte == b';')
-                .count()
-                + 1
-        })
+        .map(|value| value.as_bytes().iter().filter(|byte| **byte == b';').count() + 1)
         .sum();
     if count > 3000 {
         return None;
@@ -485,11 +432,7 @@ fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
 
 fn authority<B>(request: &Request<B>) -> Option<&str> {
     let host = if request.headers().contains_key(header::HOST) {
-        Some(
-            unique_header(request.headers(), header::HOST.as_str())?
-                .to_str()
-                .ok()?,
-        )
+        Some(unique_header(request.headers(), header::HOST.as_str())?.to_str().ok()?)
     } else {
         None
     };

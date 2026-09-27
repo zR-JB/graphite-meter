@@ -97,14 +97,10 @@ impl LaneEnding {
         }
     }
     pub fn from_websocket_code(code: u16) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|ending| ending.websocket_code() == code)
+        Self::ALL.into_iter().find(|ending| ending.websocket_code() == code)
     }
     pub fn from_webtransport_code(code: u32) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|ending| ending.webtransport_code() == code)
+        Self::ALL.into_iter().find(|ending| ending.webtransport_code() == code)
     }
 }
 

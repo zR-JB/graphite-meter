@@ -1,6 +1,4 @@
-use super::session::{
-    Session, SessionError, SessionLease, SessionStore, State, random_token, token_hash,
-};
+use super::session::{Session, SessionError, SessionLease, SessionStore, State, random_token, token_hash};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::origin::canonical_origin;
 use std::sync::Arc;
@@ -50,9 +48,7 @@ impl AuthLease {
         self.bearer
     }
     pub fn browser_origin(&self) -> Option<&str> {
-        self.grant
-            .as_ref()
-            .and_then(|grant| grant.origin.as_deref())
+        self.grant.as_ref().and_then(|grant| grant.origin.as_deref())
     }
     pub fn provider(&self) -> &str {
         self.provider.unwrap_or(self.session().provider())
@@ -67,11 +63,7 @@ impl AuthLease {
         self.active_at(Instant::now())
     }
     pub(super) fn active_at(&self, now: Instant) -> bool {
-        self.session.0.active_at(now)
-            && self
-                .grant
-                .as_ref()
-                .is_none_or(|grant| !*grant.revoked.borrow())
+        self.session.0.active_at(now) && self.grant.as_ref().is_none_or(|grant| !*grant.revoked.borrow())
     }
     pub(super) fn revoke_grant(&self) {
         if let Some(grant) = &self.grant {
@@ -101,30 +93,19 @@ impl AuthLease {
 
 impl SessionStore {
     /// Called only after the CLI approval exchange has authorized this session.
-    pub fn issue_cli_grant(
-        &self,
-        session: &SessionLease,
-    ) -> Result<(String, AuthLease), GrantError> {
+    pub fn issue_cli_grant(&self, session: &SessionLease) -> Result<(String, AuthLease), GrantError> {
         self.issue_grant(session, None)
     }
 
     /// Called only after browser approval, with its exact canonical HTTPS audience.
-    pub fn issue_browser_grant(
-        &self,
-        session: &SessionLease,
-        origin: &str,
-    ) -> Result<(String, AuthLease), GrantError> {
+    pub fn issue_browser_grant(&self, session: &SessionLease, origin: &str) -> Result<(String, AuthLease), GrantError> {
         if !secure_browser_origin(origin) {
             return Err(GrantError::InvalidOrigin);
         }
         self.issue_grant(session, Some(origin))
     }
 
-    fn issue_grant(
-        &self,
-        session: &SessionLease,
-        origin: Option<&str>,
-    ) -> Result<(String, AuthLease), GrantError> {
+    fn issue_grant(&self, session: &SessionLease, origin: Option<&str>) -> Result<(String, AuthLease), GrantError> {
         let mut state = self.0.lock().expect("session mutex poisoned");
         let now = Instant::now();
         state.sweep(now);
@@ -192,9 +173,7 @@ impl State {
                 *self
                     .grants
                     .iter()
-                    .filter(|(_, grant)| {
-                        grant.session.0.hash == session.0.hash && grant.browser_origin().is_none()
-                    })
+                    .filter(|(_, grant)| grant.session.0.hash == session.0.hash && grant.browser_origin().is_none())
                     .min_by_key(|(_, grant)| grant.issued)
                     .map(|(key, _)| key)
                     .ok_or(GrantError::Capacity)?,
@@ -227,8 +206,7 @@ impl State {
 }
 
 pub fn secure_browser_origin(origin: &str) -> bool {
-    origin.starts_with("https://")
-        && canonical_origin(origin).is_ok_and(|canonical| canonical == origin)
+    origin.starts_with("https://") && canonical_origin(origin).is_ok_and(|canonical| canonical == origin)
 }
 
 fn grant_random_error(_: SessionError) -> GrantError {
@@ -247,48 +225,21 @@ mod tests {
         let now = Instant::now();
         let age = SESSION_LIFETIME - Duration::from_secs(60);
         let (_, expiring) = store
-            .create_at(
-                "old",
-                "name",
-                "local",
-                None,
-                SystemTime::now() - age,
-                now - age,
-            )
+            .create_at("old", "name", "local", None, SystemTime::now() - age, now - age)
             .unwrap();
         let (expired_token, expired_lease) = store.issue_cli_grant(&expiring).unwrap();
-        let (sibling_token, _) = store
-            .issue_browser_grant(&expiring, "https://client.example")
-            .unwrap();
+        let (sibling_token, _) = store.issue_browser_grant(&expiring, "https://client.example").unwrap();
         let (_, current) = store.create("current", "name", "local", None).unwrap();
         let (valid_token, _) = store.issue_cli_grant(&current).unwrap();
         let after_expiry = now + Duration::from_secs(60);
 
         assert!(store.lookup_bearer_at(&valid_token, after_expiry).is_some());
-        assert!(
-            store
-                .0
-                .lock()
-                .unwrap()
-                .grants
-                .contains_key(&token_hash(&expired_token))
-        );
-        assert!(
-            store
-                .lookup_bearer_at(&expired_token, after_expiry)
-                .is_none()
-        );
+        assert!(store.0.lock().unwrap().grants.contains_key(&token_hash(&expired_token)));
+        assert!(store.lookup_bearer_at(&expired_token, after_expiry).is_none());
         assert!(!expired_lease.is_active());
         assert!(store.lookup_bearer(&sibling_token).is_none());
         assert!(store.lookup_bearer(&valid_token).is_some());
-        assert!(
-            !store
-                .0
-                .lock()
-                .unwrap()
-                .sessions
-                .contains_key(&expiring.0.hash)
-        );
+        assert!(!store.0.lock().unwrap().sessions.contains_key(&expiring.0.hash));
     }
 
     #[test]
@@ -301,11 +252,7 @@ mod tests {
         let index = alphabet.iter().position(|byte| *byte == last).unwrap();
         let mut noncanonical = token.clone().into_bytes();
         noncanonical[42] = alphabet[index + 1];
-        assert!(
-            store
-                .lookup_bearer(&String::from_utf8(noncanonical).unwrap())
-                .is_none()
-        );
+        assert!(store.lookup_bearer(&String::from_utf8(noncanonical).unwrap()).is_none());
         assert!(store.lookup_bearer(&token).is_some());
     }
 }

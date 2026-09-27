@@ -64,9 +64,7 @@ async fn http1_reuses_connections_and_http2_multiplexes_cold_requests() -> Resul
                             if protocol != Protocol::Http1 {
                                 barrier.wait().await;
                             }
-                            Ok::<_, std::convert::Infallible>(Response::new(Full::new(
-                                Bytes::from_static(b"ok"),
-                            )))
+                            Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
                         }
                     });
                     if protocol != Protocol::Http1 {
@@ -122,8 +120,7 @@ async fn http1_reuses_connections_and_http2_multiplexes_cold_requests() -> Resul
 }
 
 #[tokio::test]
-async fn pooled_connections_expire_without_another_request_and_preserve_active_bodies()
--> Result<(), Error> {
+async fn pooled_connections_expire_without_another_request_and_preserve_active_bodies() -> Result<(), Error> {
     use http_body_util::{BodyExt, StreamBody};
     use hyper::body::Frame;
     use std::{convert::Infallible, time::Duration};
@@ -163,13 +160,7 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
             let client = Http::new(false)?;
             let mut response = client.request(Method::GET, &target, protocol).await?;
             assert_eq!(
-                response
-                    .body_mut()
-                    .frame()
-                    .await
-                    .unwrap()?
-                    .into_data()
-                    .unwrap(),
+                response.body_mut().frame().await.unwrap()?.into_data().unwrap(),
                 b"first"[..]
             );
             let chunks = if active {
@@ -184,10 +175,7 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
             tokio::task::yield_now().await;
             tokio::time::resume();
             if let Some(chunks) = chunks {
-                assert!(
-                    !server.is_finished(),
-                    "{protocol:?} closed an active response"
-                );
+                assert!(!server.is_finished(), "{protocol:?} closed an active response");
                 chunks.send(Bytes::from_static(b"last"))?;
                 drop(chunks);
                 assert_eq!(bounded_body(response).await?, b"last");

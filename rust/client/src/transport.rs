@@ -7,9 +7,7 @@ use crate::{
 };
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use graphite_meter_core::{
-    discovery::Protocol, origin::canonical_origin, route::Route, wire::decode_json,
-};
+use graphite_meter_core::{discovery::Protocol, origin::canonical_origin, route::Route, wire::decode_json};
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
 use std::{sync::Arc, time::Duration};
@@ -27,11 +25,7 @@ pub(crate) struct RetryBackoff {
 }
 
 impl RetryBackoff {
-    pub(crate) fn delay(
-        &mut self,
-        mut error: &(dyn std::error::Error + 'static),
-        started: Instant,
-    ) -> Duration {
+    pub(crate) fn delay(&mut self, mut error: &(dyn std::error::Error + 'static), started: Instant) -> Duration {
         loop {
             if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
                 && matches!(http.status, 429 | 503)
@@ -39,10 +33,7 @@ impl RetryBackoff {
                 self.busy = (self.busy * 2)
                     .max(Duration::from_millis(300))
                     .min(Duration::from_millis(1200));
-                return self
-                    .busy
-                    .max(http.retry_after)
-                    .min(Duration::from_millis(1200));
+                return self.busy.max(http.retry_after).min(Duration::from_millis(1200));
             }
             let Some(source) = error.source() else {
                 break;
@@ -80,10 +71,7 @@ impl TransferRetry {
         if moved {
             self.failing_since = None;
         }
-        if !retryable
-            || !moved
-                && self.failing_since.get_or_insert(started).elapsed() >= TRANSFER_PROGRESS_TIMEOUT
-        {
+        if !retryable || !moved && self.failing_since.get_or_insert(started).elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
             return Err(error);
         }
         tokio::time::sleep(self.backoff.delay(error.as_ref(), started)).await;
@@ -106,13 +94,7 @@ impl Transport {
 
     pub(crate) async fn isolated_connection(&self) -> Result<Arc<Self>, Error> {
         Ok(Arc::new(
-            Self::connect(
-                self.http.clone(),
-                &self.origin,
-                self.protocol,
-                self.insecure,
-            )
-            .await?,
+            Self::connect(self.http.clone(), &self.origin, self.protocol, self.insecure).await?,
         ))
     }
 
@@ -165,24 +147,13 @@ impl Transport {
         };
         let mut owner = slot.lock().await;
         if owner.is_closed() {
-            *owner = Arc::new(
-                Http3Client::connect(
-                    &self.origin.parse()?,
-                    self.insecure,
-                    Duration::from_secs(10),
-                )
-                .await?,
-            );
+            *owner =
+                Arc::new(Http3Client::connect(&self.origin.parse()?, self.insecure, Duration::from_secs(10)).await?);
         }
         Ok(Some(owner.clone()))
     }
 
-    pub async fn connect(
-        http: Http,
-        origin: &str,
-        protocol: Protocol,
-        insecure: bool,
-    ) -> Result<Self, Error> {
+    pub async fn connect(http: Http, origin: &str, protocol: Protocol, insecure: bool) -> Result<Self, Error> {
         let origin = canonical_origin(origin)?;
         let h3 = if protocol == Protocol::Http3 {
             Some(Mutex::new(Arc::new(
@@ -219,8 +190,7 @@ impl Transport {
         route: Route,
         query: &[(&str, &str)],
     ) -> Result<crate::webtransport::SessionSlot, Error> {
-        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)?, self.insecure)
-            .await
+        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)?, self.insecure).await
     }
 
     pub fn url(&self, route: Route, query: &[(&str, &str)]) -> Result<String, Error> {
@@ -266,8 +236,7 @@ impl Transport {
                     .await?;
                 stream.finish().await?;
                 let response = stream.response().await?;
-                self.http
-                    .check_status(&target, response.status(), response.headers())?;
+                self.http.check_status(&target, response.status(), response.headers())?;
                 Ok::<_, Error>(BodyInner::H3(Box::new(stream)))
             } else {
                 Ok(BodyInner::Http(
@@ -335,8 +304,7 @@ impl Transport {
                 }
                 request.finish().await?;
                 let response = request.response().await?;
-                self.http
-                    .check_status(&target, response.status(), response.headers())?;
+                self.http.check_status(&target, response.status(), response.headers())?;
                 request.recv_body().await?;
             } else {
                 let request = self
@@ -375,9 +343,9 @@ fn retryable_h3_connection(error: &h3::error::ConnectionError) -> bool {
     match error {
         h3::error::ConnectionError::Timeout => true,
         h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Timeout) => true,
-        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose {
-            error_code,
-        }) => retryable_h3_code(*error_code),
+        h3::error::ConnectionError::Remote(ConnectionErrorIncoming::ApplicationClose { error_code }) => {
+            retryable_h3_code(*error_code)
+        }
         h3::error::ConnectionError::Remote(ConnectionErrorIncoming::Undefined(error)) => error
             .as_ref()
             .downcast_ref::<quinn::ConnectionError>()
@@ -389,9 +357,7 @@ fn retryable_h3_connection(error: &h3::error::ConnectionError) -> bool {
 fn retryable_quic_connection(error: &quinn::ConnectionError) -> bool {
     match error {
         quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut => true,
-        quinn::ConnectionError::ApplicationClosed(close) => {
-            retryable_h3_code(close.error_code.into())
-        }
+        quinn::ConnectionError::ApplicationClosed(close) => retryable_h3_code(close.error_code.into()),
         _ => false,
     }
 }
@@ -453,15 +419,9 @@ mod tests {
     fn transfer_retries_exclude_local_quic_and_h3_protocol_errors() {
         assert!(retryable_quic_connection(&quinn::ConnectionError::Reset));
         assert!(retryable_quic_connection(&quinn::ConnectionError::TimedOut));
-        assert!(!retryable_quic_connection(
-            &quinn::ConnectionError::VersionMismatch
-        ));
-        assert!(!retryable_quic_connection(
-            &quinn::ConnectionError::LocallyClosed
-        ));
-        assert!(retryable_h3_code(
-            h3::error::Code::H3_REQUEST_REJECTED.value()
-        ));
+        assert!(!retryable_quic_connection(&quinn::ConnectionError::VersionMismatch));
+        assert!(!retryable_quic_connection(&quinn::ConnectionError::LocallyClosed));
+        assert!(retryable_h3_code(h3::error::Code::H3_REQUEST_REJECTED.value()));
         assert!(!retryable_h3_code(h3::error::Code::H3_FRAME_ERROR.value()));
     }
 }

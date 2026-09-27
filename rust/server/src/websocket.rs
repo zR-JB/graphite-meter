@@ -27,13 +27,7 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
     {
         return refusal(StatusCode::FORBIDDEN);
     }
-    if request
-        .headers()
-        .get_all(header::SEC_WEBSOCKET_KEY)
-        .iter()
-        .count()
-        > 1
-    {
+    if request.headers().get_all(header::SEC_WEBSOCKET_KEY).iter().count() > 1 {
         return refusal(StatusCode::BAD_REQUEST);
     }
     // Go accepts token lists spread across repeated upgrade headers. Normalize
@@ -42,16 +36,11 @@ pub fn handshake<B>(request: &Request<B>, allowed_origin: Option<&str>) -> Respo
     *normalized.method_mut() = request.method().clone();
     *normalized.version_mut() = request.version();
     *normalized.headers_mut() = request.headers().clone();
-    for (name, token) in [
-        (header::CONNECTION, "Upgrade"),
-        (header::UPGRADE, "websocket"),
-    ] {
+    for (name, token) in [(header::CONNECTION, "Upgrade"), (header::UPGRADE, "websocket")] {
         if request.headers().get_all(&name).iter().any(|value| {
-            value.to_str().is_ok_and(|value| {
-                value
-                    .split(',')
-                    .any(|part| part.trim().eq_ignore_ascii_case(token))
-            })
+            value
+                .to_str()
+                .is_ok_and(|value| value.split(',').any(|part| part.trim().eq_ignore_ascii_case(token)))
         }) {
             normalized
                 .headers_mut()
@@ -101,11 +90,8 @@ fn refusal(status: StatusCode) -> Response<()> {
 /// `stream` must already have completed an authorized HTTP upgrade. The caller
 /// keeps its capacity permits until this future returns. Cancellation covers
 /// both receiving and sending, including a peer that stops reading replies.
-pub async fn serve_ping<S>(
-    stream: S,
-    deadline: tokio::time::Instant,
-    stopped: impl Future<Output = CloseReason>,
-) where
+pub async fn serve_ping<S>(stream: S, deadline: tokio::time::Instant, stopped: impl Future<Output = CloseReason>)
+where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let config = WebSocketConfig::default()
@@ -138,10 +124,7 @@ pub async fn serve_ping<S>(
     .await;
 }
 
-async fn exchange<S>(
-    socket: &mut WebSocketStream<S>,
-    deadline: tokio::time::Instant,
-) -> Result<CloseReason, Error>
+async fn exchange<S>(socket: &mut WebSocketStream<S>, deadline: tokio::time::Instant) -> Result<CloseReason, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
@@ -162,12 +145,7 @@ where
             message @ (Message::Text(_) | Message::Binary(_)) => {
                 idle = tokio::time::Instant::now() + Duration::from_secs(30);
                 if let Some(reply) = crate::ping::reply(&message.into_data()) {
-                    match tokio::time::timeout_at(
-                        idle.min(deadline),
-                        socket.send(Message::Text(reply.into())),
-                    )
-                    .await
-                    {
+                    match tokio::time::timeout_at(idle.min(deadline), socket.send(Message::Text(reply.into()))).await {
                         Ok(result) => result?,
                         Err(_) => {
                             return Ok(if idle <= deadline {

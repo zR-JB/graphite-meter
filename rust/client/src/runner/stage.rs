@@ -5,10 +5,7 @@ use crate::{
     config::Config,
     download::Download,
     latency::Observation,
-    model::{
-        Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
-        StageResult,
-    },
+    model::{Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage, StageResult},
     stream_plan::StageLanePlan,
     transport::{TRANSFER_PROGRESS_TIMEOUT, Transport},
     upload::Upload,
@@ -21,8 +18,8 @@ use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     latency::LatencyAccumulator,
     measurement::{
-        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction,
-        FINAL_CHECKPOINT_BUDGET, IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
+        AggregateMeasurements, Boundary, CHECKPOINT_BUDGET, CLIENT_STALL, Direction, FINAL_CHECKPOINT_BUDGET,
+        IntervalReason, SAMPLE_INTERVAL, Stage as TransferStage,
     },
 };
 use std::{
@@ -103,11 +100,7 @@ struct LatencyFailure {
 }
 impl std::fmt::Display for LatencyFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "{} latency unavailable: {}",
-            self.id, self.source
-        )
+        write!(formatter, "{} latency unavailable: {}", self.id, self.source)
     }
 }
 impl std::error::Error for LatencyFailure {
@@ -116,11 +109,7 @@ impl std::error::Error for LatencyFailure {
     }
 }
 
-fn latency_task_result(
-    id: &str,
-    result: Result<(), Error>,
-    stop_requested: bool,
-) -> Result<(), Error> {
+fn latency_task_result(id: &str, result: Result<(), Error>, stop_requested: bool) -> Result<(), Error> {
     let source = match result {
         Ok(()) if stop_requested => return Ok(()),
         Ok(()) => "latency session ended before stage boundary".into(),
@@ -146,23 +135,14 @@ impl Transfer {
 }
 
 impl StageResources {
-    fn preparation_failure(
-        &mut self,
-        id: &str,
-        error: &Error,
-        snapshots: &watch::Sender<Snapshot>,
-    ) {
+    fn preparation_failure(&mut self, id: &str, error: &Error, snapshots: &watch::Sender<Snapshot>) {
         self.failed.push(id.to_owned());
         self.stop_host_latency(id);
         snapshots.send_modify(|snapshot| {
             if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
                 server.error = Some(error.to_string());
             }
-            if let Some(latency) = snapshot
-                .server_latencies
-                .iter_mut()
-                .find(|latency| latency.id == id)
-            {
+            if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
                 latency.error = Some("throughput participant unavailable".into());
                 latency.latest_ms = None;
             }
@@ -185,10 +165,7 @@ impl StageResources {
 
     async fn close_transfers(&mut self, confirm: bool) -> Result<(), Error> {
         self.stop.send_replace(true);
-        let finalizers = self
-            .transfers
-            .drain(..)
-            .map(|transfer| transfer.close(confirm));
+        let finalizers = self.transfers.drain(..).map(|transfer| transfer.close(confirm));
         let results = futures_util::future::join_all(finalizers).await;
         results.into_iter().find(Result::is_err).unwrap_or(Ok(()))
     }
@@ -228,10 +205,7 @@ impl StageResources {
         Ok(())
     }
 
-    fn latency_result(
-        &mut self,
-        completed: Result<LatencyCompletion, tokio::task::JoinError>,
-    ) -> Result<(), Error> {
+    fn latency_result(&mut self, completed: Result<LatencyCompletion, tokio::task::JoinError>) -> Result<(), Error> {
         let completed = completed?;
         self.latency_completed.insert(completed.id, completed.at);
         completed.result
@@ -257,22 +231,9 @@ impl StageResources {
                 latency.error = Some(failure.source.to_string());
                 latency.latest_ms = None;
             }
-            let reason = snapshot.failure(
-                &failure.id,
-                crate::model::FailureScope::Latency,
-                &failure.source,
-            );
-            leaves = another_remains
-                && matches!(
-                    reason,
-                    Some(FailureReason::ConnectionLost | FailureReason::Timeout)
-                );
-            if leaves
-                && let Some(server) = snapshot
-                    .servers
-                    .iter_mut()
-                    .find(|server| server.id == failure.id)
-            {
+            let reason = snapshot.failure(&failure.id, crate::model::FailureScope::Latency, &failure.source);
+            leaves = another_remains && matches!(reason, Some(FailureReason::ConnectionLost | FailureReason::Timeout));
+            if leaves && let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == failure.id) {
                 server.error = Some(failure.source.to_string());
             }
             snapshot.status = format!("{failure}; other measurements continue");
@@ -314,32 +275,17 @@ impl StageResources {
             return Ok(());
         }
         let failure = error.downcast::<ParticipantFailure>()?;
-        let Some(index) = self
-            .transfers
-            .iter()
-            .position(|transfer| transfer.id == failure.id)
-        else {
+        let Some(index) = self.transfers.iter().position(|transfer| transfer.id == failure.id) else {
             return Err(failure);
         };
         accounting.observe(self.local_boundary(epoch));
         let transfer = self.transfers.remove(index);
         snapshots.send_modify(|snapshot| {
-            if let Some(server) = snapshot
-                .servers
-                .iter_mut()
-                .find(|server| server.id == failure.id)
-            {
+            if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == failure.id) {
                 server.error = Some(failure.source.to_string());
             }
-            snapshot.failure(
-                &failure.id,
-                crate::model::FailureScope::Throughput,
-                &failure.source,
-            );
-            snapshot.status = format!(
-                "{} unavailable; continuing with remaining servers",
-                failure.id
-            );
+            snapshot.failure(&failure.id, crate::model::FailureScope::Throughput, &failure.source);
+            snapshot.status = format!("{} unavailable; continuing with remaining servers", failure.id);
         });
         self.stop_host_latency(&failure.id);
         snapshots.send_modify(|snapshot| {
@@ -360,10 +306,7 @@ impl StageResources {
         if measuring && let Some(stage) = stage {
             accounting.begin(
                 stage,
-                self.transfers
-                    .iter()
-                    .map(|transfer| transfer.id.clone())
-                    .collect(),
+                self.transfers.iter().map(|transfer| transfer.id.clone()).collect(),
                 nanos(epoch.elapsed()),
                 IntervalReason::Dropout,
             );
@@ -420,11 +363,7 @@ impl StageResources {
                             || matches!(kind, BoundaryKind::Initial)
                             || (matches!(kind, BoundaryKind::Sample) && *checkpoint_misses >= 3)
                         {
-                            Err(ParticipantFailure {
-                                id: id.clone(),
-                                source,
-                            }
-                            .into())
+                            Err(ParticipantFailure { id: id.clone(), source }.into())
                         } else {
                             Ok(None)
                         }
@@ -497,17 +436,9 @@ async fn start_transfer(
     };
     let started = tokio::time::timeout_at(timing.ready_by, async {
         if stage.downloads() || stage.uploads() {
-            let target = server
-                .throughput
-                .as_ref()
-                .ok_or("missing throughput target")?;
-            let transport = server
-                .http
-                .as_ref()
-                .ok_or("missing throughput connection")?;
-            let lanes = plan
-                .lanes(&server.entry.id)
-                .ok_or("missing stream allocation")?;
+            let target = server.throughput.as_ref().ok_or("missing throughput target")?;
+            let transport = server.http.as_ref().ok_or("missing throughput connection")?;
+            let lanes = plan.lanes(&server.entry.id).ok_or("missing stream allocation")?;
             let upload_transport = if stage == Stage::Bidirectional
                 && target.transport == ThroughputTransport::FetchStream
                 && target.protocol == Protocol::Http3
@@ -559,13 +490,7 @@ async fn start_transfer(
                     )
                     .await?
                 } else {
-                    Upload::start_webtransport(
-                        upload_transport,
-                        lanes.upload,
-                        timing.epoch,
-                        stopped.clone(),
-                    )
-                    .await?
+                    Upload::start_webtransport(upload_transport, lanes.upload, timing.epoch, stopped.clone()).await?
                 });
             }
         }
@@ -616,11 +541,7 @@ pub(super) async fn measure(
         snapshot.stage = Some(stage);
         snapshot.status = format!("Preparing {}", stage.name());
         snapshot.latest = Point::default();
-        let offset = snapshot
-            .results
-            .iter()
-            .map(|result| result.elapsed)
-            .sum::<Duration>();
+        let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
         snapshot.history.add(Point {
             elapsed: offset,
             ..Point::default()
@@ -660,10 +581,7 @@ pub(super) async fn measure(
         let ready_by = Instant::now() + STAGE_READY_TIMEOUT;
         if stage == Stage::Latency || config.loaded_latency {
             for server in servers {
-                let target = server
-                    .latency
-                    .clone()
-                    .ok_or("missing selected latency target")?;
+                let target = server.latency.clone().ok_or("missing selected latency target")?;
                 let id = server.entry.id.clone();
                 let http = server.client.clone();
                 let (stop, stopped) = watch::channel(false);
@@ -672,15 +590,9 @@ pub(super) async fn measure(
                 // Keep headroom for observations queued during receiver checkpoints.
                 let (observations, receiver) = mpsc::channel(1024);
                 events.push(
-                    futures_util::stream::unfold(
-                        (id.clone(), receiver),
-                        |(id, mut receiver)| async {
-                            receiver
-                                .recv()
-                                .await
-                                .map(|event| ((id.clone(), event), (id, receiver)))
-                        },
-                    )
+                    futures_util::stream::unfold((id.clone(), receiver), |(id, mut receiver)| async {
+                        receiver.recv().await.map(|event| ((id.clone(), event), (id, receiver)))
+                    })
                     .boxed(),
                 );
                 latency.hosts.insert(id.clone(), HostLatency::default());
@@ -814,10 +726,9 @@ pub(super) async fn measure(
         }
         resources.transfers.extend(started.into_iter().flatten());
         if resources.transfers.is_empty() {
-            return Err(AllParticipantsFailed(
-                last_failure.expect("one preparation failure for each selected server"),
-            )
-            .into());
+            return Err(
+                AllParticipantsFailed(last_failure.expect("one preparation failure for each selected server")).into(),
+            );
         }
         let warmup = servers
             .iter()
@@ -832,14 +743,7 @@ pub(super) async fn measure(
         let warmup_end = Instant::now() + warmup;
         loop {
             if let Err(error) = resources.health() {
-                resources.recover(
-                    error,
-                    &mut accounting,
-                    transfer_stage,
-                    false,
-                    epoch,
-                    snapshots,
-                )?;
+                resources.recover(error, &mut accounting, transfer_stage, false, epoch, snapshots)?;
             }
             tokio::select! {
                 _ = tokio::time::sleep_until(warmup_end) => break,
@@ -865,14 +769,7 @@ pub(super) async fn measure(
                         initial = Some(boundary);
                         break;
                     }
-                    Err(error) => resources.recover(
-                        error,
-                        &mut accounting,
-                        transfer_stage,
-                        false,
-                        epoch,
-                        snapshots,
-                    )?,
+                    Err(error) => resources.recover(error, &mut accounting, transfer_stage, false, epoch, snapshots)?,
                 }
             }
         }
@@ -888,11 +785,7 @@ pub(super) async fn measure(
             boundary.observed_up = local.observed_up;
             accounting.begin(
                 stage,
-                resources
-                    .transfers
-                    .iter()
-                    .map(|transfer| transfer.id.clone())
-                    .collect(),
+                resources.transfers.iter().map(|transfer| transfer.id.clone()).collect(),
                 boundary.at_nanos,
                 IntervalReason::StageStart,
             );
@@ -912,14 +805,7 @@ pub(super) async fn measure(
         });
         loop {
             if let Err(error) = resources.health() {
-                resources.recover(
-                    error,
-                    &mut accounting,
-                    transfer_stage,
-                    true,
-                    epoch,
-                    snapshots,
-                )?;
+                resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?;
             }
             tokio::select! {
                 biased;
@@ -1010,14 +896,7 @@ pub(super) async fn measure(
                         accounting.observe(boundary);
                         break;
                     }
-                    Err(error) => resources.recover(
-                        error,
-                        &mut accounting,
-                        transfer_stage,
-                        true,
-                        epoch,
-                        snapshots,
-                    )?,
+                    Err(error) => resources.recover(error, &mut accounting, transfer_stage, true, epoch, snapshots)?,
                 }
             }
         }
@@ -1066,14 +945,8 @@ pub(super) async fn measure(
             .map(|stage| accounting.result(stage, Direction::Up));
         snapshots.send_modify(|snapshot| {
             latency.sample(snapshot, ended.duration_since(started));
-            let missing = (stage.downloads()
-                && down
-                    .as_ref()
-                    .is_none_or(|result| result.mean_bytes_per_sec.is_none()))
-                || (stage.uploads()
-                    && up
-                        .as_ref()
-                        .is_none_or(|result| result.mean_bytes_per_sec.is_none()));
+            let missing = (stage.downloads() && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
+                || (stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
             if missing && !*cancel.borrow() {
                 let error: Error = Box::new(crate::failure::MeasurementFailure(
                     graphite_meter_core::failure::FailureReason::InsufficientEvidence,
@@ -1082,8 +955,7 @@ pub(super) async fn measure(
                     snapshot.failure(&transfer.id, crate::model::FailureScope::Throughput, &error);
                 }
             }
-            let server_results =
-                server_contributions(transfer_stage, servers, &accounting, snapshot);
+            let server_results = server_contributions(transfer_stage, servers, &accounting, snapshot);
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: ended.duration_since(started),
@@ -1105,10 +977,7 @@ pub(super) async fn measure(
                             .get(&host.id)
                             .map(|host| host.accumulator.snapshot())
                             .unwrap_or_default(),
-                        error: host
-                            .error
-                            .clone()
-                            .or_else(|| cancel.borrow().then(|| "Stopped".into())),
+                        error: host.error.clone().or_else(|| cancel.borrow().then(|| "Stopped".into())),
                     })
                     .collect(),
                 server_results,
@@ -1117,22 +986,16 @@ pub(super) async fn measure(
                     && !resources.latency_failed
                     && !*cancel.borrow()
                     && (stage != Stage::Latency
-                        || latency
-                            .hosts
-                            .values()
-                            .all(|host| host.accumulator.snapshot().count > 0))
-                    && (!stage.downloads()
-                        || down.is_some_and(|result| result.mean_bytes_per_sec.is_some()))
-                    && (!stage.uploads()
-                        || up.is_some_and(|result| result.mean_bytes_per_sec.is_some())),
+                        || latency.hosts.values().all(|host| host.accumulator.snapshot().count > 0))
+                    && (!stage.downloads() || down.is_some_and(|result| result.mean_bytes_per_sec.is_some()))
+                    && (!stage.uploads() || up.is_some_and(|result| result.mean_bytes_per_sec.is_some())),
             })
         });
     } else if result.is_err() && !*cancel.borrow() {
         // A failed preparation still belongs to this stage. Earlier completed
         // results remain untouched, and this missing population is explicit.
         snapshots.send_modify(|snapshot| {
-            let server_results =
-                server_contributions(transfer_stage, servers, &accounting, snapshot);
+            let server_results = server_contributions(transfer_stage, servers, &accounting, snapshot);
             snapshot.results.push(StageResult {
                 stage,
                 elapsed: Duration::ZERO,
@@ -1187,16 +1050,9 @@ impl LatencyMeasurements {
     }
 
     fn sample(&mut self, snapshot: &mut Snapshot, elapsed: Duration) {
-        let offset = snapshot
-            .results
-            .iter()
-            .map(|result| result.elapsed)
-            .sum::<Duration>();
+        let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
         for host in &mut snapshot.server_latencies {
-            host.latest_ms = self
-                .hosts
-                .get_mut(&host.id)
-                .and_then(|state| state.latest.take());
+            host.latest_ms = self.hosts.get_mut(&host.id).and_then(|state| state.latest.take());
             host.history.add(Point {
                 elapsed: offset + elapsed,
                 latency_ms: host.latest_ms,

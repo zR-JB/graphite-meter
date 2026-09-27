@@ -1,8 +1,7 @@
 use askama::Template;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_server::auth::pages::{
-    ApprovalPage, ContinuePage, DonePage, LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT,
-    security_headers,
+    ApprovalPage, ContinuePage, DonePage, LoginPage, PENDING_SCRIPT, STYLES, THEME_SCRIPT, security_headers,
 };
 use sha2::{Digest, Sha256};
 
@@ -71,10 +70,7 @@ fn every_inline_asset_matches_csp_hash_of_actual_rendered_bytes() {
             }
         );
         for asset in styles.into_iter().chain(scripts) {
-            let expected = format!(
-                "'sha256-{}'",
-                STANDARD.encode(Sha256::digest(asset.as_bytes()))
-            );
+            let expected = format!("'sha256-{}'", STANDARD.encode(Sha256::digest(asset.as_bytes())));
             assert!(csp.contains(&expected));
         }
         assert_eq!(html.matches("rel=\"icon\"").count(), 1);
@@ -100,10 +96,7 @@ fn dynamic_fields_are_html_escaped_and_never_become_scripts() {
     let html = page.render().unwrap();
     assert!(!html.contains(attack));
     assert!(!html.contains("<script>alert"));
-    assert_eq!(
-        inline_blocks(&html, "script"),
-        [THEME_SCRIPT, PENDING_SCRIPT]
-    );
+    assert_eq!(inline_blocks(&html, "script"), [THEME_SCRIPT, PENDING_SCRIPT]);
     let approval = ApprovalPage {
         browser_capacity: false,
         client_limit: 8,
@@ -115,10 +108,7 @@ fn dynamic_fields_are_html_escaped_and_never_become_scripts() {
     .render()
     .unwrap();
     assert!(!approval.contains(attack));
-    assert_eq!(
-        inline_blocks(&approval, "script"),
-        [THEME_SCRIPT, PENDING_SCRIPT]
-    );
+    assert_eq!(inline_blocks(&approval, "script"), [THEME_SCRIPT, PENDING_SCRIPT]);
     assert!(approval.contains("action=\"/auth/browser/approve\""));
 }
 
@@ -181,11 +171,7 @@ fn approval_capacity_and_completion_keep_expected_forms_and_scripts() {
     assert!(!capacity.contains("<form"));
     for browser in [false, true] {
         let html = DonePage { browser }.render().unwrap();
-        assert!(html.contains(if browser {
-            "Browser client"
-        } else {
-            "Terminal client"
-        }));
+        assert!(html.contains(if browser { "Browser client" } else { "Terminal client" }));
         assert!(!html.contains("<form"));
         assert_eq!(inline_blocks(&html, "script"), [THEME_SCRIPT]);
     }
@@ -253,10 +239,7 @@ async fn application_response_restricts_resources_and_hashes_embedded_inline_ass
         }));
         let mut socket = TcpStream::connect(address).await.unwrap();
         socket
-            .write_all(
-                format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n")
-                    .as_bytes(),
-            )
+            .write_all(format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n").as_bytes())
             .await
             .unwrap();
         let mut response = String::new();
@@ -289,10 +272,7 @@ async fn application_response_restricts_resources_and_hashes_embedded_inline_ass
                     STANDARD.encode(Sha256::digest(inline.as_bytes()))
                 ));
             }
-            assert!(
-                policy.split("; ").any(|actual| actual == expected),
-                "{policy}"
-            );
+            assert!(policy.split("; ").any(|actual| actual == expected), "{policy}");
         }
         assert!(!policy.contains("unsafe-inline"));
         stop.send(()).unwrap();

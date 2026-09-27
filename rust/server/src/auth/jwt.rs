@@ -36,10 +36,7 @@ impl Alg {
     }
 
     pub fn allowed(advertised: &[String]) -> Vec<Self> {
-        advertised
-            .iter()
-            .filter_map(|name| Self::parse(name))
-            .collect()
+        advertised.iter().filter_map(|name| Self::parse(name)).collect()
     }
 
     fn digest(self) -> &'static digest::Algorithm {
@@ -88,21 +85,15 @@ impl Key {
             (Alg::PS256, _) => rsa(&signature::RSA_PSS_2048_8192_SHA256),
             (Alg::PS384, _) => rsa(&signature::RSA_PSS_2048_8192_SHA384),
             (Alg::PS512, _) => rsa(&signature::RSA_PSS_2048_8192_SHA512),
-            (Alg::ES256, Material::P256(point)) => {
-                UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, point)
-                    .verify(message, signature)
-                    .is_ok()
-            }
-            (Alg::ES384, Material::P384(point)) => {
-                UnparsedPublicKey::new(&signature::ECDSA_P384_SHA384_FIXED, point)
-                    .verify(message, signature)
-                    .is_ok()
-            }
-            (Alg::EdDSA, Material::Ed25519(point)) => {
-                UnparsedPublicKey::new(&signature::ED25519, point)
-                    .verify(message, signature)
-                    .is_ok()
-            }
+            (Alg::ES256, Material::P256(point)) => UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_FIXED, point)
+                .verify(message, signature)
+                .is_ok(),
+            (Alg::ES384, Material::P384(point)) => UnparsedPublicKey::new(&signature::ECDSA_P384_SHA384_FIXED, point)
+                .verify(message, signature)
+                .is_ok(),
+            (Alg::EdDSA, Material::Ed25519(point)) => UnparsedPublicKey::new(&signature::ED25519, point)
+                .verify(message, signature)
+                .is_ok(),
             _ => false,
         }
     }
@@ -116,11 +107,7 @@ impl Key {
                 | (Material::P384(_), Alg::ES384)
                 | (Material::Ed25519(_), Alg::EdDSA)
         );
-        family
-            && self
-                .alg
-                .as_deref()
-                .is_none_or(|name| Alg::parse(name) == Some(alg))
+        family && self.alg.as_deref().is_none_or(|name| Alg::parse(name) == Some(alg))
     }
 }
 
@@ -133,8 +120,7 @@ impl Jwks {
             keys: Vec<Value>,
         }
         let set: Set = serde_json::from_slice(body).map_err(|_| Reject::Malformed)?;
-        let text =
-            |key: &Value, field: &str| key.get(field).and_then(Value::as_str).map(str::to_owned);
+        let text = |key: &Value, field: &str| key.get(field).and_then(Value::as_str).map(str::to_owned);
         let bytes = |key: &Value, field: &str| {
             key.get(field)
                 .and_then(Value::as_str)
@@ -144,25 +130,19 @@ impl Jwks {
             .keys
             .iter()
             .take(64)
-            .filter(|key| {
-                key.get("use")
-                    .is_none_or(|usage| usage.as_str() == Some("sig"))
-            })
+            .filter(|key| key.get("use").is_none_or(|usage| usage.as_str() == Some("sig")))
             .filter(|key| key.get("alg").is_none_or(Value::is_string))
             .filter(|key| key.get("kid").is_none_or(Value::is_string))
             .filter(|key| {
                 key.get("key_ops").is_none_or(|ops| {
                     ops.as_array().is_some_and(|ops| {
-                        ops.iter().all(Value::is_string)
-                            && ops.iter().any(|op| op.as_str() == Some("verify"))
+                        ops.iter().all(Value::is_string) && ops.iter().any(|op| op.as_str() == Some("verify"))
                     })
                 })
             })
             .filter_map(|key| {
                 let point = |size| match (bytes(key, "x"), bytes(key, "y")) {
-                    (Some(x), Some(y)) if x.len() == size && y.len() == size => {
-                        Some([&[4][..], &x, &y].concat())
-                    }
+                    (Some(x), Some(y)) if x.len() == size && y.len() == size => Some([&[4][..], &x, &y].concat()),
                     _ => None,
                 };
                 let material = match (text(key, "kty")?.as_str(), text(key, "crv").as_deref()) {
@@ -172,9 +152,7 @@ impl Jwks {
                     },
                     ("EC", Some("P-256")) => Material::P256(point(32)?),
                     ("EC", Some("P-384")) => Material::P384(point(48)?),
-                    ("OKP", Some("Ed25519")) => {
-                        Material::Ed25519(bytes(key, "x").filter(|x| x.len() == 32)?)
-                    }
+                    ("OKP", Some("Ed25519")) => Material::Ed25519(bytes(key, "x").filter(|x| x.len() == 32)?),
                     _ => return None,
                 };
                 Some(Key {
@@ -209,11 +187,8 @@ pub(super) fn verify(token: &str, keys: &Jwks, allowed: &[Alg]) -> Result<Verifi
         return Err(Reject::Malformed);
     }
     let decode = |part: &str| B64.decode(part).map_err(|_| Reject::Malformed);
-    let header: Map<String, Value> =
-        serde_json::from_slice(&decode(header)?).map_err(|_| Reject::Malformed)?;
-    let typ = header
-        .get("typ")
-        .map(|typ| typ.as_str().map(str::to_ascii_lowercase));
+    let header: Map<String, Value> = serde_json::from_slice(&decode(header)?).map_err(|_| Reject::Malformed)?;
+    let typ = header.get("typ").map(|typ| typ.as_str().map(str::to_ascii_lowercase));
     if header.contains_key("cty")
         || header.contains_key("crit")
         || header.contains_key("enc")
@@ -266,11 +241,7 @@ pub(super) struct Expected<'a> {
     pub now: u64,
 }
 
-pub(super) fn audience_and_issuer(
-    claims: &Map<String, Value>,
-    issuer: &str,
-    client_id: &str,
-) -> Result<(), Reject> {
+pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, client_id: &str) -> Result<(), Reject> {
     let audiences = match claims.get("aud") {
         Some(Value::String(one)) => vec![one.as_str()],
         Some(Value::Array(many)) => many
@@ -304,8 +275,7 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
         preferred_username: Option<String>,
     }
     audience_and_issuer(&verified.claims, expected.issuer, expected.client_id)?;
-    let claims: Claims =
-        serde_json::from_value(Value::Object(verified.claims)).map_err(|_| Reject::Claims)?;
+    let claims: Claims = serde_json::from_value(Value::Object(verified.claims)).map_err(|_| Reject::Claims)?;
     let now = expected.now as f64;
     let digest = |value: &str| digest::digest(&digest::SHA256, value.as_bytes());
     let nonce_matches = claims
@@ -319,10 +289,7 @@ pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<Id
     if now >= claims.exp
         || claims.nbf.is_some_and(|nbf| nbf > now + 300.0)
         || !nonce_matches
-        || claims
-            .azp
-            .as_deref()
-            .is_some_and(|azp| azp != expected.client_id)
+        || claims.azp.as_deref().is_some_and(|azp| azp != expected.client_id)
         || !at_hash_matches
     {
         return Err(Reject::Claims);

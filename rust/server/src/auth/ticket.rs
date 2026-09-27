@@ -54,14 +54,7 @@ impl SessionStore {
         request_origin: &str,
         kind: SocketKind,
     ) -> Result<Ticket, TicketError> {
-        self.mint_ticket_at(
-            lease,
-            public_origin,
-            target,
-            request_origin,
-            kind,
-            Instant::now(),
-        )
+        self.mint_ticket_at(lease, public_origin, target, request_origin, kind, Instant::now())
     }
 
     fn mint_ticket_at(
@@ -76,8 +69,7 @@ impl SessionStore {
         if lease.is_bearer() && lease.browser_origin().is_none() {
             return Err(TicketError::NoSession);
         }
-        let (target, target_host, route_kind) =
-            socket_target(target).ok_or(TicketError::InvalidTarget)?;
+        let (target, target_host, route_kind) = socket_target(target).ok_or(TicketError::InvalidTarget)?;
         let public = target_origin(public_origin)
             .ok()
             .flatten()
@@ -86,10 +78,7 @@ impl SessionStore {
             SocketKind::WebSocket => Kind::WebSocket,
             SocketKind::WebTransport => Kind::WebTransport,
         };
-        if public.scheme != "https"
-            || !target_host.eq_ignore_ascii_case(&public.host)
-            || route_kind != expected
-        {
+        if public.scheme != "https" || !target_host.eq_ignore_ascii_case(&public.host) || route_kind != expected {
             return Err(TicketError::InvalidTarget);
         }
         let mut state = self.0.lock().expect("session mutex poisoned");
@@ -111,8 +100,7 @@ impl SessionStore {
             random_token::<32>().map_err(|_| TicketError::RandomUnavailable)?
         );
         let deadline = (now + TICKET_LIFETIME).min(lease.session.0.deadline);
-        let expires = (SystemTime::now() + deadline.saturating_duration_since(now))
-            .min(lease.session().expires());
+        let expires = (SystemTime::now() + deadline.saturating_duration_since(now)).min(lease.session().expires());
         state.tickets.insert(
             token_hash(&token),
             StoredTicket {
@@ -131,13 +119,7 @@ impl SessionStore {
         self.consume_ticket_at(raw, target, origin, Instant::now())
     }
 
-    fn consume_ticket_at(
-        &self,
-        raw: &str,
-        target: &str,
-        origin: &str,
-        now: Instant,
-    ) -> Option<AuthLease> {
+    fn consume_ticket_at(&self, raw: &str, target: &str, origin: &str, now: Instant) -> Option<AuthLease> {
         let mut state = self.0.lock().expect("session mutex poisoned");
         let ticket = state.tickets.remove(&token_hash(raw))?;
         let (target, _, _) = socket_target(target)?;
@@ -237,9 +219,7 @@ mod tests {
     fn session_removal_eagerly_removes_grants_and_outstanding_tickets() {
         let store = SessionStore::new();
         let (old, session) = store.create("subject", "name", "local", None).unwrap();
-        let (_, lease) = store
-            .issue_browser_grant(&session, "https://client.example")
-            .unwrap();
+        let (_, lease) = store.issue_browser_grant(&session, "https://client.example").unwrap();
         store
             .mint_ticket(
                 &lease,
@@ -249,9 +229,7 @@ mod tests {
                 SocketKind::WebTransport,
             )
             .unwrap();
-        store
-            .create("subject", "name", "local", Some(&old))
-            .unwrap();
+        store.create("subject", "name", "local", Some(&old)).unwrap();
         let state = store.0.lock().unwrap();
         assert!(state.grants.is_empty());
         assert!(state.tickets.is_empty());
@@ -272,9 +250,7 @@ mod tests {
                 now - SESSION_LIFETIME + Duration::from_secs(5),
             )
             .unwrap();
-        let (grant, lease) = store
-            .issue_browser_grant(&session, "https://client.example")
-            .unwrap();
+        let (grant, lease) = store.issue_browser_grant(&session, "https://client.example").unwrap();
         let target = "https://meter.example/wt/ping";
         let ticket = store
             .mint_ticket_at(

@@ -3,9 +3,7 @@ use std::{sync::Arc, time::Duration};
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
-    let origin = std::env::args()
-        .nth(1)
-        .ok_or("usage: wt_probe HTTPS_ORIGIN")?;
+    let origin = std::env::args().nth(1).ok_or("usage: wt_probe HTTPS_ORIGIN")?;
     tokio::time::timeout(Duration::from_secs(30), run(&origin)).await??;
     if let Some(websocket_origin) = std::env::args().nth(2) {
         validate_websocket(&websocket_origin).await?;
@@ -50,8 +48,7 @@ async fn run(origin: &str) -> Result<(), Error> {
             );
         } else {
             for _ in 0..2 {
-                let mut stream =
-                    tokio::time::timeout(Duration::from_secs(3), session.accept_uni()).await??;
+                let mut stream = tokio::time::timeout(Duration::from_secs(3), session.accept_uni()).await??;
                 let mut count = 0;
                 while let Some(chunk) = stream.read_chunk().await? {
                     count += chunk.len();
@@ -63,12 +60,8 @@ async fn run(origin: &str) -> Result<(), Error> {
         println!("download {suffix} PASS");
     }
     let http = Arc::new(
-        graphite_meter_client::quic::Http3Client::connect(
-            &format!("{origin}/").parse()?,
-            true,
-            Duration::from_secs(5),
-        )
-        .await?,
+        graphite_meter_client::quic::Http3Client::connect(&format!("{origin}/").parse()?, true, Duration::from_secs(5))
+            .await?,
     );
     let mut mint = http
         .open(
@@ -88,13 +81,9 @@ async fn run(origin: &str) -> Result<(), Error> {
     )
     .await?;
     let mut progress = session.upload_progress().await?;
-    assert_eq!(
-        progress.next().await?,
-        graphite_meter_core::wire::UploadProgress::Ready
-    );
+    assert_eq!(progress.next().await?, graphite_meter_core::wire::UploadProgress::Ready);
     let mut lane = session.open_uni().await?;
-    lane.write_chunk(bytes::Bytes::from(vec![b'w'; 131073]))
-        .await?;
+    lane.write_chunk(bytes::Bytes::from(vec![b'w'; 131073])).await?;
     lane.finish()?;
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
@@ -141,9 +130,7 @@ async fn run(origin: &str) -> Result<(), Error> {
 }
 
 async fn validate_owners(origin: &str) -> Result<(), Error> {
-    use graphite_meter_client::{
-        download::Download, latency::Observation, net::Http, webtransport,
-    };
+    use graphite_meter_client::{download::Download, latency::Observation, net::Http, webtransport};
     use graphite_meter_core::discovery::{Protocol, ThroughputTarget, ThroughputTransport};
     let http = Http::new(true)?;
     let (_cancel, cancelled) = tokio::sync::watch::channel(false);
@@ -171,15 +158,8 @@ async fn validate_owners(origin: &str) -> Result<(), Error> {
         transport: ThroughputTransport::WebTransport,
         protocol: Protocol::Http3,
     };
-    let mut download = Download::start_webtransport(
-        &http,
-        &target,
-        2,
-        Duration::from_secs(5),
-        true,
-        cancelled.clone(),
-    )
-    .await?;
+    let mut download =
+        Download::start_webtransport(&http, &target, 2, Duration::from_secs(5), true, cancelled.clone()).await?;
     assert!(download.bytes() > 0);
     download.health()?;
     tokio::time::timeout(Duration::from_secs(2), download.stop()).await?;
@@ -208,10 +188,7 @@ async fn validate_websocket(origin: &str) -> Result<(), Error> {
             replies += 1;
         }
     }
-    assert!(
-        replies > 0,
-        "shared WebSocket latency loop produced no replies"
-    );
+    assert!(replies > 0, "shared WebSocket latency loop produced no replies");
     println!("shared WebSocket latency owner PASS");
     Ok(())
 }

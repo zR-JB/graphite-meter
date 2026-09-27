@@ -22,11 +22,7 @@ fn respond(discovery: &Discovery, request: Request<()>) -> http::Response<bytes:
 fn preflight_requires_request_authority() {
     let discovery = Discovery::new(Arc::new(Config::default()), None, None).unwrap();
     let req = Request::builder().uri("/preflight").body(()).unwrap();
-    assert!(
-        discovery
-            .respond(&req, "127.0.0.1:80".parse().unwrap())
-            .is_err()
-    );
+    assert!(discovery.respond(&req, "127.0.0.1:80".parse().unwrap()).is_err());
 }
 
 #[test]
@@ -63,11 +59,7 @@ fn invalid_request_hosts_fall_back_to_localhost() {
         "user@meter.example",
     ] {
         for path in ["/servers", "/preflight"] {
-            let request = Request::builder()
-                .uri(path)
-                .header("host", host)
-                .body(())
-                .unwrap();
+            let request = Request::builder().uri(path).header("host", host).body(()).unwrap();
             let response = respond(&discovery, request);
             assert_eq!(response.status(), StatusCode::OK);
             let text = std::str::from_utf8(response.body()).unwrap();

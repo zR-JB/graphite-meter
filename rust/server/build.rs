@@ -44,9 +44,7 @@ fn generate() -> Result<()> {
     let reviewed_legal = if let Some(directory) = env::var_os("GM_RUST_LEGAL_DIR") {
         let expected = fs::canonicalize(Path::new(&directory).join("browser-assets")).ok();
         if expected.as_ref() != Some(&root) {
-            return Err(
-                "reviewed Rust legal assets must come from GM_RUST_LEGAL_DIR/browser-assets".into(),
-            );
+            return Err("reviewed Rust legal assets must come from GM_RUST_LEGAL_DIR/browser-assets".into());
         }
         true
     } else {
@@ -70,8 +68,7 @@ fn generate() -> Result<()> {
         if name.starts_with("legal/") && !reviewed_legal {
             continue;
         }
-        let content_type = content_type(&name)
-            .ok_or_else(|| format!("unsupported browser asset extension: {name}"))?;
+        let content_type = content_type(&name).ok_or_else(|| format!("unsupported browser asset extension: {name}"))?;
         let bytes = fs::read(&source)?;
         if name == "index.html" {
             let html = std::str::from_utf8(&bytes)?;
@@ -92,9 +89,7 @@ fn generate() -> Result<()> {
             if html.contains("name=\"graphite-meter-auth\"")
                 || html.contains("name=\"graphite-meter-result-history-default\"")
             {
-                return Err(
-                    "index.html must not contain server-owned auth/history metadata".into(),
-                );
+                return Err("index.html must not contain server-owned auth/history metadata".into());
             }
             index_found = true;
         }
@@ -111,12 +106,7 @@ fn generate() -> Result<()> {
     Ok(())
 }
 
-fn collect(
-    root: &Path,
-    directory: &Path,
-    prefix: &str,
-    files: &mut Vec<(String, PathBuf)>,
-) -> Result<()> {
+fn collect(root: &Path, directory: &Path, prefix: &str, files: &mut Vec<(String, PathBuf)>) -> Result<()> {
     println!("cargo:rerun-if-changed={}", directory.display());
     for entry in fs::read_dir(directory)? {
         let entry = entry?;

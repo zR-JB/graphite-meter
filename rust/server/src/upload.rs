@@ -47,10 +47,7 @@ impl Owner {
     pub fn delegated(subject: impl Into<String>, grant_id: impl Into<String>) -> Self {
         let grant_id = grant_id.into();
         Self {
-            client_keys: vec![
-                format!("grant:{grant_id}"),
-                format!("principal:{}", subject.into()),
-            ],
+            client_keys: vec![format!("grant:{grant_id}"), format!("principal:{}", subject.into())],
         }
     }
 
@@ -85,8 +82,7 @@ impl UploadError {
         self.refusal().map_or("unavailable", UploadRefusal::name)
     }
     pub fn status(self) -> http::StatusCode {
-        http::StatusCode::from_u16(self.refusal().map_or(503, UploadRefusal::status))
-            .expect("known upload status")
+        http::StatusCode::from_u16(self.refusal().map_or(503, UploadRefusal::status)).expect("known upload status")
     }
     pub fn retry(self) -> bool {
         matches!(self, Self::GlobalFull | Self::ClientFull)
@@ -206,13 +202,7 @@ impl UploadStore {
         let now = nanos(self.inner.origin.elapsed());
         issued > 0 && issued <= now && now - issued <= nanos(TOKEN_TTL)
     }
-    fn access(
-        &self,
-        id: &str,
-        owner: &Owner,
-        create: bool,
-        lane: bool,
-    ) -> Result<Arc<Mutex<Aggregate>>, UploadError> {
+    fn access(&self, id: &str, owner: &Owner, create: bool, lane: bool) -> Result<Arc<Mutex<Aggregate>>, UploadError> {
         self.sweep_if_due();
         let mut entries = self.inner.entries.lock().expect("upload store lock");
         let aggregate = if let Some(aggregate) = entries.by_id.get(id) {
@@ -221,11 +211,9 @@ impl UploadStore {
             if !create || entries.tombstones.contains_key(id) || !self.valid(id) {
                 return Err(UploadError::Invalid);
             }
-            if crate::client_address::share_full(
-                owner.client_keys(),
-                MAX_UPLOADS_PER_CLIENT,
-                |key| entries.by_client.get(key).copied().unwrap_or_default(),
-            ) {
+            if crate::client_address::share_full(owner.client_keys(), MAX_UPLOADS_PER_CLIENT, |key| {
+                entries.by_client.get(key).copied().unwrap_or_default()
+            }) {
                 return Err(UploadError::ClientFull);
             }
             if entries.by_id.len() >= MAX_LIVE_UPLOADS {
@@ -237,23 +225,16 @@ impl UploadStore {
                     .iter()
                     .filter_map(|(id, aggregate)| {
                         let state = aggregate.lock().expect("upload aggregate lock");
-                        (state.lanes == 0 && state.bytes == 0 && !state.finished)
-                            .then(|| (id.clone(), state.touched))
+                        (state.lanes == 0 && state.bytes == 0 && !state.finished).then(|| (id.clone(), state.touched))
                     })
                     .min_by_key(|(_, touched)| *touched);
                 let Some((victim, _)) = victim else {
                     return Err(UploadError::GlobalFull);
                 };
-                let aggregate = entries
-                    .by_id
-                    .remove(&victim)
-                    .expect("selected receiver exists");
+                let aggregate = entries.by_id.remove(&victim).expect("selected receiver exists");
                 let mut state = aggregate.lock().expect("upload aggregate lock");
                 for key in state.owner.client_keys() {
-                    let count = entries
-                        .by_client
-                        .get_mut(key)
-                        .expect("indexed upload owner");
+                    let count = entries.by_client.get_mut(key).expect("indexed upload owner");
                     *count -= 1;
                     if *count == 0 {
                         entries.by_client.remove(key);
@@ -261,9 +242,7 @@ impl UploadStore {
                 }
                 state.expired = true;
                 state.changed.notify_waiters();
-                entries
-                    .tombstones
-                    .insert(victim, Instant::now() + TOKEN_TTL);
+                entries.tombstones.insert(victim, Instant::now() + TOKEN_TTL);
             }
             let aggregate = Arc::new(Mutex::new(Aggregate {
                 owner: owner.clone(),
@@ -354,9 +333,7 @@ impl UploadStore {
     pub fn sweep_at(&self, now: Instant) {
         let mut entries = self.inner.entries.lock().expect("upload store lock");
         entries.tombstones.retain(|_, until| *until >= now);
-        let UploadEntries {
-            by_id, by_client, ..
-        } = &mut *entries;
+        let UploadEntries { by_id, by_client, .. } = &mut *entries;
         by_id.retain(|_, aggregate| {
             let mut state = aggregate.lock().expect("upload aggregate lock");
             if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
@@ -376,12 +353,7 @@ impl UploadStore {
         });
     }
     pub fn retained(&self) -> usize {
-        self.inner
-            .entries
-            .lock()
-            .expect("upload store lock")
-            .by_id
-            .len()
+        self.inner.entries.lock().expect("upload store lock").by_id.len()
     }
 }
 
@@ -397,11 +369,7 @@ impl UploadLane {
     pub fn finished(&self) -> impl std::future::Future<Output = ()> + Send + 'static {
         let aggregate = self.aggregate.clone();
         async move {
-            let changed = aggregate
-                .lock()
-                .expect("upload aggregate lock")
-                .changed
-                .clone();
+            let changed = aggregate.lock().expect("upload aggregate lock").changed.clone();
             loop {
                 let notified = changed.notified();
                 tokio::pin!(notified);
@@ -556,19 +524,13 @@ mod tests {
         };
         assert_eq!(
             store
-                .begin(
-                    &signed(nanos(Duration::from_secs(1))),
-                    &Owner::principal("a")
-                )
+                .begin(&signed(nanos(Duration::from_secs(1))), &Owner::principal("a"))
                 .err(),
             Some(UploadError::Invalid)
         );
         assert_eq!(
             store
-                .begin(
-                    &signed(nanos(Duration::from_secs(600))),
-                    &Owner::principal("a")
-                )
+                .begin(&signed(nanos(Duration::from_secs(600))), &Owner::principal("a"))
                 .err(),
             Some(UploadError::Invalid)
         );
@@ -577,10 +539,7 @@ mod tests {
         lane.record(15);
         Arc::get_mut(&mut store.inner).unwrap().origin -= Duration::from_secs(121);
         assert!(!store.valid(&id));
-        assert_eq!(
-            store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes,
-            15
-        );
+        assert_eq!(store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes, 15);
         drop(store.begin(&id, &Owner::principal("a")).unwrap());
     }
 
@@ -635,8 +594,7 @@ mod tests {
         drop(store.begin(&other_id, &other).unwrap());
         let first = first.unwrap();
         let aggregate = store.inner.entries.lock().unwrap().by_id[&first].clone();
-        aggregate.lock().unwrap().touched =
-            Instant::now() - UPLOAD_RETENTION - Duration::from_secs(1);
+        aggregate.lock().unwrap().touched = Instant::now() - UPLOAD_RETENTION - Duration::from_secs(1);
         store.sweep();
 
         assert_eq!(store.retained(), MAX_UPLOADS_PER_CLIENT);

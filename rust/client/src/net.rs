@@ -42,9 +42,7 @@ pub fn empty() -> Body {
     Empty::new().map_err(|never| match never {}).boxed_unsync()
 }
 pub fn full(bytes: impl Into<Bytes>) -> Body {
-    Full::new(bytes.into())
-        .map_err(|never| match never {})
-        .boxed_unsync()
+    Full::new(bytes.into()).map_err(|never| match never {}).boxed_unsync()
 }
 pub fn streaming(body: impl Stream<Item = Result<Bytes>> + Send + 'static) -> Body {
     StreamBody::new(body.map_ok(Frame::data)).boxed_unsync()
@@ -94,17 +92,11 @@ enum Sender {
 impl Connections {
     fn new(insecure: bool, proxy: Proxy) -> Result<Self> {
         let tls = |alpn: &[&[u8]]| -> Result<TlsConnector> {
-            Ok(TlsConnector::from(Arc::new(crate::tls::tcp_config(
-                insecure, alpn,
-            )?)))
+            Ok(TlsConnector::from(Arc::new(crate::tls::tcp_config(insecure, alpn)?)))
         };
         Ok(Self {
             proxy,
-            tls: [
-                tls(&[b"http/1.1"])?,
-                tls(&[b"h2"])?,
-                tls(&[b"h2", b"http/1.1"])?,
-            ],
+            tls: [tls(&[b"http/1.1"])?, tls(&[b"h2"])?, tls(&[b"h2", b"http/1.1"])?],
             pools: Mutex::new(HashMap::new()),
             maintenance: OnceLock::new(),
         })
@@ -118,11 +110,7 @@ impl Connections {
             return Ok(Sender::H2(sender.clone()));
         }
         pool.h1.retain(|connection| !connection.sender.is_closed());
-        if let Some(index) = pool
-            .h1
-            .iter()
-            .position(|connection| connection.sender.is_ready())
-        {
+        if let Some(index) = pool.h1.iter().position(|connection| connection.sender.is_ready()) {
             return Ok(Sender::H1(pool.h1.swap_remove(index)));
         }
         let target = target_origin(origin)?.ok_or("missing origin")?;
@@ -157,11 +145,7 @@ impl Connections {
         }
     }
 
-    async fn send(
-        self: &Arc<Self>,
-        mut request: Request<Body>,
-        protocol: Protocol,
-    ) -> Result<Response> {
+    async fn send(self: &Arc<Self>, mut request: Request<Body>, protocol: Protocol) -> Result<Response> {
         self.maintenance.get_or_init(|| {
             let owner = Arc::downgrade(self);
             let start = tokio::time::Instant::now() + POOL_IDLE_TIMEOUT;
@@ -173,16 +157,12 @@ impl Connections {
                     let Some(owner) = owner.upgrade() else {
                         return;
                     };
-                    owner
-                        .pools
-                        .lock()
-                        .expect("connections poisoned")
-                        .retain(|_, pool| {
-                            Arc::strong_count(pool) > 1
-                                || pool
-                                    .try_lock()
-                                    .is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
-                        });
+                    owner.pools.lock().expect("connections poisoned").retain(|_, pool| {
+                        Arc::strong_count(pool) > 1
+                            || pool
+                                .try_lock()
+                                .is_ok_and(|pool| pool.used.elapsed() < POOL_IDLE_TIMEOUT)
+                    });
                 }
             })
         });
@@ -206,11 +186,7 @@ impl Connections {
                 Ok(sender.send_request(request).await?)
             }
             Sender::H1(mut connection) => {
-                let authority = request
-                    .uri()
-                    .authority()
-                    .ok_or("missing authority")?
-                    .clone();
+                let authority = request.uri().authority().ok_or("missing authority")?.clone();
                 request
                     .headers_mut()
                     .insert(HOST, HeaderValue::from_str(authority.as_str())?);
@@ -307,11 +283,7 @@ impl Http {
             scope: None,
         })
     }
-    pub async fn dial(
-        &self,
-        origin: &str,
-        tls: Option<&TlsConnector>,
-    ) -> Result<graphite_meter_net::Connection> {
+    pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
         Ok(connect(&self.connections.proxy, &target, tls).await?)
     }
@@ -352,21 +324,11 @@ impl Http {
         self.check_status(&target, response.status(), response.headers())?;
         Ok(response)
     }
-    pub async fn request(
-        &self,
-        method: Method,
-        target: &str,
-        protocol: Protocol,
-    ) -> Result<Response> {
+    pub async fn request(&self, method: Method, target: &str, protocol: Protocol) -> Result<Response> {
         let request = self.builder(method, target)?.body(empty())?;
         tokio::time::timeout(CONTROL_TIMEOUT, self.send(request, protocol)).await?
     }
-    pub fn check_status(
-        &self,
-        target: &str,
-        status: http::StatusCode,
-        headers: &http::HeaderMap,
-    ) -> Result<()> {
+    pub fn check_status(&self, target: &str, status: http::StatusCode, headers: &http::HeaderMap) -> Result<()> {
         if status == StatusCode::FORBIDDEN
             && headers
                 .get("graphite-meter-auth")
@@ -399,15 +361,11 @@ impl Http {
                     .get(http::header::RETRY_AFTER)
                     .and_then(|value| value.to_str().ok())
                     .and_then(|value| {
-                        value
-                            .parse::<u64>()
-                            .ok()
-                            .map(Duration::from_secs)
-                            .or_else(|| {
-                                httpdate::parse_http_date(value).ok().and_then(|date| {
-                                    date.duration_since(std::time::SystemTime::now()).ok()
-                                })
-                            })
+                        value.parse::<u64>().ok().map(Duration::from_secs).or_else(|| {
+                            httpdate::parse_http_date(value)
+                                .ok()
+                                .and_then(|date| date.duration_since(std::time::SystemTime::now()).ok())
+                        })
                     })
                     .unwrap_or_default(),
                 refusal: headers
@@ -418,12 +376,7 @@ impl Http {
         }
         Ok(())
     }
-    pub async fn json<T: DeserializeOwned>(
-        &self,
-        method: Method,
-        target: &str,
-        protocol: Protocol,
-    ) -> Result<T> {
+    pub async fn json<T: DeserializeOwned>(&self, method: Method, target: &str, protocol: Protocol) -> Result<T> {
         let bytes = self.control(method, target, protocol).await?;
         Ok(decode_json(&bytes)?)
     }
@@ -437,11 +390,7 @@ impl Http {
     pub async fn discover(&self, source: &str) -> Result<Discovery> {
         let source = canonical_origin(source)?;
         let catalog: ServerCatalog = self
-            .json(
-                Method::GET,
-                &format!("{source}/servers"),
-                Protocol::Negotiated,
-            )
+            .json(Method::GET, &format!("{source}/servers"), Protocol::Negotiated)
             .await?;
         catalog.validate()?;
         let catalog = catalog.resolve(&source);
@@ -451,11 +400,7 @@ impl Http {
     pub async fn preflight(&self, entry: &ServerEntry) -> Result<Preflight> {
         let origin = canonical_origin(&entry.url)?;
         let bytes = self
-            .control(
-                Method::GET,
-                &format!("{origin}/preflight"),
-                Protocol::Negotiated,
-            )
+            .control(Method::GET, &format!("{origin}/preflight"), Protocol::Negotiated)
             .await?;
         let mut preflight = Preflight::decode(&bytes)?;
         for target in &mut preflight.capabilities.throughput {
@@ -474,9 +419,7 @@ impl Http {
     pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<Probe> {
         let origin = canonical_origin(origin)?;
         let (version, bytes) = tokio::time::timeout(CONTROL_TIMEOUT, async {
-            let response = self
-                .request(Method::GET, &format!("{origin}/probe"), protocol)
-                .await?;
+            let response = self.request(Method::GET, &format!("{origin}/probe"), protocol).await?;
             let version = response.version();
             Ok::<_, Error>((version, bounded_body(response).await?))
         })
@@ -505,13 +448,7 @@ impl Http {
             .throughput
             .iter()
             .map(|target| &target.base_url)
-            .chain(
-                preflight
-                    .capabilities
-                    .latency
-                    .iter()
-                    .map(|target| &target.base_url),
-            )
+            .chain(preflight.capabilities.latency.iter().map(|target| &target.base_url))
         {
             let origin = if raw == "." {
                 issuer.clone()
@@ -527,11 +464,7 @@ impl Http {
         scoped.scope = Some(Arc::new(GrantScope { issuer, targets }));
         Ok(scoped)
     }
-    pub fn begin_authorization(
-        &self,
-        source: &str,
-        auth_url: &str,
-    ) -> Result<PendingAuthorization> {
+    pub fn begin_authorization(&self, source: &str, auth_url: &str) -> Result<PendingAuthorization> {
         if self.insecure {
             return Err("authenticated operation refuses insecure TLS".into());
         }
@@ -557,17 +490,13 @@ impl Http {
     pub async fn poll_authorization(&self, pending: PendingAuthorization) -> Result<()> {
         tokio::time::timeout_at(pending.deadline, async {
             loop {
-                let body = serde_json::to_vec(
-                    &serde_json::json!({"verifier": pending.verifier.as_str()}),
-                )?;
+                let body = serde_json::to_vec(&serde_json::json!({"verifier": pending.verifier.as_str()}))?;
                 let request = Request::post(&pending.token_url)
                     .header(CONTENT_TYPE, "application/json")
                     .body(full(body))?;
-                let response = tokio::time::timeout(
-                    CONTROL_TIMEOUT,
-                    self.connections.send(request, Protocol::Negotiated),
-                )
-                .await??;
+                let response =
+                    tokio::time::timeout(CONTROL_TIMEOUT, self.connections.send(request, Protocol::Negotiated))
+                        .await??;
                 let status = response.status();
                 let data = tokio::time::timeout(CONTROL_TIMEOUT, bounded_body(response)).await??;
                 if status == StatusCode::OK {
@@ -637,9 +566,7 @@ fn validated_login(source: &str, raw: &str) -> Result<String> {
 }
 fn approval_code(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    let bits = bytes
-        .iter()
-        .fold(0_u64, |bits, byte| (bits << 8) | u64::from(*byte));
+    let bits = bytes.iter().fold(0_u64, |bits, byte| (bits << 8) | u64::from(*byte));
     (0..8)
         .rev()
         .map(|index| ALPHABET[((bits >> (index * 5)) & 31) as usize] as char)
@@ -649,9 +576,7 @@ fn approval_code(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphite_meter_core::discovery::{
-        Capabilities, Protocol, ThroughputTarget, ThroughputTransport,
-    };
+    use graphite_meter_core::discovery::{Capabilities, Protocol, ThroughputTarget, ThroughputTransport};
 
     fn http(insecure: bool) -> Http {
         let _ = crate::crypto::provider().install_default();
@@ -659,8 +584,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cleartext_proxy_requests_reuse_absolute_form_and_keep_credentials_on_proxy()
-    -> Result<()> {
+    async fn cleartext_proxy_requests_reuse_absolute_form_and_keep_credentials_on_proxy() -> Result<()> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         for proxied in [false, true] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
@@ -738,8 +662,7 @@ mod tests {
             "https://meter.example:000",
         ] {
             assert!(
-                http.builder(Method::GET, &format!("{origin}/probe"))
-                    .is_err(),
+                http.builder(Method::GET, &format!("{origin}/probe")).is_err(),
                 "accepted {origin}"
             );
         }
@@ -756,18 +679,9 @@ mod tests {
             "https://meter.example/a/../login",
             "https://meter.example/\\login",
         ] {
-            assert!(
-                validated_login("https://meter.example", raw).is_err(),
-                "{raw}"
-            );
+            assert!(validated_login("https://meter.example", raw).is_err(), "{raw}");
         }
-        assert!(
-            validated_login(
-                "https://meter.example:443",
-                "https://meter.example:8443/login"
-            )
-            .is_ok()
-        );
+        assert!(validated_login("https://meter.example:443", "https://meter.example:8443/login").is_ok());
         assert!(
             http(true)
                 .begin_authorization("https://meter.example", "https://meter.example/login")
@@ -786,10 +700,7 @@ mod tests {
                 header: HeaderValue::from_static("Bearer fixture"),
             },
         );
-        assert!(
-            http.authorization("https://meter.example/download")
-                .is_some()
-        );
+        assert!(http.authorization("https://meter.example/download").is_some());
         for target in [
             "https://meter.example:8443/download",
             "http://meter.example/download",
@@ -807,33 +718,14 @@ mod tests {
         };
         let preflight = Preflight::decode(br#"{"generation":"fixture","capabilities":{"throughput":[{"baseUrl":"https://meter.example:8443","transport":"fetch-stream","protocol":"http2"},{"baseUrl":"https://other.example","transport":"fetch-stream","protocol":"http1"}],"latency":[]}}"#).unwrap();
         let scoped = http.for_server(&entry, &preflight).unwrap();
-        assert!(
-            scoped
-                .authorization("https://meter.example:8443/upload")
-                .is_some()
-        );
-        assert!(
-            scoped
-                .authorization("https://other.example/upload")
-                .is_none()
-        );
-        assert!(
-            http.authorization("https://meter.example:8443/upload")
-                .is_none()
-        );
+        assert!(scoped.authorization("https://meter.example:8443/upload").is_some());
+        assert!(scoped.authorization("https://other.example/upload").is_none());
+        assert!(http.authorization("https://meter.example:8443/upload").is_none());
         let mut withdrawn = preflight.clone();
         withdrawn.capabilities.throughput.clear();
         let withdrawn = http.for_server(&entry, &withdrawn).unwrap();
-        assert!(
-            withdrawn
-                .authorization("https://meter.example:8443/upload")
-                .is_none()
-        );
-        assert!(
-            withdrawn
-                .authorization("https://meter.example/upload")
-                .is_some()
-        );
+        assert!(withdrawn.authorization("https://meter.example:8443/upload").is_none());
+        assert!(withdrawn.authorization("https://meter.example/upload").is_some());
     }
 
     #[test]
@@ -869,28 +761,13 @@ mod tests {
                 latency: Vec::new(),
             },
         };
-        let first_client = http
-            .for_server(&entry("first", first), &preflight(second))
-            .unwrap();
-        let second_client = http
-            .for_server(&entry("second", second), &preflight(second))
-            .unwrap();
+        let first_client = http.for_server(&entry("first", first), &preflight(second)).unwrap();
+        let second_client = http.for_server(&entry("second", second), &preflight(second)).unwrap();
         let target = format!("{second}/upload");
         assert_eq!(first_client.authorization(&target).unwrap(), "Bearer first");
-        assert_eq!(
-            second_client.authorization(&target).unwrap(),
-            "Bearer second"
-        );
-        let first_request = first_client
-            .builder(Method::POST, &target)
-            .unwrap()
-            .body(())
-            .unwrap();
-        let second_request = second_client
-            .builder(Method::POST, &target)
-            .unwrap()
-            .body(())
-            .unwrap();
+        assert_eq!(second_client.authorization(&target).unwrap(), "Bearer second");
+        let first_request = first_client.builder(Method::POST, &target).unwrap().body(()).unwrap();
+        let second_request = second_client.builder(Method::POST, &target).unwrap().body(()).unwrap();
         assert_eq!(first_request.headers()[AUTHORIZATION], "Bearer first");
         assert_eq!(second_request.headers()[AUTHORIZATION], "Bearer second");
         assert_eq!(http.authorization(&target).unwrap(), "Bearer second");
@@ -904,14 +781,8 @@ mod tests {
         let error = first_client
             .check_status(&target, StatusCode::FORBIDDEN, &headers)
             .unwrap_err();
-        assert_eq!(
-            authentication_required(error.as_ref()).unwrap().origin,
-            first
-        );
+        assert_eq!(authentication_required(error.as_ref()).unwrap().origin, first);
         assert!(first_client.authorization(&target).is_none());
-        assert_eq!(
-            second_client.authorization(&target).unwrap(),
-            "Bearer second"
-        );
+        assert_eq!(second_client.authorization(&target).unwrap(), "Bearer second");
     }
 }

@@ -76,10 +76,7 @@ struct Sessions(Arc<Mutex<HashMap<u64, mpsc::Sender<SessionEvent>>>>);
 impl Sessions {
     fn register(&self, id: u64) -> (Registration, mpsc::Receiver<SessionEvent>) {
         let (sender, receiver) = mpsc::channel(32);
-        self.0
-            .lock()
-            .expect("session registry poisoned")
-            .insert(id, sender);
+        self.0.lock().expect("session registry poisoned").insert(id, sender);
         let registration = Registration {
             sessions: self.clone(),
             id,
@@ -88,11 +85,7 @@ impl Sessions {
     }
 
     fn sender(&self, id: u64) -> Option<mpsc::Sender<SessionEvent>> {
-        self.0
-            .lock()
-            .expect("session registry poisoned")
-            .get(&id)
-            .cloned()
+        self.0.lock().expect("session registry poisoned").get(&id).cloned()
     }
 
     fn datagram(&self, id: u64, payload: Bytes) {
@@ -221,9 +214,7 @@ async fn serve_request(
         stream
             .send_response(http::Response::builder().status(200).body(())?)
             .await?;
-        stream
-            .send_data(Bytes::from_static(b"transport probe\n"))
-            .await?;
+        stream.send_data(Bytes::from_static(b"transport probe\n")).await?;
         stream.finish().await?;
         return Ok(());
     }
@@ -249,9 +240,7 @@ async fn serve_request(
         resets.open(&quic, id, reset_code).await?.reset(reset_code);
     }
     if path == "/wt/close" {
-        stream
-            .send_data(Bytes::from(encode_close(17, "probe closed")))
-            .await?;
+        stream.send_data(Bytes::from(encode_close(17, "probe closed"))).await?;
         stream.finish().await?;
         return Ok(());
     }
@@ -305,11 +294,7 @@ async fn serve_request(
     result
 }
 
-fn reply_ping(
-    quic: &quinn::Connection,
-    session_id: u64,
-    payload: &[u8],
-) -> Result<(), TransportError> {
+fn reply_ping(quic: &quinn::Connection, session_id: u64, payload: &[u8]) -> Result<(), TransportError> {
     use graphite_meter_core::capsule::encode_varint;
     use graphite_meter_server::ping;
 

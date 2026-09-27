@@ -32,16 +32,14 @@ async fn run(action: Action) -> Result<i32, Error> {
         Action::Version => {
             println!(
                 "{}",
-                option_env!("GM_ENGINE_VERSION")
-                    .unwrap_or(concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"))
+                option_env!("GM_ENGINE_VERSION").unwrap_or(concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"))
             );
             return Ok(0);
         }
         Action::Legal => {
             let (compressed, length) = LEGAL.ok_or("this development build has no reviewed Rust dependency notice bundle; build with GM_RUST_LEGAL_DIR to embed generated notices")?;
-            let report =
-                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
-                    .map_err(|_| "embedded Rust legal notices are corrupt")?;
+            let report = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(compressed, length)
+                .map_err(|_| "embedded Rust legal notices are corrupt")?;
             if report.len() != length {
                 return Err("embedded Rust legal notice length mismatch".into());
             }
@@ -61,10 +59,8 @@ async fn run(action: Action) -> Result<i32, Error> {
     let signal = caught.clone();
     #[cfg(unix)]
     let shutdown = {
-        let mut interrupt =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+        let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
         async move {
             let code = tokio::select! { _ = interrupt.recv() => 130, _ = terminate.recv() => 143 };
             signal.store(code, Ordering::Relaxed);
@@ -97,11 +93,7 @@ async fn run(action: Action) -> Result<i32, Error> {
 
 fn report(snapshot: &Snapshot) {
     println!("Graphite Meter · {}", safe(&snapshot.status));
-    for server in snapshot
-        .servers
-        .iter()
-        .filter(|server| server.has_check_result())
-    {
+    for server in snapshot.servers.iter().filter(|server| server.has_check_result()) {
         println!(
             "{} · {} · {}",
             safe(&server.name),
@@ -133,12 +125,11 @@ fn report(snapshot: &Snapshot) {
                 rate(result.up_bps())
             );
             for measurement in [&result.down, &result.up].into_iter().flatten() {
-                let direction =
-                    if measurement.direction == graphite_meter_core::measurement::Direction::Down {
-                        graphite_meter_client::vocabulary::DOWNLOAD
-                    } else {
-                        graphite_meter_client::vocabulary::UPLOAD
-                    };
+                let direction = if measurement.direction == graphite_meter_core::measurement::Direction::Down {
+                    graphite_meter_client::vocabulary::DOWNLOAD
+                } else {
+                    graphite_meter_client::vocabulary::UPLOAD
+                };
                 println!(
                     "  {} · {}",
                     direction.label,
@@ -154,23 +145,13 @@ fn report(snapshot: &Snapshot) {
                 .map_or(host.id.as_str(), |server| server.name.as_str());
             let median = host.median().map_or_else(
                 || "—".into(),
-                |value| {
-                    format!(
-                        "{} ms",
-                        graphite_meter_core::format::latency_ms(value as f64 / 1e6)
-                    )
-                },
+                |value| format!("{} ms", graphite_meter_core::format::latency_ms(value as f64 / 1e6)),
             );
             let timeouts = graphite_meter_client::vocabulary::probe_timeouts(host.summary);
             let milliseconds = |value: Option<u64>| {
                 value.map_or_else(
                     || "—".into(),
-                    |value| {
-                        format!(
-                            "{} ms",
-                            graphite_meter_core::format::latency_ms(value as f64 / 1e6)
-                        )
-                    },
+                    |value| format!("{} ms", graphite_meter_core::format::latency_ms(value as f64 / 1e6)),
                 )
             };
             let added = snapshot.added_ms(result, &host.id).map_or_else(
@@ -186,11 +167,7 @@ fn report(snapshot: &Snapshot) {
                 words::ADDED.label,
                 added,
                 words::P95.label,
-                milliseconds(
-                    host.median()
-                        .and(host.summary.distribution)
-                        .map(|value| value.p95)
-                ),
+                milliseconds(host.median().and(host.summary.distribution).map(|value| value.p95)),
                 words::JITTER.label,
                 milliseconds(host.summary.jitter),
                 words::PROBE_TIMEOUTS.label,
@@ -236,9 +213,7 @@ fn report(snapshot: &Snapshot) {
                 .map_or(failure.server_id.as_str(), |host| host.name.as_str());
             println!(
                 "  {}",
-                safe(&graphite_meter_client::vocabulary::failure_facts(
-                    failure, name
-                ))
+                safe(&graphite_meter_client::vocabulary::failure_facts(failure, name))
             );
         }
     }
@@ -249,10 +224,7 @@ fn report(snapshot: &Snapshot) {
 fn rate(value: Option<f64>) -> String {
     value
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or_else(
-            || "—".into(),
-            |value| graphite_meter_core::format::rate(value / 8.0),
-        )
+        .map_or_else(|| "—".into(), |value| graphite_meter_core::format::rate(value / 8.0))
 }
 fn safe(value: &str) -> String {
     value

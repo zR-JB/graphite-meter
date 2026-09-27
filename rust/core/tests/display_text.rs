@@ -10,8 +10,7 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
         "defaultSelection": ["self"],
         "servers": [{"id": "self", "url": ".", "name": "meter", "location": "here"}]
     });
-    let preflight: Value =
-        serde_json::from_slice(include_bytes!("../../../api/preflight.golden.json")).unwrap();
+    let preflight: Value = serde_json::from_slice(include_bytes!("../../../api/preflight.golden.json")).unwrap();
     let controls = ('\u{0}'..='\u{1f}')
         .chain('\u{7f}'..='\u{9f}')
         .chain(['\u{061c}', '\u{200e}', '\u{200f}'])
@@ -19,16 +18,12 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
         .chain('\u{2066}'..='\u{2069}');
     let labels = controls
         .map(|c| (format!("before{c}after"), false))
-        .chain([(
-            "München 東京 العربية e\u{301} 👩\u{200d}💻 می\u{200c}روم".into(),
-            true,
-        )]);
+        .chain([("München 東京 العربية e\u{301} 👩\u{200d}💻 می\u{200c}روم".into(), true)]);
     for (label, valid) in labels {
         for field in ["name", "location"] {
             let mut value = catalog.clone();
             value["servers"][0][field] = json!(label);
-            let parsed: ServerCatalog =
-                serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+            let parsed: ServerCatalog = serde_json::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
             assert_eq!(
                 parsed.validate(),
                 if valid {
@@ -39,10 +34,7 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
                 "catalog {field}: {label:?}"
             );
             if valid {
-                assert_eq!(
-                    serde_json::to_value(parsed).unwrap()["servers"][0][field],
-                    label
-                );
+                assert_eq!(serde_json::to_value(parsed).unwrap()["servers"][0][field], label);
             }
         }
         for pointer in ["/server/name", "/server/location", "/engineVersion"] {
@@ -51,10 +43,7 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
             let parsed = Preflight::decode(&serde_json::to_vec(&value).unwrap());
             if valid {
                 assert_eq!(
-                    serde_json::to_value(parsed.unwrap())
-                        .unwrap()
-                        .pointer(pointer)
-                        .unwrap(),
+                    serde_json::to_value(parsed.unwrap()).unwrap().pointer(pointer).unwrap(),
                     &json!(label)
                 );
             } else {

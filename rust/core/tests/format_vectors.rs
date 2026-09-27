@@ -3,8 +3,7 @@ use serde_json::Value;
 
 #[test]
 fn shared_unit_formatting() {
-    let cases: Value =
-        serde_json::from_str(include_str!("../../../api/format.testvectors.json")).unwrap();
+    let cases: Value = serde_json::from_str(include_str!("../../../api/format.testvectors.json")).unwrap();
     for (kind, cases) in cases.as_object().unwrap() {
         for case in cases.as_array().unwrap() {
             let value = case["in"].as_f64().unwrap_or_default();

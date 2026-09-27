@@ -32,9 +32,7 @@ struct RawEntry {
 /// Source presence is significant, including empty strings. No process environment is read.
 pub fn load(inline: Option<&str>, file: Option<&str>) -> Result<ServerCatalog> {
     match (inline, file) {
-        (Some(_), Some(_)) => {
-            Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into())
-        }
+        (Some(_), Some(_)) => Err("set only one of GM_SERVER_CATALOG and GM_SERVER_CATALOG_FILE".into()),
         (None, None) => Ok(ServerCatalog::singleton()),
         (Some(raw), None) => parse(raw.as_bytes()),
         (None, Some(path)) => {
@@ -79,10 +77,7 @@ pub fn parse(data: &[u8]) -> Result<ServerCatalog> {
         let raw: Option<RawCatalog> = serde_json::from_slice(data)?;
         let raw = raw.unwrap_or_default();
         if let Some(selected) = raw.default_selection {
-            catalog.default_selection = selected
-                .into_iter()
-                .map(Option::unwrap_or_default)
-                .collect();
+            catalog.default_selection = selected.into_iter().map(Option::unwrap_or_default).collect();
         }
         for entry in raw.servers.unwrap_or_default() {
             let entry = entry.unwrap_or_default();

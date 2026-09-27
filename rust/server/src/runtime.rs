@@ -39,14 +39,12 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             .map_err(|error| format!("{} listener {address}: {error}", kind.name()))?;
         let identity = match kind {
             NativeKind::H1 => None,
-            NativeKind::H1Tls | NativeKind::H2 | NativeKind::H3 => Some(
-                tls.as_ref()
-                    .expect("TLS identity loaded")
-                    .config(vec![match kind {
-                        NativeKind::H1Tls | NativeKind::H3 => b"http/1.1".to_vec(),
-                        _ => b"h2".to_vec(),
-                    }])?,
-            ),
+            NativeKind::H1Tls | NativeKind::H2 | NativeKind::H3 => {
+                Some(tls.as_ref().expect("TLS identity loaded").config(vec![match kind {
+                    NativeKind::H1Tls | NativeKind::H3 => b"http/1.1".to_vec(),
+                    _ => b"h2".to_vec(),
+                }])?)
+            }
         };
         if kind == NativeKind::H3 {
             // The bootstrap companion and QUIC endpoint share the actual port,
@@ -79,29 +77,17 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
                 NativeKind::H1 => server.serve_http1(listener, cancelled(stopped)).await,
                 NativeKind::H1Tls => {
                     server
-                        .serve_https1(
-                            listener,
-                            identity.expect("TLS identity"),
-                            cancelled(stopped),
-                        )
+                        .serve_https1(listener, identity.expect("TLS identity"), cancelled(stopped))
                         .await
                 }
                 NativeKind::H2 => {
                     server
-                        .serve_http2(
-                            listener,
-                            identity.expect("TLS identity"),
-                            cancelled(stopped),
-                        )
+                        .serve_http2(listener, identity.expect("TLS identity"), cancelled(stopped))
                         .await
                 }
                 NativeKind::H3 => {
                     server
-                        .serve_https_bootstrap(
-                            listener,
-                            identity.expect("TLS identity"),
-                            cancelled(stopped),
-                        )
+                        .serve_https_bootstrap(listener, identity.expect("TLS identity"), cancelled(stopped))
                         .await
                 }
             }
@@ -124,9 +110,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         services.push(Box::pin(async move {
             tls.watch(cancelled(stopped), |result| {
                 if let Err(error) = result {
-                    eprintln!(
-                        "[gm:tls] renewal rejected; keeping last valid certificate: {error:?}"
-                    );
+                    eprintln!("[gm:tls] renewal rejected; keeping last valid certificate: {error:?}");
                 }
             })
             .await
@@ -192,18 +176,16 @@ async fn bind(address: &str) -> std::io::Result<TcpListener> {
     let Some(port) = address.strip_prefix(':') else {
         return TcpListener::bind(address).await;
     };
-    let port: u16 = port.parse().map_err(|_| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid listener port")
-    })?;
+    let port: u16 = port
+        .parse()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid listener port"))?;
     // Set dual-stack explicitly rather than inheriting the host's IPV6_V6ONLY
     // default. Socket creation/option failure means IPv6 is unavailable; a bind
     // conflict must still fail startup rather than quietly serving only IPv4.
-    let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None).and_then(
-        |socket| {
-            socket.set_only_v6(false)?;
-            Ok(socket)
-        },
-    );
+    let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None).and_then(|socket| {
+        socket.set_only_v6(false)?;
+        Ok(socket)
+    });
     let Ok(socket) = socket else {
         return TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).await;
     };

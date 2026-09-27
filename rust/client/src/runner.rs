@@ -13,8 +13,7 @@ use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
     discovery::{
-        LatencyTarget, LatencyTransport, Probe, Protocol, ProtocolNegotiated, ThroughputTarget,
-        ThroughputTransport,
+        LatencyTarget, LatencyTransport, Probe, Protocol, ProtocolNegotiated, ThroughputTarget, ThroughputTransport,
     },
 };
 use http::Method;
@@ -41,8 +40,7 @@ pub struct PreparedRun {
 
 impl PreparedRun {
     pub fn fresh_for(&self, config: &Config) -> bool {
-        self.key == config.preparation_key()
-            && self.verified_at.elapsed() <= Duration::from_secs(30)
+        self.key == config.preparation_key() && self.verified_at.elapsed() <= Duration::from_secs(30)
     }
 }
 
@@ -96,21 +94,14 @@ impl std::error::Error for PreparationFailure {
     }
 }
 
-async fn prepare(
-    config: &Config,
-    http: &Http,
-    snapshots: &watch::Sender<Snapshot>,
-) -> Result<Preparation, Error> {
-    tokio::time::timeout(
-        Duration::from_secs(12),
-        prepare_inner(config, http, snapshots),
-    )
-    .await
-    .map_err(|_| -> Error {
-        Box::new(crate::failure::MeasurementFailure(
-            graphite_meter_core::failure::FailureReason::Timeout,
-        ))
-    })?
+async fn prepare(config: &Config, http: &Http, snapshots: &watch::Sender<Snapshot>) -> Result<Preparation, Error> {
+    tokio::time::timeout(Duration::from_secs(12), prepare_inner(config, http, snapshots))
+        .await
+        .map_err(|_| -> Error {
+            Box::new(crate::failure::MeasurementFailure(
+                graphite_meter_core::failure::FailureReason::Timeout,
+            ))
+        })?
 }
 
 async fn prepare_inner(
@@ -139,10 +130,7 @@ async fn prepare_inner(
             })
             .collect();
     });
-    let transfers = config
-        .stages
-        .iter()
-        .any(|stage| stage.downloads() || stage.uploads());
+    let transfers = config.stages.iter().any(|stage| stage.downloads() || stage.uploads());
     let latency = config.loaded_latency || config.stages.contains(&crate::model::Stage::Latency);
     snapshots.send_modify(|snapshot| {
         snapshot.status = format!("Verifying {} selected servers", selected.len());
@@ -152,12 +140,7 @@ async fn prepare_inner(
     let mut checks = selected
         .iter()
         .enumerate()
-        .map(|(index, entry)| async move {
-            (
-                index,
-                prepare_server(config, http, entry, transfers, latency).await,
-            )
-        })
+        .map(|(index, entry)| async move { (index, prepare_server(config, http, entry, transfers, latency).await) })
         .collect::<FuturesUnordered<_>>();
     let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
     let mut completed = 0;
@@ -165,11 +148,7 @@ async fn prepare_inner(
         completed += 1;
         let entry = selected[index];
         snapshots.send_modify(|snapshot| {
-            if let Some(summary) = snapshot
-                .servers
-                .iter_mut()
-                .find(|summary| summary.id == entry.id)
-            {
+            if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
                 match &result {
                     Ok(server) => {
                         summary.throughput.clone_from(&server.throughput);
@@ -219,9 +198,7 @@ async fn prepare_server(
         let mut throughput = transfers
             .then(|| selection::throughput(config, entry, &preflight))
             .transpose()?;
-        if config.stages.iter().any(|stage| stage.uploads())
-            && !preflight.capabilities.upload_checkpoint
-        {
+        if config.stages.iter().any(|stage| stage.uploads()) && !preflight.capabilities.upload_checkpoint {
             return Err("selected server does not support authoritative upload checkpoints".into());
         }
         if let Some(target) = &throughput
@@ -252,13 +229,8 @@ async fn prepare_server(
             }
         }
         let transport = if let Some(target) = &mut throughput {
-            let connection = Transport::connect(
-                client.clone(),
-                &target.base_url,
-                target.protocol,
-                config.insecure,
-            )
-            .await?;
+            let connection =
+                Transport::connect(client.clone(), &target.base_url, target.protocol, config.insecure).await?;
             if target.protocol == Protocol::Negotiated {
                 let probe = client.probe(&target.base_url, Protocol::Negotiated).await?;
                 target.protocol = match probe.protocol_negotiated {
@@ -293,35 +265,25 @@ async fn prepare_server(
                 }
                 Err(error) if config.latency_transport.is_none() => {
                     latency = Some(
-                    selection::latency_with_transport(
-                        config,
-                        entry,
-                        &preflight,
-                        LatencyTransport::WebSocket,
-                    )
-                    .map_err(|fallback_error| -> Error {
-                        format!(
-                            "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
-                        )
-                        .into()
-                    })?,
-                );
+                        selection::latency_with_transport(config, entry, &preflight, LatencyTransport::WebSocket)
+                            .map_err(|fallback_error| -> Error {
+                                format!(
+                                    "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
+                                )
+                                .into()
+                            })?,
+                    );
                 }
                 Err(error) => return Err(error),
             }
         }
         if let Some(target) = &latency {
-            if target.transport == LatencyTransport::WebTransport
-                && config.ping_interval > Duration::from_secs(15)
-            {
+            if target.transport == LatencyTransport::WebTransport && config.ping_interval > Duration::from_secs(15) {
                 return Err("WebTransport ping interval must not exceed 15 seconds".into());
             }
             let started = Instant::now();
             client
-                .probe(
-                    &target.base_url,
-                    graphite_meter_core::discovery::Protocol::Negotiated,
-                )
+                .probe(&target.base_url, graphite_meter_core::discovery::Protocol::Negotiated)
                 .await?;
             idle_rtt = started.elapsed();
             if target.transport == LatencyTransport::WebSocket {
@@ -330,8 +292,7 @@ async fn prepare_server(
         }
         Ok::<_, Error>((latency, idle_rtt))
     };
-    let ((throughput, transport), (latency, idle_rtt)) =
-        tokio::try_join!(throughput_path, latency_path)?;
+    let ((throughput, transport), (latency, idle_rtt)) = tokio::try_join!(throughput_path, latency_path)?;
     Ok(PreparedServer {
         entry: entry.clone(),
         client,
@@ -342,11 +303,7 @@ async fn prepare_server(
     })
 }
 
-async fn verify_throughput_webtransport(
-    http: &Http,
-    target: &ThroughputTarget,
-    insecure: bool,
-) -> Result<(), Error> {
+async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, insecure: bool) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -365,27 +322,19 @@ async fn verify_throughput_webtransport(
             }
             Err(error) => error,
         };
-        if crate::failure::reason(error.as_ref(), false)
-            != graphite_meter_core::failure::FailureReason::ServerBusy
+        if crate::failure::reason(error.as_ref(), false) != graphite_meter_core::failure::FailureReason::ServerBusy
             || Instant::now() >= deadline
         {
             return Err(error);
         }
-        tokio::time::sleep_until(
-            (Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline),
-        )
-        .await;
+        tokio::time::sleep_until((Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline)).await;
         if Instant::now() >= deadline {
             return Err(error);
         }
     }
 }
 
-fn lane_plan(
-    config: &Config,
-    stage: Stage,
-    servers: &[PreparedServer],
-) -> Result<StageLanePlan, Error> {
+fn lane_plan(config: &Config, stage: Stage, servers: &[PreparedServer]) -> Result<StageLanePlan, Error> {
     let participants: Vec<_> = servers
         .iter()
         .map(|server| Participant {
@@ -431,11 +380,7 @@ pub async fn run_prepared(
             snapshots.send_modify(|snapshot| {
                 snapshot.stage = config.stages.first().copied();
                 for failure in &preparation.failures {
-                    snapshot.failure(
-                        &failure.id,
-                        crate::model::FailureScope::Throughput,
-                        &failure.source,
-                    );
+                    snapshot.failure(&failure.id, crate::model::FailureScope::Throughput, &failure.source);
                 }
             });
             preparation.servers
@@ -464,11 +409,7 @@ pub async fn run_prepared(
             match replacement {
                 Ok(server) => {
                     snapshots.send_modify(|snapshot| {
-                        if let Some(summary) = snapshot
-                            .servers
-                            .iter_mut()
-                            .find(|summary| summary.id == entry.id)
-                        {
+                        if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
                             summary.error = None;
                             summary.throughput.clone_from(&server.throughput);
                             summary.latency.clone_from(&server.latency);
@@ -489,11 +430,7 @@ pub async fn run_prepared(
                             },
                             &error,
                         );
-                        if let Some(summary) = snapshot
-                            .servers
-                            .iter_mut()
-                            .find(|summary| summary.id == entry.id)
-                        {
+                        if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
                             summary.error = Some(error.to_string());
                         }
                         snapshot.results.push(crate::model::StageResult {
@@ -543,9 +480,7 @@ pub async fn run_prepared(
             if let Some(result) = snapshot.results.last() {
                 for measured in &result.server_latencies {
                     if let Some(distribution) = measured.summary.distribution
-                        && let Some(server) = prepared
-                            .iter_mut()
-                            .find(|server| server.entry.id == measured.id)
+                        && let Some(server) = prepared.iter_mut().find(|server| server.entry.id == measured.id)
                     {
                         server.idle_rtt = Duration::from_nanos(distribution.p50);
                     }

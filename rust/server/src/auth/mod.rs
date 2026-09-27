@@ -17,6 +17,4 @@ pub use session::{SESSION_LIFETIME, Session, SessionError, SessionLease, Session
 pub use grant::{AuthLease, GrantError, secure_browser_origin};
 pub use ticket::{SocketKind, Ticket, TicketError};
 
-pub use approval::{
-    ApprovalError, ApprovalKind, ApprovalView, Exchange, ExchangeError, valid_challenge,
-};
+pub use approval::{ApprovalError, ApprovalKind, ApprovalView, Exchange, ExchangeError, valid_challenge};

@@ -25,9 +25,7 @@ enum Depth {
 
 impl Theme {
     pub fn terminal() -> Self {
-        if std::env::var_os("NO_COLOR").is_some()
-            || std::env::var("TERM").is_ok_and(|term| term == "dumb")
-        {
+        if std::env::var_os("NO_COLOR").is_some() || std::env::var("TERM").is_ok_and(|term| term == "dumb") {
             return Self::monochrome();
         }
         let depth = Depth::terminal();
@@ -39,11 +37,7 @@ impl Theme {
                 .and_then(|value| value.rsplit(';').next()?.parse::<u8>().ok())
                 .is_some_and(|background| matches!(background, 7 | 9..=15)),
         };
-        if light {
-            Self::light(depth)
-        } else {
-            Self::dark(depth)
-        }
+        if light { Self::light(depth) } else { Self::dark(depth) }
     }
 
     fn dark(depth: Depth) -> Self {
@@ -94,12 +88,8 @@ impl Theme {
 
 impl Depth {
     fn terminal() -> Self {
-        let term = std::env::var("TERM")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let color_term = std::env::var("COLORTERM")
-            .unwrap_or_default()
-            .to_ascii_lowercase();
+        let term = std::env::var("TERM").unwrap_or_default().to_ascii_lowercase();
+        let color_term = std::env::var("COLORTERM").unwrap_or_default().to_ascii_lowercase();
         if matches!(color_term.as_str(), "truecolor" | "24bit")
             || term.ends_with("-direct")
             || term.ends_with("-truecolor")

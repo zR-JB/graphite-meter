@@ -23,19 +23,11 @@ async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_secs(60) - Duration::from_nanos(1)).await;
-    for budget in [
-        Budget::Password,
-        Budget::OidcExchange,
-        Budget::BrowserApproval,
-    ] {
+    for budget in [Budget::Password, Budget::OidcExchange, Budget::BrowserApproval] {
         assert!(!limiter.allow(budget, client));
     }
     tokio::time::advance(Duration::from_nanos(1)).await;
-    for budget in [
-        Budget::Password,
-        Budget::OidcExchange,
-        Budget::BrowserApproval,
-    ] {
+    for budget in [Budget::Password, Budget::OidcExchange, Budget::BrowserApproval] {
         assert!(limiter.allow(budget, client));
     }
 }
@@ -87,10 +79,7 @@ async fn address_keys_unmap_ipv4_and_group_ipv6_by_64_bit_prefix() {
         let client = format!("2001:db8:1:2::{suffix:x}").parse().unwrap();
         assert!(limiter.allow(Budget::OidcExchange, client));
     }
-    assert!(!limiter.allow(
-        Budget::OidcExchange,
-        "2001:db8:1:2:ffff::1".parse().unwrap()
-    ));
+    assert!(!limiter.allow(Budget::OidcExchange, "2001:db8:1:2:ffff::1".parse().unwrap()));
     assert!(limiter.allow(Budget::OidcExchange, "2001:db8:1:3::1".parse().unwrap()));
 }
 

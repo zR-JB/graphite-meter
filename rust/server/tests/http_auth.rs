@@ -35,8 +35,7 @@ impl Harness {
     }
     async fn start_with_proxies(trusted_proxies: Vec<ipnet::IpNet>) -> Self {
         let identity = support::Identity::generate();
-        let cert =
-            CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
+        let cert = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
         let provider = Arc::new(graphite_meter_server::crypto::provider());
         let mut tls = ServerConfig::builder_with_provider(provider.clone())
@@ -79,13 +78,9 @@ impl Harness {
         let h2 = l2.local_addr().unwrap();
         let (s1, r1) = oneshot::channel();
         let (s2, r2) = oneshot::channel();
-        let t1 = tokio::spawn(
-            server
-                .clone()
-                .serve_https1(l1, Arc::new(tls.clone()), async {
-                    let _ = r1.await;
-                }),
-        );
+        let t1 = tokio::spawn(server.clone().serve_https1(l1, Arc::new(tls.clone()), async {
+            let _ = r1.await;
+        }));
         tls.alpn_protocols = vec![b"h2".to_vec()];
         let t2 = tokio::spawn(server.serve_http2(l2, Arc::new(tls), async {
             let _ = r2.await;
@@ -108,13 +103,7 @@ impl Harness {
             .await
             .unwrap()
     }
-    async fn request(
-        &self,
-        method: &str,
-        path: &str,
-        headers: &str,
-        body: &str,
-    ) -> (String, Vec<u8>) {
+    async fn request(&self, method: &str, path: &str, headers: &str, body: &str) -> (String, Vec<u8>) {
         let mut stream = self.connect().await;
         stream.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",body.len()).as_bytes()).await.unwrap();
         let mut output = Vec::new();
@@ -159,9 +148,7 @@ fn cookie(headers: &str, name: &str) -> String {
         .unwrap()
 }
 fn credentials(session: &str, csrf: &str) -> String {
-    format!(
-        "Cookie: __Host-gm_session={session}\r\nOrigin: https://localhost\r\nX-CSRF-Token: {csrf}\r\n"
-    )
+    format!("Cookie: __Host-gm_session={session}\r\nOrigin: https://localhost\r\nX-CSRF-Token: {csrf}\r\n")
 }
 async fn read_until(stream: &mut TlsStream<TcpStream>, needle: &[u8]) -> Vec<u8> {
     let mut result = Vec::new();
@@ -200,12 +187,7 @@ async fn password_flow() {
     let verifier = "native-client";
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let (page, _) = h
-        .request(
-            "GET",
-            &format!("/auth/cli?challenge={challenge}"),
-            &headers,
-            "",
-        )
+        .request("GET", &format!("/auth/cli?challenge={challenge}"), &headers, "")
         .await;
     assert!(page.starts_with("HTTP/1.1 200"));
     let approval = form_urlencoded::Serializer::new(String::new())
@@ -232,10 +214,7 @@ async fn password_flow() {
     assert!(issued.starts_with("HTTP/1.1 200"));
     let token: serde_json::Value = serde_json::from_slice(&token).unwrap();
     assert!(token["expires"].is_string());
-    let bearer = format!(
-        "Authorization: Bearer {}\r\n",
-        token["token"].as_str().unwrap()
-    );
+    let bearer = format!("Authorization: Bearer {}\r\n", token["token"].as_str().unwrap());
     let (authorized, _) = h.request("GET", "/probe", &bearer, "").await;
     assert!(authorized.starts_with("HTTP/1.1 200"));
 
@@ -273,20 +252,14 @@ async fn password_flow() {
         .to_owned();
     let mut progress = h.connect().await;
     progress
-        .write_all(
-            format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n")
-                .as_bytes(),
-        )
+        .write_all(format!("GET /upload/progress?id={id} HTTP/1.1\r\nHost: localhost\r\n{headers}\r\n").as_bytes())
         .await
         .unwrap();
     read_until(&mut progress, b"ready").await;
     let (_, body) = h
         .request("POST", &format!("/upload?id={id}"), &headers, "hello auth")
         .await;
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["bytes"],
-        10
-    );
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&body).unwrap()["bytes"], 10);
     let (checkpoint, _) = h
         .request("POST", &format!("/upload/checkpoint?id={id}"), &headers, "")
         .await;
@@ -294,7 +267,13 @@ async fn password_flow() {
     // Leave a second upload body incomplete: revocation must cancel reads,
     // not wait for the next frame or the 120-second upload bound.
     let mut uploading = h.connect().await;
-    uploading.write_all(format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n{headers}\r\nx").as_bytes()).await.unwrap();
+    uploading
+        .write_all(
+            format!("POST /upload?id={id} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100000\r\n{headers}\r\nx")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
     let stream = h
         .h2_connector
         .connect(
@@ -321,15 +300,12 @@ async fn password_flow() {
         .send_request(request("/download?bytes=1000000", &session), true)
         .unwrap();
     let mut stalled = response.await.unwrap().into_body();
-    let (response, _) = client
-        .send_request(request("/login", &session), true)
-        .unwrap();
+    let (response, _) = client.send_request(request("/login", &session), true).unwrap();
     assert_eq!(response.await.unwrap().status(), 403); // native listener has no UI authority
     let mut ws_request = "wss://localhost/ws/ping".into_client_request().unwrap();
-    ws_request.headers_mut().insert(
-        "cookie",
-        format!("__Host-gm_session={session}").parse().unwrap(),
-    );
+    ws_request
+        .headers_mut()
+        .insert("cookie", format!("__Host-gm_session={session}").parse().unwrap());
     ws_request
         .headers_mut()
         .insert("origin", "https://localhost".parse().unwrap());
@@ -363,13 +339,9 @@ async fn password_flow() {
     tokio::time::timeout(Duration::from_secs(1), revoked)
         .await
         .expect("revocation cancels every owned transport promptly");
-    let (response, _) = client
-        .send_request(request("/download?bytes=0", &other), true)
-        .unwrap();
+    let (response, _) = client.send_request(request("/download?bytes=0", &other), true).unwrap();
     assert_eq!(response.await.unwrap().status(), 200);
-    let (ok, _) = h
-        .request("GET", "/probe", &credentials(&other, &other_csrf), "")
-        .await;
+    let (ok, _) = h.request("GET", "/probe", &credentials(&other, &other_csrf), "").await;
     assert!(ok.starts_with("HTTP/1.1 200"));
     let (denied, _) = h.request("GET", "/probe", &headers, "").await;
     assert!(denied.starts_with("HTTP/1.1 403"));
@@ -393,9 +365,7 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
     ] {
         let (denied, _) = h.request("GET", &path, "", "").await;
         assert!(denied.starts_with("HTTP/1.1 403"), "{denied}");
-        let (allowed, _) = h
-            .request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "")
-            .await;
+        let (allowed, _) = h.request("GET", &path, "X-Real-IP: 192.0.2.1\r\n", "").await;
         assert!(allowed.starts_with("HTTP/1.1 303"), "{allowed}");
     }
     h.stop().await;

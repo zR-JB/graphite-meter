@@ -126,23 +126,16 @@ impl Decoder {
                             if matches!(kind, MAX_STREAM_DATA | STREAM_DATA_BLOCKED) {
                                 return Err(Error::Http2Only);
                             }
-                            if (kind == CLOSE && value < 4)
-                                || (is_numeric(kind) && !(1..=8).contains(&value))
-                            {
+                            if (kind == CLOSE && value < 4) || (is_numeric(kind) && !(1..=8).contains(&value)) {
                                 return Err(Error::InvalidPayload);
                             }
-                            State::Body {
-                                kind,
-                                remaining: value,
-                            }
+                            State::Body { kind, remaining: value }
                         }
                         _ => unreachable!(),
                     };
                 }
                 State::Body { kind, remaining } => {
-                    let take = usize::try_from(remaining)
-                        .unwrap_or(usize::MAX)
-                        .min(input.len());
+                    let take = usize::try_from(remaining).unwrap_or(usize::MAX).min(input.len());
                     // Unknown bodies and oversized close tails are consumed without storage.
                     let retained_limit = if kind == CLOSE {
                         MAX_CLOSE_PAYLOAD
@@ -152,8 +145,7 @@ impl Decoder {
                         0
                     };
                     let retained_bytes = take.min(retained_limit - self.used);
-                    self.bytes[self.used..self.used + retained_bytes]
-                        .copy_from_slice(&input[..retained_bytes]);
+                    self.bytes[self.used..self.used + retained_bytes].copy_from_slice(&input[..retained_bytes]);
                     self.used += retained_bytes;
                     input = &input[take..];
                     let remaining = remaining - take as u64;
@@ -211,11 +203,9 @@ fn is_stream_count(kind: u64) -> bool {
     matches!(kind, MAX_BIDI | MAX_UNI | BLOCKED_BIDI | BLOCKED_UNI)
 }
 fn read_varint(bytes: &[u8]) -> u64 {
-    bytes[1..]
-        .iter()
-        .fold(u64::from(bytes[0] & 0x3f), |value, byte| {
-            (value << 8) | u64::from(*byte)
-        })
+    bytes[1..].iter().fold(u64::from(bytes[0] & 0x3f), |value, byte| {
+        (value << 8) | u64::from(*byte)
+    })
 }
 fn append_varint(output: &mut Vec<u8>, value: u64) {
     let (size, prefix) = match value {

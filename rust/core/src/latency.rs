@@ -59,11 +59,10 @@ impl DeadlineEstimator {
     pub const CEIL_NANOS: u64 = 10_000_000_000;
 
     pub fn deadline_nanos(self) -> u64 {
-        self.srtt_rttvar
-            .map_or(Self::FLOOR_NANOS, |(srtt, rttvar)| {
-                srtt.saturating_add(4 * rttvar.max(1_000_000))
-                    .clamp(Self::FLOOR_NANOS, Self::CEIL_NANOS)
-            })
+        self.srtt_rttvar.map_or(Self::FLOOR_NANOS, |(srtt, rttvar)| {
+            srtt.saturating_add(4 * rttvar.max(1_000_000))
+                .clamp(Self::FLOOR_NANOS, Self::CEIL_NANOS)
+        })
     }
 
     pub fn observe(&mut self, rtt: u64) {

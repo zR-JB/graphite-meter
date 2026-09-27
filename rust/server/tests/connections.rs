@@ -3,21 +3,13 @@ use graphite_meter_server::connections::{Connections, Refusal};
 #[test]
 fn ipv6_subnets_and_mapped_ipv4_share_the_expected_budget() {
     let capacity = Connections::new(4, 1, Vec::new());
-    let first = capacity
-        .acquire("[2001:db8:1::1]:1000".parse().unwrap())
-        .unwrap();
+    let first = capacity.acquire("[2001:db8:1::1]:1000".parse().unwrap()).unwrap();
     assert_eq!(
-        capacity
-            .acquire("[2001:db8:1::2]:2000".parse().unwrap())
-            .err(),
+        capacity.acquire("[2001:db8:1::2]:2000".parse().unwrap()).err(),
         Some(Refusal::ClientFull)
     );
-    let other = capacity
-        .acquire("[2001:db8:2::1]:1000".parse().unwrap())
-        .unwrap();
-    let mapped = capacity
-        .acquire("[::ffff:198.51.100.1]:1000".parse().unwrap())
-        .unwrap();
+    let other = capacity.acquire("[2001:db8:2::1]:1000".parse().unwrap()).unwrap();
+    let mapped = capacity.acquire("[::ffff:198.51.100.1]:1000".parse().unwrap()).unwrap();
     assert_eq!(
         capacity.acquire("198.51.100.1:2000".parse().unwrap()).err(),
         Some(Refusal::ClientFull)
@@ -55,9 +47,7 @@ fn buffered_connections_share_wider_ipv6_budgets_and_release_them() {
     let mut permits = Vec::new();
     for subnet in 0..2 {
         for port in 1..=8 {
-            let peer = format!("[2001:db8:1:{subnet:x}::1]:{port}")
-                .parse()
-                .unwrap();
+            let peer = format!("[2001:db8:1:{subnet:x}::1]:{port}").parse().unwrap();
             permits.push(capacity.acquire_buffered(peer, true).unwrap());
         }
     }

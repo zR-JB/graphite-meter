@@ -21,9 +21,7 @@ pub fn udp_socket(address: SocketAddr) -> io::Result<UdpSocket> {
     let send = socket.send_buffer_size().unwrap_or_default();
     if receive < BUFFER_BYTES || send < BUFFER_BYTES {
         REPORT.call_once(|| {
-            eprintln!(
-                "UDP buffers below requested {BUFFER_BYTES} bytes: receive={receive}, send={send}"
-            )
+            eprintln!("UDP buffers below requested {BUFFER_BYTES} bytes: receive={receive}, send={send}")
         });
     }
     socket.bind(&address.into())?;

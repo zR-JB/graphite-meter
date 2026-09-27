@@ -87,10 +87,7 @@ impl HttpServer {
         let connections = self.connections.stats();
         eprintln!(
             "[gm:admission] measurements={active}/{maximum} connections={} peak={} refused-client={} refused-global={}",
-            connections.active,
-            connections.peak,
-            connections.rejected_client,
-            connections.rejected_global
+            connections.active, connections.peak, connections.rejected_client, connections.rejected_global
         );
     }
 
@@ -108,11 +105,7 @@ impl HttpServer {
     }
 
     pub(crate) async fn security_log(&self) {
-        self.auth
-            .as_ref()
-            .expect("authentication enabled")
-            .security_log()
-            .await;
+        self.auth.as_ref().expect("authentication enabled").security_log().await;
     }
 
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
@@ -176,8 +169,7 @@ impl HttpServer {
         listener: TcpListener,
         shutdown: impl Future<Output = ()>,
     ) -> Result<(), ConfigError> {
-        self.serve_tcp(listener, None, HttpProtocol::Http1, shutdown)
-            .await
+        self.serve_tcp(listener, None, HttpProtocol::Http1, shutdown).await
     }
 
     /// TLS setup is supplied by the caller; connection capacity covers both the
@@ -231,10 +223,7 @@ impl HttpServer {
         if tls.alpn_protocols != [b"http/1.1".to_vec()] {
             return Err("HTTP/3 bootstrap requires an http/1.1-only TLS ALPN configuration".into());
         }
-        let public = &self
-            .config
-            .listener(crate::config::NativeKind::H3)
-            .public_origin;
+        let public = &self.config.listener(crate::config::NativeKind::H3).public_origin;
         let port = if public.is_empty() {
             listener.local_addr()?.port()
         } else {
@@ -351,21 +340,17 @@ impl HttpServer {
         result
     }
 
-    async fn serve_http1_connection<T>(
-        self: Arc<Self>,
-        stream: T,
-        connection: Connection,
-        bootstrap_port: Option<u16>,
-    ) where
+    async fn serve_http1_connection<T>(self: Arc<Self>, stream: T, connection: Connection, bootstrap_port: Option<u16>)
+    where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let stopping = self.stopping.clone();
         let operations = Arc::new(Mutex::new(Vec::new()));
         let upgrade = Arc::new(Mutex::new(None));
         let pending_upgrade = upgrade.clone();
-        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(
-            tokio::time::sleep(Duration::from_secs(15)),
-        ))));
+        let lifecycle = Arc::new(Mutex::new(Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(
+            Duration::from_secs(15),
+        )))));
         // Wrap the TLS stream, not its raw socket: a successful flush must also
         // drain encrypted records before releasing the response's capacity.
         let io = DeadlineIo {
@@ -379,8 +364,7 @@ impl HttpServer {
             let pending_upgrade = pending_upgrade.clone();
             let head = request.method() == Method::HEAD;
             let lifecycle = lifecycle.clone();
-            *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") =
-                Http1Lifecycle::Active { complete: false };
+            *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active { complete: false };
             async move {
                 let mut response = if bootstrap_port.is_some() && request.uri().path() != "/probe" {
                     text_response(StatusCode::NOT_FOUND)
@@ -392,10 +376,9 @@ impl HttpServer {
                 if let Some(port) = bootstrap_port
                     && response.status().is_success()
                 {
-                    response.headers_mut().insert(
-                        header::ALT_SVC,
-                        format!("h3=\":{port}\"").parse().expect("valid port"),
-                    );
+                    response
+                        .headers_mut()
+                        .insert(header::ALT_SVC, format!("h3=\":{port}\"").parse().expect("valid port"));
                     response
                         .headers_mut()
                         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
@@ -409,16 +392,15 @@ impl HttpServer {
                         pending.push(operation.clone());
                     }
                 }
-                *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") =
-                    if response.status() == StatusCode::SWITCHING_PROTOCOLS {
-                        Http1Lifecycle::UpgradePending(Box::pin(tokio::time::sleep(
-                            server.config.max_operation_duration,
-                        )))
-                    } else {
-                        Http1Lifecycle::Active {
-                            complete: head || response.body().is_end_stream(),
-                        }
-                    };
+                *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = if response.status()
+                    == StatusCode::SWITCHING_PROTOCOLS
+                {
+                    Http1Lifecycle::UpgradePending(Box::pin(tokio::time::sleep(server.config.max_operation_duration)))
+                } else {
+                    Http1Lifecycle::Active {
+                        complete: head || response.body().is_end_stream(),
+                    }
+                };
                 Ok::<_, io::Error>(response.map(|inner| Http1Body { inner, lifecycle }))
             }
         });
@@ -457,12 +439,7 @@ impl HttpServer {
         self.respond_authorized(request, peer, &owner)
     }
 
-    fn respond_authorized(
-        &self,
-        request: Request<()>,
-        peer: SocketAddr,
-        owner: &Owner,
-    ) -> Response<ResponseBody> {
+    fn respond_authorized(&self, request: Request<()>, peer: SocketAddr, owner: &Owner) -> Response<ResponseBody> {
         let path = request.uri().path();
         let mut response = if request.method() == Method::OPTIONS {
             Response::builder()
@@ -474,9 +451,7 @@ impl HttpServer {
                 Response::builder()
                     .header(header::CONTENT_TYPE, "application/json")
                     .header(header::CACHE_CONTROL, "no-store")
-                    .body(ResponseBody::bytes(Bytes::from_static(
-                        br#"{"token":"","expires":0}"#,
-                    )))
+                    .body(ResponseBody::bytes(Bytes::from_static(br#"{"token":"","expires":0}"#)))
                     .expect("static public socket session")
             } else {
                 method_not_allowed("POST")
@@ -543,11 +518,7 @@ impl HttpServer {
             let authorized = match auth.policy().authorize(request, connection) {
                 Ok(authorized) => authorized,
                 Err(rejected) => {
-                    return Ok(self.auth_refusal(
-                        rejected.request(),
-                        rejected.reason(),
-                        connection,
-                    ));
+                    return Ok(self.auth_refusal(rejected.request(), rejected.reason(), connection));
                 }
             };
             if let Authorization::Preflight(headers) = authorized.authorization() {
@@ -561,12 +532,8 @@ impl HttpServer {
             }
             origin = authorized.request().headers().get(header::ORIGIN).cloned();
             let path = authorized.request().uri().path();
-            if path == "/login"
-                || path.starts_with("/auth/")
-                || matches!(path, "/ws/session" | "/wt/session")
-            {
-                let logout =
-                    path == "/auth/logout" && authorized.request().method() == Method::POST;
+            if path == "/login" || path.starts_with("/auth/") || matches!(path, "/ws/session" | "/wt/session") {
+                let logout = path == "/auth/logout" && authorized.request().method() == Method::POST;
                 let ticket = matches!(path, "/ws/session" | "/wt/session");
                 // Even public auth endpoints collect only 4096 bytes within 15s.
                 let execute = async {
@@ -609,23 +576,16 @@ impl HttpServer {
             request
         };
         if lease.is_none()
-            && !client_address::resolve(
-                connection.peer,
-                request.headers(),
-                &self.config.trusted_proxies,
-            )
-            .usable
+            && !client_address::resolve(connection.peer, request.headers(), &self.config.trusted_proxies).usable
         {
             return Ok(text_response(StatusCode::BAD_REQUEST));
         }
-        let owner = lease.as_ref().map_or_else(
-            || self.upload_owner(&request, connection.peer),
-            AuthLease::owner,
-        );
+        let owner = lease
+            .as_ref()
+            .map_or_else(|| self.upload_owner(&request, connection.peer), AuthLease::owner);
         let route = graphite_meter_core::route::lookup(request.uri().path());
         let measurement = route.is_some();
-        let upload = route == Some(graphite_meter_core::route::Route::Upload)
-            && request.method() == Method::POST;
+        let upload = route == Some(graphite_meter_core::route::Route::Upload) && request.method() == Method::POST;
         let guard = lease.clone();
         let dispatch = async {
             if route.is_none() {
@@ -636,12 +596,7 @@ impl HttpServer {
                     .uri()
                     .authority()
                     .map(|authority| authority.as_str())
-                    .or_else(|| {
-                        request
-                            .headers()
-                            .get(header::HOST)
-                            .and_then(|host| host.to_str().ok())
-                    })
+                    .or_else(|| request.headers().get(header::HOST).and_then(|host| host.to_str().ok()))
                     .unwrap_or_default();
                 let mut response = self
                     .assets
@@ -653,19 +608,13 @@ impl HttpServer {
                 }
                 return Ok(response);
             }
-            if route == Some(graphite_meter_core::route::Route::Ping)
-                && request.method() != Method::OPTIONS
-            {
+            if route == Some(graphite_meter_core::route::Route::Ping) && request.method() != Method::OPTIONS {
                 return Ok(match upgrade {
-                    Some(pending) => {
-                        self.upgrade_websocket(request, &owner, lease.clone(), pending)
-                    }
+                    Some(pending) => self.upgrade_websocket(request, &owner, lease.clone(), pending),
                     None => text_response(StatusCode::NOT_IMPLEMENTED),
                 });
             }
-            if route == Some(graphite_meter_core::route::Route::Upload)
-                && request.method() != Method::OPTIONS
-            {
+            if route == Some(graphite_meter_core::route::Route::Upload) && request.method() != Method::OPTIONS {
                 self.receive_upload(request, &owner, operations).await
             } else {
                 Ok(self.respond_authorized(request.map(|_| ()), connection.peer, &owner))
@@ -705,12 +654,7 @@ impl HttpServer {
         Ok(response)
     }
 
-    fn retain_auth(
-        &self,
-        response: &mut Response<ResponseBody>,
-        lease: Option<AuthLease>,
-        operations: &Operations,
-    ) {
+    fn retain_auth(&self, response: &mut Response<ResponseBody>, lease: Option<AuthLease>, operations: &Operations) {
         if let Some(lease) = lease {
             let complete = response.body().is_end_stream();
             let operation = response
@@ -729,10 +673,7 @@ impl HttpServer {
             operation.lock().expect("operation poisoned").revocation =
                 Some(Box::pin(async move { lease.ended().await }));
             let mut operations = operations.lock().expect("operations poisoned");
-            if !operations
-                .iter()
-                .any(|entry| Arc::ptr_eq(entry, &operation))
-            {
+            if !operations.iter().any(|entry| Arc::ptr_eq(entry, &operation)) {
                 operations.push(operation);
             }
         }
@@ -745,10 +686,9 @@ impl HttpServer {
         connection: Connection,
     ) -> Response<ResponseBody> {
         let mut response = text_response(StatusCode::FORBIDDEN);
-        response.headers_mut().insert(
-            header::CACHE_CONTROL,
-            http::HeaderValue::from_static("no-store"),
-        );
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, http::HeaderValue::from_static("no-store"));
         if matches!(
             request.version(),
             http::Version::HTTP_09 | http::Version::HTTP_10 | http::Version::HTTP_11
@@ -758,36 +698,22 @@ impl HttpServer {
                 .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
         }
         if reason == crate::auth::policy::Refusal::AuthenticationRequired {
-            let public = self
-                .auth
-                .as_ref()
-                .expect("auth enabled")
-                .policy()
-                .public_origin();
-            response.headers_mut().insert(
-                "graphite-meter-auth",
-                http::HeaderValue::from_static("required"),
-            );
-            response.headers_mut().insert(
-                "graphite-meter-browser-auth",
-                http::HeaderValue::from_static("1"),
-            );
+            let public = self.auth.as_ref().expect("auth enabled").policy().public_origin();
+            response
+                .headers_mut()
+                .insert("graphite-meter-auth", http::HeaderValue::from_static("required"));
+            response
+                .headers_mut()
+                .insert("graphite-meter-browser-auth", http::HeaderValue::from_static("1"));
             response.headers_mut().insert(
                 "graphite-meter-auth-url",
-                format!("{public}/login")
-                    .parse()
-                    .expect("validated public origin"),
+                format!("{public}/login").parse().expect("validated public origin"),
             );
-            if connection.listener.ui
-                && request.method() == Method::GET
-                && request.uri().path() == "/"
-            {
+            if connection.listener.ui && request.method() == Method::GET && request.uri().path() == "/" {
                 *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
                 response.headers_mut().insert(
                     header::LOCATION,
-                    format!("{public}/login")
-                        .parse()
-                        .expect("validated public origin"),
+                    format!("{public}/login").parse().expect("validated public origin"),
                 );
             }
             if let Some(origin) = request.headers().get(header::ORIGIN) {
@@ -808,14 +734,10 @@ impl HttpServer {
     }
 
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        let permit = match self
-            .admission
-            .acquire_keys(Class::Request, owner.client_keys())
-        {
+        let permit = match self.admission.acquire_keys(Class::Request, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {
-                let mut response =
-                    text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
+                let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
                 response
                     .headers_mut()
                     .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
@@ -902,9 +824,7 @@ fn download_bytes(query: &str) -> u64 {
     value
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 0)
-        .map_or(DEFAULT_DOWNLOAD_BYTES, |value| {
-            (value as u64).min(MAX_DOWNLOAD_BYTES)
-        })
+        .map_or(DEFAULT_DOWNLOAD_BYTES, |value| (value as u64).min(MAX_DOWNLOAD_BYTES))
 }
 
 fn text_response(status: StatusCode) -> Response<ResponseBody> {
@@ -957,19 +877,12 @@ impl Body for ResponseBody {
     type Data = Bytes;
     type Error = std::io::Error;
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
         if self.is_end_stream() {
             return Poll::Ready(None);
         }
         if let Some(operation) = &self.operation {
-            let error = operation
-                .lock()
-                .expect("operation poisoned")
-                .check(cx)
-                .err();
+            let error = operation.lock().expect("operation poisoned").check(cx).err();
             if let Some(error) = error {
                 self.remaining = 0;
                 return Poll::Ready(Some(Err(error)));
@@ -1002,11 +915,7 @@ impl Body for ResponseBody {
             .map_or(self.remaining == 0, |progress| progress.done)
     }
     fn size_hint(&self) -> SizeHint {
-        if self
-            .progress
-            .as_ref()
-            .is_some_and(|progress| !progress.done)
-        {
+        if self.progress.as_ref().is_some_and(|progress| !progress.done) {
             SizeHint::default()
         } else {
             SizeHint::with_exact(self.remaining)
@@ -1049,10 +958,7 @@ impl Body for Http1Body {
     type Data = Bytes;
     type Error = io::Error;
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         let result = Pin::new(&mut self.inner).poll_frame(cx);
         if self.inner.is_end_stream() || matches!(result, Poll::Ready(None)) {
             let mut lifecycle = self.lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
@@ -1082,12 +988,7 @@ impl<T> DeadlineIo<T> {
                 return Err(io::ErrorKind::TimedOut.into());
             }
         }
-        for operation in self
-            .operations
-            .lock()
-            .expect("connection operations poisoned")
-            .iter()
-        {
+        for operation in self.operations.lock().expect("connection operations poisoned").iter() {
             operation.lock().expect("operation poisoned").check(cx)?;
         }
         Ok(())
@@ -1097,8 +998,7 @@ impl<T> DeadlineIo<T> {
         if let Some(lifecycle) = &self.lifecycle {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Active { complete: true }) {
-                *lifecycle =
-                    Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
+                *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
             } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
                 *lifecycle = Http1Lifecycle::Upgraded;
             }
@@ -1122,11 +1022,7 @@ impl<T> DeadlineIo<T> {
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buffer: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         self.check_deadlines(cx)?;
         let before = buffer.filled().len();
         let result = Pin::new(&mut self.inner).poll_read(cx, buffer);
@@ -1135,8 +1031,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
         {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
             if matches!(*lifecycle, Http1Lifecycle::Idle(_)) {
-                *lifecycle =
-                    Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
+                *lifecycle = Http1Lifecycle::Headers(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
             }
         }
         result
@@ -1144,11 +1039,7 @@ impl<T: AsyncRead + Unpin> AsyncRead for DeadlineIo<T> {
 }
 
 impl<T: AsyncWrite + Unpin> AsyncWrite for DeadlineIo<T> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        data: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, data: &[u8]) -> Poll<io::Result<usize>> {
         self.check_deadlines(cx)?;
         Pin::new(&mut self.inner).poll_write(cx, data)
     }
@@ -1205,10 +1096,7 @@ mod tests {
         type Data = Bytes;
         type Error = io::Error;
 
-        fn poll_frame(
-            self: Pin<&mut Self>,
-            _: &mut Context<'_>,
-        ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+        fn poll_frame(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
             panic!("rejected upload method must not read the request body");
         }
     }
@@ -1250,11 +1138,7 @@ mod tests {
             (Method::GET, "/upload/checkpoint", "POST"),
             (Method::POST, "/upload/progress", "GET, DELETE"),
         ] {
-            let request = Request::builder()
-                .method(method)
-                .uri(path)
-                .body(())
-                .unwrap();
+            let request = Request::builder().method(method).uri(path).body(()).unwrap();
             let response = server.respond(request, peer);
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED, "{path}");
             assert_eq!(response.headers()[header::ALLOW], allow, "{path}");
@@ -1283,12 +1167,7 @@ mod tests {
         config.limits.sessions_per_client = 1;
         let server = HttpServer::new(Arc::new(config)).unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
-        let request = || {
-            Request::builder()
-                .uri("/download?bytes=1")
-                .body(())
-                .unwrap()
-        };
+        let request = || Request::builder().uri("/download?bytes=1").body(()).unwrap();
         let mut response = server.respond(request(), peer);
         let operations = Arc::new(Mutex::new(vec![response.body().operation.clone().unwrap()]));
         let mut io = DeadlineIo {
@@ -1302,15 +1181,9 @@ mod tests {
             .unwrap();
         let data = frame.into_data().unwrap();
         drop(response);
-        assert_eq!(
-            server.respond(request(), peer).status(),
-            StatusCode::TOO_MANY_REQUESTS
-        );
+        assert_eq!(server.respond(request(), peer).status(), StatusCode::TOO_MANY_REQUESTS);
         io.write_all(&data).await.unwrap();
-        assert_eq!(
-            server.respond(request(), peer).status(),
-            StatusCode::TOO_MANY_REQUESTS
-        );
+        assert_eq!(server.respond(request(), peer).status(), StatusCode::TOO_MANY_REQUESTS);
         io.flush().await.unwrap();
         assert_eq!(server.respond(request(), peer).status(), StatusCode::OK);
     }
@@ -1323,10 +1196,7 @@ mod tests {
         }))
         .unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
-        let request = Request::builder()
-            .uri("/download?bytes=2")
-            .body(())
-            .unwrap();
+        let request = Request::builder().uri("/download?bytes=2").body(()).unwrap();
         let mut response = server.respond(request, peer);
         let operations = Arc::new(Mutex::new(vec![response.body().operation.clone().unwrap()]));
         let (writer, _non_reading_peer) = tokio::io::duplex(1);
@@ -1340,13 +1210,10 @@ mod tests {
             .unwrap()
             .unwrap();
         drop(response);
-        let error = tokio::time::timeout(
-            Duration::from_secs(1),
-            io.write_all(&frame.into_data().unwrap()),
-        )
-        .await
-        .unwrap()
-        .unwrap_err();
+        let error = tokio::time::timeout(Duration::from_secs(1), io.write_all(&frame.into_data().unwrap()))
+            .await
+            .unwrap()
+            .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(server.admission.load().0, 1);
         drop(io);
@@ -1414,15 +1281,9 @@ mod tests {
             operations: Arc::new(Mutex::new(Vec::new())),
             lifecycle: Some(lifecycle.clone()),
         };
-        writer
-            .write_all(b"HTTP/1.1 101 Switching Protocols")
-            .await
-            .unwrap();
+        writer.write_all(b"HTTP/1.1 101 Switching Protocols").await.unwrap();
         writer.flush().await.unwrap();
-        assert!(matches!(
-            *lifecycle.lock().unwrap(),
-            Http1Lifecycle::Upgraded
-        ));
+        assert!(matches!(*lifecycle.lock().unwrap(), Http1Lifecycle::Upgraded));
         tokio::time::advance(Duration::from_secs(61)).await;
         writer.write_all(b"owned WebSocket frame").await.unwrap();
     }

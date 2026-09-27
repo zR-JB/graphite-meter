@@ -11,8 +11,7 @@ fn close(actual: Option<f64>, expected: &Value) -> bool {
 
 #[test]
 fn latency_vectors() {
-    let cases: Vec<Value> =
-        serde_json::from_str(include_str!("../../../api/latency.testvectors.json")).unwrap();
+    let cases: Vec<Value> = serde_json::from_str(include_str!("../../../api/latency.testvectors.json")).unwrap();
     let mut failures = 0;
     for c in &cases {
         let mut acc = LatencyAccumulator::default();
@@ -43,10 +42,7 @@ fn latency_vectors() {
             let expected: Vec<f64> = expected.iter().map(|d| d.as_f64().unwrap()).collect();
             if deadlines != expected {
                 failures += 1;
-                println!(
-                    "FAIL deadlines: {} -> got {deadlines:?}; want {expected:?}",
-                    c["name"]
-                );
+                println!("FAIL deadlines: {} -> got {deadlines:?}; want {expected:?}", c["name"]);
             }
         }
         let s = acc.snapshot();

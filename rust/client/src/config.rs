@@ -58,10 +58,7 @@ impl Config {
         key.servers.sort_unstable();
         let latency = key.loaded_latency || key.stages.contains(&Stage::Latency);
         let upload = key.stages.iter().any(|stage| stage.uploads());
-        let transfer = key
-            .stages
-            .iter()
-            .any(|stage| stage.downloads() || stage.uploads());
+        let transfer = key.stages.iter().any(|stage| stage.downloads() || stage.uploads());
         key.stages = [
             latency.then_some(Stage::Latency),
             transfer.then_some(Stage::Download),
@@ -89,10 +86,7 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), Error> {
         graphite_meter_core::origin::canonical_origin(&self.url)?;
-        for origin in [&self.throughput_origin, &self.latency_origin]
-            .into_iter()
-            .flatten()
-        {
+        for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
             graphite_meter_core::origin::canonical_origin(origin)?;
         }
         if self.servers.len() > 4
@@ -111,27 +105,18 @@ impl Config {
             || self.auto_streams > crate::stream_plan::MAX_STREAMS
             || self.streams > crate::stream_plan::MAX_STREAMS
         {
-            return Err(
-                "stream counts must be within 1..=14 (0 means automatic for --streams)".into(),
-            );
+            return Err("stream counts must be within 1..=14 (0 means automatic for --streams)".into());
         }
-        if [self.ping_interval, self.loaded_ping_interval]
-            .iter()
-            .any(|interval| {
-                !interval.is_zero() && *interval < Duration::from_millis(80)
-                    || *interval > Duration::from_secs(15)
-            })
-        {
-            return Err(
-                "latency cadence must be reply-driven or from 80 milliseconds to 15 seconds".into(),
-            );
+        if [self.ping_interval, self.loaded_ping_interval].iter().any(|interval| {
+            !interval.is_zero() && *interval < Duration::from_millis(80) || *interval > Duration::from_secs(15)
+        }) {
+            return Err("latency cadence must be reply-driven or from 80 milliseconds to 15 seconds".into());
         }
         if self.warmup > Duration::from_secs(4) {
             return Err("warmup must be from zero to four seconds".into());
         }
         for stage in &self.stages {
-            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&self.duration(*stage))
-            {
+            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&self.duration(*stage)) {
                 return Err("stage duration must be from one second to five minutes".into());
             }
         }

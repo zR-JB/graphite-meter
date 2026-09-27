@@ -22,11 +22,7 @@ fn ticket_retains_cookie_identity_but_becomes_nonambient_and_single_use() {
     assert!(consumed.is_bearer());
     assert_eq!(consumed.provider(), "local");
     assert_eq!(consumed.owner(), cookie.owner());
-    assert!(
-        store
-            .consume_ticket(&ticket.token, TARGET, PUBLIC)
-            .is_none()
-    );
+    assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());
     assert!(matches!(
         store.mint_ticket(&consumed, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport),
         Err(TicketError::NoSession)
@@ -46,16 +42,8 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
         let ticket = store
             .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
             .unwrap();
-        assert!(
-            store
-                .consume_ticket(&ticket.token, target, origin)
-                .is_none()
-        );
-        assert!(
-            store
-                .consume_ticket(&ticket.token, TARGET, PUBLIC)
-                .is_none()
-        );
+        assert!(store.consume_ticket(&ticket.token, target, origin).is_none());
+        assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());
     }
     let tickets: Vec<_> = (0..8)
         .map(|i| {
@@ -65,9 +53,7 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
                 ("https://meter.example/ws/ping", SocketKind::WebSocket)
             };
             (
-                store
-                    .mint_ticket(&cookie, PUBLIC, target, PUBLIC, kind)
-                    .unwrap(),
+                store.mint_ticket(&cookie, PUBLIC, target, PUBLIC, kind).unwrap(),
                 target,
             )
         })
@@ -77,11 +63,7 @@ fn failed_binding_burns_ticket_and_combined_capacity_is_preserved() {
         Err(TicketError::Capacity)
     ));
     for (ticket, target) in tickets {
-        assert!(
-            store
-                .consume_ticket(&ticket.token, target, PUBLIC)
-                .is_some()
-        );
+        assert!(store.consume_ticket(&ticket.token, target, PUBLIC).is_some());
     }
     assert!(
         store
@@ -102,9 +84,7 @@ async fn tickets_preserve_browser_child_revocation_and_owner() {
     let unused = store
         .mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport)
         .unwrap();
-    let active = store
-        .consume_ticket(&ticket.token, TARGET, AUDIENCE)
-        .unwrap();
+    let active = store.consume_ticket(&ticket.token, TARGET, AUDIENCE).unwrap();
     assert_eq!(active.owner(), browser.owner());
     assert_ne!(active.owner(), sibling.owner());
     assert_eq!(active.browser_origin(), Some(AUDIENCE));
@@ -112,11 +92,7 @@ async fn tickets_preserve_browser_child_revocation_and_owner() {
     tokio::time::timeout(Duration::from_secs(1), active.ended())
         .await
         .unwrap();
-    assert!(
-        store
-            .consume_ticket(&unused.token, TARGET, AUDIENCE)
-            .is_none()
-    );
+    assert!(store.consume_ticket(&unused.token, TARGET, AUDIENCE).is_none());
     assert!(sibling.is_active());
     assert!(matches!(
         store.mint_ticket(&browser, PUBLIC, TARGET, AUDIENCE, SocketKind::WebTransport),
@@ -175,9 +151,5 @@ fn ticket_mint_rejects_cli_foreign_sessions_and_invalid_targets() {
         .mint_ticket(&cookie, PUBLIC, TARGET, PUBLIC, SocketKind::WebTransport)
         .unwrap();
     store.revoke(&session);
-    assert!(
-        store
-            .consume_ticket(&ticket.token, TARGET, PUBLIC)
-            .is_none()
-    );
+    assert!(store.consume_ticket(&ticket.token, TARGET, PUBLIC).is_none());
 }

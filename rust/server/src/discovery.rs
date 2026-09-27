@@ -49,15 +49,9 @@ impl Discovery {
         })
     }
 
-    pub fn respond(
-        &self,
-        request: &Request<()>,
-        peer: SocketAddr,
-    ) -> Result<Option<Response<Bytes>>, ConfigError> {
+    pub fn respond(&self, request: &Request<()>, peer: SocketAddr) -> Result<Option<Response<Bytes>>, ConfigError> {
         let response = match request.uri().path() {
-            "/probe" => self
-                .probe
-                .respond(peer, request.version(), request.headers())?,
+            "/probe" => self.probe.respond(peer, request.version(), request.headers())?,
             "/preflight" => json_response(self.for_host(authority(request)?)?.preflight)?,
             "/servers" => {
                 if request.method() != Method::GET {
@@ -79,10 +73,7 @@ impl Discovery {
             .then(|| authority.parse::<Authority>().ok())
             .flatten();
         let host = authority.as_ref().map_or("localhost", |authority| {
-            authority
-                .host()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
+            authority.host().trim_start_matches('[').trim_end_matches(']')
         });
         let host = crate::preflight::discovery_host(host);
         let mut hosts = self.hosts.lock().expect("discovery cache poisoned");

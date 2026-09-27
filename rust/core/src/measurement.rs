@@ -165,13 +165,7 @@ impl AggregateMeasurements {
             .unwrap_or_default()
     }
 
-    pub fn begin(
-        &mut self,
-        stage: Stage,
-        participants: Vec<String>,
-        at_nanos: u64,
-        reason: IntervalReason,
-    ) {
+    pub fn begin(&mut self, stage: Stage, participants: Vec<String>, at_nanos: u64, reason: IntervalReason) {
         if reason == IntervalReason::StageStart {
             self.uploads.clear();
             self.down_seen.clear();
@@ -255,15 +249,13 @@ impl AggregateMeasurements {
             interval.end_nanos = boundary.at_nanos;
             return self.resume_at(boundary);
         };
-        let peak = aggregate_window(self.peak_from.as_ref().unwrap(), &boundary, interval).filter(
-            |window| {
-                window.end_nanos - window.start_nanos >= 500_000_000
-                    && window
-                        .up
-                        .iter()
-                        .all(|component| component.duration_nanos >= 500_000_000)
-            },
-        );
+        let peak = aggregate_window(self.peak_from.as_ref().unwrap(), &boundary, interval).filter(|window| {
+            window.end_nanos - window.start_nanos >= 500_000_000
+                && window
+                    .up
+                    .iter()
+                    .all(|component| component.duration_nanos >= 500_000_000)
+        });
         if peak.is_some() {
             self.peak_from = Some(boundary.clone());
         }
@@ -274,17 +266,11 @@ impl AggregateMeasurements {
         interval.samples += 1;
         if let Some(peak) = peak {
             for component in &peak.down {
-                let rates = interval
-                    .server_peaks
-                    .entry(component.server_id.clone())
-                    .or_default();
+                let rates = interval.server_peaks.entry(component.server_id.clone()).or_default();
                 rates.0 = rates.0.max(component.bytes_per_sec);
             }
             for component in &peak.up {
-                let rates = interval
-                    .server_peaks
-                    .entry(component.server_id.clone())
-                    .or_default();
+                let rates = interval.server_peaks.entry(component.server_id.clone()).or_default();
                 rates.1 = rates.1.max(component.bytes_per_sec);
             }
             if let Some(rate) = peak.down_bytes_per_sec {
@@ -401,9 +387,7 @@ impl AggregateMeasurements {
                 Direction::Up => &window.up,
             };
             if let Some(component) = components.iter().find(|component| {
-                component.server_id == id
-                    && component.duration_nanos >= MIN_SURVIVOR_NANOS
-                    && component.bytes > 0
+                component.server_id == id && component.duration_nanos >= MIN_SURVIVOR_NANOS && component.bytes > 0
             }) {
                 result.mean_bytes_per_sec = Some(component.bytes_per_sec);
                 result.peak_bytes_per_sec = Some(
@@ -432,12 +416,7 @@ impl AggregateMeasurements {
     fn resume_at(&mut self, boundary: Boundary) -> Option<AggregateWindow> {
         let interval = self.intervals.back().unwrap();
         let (stage, participants) = (interval.stage, interval.participants.clone());
-        self.begin(
-            stage,
-            participants,
-            boundary.at_nanos,
-            IntervalReason::EvidenceResumed,
-        );
+        self.begin(stage, participants, boundary.at_nanos, IntervalReason::EvidenceResumed);
         // The ledger was already updated before the gap was discovered.
         self.observe(boundary)
     }
@@ -470,9 +449,11 @@ impl AggregateMeasurements {
             self.down_seen.insert(id.clone(), count);
         }
         for (id, observation) in &boundary.observed_up {
-            if boundary.up.get(id).is_some_and(|snapshot| {
-                snapshot.id == observation.id && snapshot.bytes >= observation.maximum
-            }) {
+            if boundary
+                .up
+                .get(id)
+                .is_some_and(|snapshot| snapshot.id == observation.id && snapshot.bytes >= observation.maximum)
+            {
                 continue;
             }
             self.credit_upload(id, observation);
@@ -506,11 +487,7 @@ impl AggregateMeasurements {
     }
 }
 
-fn aggregate_window(
-    first: &Boundary,
-    last: &Boundary,
-    interval: &AggregationInterval,
-) -> Option<AggregateWindow> {
+fn aggregate_window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> Option<AggregateWindow> {
     let elapsed = last.at_nanos.checked_sub(first.at_nanos)?;
     if elapsed == 0 || elapsed > i64::MAX as u64 {
         return None;

@@ -126,10 +126,7 @@ fn validates_origins_and_transport_strings() {
         } else {
             decoded.capabilities.latency.len()
         };
-        assert_eq!(
-            count,
-            base["capabilities"][list].as_array().unwrap().len() - 1
-        );
+        assert_eq!(count, base["capabilities"][list].as_array().unwrap().len() - 1);
     }
     let mut direct = Preflight::decode(PREFLIGHT).unwrap();
     direct.capabilities.latency[0].base_url = "https://host/path".into();
@@ -211,10 +208,7 @@ fn newer_servers_targets_are_skipped_but_counted_as_sent() {
         let skipped = targets[1].clone();
         targets.resize(32, skipped.clone());
         decode_preflight_value(&value).unwrap();
-        value["capabilities"][list]
-            .as_array_mut()
-            .unwrap()
-            .push(skipped);
+        value["capabilities"][list].as_array_mut().unwrap().push(skipped);
         assert!(decode_preflight_value(&value).is_err(), "{list}");
     }
     for (list, field) in [
@@ -225,16 +219,12 @@ fn newer_servers_targets_are_skipped_but_counted_as_sent() {
         let mut empty = document.clone();
         empty["capabilities"][list][1][field] = json!("");
         let mut missing = document.clone();
-        missing["capabilities"][list][1]
-            .as_object_mut()
-            .unwrap()
-            .remove(field);
+        missing["capabilities"][list][1].as_object_mut().unwrap().remove(field);
         for value in [empty, missing] {
             assert!(decode_preflight_value(&value).is_err(), "{list} {field}");
         }
     }
     let mut known = document.clone();
-    known["capabilities"]["throughput"][0]["baseUrl"] =
-        document["capabilities"]["throughput"][1]["baseUrl"].clone();
+    known["capabilities"]["throughput"][0]["baseUrl"] = document["capabilities"]["throughput"][1]["baseUrl"].clone();
     assert!(decode_preflight_value(&known).is_err());
 }

@@ -5,25 +5,15 @@ use http::{HeaderMap, HeaderValue, header};
 fn request(origin: &str, method: &str, headers: &str) -> HeaderMap {
     let mut request = HeaderMap::new();
     request.insert(header::ORIGIN, origin.parse().unwrap());
-    request.insert(
-        header::ACCESS_CONTROL_REQUEST_METHOD,
-        method.parse().unwrap(),
-    );
-    request.insert(
-        header::ACCESS_CONTROL_REQUEST_HEADERS,
-        headers.parse().unwrap(),
-    );
+    request.insert(header::ACCESS_CONTROL_REQUEST_METHOD, method.parse().unwrap());
+    request.insert(header::ACCESS_CONTROL_REQUEST_HEADERS, headers.parse().unwrap());
     request
 }
 
 #[test]
 fn cookie_and_bearer_preflights_have_distinct_credential_boundaries() {
     let public = HeaderValue::from_static("https://meter.example");
-    let same_origin = request(
-        "https://meter.example",
-        "GET",
-        "authorization, x-csrf-token",
-    );
+    let same_origin = request("https://meter.example", "GET", "authorization, x-csrf-token");
     let access = authenticated_preflight(&public, true, Some(Route::Download), &same_origin)
         .expect("canonical origin may use cookies and CSRF headers");
     let mut response = HeaderMap::new();
@@ -38,10 +28,7 @@ fn cookie_and_bearer_preflights_have_distinct_credential_boundaries() {
         .expect("foreign origin may attempt a bearer-authenticated request");
     access.apply_measurement(&mut response);
     assert!(!response.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
-    assert_eq!(
-        response[header::ACCESS_CONTROL_ALLOW_ORIGIN],
-        "https://ui.example"
-    );
+    assert_eq!(response[header::ACCESS_CONTROL_ALLOW_ORIGIN], "https://ui.example");
     assert_eq!(
         response[header::ACCESS_CONTROL_ALLOW_HEADERS],
         "Authorization, Content-Type"
@@ -52,36 +39,12 @@ fn cookie_and_bearer_preflights_have_distinct_credential_boundaries() {
 fn refused_preflights_cannot_authorize_a_browser_request() {
     let public = HeaderValue::from_static("https://meter.example");
     for (origin, method, headers, secure, route) in [
-        (
-            "https://meter.example",
-            "GET",
-            "",
-            false,
-            Some(Route::Download),
-        ),
-        (
-            "https://meter.example",
-            "DELETE",
-            "",
-            true,
-            Some(Route::Download),
-        ),
-        (
-            "https://meter.example",
-            "GET",
-            "x-evil",
-            true,
-            Some(Route::Download),
-        ),
+        ("https://meter.example", "GET", "", false, Some(Route::Download)),
+        ("https://meter.example", "DELETE", "", true, Some(Route::Download)),
+        ("https://meter.example", "GET", "x-evil", true, Some(Route::Download)),
         ("https://meter.example", "GET", "", true, None),
         ("https://ui.example", "GET", "", true, Some(Route::Download)),
-        (
-            "http://ui.example",
-            "GET",
-            "authorization",
-            true,
-            Some(Route::Download),
-        ),
+        ("http://ui.example", "GET", "authorization", true, Some(Route::Download)),
         (
             "https://ui.example/",
             "GET",
@@ -96,13 +59,7 @@ fn refused_preflights_cannot_authorize_a_browser_request() {
             true,
             Some(Route::Download),
         ),
-        (
-            "https://ui.example",
-            "GET",
-            "authorization",
-            true,
-            Some(Route::Servers),
-        ),
+        ("https://ui.example", "GET", "authorization", true, Some(Route::Servers)),
     ] {
         let request = request(origin, method, headers);
         assert!(

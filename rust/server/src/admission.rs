@@ -86,19 +86,11 @@ impl Admission {
     pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = self.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
         let (clients, limit) = match class {
-            Class::Request => (
-                &counts.requests_by_client,
-                self.0.limits.operations_per_client,
-            ),
-            Class::Session => (
-                &counts.sessions_by_client,
-                self.0.limits.sessions_per_client,
-            ),
+            Class::Request => (&counts.requests_by_client, self.0.limits.operations_per_client),
+            Class::Session => (&counts.sessions_by_client, self.0.limits.sessions_per_client),
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
-        if crate::client_address::share_full(keys, limit, |key| {
-            clients.get(key).copied().unwrap_or(0)
-        }) {
+        if crate::client_address::share_full(keys, limit, |key| clients.get(key).copied().unwrap_or(0)) {
             return Err(Refusal::ClientFull);
         }
         if counts.active >= self.0.limits.operations {
@@ -128,11 +120,7 @@ impl Admission {
 
     pub fn load(&self) -> (usize, usize) {
         (
-            self.0
-                .counts
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .active,
+            self.0.counts.lock().unwrap_or_else(PoisonError::into_inner).active,
             self.0.limits.operations,
         )
     }
@@ -140,12 +128,7 @@ impl Admission {
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = self
-            .admission
-            .0
-            .counts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut counts = self.admission.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
         counts.active -= 1;
         let clients = match self.class {
             Class::Request => &mut counts.requests_by_client,
@@ -178,14 +161,8 @@ mod tests {
         });
         let request = admission.acquire(Class::Request, "a").unwrap();
         let session = admission.acquire(Class::Session, "a").unwrap();
-        assert_eq!(
-            admission.acquire(Class::Request, "a").err(),
-            Some(Refusal::ClientFull)
-        );
-        assert_eq!(
-            admission.acquire(Class::Request, "b").err(),
-            Some(Refusal::GlobalFull)
-        );
+        assert_eq!(admission.acquire(Class::Request, "a").err(), Some(Refusal::ClientFull));
+        assert_eq!(admission.acquire(Class::Request, "b").err(), Some(Refusal::GlobalFull));
         drop(request);
         assert_eq!(
             admission.acquire(Class::Session, "b").err(),

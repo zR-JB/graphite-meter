@@ -29,9 +29,7 @@ impl fmt::Display for DiscoveryError {
 }
 impl std::error::Error for DiscoveryError {}
 
-fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(
-    deserializer: D,
-) -> Result<T, D::Error> {
+fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(deserializer: D) -> Result<T, D::Error> {
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 fn is_false(value: &bool) -> bool {
@@ -42,11 +40,7 @@ fn is_false(value: &bool) -> bool {
 pub struct ServerInfo {
     #[serde(default, deserialize_with = "null_default")]
     pub name: String,
-    #[serde(
-        default,
-        deserialize_with = "null_default",
-        skip_serializing_if = "String::is_empty"
-    )]
+    #[serde(default, deserialize_with = "null_default", skip_serializing_if = "String::is_empty")]
     pub location: String,
 }
 
@@ -64,11 +58,7 @@ pub struct Preflight {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
-    #[serde(
-        default,
-        deserialize_with = "null_default",
-        skip_serializing_if = "is_false"
-    )]
+    #[serde(default, deserialize_with = "null_default", skip_serializing_if = "is_false")]
     pub upload_checkpoint: bool,
     #[serde(deserialize_with = "throughput_targets")]
     pub throughput: Vec<ThroughputTarget>,
@@ -76,28 +66,18 @@ pub struct Capabilities {
     pub latency: Vec<LatencyTarget>,
 }
 
-fn throughput_targets<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<ThroughputTarget>, D::Error> {
+fn throughput_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<ThroughputTarget>, D::Error> {
     known_targets(
         deserializer,
         &[
-            (
-                "transport",
-                &["fetch-stream", "webtransport", "webtransport-datagram"],
-            ),
+            ("transport", &["fetch-stream", "webtransport", "webtransport-datagram"]),
             ("protocol", &["http1", "http2", "http3", "negotiated"]),
         ],
     )
 }
 
-fn latency_targets<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<LatencyTarget>, D::Error> {
-    known_targets(
-        deserializer,
-        &[("transport", &["websocket", "webtransport"])],
-    )
+fn latency_targets<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<LatencyTarget>, D::Error> {
+    known_targets(deserializer, &[("transport", &["websocket", "webtransport"])])
 }
 
 fn known_targets<'de, D: Deserializer<'de>, T: serde::de::DeserializeOwned>(
@@ -189,16 +169,8 @@ impl Preflight {
         if self.capabilities.throughput.len() > 32 || self.capabilities.latency.len() > 32 {
             return Err(DiscoveryError::InvalidTargets);
         }
-        let throughput_origins = self
-            .capabilities
-            .throughput
-            .iter()
-            .map(|target| &target.base_url);
-        let latency_origins = self
-            .capabilities
-            .latency
-            .iter()
-            .map(|target| &target.base_url);
+        let throughput_origins = self.capabilities.throughput.iter().map(|target| &target.base_url);
+        let latency_origins = self.capabilities.latency.iter().map(|target| &target.base_url);
         for origin in throughput_origins.chain(latency_origins) {
             target_origin(origin).map_err(|_| DiscoveryError::InvalidOrigin)?;
         }
@@ -244,16 +216,14 @@ impl Probe {
         Ok(value)
     }
     pub fn validate(&self) -> Result<(), DiscoveryError> {
-        if self.client_ip.is_empty()
-            || self.client_ip.len() > 64
-            || !matches!(self.client_ip_version, 4 | 6)
-        {
+        if self.client_ip.is_empty() || self.client_ip.len() > 64 || !matches!(self.client_ip_version, 4 | 6) {
             return Err(DiscoveryError::InvalidProbe);
         }
         // Match Go's signed int range even though occupancy is nonnegative.
-        if self.load.is_some_and(|load| {
-            load.max == 0 || load.active > isize::MAX as usize || load.max > isize::MAX as usize
-        }) {
+        if self
+            .load
+            .is_some_and(|load| load.max == 0 || load.active > isize::MAX as usize || load.max > isize::MAX as usize)
+        {
             return Err(DiscoveryError::InvalidLoad);
         }
         Ok(())

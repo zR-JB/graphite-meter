@@ -91,21 +91,14 @@ impl Http3Client {
             .collect();
         let mut last_error: Option<Error> = None;
         for address in addresses {
-            let bind: SocketAddr = if address.is_ipv6() {
-                "[::]:0"
-            } else {
-                "0.0.0.0:0"
-            }
-            .parse()?;
+            let bind: SocketAddr = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
             let endpoint = EndpointOwner(quinn::Endpoint::new(
                 quinn::EndpointConfig::default(),
                 None,
                 graphite_meter_core::socket::udp_socket(bind)?,
                 quinn::default_runtime().ok_or("no async runtime for QUIC")?,
             )?);
-            let connecting = endpoint
-                .0
-                .connect_with(config.clone(), address, &origin.host)?;
+            let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
             // A silent address must not consume the whole multi-address attempt.
             let connection = match timeout(Duration::from_secs(3), connecting).await {
                 Ok(Ok(connection)) => connection,
@@ -148,11 +141,7 @@ impl Http3Client {
         self.connection.close_reason().is_some() || !self.driver_alive.load(Ordering::Acquire)
     }
 
-    pub async fn open(
-        self: &Arc<Self>,
-        request: Request<()>,
-        limits: RequestLimits,
-    ) -> Result<Http3Stream, Error> {
+    pub async fn open(self: &Arc<Self>, request: Request<()>, limits: RequestLimits) -> Result<Http3Stream, Error> {
         if Origin::from_uri(request.uri())? != self.origin {
             return Err("HTTP/3 request authority differs from its connection".into());
         }
@@ -160,11 +149,7 @@ impl Http3Client {
             .checked_add(limits.timeout)
             .ok_or("HTTP/3 timeout is too large")?;
         let permit = timeout_at(deadline, self.permits.clone().acquire_owned()).await??;
-        let mut sender = self
-            .sender
-            .as_ref()
-            .expect("connected client has sender")
-            .clone();
+        let mut sender = self.sender.as_ref().expect("connected client has sender").clone();
         let stream = timeout_at(deadline, sender.send_request(request)).await??;
         Ok(Http3Stream {
             stream,
@@ -315,12 +300,8 @@ mod tests {
     #[test]
     fn request_authority_is_fixed_and_never_accepts_credentials() {
         let origin = Origin::from_uri(&"https://METER.example:443/path".parse().unwrap()).unwrap();
-        assert!(
-            origin == Origin::from_uri(&"https://meter.example/other".parse().unwrap()).unwrap()
-        );
-        assert!(
-            origin != Origin::from_uri(&"https://meter.example:8443/".parse().unwrap()).unwrap()
-        );
+        assert!(origin == Origin::from_uri(&"https://meter.example/other".parse().unwrap()).unwrap());
+        assert!(origin != Origin::from_uri(&"https://meter.example:8443/".parse().unwrap()).unwrap());
         for uri in [
             "/path",
             "http://meter.example/",
@@ -344,9 +325,8 @@ mod tests {
                 PrivateKeyDer::from_pem_slice(key.as_bytes())?,
             )?;
         tls.alpn_protocols = vec![b"h3".to_vec()];
-        let config = quinn::ServerConfig::with_crypto(Arc::new(
-            quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
-        ));
+        let config =
+            quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
         let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse()?)?;
         let uri: Uri = format!("https://{}/echo", server.local_addr()?).parse()?;
         let mut tasks = JoinSet::new();
@@ -360,21 +340,14 @@ mod tests {
                 .build::<_, Bytes>(h3_noq::Connection::new(connection))
                 .await?;
             for _ in 0..2 {
-                let (request, mut stream) = h3
-                    .accept()
-                    .await?
-                    .ok_or("missing request")?
-                    .resolve_request()
-                    .await?;
+                let (request, mut stream) = h3.accept().await?.ok_or("missing request")?.resolve_request().await?;
                 assert_eq!(request.method(), http::Method::POST);
                 let mut body = Vec::new();
                 while let Some(mut chunk) = stream.recv_data().await? {
                     body.extend_from_slice(&chunk.copy_to_bytes(chunk.remaining()));
                 }
                 assert_eq!(body, b"native upload");
-                stream
-                    .send_response(Response::builder().status(200).body(())?)
-                    .await?;
+                stream.send_response(Response::builder().status(200).body(())?).await?;
                 stream.send_data(Bytes::from(body)).await?;
                 stream.finish().await?;
             }
@@ -382,11 +355,7 @@ mod tests {
             let _ = h3.accept().await;
             Ok::<_, Error>(())
         });
-        assert!(
-            Http3Client::connect(&uri, false, Duration::from_secs(5))
-                .await
-                .is_err()
-        );
+        assert!(Http3Client::connect(&uri, false, Duration::from_secs(5)).await.is_err());
         let client = Arc::new(Http3Client::connect(&uri, true, Duration::from_secs(5)).await?);
         for max_receive_bytes in [100, 3] {
             let request = Request::post(uri.clone()).body(())?;

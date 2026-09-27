@@ -132,10 +132,7 @@ impl Upload {
         };
         if minted.upload_id.is_empty()
             || minted.upload_id.len() > 8192
-            || minted
-                .upload_id
-                .bytes()
-                .any(|byte| byte <= 32 || byte == 127)
+            || minted.upload_id.bytes().any(|byte| byte <= 32 || byte == 127)
         {
             return Err("server returned an invalid upload session ID".into());
         }
@@ -287,11 +284,8 @@ impl Upload {
             let requested_at_nanos = elapsed(self.epoch)?;
             let response = tokio::time::timeout_at(
                 deadline,
-                self.control.json::<Count>(
-                    Method::POST,
-                    Route::UploadCheckpoint,
-                    &[("id", &self.id)],
-                ),
+                self.control
+                    .json::<Count>(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)]),
             )
             .await;
             let count = match response {
@@ -318,10 +312,7 @@ impl Upload {
                 }
             };
             let received_at_nanos = elapsed(self.epoch)?;
-            if count.bytes > MAX_UPLOAD_COUNTER
-                || count.nanos == 0
-                || count.nanos > MAX_UPLOAD_COUNTER
-            {
+            if count.bytes > MAX_UPLOAD_COUNTER || count.nanos == 0 || count.nanos > MAX_UPLOAD_COUNTER {
                 return Err(wire::WireError::InvalidReceiverCheckpoint.into());
             }
             self.health()?;
@@ -454,8 +445,7 @@ async fn progress_loop(
             Ok(()) => return Ok(()),
             Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
             Err(_) => {
-                let deadline =
-                    *recovery.get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
+                let deadline = *recovery.get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
                 if Instant::now() >= deadline {
                     return Err("upload progress did not recover within two seconds".into());
                 }
@@ -575,11 +565,7 @@ async fn send_wt_lane(
     }
 }
 
-async fn send_wt_reconnecting(
-    slot: &SessionSlot,
-    block: Bytes,
-    active: Arc<AtomicBool>,
-) -> Result<(), Error> {
+async fn send_wt_reconnecting(slot: &SessionSlot, block: Bytes, active: Arc<AtomicBool>) -> Result<(), Error> {
     let mut retry = TransferRetry::default();
     loop {
         let session = slot.current().await;
@@ -591,8 +577,7 @@ async fn send_wt_reconnecting(
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {
-                let retryable =
-                    !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
+                let retryable = !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
                 retry.retry(error, started, false, retryable).await?;
             }
         }
@@ -704,9 +689,7 @@ mod tests {
                 let (mut stream, _) = listener.accept().await?;
                 if attempt == 1 {
                     assert!(
-                        first_closed.is_some_and(|closed: Instant| {
-                            closed.elapsed() >= TRANSFER_RETRY_BACKOFF
-                        }),
+                        first_closed.is_some_and(|closed: Instant| { closed.elapsed() >= TRANSFER_RETRY_BACKOFF }),
                         "a dropped upload request was retried without pacing"
                     );
                 }
@@ -754,18 +737,16 @@ mod tests {
             for attempt in 0..2 {
                 let (mut stream, _) = listener.accept().await?;
                 if attempt == 1 {
-                    assert!(first_closed.is_some_and(|closed: Instant| {
-                        closed.elapsed() >= Duration::from_millis(100)
-                    }));
+                    assert!(
+                        first_closed.is_some_and(|closed: Instant| { closed.elapsed() >= Duration::from_millis(100) })
+                    );
                 }
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).await?;
                 assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
                 if attempt == 0 {
                     stream
-                        .write_all(
-                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
-                        )
+                        .write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n")
                         .await?;
                     first_closed = Some(Instant::now());
                     continue;

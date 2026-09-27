@@ -18,9 +18,7 @@ async fn download_peer() -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Erro
     download_peer_with_gate(None).await
 }
 
-async fn download_peer_with_gate(
-    gate: Option<Arc<Barrier>>,
-) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
+async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, Arc<AtomicU8>, JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("https://{}", listener.local_addr()?);
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
@@ -213,12 +211,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     assert!(stage.complete);
     assert_eq!(stage.server_results[0].id, "near");
     assert_eq!(stage.server_results[1].id, "far");
-    assert!(
-        stage
-            .server_results
-            .iter()
-            .all(|server| server.down_bytes() > 0)
-    );
+    assert!(stage.server_results.iter().all(|server| server.down_bytes() > 0));
     near_task.abort();
     far_task.abort();
     Ok(())
@@ -356,14 +349,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     });
     let (_stop, cancelled) = watch::channel(false);
     near_failed.store(3, Ordering::SeqCst);
-    let first = measure(
-        Stage::Download,
-        &config,
-        &servers,
-        &snapshots,
-        cancelled.clone(),
-    )
-    .await?;
+    let first = measure(Stage::Download, &config, &servers, &snapshots, cancelled.clone()).await?;
     assert_eq!(first, vec!["near"]);
     assert_eq!(
         observed.borrow().failures[0].reason,
@@ -376,14 +362,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
 
     // A stalled first peer must not consume the next peer's startup budget.
     near_failed.store(2, Ordering::SeqCst);
-    let second = measure(
-        Stage::Download,
-        &config,
-        &servers,
-        &snapshots,
-        cancelled.clone(),
-    )
-    .await?;
+    let second = measure(Stage::Download, &config, &servers, &snapshots, cancelled.clone()).await?;
     assert_eq!(second, vec!["near"]);
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
@@ -394,10 +373,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     let contributions = &snapshot.results[1].server_results;
     assert_eq!(contributions.len(), 2);
     assert_eq!(
-        contributions
-            .iter()
-            .map(|server| server.down_bytes())
-            .sum::<u64>(),
+        contributions.iter().map(|server| server.down_bytes()).sum::<u64>(),
         snapshot.results[1].down_bytes()
     );
     assert!(contributions[0].down_bps().is_none());
@@ -408,14 +384,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     drop(snapshot);
 
     far_failed.store(1, Ordering::SeqCst);
-    let third = measure(
-        Stage::Download,
-        &config,
-        &servers[1..],
-        &snapshots,
-        cancelled,
-    )
-    .await;
+    let third = measure(Stage::Download, &config, &servers[1..], &snapshots, cancelled).await;
     assert!(third.is_err());
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 3);
@@ -479,12 +448,8 @@ fn host_latency_populations_and_continuity_are_independent() {
     let start = Instant::now();
     let end = start + Duration::from_secs(1);
     let mut measurements = LatencyMeasurements::default();
-    measurements
-        .hosts
-        .insert("near".into(), HostLatency::default());
-    measurements
-        .hosts
-        .insert("far".into(), HostLatency::default());
+    measurements.hosts.insert("near".into(), HostLatency::default());
+    measurements.hosts.insert("far".into(), HostLatency::default());
     for (id, rtt_ms) in [("near", 2), ("far", 200), ("near", 4), ("far", 220)] {
         measurements.observe(
             (
@@ -564,32 +529,16 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
             }
             mode.store(6, Ordering::SeqCst);
         };
-        let (result, ()) =
-            tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, fail) }).await?;
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(5), async { tokio::join!(run, fail) }).await?;
         assert!(result?.is_empty());
         let snapshot = observed.borrow();
         let stage = &snapshot.results[0];
         assert_eq!(stage.server_results.len(), 3);
-        assert!(
-            stage
-                .server_results
-                .iter()
-                .all(|host| host.down_bytes() > 0)
-        );
+        assert!(stage.server_results.iter().all(|host| host.down_bytes() > 0));
         assert!(!stage.complete);
-        assert!(
-            stage
-                .intervals
-                .iter()
-                .all(|interval| interval.participants.len() == 3)
-        );
-        let [near, far, quiet] = ["near", "far", "quiet"].map(|id| {
-            stage
-                .server_latencies
-                .iter()
-                .find(|host| host.id == id)
-                .unwrap()
-        });
+        assert!(stage.intervals.iter().all(|interval| interval.participants.len() == 3));
+        let [near, far, quiet] =
+            ["near", "far", "quiet"].map(|id| stage.server_latencies.iter().find(|host| host.id == id).unwrap());
         assert!(near.error.is_some());
         assert!(far.error.is_none());
         assert!(far.summary.count > 0);
@@ -630,10 +579,7 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
     );
     peer.abort();
     let error = result.unwrap_err();
-    assert!(
-        crate::net::authentication_required(error.as_ref()).is_some(),
-        "{error}"
-    );
+    assert!(crate::net::authentication_required(error.as_ref()).is_some(), "{error}");
     Ok(())
 }
 
@@ -674,13 +620,7 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
         far_mode.store(7, Ordering::SeqCst);
     };
     let (result, ()) = tokio::join!(
-        measure(
-            Stage::Bidirectional,
-            &config,
-            &servers,
-            &snapshots,
-            cancelled
-        ),
+        measure(Stage::Bidirectional, &config, &servers, &snapshots, cancelled),
         stall_upload
     );
     near_task.abort();
@@ -705,8 +645,7 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
     let (origin, mode, peer) = download_peer().await?;
     let (healthy, _, healthy_peer) = download_peer().await?;
     let http = Http::new(true)?;
-    let healthy_transport =
-        Arc::new(Transport::connect(http.clone(), &healthy, Protocol::Http1, true).await?);
+    let healthy_transport = Arc::new(Transport::connect(http.clone(), &healthy, Protocol::Http1, true).await?);
     let transport = Arc::new(Transport::connect(http, &origin, Protocol::Http1, true).await?);
     let (stop, cancelled) = watch::channel(false);
     let epoch = Instant::now();
@@ -735,14 +674,7 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
         latency_completed: BTreeMap::new(),
         latency_failed: false,
     };
-    assert_eq!(
-        resources
-            .boundary(epoch, BoundaryKind::Initial)
-            .await?
-            .up
-            .len(),
-        2
-    );
+    assert_eq!(resources.boundary(epoch, BoundaryKind::Initial).await?.up.len(), 2);
     mode.store(1, Ordering::SeqCst);
     for _ in 0..2 {
         assert!(
@@ -754,14 +686,7 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
         );
     }
     mode.store(0, Ordering::SeqCst);
-    assert_eq!(
-        resources
-            .boundary(epoch, BoundaryKind::Sample)
-            .await?
-            .up
-            .len(),
-        2
-    );
+    assert_eq!(resources.boundary(epoch, BoundaryKind::Sample).await?.up.len(), 2);
     mode.store(1, Ordering::SeqCst);
     for _ in 0..2 {
         assert!(
@@ -779,17 +704,9 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
             .up
             .contains_key("healthy")
     );
-    assert!(
-        resources
-            .boundary(epoch, BoundaryKind::Sample)
-            .await
-            .is_err()
-    );
+    assert!(resources.boundary(epoch, BoundaryKind::Sample).await.is_err());
     mode.store(3, Ordering::SeqCst);
-    let error = resources
-        .boundary(epoch, BoundaryKind::Final)
-        .await
-        .unwrap_err();
+    let error = resources.boundary(epoch, BoundaryKind::Final).await.unwrap_err();
     assert!(crate::net::authentication_required(error.as_ref()).is_some());
     drop(resources);
     peer.abort();
@@ -798,8 +715,7 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
 }
 
 #[tokio::test]
-async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() -> Result<(), Error>
-{
+async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     let (origin, fault, peer) = download_peer().await?;
     let http = Http::new(true)?;

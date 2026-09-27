@@ -28,9 +28,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
             .strip_prefix("--")
             .or_else(|| arg.strip_prefix('-'))
             .ok_or("unexpected positional argument")?;
-        let (name, inline) = flag
-            .split_once('=')
-            .map_or((flag, None), |(k, v)| (k, Some(v)));
+        let (name, inline) = flag.split_once('=').map_or((flag, None), |(k, v)| (k, Some(v)));
         match name {
             "help" | "h" if inline.is_none() => return Ok(Action::Help),
             "version" => {
@@ -73,9 +71,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Action, Error> 
                     "http2" => Some(Protocol::Http2),
                     "http3" => Some(Protocol::Http3),
                     _ => {
-                        return Err(
-                            "throughput protocol must be auto, http1, http2, or http3".into()
-                        );
+                        return Err("throughput protocol must be auto, http1, http2, or http3".into());
                     }
                 }
             }

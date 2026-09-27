@@ -35,22 +35,18 @@ fn client(origin: &str) -> Command {
         "-ping",
         "80ms",
     ]);
-    command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     command
 }
 
-async fn latency_peer(
-    revoked_download: bool,
-) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
+async fn latency_peer(revoked_download: bool) -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let twin = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let twin_origin = format!("http://{}", twin.local_addr()?);
     let peer = tokio::spawn(async move {
-        while let Ok((mut stream, _)) = tokio::select! { accepted = listener.accept() => accepted, accepted = twin.accept() => accepted }
+        while let Ok((mut stream, _)) =
+            tokio::select! { accepted = listener.accept() => accepted, accepted = twin.accept() => accepted }
         {
             let twin_origin = twin_origin.clone();
             tokio::spawn(async move {
@@ -71,9 +67,7 @@ async fn latency_peer(
                 };
                 if path == "/ws/ping" {
                     let mut socket = tokio_tungstenite::accept_async(stream).await?;
-                    while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) =
-                        socket.next().await
-                    {
+                    while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = socket.next().await {
                         let id = graphite_meter_core::wire::decode_ping(&text)?;
                         socket
                             .send(tokio_tungstenite::tungstenite::Message::Text(
@@ -100,7 +94,15 @@ async fn latency_peer(
                     "/probe" => serde_json::json!({"clientIp":"127.0.0.1","clientIpVersion":4,"clientIpSource":"socket","protocolNegotiated":"http/1.1"}),
                     _ => return Err("unexpected route".into()),
                 }.to_string();
-                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await?;
+                stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await?;
                 Ok(())
             });
         }
@@ -141,10 +143,7 @@ async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> 
     peer.abort();
     let report = String::from_utf8(output.stdout)?;
     assert_eq!(output.status.code(), Some(1), "{report}");
-    assert!(
-        report.starts_with("Graphite Meter · Incomplete"),
-        "{report}"
-    );
+    assert!(report.starts_with("Graphite Meter · Incomplete"), "{report}");
     assert!(
         report.contains("twin peer · Download throughput · at 1.")
             && report.contains("Sign-in required: authentication required (HTTP 403)"),
@@ -168,8 +167,7 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
                 .await?
                 .success()
         );
-        let output =
-            tokio::time::timeout(Duration::from_secs(5), child.wait_with_output()).await??;
+        let output = tokio::time::timeout(Duration::from_secs(5), child.wait_with_output()).await??;
         assert_eq!(output.status.code(), Some(code));
         assert!(String::from_utf8(output.stdout)?.contains("Stopped"));
     }
@@ -262,20 +260,12 @@ finally:
                 "-c",
                 script,
                 env!("CARGO_BIN_EXE_graphite-meter-client"),
-                if mode == "check-quit" {
-                    &silent_origin
-                } else {
-                    &origin
-                },
+                if mode == "check-quit" { &silent_origin } else { &origin },
                 mode,
             ])
             .output()
             .await?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
         assert_eq!(result["step"], step);
         assert_eq!(result["code"], code);
@@ -283,11 +273,7 @@ finally:
         assert!(text.contains("\x1b[?1049l"));
         assert!(text.contains("\x1b[?25h"));
         let stopped = !matches!(mode, "setup-interrupt" | "check-quit");
-        assert_eq!(
-            text.contains("Graphite Meter · Stopped"),
-            stopped,
-            "{mode}: {text:?}"
-        );
+        assert_eq!(text.contains("Graphite Meter · Stopped"), stopped, "{mode}: {text:?}");
     }
     peer.abort();
     Ok(())

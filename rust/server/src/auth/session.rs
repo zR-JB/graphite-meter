@@ -176,14 +176,7 @@ impl SessionStore {
         provider: &str,
         prior_token: Option<&str>,
     ) -> Result<(String, SessionLease), SessionError> {
-        self.create_at(
-            subject,
-            name,
-            provider,
-            prior_token,
-            SystemTime::now(),
-            Instant::now(),
-        )
+        self.create_at(subject, name, provider, prior_token, SystemTime::now(), Instant::now())
     }
 
     pub(super) fn create_at(
@@ -212,10 +205,7 @@ impl SessionStore {
         });
         let mut state = self.0.lock().expect("session mutex poisoned");
         state.sweep(now);
-        let same_subject = state
-            .sessions
-            .values()
-            .filter(|session| session.subject == subject);
+        let same_subject = state.sessions.values().filter(|session| session.subject == subject);
         let oldest = same_subject
             .clone()
             .min_by_key(|session| session.created)
@@ -277,10 +267,7 @@ impl SessionStore {
     }
 
     pub fn sweep(&self) {
-        self.0
-            .lock()
-            .expect("session mutex poisoned")
-            .sweep(Instant::now());
+        self.0.lock().expect("session mutex poisoned").sweep(Instant::now());
     }
 }
 

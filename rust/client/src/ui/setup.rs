@@ -72,13 +72,9 @@ impl Ui {
             .clamp(Duration::from_secs(1), Duration::from_secs(300));
         } else if field == Field::Warmup {
             self.config.warmup = if direction > 0 {
-                self.config
-                    .warmup
-                    .saturating_add(Duration::from_millis(100))
+                self.config.warmup.saturating_add(Duration::from_millis(100))
             } else {
-                self.config
-                    .warmup
-                    .saturating_sub(Duration::from_millis(100))
+                self.config.warmup.saturating_sub(Duration::from_millis(100))
             }
             .min(Duration::from_secs(4));
         } else {
@@ -133,9 +129,7 @@ impl Field {
             Self::ThroughputTransport => {
                 crate::vocabulary::throughput_transport(config.throughput_transport).explanation
             }
-            Self::LatencyTransport => {
-                crate::vocabulary::latency_transport(config.latency_transport).explanation
-            }
+            Self::LatencyTransport => crate::vocabulary::latency_transport(config.latency_transport).explanation,
             _ => self.term().explanation,
         }
     }
@@ -162,19 +156,13 @@ impl Field {
             Self::Servers => config.servers.join(","),
             Self::ThroughputOrigin => config.throughput_origin.clone().unwrap_or_default(),
             Self::LatencyOrigin => config.latency_origin.clone().unwrap_or_default(),
-            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol)
+            Self::Protocol => crate::vocabulary::protocol(config.throughput_protocol).label.into(),
+            Self::ThroughputTransport => crate::vocabulary::throughput_transport(config.throughput_transport)
                 .label
                 .into(),
-            Self::ThroughputTransport => {
-                crate::vocabulary::throughput_transport(config.throughput_transport)
-                    .label
-                    .into()
-            }
-            Self::LatencyTransport => {
-                crate::vocabulary::latency_transport(config.latency_transport)
-                    .label
-                    .into()
-            }
+            Self::LatencyTransport => crate::vocabulary::latency_transport(config.latency_transport)
+                .label
+                .into(),
             Self::Warmup => seconds(config.warmup),
             Self::Streams => config.streams.to_string(),
             Self::AutoStreams => config.auto_streams.to_string(),
@@ -209,17 +197,9 @@ pub(super) struct Edit {
 }
 impl Edit {
     pub(super) fn new(field: Field, value: String) -> Self {
-        let chars: Vec<_> = value
-            .chars()
-            .filter(|c| safe_character(*c))
-            .take(MAX_TEXT)
-            .collect();
+        let chars: Vec<_> = value.chars().filter(|c| safe_character(*c)).take(MAX_TEXT).collect();
         let cursor = chars.len();
-        Self {
-            field,
-            chars,
-            cursor,
-        }
+        Self { field, chars, cursor }
     }
     pub(super) fn insert(&mut self, text: &str) {
         for character in text
@@ -297,11 +277,7 @@ impl Edit {
 
 impl Ui {
     pub(super) fn activate(&mut self) {
-        let Some(&field) = self
-            .rows
-            .selected()
-            .and_then(|index| self.fields().get(index))
-        else {
+        let Some(&field) = self.rows.selected().and_then(|index| self.fields().get(index)) else {
             return;
         };
         if let Some(stage) = field.stage() {
@@ -342,9 +318,7 @@ impl Ui {
             Field::ThroughputTransport => {
                 self.config.throughput_transport = match self.config.throughput_transport {
                     None => Some(ThroughputTransport::FetchStream),
-                    Some(ThroughputTransport::FetchStream) => {
-                        Some(ThroughputTransport::WebTransport)
-                    }
+                    Some(ThroughputTransport::FetchStream) => Some(ThroughputTransport::WebTransport),
                     Some(_) => None,
                 }
             }
@@ -376,12 +350,7 @@ impl Ui {
                     .filter(|id| !id.is_empty())
                     .map(str::to_owned)
                     .collect();
-                if ids.len() > 4
-                    || ids
-                        .iter()
-                        .enumerate()
-                        .any(|(index, id)| ids[..index].contains(id))
-                {
+                if ids.len() > 4 || ids.iter().enumerate().any(|(index, id)| ids[..index].contains(id)) {
                     return Err("select at most four distinct server IDs".into());
                 }
                 self.config.servers = ids;
@@ -400,13 +369,8 @@ impl Ui {
             }
             Field::Streams | Field::AutoStreams => {
                 let number: usize = value.parse()?;
-                if number > crate::stream_plan::MAX_STREAMS
-                    || matches!(field, Field::AutoStreams) && number == 0
-                {
-                    return Err(
-                        "stream count must be 1..14; fixed streams also permits 0 for automatic"
-                            .into(),
-                    );
+                if number > crate::stream_plan::MAX_STREAMS || matches!(field, Field::AutoStreams) && number == 0 {
+                    return Err("stream count must be 1..14; fixed streams also permits 0 for automatic".into());
                 }
                 if matches!(field, Field::Streams) {
                     self.config.streams = number;
@@ -421,9 +385,7 @@ impl Ui {
                     || number > 86400.0
                     || number == 0.0 && !matches!(field, Field::Warmup)
                 {
-                    return Err(
-                        "enter a positive duration up to 86400 (warmup also permits zero)".into(),
-                    );
+                    return Err("enter a positive duration up to 86400 (warmup also permits zero)".into());
                 }
                 let duration = Duration::try_from_secs_f64(number)?;
                 match field {

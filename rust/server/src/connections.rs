@@ -95,37 +95,22 @@ impl Connections {
     }
 
     pub fn stats(&self) -> Stats {
-        self.0
-            .counts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stats
+        self.0.counts.lock().unwrap_or_else(PoisonError::into_inner).stats
     }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut counts = self
-            .owner
-            .0
-            .counts
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut counts = self.owner.0.counts.lock().unwrap_or_else(PoisonError::into_inner);
         counts.stats.active -= 1;
         for key in &self.keys {
-            let count = counts
-                .clients
-                .get_mut(key)
-                .expect("permit owns client capacity");
+            let count = counts.clients.get_mut(key).expect("permit owns client capacity");
             *count -= 1;
             if *count == 0 {
                 counts.clients.remove(key);
             }
             if self.buffered {
-                let count = counts
-                    .buffered
-                    .get_mut(key)
-                    .expect("permit owns buffer share");
+                let count = counts.buffered.get_mut(key).expect("permit owns buffer share");
                 *count -= 1;
                 if *count == 0 {
                     counts.buffered.remove(key);

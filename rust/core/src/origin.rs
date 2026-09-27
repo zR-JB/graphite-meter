@@ -71,8 +71,7 @@ pub fn target_origin(raw: &str) -> Result<Option<Origin>, OriginError> {
     }
     let (host, port) = if let Some(bracketed) = authority.strip_prefix('[') {
         let (host, suffix) = bracketed.split_once(']').ok_or(OriginError)?;
-        host.parse::<std::net::Ipv6Addr>()
-            .map_err(|_| OriginError)?;
+        host.parse::<std::net::Ipv6Addr>().map_err(|_| OriginError)?;
         let port = if suffix.is_empty() {
             None
         } else {
@@ -130,16 +129,10 @@ fn ascii_name(host: &str) -> bool {
 
 pub fn split_url(raw: &str) -> Result<(Origin, &str), OriginError> {
     let start = raw.find("://").ok_or(OriginError)? + 3;
-    let end = raw[start..]
-        .find(['/', '?'])
-        .map_or(raw.len(), |index| start + index);
+    let end = raw[start..].find(['/', '?']).map_or(raw.len(), |index| start + index);
     let origin = target_origin(&raw[..end])?.ok_or(OriginError)?;
     let rest = &raw[end..];
-    if rest.len() > 2048
-        || rest
-            .bytes()
-            .any(|c| c <= b' ' || c >= 127 || matches!(c, b'#' | b'\\'))
-    {
+    if rest.len() > 2048 || rest.bytes().any(|c| c <= b' ' || c >= 127 || matches!(c, b'#' | b'\\')) {
         return Err(OriginError);
     }
     Ok((origin, rest))

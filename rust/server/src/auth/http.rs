@@ -1,7 +1,7 @@
 //! HTTP authentication controller. Requests arrive only after policy authorization.
 use super::{
-    ApprovalError, ApprovalKind, AuthLease, Exchange, ExchangeError, SESSION_LIFETIME,
-    SessionStore, SocketKind, TicketError,
+    ApprovalError, ApprovalKind, AuthLease, Exchange, ExchangeError, SESSION_LIFETIME, SessionStore, SocketKind,
+    TicketError,
     logging::{Counter, SecurityLog},
     oidc::OidcFailure,
     pages::{self, ApprovalPage, ContinuePage, DonePage, LoginPage},
@@ -37,11 +37,7 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(
-        config: &AuthConfig,
-        trusted: Vec<IpNet>,
-        sessions: Option<SessionStore>,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(config: &AuthConfig, trusted: Vec<IpNet>, sessions: Option<SessionStore>) -> Result<Self, ConfigError> {
         let sessions = sessions.unwrap_or_default();
         let log = Arc::new(SecurityLog::default());
         let attempts = Arc::new(AttemptLimiter::with_log(log.clone()));
@@ -127,10 +123,7 @@ impl Service {
     pub async fn handle(&self, authorized: &AuthorizedRequest<Bytes>) -> Option<Response<Bytes>> {
         let request = authorized.request();
         let path = request.uri().path();
-        if path != "/login"
-            && !path.starts_with("/auth/")
-            && !matches!(path, "/wt/session" | "/ws/session")
-        {
+        if path != "/login" && !path.starts_with("/auth/") && !matches!(path, "/wt/session" | "/ws/session") {
             return None;
         }
         if let Authorization::Preflight(headers) = authorized.authorization() {
@@ -172,11 +165,7 @@ impl Service {
         };
         let query = query(request);
         let challenge = value(&query, "challenge");
-        let challenge = if valid_challenge(challenge) {
-            challenge
-        } else {
-            ""
-        };
+        let challenge = if valid_challenge(challenge) { challenge } else { "" };
         let notice = match value(&query, "error") {
             "" => "",
             value @ ("provider" | "busy" | "stale" | "throttled" | "password") => value,
@@ -200,9 +189,9 @@ impl Service {
             },
         );
         if let Some(provider) = provider {
-            result.headers_mut().extend(
-                pages::security_headers(Some(&provider.origin)).expect("validated provider origin"),
-            );
+            result
+                .headers_mut()
+                .extend(pages::security_headers(Some(&provider.origin)).expect("validated provider origin"));
         }
         set_cookie(
             &mut result,
@@ -292,16 +281,11 @@ impl Service {
             return self.oidc_rejected(OidcFailure::Failed, "failed", "");
         };
         let challenge = value(&form, "challenge");
-        let challenge = if valid_challenge(challenge) {
-            challenge
-        } else {
-            ""
-        };
+        let challenge = if valid_challenge(challenge) { challenge } else { "" };
         let csrf = value(&form, "csrf");
         if text(request, "origin") != self.policy.public_origin()
             || csrf.is_empty()
-            || !cookie(request.headers(), "__Host-gm_login")
-                .is_some_and(|nonce| constant_equal(nonce, csrf))
+            || !cookie(request.headers(), "__Host-gm_login").is_some_and(|nonce| constant_equal(nonce, csrf))
         {
             return self.oidc_rejected(OidcFailure::Failed, "stale", challenge);
         }
@@ -311,14 +295,12 @@ impl Service {
         else {
             return self.oidc_rejected(OidcFailure::Failed, "throttled", challenge);
         };
-        let prior = cookie(request.headers(), "__Host-gm_session")
-            .and_then(|token| self.sessions.lookup(token));
+        let prior = cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token));
         match oidc.start(address, challenge.to_owned(), prior).await {
             Ok(started) => {
                 let mut result = redirect(&started.url);
                 result.headers_mut().extend(
-                    pages::security_headers(Some(&started.provider.origin))
-                        .expect("validated provider origin"),
+                    pages::security_headers(Some(&started.provider.origin)).expect("validated provider origin"),
                 );
                 result.headers_mut().append(
                     header::SET_COOKIE,
@@ -350,12 +332,9 @@ impl Service {
                 .filter(|value| value.len() == 43)
                 .ok_or(OidcFailure::Failed)?;
             let code = unique("code")
-                .filter(|value| {
-                    !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control)
-                })
+                .filter(|value| !value.is_empty() && value.len() <= 2048 && !value.chars().any(char::is_control))
                 .ok_or(OidcFailure::Failed)?;
-            if fields.iter().any(|(key, _)| key == "error")
-                || fields.iter().filter(|(key, _)| key == "iss").count() > 1
+            if fields.iter().any(|(key, _)| key == "error") || fields.iter().filter(|(key, _)| key == "iss").count() > 1
             {
                 return Err(OidcFailure::Failed);
             }
@@ -409,12 +388,7 @@ impl Service {
         result
     }
 
-    fn oidc_rejected(
-        &self,
-        failure: OidcFailure,
-        notice: &str,
-        challenge: &str,
-    ) -> Response<Bytes> {
+    fn oidc_rejected(&self, failure: OidcFailure, notice: &str, challenge: &str) -> Response<Bytes> {
         self.log.count(Counter::OidcFailure);
         match failure {
             OidcFailure::ReplayExpiry => self.log.count(Counter::ReplayExpiry),
@@ -480,11 +454,7 @@ impl Service {
         result
     }
 
-    fn approval_page(
-        &self,
-        authorized: &AuthorizedRequest<Bytes>,
-        browser: bool,
-    ) -> Response<Bytes> {
+    fn approval_page(&self, authorized: &AuthorizedRequest<Bytes>, browser: bool) -> Response<Bytes> {
         let request = authorized.request();
         let query = query(request);
         let challenge = value(&query, "challenge");
@@ -509,8 +479,7 @@ impl Service {
         {
             None
         } else {
-            cookie(request.headers(), "__Host-gm_session")
-                .and_then(|token| self.sessions.lookup(token))
+            cookie(request.headers(), "__Host-gm_session").and_then(|token| self.sessions.lookup(token))
         };
         let origin = value(&query, "client_origin");
         let approval = if browser {
@@ -633,9 +602,7 @@ impl Service {
             Err(_) => Ok(Exchange::Pending),
         };
         let mut result = match exchange {
-            Ok(Exchange::Pending) => {
-                json_response(StatusCode::ACCEPTED, json!({"status":"pending"}))
-            }
+            Ok(Exchange::Pending) => json_response(StatusCode::ACCEPTED, json!({"status":"pending"})),
             Ok(Exchange::Issued { token, lease }) => {
                 let expires = lease.session().expires();
                 if browser {
@@ -644,10 +611,7 @@ impl Service {
                         json!({"token":token, "expires":unix_ms(expires), "remainingMs":remaining_ms(expires), "maximumLifetimeMs":SESSION_LIFETIME.as_millis() as u64}),
                     )
                 } else {
-                    json_response(
-                        StatusCode::OK,
-                        json!({"token":token, "expires":rfc3339(expires)}),
-                    )
+                    json_response(StatusCode::OK, json!({"token":token, "expires":rfc3339(expires)}))
                 }
             }
             Err(ExchangeError::GrantCapacity) => response(StatusCode::TOO_MANY_REQUESTS),
@@ -690,17 +654,10 @@ impl Service {
                 StatusCode::OK,
                 json!({"token":ticket.token, "expires":unix_ms(ticket.expires)}),
             ),
-            Err(TicketError::InvalidTarget) => {
-                error_response(StatusCode::BAD_REQUEST, "invalid socket target\n")
-            }
-            Err(TicketError::NoSession) => {
-                error_response(StatusCode::FORBIDDEN, "no session to bind a token to\n")
-            }
+            Err(TicketError::InvalidTarget) => error_response(StatusCode::BAD_REQUEST, "invalid socket target\n"),
+            Err(TicketError::NoSession) => error_response(StatusCode::FORBIDDEN, "no session to bind a token to\n"),
             Err(TicketError::Capacity) => {
-                let mut result = error_response(
-                    StatusCode::TOO_MANY_REQUESTS,
-                    "webtransport token capacity reached\n",
-                );
+                let mut result = error_response(StatusCode::TOO_MANY_REQUESTS, "webtransport token capacity reached\n");
                 result
                     .headers_mut()
                     .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
@@ -752,10 +709,9 @@ fn html(status: StatusCode, template: &impl Template) -> Response<Bytes> {
 }
 fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Bytes> {
     let mut response = response(status);
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
     *response.body_mut() = value.to_string().into();
     response
 }
@@ -871,17 +827,8 @@ fn decode_form(raw: &str) -> Result<String, ()> {
     }
     String::from_utf8(out).map_err(|_| ())
 }
-fn set_cookie(
-    response: &mut Response<Bytes>,
-    name: &str,
-    value: &str,
-    expires: SystemTime,
-    http_only: bool,
-) {
-    let age = expires
-        .duration_since(SystemTime::now())
-        .unwrap_or_default()
-        .as_secs();
+fn set_cookie(response: &mut Response<Bytes>, name: &str, value: &str, expires: SystemTime, http_only: bool) {
+    let age = expires.duration_since(SystemTime::now()).unwrap_or_default().as_secs();
     let value = format!(
         "{name}={value}; Path=/; Expires={}; Max-Age={age}; Secure; SameSite=Strict{}",
         httpdate::fmt_http_date(expires),
@@ -903,14 +850,11 @@ fn clear_cookie(response: &mut Response<Bytes>, name: &str) {
     );
 }
 fn rfc3339(time: SystemTime) -> String {
-    let elapsed = time
-        .duration_since(UNIX_EPOCH)
-        .expect("session expiry after epoch");
+    let elapsed = time.duration_since(UNIX_EPOCH).expect("session expiry after epoch");
     let (days, seconds) = (elapsed.as_secs() / 86_400, elapsed.as_secs() % 86_400);
     let era_day = days + 719_468;
     let (era, day_of_era) = (era_day / 146_097, era_day % 146_097);
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
     let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
     let month_index = (5 * day_of_year + 2) / 153;
     let day = day_of_year - (153 * month_index + 2) / 5 + 1;
@@ -934,9 +878,7 @@ fn rfc3339(time: SystemTime) -> String {
     text
 }
 fn unix_ms(time: SystemTime) -> u64 {
-    time.duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    time.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 fn remaining_ms(expires: SystemTime) -> u64 {
     expires
@@ -1068,10 +1010,7 @@ mod tests {
                 ("origin", PUBLIC),
                 ("content-type", "application/x-www-form-urlencoded"),
             ],
-            encoded(&[
-                ("csrf", &nonce),
-                ("password", "correct horse battery staple"),
-            ]),
+            encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
         )
         .await;
         assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
@@ -1112,14 +1051,11 @@ mod tests {
         service.oidc = Some(super::super::oidc::tests::ready());
         let service = Arc::new(service);
         let provider_csp = |response: &Response<Bytes>| {
-            response
-                .headers()
-                .get("content-security-policy")
-                .is_some_and(|csp| {
-                    csp.to_str()
-                        .unwrap()
-                        .contains("form-action 'self' https://identity.example")
-                })
+            response.headers().get("content-security-policy").is_some_and(|csp| {
+                csp.to_str()
+                    .unwrap()
+                    .contains("form-action 'self' https://identity.example")
+            })
         };
         let mut logins = tokio::task::JoinSet::new();
         for _ in 0..8 {
@@ -1179,10 +1115,7 @@ mod tests {
         .unwrap();
         let callback = query_url(
             "/auth/oidc/callback",
-            &[
-                ("state", &"a".repeat(43)),
-                ("code", "private-provider-code"),
-            ],
+            &[("state", &"a".repeat(43)), ("code", "private-provider-code")],
         );
         let response = call(
             &service,
@@ -1194,10 +1127,7 @@ mod tests {
         .await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
         let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
-        assert!(
-            line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"),
-            "{line}"
-        );
+        assert!(line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"), "{line}");
         assert!(!line.contains("private-"));
         assert!(!line.contains("provider-secret"));
     }
@@ -1205,7 +1135,19 @@ mod tests {
     #[tokio::test]
     async fn password_ticket_logout_revokes_lease_and_records_counter_deltas() {
         const PUBLIC: &str = "https://meter.example";
-        let service = Service::new(&AuthConfig { mode: AuthMode::Password, public_url: PUBLIC.into(), password_hash: "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into(), ..AuthConfig::default() }, vec![], None).unwrap();
+        let service = Service::new(
+            &AuthConfig {
+                mode: AuthMode::Password,
+                public_url: PUBLIC.into(),
+                password_hash:
+                    "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
+                        .into(),
+                ..AuthConfig::default()
+            },
+            vec![],
+            None,
+        )
+        .unwrap();
         let login = call(&service, Method::GET, "/login", &[], String::new()).await;
         assert_eq!(login.status(), StatusCode::OK);
         let nonce = set_cookie_value(&login, "__Host-gm_login");
@@ -1232,10 +1174,7 @@ mod tests {
                 ("origin", PUBLIC),
                 ("content-type", "application/x-www-form-urlencoded"),
             ],
-            encoded(&[
-                ("csrf", &nonce),
-                ("password", "correct horse battery staple"),
-            ]),
+            encoded(&[("csrf", &nonce), ("password", "correct horse battery staple")]),
         )
         .await;
         assert_eq!(signed_in.status(), StatusCode::SEE_OTHER);
@@ -1245,15 +1184,8 @@ mod tests {
         let ticket = call(
             &service,
             Method::POST,
-            &query_url(
-                "/wt/session",
-                &[("target", "https://meter.example:8443/wt/ping")],
-            ),
-            &[
-                ("origin", PUBLIC),
-                ("cookie", &session_cookie),
-                ("x-csrf-token", &csrf),
-            ],
+            &query_url("/wt/session", &[("target", "https://meter.example:8443/wt/ping")]),
+            &[("origin", PUBLIC), ("cookie", &session_cookie), ("x-csrf-token", &csrf)],
             String::new(),
         )
         .await;
@@ -1261,10 +1193,7 @@ mod tests {
         let ticket: serde_json::Value = serde_json::from_slice(ticket.body()).unwrap();
         let connect = Request::builder()
             .method(Method::CONNECT)
-            .uri(query_url(
-                "/wt/ping",
-                &[("token", ticket["token"].as_str().unwrap())],
-            ))
+            .uri(query_url("/wt/ping", &[("token", ticket["token"].as_str().unwrap())]))
             .header(header::HOST, "meter.example:8443")
             .header(header::ORIGIN, PUBLIC)
             .body(Bytes::new())
@@ -1297,14 +1226,8 @@ mod tests {
         assert!(service.sessions().lookup(&raw_session).is_none());
         let mut last = [0; Counter::COUNT];
         let window = service.log.window(&mut last).unwrap();
-        assert!(
-            window.contains("local=1 oidc=0 invalid-password=1"),
-            "{window}"
-        );
-        assert!(
-            window.contains("logout=1 cli-approval=0 capacity=0"),
-            "{window}"
-        );
+        assert!(window.contains("local=1 oidc=0 invalid-password=1"), "{window}");
+        assert!(window.contains("logout=1 cli-approval=0 capacity=0"), "{window}");
         assert!(service.log.window(&mut last).is_none());
         assert!(!window.contains(&raw_session));
         assert!(!window.contains("correct horse"));

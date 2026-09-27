@@ -39,7 +39,9 @@ impl Access<'_> {
                 );
                 headers.insert(
                     header::ACCESS_CONTROL_EXPOSE_HEADERS,
-                    HeaderValue::from_static("X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL"),
+                    HeaderValue::from_static(
+                        "X-Graphite-Upload-Refusal, Retry-After, Graphite-Meter-Auth, Graphite-Meter-Auth-URL",
+                    ),
                 );
             }
             Self::Bearer(_) => {
@@ -58,10 +60,7 @@ impl Access<'_> {
 
     pub fn apply_measurement(self, headers: &mut HeaderMap) {
         self.apply_response(headers);
-        headers.insert(
-            header::ACCESS_CONTROL_MAX_AGE,
-            HeaderValue::from_static("7200"),
-        );
+        headers.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
             HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
@@ -91,9 +90,7 @@ pub fn authenticated_preflight<'a>(
         return None;
     }
     let route = route?;
-    let method = unique(request, header::ACCESS_CONTROL_REQUEST_METHOD)?
-        .to_str()
-        .ok()?;
+    let method = unique(request, header::ACCESS_CONTROL_REQUEST_METHOD)?.to_str().ok()?;
     if !route::spec(route).allows_cors_method(method) {
         return None;
     }
@@ -101,10 +98,7 @@ pub fn authenticated_preflight<'a>(
     let same_origin = origin == public_origin;
     if !same_origin {
         let raw = origin.to_str().ok()?;
-        if route == Route::Servers
-            || !raw.starts_with("https://")
-            || canonical_origin(raw).ok()?.as_str() != raw
-        {
+        if route == Route::Servers || !raw.starts_with("https://") || canonical_origin(raw).ok()?.as_str() != raw {
             return None;
         }
     }

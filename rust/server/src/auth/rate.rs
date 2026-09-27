@@ -77,11 +77,7 @@ impl AttemptLimiter {
                     return false;
                 }
                 for key in &keys {
-                    state
-                        .password
-                        .entry(key.clone())
-                        .or_default()
-                        .push_back(now);
+                    state.password.entry(key.clone()).or_default().push_back(now);
                 }
                 state.global_password.push_back(now);
             }
@@ -97,11 +93,7 @@ impl AttemptLimiter {
                     return false;
                 }
                 for key in &keys {
-                    state
-                        .exchanges
-                        .entry(key.clone())
-                        .or_default()
-                        .push_back(now);
+                    state.exchanges.entry(key.clone()).or_default().push_back(now);
                 }
             }
             Budget::BrowserApproval => {
@@ -116,11 +108,7 @@ impl AttemptLimiter {
                     return false;
                 }
                 for key in &keys {
-                    state
-                        .approvals
-                        .entry(key.clone())
-                        .or_default()
-                        .push_back(now);
+                    state.approvals.entry(key.clone()).or_default().push_back(now);
                 }
             }
         }
@@ -140,24 +128,16 @@ fn address_has_room(
         expire(attempts, now);
         !attempts.is_empty()
     });
-    let missing = keys
-        .iter()
-        .filter(|key| !addresses.contains_key(*key))
-        .count();
+    let missing = keys.iter().filter(|key| !addresses.contains_key(*key)).count();
     if addresses.len() + missing > MAX_KEYS {
         log.ceiling(ceiling);
         return false;
     }
-    !crate::client_address::share_full(keys, limit, |key| {
-        addresses.get(key).map_or(0, Attempts::len)
-    })
+    !crate::client_address::share_full(keys, limit, |key| addresses.get(key).map_or(0, Attempts::len))
 }
 
 fn expire(attempts: &mut Attempts, now: Instant) {
-    while attempts
-        .front()
-        .is_some_and(|&time| now.duration_since(time) >= WINDOW)
-    {
+    while attempts.front().is_some_and(|&time| now.duration_since(time) >= WINDOW) {
         attempts.pop_front();
     }
 }

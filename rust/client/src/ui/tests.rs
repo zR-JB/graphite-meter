@@ -112,10 +112,7 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
 fn reenabled_stage_runs_in_canonical_order() {
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let latency = ui
-        .fields()
-        .iter()
-        .position(|field| *field == Field::LatencyStage);
+    let latency = ui.fields().iter().position(|field| *field == Field::LatencyStage);
     ui.rows.select(latency);
     for code in [KeyCode::Char(' '), KeyCode::Char(' '), KeyCode::Char('r')] {
         ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
@@ -139,10 +136,7 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
                 deadline: tokio::time::Instant::now() + Duration::from_secs(120),
                 origin: "https://meter.example".into(),
                 code: "782411".into(),
-                browser_url: format!(
-                    "https://meter.example/auth/cli?challenge={}TAIL",
-                    "x".repeat(300)
-                ),
+                browser_url: format!("https://meter.example/auth/cli?challenge={}TAIL", "x".repeat(300)),
             }),
             ..Snapshot::default()
         },
@@ -171,17 +165,11 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
     let (commands, mut received) = mpsc::channel(4);
     ui.paste("ignored");
     assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
-    ui.key(
-        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE),
-        &commands,
-    );
+    ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE), &commands);
     assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
     ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &commands);
     assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
-    ui.key(
-        KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE),
-        &commands,
-    );
+    ui.key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &commands);
     assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
     for _ in 0..12 {
         ui.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &commands);
@@ -380,10 +368,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
             ..Point::default()
         });
     }
-    assert_eq!(
-        snapshot.history.points.front().unwrap().elapsed,
-        Duration::ZERO
-    );
+    assert_eq!(snapshot.history.points.front().unwrap().elapsed, Duration::ZERO);
     assert!(snapshot.history.points.len() <= 480);
     snapshot.server_latencies.push(host);
     let config = Config {
@@ -403,13 +388,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    for text in [
-        "Throughput",
-        "Latency · ms",
-        "−0.3 ms",
-        "Probe timeouts",
-        "120 s",
-    ] {
+    for text in ["Throughput", "Latency · ms", "−0.3 ms", "Probe timeouts", "120 s"] {
         assert!(rendered.contains(text), "missing {text}: {rendered}");
     }
 }

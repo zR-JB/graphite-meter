@@ -2,10 +2,7 @@ use graphite_meter_server::config::{AuthMode, Config, NativeKind};
 use std::{collections::BTreeMap, time::Duration};
 
 fn env(values: &[(&str, &str)]) -> BTreeMap<String, String> {
-    values
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
+    values.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 fn failure(values: &[(&str, &str)]) -> String {
     match Config::from_env(&env(values)) {
@@ -21,13 +18,7 @@ fn defaults_and_presence_are_distinct() {
     assert!(c.advertised_native.is_none());
     assert!(!c.auth.explicit);
     assert_eq!(c.auth.mode, AuthMode::Off);
-    assert!(
-        Config::from_env(&env(&[
-            ("GM_AUTH_MODE", " off "),
-            ("GM_AUTH_UNKNOWN", "ignored")
-        ]))
-        .is_ok()
-    );
+    assert!(Config::from_env(&env(&[("GM_AUTH_MODE", " off "), ("GM_AUTH_UNKNOWN", "ignored")])).is_ok());
     for name in [
         "GM_AUTH_PUBLIC_URL",
         "GM_AUTH_PASSWORD_HASH",
@@ -52,10 +43,7 @@ fn parses_trimmed_strings_lists_booleans_and_signed_integers() {
         ("GM_RESULT_HISTORY_DEFAULT", "1"),
         ("GM_MAX_CONNECTIONS", " +1024 "),
         ("GM_MAX_CONNECTIONS_PER_CLIENT", "+128"),
-        (
-            "GM_PUBLIC_ORIGINS",
-            " https://meter.example, ,https://other.example ",
-        ),
+        ("GM_PUBLIC_ORIGINS", " https://meter.example, ,https://other.example "),
         ("GM_TRUSTED_PROXIES", " 192.0.2.129/24,2001:db8::1/64 "),
     ]))
     .unwrap();
@@ -64,15 +52,9 @@ fn parses_trimmed_strings_lists_booleans_and_signed_integers() {
     assert!(c.verbose && c.result_history_default);
     assert_eq!(c.max_connections, 1024);
     assert_eq!(c.max_connections_per_client, 128);
+    assert_eq!(c.public.both, ["https://meter.example", "https://other.example"]);
     assert_eq!(
-        c.public.both,
-        ["https://meter.example", "https://other.example"]
-    );
-    assert_eq!(
-        c.trusted_proxies
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
+        c.trusted_proxies.iter().map(ToString::to_string).collect::<Vec<_>>(),
         ["192.0.2.0/24", "2001:db8::/64"]
     );
 }
@@ -93,20 +75,13 @@ fn advertisement_all_none_empty_and_explicit_set() {
             .advertised_native
             .is_none()
     );
-    let c = Config::from_env(&env(&[(
-        "GM_ADVERTISED_NATIVE_ENDPOINTS",
-        "http1-clear,http1-clear",
-    )]))
-    .unwrap();
+    let c = Config::from_env(&env(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear,http1-clear")])).unwrap();
     assert_eq!(
         c.advertised_native.unwrap().into_iter().collect::<Vec<_>>(),
         [NativeKind::H1]
     );
     for raw in ["ALL", "all,http1-clear", "http1", "none,http3"] {
-        assert!(
-            failure(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", raw)])
-                .contains("GM_ADVERTISED_NATIVE_ENDPOINTS")
-        );
+        assert!(failure(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", raw)]).contains("GM_ADVERTISED_NATIVE_ENDPOINTS"));
     }
 }
 
@@ -148,7 +123,5 @@ fn invalid_environment_identifies_the_setting() {
     ] {
         assert!(failure(&[(name, value)]).contains(name), "{name}={value}");
     }
-    assert!(
-        failure(&[("GM_SERVER_CATALOG", ""), ("GM_SERVER_CATALOG_FILE", "")]).contains("only one")
-    );
+    assert!(failure(&[("GM_SERVER_CATALOG", ""), ("GM_SERVER_CATALOG_FILE", "")]).contains("only one"));
 }

@@ -18,14 +18,8 @@ pub type ReceiveStream = BufRecvStream<h3_noq::RecvStream, Bytes>;
 
 pub enum Incoming {
     Request(Box<Request>),
-    Unidirectional {
-        session_id: u64,
-        stream: ReceiveStream,
-    },
-    Datagram {
-        session_id: u64,
-        payload: Bytes,
-    },
+    Unidirectional { session_id: u64, stream: ReceiveStream },
+    Datagram { session_id: u64, payload: Bytes },
 }
 
 /// The connection owner must keep polling this while request/session tasks run.
@@ -136,9 +130,7 @@ fn poll_stream(
     Poll::Pending
 }
 
-fn take_uni(
-    connection: &mut h3::server::Connection<h3_noq::Connection, Bytes>,
-) -> Option<Incoming> {
+fn take_uni(connection: &mut h3::server::Connection<h3_noq::Connection, Bytes>) -> Option<Incoming> {
     connection
         .inner
         .accepted_streams_mut()
@@ -160,11 +152,7 @@ mod tests {
             let mut encoded = Vec::new();
             graphite_meter_core::capsule::encode_varint(quarter_id, &mut encoded).unwrap();
             encoded.extend_from_slice(b"PING,42");
-            let Incoming::Datagram {
-                session_id,
-                payload,
-            } = decode_datagram(encoded.into()).unwrap()
-            else {
+            let Incoming::Datagram { session_id, payload } = decode_datagram(encoded.into()).unwrap() else {
                 panic!("datagram expected");
             };
             assert_eq!(session_id, quarter_id * 4);
@@ -174,11 +162,7 @@ mod tests {
 
     #[test]
     fn rejects_truncated_or_unrepresentable_session_ids() {
-        for encoded in [
-            &b""[..],
-            &b"\x40"[..],
-            &b"\xd0\x00\x00\x00\x00\x00\x00\x00"[..],
-        ] {
+        for encoded in [&b""[..], &b"\x40"[..], &b"\xd0\x00\x00\x00\x00\x00\x00\x00"[..]] {
             assert!(decode_datagram(Bytes::copy_from_slice(encoded)).is_err());
         }
     }

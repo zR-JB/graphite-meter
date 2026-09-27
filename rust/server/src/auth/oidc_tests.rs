@@ -52,21 +52,14 @@ impl Keys {
             .output()
             .unwrap();
         assert!(generated.status.success());
-        let PrivateKeyDer::Pkcs1(der) = PrivateKeyDer::from_pem_slice(&generated.stdout).unwrap()
-        else {
+        let PrivateKeyDer::Pkcs1(der) = PrivateKeyDer::from_pem_slice(&generated.stdout).unwrap() else {
             panic!("openssl did not emit PKCS#1");
         };
         let rng = SystemRandom::new();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-            .unwrap();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
         Self {
             rsa: RsaKeyPair::from_der(der.secret_pkcs1_der()).unwrap(),
-            ec: EcdsaKeyPair::from_pkcs8(
-                &signature::ECDSA_P256_SHA256_FIXED_SIGNING,
-                pkcs8.as_ref(),
-                &rng,
-            )
-            .unwrap(),
+            ec: EcdsaKeyPair::from_pkcs8(&signature::ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng).unwrap(),
             rng,
         }
     }
@@ -99,12 +92,7 @@ impl Keys {
                     .unwrap();
                 signature
             }
-            Some("ES256") => self
-                .ec
-                .sign(&self.rng, message.as_bytes())
-                .unwrap()
-                .as_ref()
-                .to_vec(),
+            Some("ES256") => self.ec.sign(&self.rng, message.as_bytes()).unwrap().as_ref().to_vec(),
             Some("HS256") => ring::hmac::sign(
                 &ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"secret"),
                 message.as_bytes(),
@@ -164,12 +152,11 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
     for cert in certificates {
         roots.add(cert).unwrap();
     }
-    let client_tls =
-        rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
-            .with_safe_default_protocol_versions()
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+    let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     oidc.http = ProviderHttp {
         tls: TlsConnector::from(Arc::new(client_tls)),
         proxy,
@@ -311,12 +298,7 @@ impl ProviderDouble {
             .insert(fields["code_challenge"].clone(), fields["nonce"].clone());
         *self.claims.lock().unwrap() = claims;
         self.oidc
-            .finish(
-                &fields["state"],
-                &started.browser,
-                "valid-code",
-                Some(&self.issuer),
-            )
+            .finish(&fields["state"], &started.browser, "valid-code", Some(&self.issuer))
             .await
     }
     async fn stop(self) {
@@ -329,10 +311,7 @@ impl ProviderDouble {
 async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
     let display_name = format!(" {}", "é".repeat(127));
-    provider.twist.lock().unwrap().name = Some(format!(
-        "\u{009b}{display_name}\u{202e}🙂{}",
-        "x".repeat(256 * 1024)
-    ));
+    provider.twist.lock().unwrap().name = Some(format!("\u{009b}{display_name}\u{202e}🙂{}", "x".repeat(256 * 1024)));
     for scenario in 0..5 {
         let result = provider
             .login(Claims {
@@ -359,16 +338,8 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
 
 #[tokio::test]
 async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once() {
-    let provider = provider_double(
-        "localhost",
-        &["RS256", "ES256", "HS256", "none"],
-        Proxy::default(),
-    )
-    .await;
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+    let provider = provider_double("localhost", &["RS256", "ES256", "HS256", "none"], Proxy::default()).await;
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let refused: [(&str, Twist); 10] = [
         (
             "second audience",
@@ -443,10 +414,7 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
     ];
     for (name, twist) in refused {
         *provider.twist.lock().unwrap() = twist;
-        assert!(
-            provider.login(Claims::default()).await.is_err(),
-            "{name} authenticated"
-        );
+        assert!(provider.login(Claims::default()).await.is_err(), "{name} authenticated");
     }
     *provider.twist.lock().unwrap() = Twist {
         signed_userinfo: Some(
@@ -463,10 +431,7 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
         rotated: true,
         ..Twist::default()
     };
-    let (first, second) = tokio::join!(
-        provider.login(Claims::default()),
-        provider.login(Claims::default())
-    );
+    let (first, second) = tokio::join!(provider.login(Claims::default()), provider.login(Claims::default()));
     assert_eq!(first.unwrap().subject, "oidc:operator");
     assert_eq!(second.unwrap().subject, "oidc:operator");
     assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), before + 1);
@@ -501,9 +466,7 @@ async fn provider_traffic_uses_the_https_proxy() {
                     .unwrap()
                     .to_owned();
                 counted.fetch_add(1, Ordering::SeqCst);
-                let mut upstream = TcpStream::connect(format!("127.0.0.1:{target}"))
-                    .await
-                    .unwrap();
+                let mut upstream = TcpStream::connect(format!("127.0.0.1:{target}")).await.unwrap();
                 client
                     .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
                     .await
@@ -551,12 +514,6 @@ async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     provider.oidc.retry_discovery().await;
     assert!(Arc::ptr_eq(&ready, provider.oidc.ready().unwrap()));
     assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), 1);
-    assert!(
-        provider
-            .oidc
-            .start(address, String::new(), None)
-            .await
-            .is_ok()
-    );
+    assert!(provider.oidc.start(address, String::new(), None).await.is_ok());
     provider.stop().await;
 }

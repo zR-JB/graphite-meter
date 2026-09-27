@@ -34,11 +34,7 @@ impl Assets {
         Self::from_entries(EMBEDDED, auth_enabled, history_default)
     }
 
-    fn from_entries(
-        entries: &'static [EmbeddedAsset],
-        auth_enabled: bool,
-        history_default: bool,
-    ) -> Self {
+    fn from_entries(entries: &'static [EmbeddedAsset], auth_enabled: bool, history_default: bool) -> Self {
         let index = entries.iter().find(|entry| entry.path == "index.html");
         let inline_script_hash = index.and_then(|entry| inline_hash(entry.bytes, "script"));
         let inline_style_hash = index.and_then(|entry| inline_hash(entry.bytes, "style"));
@@ -47,9 +43,8 @@ impl Assets {
             if auth_enabled {
                 marker.push_str("<meta name=\"graphite-meter-auth\" content=\"enabled\">");
             }
-            let history_marker = format!(
-                "<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">"
-            );
+            let history_marker =
+                format!("<meta name=\"graphite-meter-result-history-default\" content=\"{history_default}\">");
             marker.push_str(&history_marker);
             let html = std::str::from_utf8(entry.bytes).expect("build validated UTF-8 index");
             Bytes::from(html.replacen("</head>", &format!("{marker}</head>"), 1))
@@ -182,10 +177,7 @@ mod tests {
         assert_eq!(get.headers()["x-content-type-options"], "nosniff");
         let head = assets.serve(&Method::HEAD, "/");
         assert!(head.body().is_empty());
-        assert_eq!(
-            head.headers()["content-length"],
-            get.body().len().to_string()
-        );
+        assert_eq!(head.headers()["content-length"], get.body().len().to_string());
         let security = crate::app_security::AppSecurity::new(
             std::sync::Arc::new(crate::config::Config::default()),
             assets.inline_script_hash(),
@@ -241,10 +233,7 @@ mod tests {
         }
         let js = assets.serve(&Method::GET, "/assets/app.js");
         assert_eq!(js.status(), StatusCode::OK);
-        assert_eq!(
-            js.headers()["content-type"],
-            "text/javascript; charset=utf-8"
-        );
+        assert_eq!(js.headers()["content-type"], "text/javascript; charset=utf-8");
         assert_eq!(js.body(), "export {};");
         let head = assets.serve(&Method::HEAD, "/assets/app.js");
         assert!(head.body().is_empty());

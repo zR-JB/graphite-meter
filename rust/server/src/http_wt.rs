@@ -52,8 +52,7 @@ impl HttpServer {
     ) -> Result<(), TransportError> {
         let quic = credit.quic().clone();
         if request.method() != Method::CONNECT
-            || request.extensions().get::<h3::ext::Protocol>()
-                != Some(&h3::ext::Protocol::WEB_TRANSPORT)
+            || request.extensions().get::<h3::ext::Protocol>() != Some(&h3::ext::Protocol::WEB_TRANSPORT)
         {
             return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
         }
@@ -78,8 +77,7 @@ impl HttpServer {
                     (request, Some(lease))
                 }
                 Err(rejected) => {
-                    let response =
-                        self.auth_refusal(rejected.request(), rejected.reason(), connection);
+                    let response = self.auth_refusal(rejected.request(), rejected.reason(), connection);
                     let mut response = response.map(|_| ());
                     response.headers_mut().remove(header::CONNECTION);
                     return tokio::time::timeout(Duration::from_secs(10), async {
@@ -93,10 +91,7 @@ impl HttpServer {
         } else {
             (request, None)
         };
-        if lease.is_none()
-            && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies)
-                .usable
-        {
+        if lease.is_none() && !client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).usable {
             return refuse(&mut stream, StatusCode::BAD_REQUEST).await;
         }
         let route = match request.uri().path() {
@@ -109,11 +104,10 @@ impl HttpServer {
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let class = crate::route::spec(
-            graphite_meter_core::route::lookup(request.uri().path()).expect("validated WT route"),
-        )
-        .admission
-        .expect("WT admission class");
+        let class =
+            crate::route::spec(graphite_meter_core::route::lookup(request.uri().path()).expect("validated WT route"))
+                .admission
+                .expect("WT admission class");
         let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
             Ok(permit) => permit,
             Err(error) => return refuse(&mut stream, StatusCode::from_u16(error.status())?).await,
@@ -222,12 +216,7 @@ impl HttpServer {
         let mut connect_bytes = 0_u64;
         let mut connect_frames = 0_u64;
         let mut tick = tokio::time::interval(Duration::from_millis(100));
-        let settle = Instant::now()
-            + if verify {
-                Duration::from_secs(5)
-            } else {
-                REFUSAL_LINGER
-            };
+        let settle = Instant::now() + if verify { Duration::from_secs(5) } else { REFUSAL_LINGER };
         let mut ending = LaneEnding::Finished;
         let stopping = stopped(self.stopping.clone());
         tokio::pin!(stopping);
@@ -361,9 +350,7 @@ async fn download_lane(
     meter: crate::meter::Meter,
 ) -> Result<(), TransportError> {
     loop {
-        let mut stream = resets
-            .open(&quic, id, quinn::VarInt::from_u64(RESET)?)
-            .await?;
+        let mut stream = resets.open(&quic, id, quinn::VarInt::from_u64(RESET)?).await?;
         let transfer = meter.open();
         let mut remaining = count;
         while remaining > 0 {
@@ -415,9 +402,7 @@ async fn progress(
     id: u64,
     subscription: Result<crate::upload::UploadSubscription, crate::upload::UploadError>,
 ) -> Result<(), TransportError> {
-    let mut stream = resets
-        .open(&quic, id, quinn::VarInt::from_u64(RESET)?)
-        .await?;
+    let mut stream = resets.open(&quic, id, quinn::VarInt::from_u64(RESET)?).await?;
     let mut subscription = match subscription {
         Ok(subscription) => subscription,
         Err(error) => {

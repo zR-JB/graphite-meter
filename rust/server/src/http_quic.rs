@@ -42,8 +42,7 @@ impl HttpServer {
         let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
         let socket = runtime.wrap_udp_socket(socket)?;
         let endpoint_config = quinn::EndpointConfig::default();
-        let packet_bytes =
-            usize::try_from(endpoint_config.get_max_udp_payload_size().min(64 * 1024))?;
+        let packet_bytes = usize::try_from(endpoint_config.get_max_udp_payload_size().min(64 * 1024))?;
         let receive_bytes = packet_bytes
             .checked_mul(socket.max_receive_segments().get())
             .ok_or("QUIC receive segment size overflow")?;
@@ -69,9 +68,7 @@ impl HttpServer {
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
         if self.memory.available() < connection_floor(&self.config.limits) {
-            return Err(
-                "server memory budget must cover QUIC endpoint buffers and one connection".into(),
-            );
+            return Err("server memory budget must cover QUIC endpoint buffers and one connection".into());
         }
         quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
@@ -82,10 +79,7 @@ impl HttpServer {
         .map_err(Into::into)
     }
 
-    pub fn quic_config(
-        &self,
-        tls: Arc<rustls::ServerConfig>,
-    ) -> Result<quinn::ServerConfig, ConfigError> {
+    pub fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
         if tls.alpn_protocols != [b"h3".to_vec()] {
             return Err("HTTP/3 listener requires h3-only TLS ALPN".into());
         }
@@ -96,8 +90,7 @@ impl HttpServer {
             .incoming_buffer_size(INCOMING_BYTES)
             .incoming_buffer_size_total(INCOMING_TOTAL_BYTES);
         let mut transport = quinn::TransportConfig::default();
-        transport
-            .max_concurrent_bidi_streams(u32::try_from(max_requests(&self.config.limits))?.into());
+        transport.max_concurrent_bidi_streams(u32::try_from(max_requests(&self.config.limits))?.into());
         transport.max_concurrent_uni_streams(UNI_STREAMS.into());
         // A fixed 1 MiB Noq stream window capped one upload near 80 Mbit/s at 100 ms RTT.
         transport.stream_receive_window((8 * 1024 * 1024_u32).into());
@@ -185,11 +178,7 @@ impl HttpServer {
         let credit = self.receive_credit(quic.clone());
         let mut window = SendWindow::new();
         let mut initializing = CloseOnDrop(Some(quic.clone()));
-        let http = tokio::time::timeout(
-            HEADER_TIMEOUT,
-            webtransport::Connection::new(quic.clone(), 1),
-        )
-        .await??;
+        let http = tokio::time::timeout(HEADER_TIMEOUT, webtransport::Connection::new(quic.clone(), 1)).await??;
         let mut connection = OwnedConnection {
             http,
             quic,
@@ -471,11 +460,7 @@ impl ReceiveCredit {
     }
 
     fn leftover_since(&self) -> Option<tokio::time::Instant> {
-        self.0
-            .admitted
-            .lock()
-            .expect("receive credit poisoned")
-            .ended
+        self.0.admitted.lock().expect("receive credit poisoned").ended
     }
 }
 
@@ -530,11 +515,7 @@ impl SendWindow {
         if let Some((last, previous)) = self.last {
             // Two observed bandwidth-delay products allow a new path to
             // grow without a full window on fast local links.
-            let target = desired_send_window(
-                sent.saturating_sub(previous),
-                path.rtt,
-                now.duration_since(last),
-            );
+            let target = desired_send_window(sent.saturating_sub(previous), path.rtt, now.duration_since(last));
             if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
                 let since = self.low_demand_since.get_or_insert(now);
                 if now.duration_since(*since) >= SEND_WINDOW_SHRINK_DELAY {
@@ -696,10 +677,7 @@ impl Sessions {
     }
 
     fn carried(&self) -> bool {
-        self.registry
-            .lock()
-            .expect("session registry poisoned")
-            .carried
+        self.registry.lock().expect("session registry poisoned").carried
     }
 
     fn datagram(&self, id: u64, payload: Bytes) {
@@ -724,9 +702,7 @@ impl Sessions {
         if let Some(sender) = registry.active.get(&id) {
             deliver(&sender.streams, stream);
         } else if registry.pending.len() < MAX_PENDING_STREAMS {
-            registry
-                .pending
-                .push_back((tokio::time::Instant::now(), id, stream));
+            registry.pending.push_back((tokio::time::Instant::now(), id, stream));
         } else {
             stop(stream);
         }
@@ -739,10 +715,7 @@ impl Sessions {
             .front()
             .is_some_and(|(started, _, _)| started.elapsed() >= HEADER_TIMEOUT)
         {
-            let (_, _, stream) = registry
-                .pending
-                .pop_front()
-                .expect("checked pending stream");
+            let (_, _, stream) = registry.pending.pop_front().expect("checked pending stream");
             stop(stream);
         }
     }
@@ -816,20 +789,14 @@ mod tests {
             .lines()
             .filter_map(|line| {
                 let fields: Vec<_> = line.split_whitespace().collect();
-                fields[1]
-                    .ends_with(&port)
-                    .then(|| format!("socket:[{}]", fields[9]))
+                fields[1].ends_with(&port).then(|| format!("socket:[{}]", fields[9]))
             })
             .collect();
         std::fs::read_dir("/proc/self/fd")
             .unwrap()
             .flatten()
             .filter_map(|fd| std::fs::read_link(fd.path()).ok())
-            .find(|link| {
-                sockets
-                    .iter()
-                    .any(|socket| link.as_os_str() == socket.as_str())
-            })
+            .find(|link| sockets.iter().any(|socket| link.as_os_str() == socket.as_str()))
     }
 
     async fn settled(memory: &super::MemoryBudget, peers: &[&quinn::Connection]) -> usize {
@@ -854,14 +821,9 @@ mod tests {
         }
     }
 
-    async fn download(
-        quic: quinn::Connection,
-        bytes: u64,
-    ) -> Result<usize, h3::error::StreamError> {
+    async fn download(quic: quinn::Connection, bytes: u64) -> Result<usize, h3::error::StreamError> {
         use bytes::Buf;
-        let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic))
-            .await
-            .unwrap();
+        let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic)).await.unwrap();
         let driving = tokio::spawn(async move { driver.wait_idle().await });
         let mut stream = h3
             .send_request(
@@ -899,9 +861,7 @@ mod tests {
         );
         assert_eq!(small.memory.available(), available);
 
-        let server =
-            HttpServer::with_memory(config, 64 * 1024 * 1024 + floor + DOWNLOAD_BLOCK_BYTES)
-                .unwrap();
+        let server = HttpServer::with_memory(config, 64 * 1024 * 1024 + floor + DOWNLOAD_BLOCK_BYTES).unwrap();
         let available = server.memory.available();
         let endpoint = server
             .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
@@ -910,11 +870,7 @@ mod tests {
         assert!(reserved > INCOMING_TOTAL_BYTES as usize);
         assert!(server.memory.available() >= floor);
         let remaining = server.memory.lease(server.memory.available()).unwrap();
-        assert!(
-            server
-                .quic_endpoint(tls, "127.0.0.1:0".parse().unwrap())
-                .is_err()
-        );
+        assert!(server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).is_err());
         assert_eq!(server.memory.available(), 0);
         drop(remaining);
         let address = endpoint.local_addr().unwrap();
@@ -937,9 +893,7 @@ mod tests {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let runtime = quinn::default_runtime().unwrap();
         let socket = runtime
-            .wrap_udp_socket(
-                graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap()).unwrap(),
-            )
+            .wrap_udp_socket(graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap()).unwrap())
             .unwrap();
         let memory = MemoryBudget::new(64 * 1024);
         let socket = BudgetedSocket {
@@ -1008,9 +962,7 @@ mod tests {
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(5), async {
             let (client, server) = tokio::join!(
-                client
-                    .connect(server.local_addr().unwrap(), "localhost")
-                    .unwrap(),
+                client.connect(server.local_addr().unwrap(), "localhost").unwrap(),
                 async { server.accept().await.unwrap().await.unwrap() },
             );
             let client = client.unwrap();
@@ -1056,19 +1008,14 @@ mod tests {
         use futures_util::FutureExt;
         let server = HttpServer::new(Arc::new(Config::default())).unwrap();
         let (tls, client_config) = tls();
-        let endpoint = quinn::Endpoint::server(
-            server.quic_config(tls).unwrap(),
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .unwrap();
+        let endpoint =
+            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
         client.set_default_client_config(client_config);
         tokio::time::timeout(Duration::from_secs(5), async {
             let connect = || async {
                 let (quic, accepted) = tokio::join!(
-                    client
-                        .connect(endpoint.local_addr().unwrap(), "localhost")
-                        .unwrap(),
+                    client.connect(endpoint.local_addr().unwrap(), "localhost").unwrap(),
                     async { endpoint.accept().await.unwrap().await.unwrap() },
                 );
                 (quic.unwrap(), accepted)
@@ -1091,25 +1038,14 @@ mod tests {
             assert!(charged <= 3 * RECEIVE_WINDOW_FLOOR as usize);
 
             let used = server.memory.limit - server.memory.available();
-            let pressure = server
-                .memory
-                .lease(server.memory.limit / 4 * 3 - used)
-                .unwrap();
+            let pressure = server.memory.lease(server.memory.limit / 4 * 3 - used).unwrap();
             assert!(!server.memory.has_headroom());
-            assert_eq!(
-                SendWindow::new().grow(MAX_SEND_WINDOW, &server.memory),
-                None
-            );
+            assert_eq!(SendWindow::new().grow(MAX_SEND_WINDOW, &server.memory), None);
             let admitted = server.receive_credit(accepted.clone()).admit();
             let mut after_max_data = accepted.open_uni().await.unwrap();
             after_max_data.write_all(b"x").await.unwrap();
             after_max_data.finish().unwrap();
-            quic.accept_uni()
-                .await
-                .unwrap()
-                .read_to_end(1)
-                .await
-                .unwrap();
+            quic.accept_uni().await.unwrap().read_to_end(1).await.unwrap();
             assert!(
                 send.write(&[7]).now_or_never().is_none(),
                 "window grew past the threshold"
@@ -1144,11 +1080,8 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
-        let endpoint = quinn::Endpoint::server(
-            server.quic_config(tls).unwrap(),
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .unwrap();
+        let endpoint =
+            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
@@ -1164,11 +1097,7 @@ mod tests {
                 .memory
                 .lease(settled(&server.memory, &[&requesting, &sibling]).await - 4096)
                 .unwrap();
-            assert!(
-                download(requesting.clone(), 64 * 1024 * 1024)
-                    .await
-                    .is_err()
-            );
+            assert!(download(requesting.clone(), 64 * 1024 * 1024).await.is_err());
             match requesting.closed().await {
                 quinn::ConnectionError::ConnectionClosed(close) => {
                     assert_eq!(close.error_code, quinn::TransportErrorCode::INTERNAL_ERROR)
@@ -1194,11 +1123,8 @@ mod tests {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
         let (tls, client_config) = tls();
-        let endpoint = quinn::Endpoint::server(
-            server.quic_config(tls).unwrap(),
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .unwrap();
+        let endpoint =
+            quinn::Endpoint::server(server.quic_config(tls).unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
         let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
         let serving = tokio::spawn(server.clone().serve_quic(endpoint, async {
@@ -1209,8 +1135,7 @@ mod tests {
             let mut clients = Vec::new();
             let mut connecting = Vec::new();
             for source in 2..=11 {
-                let client =
-                    quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
                 client.set_default_client_config(client_config.clone());
                 if source <= 10 {
                     for _ in 0..8 {
@@ -1225,11 +1150,7 @@ mod tests {
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
             let floor = connection_floor(&server.config.limits);
             assert!(charged < silent.len() * (floor + 64 * 1024));
-            let fresh = clients[9]
-                .connect(address, "localhost")
-                .unwrap()
-                .await
-                .unwrap();
+            let fresh = clients[9].connect(address, "localhost").unwrap().await.unwrap();
             assert_eq!(download(fresh, 13).await.unwrap(), 13);
         })
         .await
@@ -1274,23 +1195,16 @@ mod tests {
             link.inject(crate::test_link::Fault::None);
             let address = link.address;
             let (stop_h2, stopped_h2) = tokio::sync::oneshot::channel();
-            let h2_server = tokio::spawn(server.clone().serve_http2(
-                listener,
-                Arc::new(tls.clone()),
-                async {
-                    let _ = stopped_h2.await;
-                },
-            ));
+            let h2_server = tokio::spawn(server.clone().serve_http2(listener, Arc::new(tls.clone()), async {
+                let _ = stopped_h2.await;
+            }));
             let available = server.memory.available();
             link.inject(crate::test_link::Fault::Stall);
             let pending = TcpStream::connect(address).await.unwrap();
             while server.memory.available() == available {
                 tokio::task::yield_now().await;
             }
-            assert_eq!(
-                server.memory.available(),
-                available - http_h2::BUFFER_BYTES as usize
-            );
+            assert_eq!(server.memory.available(), available - http_h2::BUFFER_BYTES as usize);
             drop(pending);
             link.inject(crate::test_link::Fault::Reset);
             while server.memory.available() != available {
@@ -1331,22 +1245,14 @@ mod tests {
             client_endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(
                 quinn::crypto::rustls::QuicClientConfig::try_from(client_tls).unwrap(),
             )));
-            let unloaded = crate::test_link::Link::udp(quic_address, Duration::ZERO)
-                .await
-                .unwrap();
+            let unloaded = crate::test_link::Link::udp(quic_address, Duration::ZERO).await.unwrap();
             let quic = client_endpoint
                 .connect(unloaded.address, "localhost")
                 .unwrap()
                 .await
                 .unwrap();
-            assert_eq!(
-                unloaded.retries(),
-                0,
-                "Retry below a quarter of the memory budget"
-            );
-            let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic))
-                .await
-                .unwrap();
+            assert_eq!(unloaded.retries(), 0, "Retry below a quarter of the memory budget");
+            let (mut driver, mut h3) = h3::client::new(h3_noq::Connection::new(quic)).await.unwrap();
             let h3_driver = tokio::spawn(async move { driver.wait_idle().await });
             let second = client_endpoint
                 .connect(quic_address, "localhost")
@@ -1357,14 +1263,9 @@ mod tests {
             let refundable = server.memory.limit - server.memory.available() - admission_leases;
             let exhausted = server
                 .memory
-                .lease(
-                    server.memory.available() + refundable + 1
-                        - floor.min(http_h2::BUFFER_BYTES as usize),
-                )
+                .lease(server.memory.available() + refundable + 1 - floor.min(http_h2::BUFFER_BYTES as usize))
                 .unwrap();
-            let pressured = crate::test_link::Link::udp(quic_address, Duration::ZERO)
-                .await
-                .unwrap();
+            let pressured = crate::test_link::Link::udp(quic_address, Duration::ZERO).await.unwrap();
             assert!(
                 client_endpoint
                     .connect(pressured.address, "localhost")
@@ -1399,19 +1300,12 @@ mod tests {
             while let Some(data) = response.body_mut().data().await {
                 let data = data.unwrap();
                 bytes += data.len();
-                response
-                    .body_mut()
-                    .flow_control()
-                    .release_capacity(data.len())
-                    .unwrap();
+                response.body_mut().flow_control().release_capacity(data.len()).unwrap();
             }
             assert_eq!(bytes, 4);
             let mut stream = h3.send_request(request()).await.unwrap();
             stream.finish().await.unwrap();
-            assert_eq!(
-                stream.recv_response().await.unwrap().status(),
-                StatusCode::OK
-            );
+            assert_eq!(stream.recv_response().await.unwrap().status(), StatusCode::OK);
             let mut bytes = 0;
             while let Some(data) = stream.recv_data().await.unwrap() {
                 bytes += bytes::Buf::remaining(&data);
@@ -1450,13 +1344,9 @@ mod tests {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(certificate).unwrap();
         let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
-        client.set_default_client_config(
-            quinn::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap(),
-        );
+        client.set_default_client_config(quinn::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap());
         let (sender, receiver) = tokio::join!(
-            client
-                .connect(server.local_addr().unwrap(), "localhost")
-                .unwrap(),
+            client.connect(server.local_addr().unwrap(), "localhost").unwrap(),
             async { server.accept().await.unwrap().await.unwrap() },
         );
         let sender = sender.unwrap();
@@ -1468,11 +1358,10 @@ mod tests {
         let mut send = sender.open_uni().await.unwrap();
         send.write_all(b"upload").await.unwrap();
         let mut adapter = h3_noq::Connection::new(receiver);
-        let recv = poll_fn(|cx| {
-            <h3_noq::Connection as h3::quic::Connection<Bytes>>::poll_accept_recv(&mut adapter, cx)
-        })
-        .await
-        .unwrap();
+        let recv =
+            poll_fn(|cx| <h3_noq::Connection as h3::quic::Connection<Bytes>>::poll_accept_recv(&mut adapter, cx))
+                .await
+                .unwrap();
         sessions.stream(0, h3::stream::BufRecvStream::new(recv));
         let mut stream = events
             .streams

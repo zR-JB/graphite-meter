@@ -186,10 +186,6 @@ impl Config {
         &self.native[kind as usize]
     }
     pub fn native_advertised(&self, kind: NativeKind) -> bool {
-        !self.listener(kind).address.is_empty()
-            && self
-                .advertised_native
-                .as_ref()
-                .is_none_or(|set| set.contains(&kind))
+        !self.listener(kind).address.is_empty() && self.advertised_native.as_ref().is_none_or(|set| set.contains(&kind))
     }
 }

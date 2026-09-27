@@ -11,16 +11,10 @@ use tokio::time::Instant;
 
 impl HttpServer {
     pub(super) fn upload_owner<B>(&self, request: &Request<B>, peer: SocketAddr) -> Owner {
-        Owner::anonymous(
-            client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).addr,
-        )
+        Owner::anonymous(client_address::resolve(peer, request.headers(), &self.config.trusted_proxies).addr)
     }
 
-    pub(super) fn upload_control(
-        &self,
-        request: &Request<()>,
-        owner: &Owner,
-    ) -> Response<ResponseBody> {
+    pub(super) fn upload_control(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
         let id = upload_id(request);
         match request.uri().path() {
             "/upload/session" => {
@@ -84,10 +78,7 @@ impl HttpServer {
         }
     }
 
-    fn upload_operation(
-        &self,
-        owner: &Owner,
-    ) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
+    fn upload_operation(&self, owner: &Owner) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
         self.admission
             .acquire_keys(Class::Request, owner.client_keys())
             .map(|permit| {
@@ -133,11 +124,7 @@ impl HttpServer {
             }
         };
         let mut body = request.into_body();
-        let deadline = operation
-            .lock()
-            .expect("operation poisoned")
-            .deadline
-            .deadline();
+        let deadline = operation.lock().expect("operation poisoned").deadline.deadline();
         let mut idle = Instant::now() + Duration::from_secs(30);
         loop {
             let frame = tokio::time::timeout_at(
@@ -194,9 +181,7 @@ fn json_response(value: &impl Serialize) -> Response<ResponseBody> {
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::CACHE_CONTROL, "no-store")
         .body(ResponseBody::bytes(
-            serde_json::to_vec(value)
-                .expect("serializable upload document")
-                .into(),
+            serde_json::to_vec(value).expect("serializable upload document").into(),
         ))
         .expect("static JSON response")
 }
@@ -212,10 +197,9 @@ fn admission_refusal(error: crate::admission::Refusal) -> Response<ResponseBody>
 fn refusal(error: UploadError) -> Response<ResponseBody> {
     let mut response = text_response(error.status());
     *response.body_mut() = ResponseBody::bytes(Bytes::from(format!("{error}\n")));
-    response.headers_mut().insert(
-        "x-graphite-upload-refusal",
-        HeaderValue::from_static(error.code()),
-    );
+    response
+        .headers_mut()
+        .insert("x-graphite-upload-refusal", HeaderValue::from_static(error.code()));
     if error.retry() {
         response
             .headers_mut()
@@ -224,8 +208,7 @@ fn refusal(error: UploadError) -> Response<ResponseBody> {
     response
 }
 
-type NextProgress =
-    Pin<Box<dyn Future<Output = (UploadSubscription, Option<UploadProgress>)> + Send>>;
+type NextProgress = Pin<Box<dyn Future<Output = (UploadSubscription, Option<UploadProgress>)> + Send>>;
 
 pub(super) struct ProgressBody {
     next: Option<NextProgress>,
@@ -242,19 +225,12 @@ impl ProgressBody {
         }
     }
 
-    pub(super) fn poll_frame(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+    pub(super) fn poll_frame(&mut self, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         if self.done {
             return Poll::Ready(None);
         }
-        if let Poll::Ready((subscription, event)) = self
-            .next
-            .as_mut()
-            .expect("active progress future")
-            .as_mut()
-            .poll(cx)
+        if let Poll::Ready((subscription, event)) =
+            self.next.as_mut().expect("active progress future").as_mut().poll(cx)
         {
             self.next = None;
             let Some(event) = event else {
@@ -288,13 +264,11 @@ fn next_progress(mut subscription: UploadSubscription) -> NextProgress {
 }
 
 pub(super) fn lane_refusal(refusal: UploadRefusal) -> Response<ResponseBody> {
-    let mut response =
-        text_response(StatusCode::from_u16(refusal.status()).expect("known refusal status"));
+    let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known refusal status"));
     *response.body_mut() = ResponseBody::bytes(Bytes::from(format!("{}\n", refusal.message())));
-    response.headers_mut().insert(
-        "x-graphite-upload-refusal",
-        HeaderValue::from_static(refusal.name()),
-    );
+    response
+        .headers_mut()
+        .insert("x-graphite-upload-refusal", HeaderValue::from_static(refusal.name()));
     if refusal == UploadRefusal::Revoked {
         response
             .headers_mut()

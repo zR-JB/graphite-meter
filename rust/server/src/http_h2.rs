@@ -32,11 +32,8 @@ impl HttpServer {
             .data_frame_budget(STATE_BYTES)
             .shared_budget(self.memory.clone(), STATE_BYTES);
         let stream = WriteProgressIo::new(stream, Duration::from_secs(30));
-        let Ok(Ok(mut connection)) = tokio::time::timeout(
-            Duration::from_secs(10),
-            builder.handshake::<_, Bytes>(stream),
-        )
-        .await
+        let Ok(Ok(mut connection)) =
+            tokio::time::timeout(Duration::from_secs(10), builder.handshake::<_, Bytes>(stream)).await
         else {
             return;
         };
@@ -60,9 +57,7 @@ impl HttpServer {
                 stale = Some(Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
             }
             // Control requests must not keep an upload's leftover credit alive.
-            let expired = stale
-                .as_mut()
-                .is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
+            let expired = stale.as_mut().is_some_and(|stale| stale.as_mut().poll(cx).is_ready());
             if closing.is_none() && (expired || stopping.as_mut().poll(cx).is_ready()) {
                 connection.graceful_shutdown();
                 closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
@@ -76,9 +71,7 @@ impl HttpServer {
                         let server = self.clone();
                         let window = window.clone();
                         streams.push(Box::pin(async move {
-                            server
-                                .serve_http2_stream(request, reply, facts, window)
-                                .await;
+                            server.serve_http2_stream(request, reply, facts, window).await;
                         }));
                     }
                     cx.waker().wake_by_ref();
@@ -96,8 +89,7 @@ impl HttpServer {
                         idle = None;
                         return Poll::Pending;
                     }
-                    let deadline =
-                        idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
+                    let deadline = idle.get_or_insert_with(|| Box::pin(tokio::time::sleep(IDLE_TIMEOUT)));
                     if deadline.as_mut().poll(cx).is_ready() {
                         connection.graceful_shutdown();
                         closing = Some(Box::pin(tokio::time::sleep(SHUTDOWN_GRACE)));
@@ -129,9 +121,7 @@ impl HttpServer {
                     window,
                     funded: false,
                 });
-                let response = self
-                    .respond_incoming(request, facts, &operations, None)
-                    .await?;
+                let response = self.respond_incoming(request, facts, &operations, None).await?;
                 send_response(&mut reply, response, head).await
             };
             let mut exchange = std::pin::pin!(exchange);
@@ -151,8 +141,7 @@ impl HttpServer {
                 // revocation wake even if flow control blocks before another poll.
                 if result.is_pending() {
                     for operation in operations.lock().expect("operations poisoned").iter() {
-                        if let Err(error) = operation.lock().expect("operation poisoned").check(cx)
-                        {
+                        if let Err(error) = operation.lock().expect("operation poisoned").check(cx) {
                             return Poll::Ready(Err(error));
                         }
                     }
@@ -192,9 +181,7 @@ async fn send_response(
             frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)) => frame,
         };
         let Some(frame) = frame else {
-            stream
-                .send_data(Bytes::new(), true)
-                .map_err(io::Error::other)?;
+            stream.send_data(Bytes::new(), true).map_err(io::Error::other)?;
             return Ok(());
         };
         let frame = frame?;
@@ -206,9 +193,7 @@ async fn send_response(
                 let capacity = reserve(&mut stream, length).await?;
                 let chunk = data.split_to(length.min(capacity));
                 let finished = data.is_empty() && body.is_end_stream();
-                stream
-                    .send_data(chunk, finished)
-                    .map_err(io::Error::other)?;
+                stream.send_data(chunk, finished).map_err(io::Error::other)?;
                 if finished {
                     return Ok(());
                 }
@@ -255,20 +240,13 @@ impl Body for H2Body {
     type Data = Bytes;
     type Error = h2::Error;
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
         let this = &mut *self;
         let admitted = || {
             let operations = this.operations.lock().expect("operations poisoned");
-            operations.iter().any(|operation| {
-                operation
-                    .lock()
-                    .expect("operation poisoned")
-                    .permit
-                    .is_some()
-            })
+            operations
+                .iter()
+                .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
         };
         // Under pressure an admitted upload keeps reading at the current window.
         if !this.funded && this.window.memory.has_headroom() && admitted() {
@@ -348,22 +326,14 @@ impl<T> WriteProgressIo<T> {
 }
 
 impl<T: AsyncRead + Unpin> AsyncRead for WriteProgressIo<T> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buffer: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buffer: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         self.check_stall(cx)?;
         Pin::new(&mut self.inner).poll_read(cx, buffer)
     }
 }
 
 impl<T: AsyncWrite + Unpin> AsyncWrite for WriteProgressIo<T> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bytes: &[u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
         self.check_stall(cx)?;
         match Pin::new(&mut self.inner).poll_write(cx, bytes) {
             Poll::Ready(result) => {
@@ -460,10 +430,7 @@ mod write_stall_tests {
         // second byte made real progress and must grant a fresh interval.
         tokio::time::advance(Duration::from_millis(15)).await;
         assert_eq!(reader.read_u8().await.unwrap(), b'b');
-        assert!(matches!(
-            poll_once(write.as_mut()).await,
-            Poll::Ready(Ok(()))
-        ));
+        assert!(matches!(poll_once(write.as_mut()).await, Poll::Ready(Ok(()))));
         assert_eq!(reader.read_u8().await.unwrap(), b'c');
     }
 
@@ -472,11 +439,7 @@ mod write_stall_tests {
     }
 
     impl AsyncWrite for BufferedWriter {
-        fn poll_write(
-            mut self: Pin<&mut Self>,
-            _: &mut Context<'_>,
-            bytes: &[u8],
-        ) -> Poll<io::Result<usize>> {
+        fn poll_write(mut self: Pin<&mut Self>, _: &mut Context<'_>, bytes: &[u8]) -> Poll<io::Result<usize>> {
             self.accepted += bytes.len();
             Poll::Ready(Ok(bytes.len()))
         }
@@ -490,8 +453,7 @@ mod write_stall_tests {
 
     #[tokio::test(start_paused = true)]
     async fn final_buffered_output_remains_bounded_until_transport_flush() {
-        let mut writer =
-            WriteProgressIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
+        let mut writer = WriteProgressIo::new(BufferedWriter { accepted: 0 }, Duration::from_millis(20));
         // Model a completed response whose final frame was accepted into TLS's
         // buffer, while its encrypted output can no longer reach the socket.
         writer.write_all(b"final END_STREAM frame").await.unwrap();
@@ -544,8 +506,7 @@ mod budget_tests {
                 .with_root_certificates(roots)
                 .with_no_client_auth();
             client.alpn_protocols = vec![b"h2".to_vec()];
-            let server =
-                Arc::new(HttpServer::with_memory(Arc::new(Config::default()), memory).unwrap());
+            let server = Arc::new(HttpServer::with_memory(Arc::new(Config::default()), memory).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = tokio::sync::oneshot::channel();
@@ -639,9 +600,7 @@ mod budget_tests {
         }
         assert!(refused > 0, "the flood never reached the connection's cap");
         let mut sibling = served.client(65_535).await;
-        let (probe, _) = sibling
-            .send_request(request(Method::GET, "/probe"), true)
-            .unwrap();
+        let (probe, _) = sibling.send_request(request(Method::GET, "/probe"), true).unwrap();
         assert_eq!(json(probe).await["protocolNegotiated"], "h2");
         drop((flood, sibling));
         served.stop().await;
@@ -653,11 +612,7 @@ mod budget_tests {
         let served = Served::start(limit).await;
         let idle = served.available();
         let mut client = served.client(65_535).await;
-        let pressure = served
-            .server
-            .memory
-            .lease(served.available() - limit / 4)
-            .unwrap();
+        let pressure = served.server.memory.lease(served.available() - limit / 4).unwrap();
         let held = served.available();
         let (session, _) = client
             .send_request(request(Method::POST, "/upload/session"), true)
@@ -674,19 +629,14 @@ mod budget_tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert!(
-                capacity <= DEFAULT_WINDOW_BYTES as usize,
-                "window grew under pressure"
-            );
+            assert!(capacity <= DEFAULT_WINDOW_BYTES as usize, "window grew under pressure");
             assert_eq!(served.available(), held);
             let chunk = body.split_to(capacity.min(body.len()));
             upload.send_data(chunk, body.is_empty()).unwrap();
         }
         assert_eq!(json(reply).await["bytes"], 512 * 1024);
         client = client.ready().await.unwrap();
-        let (probe, _) = client
-            .send_request(request(Method::GET, "/probe"), true)
-            .unwrap();
+        let (probe, _) = client.send_request(request(Method::GET, "/probe"), true).unwrap();
         assert_eq!(json(probe).await["load"]["active"], 0);
         drop((client, pressure));
         let server = served.server.clone();

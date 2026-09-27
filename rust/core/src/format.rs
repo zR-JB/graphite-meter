@@ -17,11 +17,7 @@ pub fn latency_ms(value: f64) -> String {
 pub fn added_ms(value: f64) -> String {
     format!(
         "{}{}",
-        if (value * 10.0).round() < 0.0 {
-            "−"
-        } else {
-            "+"
-        },
+        if (value * 10.0).round() < 0.0 { "−" } else { "+" },
         fixed_ms(value.abs())
     )
 }
@@ -43,11 +39,7 @@ pub fn rate(bytes_per_sec: f64) -> String {
     while tier < units.len() - 1 && bits >= 1.2 * 1000.0_f64.powi(tier as i32 + 1) {
         tier += 1;
     }
-    format!(
-        "{} {}",
-        speed(bits / 1000.0_f64.powi(tier as i32)),
-        units[tier]
-    )
+    format!("{} {}", speed(bits / 1000.0_f64.powi(tier as i32)), units[tier])
 }
 
 pub fn bytes(bytes: u64) -> String {

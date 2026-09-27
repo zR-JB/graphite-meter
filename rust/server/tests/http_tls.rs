@@ -14,29 +14,26 @@ use tokio::{
 use tokio_rustls::{TlsConnector, client::TlsStream};
 
 fn configs(identity: &support::Identity) -> (Arc<ServerConfig>, RootCertStore) {
-    let certificate =
-        CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
+    let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
     let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
     let mut roots = RootCertStore::empty();
     roots.add(certificate.clone()).unwrap();
-    let mut server =
-        ServerConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_no_client_auth()
-            .with_single_cert(vec![certificate], key)
-            .unwrap();
+    let mut server = ServerConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![certificate], key)
+        .unwrap();
     server.alpn_protocols = vec![b"http/1.1".to_vec()];
     (Arc::new(server), roots)
 }
 
 fn connector(roots: RootCertStore, version: &'static SupportedProtocolVersion) -> TlsConnector {
-    let mut client =
-        ClientConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
-            .with_protocol_versions(&[version])
-            .unwrap()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+    let mut client = ClientConfig::builder_with_provider(Arc::new(graphite_meter_server::crypto::provider()))
+        .with_protocol_versions(&[version])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
     client.alpn_protocols = vec![b"http/1.1".to_vec()];
     TlsConnector::from(Arc::new(client))
 }
@@ -53,10 +50,7 @@ async fn connect(address: SocketAddr, connector: &TlsConnector) -> TlsStream<Tcp
         stream.get_ref().1.protocol_version(),
         Some(rustls::ProtocolVersion::TLSv1_3)
     );
-    assert_eq!(
-        stream.get_ref().1.alpn_protocol(),
-        Some(b"http/1.1".as_slice())
-    );
+    assert_eq!(stream.get_ref().1.alpn_protocol(), Some(b"http/1.1".as_slice()));
     stream
 }
 
@@ -68,14 +62,20 @@ async fn request(
     body: &[u8],
 ) -> (String, Vec<u8>) {
     let mut socket = connect(address, connector).await;
-    socket.write_all(format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+    socket
+        .write_all(
+            format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
     socket.write_all(body).await.unwrap();
     let mut response = Vec::new();
     socket.read_to_end(&mut response).await.unwrap();
-    let boundary = response
-        .windows(4)
-        .position(|part| part == b"\r\n\r\n")
-        .unwrap();
+    let boundary = response.windows(4).position(|part| part == b"\r\n\r\n").unwrap();
     (
         String::from_utf8(response[..boundary].to_vec()).unwrap(),
         response[boundary + 4..].to_vec(),
@@ -124,35 +124,20 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
             let (headers, _) = request(address, &good, "GET", path, b"").await;
             assert!(headers.starts_with("HTTP/1.1 405"));
         }
-        let (headers, download) =
-            request(address, &good, "GET", "/download?bytes=300000", b"").await;
+        let (headers, download) = request(address, &good, "GET", "/download?bytes=300000", b"").await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert_eq!(download.len(), 300000);
         assert_eq!(&download[..37856], &download[262144..]);
         let (_, session) = request(address, &good, "POST", "/upload/session", b"").await;
         let session: serde_json::Value = serde_json::from_slice(&session).unwrap();
         let id = session["uploadId"].as_str().unwrap();
-        let (headers, upload) = request(
-            address,
-            &good,
-            "POST",
-            &format!("/upload?id={id}"),
-            &download,
-        )
-        .await;
+        let (headers, upload) = request(address, &good, "POST", &format!("/upload?id={id}"), &download).await;
         assert!(headers.starts_with("HTTP/1.1 200"));
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&upload).unwrap()["bytes"],
             300000
         );
-        let (_, checkpoint) = request(
-            address,
-            &good,
-            "POST",
-            &format!("/upload/checkpoint?id={id}"),
-            b"",
-        )
-        .await;
+        let (_, checkpoint) = request(address, &good, "POST", &format!("/upload/checkpoint?id={id}"), b"").await;
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&checkpoint).unwrap()["bytes"],
             300000
@@ -258,22 +243,17 @@ async fn h3_tcp_bootstrap_only_serves_probe_and_advertises_the_effective_public_
             ("https://localhost", Some(443)),
         ] {
             let mut config = Config::default();
-            config.native[graphite_meter_server::config::NativeKind::H3 as usize].public_origin =
-                origin.into();
+            config.native[graphite_meter_server::config::NativeKind::H3 as usize].public_origin = origin.into();
             let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = oneshot::channel();
-            let serving =
-                tokio::spawn(server.serve_https_bootstrap(listener, tls.clone(), async {
-                    let _ = stopped.await;
-                }));
+            let serving = tokio::spawn(server.serve_https_bootstrap(listener, tls.clone(), async {
+                let _ = stopped.await;
+            }));
             let (headers, body) = request(address, &connector, "GET", "/probe", b"").await;
             assert!(headers.starts_with("HTTP/1.1 200"));
-            assert!(headers.contains(&format!(
-                "alt-svc: h3=\":{}\"",
-                port.unwrap_or(address.port())
-            )));
+            assert!(headers.contains(&format!("alt-svc: h3=\":{}\"", port.unwrap_or(address.port()))));
             assert!(headers.contains("connection: close"));
             let probe: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(probe["protocolNegotiated"], "http/1.1");

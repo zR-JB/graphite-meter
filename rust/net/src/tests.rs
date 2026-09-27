@@ -38,48 +38,24 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
 
 #[test]
 fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_socks() {
-    let proxy = Proxy::new(
-        "proxy.example:3128",
-        "http://u%3Ar:p%40ss@[2001:db8::2]",
-        "",
-    );
-    let http = proxy
-        .route(&origin("http://meter.example"))
-        .unwrap()
-        .as_ref()
-        .unwrap();
+    let proxy = Proxy::new("proxy.example:3128", "http://u%3Ar:p%40ss@[2001:db8::2]", "");
+    let http = proxy.route(&origin("http://meter.example")).unwrap().as_ref().unwrap();
     assert_eq!(
         (http.origin.key().as_str(), http.authorization.as_deref()),
         ("http://proxy.example:3128", None)
     );
-    let https = proxy
-        .route(&origin("https://meter.example"))
-        .unwrap()
-        .as_ref()
-        .unwrap();
+    let https = proxy.route(&origin("https://meter.example")).unwrap().as_ref().unwrap();
     assert_eq!(https.origin.authority(), "[2001:db8::2]");
     assert_eq!(
         https.authorization.as_deref(),
         Some(format!("Basic {}", STANDARD.encode("u:r:p@ss")).as_str())
     );
     let socks = Proxy::new("", "socks5://proxy.example:1080", "");
-    assert!(
-        socks
-            .route(&origin("https://meter.example"))
-            .unwrap()
-            .is_err()
-    );
-    assert!(
-        Proxy::new("", "", "")
-            .route(&origin("https://meter.example"))
-            .is_none()
-    );
+    assert!(socks.route(&origin("https://meter.example")).unwrap().is_err());
+    assert!(Proxy::new("", "", "").route(&origin("https://meter.example")).is_none());
 }
 
-async fn proxy(
-    status: &'static str,
-    service: SocketAddr,
-) -> (SocketAddr, tokio::task::JoinHandle<String>) {
+async fn proxy(status: &'static str, service: SocketAddr) -> (SocketAddr, tokio::task::JoinHandle<String>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
@@ -108,26 +84,17 @@ async fn connect_tunnels_through_the_proxy_with_credentials() {
         socket.read_exact(&mut buffer).await.unwrap();
         socket.write_all(&buffer).await.unwrap();
     });
-    let (address, head) = proxy(
-        "HTTP/1.1 200 Connection established\r\n\r\n",
-        service_address,
-    )
-    .await;
+    let (address, head) = proxy("HTTP/1.1 200 Connection established\r\n\r\n", service_address).await;
     let socket = Box::new(TcpStream::connect(address).await.unwrap());
     let authorization = format!("Basic {}", STANDARD.encode("user:secret"));
-    let mut connection = tunnel(socket, "meter.test:8080", Some(&authorization))
-        .await
-        .unwrap();
+    let mut connection = tunnel(socket, "meter.test:8080", Some(&authorization)).await.unwrap();
     connection.write_all(b"ping").await.unwrap();
     let mut echoed = [0; 4];
     connection.read_exact(&mut echoed).await.unwrap();
     assert_eq!(&echoed, b"ping");
     drop(connection);
     let head = head.await.unwrap();
-    assert!(
-        head.starts_with("CONNECT meter.test:8080 HTTP/1.1\r\n"),
-        "{head}"
-    );
+    assert!(head.starts_with("CONNECT meter.test:8080 HTTP/1.1\r\n"), "{head}");
     assert!(
         head.contains(&format!(
             "proxy-authorization: Basic {}\r\n",
@@ -167,14 +134,11 @@ async fn cleartext_proxy_uses_absolute_form_without_connect() {
         String::from_utf8(head).unwrap()
     });
     let proxy = Proxy::new(&format!("http://user:secret@{address}"), "", "");
-    let connection = connect(&proxy, &origin("http://meter.test"), None)
+    let connection = connect(&proxy, &origin("http://meter.test"), None).await.unwrap();
+    assert!(connection.absolute_form);
+    let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
         .await
         .unwrap();
-    assert!(connection.absolute_form);
-    let (mut sender, driver) =
-        hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
-            .await
-            .unwrap();
     tokio::spawn(driver);
     let request = http::Request::get("http://meter.test/probe")
         .header(http::header::HOST, "meter.test")
@@ -184,23 +148,10 @@ async fn cleartext_proxy_uses_absolute_form_without_connect() {
         )
         .body(String::new())
         .unwrap();
-    assert!(
-        sender
-            .send_request(request)
-            .await
-            .unwrap()
-            .status()
-            .is_success()
-    );
+    assert!(sender.send_request(request).await.unwrap().status().is_success());
     let head = peer.await.unwrap();
-    assert!(
-        head.starts_with("GET http://meter.test/probe HTTP/1.1\r\n"),
-        "{head}"
-    );
-    assert!(
-        head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
-        "{head}"
-    );
+    assert!(head.starts_with("GET http://meter.test/probe HTTP/1.1\r\n"), "{head}");
+    assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), "{head}");
 }
 
 #[path = "../../test_identity.rs"]
@@ -244,10 +195,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
                 head.push(stream.read_u8().await.unwrap());
             }
             let head = String::from_utf8(head).unwrap();
-            assert!(
-                head.starts_with("CONNECT localhost.:443 HTTP/1.1\r\n"),
-                "{head}"
-            );
+            assert!(head.starts_with("CONNECT localhost.:443 HTTP/1.1\r\n"), "{head}");
             assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="));
             stream
                 .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
@@ -275,23 +223,15 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
                 .unwrap();
             assert!(!connection.absolute_form);
             assert!(connection.proxy_authorization.is_none());
-            let (mut sender, driver) =
-                hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
-                    .await
-                    .unwrap();
+            let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
+                .await
+                .unwrap();
             tokio::spawn(driver);
             let request = http::Request::get("/probe")
                 .header(http::header::HOST, "localhost.")
                 .body(String::new())
                 .unwrap();
-            assert!(
-                sender
-                    .send_request(request)
-                    .await
-                    .unwrap()
-                    .status()
-                    .is_success()
-            );
+            assert!(sender.send_request(request).await.unwrap().status().is_success());
             peer.await.unwrap();
         })
         .await

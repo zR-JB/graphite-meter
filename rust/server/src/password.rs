@@ -36,11 +36,7 @@ impl Hash {
         if params.len() != 3 {
             return Err("password hash has invalid Argon2 parameters");
         }
-        for (param, (prefix, expected)) in
-            params
-                .iter()
-                .zip([("m=", MEMORY), ("t=", TIME), ("p=", THREADS)])
-        {
+        for (param, (prefix, expected)) in params.iter().zip([("m=", MEMORY), ("t=", TIME), ("p=", THREADS)]) {
             let value = param
                 .strip_prefix(prefix)
                 .ok_or("password hash has invalid Argon2 parameters")?;
@@ -91,8 +87,7 @@ pub fn validate_password(password: &str) -> Result<(), &'static str> {
 }
 
 fn derive(password: &str, salt: &[u8; 16]) -> Result<[u8; 32], &'static str> {
-    let params = Params::new(MEMORY, TIME, THREADS, Some(32))
-        .map_err(|_| "invalid password hashing parameters")?;
+    let params = Params::new(MEMORY, TIME, THREADS, Some(32)).map_err(|_| "invalid password hashing parameters")?;
     let mut key = [0; 32];
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(password.as_bytes(), salt, &mut key)
@@ -102,9 +97,6 @@ fn derive(password: &str, salt: &[u8; 16]) -> Result<[u8; 32], &'static str> {
 
 fn decode<const N: usize>(encoded: &str) -> Option<[u8; N]> {
     // Go's RawStdEncoding ignores CR/LF and permits noncanonical trailing bits.
-    let encoded: Vec<_> = encoded
-        .bytes()
-        .filter(|byte| !matches!(byte, b'\r' | b'\n'))
-        .collect();
+    let encoded: Vec<_> = encoded.bytes().filter(|byte| !matches!(byte, b'\r' | b'\n')).collect();
     BASE64.decode(encoded).ok()?.try_into().ok()
 }

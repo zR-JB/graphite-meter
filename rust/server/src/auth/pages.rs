@@ -84,30 +84,22 @@ fn asset_hash(asset: &str) -> String {
 
 /// Match auth-page hardening headers. The optional discovered OIDC origin only
 /// widens form-action; it cannot inject CSP directives or wildcard sources.
-pub fn security_headers(
-    authorization_origin: Option<&str>,
-) -> Result<HeaderMap, InvalidAuthorizationOrigin> {
+pub fn security_headers(authorization_origin: Option<&str>) -> Result<HeaderMap, InvalidAuthorizationOrigin> {
     let mut csp = CSP.clone();
     if let Some(origin) = authorization_origin.filter(|origin| !origin.is_empty()) {
         if !super::secure_browser_origin(origin)
-            || origin.chars().any(|ch| {
-                ch.is_whitespace() || matches!(ch, ';' | '\'' | '"' | '*' | '\\' | '<' | '>')
-            })
+            || origin
+                .chars()
+                .any(|ch| ch.is_whitespace() || matches!(ch, ';' | '\'' | '"' | '*' | '\\' | '<' | '>'))
         {
             return Err(InvalidAuthorizationOrigin);
         }
-        csp = csp.replace(
-            "form-action 'self'",
-            &format!("form-action 'self' {origin}"),
-        );
+        csp = csp.replace("form-action 'self'", &format!("form-action 'self' {origin}"));
     }
     let mut headers = HeaderMap::new();
     headers.insert("cache-control", HeaderValue::from_static("no-store"));
     headers.insert("referrer-policy", HeaderValue::from_static("same-origin"));
-    headers.insert(
-        "x-content-type-options",
-        HeaderValue::from_static("nosniff"),
-    );
+    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
     headers.insert(
         "permissions-policy",
         HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),

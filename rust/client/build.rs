@@ -17,10 +17,7 @@ fn compress_notices() -> Result<(), Box<dyn std::error::Error>> {
 
     let output = legal::output_directory(&legal::checkout()?)?;
     if env::var_os("GM_RUST_LEGAL_DIR").is_none() {
-        fs::write(
-            output.join("legal.rs"),
-            "const LEGAL: Option<(&[u8], usize)> = None;\n",
-        )?;
+        fs::write(output.join("legal.rs"), "const LEGAL: Option<(&[u8], usize)> = None;\n")?;
         return Ok(());
     };
     let report = fs::read(output.join("LEGAL.txt"))?;

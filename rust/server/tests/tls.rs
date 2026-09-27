@@ -19,18 +19,8 @@ type TestError = Box<dyn Error + Send + Sync>;
 
 fn config(identity: &support::Identity) -> Config {
     let mut config = Config {
-        tls_cert: identity
-            .directory()
-            .join("identity.pem")
-            .to_str()
-            .unwrap()
-            .into(),
-        tls_key: identity
-            .directory()
-            .join("identity.key")
-            .to_str()
-            .unwrap()
-            .into(),
+        tls_cert: identity.directory().join("identity.pem").to_str().unwrap().into(),
+        tls_key: identity.directory().join("identity.key").to_str().unwrap().into(),
         ..Config::default()
     };
     config.native[NativeKind::H1Tls as usize].address = ":8443".into();
@@ -54,10 +44,7 @@ async fn handshake(
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let name = ServerName::try_from("localhost")?;
     let (client, server) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::try_join!(
-            connector.connect(name, client_io),
-            acceptor.accept(server_io),
-        )
+        tokio::try_join!(connector.connect(name, client_io), acceptor.accept(server_io),)
     })
     .await??;
     assert_eq!(
@@ -68,8 +55,7 @@ async fn handshake(
 }
 
 #[tokio::test]
-async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Result<(), TestError>
-{
+async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Result<(), TestError> {
     let first = support::Identity::generate();
     let second = support::Identity::generate();
     let config = config(&first);
@@ -82,11 +68,7 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     assert!(!manager.reload(SystemTime::now())?);
 
     assert!(manager.reload(SystemTime::UNIX_EPOCH).is_err());
-    assert!(
-        manager
-            .reload(SystemTime::now() + Duration::from_secs(172800))
-            .is_err()
-    );
+    assert!(manager.reload(SystemTime::now() + Duration::from_secs(172800)).is_err());
     fs::copy(second.directory().join("identity.key"), &config.tls_key)?;
     assert!(
         manager.reload(SystemTime::now()).is_err(),
@@ -144,10 +126,7 @@ async fn watcher_retries_invalid_replacement_and_stops_on_shutdown() -> Result<(
         move |result| reports.try_send(result).unwrap(),
     ));
     tokio::task::yield_now().await;
-    assert!(
-        reported.try_recv().is_err(),
-        "startup must not reread files"
-    );
+    assert!(reported.try_recv().is_err(), "startup must not reread files");
 
     fs::copy(second.directory().join("identity.key"), &config.tls_key)?;
     tokio::time::advance(Duration::from_secs(60)).await;

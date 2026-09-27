@@ -33,9 +33,7 @@ pub struct Certificates {
 
 impl fmt::Debug for Certificates {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("Certificates")
-            .finish_non_exhaustive()
+        formatter.debug_struct("Certificates").finish_non_exhaustive()
     }
 }
 
@@ -118,10 +116,7 @@ impl Certificates {
         Ok(changed)
     }
 
-    pub fn config(
-        self: &Arc<Self>,
-        protocols: Vec<Vec<u8>>,
-    ) -> Result<Arc<ServerConfig>, ConfigError> {
+    pub fn config(self: &Arc<Self>, protocols: Vec<Vec<u8>>) -> Result<Arc<ServerConfig>, ConfigError> {
         let provider = Arc::new(crate::crypto::provider());
         let mut config = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -134,12 +129,7 @@ impl Certificates {
 
 impl ResolvesServerCert for Certificates {
     fn resolve(&self, _hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        Some(
-            self.current
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone(),
-        )
+        Some(self.current.read().unwrap_or_else(PoisonError::into_inner).clone())
     }
 }
 
@@ -149,9 +139,7 @@ fn log_certificate(identity: &CertifiedKey, now: SystemTime) {
         "[gm:tls] certificate loaded; expires at {}",
         httpdate::fmt_http_date(expires),
     );
-    let remaining = expires
-        .duration_since(now)
-        .expect("validated certificate validity");
+    let remaining = expires.duration_since(now).expect("validated certificate validity");
     if remaining < Duration::from_secs(30 * 24 * 60 * 60) {
         let hours = remaining.as_secs().saturating_add(1800) / 3600;
         eprintln!("[gm:tls] warning: certificate expires in {hours}h");
@@ -167,11 +155,7 @@ fn read_identity(
     let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
     let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
     if chain.len() > MAX_CHAIN_CERTIFICATES
-        || chain
-            .iter()
-            .map(|certificate| certificate.len())
-            .sum::<usize>()
-            > MAX_CHAIN_BYTES
+        || chain.iter().map(|certificate| certificate.len()).sum::<usize>() > MAX_CHAIN_BYTES
     {
         return Err("TLS certificate chain exceeds 8 certificates or 32 KiB".into());
     }
@@ -187,11 +171,7 @@ fn read_identity(
         rustls::client::verify_server_name(&parsed, name)?;
     }
     let key = PrivateKeyDer::from_pem_file(key_path)?;
-    Ok(CertifiedKey::from_der(
-        chain,
-        key,
-        &crate::crypto::provider(),
-    )?)
+    Ok(CertifiedKey::from_der(chain, key, &crate::crypto::provider())?)
 }
 
 fn validity(certificate: &[u8]) -> Option<(SystemTime, SystemTime)> {
@@ -240,18 +220,13 @@ fn der(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
 fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
     let number = |digits: &[u8]| {
         digits.iter().try_fold(0_u64, |total, digit| {
-            digit
-                .is_ascii_digit()
-                .then(|| total * 10 + u64::from(digit - b'0'))
+            digit.is_ascii_digit().then(|| total * 10 + u64::from(digit - b'0'))
         })
     };
     let (year, rest) = match (tag, value.len()) {
         (0x17, 13) => {
             let year = number(&value[..2])?;
-            (
-                if year >= 50 { 1900 + year } else { 2000 + year },
-                &value[2..],
-            )
+            (if year >= 50 { 1900 + year } else { 2000 + year }, &value[2..])
         }
         (0x18, 15) => (number(&value[..4])?, &value[4..]),
         _ => return None,
@@ -279,8 +254,7 @@ fn der_time(tag: u8, value: &[u8]) -> Option<SystemTime> {
     let year = year.checked_sub(u64::from(month <= 2))?;
     let year_of_era = year % 400;
     let day_of_year = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
-    let days = (year / 400) * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100
-        + day_of_year;
+    let days = (year / 400) * 146_097 + year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     let seconds = days.checked_sub(719_468)? * 86_400 + hour * 3600 + minute * 60 + second;
     Some(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }

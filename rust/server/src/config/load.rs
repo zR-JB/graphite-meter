@@ -14,9 +14,7 @@ impl Config {
         let mut env = BTreeMap::new();
         for (key, value) in std::env::vars_os() {
             if let Some(key) = key.to_str().filter(|key| key.starts_with("GM_")) {
-                let value = value
-                    .into_string()
-                    .map_err(|_| format!("{key} is not UTF-8"))?;
+                let value = value.into_string().map_err(|_| format!("{key} is not UTF-8"))?;
                 env.insert(key.to_owned(), value);
             }
         }
@@ -50,24 +48,12 @@ impl Config {
         for (name, dst) in [
             ("GM_AUTH_PUBLIC_URL", &mut config.auth.public_url),
             ("GM_AUTH_PASSWORD_HASH", &mut config.auth.password_hash),
-            (
-                "GM_AUTH_PASSWORD_HASH_FILE",
-                &mut config.auth.password_hash_file,
-            ),
+            ("GM_AUTH_PASSWORD_HASH_FILE", &mut config.auth.password_hash_file),
             ("GM_AUTH_OIDC_ISSUER", &mut config.auth.oidc_issuer),
             ("GM_AUTH_OIDC_CLIENT_ID", &mut config.auth.oidc_client_id),
-            (
-                "GM_AUTH_OIDC_CLIENT_SECRET",
-                &mut config.auth.oidc_client_secret,
-            ),
-            (
-                "GM_AUTH_OIDC_CLIENT_SECRET_FILE",
-                &mut config.auth.oidc_secret_file,
-            ),
-            (
-                "GM_AUTH_OIDC_PROVIDER_NAME",
-                &mut config.auth.oidc_provider_name,
-            ),
+            ("GM_AUTH_OIDC_CLIENT_SECRET", &mut config.auth.oidc_client_secret),
+            ("GM_AUTH_OIDC_CLIENT_SECRET_FILE", &mut config.auth.oidc_secret_file),
+            ("GM_AUTH_OIDC_PROVIDER_NAME", &mut config.auth.oidc_provider_name),
         ] {
             if env.contains_key(name) {
                 config.auth.explicit = true;
@@ -95,9 +81,8 @@ impl Config {
                     split_list(raw)
                         .into_iter()
                         .map(|name| {
-                            NativeKind::parse(&name).ok_or_else(|| {
-                                format!("GM_ADVERTISED_NATIVE_ENDPOINTS: unknown endpoint {name:?}")
-                            })
+                            NativeKind::parse(&name)
+                                .ok_or_else(|| format!("GM_ADVERTISED_NATIVE_ENDPOINTS: unknown endpoint {name:?}"))
                         })
                         .collect::<Result<_, _>>()?,
                 ),
@@ -105,10 +90,7 @@ impl Config {
         }
         for (name, dst) in [
             ("GM_PUBLIC_ORIGINS", &mut config.public.both),
-            (
-                "GM_PUBLIC_THROUGHPUT_ORIGINS",
-                &mut config.public.throughput,
-            ),
+            ("GM_PUBLIC_THROUGHPUT_ORIGINS", &mut config.public.throughput),
             ("GM_PUBLIC_LATENCY_ORIGINS", &mut config.public.latency),
         ] {
             if let Some(raw) = env.get(name) {
@@ -121,10 +103,7 @@ impl Config {
         )?;
         for (name, dst) in [
             ("GM_VERBOSE", &mut config.verbose),
-            (
-                "GM_RESULT_HISTORY_DEFAULT",
-                &mut config.result_history_default,
-            ),
+            ("GM_RESULT_HISTORY_DEFAULT", &mut config.result_history_default),
         ] {
             if let Some(raw) = env.get(name) {
                 *dst = match raw.trim().to_ascii_lowercase().as_str() {
@@ -141,44 +120,30 @@ impl Config {
                 &mut config.limits.operations_per_client,
             ),
             ("GM_MAX_ACTIVE_SESSIONS", &mut config.limits.sessions),
-            (
-                "GM_MAX_SESSIONS_PER_CLIENT",
-                &mut config.limits.sessions_per_client,
-            ),
+            ("GM_MAX_SESSIONS_PER_CLIENT", &mut config.limits.sessions_per_client),
             ("GM_MAX_BUFFER_BYTES", &mut config.max_buffer_bytes),
             ("GM_MAX_CONNECTIONS", &mut config.max_connections),
-            (
-                "GM_MAX_CONNECTIONS_PER_CLIENT",
-                &mut config.max_connections_per_client,
-            ),
+            ("GM_MAX_CONNECTIONS_PER_CLIENT", &mut config.max_connections_per_client),
         ] {
             if let Some(raw) = env.get(name) {
                 let value = raw
                     .trim()
                     .parse::<i64>()
                     .map_err(|_| format!("{name} must be an integer"))?;
-                *dst = usize::try_from(value)
-                    .map_err(|_| format!("{name} must be greater than zero"))?;
+                *dst = usize::try_from(value).map_err(|_| format!("{name} must be greater than zero"))?;
             }
         }
         for (name, dst) in [
-            (
-                "GM_MAX_OPERATION_DURATION",
-                &mut config.max_operation_duration,
-            ),
+            ("GM_MAX_OPERATION_DURATION", &mut config.max_operation_duration),
             ("GM_MAX_SESSION_DURATION", &mut config.max_session_duration),
         ] {
             if let Some(raw) = env.get(name).filter(|value| !value.is_empty()) {
                 let nanos = parse_go_duration(raw).map_err(|error| format!("{name}: {error}"))?;
-                let nanos =
-                    u64::try_from(nanos).map_err(|_| format!("{name} must not be negative"))?;
+                let nanos = u64::try_from(nanos).map_err(|_| format!("{name} must not be negative"))?;
                 *dst = Duration::from_nanos(nanos);
             }
         }
-        if let Some(raw) = env
-            .get("GM_TRUSTED_PROXIES")
-            .filter(|value| !value.is_empty())
-        {
+        if let Some(raw) = env.get("GM_TRUSTED_PROXIES").filter(|value| !value.is_empty()) {
             for value in raw.split(',') {
                 let prefix = value
                     .trim()

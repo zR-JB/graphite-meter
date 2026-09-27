@@ -43,18 +43,11 @@ fn decimal<T: std::str::FromStr>(text: &str, max_len: usize) -> Result<T, WireEr
 }
 
 pub fn decode_ping(message: &str) -> Result<u32, WireError> {
-    decimal(
-        message
-            .strip_prefix("PING,")
-            .ok_or(WireError::MalformedProbe)?,
-        10,
-    )
+    decimal(message.strip_prefix("PING,").ok_or(WireError::MalformedProbe)?, 10)
 }
 
 pub fn decode_pong(message: &str) -> Result<Pong, WireError> {
-    let payload = message
-        .strip_prefix("PONG,")
-        .ok_or(WireError::MalformedProbe)?;
+    let payload = message.strip_prefix("PONG,").ok_or(WireError::MalformedProbe)?;
     let (id, handling_nanos) = payload.split_once(',').ok_or(WireError::MalformedProbe)?;
     Ok(Pong {
         id: decimal(id, 10)?,
@@ -135,8 +128,8 @@ pub fn decode_json<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, ser
 }
 
 pub fn decode_upload_progress(data: &[u8]) -> Result<UploadProgress, WireError> {
-    let StrictValue(Value::Object(mut fields)) = serde_json::from_slice::<StrictValue>(data)
-        .map_err(|_| WireError::InvalidUploadProgress)?
+    let StrictValue(Value::Object(mut fields)) =
+        serde_json::from_slice::<StrictValue>(data).map_err(|_| WireError::InvalidUploadProgress)?
     else {
         return Err(WireError::InvalidUploadProgress);
     };
@@ -178,11 +171,7 @@ fn counter(value: Option<Value>) -> Result<u64, WireError> {
         return Err(WireError::InvalidUploadProgress);
     };
     let number = value.as_f64().ok_or(WireError::InvalidUploadProgress)?;
-    if !number.is_finite()
-        || number < 0.0
-        || number > MAX_UPLOAD_COUNTER as f64
-        || number.trunc() != number
-    {
+    if !number.is_finite() || number < 0.0 || number > MAX_UPLOAD_COUNTER as f64 || number.trunc() != number {
         return Err(WireError::InvalidUploadProgress);
     }
     Ok(number as u64)

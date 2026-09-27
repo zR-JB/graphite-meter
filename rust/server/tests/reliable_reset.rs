@@ -38,14 +38,11 @@ async fn exercise(immediate: bool) -> Result<(), TestError> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert)?;
     let client = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
-    client.set_default_client_config(quinn::ClientConfig::with_root_certificates(Arc::new(
-        roots,
-    ))?);
+    client.set_default_client_config(quinn::ClientConfig::with_root_certificates(Arc::new(roots))?);
     let connecting = client.connect(server.local_addr()?, "localhost")?;
-    let (sender, receiver) =
-        tokio::try_join!(async { Ok::<_, TestError>(connecting.await?) }, async {
-            Ok::<_, TestError>(server.accept().await.ok_or("endpoint closed")?.await?)
-        })?;
+    let (sender, receiver) = tokio::try_join!(async { Ok::<_, TestError>(connecting.await?) }, async {
+        Ok::<_, TestError>(server.accept().await.ok_or("endpoint closed")?.await?)
+    })?;
 
     let (factory, mut cleanup) = ResetQueue::new(1);
     let code = quinn::VarInt::from_u32(73);
@@ -76,9 +73,7 @@ async fn exercise(immediate: bool) -> Result<(), TestError> {
         // its future can use the newly granted flow-control credit.
         assert_eq!(incoming.read_chunk(1).await?.unwrap().as_ref(), &[0x40]);
         drop(opening);
-        let pending = cleanup
-            .try_recv()
-            .expect("cancelled open must transfer ownership");
+        let pending = cleanup.try_recv().expect("cancelled open must transfer ownership");
         let ((), bytes) = tokio::try_join!(pending.complete(), async {
             let mut bytes = vec![0x40];
             loop {

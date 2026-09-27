@@ -29,10 +29,7 @@ impl Work {
     }
 }
 
-pub async fn run(
-    config: Config,
-    shutdown: impl Future<Output = ()>,
-) -> Result<(Option<Snapshot>, ui::Exit), Error> {
+pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
     let mut controller = Controller::with_snapshots(&config, snapshots)?;
@@ -80,10 +77,7 @@ pub async fn run(
     Ok((controller.finished, result?))
 }
 
-pub async fn run_once(
-    config: Config,
-    shutdown: impl Future<Output = ()>,
-) -> Result<Snapshot, Error> {
+pub async fn run_once(config: Config, shutdown: impl Future<Output = ()>) -> Result<Snapshot, Error> {
     let mut controller = Controller::new(&config)?;
     let mut events = controller.start(config, None)?;
     let result = {
@@ -156,18 +150,11 @@ impl Controller {
         })
     }
 
-    pub fn authorize(
-        &self,
-        origin: &str,
-        login_url: &str,
-    ) -> Result<crate::net::PendingAuthorization, Error> {
+    pub fn authorize(&self, origin: &str, login_url: &str) -> Result<crate::net::PendingAuthorization, Error> {
         self.http.begin_authorization(origin, login_url)
     }
 
-    pub async fn poll_authorization(
-        &self,
-        pending: crate::net::PendingAuthorization,
-    ) -> Result<(), Error> {
+    pub async fn poll_authorization(&self, pending: crate::net::PendingAuthorization) -> Result<(), Error> {
         self.http.poll_authorization(pending).await
     }
 
@@ -272,13 +259,9 @@ impl Controller {
         }
         if !self.operations.is_empty() {
             self.cancelling = true;
-            self.cancel_deadline
-                .get_or_insert(Instant::now() + CANCEL_GRACE);
+            self.cancel_deadline.get_or_insert(Instant::now() + CANCEL_GRACE);
             self.snapshots.send_modify(|snapshot| {
-                if matches!(
-                    snapshot.phase,
-                    Phase::Preparing | Phase::Warmup | Phase::Measuring
-                ) {
+                if matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
                     snapshot.status = "Cancelling; waiting for owned IO".into();
                 }
                 snapshot.auth = None;
@@ -293,10 +276,7 @@ impl Controller {
         self.cancel_deadline = None;
         if self.cancelling {
             self.snapshots.send_modify(|snapshot| {
-                if matches!(
-                    snapshot.phase,
-                    Phase::Preparing | Phase::Warmup | Phase::Measuring
-                ) {
+                if matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
                     snapshot.phase = Phase::Cancelled;
                     snapshot.status = "Stopped".into();
                     snapshot.error = None;
@@ -311,11 +291,7 @@ impl Controller {
                 Ok(prepared) => self.prepared = prepared,
                 Err(error) => {
                     self.snapshots.send_modify(|snapshot| {
-                        snapshot.phase = if snapshot
-                            .results
-                            .iter()
-                            .any(|result| result.elapsed > Duration::ZERO)
-                        {
+                        snapshot.phase = if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
                             Phase::Incomplete
                         } else {
                             Phase::Failed
@@ -424,10 +400,7 @@ async fn execute(
         let origin = required.origin.clone();
         let login = required.login_url.clone();
         if !approvals.insert(origin.clone()) {
-            return Err(
-                "server rejected the approved credential; verify its authentication configuration"
-                    .into(),
-            );
+            return Err("server rejected the approved credential; verify its authentication configuration".into());
         }
         let pending = http.begin_authorization(&origin, &login)?;
         snapshots.send_modify(|snapshot| {
@@ -509,8 +482,7 @@ mod tests {
                 .into(),
                 ..Snapshot::default()
             });
-            let mut controller =
-                Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
+            let mut controller = Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
             let (cancel, mut cancelled_signal) = watch::channel(false);
             controller.cancel = Some(cancel);
             let (joined, completed) = tokio::sync::oneshot::channel();

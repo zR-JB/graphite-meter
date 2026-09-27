@@ -33,9 +33,8 @@ async fn exercise() -> Result<(), TestError> {
         .with_no_client_auth()
         .with_single_cert(vec![certificate.clone()], key)?;
     tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut config = quinn::ServerConfig::with_crypto(Arc::new(
-        quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
-    ));
+    let mut config =
+        quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
     let mut transport = quinn::TransportConfig::default();
     transport.send_window(64 * 1024);
     transport.max_concurrent_bidi_streams(256_u32.into());
@@ -48,9 +47,7 @@ async fn exercise() -> Result<(), TestError> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut client_config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(tls)?,
-    ));
+    let mut client_config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
     let mut transport = quinn::TransportConfig::default();
     transport.stream_receive_window(4096_u32.into());
     client_config.transport_config(Arc::new(transport));
@@ -97,8 +94,7 @@ async fn exercise() -> Result<(), TestError> {
         }
         Ok::<_, TestError>(())
     });
-    let (mut connection, mut sender) =
-        h3::client::new(h3_noq::Connection::new(client_quic)).await?;
+    let (mut connection, mut sender) = h3::client::new(h3_noq::Connection::new(client_quic)).await?;
     let driver = tokio::spawn(async move { connection.wait_idle().await });
     let request = |method: &str, path: &str| {
         Request::builder()
@@ -127,9 +123,7 @@ async fn exercise() -> Result<(), TestError> {
         serde_json::from_slice::<serde_json::Value>(&body)?["protocolNegotiated"],
         "h3"
     );
-    let mut mint = sender
-        .send_request(request("POST", "/upload/session"))
-        .await?;
+    let mut mint = sender.send_request(request("POST", "/upload/session")).await?;
     mint.finish().await?;
     assert_eq!(mint.recv_response().await?.status(), 200);
     let mut bytes = Vec::new();
@@ -150,13 +144,8 @@ async fn exercise() -> Result<(), TestError> {
     while let Some(mut data) = upload.recv_data().await? {
         bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
     }
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&bytes)?["bytes"],
-        11
-    );
-    let mut stalled = sender
-        .send_request(request("GET", "/download?bytes=10000000"))
-        .await?;
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&bytes)?["bytes"], 11);
+    let mut stalled = sender.send_request(request("GET", "/download?bytes=10000000")).await?;
     stalled.finish().await?;
     assert_eq!(stalled.recv_response().await?.status(), 200);
     tokio::time::pause();
@@ -169,9 +158,7 @@ async fn exercise() -> Result<(), TestError> {
             Ok(None) => panic!("flow-controlled transfer must be reset at its deadline"),
         }
     }
-    let mut sibling = sender
-        .send_request(request("GET", "/download?bytes=13"))
-        .await?;
+    let mut sibling = sender.send_request(request("GET", "/download?bytes=13")).await?;
     sibling.finish().await?;
     assert_eq!(sibling.recv_response().await?.status(), 200);
     let mut count = 0;
@@ -205,8 +192,7 @@ async fn serve_quic() -> Result<Served, TestError> {
         .with_single_cert(vec![certificate.clone()], key)?;
     tls.alpn_protocols = vec![b"h3".to_vec()];
     let server = Arc::new(HttpServer::new(Arc::new(Config::default()))?);
-    let endpoint =
-        quinn::Endpoint::server(server.quic_config(Arc::new(tls))?, "127.0.0.1:0".parse()?)?;
+    let endpoint = quinn::Endpoint::server(server.quic_config(Arc::new(tls))?, "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
     let (stop, stopped) = oneshot::channel();
     let task = tokio::spawn(server.serve_quic(endpoint, async {
@@ -244,10 +230,7 @@ async fn body(
         request.send_data(Bytes::from_static(upload)).await?;
     }
     request.finish().await?;
-    assert_eq!(
-        request.recv_response().await?.status(),
-        http::StatusCode::OK
-    );
+    assert_eq!(request.recv_response().await?.status(), http::StatusCode::OK);
     let mut bytes = Vec::new();
     while let Some(mut data) = request.recv_data().await? {
         bytes.extend_from_slice(&data.copy_to_bytes(data.remaining()));
@@ -270,10 +253,7 @@ async fn probes_do_not_keep_admitted_works_leftover_credit_alive() -> Result<(),
     let (mut sender, driving, stop, task) = serve_quic().await?;
     let session = body(&mut sender, http::Method::POST, "/upload/session", b"").await?;
     let session: serde_json::Value = serde_json::from_slice(&session)?;
-    let path = format!(
-        "https://localhost/upload?id={}",
-        session["uploadId"].as_str().unwrap()
-    );
+    let path = format!("https://localhost/upload?id={}", session["uploadId"].as_str().unwrap());
     let mut upload = sender.send_request(Request::post(path).body(())?).await?;
     upload.send_data(Bytes::from_static(b"abc")).await?;
     // A round trip later the server is still admitted, awaiting the body's end.

@@ -2,8 +2,8 @@
 use crate::config::{Config, ConfigError, NativeKind};
 use graphite_meter_core::{
     discovery::{
-        Capabilities, LatencyTarget, LatencyTransport, Preflight as Document, Protocol, ServerInfo,
-        ThroughputTarget, ThroughputTransport,
+        Capabilities, LatencyTarget, LatencyTransport, Preflight as Document, Protocol, ServerInfo, ThroughputTarget,
+        ThroughputTransport,
     },
     origin::{key, target_origin},
 };
@@ -28,10 +28,7 @@ impl Preflight {
             .then(|| authority.parse::<http::uri::Authority>().ok())
             .flatten();
         let host = authority.as_ref().map_or("localhost", |authority| {
-            authority
-                .host()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
+            authority.host().trim_start_matches('[').trim_end_matches(']')
         });
         self.build_for_host(host)
     }
@@ -128,9 +125,11 @@ impl Preflight {
 
 fn add_throughput(capabilities: &mut Capabilities, base: &str, protocol: Protocol) {
     let base = base.trim_end_matches('/');
-    if let Some(target) = capabilities.throughput.iter_mut().find(|target| {
-        target.transport == ThroughputTransport::FetchStream && key(&target.base_url) == key(base)
-    }) {
+    if let Some(target) = capabilities
+        .throughput
+        .iter_mut()
+        .find(|target| target.transport == ThroughputTransport::FetchStream && key(&target.base_url) == key(base))
+    {
         if target.protocol != protocol {
             target.protocol = Protocol::Negotiated;
         }
@@ -145,9 +144,11 @@ fn add_throughput(capabilities: &mut Capabilities, base: &str, protocol: Protoco
 
 fn add_latency(capabilities: &mut Capabilities, base: &str) {
     let base = base.trim_end_matches('/');
-    if !capabilities.latency.iter().any(|target| {
-        target.transport == LatencyTransport::WebSocket && key(&target.base_url) == key(base)
-    }) {
+    if !capabilities
+        .latency
+        .iter()
+        .any(|target| target.transport == LatencyTransport::WebSocket && key(&target.base_url) == key(base))
+    {
         capabilities.latency.push(LatencyTarget {
             base_url: base.into(),
             transport: LatencyTransport::WebSocket,
@@ -160,11 +161,7 @@ fn public_base(raw: &str) -> &str {
 }
 
 fn native_origin(kind: NativeKind, host: &str, address: &str) -> Result<String, ConfigError> {
-    let scheme = if kind == NativeKind::H1 {
-        "http"
-    } else {
-        "https"
-    };
+    let scheme = if kind == NativeKind::H1 { "http" } else { "https" };
     let host = if host.contains(':') {
         format!("[{host}]")
     } else {
@@ -194,9 +191,7 @@ pub(super) fn discovery_host(host: &str) -> &str {
                 && label.len() <= 63
                 && !label.starts_with('-')
                 && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         })
     {
         host

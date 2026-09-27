@@ -147,12 +147,7 @@ impl Link {
     }
 }
 
-async fn relay(
-    mut client: TcpStream,
-    mut server: TcpStream,
-    delay: Duration,
-    mut faults: watch::Receiver<Fault>,
-) {
+async fn relay(mut client: TcpStream, mut server: TcpStream, delay: Duration, mut faults: watch::Receiver<Fault>) {
     let _ = client.set_nodelay(true);
     let _ = server.set_nodelay(true);
     let (up, down) = (faults.clone(), faults.clone());
@@ -175,12 +170,7 @@ async fn relay(
     }
 }
 
-async fn pipe(
-    mut from: ReadHalf<'_>,
-    mut to: WriteHalf<'_>,
-    delay: Duration,
-    faults: watch::Receiver<Fault>,
-) {
+async fn pipe(mut from: ReadHalf<'_>, mut to: WriteHalf<'_>, delay: Duration, faults: watch::Receiver<Fault>) {
     let (sender, mut receiver) = mpsc::channel::<(Instant, Bytes)>(256);
     let mut open = faults.clone();
     let read = async move {

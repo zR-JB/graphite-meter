@@ -39,19 +39,12 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
         response.headers()[header::SEC_WEBSOCKET_ACCEPT],
         "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
     );
-    assert!(
-        !response
-            .headers()
-            .contains_key(header::SEC_WEBSOCKET_EXTENSIONS)
-    );
+    assert!(!response.headers().contains_key(header::SEC_WEBSOCKET_EXTENSIONS));
     assert_eq!(
         handshake(&request, Some("https://other.example")).status(),
         StatusCode::FORBIDDEN
     );
-    assert_eq!(
-        handshake(&request, None).status(),
-        StatusCode::SWITCHING_PROTOCOLS
-    );
+    assert_eq!(handshake(&request, None).status(), StatusCode::SWITCHING_PROTOCOLS);
     request
         .headers_mut()
         .insert(header::CONNECTION, "keep-alive".parse().unwrap());
@@ -61,14 +54,10 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
     request
         .headers_mut()
         .insert(header::UPGRADE, "other, WebSocket".parse().unwrap());
-    assert_eq!(
-        handshake(&request, None).status(),
-        StatusCode::SWITCHING_PROTOCOLS
-    );
-    request.headers_mut().append(
-        header::SEC_WEBSOCKET_KEY,
-        "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap(),
-    );
+    assert_eq!(handshake(&request, None).status(), StatusCode::SWITCHING_PROTOCOLS);
+    request
+        .headers_mut()
+        .append(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap());
     assert_eq!(handshake(&request, None).status(), StatusCode::BAD_REQUEST);
 }
 
@@ -105,16 +94,8 @@ async fn ping_accepts_text_binary_and_fragmented_messages() -> Result<(), TestEr
         Message::Binary(vec![255].into()),
         Message::Text("PING,7".into()),
         Message::Binary(b"PING,8".to_vec().into()),
-        Message::Frame(Frame::message(
-            b"PING,".to_vec(),
-            OpCode::Data(Data::Text),
-            false,
-        )),
-        Message::Frame(Frame::message(
-            b"9".to_vec(),
-            OpCode::Data(Data::Continue),
-            true,
-        )),
+        Message::Frame(Frame::message(b"PING,".to_vec(), OpCode::Data(Data::Text), false)),
+        Message::Frame(Frame::message(b"9".to_vec(), OpCode::Data(Data::Continue), true)),
     ] {
         socket.send(message).await?;
     }
@@ -123,13 +104,8 @@ async fn ping_accepts_text_binary_and_fragmented_messages() -> Result<(), TestEr
         assert!(message.is_text());
         assert_eq!(decode_pong(message.to_text()?)?.id, id);
     }
-    socket
-        .send(Message::Ping(b"control".to_vec().into()))
-        .await?;
-    assert_eq!(
-        receive(&mut socket).await?,
-        Message::Pong(b"control".to_vec().into())
-    );
+    socket.send(Message::Ping(b"control".to_vec().into())).await?;
+    assert_eq!(receive(&mut socket).await?, Message::Pong(b"control".to_vec().into()));
     stop.send(CloseReason::Finished).unwrap();
     let Message::Close(Some(frame)) = receive(&mut socket).await? else {
         panic!("expected close frame");
@@ -214,21 +190,15 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     let task = tokio::spawn(serving.serve_http1(listener, async {
         let _ = stopped.await;
     }));
-    let (mut socket, response) = tokio_tungstenite::client_async(
-        format!("ws://{address}/ws/ping"),
-        TcpStream::connect(address).await?,
-    )
-    .await?;
+    let (mut socket, response) =
+        tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
     socket.send(Message::Text("PING,23".into())).await?;
     let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
         .await?
         .unwrap()?;
     assert_eq!(decode_pong(pong.to_text()?)?.id, 23);
-    let response = server.respond(
-        Request::builder().uri("/download?bytes=1").body(())?,
-        address,
-    );
+    let response = server.respond(Request::builder().uri("/download?bytes=1").body(())?, address);
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 
     stop.send(()).unwrap();
@@ -241,10 +211,7 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     };
     assert_eq!(u16::from(close.code), 1001);
     assert_eq!(close.reason, "shutdown");
-    let response = server.respond(
-        Request::builder().uri("/download?bytes=1").body(())?,
-        address,
-    );
+    let response = server.respond(Request::builder().uri("/download?bytes=1").body(())?, address);
     assert_eq!(response.status(), StatusCode::OK);
 
     Ok(())
@@ -263,18 +230,8 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
 
     let identity = support::Identity::generate();
     let config = Config {
-        tls_cert: identity
-            .directory()
-            .join("identity.pem")
-            .to_str()
-            .unwrap()
-            .into(),
-        tls_key: identity
-            .directory()
-            .join("identity.key")
-            .to_str()
-            .unwrap()
-            .into(),
+        tls_cert: identity.directory().join("identity.pem").to_str().unwrap().into(),
+        tls_key: identity.directory().join("identity.key").to_str().unwrap().into(),
         ..Config::default()
     };
     let tls = Certificates::load(&config, SystemTime::now())?.config(vec![b"http/1.1".to_vec()])?;
@@ -292,16 +249,10 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         let _ = stopped.await;
     }));
     let stream = TlsConnector::from(Arc::new(client_tls))
-        .connect(
-            ServerName::try_from("localhost")?,
-            TcpStream::connect(address).await?,
-        )
+        .connect(ServerName::try_from("localhost")?, TcpStream::connect(address).await?)
         .await?;
-    let (mut socket, _) = tokio_tungstenite::client_async(
-        format!("wss://localhost:{}/ws/ping", address.port()),
-        stream,
-    )
-    .await?;
+    let (mut socket, _) =
+        tokio_tungstenite::client_async(format!("wss://localhost:{}/ws/ping", address.port()), stream).await?;
     socket.send(Message::Text("PING,42".into())).await?;
     let pong = tokio::time::timeout(Duration::from_secs(2), socket.next())
         .await?
@@ -328,11 +279,8 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     let task = tokio::spawn(server.serve_http1(listener, async {
         let _ = stopped.await;
     }));
-    let (mut socket, _) = tokio_tungstenite::client_async(
-        format!("ws://{address}/ws/ping"),
-        TcpStream::connect(address).await?,
-    )
-    .await?;
+    let (mut socket, _) =
+        tokio_tungstenite::client_async(format!("ws://{address}/ws/ping"), TcpStream::connect(address).await?).await?;
     tokio::time::pause();
     tokio::time::advance(Duration::from_secs(61)).await;
     tokio::task::yield_now().await;

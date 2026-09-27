@@ -9,8 +9,7 @@ use crate::{
 };
 use crossterm::{
     event::{
-        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent,
-        KeyEventKind, KeyModifiers,
+        DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
     },
     execute,
 };
@@ -23,8 +22,7 @@ use ratatui::{
     symbols::Marker,
     text::{Line, Span},
     widgets::{
-        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem,
-        ListState, Paragraph, Wrap,
+        Axis, Block, BorderType, Borders, Chart, Clear, Dataset, GraphType, List, ListItem, ListState, Paragraph, Wrap,
     },
 };
 use setup::Edit;
@@ -215,12 +213,7 @@ impl Ui {
         snapshot.server_latencies.truncate(4);
         snapshot.results.truncate(16);
         self.awaiting = false;
-        if snapshot.auth.is_some()
-            || !matches!(
-                snapshot.phase,
-                Phase::Preparing | Phase::Warmup | Phase::Measuring
-            )
-        {
+        if snapshot.auth.is_some() || !matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
             if self.cancel != CancelState::Idle {
                 self.notice.clear();
             }
@@ -242,8 +235,7 @@ impl Ui {
             (&mut self.shown_down, self.snapshot.latest.down_bps),
             (&mut self.shown_up, self.snapshot.latest.up_bps),
         ] {
-            *shown =
-                target.map(|target| shown.map_or(target, |value| value + 0.35 * (target - value)));
+            *shown = target.map(|target| shown.map_or(target, |value| value + 0.35 * (target - value)));
         }
     }
     fn elapsed(&self) -> Duration {
@@ -256,10 +248,7 @@ impl Ui {
     }
     fn notice(&self) -> (&str, bool) {
         if self.cancel == CancelState::Confirming {
-            (
-                "Stop the test? Esc confirms; any other key continues.",
-                false,
-            )
+            ("Stop the test? Esc confirms; any other key continues.", false)
         } else if self.cancel == CancelState::Requested {
             ("Cancelling run; waiting for owned IO.", false)
         } else if !self.notice.is_empty() {
@@ -271,11 +260,7 @@ impl Ui {
         }
     }
     fn active(&self) -> bool {
-        self.awaiting
-            || matches!(
-                self.snapshot.phase,
-                Phase::Preparing | Phase::Warmup | Phase::Measuring
-            )
+        self.awaiting || matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring)
     }
     fn send(&mut self, command: Command, commands: &mpsc::Sender<Command>) -> bool {
         let requested = match &command {
@@ -407,11 +392,7 @@ impl Ui {
         }
         let field_count = self.fields().len();
         match key.code {
-            KeyCode::Char('d')
-                if self.live
-                    && self.snapshot.auth.is_none()
-                    && !self.snapshot.results.is_empty() =>
-            {
+            KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() && !self.snapshot.results.is_empty() => {
                 self.popup = Popup::Details;
                 self.details_scroll = 0;
             }
@@ -425,9 +406,7 @@ impl Ui {
             }
             KeyCode::Char('r') | KeyCode::Enter
                 if !self.active()
-                    && (key.code == KeyCode::Char('r')
-                        || self.live
-                        || self.rows.selected() == Some(0)) =>
+                    && (key.code == KeyCode::Char('r') || self.live || self.rows.selected() == Some(0)) =>
             {
                 match self.config.validate() {
                     Ok(()) => {
@@ -484,12 +463,8 @@ impl Ui {
             }
             KeyCode::Left if !self.live => self.change_field(-1),
             KeyCode::Right if !self.live => self.change_field(1),
-            KeyCode::Up | KeyCode::Char('k') if !self.live => {
-                move_selection(&mut self.rows, field_count, -1)
-            }
-            KeyCode::Down | KeyCode::Char('j') if !self.live => {
-                move_selection(&mut self.rows, field_count, 1)
-            }
+            KeyCode::Up | KeyCode::Char('k') if !self.live => move_selection(&mut self.rows, field_count, -1),
+            KeyCode::Down | KeyCode::Char('j') if !self.live => move_selection(&mut self.rows, field_count, 1),
             KeyCode::Enter | KeyCode::Char(' ') if !self.live && !self.active() => self.activate(),
             _ => {}
         }
@@ -518,8 +493,7 @@ fn move_selection(state: &mut ListState, length: usize, direction: isize) {
         state.select(None);
         return;
     }
-    let next =
-        (state.selected().unwrap_or(0) as isize + direction).rem_euclid(length as isize) as usize;
+    let next = (state.selected().unwrap_or(0) as isize + direction).rem_euclid(length as isize) as usize;
     state.select(Some(next));
 }
 fn panel(title: &str, theme: Theme) -> Block<'_> {
@@ -529,9 +503,7 @@ fn panel(title: &str, theme: Theme) -> Block<'_> {
         .border_style(Style::new().fg(theme.border))
         .title(Span::styled(
             title,
-            Style::new()
-                .fg(theme.brand_strong)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.brand_strong).add_modifier(Modifier::BOLD),
         ))
 }
 fn popup(area: Rect, width: u16, height: u16) -> Rect {
@@ -561,11 +533,7 @@ fn safe_text_width(value: &str, columns: usize) -> String {
     let mut text = String::new();
     let mut width = 0;
     for character in value.chars().take(MAX_TEXT) {
-        let character = if safe_character(character) {
-            character
-        } else {
-            '�'
-        };
+        let character = if safe_character(character) { character } else { '�' };
         let next = width + cell_width(character);
         if next > columns {
             break;
@@ -578,18 +546,13 @@ fn safe_text_width(value: &str, columns: usize) -> String {
 fn rate(value: Option<f64>) -> String {
     value
         .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or_else(
-            || "—".into(),
-            |value| graphite_meter_core::format::rate(value / 8.0),
-        )
+        .map_or_else(|| "—".into(), |value| graphite_meter_core::format::rate(value / 8.0))
 }
 fn milliseconds(value: Option<f64>) -> String {
-    value
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .map_or_else(
-            || "—".into(),
-            |value| format!("{} ms", graphite_meter_core::format::latency_ms(value)),
-        )
+    value.filter(|value| value.is_finite() && *value >= 0.0).map_or_else(
+        || "—".into(),
+        |value| format!("{} ms", graphite_meter_core::format::latency_ms(value)),
+    )
 }
 
 #[cfg(test)]

@@ -96,10 +96,7 @@ impl SecurityLog {
         true
     }
     pub fn window(&self, last: &mut [u64; Counter::COUNT]) -> Option<String> {
-        let values = self
-            .counters
-            .each_ref()
-            .map(|counter| counter.load(Ordering::Relaxed));
+        let values = self.counters.each_ref().map(|counter| counter.load(Ordering::Relaxed));
         if values == *last {
             return None;
         }
@@ -130,10 +127,7 @@ mod tests {
         let first = log.ceilings.lock().unwrap()[Ceiling::Password as usize].unwrap();
         tokio::time::advance(Duration::from_secs(59)).await;
         assert!(!limiter.allow(Budget::Password, address(62)));
-        assert_eq!(
-            log.ceilings.lock().unwrap()[Ceiling::Password as usize],
-            Some(first)
-        );
+        assert_eq!(log.ceilings.lock().unwrap()[Ceiling::Password as usize], Some(first));
         tokio::time::advance(Duration::from_secs(1)).await;
         for last in 1..=60 {
             assert!(limiter.allow(Budget::Password, address(last)));

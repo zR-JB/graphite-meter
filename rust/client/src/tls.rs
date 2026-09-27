@@ -25,8 +25,7 @@ fn build(
     versions: &[&'static rustls::SupportedProtocolVersion],
 ) -> Result<rustls::ClientConfig, Error> {
     let provider = Arc::new(crate::crypto::provider());
-    let builder = rustls::ClientConfig::builder_with_provider(provider.clone())
-        .with_protocol_versions(versions)?;
+    let builder = rustls::ClientConfig::builder_with_provider(provider.clone()).with_protocol_versions(versions)?;
     let tls = if insecure {
         builder
             .dangerous()
@@ -82,8 +81,6 @@ impl ServerCertVerifier for InsecureVerifier {
         )
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.provider
-            .signature_verification_algorithms
-            .supported_schemes()
+        self.provider.signature_verification_algorithms.supported_schemes()
     }
 }

@@ -34,9 +34,7 @@ async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Resu
             if let Message::Text(text) = message?
                 && wire::decode_ping(&text) == Ok(0)
             {
-                socket
-                    .send(Message::Text(wire::encode_pong(0, 0).into()))
-                    .await?;
+                socket.send(Message::Text(wire::encode_pong(0, 0).into())).await?;
             }
         }
         return Ok(());
@@ -198,11 +196,7 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
         ..Config::default()
     };
     let (snapshots, _) = watch::channel(Snapshot::default());
-    let result = tokio::time::timeout(
-        Duration::from_secs(3),
-        prepare(&config, &Http::new(false)?, &snapshots),
-    )
-    .await?;
+    let result = tokio::time::timeout(Duration::from_secs(3), prepare(&config, &Http::new(false)?, &snapshots)).await?;
     let Ok(Preparation { servers, failures }) = result else {
         return Err("one unusable server failed the whole selection".into());
     };
@@ -214,9 +208,12 @@ async fn selected_servers_verify_concurrently_and_report_each_result() -> Result
         graphite_meter_core::failure::FailureReason::PreparationFailed
     );
     let snapshot = snapshots.borrow();
-    assert!(snapshot.servers.iter().any(|server| {
-        server.id == "self" && server.throughput.is_some() && server.error.is_none()
-    }));
+    assert!(
+        snapshot
+            .servers
+            .iter()
+            .any(|server| { server.id == "self" && server.throughput.is_some() && server.error.is_none() })
+    );
     assert!(snapshot.servers.iter().any(|server| {
         server.id == "beta"
             && server
@@ -272,11 +269,7 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
         .err()
         .ok_or("unreachable WebTransport unexpectedly passed preparation")?;
     assert!(error.to_string().contains("select an origin explicitly"));
-    assert!(
-        error
-            .to_string()
-            .contains("advertised WebTransport is unavailable")
-    );
+    assert!(error.to_string().contains("advertised WebTransport is unavailable"));
     fixture.abort();
     Ok(())
 }

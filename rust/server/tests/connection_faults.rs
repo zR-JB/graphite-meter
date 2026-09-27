@@ -35,12 +35,10 @@ struct Tls {
 impl Tls {
     fn new() -> Self {
         let identity = support::Identity::generate();
-        let certificate =
-            CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
+        let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
         let provider = graphite_meter_server::crypto::provider();
-        let key =
-            Arc::new(CertifiedKey::from_der(vec![certificate.clone()], key, &provider).unwrap());
+        let key = Arc::new(CertifiedKey::from_der(vec![certificate.clone()], key, &provider).unwrap());
         Self {
             _identity: identity,
             certificate,
@@ -84,16 +82,10 @@ impl ResolvesServerCert for PanicOnce {
     }
 }
 
-async fn h2_client(
-    tls: &Tls,
-    address: SocketAddr,
-) -> Result<h2::client::SendRequest<Bytes>, TestError> {
+async fn h2_client(tls: &Tls, address: SocketAddr) -> Result<h2::client::SendRequest<Bytes>, TestError> {
     let stream = tls
         .client()
-        .connect(
-            ServerName::try_from("localhost")?,
-            TcpStream::connect(address).await?,
-        )
+        .connect(ServerName::try_from("localhost")?, TcpStream::connect(address).await?)
         .await?;
     let (client, connection) = h2::client::handshake(stream).await?;
     tokio::spawn(connection);
@@ -138,10 +130,7 @@ async fn one_connection_panic_leaves_the_listener_serving() -> Result<(), TestEr
         },
     )
     .await;
-    assert!(
-        h2_client(&tls, address).await.is_err(),
-        "first handshake must fail"
-    );
+    assert!(h2_client(&tls, address).await.is_err(), "first handshake must fail");
     let mut client = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if let Ok(client) = h2_client(&tls, address).await {
@@ -196,8 +185,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     let mut remaining = Bytes::from(vec![7_u8; 2 * 1024 * 1024]);
     client = client.ready().await?;
     let started = tokio::time::Instant::now();
-    let (response, mut upload) =
-        client.send_request(request("POST", &format!("/upload?id={id}")), false)?;
+    let (response, mut upload) = client.send_request(request("POST", &format!("/upload?id={id}")), false)?;
     while !remaining.is_empty() {
         upload.reserve_capacity(remaining.len().min(256 * 1024));
         let capacity = std::future::poll_fn(|cx| upload.poll_capacity(cx))
@@ -212,10 +200,7 @@ async fn h2_upload_is_not_window_bound_on_a_delayed_link() -> Result<(), TestErr
     assert_eq!(reply["bytes"], 2 * 1024 * 1024);
     let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
     eprintln!("h2 2 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
-    assert!(
-        round_trips < 10.0,
-        "window-bound upload: {round_trips:.1} RTT"
-    );
+    assert!(round_trips < 10.0, "window-bound upload: {round_trips:.1} RTT");
     stop.send(()).ok();
     server.await??;
     Ok(())
@@ -235,9 +220,7 @@ async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), T
     .await?;
     let one_way = Duration::from_millis(20);
     let link = test_link::Link::udp(address, one_way).await?;
-    let quic = quic_client(&tls, true)?
-        .connect(link.address, "localhost")?
-        .await?;
+    let quic = quic_client(&tls, true)?.connect(link.address, "localhost")?.await?;
     let (mut driver, mut sender) = h3::client::new(h3_noq::Connection::new(quic.clone())).await?;
     let driving = tokio::spawn(async move { driver.wait_idle().await });
     let mut session = sender
@@ -265,16 +248,10 @@ async fn h3_upload_is_not_floor_window_bound_on_a_delayed_link() -> Result<(), T
         reply.extend_from_slice(&data.copy_to_bytes(data.remaining()));
     }
     let elapsed = started.elapsed();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&reply)?["bytes"],
-        size
-    );
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&reply)?["bytes"], size);
     let round_trips = elapsed.as_secs_f64() / (2.0 * one_way.as_secs_f64());
     eprintln!("h3 4 MiB upload: {elapsed:?} = {round_trips:.1} RTT");
-    assert!(
-        round_trips < 20.0,
-        "window-bound upload: {round_trips:.1} RTT"
-    );
+    assert!(round_trips < 20.0, "window-bound upload: {round_trips:.1} RTT");
     quic.close(0_u32.into(), b"done");
     driving.abort();
     stop.send(()).ok();
@@ -358,11 +335,7 @@ async fn quic_retry_only_under_load() -> Result<(), TestError> {
     for load in 0..3 {
         let link = test_link::Link::udp(address, Duration::ZERO).await?;
         let connection = client.connect(link.address, "localhost")?.await?;
-        assert_eq!(
-            link.retries() > 0,
-            load >= 2,
-            "Retry only from a quarter of the limit"
-        );
+        assert_eq!(link.retries() > 0, load >= 2, "Retry only from a quarter of the limit");
         held.push((link, connection));
     }
     stop.send(()).ok();
@@ -421,8 +394,7 @@ async fn tcp_delay_stall_and_reset() {
     let mut refused = refused;
     let result = refused.read(&mut reply).await;
     assert!(
-        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::ConnectionReset)
-            || matches!(result, Ok(0)),
+        matches!(result, Err(ref e) if e.kind() == std::io::ErrorKind::ConnectionReset) || matches!(result, Ok(0)),
         "{result:?}"
     );
 }
@@ -437,9 +409,7 @@ async fn udp_delay_and_blackhole() {
             let _ = server.send_to(&buffer[..count], from).await;
         }
     });
-    let link = test_link::Link::udp(target, Duration::from_millis(20))
-        .await
-        .unwrap();
+    let link = test_link::Link::udp(target, Duration::from_millis(20)).await.unwrap();
     let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     client.connect(link.address).await.unwrap();
     let started = tokio::time::Instant::now();
@@ -491,11 +461,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     let tls = Tls::new();
     let (address, server, stop) = quic_server(&tls, Config::default()).await?;
     let link = test_link::Link::udp(address, one_way).await?;
-    let target = if one_way.is_zero() {
-        address
-    } else {
-        link.address
-    };
+    let target = if one_way.is_zero() { address } else { link.address };
     let provider = Arc::new(graphite_meter_server::crypto::provider());
     let mut roots = RootCertStore::empty();
     roots.add(tls.certificate.clone())?;
@@ -504,9 +470,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
         .with_root_certificates(roots)
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"h3".to_vec()];
-    let mut config = quinn::ClientConfig::new(Arc::new(
-        quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?,
-    ));
+    let mut config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(client_tls)?));
     let mut transport = quinn::TransportConfig::default();
     transport.stream_receive_window((64_u32 << 20).into());
     transport.receive_window((64_u32 << 20).into());
@@ -517,21 +481,14 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
         graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?,
         quinn::default_runtime().unwrap(),
     )?;
-    let mut client =
-        WebTransportClient::new(endpoint.connect_with(config, target, "localhost")?.await?).await?;
-    let path = if webtransport {
-        "wt/download"
-    } else {
-        "download"
-    };
+    let mut client = WebTransportClient::new(endpoint.connect_with(config, target, "localhost")?.await?).await?;
+    let path = if webtransport { "wt/download" } else { "download" };
     let mut request = Request::builder()
         .uri(format!("https://localhost/{path}?bytes=4294967296"))
         .body(())?;
     if webtransport {
         *request.method_mut() = http::Method::CONNECT;
-        request
-            .extensions_mut()
-            .insert(h3::ext::Protocol::WEB_TRANSPORT);
+        request.extensions_mut().insert(h3::ext::Protocol::WEB_TRANSPORT);
     }
     let mut stream = client.sender.send_request(request).await?;
     if !webtransport {
@@ -539,13 +496,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     }
     assert_eq!(stream.recv_response().await?.status(), 200);
     let mut wt_stream = if webtransport {
-        Some(
-            client
-                .incoming
-                .recv()
-                .await
-                .ok_or("missing download stream")?,
-        )
+        Some(client.incoming.recv().await.ok_or("missing download stream")?)
     } else {
         None
     };
@@ -555,9 +506,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     let mut next = Duration::from_millis(500);
     while started.elapsed() < Duration::from_secs(4) {
         let count = if let Some(stream) = &mut wt_stream {
-            poll_fn(|cx| stream.poll_data(cx))
-                .await?
-                .map(|chunk| chunk.len())
+            poll_fn(|cx| stream.poll_data(cx)).await?.map(|chunk| chunk.len())
         } else {
             stream.recv_data().await?.map(|chunk| chunk.remaining())
         };
@@ -586,8 +535,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
 }
 
 #[tokio::test]
-async fn cancelled_download_without_reliable_reset_preserves_http3_connection()
--> Result<(), TestError> {
+async fn cancelled_download_without_reliable_reset_preserves_http3_connection() -> Result<(), TestError> {
     use h3::quic::{RecvStream as _, StreamErrorIncoming};
     use std::future::poll_fn;
 
@@ -595,8 +543,7 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection()
         let tls = Tls::new();
         let (address, server, stop) = quic_server(&tls, Config::default()).await?;
         let endpoint = quic_client(&tls, false)?;
-        let mut client =
-            WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
+        let mut client = WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
         // A plain request keeps the connection past its sessions.
         let mut request = client
             .sender
@@ -607,25 +554,17 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection()
         while request.recv_data().await?.is_some() {}
         for _ in 0..2 {
             let mut control = client.session("/wt/download?bytes=4294967296").await?;
-            let mut stream = client
-                .incoming
-                .recv()
-                .await
-                .ok_or("missing download stream")?;
+            let mut stream = client.incoming.recv().await.ok_or("missing download stream")?;
             assert!(poll_fn(|cx| stream.poll_data(cx)).await?.is_some());
             control
-                .send_data(Bytes::from(graphite_meter_core::capsule::encode_close(
-                    0, "",
-                )))
+                .send_data(Bytes::from(graphite_meter_core::capsule::encode_close(0, "")))
                 .await?;
             control.finish().await?;
             loop {
                 match poll_fn(|cx| stream.poll_data(cx)).await {
                     Ok(Some(_)) => {}
                     Err(StreamErrorIncoming::StreamTerminated { .. }) => break,
-                    outcome => panic!(
-                        "cancelled download must reset without closing the connection: {outcome:?}"
-                    ),
+                    outcome => panic!("cancelled download must reset without closing the connection: {outcome:?}"),
                 }
             }
             while control.recv_data().await?.is_some() {}
@@ -642,8 +581,7 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection()
 struct WebTransportClient {
     quic: quinn::Connection,
     sender: h3::client::SendRequest<h3_noq::OpenStreams, Bytes>,
-    incoming:
-        tokio::sync::mpsc::UnboundedReceiver<graphite_meter_server::webtransport::ReceiveStream>,
+    incoming: tokio::sync::mpsc::UnboundedReceiver<graphite_meter_server::webtransport::ReceiveStream>,
     max_sessions: u64,
     _driver: tokio::task::JoinSet<h3::error::ConnectionError>,
 }
@@ -675,8 +613,7 @@ impl WebTransportClient {
                 {
                     let _ = ready.send(http.settings().max_webtransport_sessions());
                 }
-                while let Some((_, stream)) = http.inner.accepted_streams_mut().wt_uni_streams.pop()
-                {
+                while let Some((_, stream)) = http.inner.accepted_streams_mut().wt_uni_streams.pop() {
                     let _ = incoming.send(stream);
                 }
                 Poll::Pending
@@ -697,18 +634,14 @@ impl WebTransportClient {
             .method(http::Method::CONNECT)
             .uri(format!("https://localhost{path}"))
             .body(())?;
-        request
-            .extensions_mut()
-            .insert(h3::ext::Protocol::WEB_TRANSPORT);
+        request.extensions_mut().insert(h3::ext::Protocol::WEB_TRANSPORT);
         let mut control = self.sender.send_request(request).await?;
         assert_eq!(control.recv_response().await?.status(), 200);
         Ok(control)
     }
 }
 
-async fn close_capsule(
-    control: &mut ConnectStream,
-) -> Result<graphite_meter_core::capsule::Capsule, TestError> {
+async fn close_capsule(control: &mut ConnectStream) -> Result<graphite_meter_core::capsule::Capsule, TestError> {
     use bytes::Buf;
     let mut decoder = graphite_meter_core::capsule::Decoder::new();
     while let Some(mut data) = control.recv_data().await? {
@@ -743,15 +676,10 @@ async fn webtransport_only_connection_ends_with_its_session() -> Result<(), Test
         let (address, server, stop) = quic_server(&tls, Config::default()).await?;
         let endpoint = quic_client(&tls, true)?;
 
-        let mut refused =
-            WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
+        let mut refused = WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
         assert_eq!(refused.max_sessions, 1);
         let mut control = refused.session("/wt/upload?id=").await?;
-        let mut progress = refused
-            .incoming
-            .recv()
-            .await
-            .ok_or("missing progress stream")?;
+        let mut progress = refused.incoming.recv().await.ok_or("missing progress stream")?;
         let record = poll_fn(|cx| progress.poll_data(cx))
             .await?
             .ok_or("empty progress stream")?;
@@ -769,19 +697,15 @@ async fn webtransport_only_connection_ends_with_its_session() -> Result<(), Test
         control.finish().await?;
         assert_closed_without_error(&refused.quic).await;
 
-        let mut ended =
-            WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
+        let mut ended = WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
         let mut control = ended.session("/wt/ping").await?;
         control
-            .send_data(Bytes::from(graphite_meter_core::capsule::encode_close(
-                0, "",
-            )))
+            .send_data(Bytes::from(graphite_meter_core::capsule::encode_close(0, "")))
             .await?;
         control.finish().await?;
         assert_closed_without_error(&ended.quic).await;
 
-        let mut stopped =
-            WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
+        let mut stopped = WebTransportClient::new(endpoint.connect(address, "localhost")?.await?).await?;
         let mut control = stopped.session("/wt/ping").await?;
         stop.send(()).ok();
         assert_eq!(

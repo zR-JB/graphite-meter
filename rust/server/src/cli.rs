@@ -203,9 +203,7 @@ pub fn parse(args: &[OsString]) -> Result<Arguments, ConfigError> {
     let mut overrides = BTreeMap::new();
     let mut args = args.iter();
     while let Some(argument) = args.next() {
-        let argument = argument
-            .to_str()
-            .ok_or("command line arguments must be UTF-8")?;
+        let argument = argument.to_str().ok_or("command line arguments must be UTF-8")?;
         if argument == "--" {
             if args.next().is_some() {
                 return Err("unexpected positional argument".into());
@@ -245,8 +243,7 @@ pub fn parse(args: &[OsString]) -> Result<Arguments, ConfigError> {
                 .ok_or_else(|| format!("flag -{name} requires a signed 64-bit integer"))?
                 .to_string(),
             Duration => {
-                parse_go_duration(value)
-                    .map_err(|_| format!("flag -{name} requires a Go duration"))?;
+                parse_go_duration(value).map_err(|_| format!("flag -{name} requires a Go duration"))?;
                 value.into()
             }
             Text => value.into(),
@@ -257,10 +254,9 @@ pub fn parse(args: &[OsString]) -> Result<Arguments, ConfigError> {
 }
 
 fn integer(raw: &str) -> Option<i64> {
-    let (negative, raw) = raw.strip_prefix('-').map_or_else(
-        || (false, raw.strip_prefix('+').unwrap_or(raw)),
-        |raw| (true, raw),
-    );
+    let (negative, raw) = raw
+        .strip_prefix('-')
+        .map_or_else(|| (false, raw.strip_prefix('+').unwrap_or(raw)), |raw| (true, raw));
     let (radix, digits, prefixed) = if raw.starts_with("0x") || raw.starts_with("0X") {
         (16, &raw[2..], true)
     } else if raw.starts_with("0b") || raw.starts_with("0B") {

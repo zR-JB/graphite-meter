@@ -24,9 +24,7 @@ impl HttpServer {
     pub fn classify_http3_request(request: &Request<()>) -> Http3RequestKind {
         if request.method() != Method::CONNECT {
             Http3RequestKind::Measurement
-        } else if request.extensions().get::<h3::ext::Protocol>()
-            == Some(&h3::ext::Protocol::WEB_TRANSPORT)
-        {
+        } else if request.extensions().get::<h3::ext::Protocol>() == Some(&h3::ext::Protocol::WEB_TRANSPORT) {
             Http3RequestKind::WebTransport
         } else {
             Http3RequestKind::InvalidConnect
@@ -115,10 +113,7 @@ impl Body for RequestBody {
     type Data = Bytes;
     type Error = io::Error;
 
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
+    fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, io::Error>>> {
         if self.finished {
             return Poll::Ready(None);
         }
@@ -184,12 +179,8 @@ impl ResponseStream {
         active_responses: Arc<AtomicUsize>,
     ) -> io::Result<()> {
         let (parts, mut body) = response.into_parts();
-        let active = (!head
-            && body
-                .size_hint()
-                .upper()
-                .is_some_and(|size| size > 1024 * 1024))
-        .then(|| ActiveResponse::new(active_responses));
+        let active = (!head && body.size_hint().upper().is_some_and(|size| size > 1024 * 1024))
+            .then(|| ActiveResponse::new(active_responses));
         self.stream
             .send_response(Response::from_parts(parts, ()))
             .await
@@ -197,9 +188,7 @@ impl ResponseStream {
         let idle = tokio::time::sleep(Duration::from_secs(30));
         tokio::pin!(idle);
         if !head {
-            while let Some(frame) =
-                std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
-            {
+            while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
                 if let Ok(mut data) = frame?.into_data() {
                     while !data.is_empty() {
                         let chunk = data.split_to(data.len().min(DATA_BYTES));

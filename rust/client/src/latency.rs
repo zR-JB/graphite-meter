@@ -13,9 +13,7 @@ use tokio::{
     sync::{mpsc, watch},
     time::Instant,
 };
-use tokio_tungstenite::tungstenite::{
-    Message, client::IntoClientRequest, protocol::WebSocketConfig,
-};
+use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest, protocol::WebSocketConfig};
 
 type Socket = tokio_tungstenite::WebSocketStream<Box<dyn graphite_meter_net::Stream>>;
 
@@ -38,9 +36,7 @@ impl Observation {
         Some(match self {
             Self::ConnectionBoundary => return None,
             Self::Sample {
-                rtt,
-                server_handling,
-                ..
+                rtt, server_handling, ..
             } => ProbeOutcome::Reply {
                 // run() bounds duration to the core's signed nanosecond clock range.
                 rtt_nanos: rtt.as_nanos() as i64,
@@ -124,11 +120,8 @@ pub(crate) async fn run_kind(
             if Instant::now() >= end {
                 return Ok(());
             }
-            let attempt = tokio::time::timeout_at(
-                reconnect_until,
-                connect(http, origin, insecure, &mut cancel, kind),
-            )
-            .await;
+            let attempt =
+                tokio::time::timeout_at(reconnect_until, connect(http, origin, insecure, &mut cancel, kind)).await;
             match attempt {
                 Ok(Ok(Some(socket))) => break socket,
                 Ok(Ok(None)) => return Ok(()),
@@ -171,10 +164,7 @@ impl Bus {
                 let (writer, reader) = (*socket).split();
                 (Writer::WebSocket(writer), Reader::WebSocket(reader))
             }
-            Self::WebTransport(session) => (
-                Writer::WebTransport(session.clone()),
-                Reader::WebTransport(session),
-            ),
+            Self::WebTransport(session) => (Writer::WebTransport(session.clone()), Reader::WebTransport(session)),
         }
     }
 }
@@ -198,23 +188,24 @@ impl Reader {
     async fn next(&mut self) -> Option<Result<Message, Error>> {
         match self {
             Self::WebSocket(reader) => reader.next().await.map(|result| result.map_err(Into::into)),
-            Self::WebTransport(session) => Some(session.recv_datagram().await.map(|bytes| {
-                match String::from_utf8(bytes.to_vec()) {
-                    Ok(text) => Message::Text(text.into()),
-                    Err(_) => Message::Binary(bytes),
-                }
-            })),
+            Self::WebTransport(session) => {
+                Some(
+                    session
+                        .recv_datagram()
+                        .await
+                        .map(|bytes| match String::from_utf8(bytes.to_vec()) {
+                            Ok(text) => Message::Text(text.into()),
+                            Err(_) => Message::Binary(bytes),
+                        }),
+                )
+            }
         }
     }
 }
 
 /// Check the actual latency channel before a run starts. A successful HTTP
 /// probe does not establish that QUIC datagrams or WebSocket pings work.
-pub(crate) async fn verify(
-    http: &Http,
-    target: &LatencyTarget,
-    insecure: bool,
-) -> Result<(), Error> {
+pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<(), Error> {
     let kind = match target.transport {
         LatencyTransport::WebSocket => Kind::WebSocket,
         LatencyTransport::WebTransport => Kind::WebTransport,
@@ -242,18 +233,11 @@ pub(crate) async fn verify(
                             }
                             Some(Ok(Message::Close(frame))) => {
                                 if let Some(ending) = frame.and_then(|frame| {
-                                    graphite_meter_core::failure::LaneEnding::from_websocket_code(
-                                        frame.code.into(),
-                                    )
+                                    graphite_meter_core::failure::LaneEnding::from_websocket_code(frame.code.into())
                                 }) {
-                                    break Err(
-                                        Box::new(crate::failure::LaneFailure(ending)) as Error
-                                    );
+                                    break Err(Box::new(crate::failure::LaneFailure(ending)) as Error);
                                 }
-                                break Err(Disconnected(
-                                    "latency channel closed before measurement ended",
-                                )
-                                .into());
+                                break Err(Disconnected("latency channel closed before measurement ended").into());
                             }
                             None => {
                                 return Err("latency channel closed before replying".into());
@@ -294,8 +278,7 @@ async fn connect(
             Ok(bus) => return Ok(bus),
             Err(error) => error,
         };
-        if crate::failure::reason(error.as_ref(), false)
-            != graphite_meter_core::failure::FailureReason::ServerBusy
+        if crate::failure::reason(error.as_ref(), false) != graphite_meter_core::failure::FailureReason::ServerBusy
             || Instant::now() >= deadline
         {
             return Err(error);
@@ -346,9 +329,7 @@ async fn connect_ws(
     } else {
         format!(
             "ws://{}",
-            target
-                .strip_prefix("http://")
-                .ok_or("invalid WebSocket origin")?
+            target.strip_prefix("http://").ok_or("invalid WebSocket origin")?
         )
     };
     let mut request = websocket.into_client_request()?;
@@ -356,9 +337,7 @@ async fn connect_ws(
         if insecure {
             return Err("authenticated operation refuses insecure TLS".into());
         }
-        request
-            .headers_mut()
-            .insert(http::header::AUTHORIZATION, authorization);
+        request.headers_mut().insert(http::header::AUTHORIZATION, authorization);
     }
     let mut tls = crate::tls::config(insecure)?;
     tls.alpn_protocols = vec![b"http/1.1".to_vec()];
@@ -387,20 +366,15 @@ async fn connect_ws(
                 .insert(http::header::PROXY_AUTHORIZATION, authorization);
         }
         let (mut sender, driver) =
-            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection.stream))
-                .await?;
+            hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(connection.stream)).await?;
         tokio::spawn(driver.with_upgrades());
-        let response = sender
-            .send_request(request.map(|()| crate::net::empty()))
-            .await?;
+        let response = sender.send_request(request.map(|()| crate::net::empty())).await?;
         if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
             http.check_status(&target, response.status(), response.headers())?;
             return Err("WebSocket upgrade was not accepted".into());
         }
         let headers = response.headers();
-        let upgrade = headers
-            .get(http::header::UPGRADE)
-            .and_then(|value| value.to_str().ok());
+        let upgrade = headers.get(http::header::UPGRADE).and_then(|value| value.to_str().ok());
         let connection = headers
             .get(http::header::CONNECTION)
             .and_then(|value| value.to_str().ok());
@@ -419,8 +393,7 @@ async fn connect_ws(
             return Err("invalid WebSocket upgrade response".into());
         }
         let upgraded = hyper::upgrade::on(response).await?;
-        let stream: Box<dyn graphite_meter_net::Stream> =
-            Box::new(hyper_util::rt::TokioIo::new(upgraded));
+        let stream: Box<dyn graphite_meter_net::Stream> = Box::new(hyper_util::rt::TokioIo::new(upgraded));
         Ok::<_, Error>(
             tokio_tungstenite::WebSocketStream::from_raw_socket(
                 stream,
@@ -629,13 +602,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn deadlines_learn_from_late_replies_and_drain_at_the_stage_boundary() -> Result<(), Error>
-    {
-        for (delay, interval, duration, expected) in [
-            (150, 80, 100, (2, 0)),
-            (300, 80, 100, (0, 2)),
-            (400, 500, 1600, (3, 1)),
-        ] {
+    async fn deadlines_learn_from_late_replies_and_drain_at_the_stage_boundary() -> Result<(), Error> {
+        for (delay, interval, duration, expected) in
+            [(150, 80, 100, (2, 0)), (300, 80, 100, (0, 2)), (400, 500, 1600, (3, 1))]
+        {
             let (client, server) = tokio::io::duplex(4096);
             let socket = Socket::from_raw_socket(
                 Box::new(client),
@@ -706,14 +676,8 @@ mod tests {
                     head.push(stream.read_u8().await.unwrap());
                 }
                 let head = String::from_utf8(head).unwrap();
-                assert!(
-                    head.starts_with("GET http://meter.test/ws/ping HTTP/1.1\r\n"),
-                    "{head}"
-                );
-                assert!(
-                    head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="),
-                    "{head}"
-                );
+                assert!(head.starts_with("GET http://meter.test/ws/ping HTTP/1.1\r\n"), "{head}");
+                assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), "{head}");
                 let key = head
                     .lines()
                     .find_map(|line| line.strip_prefix("sec-websocket-key: "))

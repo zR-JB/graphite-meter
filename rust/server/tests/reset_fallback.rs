@@ -53,14 +53,11 @@ async fn no_reset_peer_inner(case: Case) -> Result<(), TestError> {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert)?;
     let sender_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse()?)?;
-    sender_endpoint.set_default_client_config(quinn::ClientConfig::with_root_certificates(
-        Arc::new(roots),
-    )?);
+    sender_endpoint.set_default_client_config(quinn::ClientConfig::with_root_certificates(Arc::new(roots))?);
     let connecting = sender_endpoint.connect(receiver_endpoint.local_addr()?, "localhost")?;
-    let (sender, receiver) =
-        tokio::try_join!(async { Ok::<_, TestError>(connecting.await?) }, async {
-            Ok::<_, TestError>(receiver_endpoint.accept().await.ok_or("closed")?.await?)
-        })?;
+    let (sender, receiver) = tokio::try_join!(async { Ok::<_, TestError>(connecting.await?) }, async {
+        Ok::<_, TestError>(receiver_endpoint.accept().await.ok_or("closed")?.await?)
+    })?;
     let (factory, mut cleanup) = ResetQueue::new(4);
     let code = quinn::VarInt::from_u32(73);
     let outcome = match case {
@@ -87,8 +84,7 @@ async fn no_reset_peer_inner(case: Case) -> Result<(), TestError> {
             let pending = cleanup.try_recv();
             let (completed, outcome) = match pending {
                 Ok(pending) => {
-                    let (completed, outcome) =
-                        tokio::join!(pending.complete(), read_to_outcome(&mut incoming));
+                    let (completed, outcome) = tokio::join!(pending.complete(), read_to_outcome(&mut incoming));
                     (completed.map_err(|e| e.to_string()), outcome)
                 }
                 Err(_) => (Ok(()), read_to_outcome(&mut incoming).await),

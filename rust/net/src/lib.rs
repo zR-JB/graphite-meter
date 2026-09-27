@@ -26,15 +26,9 @@ pub struct Connection {
     pub proxy_authorization: Option<http::HeaderValue>,
 }
 
-pub async fn connect(
-    proxy: &Proxy,
-    target: &Origin,
-    tls: Option<&TlsConnector>,
-) -> io::Result<Connection> {
+pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>) -> io::Result<Connection> {
     if (target.scheme == "https") != tls.is_some() {
-        return Err(io::Error::other(
-            "TLS configuration does not match the target scheme",
-        ));
+        return Err(io::Error::other("TLS configuration does not match the target scheme"));
     }
     let port = target.port_number();
     let mut absolute_form = false;
@@ -49,10 +43,7 @@ pub async fn connect(
                     .tls
                     .as_ref()
                     .ok_or_else(|| io::Error::other("proxy TLS is unavailable"))?;
-                Box::new(
-                    tls.connect(server_name(&upstream.origin.host)?, tcp)
-                        .await?,
-                )
+                Box::new(tls.connect(server_name(&upstream.origin.host)?, tcp).await?)
             } else {
                 Box::new(tcp)
             };
@@ -68,8 +59,7 @@ pub async fn connect(
                     .authorization
                     .as_ref()
                     .map(|value| {
-                        let mut header =
-                            http::HeaderValue::from_str(value).map_err(io::Error::other)?;
+                        let mut header = http::HeaderValue::from_str(value).map_err(io::Error::other)?;
                         header.set_sensitive(true);
                         Ok::<_, io::Error>(header)
                     })
@@ -95,9 +85,7 @@ pub async fn connect(
             absolute_form,
             proxy_authorization,
         }),
-        _ => Err(io::Error::other(
-            "TLS configuration does not match the target scheme",
-        )),
+        _ => Err(io::Error::other("TLS configuration does not match the target scheme")),
     }
 }
 
@@ -139,34 +127,22 @@ async fn tcp(host: &str, port: u16) -> io::Result<TcpStream> {
     }
 }
 
-async fn tunnel(
-    stream: Box<dyn Stream>,
-    authority: &str,
-    authorization: Option<&str>,
-) -> io::Result<Box<dyn Stream>> {
-    let (mut sender, connection) =
-        hyper::client::conn::http1::handshake::<_, String>(TokioIo::new(stream))
-            .await
-            .map_err(io::Error::other)?;
+async fn tunnel(stream: Box<dyn Stream>, authority: &str, authorization: Option<&str>) -> io::Result<Box<dyn Stream>> {
+    let (mut sender, connection) = hyper::client::conn::http1::handshake::<_, String>(TokioIo::new(stream))
+        .await
+        .map_err(io::Error::other)?;
     let mut request = http::Request::connect(authority).header(http::header::HOST, authority);
     if let Some(authorization) = authorization {
         request = request.header(http::header::PROXY_AUTHORIZATION, authorization);
     }
     let request = request.body(String::new()).map_err(io::Error::other)?;
     tokio::spawn(connection.with_upgrades());
-    let response = sender
-        .send_request(request)
-        .await
-        .map_err(io::Error::other)?;
+    let response = sender.send_request(request).await.map_err(io::Error::other)?;
     if !response.status().is_success() {
         let status = response.status().as_u16();
-        return Err(io::Error::other(format!(
-            "proxy refused CONNECT with HTTP {status}"
-        )));
+        return Err(io::Error::other(format!("proxy refused CONNECT with HTTP {status}")));
     }
-    let upgraded = hyper::upgrade::on(response)
-        .await
-        .map_err(io::Error::other)?;
+    let upgraded = hyper::upgrade::on(response).await.map_err(io::Error::other)?;
     Ok(Box::new(TokioIo::new(upgraded)))
 }
 
@@ -252,9 +228,7 @@ impl Proxy {
             || self.bypass.iter().any(|rule| match (rule, ip) {
                 (Bypass::All, _) => true,
                 (Bypass::Network(network), Some(ip)) => network.contains(&ip),
-                (Bypass::Address(address, only), Some(ip)) => {
-                    *address == ip && only.is_none_or(|only| only == port)
-                }
+                (Bypass::Address(address, only), Some(ip)) => *address == ip && only.is_none_or(|only| only == port),
                 (
                     Bypass::Domain {
                         suffix,
@@ -302,10 +276,7 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
             STANDARD.encode(format!("{}:{}", decode(user), decode(password)))
         )
     });
-    Ok(Upstream {
-        origin,
-        authorization,
-    })
+    Ok(Upstream { origin, authorization })
 }
 
 fn bypass(entry: &str) -> Option<Bypass> {
@@ -344,14 +315,12 @@ fn bypass(entry: &str) -> Option<Bypass> {
 }
 
 fn proxy_tls() -> Option<TlsConnector> {
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()
-    .ok()?
-    .with_platform_verifier()
-    .ok()?
-    .with_no_client_auth();
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+        .with_safe_default_protocol_versions()
+        .ok()?
+        .with_platform_verifier()
+        .ok()?
+        .with_no_client_auth();
     Some(TlsConnector::from(Arc::new(config)))
 }
 

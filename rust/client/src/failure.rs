@@ -10,8 +10,7 @@ pub struct HttpFailure {
 
 impl HttpFailure {
     pub fn retryable(&self) -> bool {
-        matches!(self.status, 429 | 503)
-            || self.status == 408 && self.refusal == Some(UploadRefusal::Idle)
+        matches!(self.status, 429 | 503) || self.status == 408 && self.refusal == Some(UploadRefusal::Idle)
     }
     pub fn reason(&self) -> FailureReason {
         match self.refusal {
@@ -75,9 +74,7 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
         }
         // io::Error::source() skips its own payload, which carries a wrapped wire cause.
         let next = match io {
-            Some(io) => io
-                .get_ref()
-                .map(|inner| inner as &(dyn std::error::Error + 'static)),
+            Some(io) => io.get_ref().map(|inner| inner as &(dyn std::error::Error + 'static)),
             None => error.source(),
         };
         let Some(source) = next else {
@@ -92,8 +89,7 @@ pub fn reason(mut error: &(dyn std::error::Error + 'static), preparing: bool) ->
 }
 
 pub(crate) fn lane_error(error: Error) -> Error {
-    if let Some(quinn::ConnectionError::ApplicationClosed(close)) =
-        error.downcast_ref::<quinn::ConnectionError>()
+    if let Some(quinn::ConnectionError::ApplicationClosed(close)) = error.downcast_ref::<quinn::ConnectionError>()
         && let Ok(code) = u32::try_from(close.error_code.into_inner())
         && let Some(ending) = LaneEnding::from_webtransport_code(code)
     {

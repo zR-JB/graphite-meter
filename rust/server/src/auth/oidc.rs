@@ -86,11 +86,7 @@ impl Provider {
         }
         let mut keys = self.keys.lock().await;
         if Arc::ptr_eq(&keys, &seen) {
-            *keys = Arc::new(
-                http.jwks(&self.jwks_uri)
-                    .await
-                    .map_err(|_| Reject::UnknownKey)?,
-            );
+            *keys = Arc::new(http.jwks(&self.jwks_uri).await.map_err(|_| Reject::UnknownKey)?);
         }
         let keys = keys.clone();
         jwt::verify(token, &keys, &self.algorithms)
@@ -148,10 +144,7 @@ pub(super) struct Oidc {
     exchanges: Semaphore,
 }
 impl Oidc {
-    pub fn new(
-        config: &AuthConfig,
-        log: Arc<super::logging::SecurityLog>,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(config: &AuthConfig, log: Arc<super::logging::SecurityLog>) -> Result<Self, ConfigError> {
         let secret = read_secret(&config.oidc_client_secret, &config.oidc_secret_file, 4096)?;
         let mut config = config.clone();
         config.oidc_client_secret.zeroize();
@@ -193,10 +186,7 @@ impl Oidc {
                 eprintln!("[gm:auth] OIDC provider retrying");
             }
             self.log.debug("OIDC discovery failed");
-            tokio::time::sleep(
-                Duration::from_secs(1 << failures.min(6)).min(Duration::from_secs(60)),
-            )
-            .await;
+            tokio::time::sleep(Duration::from_secs(1 << failures.min(6)).min(Duration::from_secs(60))).await;
             failures = failures.saturating_add(1);
         }
     }
@@ -205,9 +195,7 @@ impl Oidc {
         let separator = if issuer.ends_with('/') { "" } else { "/" };
         let response = self
             .http
-            .call(get(&format!(
-                "{issuer}{separator}.well-known/openid-configuration"
-            ))?)
+            .call(get(&format!("{issuer}{separator}.well-known/openid-configuration"))?)
             .await?;
         let metadata: Metadata = serde_json::from_slice(json(&response, &["application/json"])?)?;
         if metadata.issuer != *issuer {
@@ -227,10 +215,8 @@ impl Oidc {
         let state = random_token::<32>().map_err(|_| OidcFailure::Failed)?;
         let nonce = Zeroizing::new(random_token::<32>().map_err(|_| OidcFailure::Failed)?);
         let verifier = Zeroizing::new(random_token::<32>().map_err(|_| OidcFailure::Failed)?);
-        let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(ring::digest::digest(
-            &ring::digest::SHA256,
-            verifier.as_bytes(),
-        ));
+        let pkce = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(ring::digest::digest(&ring::digest::SHA256, verifier.as_bytes()));
         let query = form_urlencoded::Serializer::new(String::new())
             .append_pair("response_type", "code")
             .append_pair("client_id", &self.config.oidc_client_id)
@@ -247,10 +233,7 @@ impl Oidc {
             Some(_) => "&",
         };
         let url = format!("{}{separator}{query}", provider.authorization);
-        let mut transactions = self
-            .transactions
-            .lock()
-            .expect("OIDC transactions poisoned");
+        let mut transactions = self.transactions.lock().expect("OIDC transactions poisoned");
         let now = Instant::now();
         transactions.retain(|_, transaction| transaction.deadline > now);
         let client_keys = crate::client_address::client_keys(address);
@@ -280,11 +263,7 @@ impl Oidc {
                 prior,
             },
         );
-        Ok(Started {
-            url,
-            browser,
-            provider,
-        })
+        Ok(Started { url, browser, provider })
     }
     fn redirect_uri(&self) -> String {
         format!("{}/auth/oidc/callback", self.config.public_url)
@@ -310,10 +289,7 @@ impl Oidc {
         {
             return Err(OidcFailure::Failed);
         }
-        let _permit = self
-            .exchanges
-            .try_acquire()
-            .map_err(|_| OidcFailure::Failed)?;
+        let _permit = self.exchanges.try_acquire().map_err(|_| OidcFailure::Failed)?;
         let provider = &tx.provider;
         let tokens = self
             .exchange(provider, code, &tx.verifier)
@@ -388,23 +364,14 @@ impl Oidc {
             prior: tx.prior,
         })
     }
-    async fn exchange(
-        &self,
-        provider: &Provider,
-        code: &str,
-        verifier: &str,
-    ) -> Result<Tokens, ConfigError> {
-        let encode =
-            |value: &str| form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
+    async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<Tokens, ConfigError> {
+        let encode = |value: &str| form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>();
         let credentials = Zeroizing::new(format!(
             "{}:{}",
             encode(&self.config.oidc_client_id),
             encode(&self.secret)
         ));
-        let mut authorization = HeaderValue::from_str(&format!(
-            "Basic {}",
-            STANDARD.encode(credentials.as_bytes())
-        ))?;
+        let mut authorization = HeaderValue::from_str(&format!("Basic {}", STANDARD.encode(credentials.as_bytes())))?;
         authorization.set_sensitive(true);
         let body = form_urlencoded::Serializer::new(String::new())
             .append_pair("grant_type", "authorization_code")
@@ -421,9 +388,7 @@ impl Oidc {
         let essence = essence(&response);
         if response.status() != StatusCode::OK
             || response.body().is_empty()
-            || essence
-                .as_deref()
-                .is_some_and(|essence| essence != "application/json")
+            || essence.as_deref().is_some_and(|essence| essence != "application/json")
         {
             return Err("OIDC token endpoint rejected the exchange".into());
         }
@@ -433,11 +398,7 @@ impl Oidc {
         }
         Ok(tokens)
     }
-    async fn user_info(
-        &self,
-        provider: &Provider,
-        access_token: &str,
-    ) -> Result<UserInfo, ConfigError> {
+    async fn user_info(&self, provider: &Provider, access_token: &str) -> Result<UserInfo, ConfigError> {
         let mut bearer = HeaderValue::from_str(&format!("Bearer {access_token}"))?;
         bearer.set_sensitive(true);
         let mut request = get(&provider.userinfo)?;
@@ -454,15 +415,9 @@ impl Oidc {
                     .verify(&self.http, token)
                     .await
                     .map_err(|_| "OIDC user information signature rejected")?;
-                jwt::audience_and_issuer(
-                    &verified.claims,
-                    &self.config.oidc_issuer,
-                    &self.config.oidc_client_id,
-                )
-                .map_err(|_| "OIDC user information claims rejected")?;
-                Ok(serde_json::from_value(serde_json::Value::Object(
-                    verified.claims,
-                ))?)
+                jwt::audience_and_issuer(&verified.claims, &self.config.oidc_issuer, &self.config.oidc_client_id)
+                    .map_err(|_| "OIDC user information claims rejected")?;
+                Ok(serde_json::from_value(serde_json::Value::Object(verified.claims))?)
             }
             Some(_) => Err("OIDC user information has an unexpected type".into()),
         }
@@ -487,9 +442,7 @@ struct UserInfo {
 fn valid_url(url: &str) -> Result<(), ConfigError> {
     match split_url(url) {
         Ok((origin, _)) if origin.scheme == "https" => Ok(()),
-        _ => Err(
-            "OIDC endpoint must be an absolute HTTPS URL without credentials or fragment".into(),
-        ),
+        _ => Err("OIDC endpoint must be an absolute HTTPS URL without credentials or fragment".into()),
     }
 }
 
@@ -505,14 +458,7 @@ fn essence(response: &Response<Vec<u8>>) -> Option<String> {
         .get(header::CONTENT_TYPE)?
         .to_str()
         .unwrap_or_default();
-    Some(
-        value
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_ascii_lowercase(),
-    )
+    Some(value.split(';').next().unwrap_or_default().trim().to_ascii_lowercase())
 }
 
 fn json<'a>(response: &'a Response<Vec<u8>>, types: &[&str]) -> Result<&'a [u8], ConfigError> {
@@ -545,11 +491,7 @@ impl ProviderHttp {
         Jwks::parse(body).map_err(|_| "OIDC key set is malformed".into())
     }
     async fn call(&self, mut request: Request<String>) -> Result<Response<Vec<u8>>, ConfigError> {
-        let timeout = if request.method() == Method::GET {
-            10
-        } else {
-            15
-        };
+        let timeout = if request.method() == Method::GET { 10 } else { 15 };
         tokio::time::timeout(Duration::from_secs(timeout), async {
             let uri = request.uri().to_string();
             valid_url(&uri)?;
@@ -558,20 +500,13 @@ impl ProviderHttp {
             request
                 .headers_mut()
                 .insert(header::HOST, HeaderValue::from_str(&host)?);
-            *request.uri_mut() = if path.is_empty() {
-                "/".parse()?
-            } else {
-                path.parse()?
-            };
+            *request.uri_mut() = if path.is_empty() { "/".parse()? } else { path.parse()? };
             let connection = connect(&self.proxy, &origin, Some(&self.tls)).await?;
-            let (mut sender, driver) =
-                hyper::client::conn::http1::handshake(TokioIo::new(connection.stream)).await?;
+            let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream)).await?;
             let exchange = async move {
                 let (parts, mut body) = sender.send_request(request).await?.into_parts();
                 let mut bytes = Vec::new();
-                while let Some(frame) =
-                    std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
-                {
+                while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
                     if let Ok(data) = frame?.into_data() {
                         if bytes.len() + data.len() > 1024 * 1024 {
                             return Err("OIDC response too large".into());
@@ -637,10 +572,7 @@ pub(super) mod tests {
         let fields = query_fields(&started.url);
         assert_eq!(fields["code_challenge_method"], "S256");
         assert_eq!(fields["response_type"], "code");
-        assert_eq!(
-            fields["redirect_uri"],
-            "https://meter.example/auth/oidc/callback"
-        );
+        assert_eq!(fields["redirect_uri"], "https://meter.example/auth/oidc/callback");
         assert!(
             oidc.finish(
                 &fields["state"],
@@ -699,14 +631,9 @@ pub(super) mod tests {
             .unwrap();
         let state = query_fields(&started.url)["state"].clone();
         assert!(
-            oidc.finish(
-                &state,
-                &started.browser,
-                "code",
-                Some("https://other.example")
-            )
-            .await
-            .is_err()
+            oidc.finish(&state, &started.browser, "code", Some("https://other.example"))
+                .await
+                .is_err()
         );
         assert!(oidc.transactions.lock().unwrap().is_empty());
     }

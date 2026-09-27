@@ -69,9 +69,7 @@ impl EchoGuard {
         let fd = rustix::io::fcntl_dupfd_cloexec(input, 0)?;
         let original = tcgetattr(&fd)?;
         let mut hidden = original.clone();
-        hidden
-            .local_modes
-            .remove(LocalModes::ECHO | LocalModes::ECHONL);
+        hidden.local_modes.remove(LocalModes::ECHO | LocalModes::ECHONL);
         tcsetattr(&fd, OptionalActions::Now, &hidden)?;
         Ok(Self {
             fd,

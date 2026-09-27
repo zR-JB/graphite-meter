@@ -35,11 +35,7 @@ impl Ui {
         let regions = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(if self.help { 1 } else { 4 }),
-            Constraint::Length(if self.help {
-                1 + help_lines.len() as u16
-            } else {
-                2
-            }),
+            Constraint::Length(if self.help { 1 + help_lines.len() as u16 } else { 2 }),
         ])
         .split(area);
         let status = match self.snapshot.phase {
@@ -57,8 +53,7 @@ impl Ui {
         let status = safe_text_width(&status, usize::from(regions[0].width / 2).saturating_sub(4));
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
-        let spacer =
-            usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
+        let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
         let status_background = match self.snapshot.phase {
             Phase::Complete => self.theme.success,
             Phase::Cancelled | Phase::Partial => self.theme.warning,
@@ -110,26 +105,15 @@ impl Ui {
             self.draw_setup(frame, regions[1]);
         }
         let (mut notice, is_error) = self.notice();
-        if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup
-        {
+        if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup {
             notice = self.fields()[self.rows.selected().unwrap_or(0)].explanation(&self.config);
         }
-        let notice_color = if is_error {
-            self.theme.error
-        } else {
-            self.theme.muted
-        };
+        let notice_color = if is_error { self.theme.error } else { self.theme.muted };
         let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
             vec!["Esc confirm stop", "any key continue", "q quit"]
         } else if self.live {
             if self.active() {
-                vec![
-                    "Esc stop",
-                    "d Details",
-                    "l Latency server",
-                    "? keys",
-                    "q quit",
-                ]
+                vec!["Esc stop", "d Details", "l Latency server", "? keys", "q quit"]
             } else {
                 vec![
                     "Enter Run again",
@@ -152,9 +136,7 @@ impl Ui {
         } else {
             let field = self.fields()[self.rows.selected().unwrap_or(0)];
             use super::setup::Field;
-            let action = if field.stage().is_some()
-                || matches!(field, Field::LoadedLatency | Field::Insecure)
-            {
+            let action = if field.stage().is_some() || matches!(field, Field::LoadedLatency | Field::Insecure) {
                 "Space toggle"
             } else {
                 match field {
@@ -202,10 +184,7 @@ impl Ui {
                 Style::new().fg(notice_color),
             )]
         };
-        lines.push(Line::styled(
-            footer,
-            Style::new().fg(self.theme.brand_strong),
-        ));
+        lines.push(Line::styled(footer, Style::new().fg(self.theme.brand_strong)));
         lines.extend(help_lines);
         frame.render_widget(Paragraph::new(lines), regions[2]);
         if self.popup == Popup::Details {
@@ -223,17 +202,11 @@ impl Ui {
                 Paragraph::new(vec![
                     Line::from(vec![
                         Span::raw(before),
-                        Span::styled(
-                            cursor.to_string(),
-                            Style::new().add_modifier(Modifier::REVERSED),
-                        ),
+                        Span::styled(cursor.to_string(), Style::new().add_modifier(Modifier::REVERSED)),
                         Span::raw(after),
                     ]),
                     Line::from("Enter apply · Esc discard · ←/→ Home/End move"),
-                    Line::styled(
-                        safe_text(&self.notice, 200),
-                        Style::new().fg(self.theme.warning),
-                    ),
+                    Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warning)),
                 ])
                 .block(panel(edit.field.label(), self.theme)),
                 area,
@@ -269,15 +242,8 @@ impl Ui {
             regions[0],
         );
         frame.render_widget(
-            Paragraph::new(safe_text_width(
-                &format!("Match this code: {}", auth.code),
-                width,
-            ))
-            .style(
-                Style::new()
-                    .fg(self.theme.brand_strong)
-                    .add_modifier(Modifier::BOLD),
-            ),
+            Paragraph::new(safe_text_width(&format!("Match this code: {}", auth.code), width))
+                .style(Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD)),
             regions[1],
         );
         frame.render_widget(
@@ -286,9 +252,7 @@ impl Ui {
         );
         let url = safe_text(&auth.browser_url, MAX_TEXT);
         let lines = wrap_columns(&url, width.max(1));
-        let remaining = auth
-            .deadline
-            .saturating_duration_since(tokio::time::Instant::now());
+        let remaining = auth.deadline.saturating_duration_since(tokio::time::Instant::now());
         frame.render_widget(
             Paragraph::new(format!(
                 "waited {:.0} s · expires in {:.0} s",
@@ -311,8 +275,7 @@ impl Ui {
             regions[4],
         );
         frame.render_widget(
-            Paragraph::new("Enter/Space/o open · Esc cancel · q quit")
-                .style(Style::new().fg(self.theme.brand_strong)),
+            Paragraph::new("Enter/Space/o open · Esc cancel · q quit").style(Style::new().fg(self.theme.brand_strong)),
             regions[5],
         );
     }
@@ -320,13 +283,10 @@ impl Ui {
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
         let content = area;
         let (fields_area, plan_area) = if frame.area().width >= 100 {
-            let regions =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .split(content);
+            let regions = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).split(content);
             (regions[0], regions[1])
         } else if content.height >= 12 {
-            let regions =
-                Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(content);
+            let regions = Layout::vertical([Constraint::Length(5), Constraint::Min(1)]).split(content);
             (regions[0], regions[1])
         } else {
             (content, Rect::default())
@@ -356,17 +316,13 @@ impl Ui {
                 if *field == Field::Servers {
                     lines.push(Line::styled(
                         "Connections",
-                        Style::new()
-                            .fg(self.theme.brand_strong)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
                     ));
                 }
                 if *field == Field::LatencyStage {
                     lines.push(Line::styled(
                         "Stages",
-                        Style::new()
-                            .fg(self.theme.brand_strong)
-                            .add_modifier(Modifier::BOLD),
+                        Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
                     ));
                 }
                 lines.push(Line::from(vec![
@@ -439,24 +395,19 @@ impl Ui {
                 }
             }
             lines.extend([String::new(), "Run order".into()]);
-            lines.extend(self.config.stages.iter().map(|stage| {
-                format!(
-                    "  {}  {} s",
-                    stage.name(),
-                    seconds(self.config.duration(*stage))
-                )
-            }));
+            lines.extend(
+                self.config
+                    .stages
+                    .iter()
+                    .map(|stage| format!("  {}  {} s", stage.name(), seconds(self.config.duration(*stage)))),
+            );
             lines.extend([
                 String::new(),
                 format!("Warmup: {} s", seconds(self.config.warmup)),
                 format!("Loaded latency: {}", on_off(self.config.loaded_latency)),
                 format!(
                     "TLS verification: {}",
-                    if self.config.insecure {
-                        "DISABLED"
-                    } else {
-                        "enabled"
-                    }
+                    if self.config.insecure { "DISABLED" } else { "enabled" }
                 ),
             ]);
             let width = usize::from(plan_area.width.saturating_sub(2));
@@ -465,10 +416,7 @@ impl Ui {
                 .map(|line| safe_text_width(line, width))
                 .collect::<Vec<_>>()
                 .join("\n");
-            frame.render_widget(
-                Paragraph::new(text).block(panel("Servers", self.theme)),
-                plan_area,
-            );
+            frame.render_widget(Paragraph::new(text).block(panel("Servers", self.theme)), plan_area);
         }
     }
     fn focused_latency(&self) -> Option<&crate::model::ServerLatency> {
@@ -520,12 +468,9 @@ impl Ui {
         let chart_height = area.height.saturating_sub(results_height + track_height);
         let show_chart = chart_height >= 9;
         let (track_area, timeline_area, results_area) = if frame.area().width >= 100 {
-            let regions =
-                Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)])
-                    .split(area);
+            let regions = Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)]).split(area);
             let columns =
-                Layout::horizontal([Constraint::Percentage(32), Constraint::Percentage(68)])
-                    .split(regions[0]);
+                Layout::horizontal([Constraint::Percentage(32), Constraint::Percentage(68)]).split(regions[0]);
             (columns[0], columns[1], regions[1])
         } else {
             let regions = Layout::vertical([
@@ -538,11 +483,7 @@ impl Ui {
         };
         let mut track = Vec::new();
         for stage in &self.requested.stages {
-            let result = self
-                .snapshot
-                .results
-                .iter()
-                .find(|result| result.stage == *stage);
+            let result = self.snapshot.results.iter().find(|result| result.stage == *stage);
             let value = if let Some(result) = result {
                 self.outcome(result)
             } else if self.active() && self.snapshot.stage == Some(*stage) {
@@ -574,22 +515,14 @@ impl Ui {
             let index = self
                 .snapshot
                 .stage
-                .and_then(|stage| {
-                    self.requested
-                        .stages
-                        .iter()
-                        .position(|planned| *planned == stage)
-                })
+                .and_then(|stage| self.requested.stages.iter().position(|planned| *planned == stage))
                 .unwrap_or(0);
             frame.render_widget(
                 Paragraph::new(track.into_iter().skip(index).take(2).collect::<Vec<_>>()),
                 track_area,
             );
         } else {
-            frame.render_widget(
-                Paragraph::new(track).block(panel("Test", self.theme)),
-                track_area,
-            );
+            frame.render_widget(Paragraph::new(track).block(panel("Test", self.theme)), track_area);
         }
         if timeline_area.height >= 9 {
             self.draw_timeline(frame, timeline_area);
@@ -669,9 +602,7 @@ impl Ui {
     fn draw_results(&self, frame: &mut Frame, area: Rect) {
         let mut lines = vec![Line::styled(
             "Throughput              Download           Upload",
-            Style::new()
-                .fg(self.theme.brand_strong)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
         )];
         for result in &self.snapshot.results {
             if result.stage == Stage::Latency {
@@ -703,9 +634,7 @@ impl Ui {
                     crate::vocabulary::JITTER.label,
                     crate::vocabulary::PROBE_TIMEOUTS.label
                 ),
-                Style::new()
-                    .fg(self.theme.brand_strong)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
             ));
         } else {
             lines.push(Line::styled(
@@ -719,9 +648,7 @@ impl Ui {
                 ]
                 .map(|term| term.label)
                 .join(" · "),
-                Style::new()
-                    .fg(self.theme.brand_strong)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
             ));
         }
         for result in &self.snapshot.results {
@@ -759,10 +686,7 @@ impl Ui {
             }
         }
         for failure in &self.snapshot.failures {
-            lines.push(Line::styled(
-                failure.reason.label(),
-                Style::new().fg(self.theme.error),
-            ));
+            lines.push(Line::styled(failure.reason.label(), Style::new().fg(self.theme.error)));
         }
         frame.render_widget(
             Paragraph::new(lines)
@@ -811,20 +735,13 @@ impl Ui {
             let column = (at / total * plot_width as f64) as usize;
             if column >= marks.width() {
                 marks.push_str(&" ".repeat(column - marks.width()));
-                marks.push_str(if *stage == Stage::Latency {
-                    "Idle"
-                } else {
-                    stage.name()
-                });
+                marks.push_str(if *stage == Stage::Latency { "Idle" } else { stage.name() });
             }
             at += self.requested.duration(*stage).as_secs_f64();
         }
         frame.render_widget(
-            Paragraph::new(safe_text_width(
-                &format!("{:>14}{marks}", ""),
-                usize::from(area.width),
-            ))
-            .style(Style::new().fg(self.theme.muted)),
+            Paragraph::new(safe_text_width(&format!("{:>14}{marks}", ""), usize::from(area.width)))
+                .style(Style::new().fg(self.theme.muted)),
             regions[1],
         );
         for (latency, region) in [(false, regions[2]), (true, regions[3])] {
@@ -903,14 +820,7 @@ impl Ui {
                 .collect::<Vec<_>>();
             frame.render_widget(
                 Chart::new(datasets)
-                    .block(panel(
-                        if latency {
-                            "Latency · ms"
-                        } else {
-                            "Throughput"
-                        },
-                        self.theme,
-                    ))
+                    .block(panel(if latency { "Latency · ms" } else { "Throughput" }, self.theme))
                     .x_axis(
                         Axis::default()
                             .bounds([0.0, total])
@@ -932,35 +842,27 @@ impl Ui {
         let area = popup(frame.area(), 84, frame.area().height.saturating_sub(2));
         let mut lines = vec![Line::styled(
             self.snapshot.status.clone(),
-            Style::new()
-                .fg(self.theme.brand_strong)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
         )];
         for result in &self.snapshot.results {
             lines.push(Line::raw(""));
             lines.push(Line::styled(
                 result.stage.name(),
-                Style::new()
-                    .fg(self.theme.brand_strong)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
             ));
             for measurement in [&result.down, &result.up].into_iter().flatten() {
-                let name =
-                    if measurement.direction == graphite_meter_core::measurement::Direction::Down {
-                        "Download"
-                    } else {
-                        "Upload"
-                    };
+                let name = if measurement.direction == graphite_meter_core::measurement::Direction::Down {
+                    "Download"
+                } else {
+                    "Upload"
+                };
                 lines.push(Line::from(format!(
                     "{name}: {}",
                     crate::vocabulary::throughput_facts(measurement)
                 )));
             }
             if !result.server_results.is_empty() {
-                lines.push(Line::from(format!(
-                    "{:<23} {:<20} Upload",
-                    "Throughput", "Download"
-                )));
+                lines.push(Line::from(format!("{:<23} {:<20} Upload", "Throughput", "Download")));
                 lines.push(Line::from(format!(
                     "{:<23} {:<20} {}",
                     "Combined",
@@ -988,10 +890,7 @@ impl Ui {
                     milliseconds(host.median().map(|value| value as f64 / 1e6)),
                     host.summary.count
                 )));
-                lines.push(Line::from(crate::vocabulary::latency_facts(
-                    host.summary,
-                    host.elapsed,
-                )));
+                lines.push(Line::from(crate::vocabulary::latency_facts(host.summary, host.elapsed)));
                 if let Some(timing) = crate::vocabulary::reflector_facts(host.summary) {
                     lines.push(Line::from(timing));
                 }
@@ -1001,17 +900,12 @@ impl Ui {
             lines.push(Line::raw(""));
             lines.push(Line::styled(
                 "Left the test",
-                Style::new()
-                    .fg(self.theme.brand_strong)
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
             ));
             for failure in &self.snapshot.failures {
                 lines.extend(wrap_columns(
                     &safe_text(
-                        &crate::vocabulary::failure_facts(
-                            failure,
-                            self.server_name(&failure.server_id),
-                        ),
+                        &crate::vocabulary::failure_facts(failure, self.server_name(&failure.server_id)),
                         MAX_TEXT,
                     ),
                     usize::from(area.width.saturating_sub(2)),
@@ -1021,9 +915,7 @@ impl Ui {
         lines.push(Line::raw(""));
         lines.push(Line::styled(
             "Aggregation intervals",
-            Style::new()
-                .fg(self.theme.brand_strong)
-                .add_modifier(Modifier::BOLD),
+            Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
         ));
         for result in &self.snapshot.results {
             if result.omitted_intervals > 0 {
@@ -1036,20 +928,14 @@ impl Ui {
                 let reason = match interval.reason {
                     graphite_meter_core::measurement::IntervalReason::StageStart => "stage-start",
                     graphite_meter_core::measurement::IntervalReason::Dropout => "dropout",
-                    graphite_meter_core::measurement::IntervalReason::EvidenceResumed => {
-                        "evidence-resumed"
-                    }
+                    graphite_meter_core::measurement::IntervalReason::EvidenceResumed => "evidence-resumed",
                 };
                 lines.push(Line::from(format!(
                     "{} · {reason} · {:.1}–{:.1} s{}",
                     result.stage.name(),
                     interval.start_nanos as f64 / 1e9,
                     interval.end_nanos as f64 / 1e9,
-                    if interval.complete {
-                        ""
-                    } else {
-                        " · incomplete"
-                    }
+                    if interval.complete { "" } else { " · incomplete" }
                 )));
                 lines.push(Line::from(
                     interval
@@ -1062,10 +948,7 @@ impl Ui {
             }
         }
         lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            "Values",
-            Style::new().fg(self.theme.brand_strong),
-        ));
+        lines.push(Line::styled("Values", Style::new().fg(self.theme.brand_strong)));
         for term in crate::vocabulary::VALUES {
             lines.extend(wrap_columns(
                 &format!("{} · {}", term.label, term.explanation),
@@ -1142,10 +1025,7 @@ impl Ui {
         } else {
             frame.render_stateful_widget(
                 List::new(items)
-                    .block(panel(
-                        "Servers · Space toggle · Enter apply · maximum four",
-                        self.theme,
-                    ))
+                    .block(panel("Servers · Space toggle · Enter apply · maximum four", self.theme))
                     .highlight_style(
                         Style::new()
                             .fg(self.theme.text)

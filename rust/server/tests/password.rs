@@ -8,11 +8,8 @@ use std::{
 /// Generated independently by Go x/crypto/argon2.IDKey with salt "0123456789abcdef":
 /// the fixture holds the password, then its PHC hash.
 fn go_vector() -> (String, String) {
-    let fixture = std::fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/go-argon2id.txt"
-    ))
-    .expect("Go Argon2id vector");
+    let fixture = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/go-argon2id.txt"))
+        .expect("Go Argon2id vector");
     let (password, hash) = fixture.trim_end().split_once('\n').expect("two lines");
     (password.into(), hash.into())
 }
@@ -92,9 +89,7 @@ fn retains_go_parser_permissiveness() {
 #[test]
 fn round_trip_preserves_password_bytes_and_uses_fresh_salt() {
     // Unusual bytes, including surrounding spaces, around a fresh random core.
-    let password = String::from(" !@#$%^&*()_+-=[]{}|;:',.<>/?~ tabs\tand unicode ü🔐\0 ")
-        + &random_password()
-        + " ";
+    let password = String::from(" !@#$%^&*()_+-=[]{}|;:',.<>/?~ tabs\tand unicode ü🔐\0 ") + &random_password() + " ";
     let first = hash_password(&password).unwrap();
     let second = hash_password(&password).unwrap();
     assert_ne!(first, second);
@@ -102,11 +97,7 @@ fn round_trip_preserves_password_bytes_and_uses_fresh_salt() {
     assert!(Hash::parse(&first).unwrap().verify(&password));
     assert!(!Hash::parse(&first).unwrap().verify(password.trim()));
     let maximum = "ü".repeat(512);
-    assert!(
-        Hash::parse(&hash_password(&maximum).unwrap())
-            .unwrap()
-            .verify(&maximum)
-    );
+    assert!(Hash::parse(&hash_password(&maximum).unwrap()).unwrap().verify(&maximum));
 }
 
 #[test]
@@ -129,17 +120,9 @@ fn rejects_invalid_passwords_before_hashing() {
 fn piped_password_command_emits_compatible_hash_without_echoing_secret() {
     let password = random_password();
     let result = command(&format!("{password}\n{password}\n"));
-    assert!(
-        result.status.success(),
-        "{}",
-        String::from_utf8_lossy(&result.stderr)
-    );
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let encoded = String::from_utf8(result.stdout).expect("ASCII PHC hash");
-    assert!(
-        Hash::parse(encoded.trim())
-            .expect("valid PHC hash")
-            .verify(&password)
-    );
+    assert!(Hash::parse(encoded.trim()).expect("valid PHC hash").verify(&password));
     assert!(!String::from_utf8_lossy(&result.stderr).contains(&password));
 }
 

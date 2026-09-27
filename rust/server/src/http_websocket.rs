@@ -42,14 +42,10 @@ impl HttpServer {
         lease: Option<AuthLease>,
         pending: &Mutex<Option<Upgrade>>,
     ) -> Response<ResponseBody> {
-        let permit = match self
-            .admission
-            .acquire_keys(Class::Request, owner.client_keys())
-        {
+        let permit = match self.admission.acquire_keys(Class::Request, owner.client_keys()) {
             Ok(permit) => permit,
             Err(refusal) => {
-                let mut response =
-                    text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
+                let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
                 response
                     .headers_mut()
                     .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));

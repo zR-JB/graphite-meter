@@ -24,17 +24,11 @@ fn tokens_are_stateless_authenticated_and_store_local() {
     forged[10] = if forged[10] == b'A' { b'B' } else { b'A' };
     assert_eq!(
         store
-            .begin(
-                std::str::from_utf8(&forged).unwrap(),
-                &Owner::principal("a")
-            )
+            .begin(std::str::from_utf8(&forged).unwrap(), &Owner::principal("a"))
             .err(),
         Some(UploadError::Invalid)
     );
-    assert_eq!(
-        store.checkpoint(&id, &Owner::principal("a")),
-        Err(UploadError::Invalid)
-    );
+    assert_eq!(store.checkpoint(&id, &Owner::principal("a")), Err(UploadError::Invalid));
     drop(store.begin(&id, &Owner::principal("a")).unwrap());
     assert_eq!(store.retained(), 1);
 }
@@ -43,11 +37,7 @@ fn tokens_are_stateless_authenticated_and_store_local() {
 fn delegated_owners_share_capacity_but_not_access() {
     let store = UploadStore::new().unwrap();
     let id = store.mint().unwrap();
-    drop(
-        store
-            .begin(&id, &Owner::delegated("a", "browser:1"))
-            .unwrap(),
-    );
+    drop(store.begin(&id, &Owner::delegated("a", "browser:1")).unwrap());
     assert_eq!(
         store.begin(&id, &Owner::delegated("a", "browser:2")).err(),
         Some(UploadError::OwnerMismatch)
@@ -61,9 +51,7 @@ fn delegated_owners_share_capacity_but_not_access() {
         Err(UploadError::OwnerMismatch)
     );
     assert_eq!(
-        store
-            .subscribe(&id, &Owner::delegated("a", "browser:2"))
-            .err(),
+        store.subscribe(&id, &Owner::delegated("a", "browser:2")).err(),
         Some(UploadError::OwnerMismatch)
     );
     for _ in 1..MAX_UPLOADS_PER_CLIENT {
@@ -87,16 +75,10 @@ fn delegated_owners_share_capacity_but_not_access() {
         Some(UploadError::ClientFull)
     );
     assert_eq!(
-        store
-            .begin(&store.mint().unwrap(), &Owner::principal("a"))
-            .err(),
+        store.begin(&store.mint().unwrap(), &Owner::principal("a")).err(),
         Some(UploadError::ClientFull)
     );
-    drop(
-        store
-            .begin(&store.mint().unwrap(), &Owner::principal("b"))
-            .unwrap(),
-    );
+    drop(store.begin(&store.mint().unwrap(), &Owner::principal("b")).unwrap());
     store.sweep_at(Instant::now() + UPLOAD_RETENTION + Duration::from_secs(1));
     assert_eq!(store.retained(), 0);
     drop(
@@ -196,10 +178,7 @@ async fn completion_waits_for_lane_drop_and_replays_receiver_totals() {
         store.begin(&id, &Owner::principal("a")).err(),
         Some(UploadError::Invalid)
     );
-    assert_eq!(
-        store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes,
-        330
-    );
+    assert_eq!(store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes, 330);
     let mut replay = store.subscribe(&id, &Owner::principal("a")).unwrap();
     assert_eq!(replay.next().await, Some(UploadProgress::Ready));
     assert!(matches!(
@@ -240,21 +219,13 @@ async fn retention_preserves_active_lanes_and_expires_observers() {
     let future = Instant::now() + UPLOAD_RETENTION + Duration::from_secs(1);
     store.sweep_at(future);
     assert_eq!(store.retained(), 1);
-    assert_eq!(
-        store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes,
-        42
-    );
+    assert_eq!(store.checkpoint(&id, &Owner::principal("a")).unwrap().bytes, 42);
     drop(lane);
     store.sweep_at(future);
     assert_eq!(store.retained(), 0);
-    assert!(
-        matches!(observer.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid")
-    );
+    assert!(matches!(observer.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid"));
     assert_eq!(observer.next().await, None);
-    assert_eq!(
-        store.checkpoint(&id, &Owner::principal("a")),
-        Err(UploadError::Invalid)
-    );
+    assert_eq!(store.checkpoint(&id, &Owner::principal("a")), Err(UploadError::Invalid));
 }
 
 #[tokio::test]
@@ -312,19 +283,13 @@ async fn lifecycle_changes_wake_without_waiting_for_progress_tick() {
     let mut pending = Box::pin(subscription.next());
     assert!(pending.as_mut().poll(&mut context).is_pending());
     store.finish(&id, &Owner::principal("a")).unwrap();
-    assert!(
-        flag.0.swap(false, Ordering::SeqCst),
-        "finish must wake the feed"
-    );
+    assert!(flag.0.swap(false, Ordering::SeqCst), "finish must wake the feed");
     assert!(
         pending.as_mut().poll(&mut context).is_pending(),
         "live lane must delay completion"
     );
     drop(lane);
-    assert!(
-        flag.0.swap(false, Ordering::SeqCst),
-        "lane drop must wake the feed"
-    );
+    assert!(flag.0.swap(false, Ordering::SeqCst), "lane drop must wake the feed");
     assert!(matches!(
         pending.as_mut().poll(&mut context),
         Poll::Ready(Some(UploadProgress::Complete { bytes: 25, .. }))
@@ -341,19 +306,13 @@ async fn lifecycle_changes_wake_without_waiting_for_progress_tick() {
         flag.0.swap(false, Ordering::SeqCst),
         "replacement must wake the old feed"
     );
-    assert!(matches!(
-        pending.as_mut().poll(&mut context),
-        Poll::Ready(None)
-    ));
+    assert!(matches!(pending.as_mut().poll(&mut context), Poll::Ready(None)));
     drop(pending);
     replacement.next().await;
     let mut pending = Box::pin(replacement.next());
     assert!(pending.as_mut().poll(&mut context).is_pending());
     store.sweep_at(Instant::now() + UPLOAD_RETENTION + Duration::from_secs(1));
-    assert!(
-        flag.0.swap(false, Ordering::SeqCst),
-        "expiry must wake the feed"
-    );
+    assert!(flag.0.swap(false, Ordering::SeqCst), "expiry must wake the feed");
     assert!(
         matches!(pending.as_mut().poll(&mut context), Poll::Ready(Some(UploadProgress::Error { code, .. })) if code == "invalid")
     );
@@ -371,18 +330,12 @@ fn owner_fields_cannot_collide_through_delimiters() {
     assert_ne!(first, second);
     let id = store.mint().unwrap();
     drop(store.begin(&id, &first).unwrap());
-    assert_eq!(
-        store.checkpoint(&id, &second),
-        Err(UploadError::OwnerMismatch)
-    );
+    assert_eq!(store.checkpoint(&id, &second), Err(UploadError::OwnerMismatch));
     let principal = Owner::principal("a");
     assert_eq!(principal.client_keys()[0], delegated.client_keys()[1]);
     let id = store.mint().unwrap();
     drop(store.begin(&id, &principal).unwrap());
-    assert_eq!(
-        store.checkpoint(&id, &delegated),
-        Err(UploadError::OwnerMismatch)
-    );
+    assert_eq!(store.checkpoint(&id, &delegated), Err(UploadError::OwnerMismatch));
     assert_ne!(Owner::delegated("a", ""), principal);
 }
 
@@ -420,11 +373,6 @@ async fn empty_receiver_eviction_refuses_reopening_and_ends_its_feed() {
             .begin(&store.mint().unwrap(), &Owner::principal("replacement"))
             .unwrap(),
     );
-    assert!(
-        matches!(feed.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid")
-    );
-    assert_eq!(
-        store.begin(&victim, &owner).err(),
-        Some(UploadError::Invalid)
-    );
+    assert!(matches!(feed.next().await, Some(UploadProgress::Error { code, .. }) if code == "invalid"));
+    assert_eq!(store.begin(&victim, &owner).err(), Some(UploadError::Invalid));
 }

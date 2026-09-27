@@ -31,11 +31,7 @@ impl Config {
             )
             .into());
         }
-        if self
-            .trusted_proxies
-            .iter()
-            .any(|prefix| prefix.prefix_len() == 0)
-        {
+        if self.trusted_proxies.iter().any(|prefix| prefix.prefix_len() == 0) {
             return Err("trusted proxy prefix must not cover every address".into());
         }
         for (name, value) in [
@@ -45,15 +41,9 @@ impl Config {
                 self.limits.operations_per_client,
             ),
             ("GM_MAX_ACTIVE_SESSIONS", self.limits.sessions),
-            (
-                "GM_MAX_SESSIONS_PER_CLIENT",
-                self.limits.sessions_per_client,
-            ),
+            ("GM_MAX_SESSIONS_PER_CLIENT", self.limits.sessions_per_client),
             ("GM_MAX_CONNECTIONS", self.max_connections),
-            (
-                "GM_MAX_CONNECTIONS_PER_CLIENT",
-                self.max_connections_per_client,
-            ),
+            ("GM_MAX_CONNECTIONS_PER_CLIENT", self.max_connections_per_client),
         ] {
             if value == 0 {
                 return Err(format!("{name} must be greater than zero").into());
@@ -99,9 +89,7 @@ impl Config {
             return Err("GM_MAX_OPERATION_DURATION must be greater than zero".into());
         }
         if self.max_session_duration < self.max_operation_duration {
-            return Err(
-                "GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION".into(),
-            );
+            return Err("GM_MAX_SESSION_DURATION must be at least GM_MAX_OPERATION_DURATION".into());
         }
         Ok(())
     }
@@ -114,21 +102,13 @@ impl Config {
             .iter()
             .any(|&kind| !self.listener(kind).address.is_empty());
         if tls_listener_enabled && (self.tls_cert.is_empty() || self.tls_key.is_empty()) {
-            return Err(
-                "GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled"
-                    .into(),
-            );
+            return Err("GM_TLS_CERT and GM_TLS_KEY are required when a native TLS listener is enabled".into());
         }
         for (i, kind) in NativeKind::ALL.into_iter().enumerate() {
             for other in &NativeKind::ALL[i + 1..] {
                 let address = &self.listener(kind).address;
                 if !address.is_empty() && *address == self.listener(*other).address {
-                    return Err(format!(
-                        "{} and {} must differ",
-                        kind.address_env(),
-                        other.address_env()
-                    )
-                    .into());
+                    return Err(format!("{} and {} must differ", kind.address_env(), other.address_env()).into());
                 }
             }
         }
@@ -153,27 +133,18 @@ impl Config {
             if raw.is_empty() {
                 continue;
             }
-            let scheme = if kind == NativeKind::H1 {
-                "http"
-            } else {
-                "https"
-            };
+            let scheme = if kind == NativeKind::H1 { "http" } else { "https" };
             if !absolute(raw).is_some_and(|origin| origin.scheme == scheme) {
-                return Err(format!(
-                    "{} must be an origin with {scheme} scheme",
-                    kind.origin_env()
-                )
-                .into());
+                return Err(format!("{} must be an origin with {scheme} scheme", kind.origin_env()).into());
             }
             if self.native_advertised(kind)
                 && deterministic
                     .insert(key(raw), kind.protocol())
                     .is_some_and(|protocol| protocol != kind.protocol())
             {
-                return Err(format!(
-                    "native origin {raw:?} is advertised with multiple deterministic protocols"
-                )
-                .into());
+                return Err(
+                    format!("native origin {raw:?} is advertised with multiple deterministic protocols").into(),
+                );
             }
         }
         for (name, values) in self.public.lists() {
@@ -185,15 +156,10 @@ impl Config {
         }
         for raw in self.public.both.iter().chain(&self.public.throughput) {
             if deterministic.contains_key(&key(raw)) {
-                return Err(format!(
-                    "origin {raw:?} cannot be both native deterministic and public negotiated"
-                )
-                .into());
+                return Err(format!("origin {raw:?} cannot be both native deterministic and public negotiated").into());
             }
         }
-        if !NativeKind::ALL
-            .into_iter()
-            .any(|kind| self.native_advertised(kind))
+        if !NativeKind::ALL.into_iter().any(|kind| self.native_advertised(kind))
             && self.public.both.is_empty()
             && self.public.throughput.is_empty()
         {
@@ -217,9 +183,7 @@ impl Config {
 
     fn validate_authenticated_origins(&self, public: &Origin) -> Result<(), ConfigError> {
         if self.native_advertised(NativeKind::H1) {
-            return Err(
-                "clear HTTP/1.1 cannot be advertised when authentication is enabled".into(),
-            );
+            return Err("clear HTTP/1.1 cannot be advertised when authentication is enabled".into());
         }
         let check_auth_origin = |name: &str, raw: &str| -> Result<(), ConfigError> {
             if raw.is_empty() || raw == "self" {
@@ -228,10 +192,7 @@ impl Config {
             if !absolute(raw).is_some_and(|origin| {
                 origin.scheme == "https" && origin.host.to_lowercase() == public.host.to_lowercase()
             }) {
-                return Err(format!(
-                    "{name} must use HTTPS and the canonical authentication hostname"
-                )
-                .into());
+                return Err(format!("{name} must use HTTPS and the canonical authentication hostname").into());
             }
             Ok(())
         };
@@ -280,10 +241,7 @@ impl AuthConfig {
 
     fn validate_password(&self) -> Result<(), ConfigError> {
         if !self.password_hash.is_empty() && !self.password_hash_file.is_empty() {
-            return Err(
-                "GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive"
-                    .into(),
-            );
+            return Err("GM_AUTH_PASSWORD_HASH and GM_AUTH_PASSWORD_HASH_FILE are mutually exclusive".into());
         }
         if self.mode.password() != self.has_password_source() {
             let message = if self.mode.password() {
@@ -305,7 +263,9 @@ impl AuthConfig {
             && (!self.oidc_client_secret.is_empty() || !self.oidc_secret_file.is_empty())
             && !self.oidc_allowed_groups.is_empty();
         if self.mode.oidc() && !oidc_complete {
-            return Err("OIDC authentication requires issuer, client ID, one client secret source, and allowed groups".into());
+            return Err(
+                "OIDC authentication requires issuer, client ID, one client secret source, and allowed groups".into(),
+            );
         }
         if !self.mode.oidc() && self.has_oidc_settings() {
             return Err("OIDC settings configured while OIDC authentication is disabled".into());
@@ -322,22 +282,14 @@ impl AuthConfig {
                 .chars()
                 .any(|c| !graphite_meter_core::text::display_character(c))
         {
-            return Err(
-                "GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters"
-                    .into(),
-            );
+            return Err("GM_AUTH_OIDC_PROVIDER_NAME must be at most 64 bytes without control characters".into());
         }
         Ok(())
     }
 
     fn validate_oidc_issuer(&self) -> Result<(), ConfigError> {
-        if !split_url(&self.oidc_issuer)
-            .is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?'))
-        {
-            return Err(
-                "GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment"
-                    .into(),
-            );
+        if !split_url(&self.oidc_issuer).is_ok_and(|(origin, rest)| origin.scheme == "https" && !rest.contains('?')) {
+            return Err("GM_AUTH_OIDC_ISSUER must be an HTTPS URL with no credentials, query, or fragment".into());
         }
         Ok(())
     }

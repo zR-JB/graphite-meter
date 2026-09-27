@@ -17,11 +17,7 @@ pub struct Probe {
 
 impl Probe {
     /// Set bootstrap_port only on the TCP bootstrap for the HTTP/3 listener.
-    pub fn new(
-        config: Arc<Config>,
-        bootstrap_port: Option<u16>,
-        admission: Option<Admission>,
-    ) -> Self {
+    pub fn new(config: Arc<Config>, bootstrap_port: Option<u16>, admission: Option<Admission>) -> Self {
         Self {
             config,
             bootstrap_port,

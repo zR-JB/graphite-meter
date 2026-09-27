@@ -133,8 +133,7 @@ impl Download {
         let start = async {
             for first in (0..lanes).step_by(WT_LANES_PER_SESSION) {
                 let group = (lanes - first).min(WT_LANES_PER_SESSION);
-                let target =
-                    format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
+                let target = format!("{origin}/wt/download?bytes={WT_STREAM_BYTES}&streams={group}");
                 let slot = Arc::new(SessionSlot::dial(http, target, insecure).await?);
                 for _ in 0..group {
                     let slot = slot.clone();
@@ -215,10 +214,7 @@ async fn receive_http_lane(
                 )
                 .await?;
             if !announced {
-                ready
-                    .send(())
-                    .await
-                    .map_err(|_| "download readiness receiver closed")?;
+                ready.send(()).await.map_err(|_| "download readiness receiver closed")?;
                 announced = true;
             }
             let mut received = 0;
@@ -256,8 +252,7 @@ async fn receive_webtransport(
         let session = slot.current().await;
         let started = Instant::now();
         let mut moved = false;
-        let result =
-            receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, &mut moved).await;
+        let result = receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, &mut moved).await;
         let Err(error) = result else {
             retry.progressed();
             continue;
@@ -267,8 +262,7 @@ async fn receive_webtransport(
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {
-                let retryable =
-                    !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
+                let retryable = !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
                 retry.retry(error, started, false, retryable).await?;
             }
         }
@@ -308,9 +302,7 @@ fn record_webtransport(
 ) -> Result<(), Error> {
     bytes.fetch_add(count as u64, Ordering::Relaxed);
     if !*announced && count > 0 {
-        ready
-            .try_send(())
-            .map_err(|_| "download readiness receiver closed")?;
+        ready.try_send(()).map_err(|_| "download readiness receiver closed")?;
         *announced = true;
     }
     Ok(())
@@ -356,8 +348,7 @@ mod tests {
             }
             Ok::<_, Error>(())
         });
-        let transport =
-            Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?);
+        let transport = Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?);
         let (_stop, cancelled) = watch::channel(false);
         let mut download = Download::start(transport, 1, Duration::from_secs(5), cancelled).await?;
         tokio::time::timeout(Duration::from_secs(5), async {

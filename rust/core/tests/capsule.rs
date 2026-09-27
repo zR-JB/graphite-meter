@@ -1,6 +1,4 @@
-use graphite_meter_core::capsule::{
-    Capsule, Decoder, Error, MAX_STREAMS, MAX_VARINT, encode, encode_close,
-};
+use graphite_meter_core::capsule::{Capsule, Decoder, Error, MAX_STREAMS, MAX_VARINT, encode, encode_close};
 
 fn raw(kind: u64, body: &[u8]) -> Vec<u8> {
     let mut bytes = varint(kind);
@@ -37,10 +35,7 @@ fn every_split_and_one_byte_feeds() {
         decoder.finish().unwrap();
     }
     let mut decoder = Decoder::new();
-    let got: Vec<_> = bytes
-        .iter()
-        .flat_map(|byte| decoder.feed(&[*byte]).unwrap())
-        .collect();
+    let got: Vec<_> = bytes.iter().flat_map(|byte| decoder.feed(&[*byte]).unwrap()).collect();
     assert_eq!(got, expected);
     decoder.finish().unwrap();
 }
@@ -71,10 +66,7 @@ fn close_retains_raw_first_1024_and_consumes_tail() {
     let mut bytes = raw(0x2843, &body);
     bytes.extend(encode(&Capsule::MaxData(1)).unwrap());
     let mut decoder = Decoder::new();
-    let got: Vec<_> = bytes
-        .chunks(7)
-        .flat_map(|chunk| decoder.feed(chunk).unwrap())
-        .collect();
+    let got: Vec<_> = bytes.chunks(7).flat_map(|chunk| decoder.feed(chunk).unwrap()).collect();
     assert_eq!(
         got,
         vec![
@@ -146,11 +138,7 @@ fn malformed_and_truncated_capsules() {
 #[test]
 fn numeric_bounds() {
     for kind in [0x190b4d3f, 0x190b4d40, 0x190b4d43, 0x190b4d44] {
-        assert!(
-            Decoder::new()
-                .feed(&raw(kind, &varint(MAX_STREAMS)))
-                .is_ok()
-        );
+        assert!(Decoder::new().feed(&raw(kind, &varint(MAX_STREAMS))).is_ok());
         assert_eq!(
             Decoder::new().feed(&raw(kind, &varint(MAX_STREAMS + 1))),
             Err(Error::ValueOutOfRange)

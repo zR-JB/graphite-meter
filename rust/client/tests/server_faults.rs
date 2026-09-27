@@ -21,8 +21,7 @@ enum Peer {
 }
 
 #[tokio::test]
-async fn silent_download_lanes_stay_open_and_repeated_resets_keep_their_cause() -> Result<(), Error>
-{
+async fn silent_download_lanes_stay_open_and_repeated_resets_keep_their_cause() -> Result<(), Error> {
     let _ = graphite_meter_client::crypto::provider().install_default();
     let mut cases = JoinSet::new();
     for peer in [Peer::H2, Peer::H3, Peer::WebTransport] {
@@ -66,9 +65,7 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
                                 std::future::pending().await
                             }
                         }));
-                        Ok::<_, std::convert::Infallible>(Response::new(StreamBody::new(Box::pin(
-                            chunks,
-                        ))))
+                        Ok::<_, std::convert::Infallible>(Response::new(StreamBody::new(Box::pin(chunks))))
                     }
                 });
                 hyper::server::conn::http2::Builder::new(TokioExecutor::new())
@@ -80,25 +77,25 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
         }
         Peer::H3 | Peer::WebTransport => {
             let (certificate, key) = test_identity::generate_identity("localhost")?;
-            let mut tls = rustls::ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(
-                    vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-                    PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-                )?;
+            let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
+                vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+                PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+            )?;
             tls.alpn_protocols = vec![b"h3".to_vec()];
-            let config = quinn::ServerConfig::with_crypto(Arc::new(
-                quinn::crypto::rustls::QuicServerConfig::try_from(tls)?,
-            ));
+            let config =
+                quinn::ServerConfig::with_crypto(Arc::new(quinn::crypto::rustls::QuicServerConfig::try_from(tls)?));
             let server = quinn::Endpoint::server(config, "127.0.0.1:0".parse()?)?;
             let origin = format!("https://{}", server.local_addr()?);
             endpoint = Some(server.clone());
             servers.spawn(async move {
                 let quic = server.accept().await.ok_or("endpoint closed")?.await?;
                 let mut connection = h3::server::builder()
-                    .enable_extended_connect(true).enable_datagram(true)
-                    .enable_webtransport(true).max_webtransport_sessions(1)
-                    .build(h3_noq::Connection::new(quic.clone())).await?;
+                    .enable_extended_connect(true)
+                    .enable_datagram(true)
+                    .enable_webtransport(true)
+                    .max_webtransport_sessions(1)
+                    .build(h3_noq::Connection::new(quic.clone()))
+                    .await?;
                 let mut requests = JoinSet::new();
                 let mut first = true;
                 loop {
@@ -194,22 +191,12 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
         }
     })
     .await;
-    assert_eq!(
-        download.bytes(),
-        measured,
-        "{peer:?} counted bytes after the fault"
-    );
+    assert_eq!(download.bytes(), measured, "{peer:?} counted bytes after the fault");
     match ended {
-        Err(_) => assert!(
-            !retries_end_lane,
-            "{peer:?} reset={reset}: lane outlived its retries"
-        ),
+        Err(_) => assert!(!retries_end_lane, "{peer:?} reset={reset}: lane outlived its retries"),
         Ok(error) => {
             assert!(retries_end_lane, "{peer:?} reset={reset}: {error}");
-            assert!(
-                started.elapsed() >= Duration::from_millis(1800),
-                "{peer:?}: {error}"
-            );
+            assert!(started.elapsed() >= Duration::from_millis(1800), "{peer:?}: {error}");
             let cause = match peer {
                 Peer::H2 => error.is::<hyper::Error>(),
                 Peer::H3 => matches!(error.downcast_ref::<h3::error::StreamError>(),
