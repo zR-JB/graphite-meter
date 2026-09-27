@@ -1,16 +1,15 @@
 # Deployment and configuration
 
-One static server binary with the browser client embedded. With no configuration it serves clear HTTP/1.1 on port
-7246. Native TLS listeners add deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3 and WebTransport.
+One static server binary with the browser client embedded. With no configuration it serves clear HTTP/1.1 on port 7246. Native TLS listeners add deterministic HTTP/1.1 TLS, HTTP/2, HTTP/3 and WebTransport.
 
-| Your setup | Start here | What you need |
-| --- | --- | --- |
-| Local or trusted LAN | [One container](#fast-local-deployment) | TCP 7246. |
-| Existing HTTPS ingress | [Reverse proxy](#reverse-proxies) and [authentication](#authentication) | A hostname, TLS proxy and its CIDR. |
-| Direct protocol comparisons | [Compose with native TLS](#native-tls) | A trusted certificate; TCP 7247–7249, UDP 7249. |
-| systemd under your own user | [Quadlet](../container/quadlet/README.md) | Linux, Podman and systemd. |
-| Private tailnet | [Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md) | Tailnet identity, HTTPS certificates, policy. |
-| Current checkout | [Build from source](#build-from-source) | Git and Docker Compose, or the pinned toolchain. |
+| Your setup                  | Start here                                                              | What you need                                    |
+| --------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
+| Local or trusted LAN        | [One container](#fast-local-deployment)                                 | TCP 7246.                                        |
+| Existing HTTPS ingress      | [Reverse proxy](#reverse-proxies) and [authentication](#authentication) | A hostname, TLS proxy and its CIDR.              |
+| Direct protocol comparisons | [Compose with native TLS](#native-tls)                                  | A trusted certificate; TCP 7247–7249, UDP 7249.  |
+| systemd under your own user | [Quadlet](../container/quadlet/README.md)                               | Linux, Podman and systemd.                       |
+| Private tailnet             | [Tailscale sidecar](../container/quadlet/tailscale-sidecar/README.md)   | Tailnet identity, HTTPS certificates, policy.    |
+| Current checkout            | [Build from source](#build-from-source)                                 | Git and Docker Compose, or the pinned toolchain. |
 
 Pin `:X.Y.Z` or an image digest instead of `:latest` for reproducible deployments. Jump to the
 [server reference](#server-reference), [terminal client](#native-terminal-client) or
@@ -88,8 +87,8 @@ by it:
 - **Quadlet**: nothing. Podman secrets are world-readable inside the container, and the TLS and Tailscale units
   map your user, which owns their keys, to the image user with `UserNS=keep-id:uid=65532,gid=65532`.
 
-Rootful Docker gives container root the host's root. *Rootless Podman already maps root to my user, so why a
-non-root user?* Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
+Rootful Docker gives container root the host's root. _Rootless Podman already maps root to my user, so why a
+non-root user?_ Defence in depth: an escape from the default unit lands on a subordinate UID with no access to your
 files; the keep-id units run as your user, as root did before.
 
 ## Native listeners
@@ -247,36 +246,36 @@ See the [Quadlet guide](../container/quadlet/README.md). Rootless userspace netw
 Linux and macOS (amd64/arm64) and Windows (amd64); the server ships as the container image or a
 [source build](#build-from-source).
 
-| Flag | Default | Meaning |
-| --- | --- | --- |
-| `--url` | `http://127.0.0.1:7246` | Origin of the operator server catalogue. |
-| `--server <id>` | operator default | Repeatable; one to four catalogue IDs. |
-| `--throughput-origin` / `--latency-origin` | `auto` | Discovered origin, or `auto`. |
-| `--throughput-protocol` | `auto` | `http1`, `http2` or `http3` for a negotiated origin. |
-| `--throughput-transport` | `auto` | `fetch-stream` or `webtransport`. |
-| `--latency-transport` | `auto` | `websocket` or `webtransport`. |
-| `--stages` | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`). |
-| `--warmup` | `800ms` | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s. |
-| `--latency-duration` | `4s` | Measured window, 1 s–5 min, checked even for a stage that is off. |
-| `--download-/--upload-/--bidirectional-duration` | `10s` | Same bounds. |
-| `--auto-streams` | `6` | Maximum HTTP/1.1 streams per direction, 1–14. |
-| `--streams` | `0` | Exact streams per server and direction, at most 14; `0` keeps automatic. |
-| `--ping` | `reply-driven` | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms–15 s. |
-| `--loaded-ping` | `medium` | Cadence during transfers, same values. |
-| `--loaded-latency` | `true` | Measure latency during transfer stages. |
-| `--insecure` | `false` | Skip TLS verification; refuses sign-in. |
-| `--report` | `false` | Run once without the interface, and without sign-in; automatic when stdout is not a terminal. |
-| `--version` / `--legal` | | Print the version or third-party notices and exit. |
+| Flag                                             | Default                   | Meaning                                                                                         |
+| ------------------------------------------------ | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `--url`                                          | `http://127.0.0.1:7246`   | Origin of the operator server catalogue.                                                        |
+| `--server <id>`                                  | operator default          | Repeatable; one to four catalogue IDs.                                                          |
+| `--throughput-origin` / `--latency-origin`       | `auto`                    | Discovered origin, or `auto`.                                                                   |
+| `--throughput-protocol`                          | `auto`                    | `http1`, `http2` or `http3` for a negotiated origin.                                            |
+| `--throughput-transport`                         | `auto`                    | `fetch-stream` or `webtransport`.                                                               |
+| `--latency-transport`                            | `auto`                    | `websocket` or `webtransport`.                                                                  |
+| `--stages`                                       | `latency,download,upload` | Comma-separated; add `bidirectional` (aliases `ping`, `down`, `up`, `bidi`).                    |
+| `--warmup`                                       | `800ms`                   | Before every stage, 0–4 s; stretched to ten idle RTTs, at most 4 s.                             |
+| `--latency-duration`                             | `4s`                      | Measured window, 1 s–5 min, checked even for a stage that is off.                               |
+| `--download-/--upload-/--bidirectional-duration` | `10s`                     | Same bounds.                                                                                    |
+| `--auto-streams`                                 | `6`                       | Maximum HTTP/1.1 streams per direction, 1–14.                                                   |
+| `--streams`                                      | `0`                       | Exact streams per server and direction, at most 14; `0` keeps automatic.                        |
+| `--ping`                                         | `reply-driven`            | Idle cadence: `reply-driven`, `fast` (80 ms), `medium` (250 ms), `slow` (600 ms) or 80 ms–15 s. |
+| `--loaded-ping`                                  | `medium`                  | Cadence during transfers, same values.                                                          |
+| `--loaded-latency`                               | `true`                    | Measure latency during transfer stages.                                                         |
+| `--insecure`                                     | `false`                   | Skip TLS verification; refuses sign-in.                                                         |
+| `--report`                                       | `false`                   | Run once without the interface, and without sign-in; automatic when stdout is not a terminal.   |
+| `--version` / `--legal`                          |                           | Print the version or third-party notices and exit.                                              |
 
 Fixed cadences are capped at 15 s, half the server's idle bound. Headless runs print stage progress to stderr and
 the report to stdout; an interactive run prints the same report on exit. It is plain text unless stdout is a
 terminal and `NO_COLOR` is unset.
 
-| Exit | Meaning |
-| --- | --- |
-| 0 | Complete, or quit before a run. |
-| 1 | Any other outcome (Partial, Incomplete, Stopped, Failed) or a runtime error. |
-| 2 | Invalid flags or arguments. |
+| Exit      | Meaning                                                                               |
+| --------- | ------------------------------------------------------------------------------------- |
+| 0         | Complete, or quit before a run.                                                       |
+| 1         | Any other outcome (Partial, Incomplete, Stopped, Failed) or a runtime error.          |
+| 2         | Invalid flags or arguments.                                                           |
 | 130 / 143 | A run stopped by SIGINT (or ctrl+c) / SIGTERM; after a finished run they exit like q. |
 
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
@@ -284,19 +283,19 @@ group. The footer explains the focused row and its steps, then names what enter 
 current screen. Every selected server is probed for latency; the run's latency is the first selected server's, and
 if it leaves the test a surviving one takes over. `l` switches the server shown; the printed report keeps the run's.
 
-| Key | Where | Action |
-| --- | --- | --- |
-| ↑/↓ (k/j, tab), ←/→ | setup | Move; change the focused value. |
-| enter, space | setup | Start test on **Start test**, else open the row; space turns a stage on or off. |
-| r, v, s, u, a | setup | Start test, recheck paths, test servers, use available servers, automatic paths. |
-| ←/→, home/end, enter, esc | editing a value | Move the cursor, apply, cancel. |
-| space, enter, esc | server chooser | Select, apply, cancel. |
-| enter, space (o), esc | sign-in | Open the approval page, cancel. |
-| esc | running | Stop test; a second esc confirms. |
-| enter (r), esc | finished | Run again; back to setup. |
-| d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
-| ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
+| Key                       | Where              | Action                                                                                                                                                       |
+| ------------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ↑/↓ (k/j, tab), ←/→       | setup              | Move; change the focused value.                                                                                                                              |
+| enter, space              | setup              | Start test on **Start test**, else open the row; space turns a stage on or off.                                                                              |
+| r, v, s, u, a             | setup              | Start test, recheck paths, test servers, use available servers, automatic paths.                                                                             |
+| ←/→, home/end, enter, esc | editing a value    | Move the cursor, apply, cancel.                                                                                                                              |
+| space, enter, esc         | server chooser     | Select, apply, cancel.                                                                                                                                       |
+| enter, space (o), esc     | sign-in            | Open the approval page, cancel.                                                                                                                              |
+| esc                       | running            | Stop test; a second esc confirms.                                                                                                                            |
+| enter (r), esc            | finished           | Run again; back to setup.                                                                                                                                    |
+| d, l                      | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server.                                                                |
+| ↑/↓, pgup/pgdn, home/end  | any                | Scroll the body.                                                                                                                                             |
+| ?, q, ctrl+c              | any                | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 
@@ -312,62 +311,62 @@ cannot read their keys.
 
 ## Troubleshooting
 
-| Symptom | Check |
-| --- | --- |
-| Another device cannot open the page | Use the server IP, not `localhost`; publish and allow TCP 7246. |
-| WebTransport is unavailable | HTTPS page, trusted certificate, browser support, advertised H3 origin, TCP+UDP reachability. |
-| An advertised path fails validation | The origin must be reachable with the right scheme, port and certificate hostname. |
+| Symptom                                    | Check                                                                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Another device cannot open the page        | Use the server IP, not `localhost`; publish and allow TCP 7246.                                              |
+| WebTransport is unavailable                | HTTPS page, trusted certificate, browser support, advertised H3 origin, TCP+UDP reachability.                |
+| An advertised path fails validation        | The origin must be reachable with the right scheme, port and certificate hostname.                           |
 | A local peer fails only from a hosted page | Local-network permission and HTTPS; see [browser reachability](SERVERS.md#local-network-browser-permission). |
-| A browser IPv6 peer needs a hostname | Use a DNS name for IPv6 outside the page's origin; the native client accepts literals. |
-| Uploads fail behind a proxy | Disable request buffering and body-size limits; allow streaming progress and long requests. |
-| Throughput is lower than expected | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener. |
-| Timeouts or "—" appear | Inspect stage evidence: unfinished probes and missing receiver counters are not zero. |
+| A browser IPv6 peer needs a hostname       | Use a DNS name for IPv6 outside the page's origin; the native client accepts literals.                       |
+| Uploads fail behind a proxy                | Disable request buffering and body-size limits; allow streaming progress and long requests.                  |
+| Throughput is lower than expected          | CPU, browser, Wi-Fi, proxy and container networking; compare the native client on a direct listener.         |
+| Timeouts or "—" appear                     | Inspect stage evidence: unfinished probes and missing receiver counters are not zero.                        |
 
 ## Server reference
 
 Environment loads first; a flag overrides it. `graphite-meter -h` lists every flag with its variable. Rows marked
-*env only* have no flag, so secrets stay out of process arguments.
+_env only_ have no flag, so secrets stay out of process arguments.
 
-| Environment | Flag | Default | Meaning |
-| --- | --- | --- | --- |
-| `GM_H1_ADDR` | `--h1-addr` | `:7246` | Clear HTTP/1.1 listen address; required. |
-| `GM_H1_TLS_ADDR` | `--h1-tls-addr` | empty | HTTPS HTTP/1.1 address; empty disables. |
-| `GM_H2_ADDR` | `--h2-addr` | empty | HTTP/2 TLS address; empty disables. |
-| `GM_H3_ADDR` | `--h3-addr` | empty | HTTP/3 UDP and bootstrap TCP address; empty disables. |
-| `GM_TLS_CERT` / `GM_TLS_KEY` | `--tls-cert` / `--tls-key` | empty | PEM paths; required when any TLS listener is enabled. |
-| `GM_H1_PUBLIC_ORIGIN` | `--h1-public-origin` | empty | Public `http://` origin of the clear listener. |
-| `GM_H1_TLS_PUBLIC_ORIGIN` | `--h1-tls-public-origin` | empty | Public `https://` origin of the HTTPS HTTP/1.1 listener. |
-| `GM_H2_PUBLIC_ORIGIN` | `--h2-public-origin` | empty | Public `https://` origin of the HTTP/2 listener. |
-| `GM_H3_PUBLIC_ORIGIN` | `--h3-public-origin` | empty | Public `https://` origin of the HTTP/3 listener. |
-| `GM_ADVERTISED_NATIVE_ENDPOINTS` | `--advertised-native-endpoints` | `all` | `all`, `none` or a subset of `http1-clear,http1-tls,http2,http3`. |
-| `GM_PUBLIC_ORIGINS` | `--public-origins` | empty | Negotiated origins (or `self`) for throughput and latency. |
-| `GM_PUBLIC_THROUGHPUT_ORIGINS` | `--public-throughput-origins` | empty | Negotiated throughput-only origins. |
-| `GM_PUBLIC_LATENCY_ORIGINS` | `--public-latency-origins` | empty | WebSocket latency-only origins. |
-| `GM_SERVER_NAME` | `--name` | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters. |
-| `GM_SERVER_LOCATION` | `--location` | empty | Location label, with the same limits. |
-| `GM_RESULT_HISTORY_DEFAULT` | `--result-history-default` | `false` | Default for saving completed browser results on the device. |
-| `GM_VERBOSE` | `--verbose` | `false` | Log per-second throughput, admission counters and authentication debug lines. |
-| `GM_MAX_ACTIVE_MEASUREMENTS` | `--max-active-measurements` | `256` | Concurrent measurement handlers. |
-| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32` | Handlers per client identity. |
-| `GM_MAX_ACTIVE_SESSIONS` | `--max-active-sessions` | `64` | WebTransport sessions, a share of the handler pool. |
-| `GM_MAX_SESSIONS_PER_CLIENT` | `--max-sessions-per-client` | `8` | WebTransport sessions per client identity. |
-| `GM_MAX_CONNECTIONS` | `--max-connections` | `4096` | Concurrent TCP and QUIC connections. |
-| `GM_MAX_CONNECTIONS_PER_CLIENT` | `--max-connections-per-client` | `64` | Connections per direct client. |
-| `GM_MAX_OPERATION_DURATION` | `--max-operation-duration` | `5m` | Request-shaped measurement lifetime. |
-| `GM_MAX_SESSION_DURATION` | `--max-session-duration` | `2h` | WebTransport transfer session lifetime. |
-| `GM_TRUSTED_PROXIES` | *env only* | empty | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
-| `GM_AUTH_MODE` | `--auth-mode` | `off` | `off`, `password`, `oidc` or `hybrid`. |
-| `GM_AUTH_PUBLIC_URL` | `--auth-public-url` | empty | Canonical HTTPS UI origin, no path or `:443`. |
-| `GM_AUTH_PASSWORD_HASH` | *env only* | empty | Inline Argon2id PHC hash; prefer the file. |
-| `GM_AUTH_PASSWORD_HASH_FILE` | `--auth-password-hash-file` | empty | File with one Argon2id PHC hash. |
-| `GM_AUTH_OIDC_ISSUER` | `--auth-oidc-issuer` | empty | HTTPS issuer URL. |
-| `GM_AUTH_OIDC_CLIENT_ID` | `--auth-oidc-client-id` | empty | Confidential client ID. |
-| `GM_AUTH_OIDC_CLIENT_SECRET` | *env only* | empty | Inline client secret; prefer the file. |
-| `GM_AUTH_OIDC_CLIENT_SECRET_FILE` | `--auth-oidc-client-secret-file` | empty | File with the client secret. |
-| `GM_AUTH_OIDC_ALLOWED_GROUPS` | `--auth-oidc-allowed-groups` | empty | Required comma-separated, case-sensitive groups. |
-| `GM_AUTH_OIDC_PROVIDER_NAME` | `--auth-oidc-provider-name` | `Authelia` | Sign-in page label, ≤ 64 bytes. |
-| `GM_SERVER_CATALOG` | *env only* | empty | [Server catalogue](SERVERS.md#operator-catalogue) JSON. |
-| `GM_SERVER_CATALOG_FILE` | *env only* | empty | Absolute catalogue file path without `..`; exclusive with the inline form. |
+| Environment                             | Flag                                   | Default          | Meaning                                                                                |
+| --------------------------------------- | -------------------------------------- | ---------------- | -------------------------------------------------------------------------------------- |
+| `GM_H1_ADDR`                            | `--h1-addr`                            | `:7246`          | Clear HTTP/1.1 listen address; required.                                               |
+| `GM_H1_TLS_ADDR`                        | `--h1-tls-addr`                        | empty            | HTTPS HTTP/1.1 address; empty disables.                                                |
+| `GM_H2_ADDR`                            | `--h2-addr`                            | empty            | HTTP/2 TLS address; empty disables.                                                    |
+| `GM_H3_ADDR`                            | `--h3-addr`                            | empty            | HTTP/3 UDP and bootstrap TCP address; empty disables.                                  |
+| `GM_TLS_CERT` / `GM_TLS_KEY`            | `--tls-cert` / `--tls-key`             | empty            | PEM paths; required when any TLS listener is enabled.                                  |
+| `GM_H1_PUBLIC_ORIGIN`                   | `--h1-public-origin`                   | empty            | Public `http://` origin of the clear listener.                                         |
+| `GM_H1_TLS_PUBLIC_ORIGIN`               | `--h1-tls-public-origin`               | empty            | Public `https://` origin of the HTTPS HTTP/1.1 listener.                               |
+| `GM_H2_PUBLIC_ORIGIN`                   | `--h2-public-origin`                   | empty            | Public `https://` origin of the HTTP/2 listener.                                       |
+| `GM_H3_PUBLIC_ORIGIN`                   | `--h3-public-origin`                   | empty            | Public `https://` origin of the HTTP/3 listener.                                       |
+| `GM_ADVERTISED_NATIVE_ENDPOINTS`        | `--advertised-native-endpoints`        | `all`            | `all`, `none` or a subset of `http1-clear,http1-tls,http2,http3`.                      |
+| `GM_PUBLIC_ORIGINS`                     | `--public-origins`                     | empty            | Negotiated origins (or `self`) for throughput and latency.                             |
+| `GM_PUBLIC_THROUGHPUT_ORIGINS`          | `--public-throughput-origins`          | empty            | Negotiated throughput-only origins.                                                    |
+| `GM_PUBLIC_LATENCY_ORIGINS`             | `--public-latency-origins`             | empty            | WebSocket latency-only origins.                                                        |
+| `GM_SERVER_NAME`                        | `--name`                               | `graphite-meter` | Name in `/preflight` and clients; at most 256 bytes, no control characters.            |
+| `GM_SERVER_LOCATION`                    | `--location`                           | empty            | Location label, with the same limits.                                                  |
+| `GM_RESULT_HISTORY_DEFAULT`             | `--result-history-default`             | `false`          | Default for saving completed browser results on the device.                            |
+| `GM_VERBOSE`                            | `--verbose`                            | `false`          | Log per-second throughput, admission counters and authentication debug lines.          |
+| `GM_MAX_ACTIVE_MEASUREMENTS`            | `--max-active-measurements`            | `256`            | Concurrent measurement handlers.                                                       |
+| `GM_MAX_ACTIVE_MEASUREMENTS_PER_CLIENT` | `--max-active-measurements-per-client` | `32`             | Handlers per client identity.                                                          |
+| `GM_MAX_ACTIVE_SESSIONS`                | `--max-active-sessions`                | `64`             | WebTransport sessions, a share of the handler pool.                                    |
+| `GM_MAX_SESSIONS_PER_CLIENT`            | `--max-sessions-per-client`            | `8`              | WebTransport sessions per client identity.                                             |
+| `GM_MAX_CONNECTIONS`                    | `--max-connections`                    | `4096`           | Concurrent TCP and QUIC connections.                                                   |
+| `GM_MAX_CONNECTIONS_PER_CLIENT`         | `--max-connections-per-client`         | `64`             | Connections per direct client.                                                         |
+| `GM_MAX_OPERATION_DURATION`             | `--max-operation-duration`             | `5m`             | Request-shaped measurement lifetime.                                                   |
+| `GM_MAX_SESSION_DURATION`               | `--max-session-duration`               | `2h`             | WebTransport transfer session lifetime.                                                |
+| `GM_TRUSTED_PROXIES`                    | _env only_                             | empty            | Proxy CIDRs allowed to supply `X-Real-IP`, `X-Forwarded-Proto` and `X-Forwarded-Host`. |
+| `GM_AUTH_MODE`                          | `--auth-mode`                          | `off`            | `off`, `password`, `oidc` or `hybrid`.                                                 |
+| `GM_AUTH_PUBLIC_URL`                    | `--auth-public-url`                    | empty            | Canonical HTTPS UI origin, no path or `:443`.                                          |
+| `GM_AUTH_PASSWORD_HASH`                 | _env only_                             | empty            | Inline Argon2id PHC hash; prefer the file.                                             |
+| `GM_AUTH_PASSWORD_HASH_FILE`            | `--auth-password-hash-file`            | empty            | File with one Argon2id PHC hash.                                                       |
+| `GM_AUTH_OIDC_ISSUER`                   | `--auth-oidc-issuer`                   | empty            | HTTPS issuer URL.                                                                      |
+| `GM_AUTH_OIDC_CLIENT_ID`                | `--auth-oidc-client-id`                | empty            | Confidential client ID.                                                                |
+| `GM_AUTH_OIDC_CLIENT_SECRET`            | _env only_                             | empty            | Inline client secret; prefer the file.                                                 |
+| `GM_AUTH_OIDC_CLIENT_SECRET_FILE`       | `--auth-oidc-client-secret-file`       | empty            | File with the client secret.                                                           |
+| `GM_AUTH_OIDC_ALLOWED_GROUPS`           | `--auth-oidc-allowed-groups`           | empty            | Required comma-separated, case-sensitive groups.                                       |
+| `GM_AUTH_OIDC_PROVIDER_NAME`            | `--auth-oidc-provider-name`            | `Authelia`       | Sign-in page label, ≤ 64 bytes.                                                        |
+| `GM_SERVER_CATALOG`                     | _env only_                             | empty            | [Server catalogue](SERVERS.md#operator-catalogue) JSON.                                |
+| `GM_SERVER_CATALOG_FILE`                | _env only_                             | empty            | Absolute catalogue file path without `..`; exclusive with the inline form.             |
 
 - Listener addresses must differ. Numeric limits are positive, per-client limits ≤ their global limit, sessions ≤
   handlers, and session duration ≥ operation duration. Something must carry throughput: with no native endpoint

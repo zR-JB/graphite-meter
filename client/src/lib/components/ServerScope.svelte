@@ -44,7 +44,6 @@
 
 <style>
   .server-scope {
-    width: var(--scope-width, auto);
     max-width: 100%;
     text-overflow: ellipsis;
   }

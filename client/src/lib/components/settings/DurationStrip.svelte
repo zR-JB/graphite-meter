@@ -1,6 +1,5 @@
 <script lang="ts">
   import { fly } from "svelte/transition";
-  import { fmtDuration } from "../../format";
   import { still } from "../../presentation/motion.svelte";
 
   let {
@@ -8,6 +7,9 @@
   }: {
     stages: readonly { key: string; label: string; tone: string; ms: number }[];
   } = $props();
+  // Seconds, like the steppers that set them; whole ones from a minute on, so every segment keeps its width.
+  const seconds = (ms: number) =>
+    ms < 59_950 ? (ms / 1000).toFixed(1) : `${Math.round(ms / 1000)}`;
   // A new time rolls in from below as the old one leaves upward, like a counter.
   const roll = (node: Element, { y }: { y: number }) =>
     fly(node, { y, duration: still() ? 0 : 320, opacity: 0 });
@@ -15,7 +17,7 @@
 
 <div class="strip" role="list" aria-label="Stage times">
   {#each stages as stage (stage.key)}
-    {@const [value, unit] = fmtDuration(stage.ms).split(" ")}
+    {@const value = seconds(stage.ms)}
     <div
       class="segment"
       role="listitem"
@@ -26,7 +28,7 @@
       <span class="time">
         {#key value}
           <span class="value" in:roll={{ y: 10 }} out:roll={{ y: -10 }}
-            >{value}<span class="unit">{unit}</span></span
+            >{value}<span class="unit">s</span></span
           >
         {/key}
       </span>

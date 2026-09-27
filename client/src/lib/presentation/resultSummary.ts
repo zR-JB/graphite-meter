@@ -28,7 +28,6 @@ interface SummaryEvidence extends Pick<
 > {
   status: Partial<Record<TransportRole, SummaryStatus>>;
   added: AddedLatency | null;
-  latencySource?: string;
 }
 export interface SummaryRow {
   label: string;
@@ -86,28 +85,17 @@ const shownStatus = (stages: Record<TransportRole, string>) =>
 /** The shown server's evidence, else the run's own; stages without a result are left out. */
 export function summaryEvidence(
   stages: Record<TransportRole, string>,
-  run: Omit<SummaryEvidence, "status" | "latencySource">,
+  run: Omit<SummaryEvidence, "status">,
   details: MultiServerResult | null | undefined,
   shown: string,
-  latencyFocus: string | null | undefined,
 ): SummaryEvidence {
-  const multiple = details && details.selection.length > 1;
   return (
     (details && shown && serverEvidence(details, shown)) || {
       ...run,
       status: shownStatus(stages),
-      latencySource: multiple
-        ? details.selection.find((server) => server.id === latencyFocus)?.name
-        : undefined,
     }
   );
 }
-
-/** Under "added", whole milliseconds from 10 ms and no plus, so three stages fit a line; the hover keeps both. */
-const addedShort = (ms: number) =>
-  Math.abs(ms) < 9.95
-    ? fmtAddedMs(ms).replace("+", "")
-    : `${Math.round(ms)}`.replace("-", "−");
 
 export const laneShort = (
   bytesPerSec: number | null | undefined,
@@ -145,33 +133,18 @@ function wire(
 function latencyCard(card: SummaryCard, evidence: SummaryEvidence) {
   const latency = evidence.latency;
   if (!latency) return card;
-  const { reportedMs, jitterMs, stabilityPct } = latency;
+  const { reportedMs, jitterMs } = latency;
   const added = LOADED.flatMap((stage): SummaryRow[] => {
     const ms = evidence.added?.[stage];
     return ms == null
       ? []
-      : [
-          {
-            label: "Added",
-            value: `${fmtAddedMs(ms)} ms`,
-            short: addedShort(ms),
-            stage,
-          },
-        ];
+      : [{ label: "Added", value: `${fmtAddedMs(ms)} ms`, stage }];
   });
-  const steady = card.status === "complete" ? (stabilityPct ?? null) : null;
   return {
     ...card,
     num: fmtMs(reportedMs),
     unit: "ms",
-    rows: [
-      { label: "Jitter", value: formatLatency(jitterMs) },
-      ...added,
-      ...stability(steady),
-      ...(evidence.latencySource
-        ? [{ label: "Server", value: evidence.latencySource }]
-        : []),
-    ],
+    rows: [{ label: "Jitter", value: formatLatency(jitterMs) }, ...added],
   };
 }
 
@@ -207,7 +180,7 @@ function bidirectionalCard(
     wire: showWire && complete ? wire(lanes?.wire, value, units) : undefined,
     rows: [
       ...rows,
-      { label: "Combined", value: formatRate(value, units) },
+      { label: "Down + up", value: formatRate(value, units) },
       ...(moved
         ? [{ label: "Transferred", value: fmtBytes(moved, units.base) }]
         : []),
@@ -297,45 +270,6 @@ export const cardTip = (card: SummaryCard) =>
           : `${row.label}\t${row.value}`,
       ),
   ].join("\n");
-
-export interface CardLine {
-  label: string;
-  tip?: string;
-  facts: { value: string; stage?: TransportRole }[];
-  mark?: { text: string; tip: string };
-}
-export function cardLine(card: SummaryCard): CardLine | null {
-  if (card.wire)
-    return {
-      label: "wire",
-      facts: [{ value: card.wire.value }],
-      mark: { text: card.wire.overhead, tip: card.wire.tip },
-    };
-  const shown = card.rows.filter((row) => row.value !== MISSING);
-  const added = shown.filter((row) => row.label === "Added");
-  if (added.length)
-    return {
-      label: "added",
-      tip: JARGON.addedLatency,
-      facts: added.map((row) => ({ value: row.short!, stage: row.stage })),
-    };
-  const lanes = card.rows.filter((row) => row.short);
-  if (lanes.length)
-    return {
-      label: "",
-      facts: lanes.map((row) => ({ value: row.short!, stage: row.stage })),
-    };
-  const fact = shown.find((row) =>
-    ["Jitter", "Transferred"].includes(row.label),
-  );
-  return fact
-    ? {
-        label: fact.label.toLowerCase(),
-        tip: fact.label === "Jitter" ? JARGON.jitter : JARGON.transferred,
-        facts: [{ value: fact.value }],
-      }
-    : null;
-}
 
 interface TracePoint {
   t: number;

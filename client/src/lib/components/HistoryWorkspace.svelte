@@ -344,11 +344,15 @@
       outcome,
       metrics,
       label: [
-        `${exact}, ${OUTCOME[outcome].toLowerCase()} result`,
-        ...columns.map(
-          (column, index) =>
-            `${HISTORY_SORT_LABEL[column]} ${metrics[index].text}${metrics[index].share === null ? "" : ` ${scales[column].unit}`}`,
-        ),
+        [exact, where, `${OUTCOME[outcome].toLowerCase()} result`]
+          .filter(Boolean)
+          .join(", "),
+        ...columns.map((column, index) => {
+          const { text, share, note } = metrics[index];
+          const value = `${HISTORY_SORT_LABEL[column]} ${text}${share === null ? "" : ` ${scales[column].unit}`}`;
+          if (!note) return value;
+          return `${value}, ${column === "idle" ? `${note} ms` : column === "loaded" ? `under ${note}` : `${note} added`}`;
+        }),
       ].join(". "),
     };
   }
@@ -602,7 +606,7 @@
               {#if column === "date"}<span class="outcome-head"></span>{/if}
             {/each}
           </div>
-          {#each groups as group, index (group.heading || index)}
+          {#each groups as group, index (group.records[0].id)}
             <section class="group day">
               {#if group.heading}<h3 id={`history-day-${index}`}>
                   {group.heading}

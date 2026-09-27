@@ -336,11 +336,7 @@ export type RunnerEvent =
       stage: TransportRole;
       summary: StageLatencySummary | null;
     }
-  | {
-      type: "serverFailure";
-      failure: import("./measure").ServerFailure;
-      participants: string[];
-    }
+  | { type: "serverFailure"; failure: import("./measure").ServerFailure }
   | { type: "serverDetails"; details: import("./measure").MultiServerResult }
   | { type: "phase"; transition: PhaseTransition }
   | { type: "live"; sample: LiveSample }

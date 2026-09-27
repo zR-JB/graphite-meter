@@ -235,6 +235,7 @@
               value={selectedServer?.id ?? ""}
               label="Inspect server"
               onchange={controller.showServer}
+              disabled={store.isRunning}
             />
           </dd>
         </div>

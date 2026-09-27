@@ -66,7 +66,6 @@
       },
       details,
       shown,
-      details?.latencyFocus,
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });

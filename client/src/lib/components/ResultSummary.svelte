@@ -4,6 +4,7 @@
     cardTip,
     type CardScale,
     type SummaryCard,
+    type SummaryRow,
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import type { TransportRole } from "../runner/contract";
@@ -45,7 +46,7 @@
   // Latency has its own card; this row holds the transfers.
   const transfers = $derived(cards.filter((card) => card.key !== "latency"));
   // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
-  const FACT_ORDER = ["Peak", "Stability", "Combined", "Transferred"];
+  const FACT_ORDER = ["Peak", "Stability", "Down + up", "Transferred"];
   const facts = (card: SummaryCard) =>
     card.rows
       .filter((row) => !row.stage)
@@ -59,7 +60,9 @@
     {#each transfers as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
-      {@const lanes = card.rows.filter((row) => row.stage)}
+      {@const lanes = card.rows.filter(
+        (row): row is SummaryRow & { stage: TransportRole } => !!row.stage,
+      )}
       {@const reason = onCards.find((issue) =>
         issue.throughput.includes(card.key),
       )?.reason}
@@ -93,7 +96,9 @@
                 <span class="pair" data-tone={lane.stage}
                   ><span class="arrow" aria-hidden="true"
                     >{lane.stage === "download" ? "↓" : "↑"}</span
-                  ><span class="num">{lane.short}</span></span
+                  ><span class="sr-only">{STAGE[lane.stage].short}</span><span
+                    class="num">{lane.short}</span
+                  ></span
                 >
               {/each}
             {:else}
@@ -285,7 +290,7 @@
     font-weight: var(--w-strong);
   }
   .graph-slot {
-    height: var(--graph-h, clamp(64px, 11svh, 132px));
+    height: clamp(64px, 11svh, 132px);
     min-height: 0;
   }
   .facts {

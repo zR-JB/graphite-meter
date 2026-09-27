@@ -170,12 +170,12 @@ const latencySeries = (b: LatencyBucket) =>
 const throughputSeries = (s: ThroughputSample) =>
   `${s.phase}:${s.dir}:${s.continuityId}`;
 
-/** Inserts or revises a bucket, keeping start order through compaction; true when existing points changed. */
+/** Inserts or revises a bucket, keeping start order through compaction. */
 export function upsertLatencyBucket(
   history: LatencyBucket[],
   bucket: LatencyBucket,
   limit = SERIES_LIMIT,
-): boolean {
+): void {
   const key = latencySeries(bucket);
   let at = history.length;
   while (at > 0 && history[at - 1].startT > bucket.startT) at--;
@@ -186,10 +186,10 @@ export function upsertLatencyBucket(
     latencySeries(history[same]) !== key
   )
     same--;
-  const revised = same >= 0 && history[same].startT === bucket.startT;
-  if (revised) history[same] = bucket;
+  if (same >= 0 && history[same].startT === bucket.startT)
+    history[same] = bucket;
   else history.splice(at, 0, bucket);
-  if (history.length <= limit) return revised || at < history.length - 1;
+  if (history.length <= limit) return;
   const reduced = compact(history, limit, latencySeries, (bin) => [
     mergeLatency(bin),
   ]);
@@ -198,36 +198,29 @@ export function upsertLatencyBucket(
     history.length,
     ...reduced.sort((a, b) => a.startT - b.startT),
   );
-  return true;
 }
 
 /** Replaces an equal-time point of the same series; only the timestamp tail can match. */
-export function upsertThroughputSample(
+function upsertThroughputSample(
   history: ThroughputSample[],
   sample: ThroughputSample,
-): boolean {
+): void {
   const key = throughputSeries(sample);
   for (let i = history.length - 1; i >= 0 && history[i].t === sample.t; i--)
     if (throughputSeries(history[i]) === key) {
       history[i] = sample;
-      return true;
+      return;
     }
   history.push(sample);
-  return false;
 }
 
-/** True when existing history changed and incremental indexes must be rebuilt. */
 export function appendThroughputSample(
   history: ThroughputSample[],
   sample: ThroughputSample,
   spanMs = 0,
-): boolean {
-  const replaced = upsertThroughputSample(history, sample);
-  return (
-    (history.length > SERIES_LIMIT &&
-      compactThroughputHistory(history, spanMs)) ||
-    replaced
-  );
+): void {
+  upsertThroughputSample(history, sample);
+  if (history.length > SERIES_LIMIT) compactThroughputHistory(history, spanMs);
 }
 
 /** Keeps each series' first, last, and per-bin extremes, so compaction never hides a peak or a dip. */
@@ -235,7 +228,7 @@ export function compactThroughputHistory(
   history: ThroughputSample[],
   spanMs: number,
   limit = SERIES_LIMIT,
-): boolean {
+): void {
   const canonical: ThroughputSample[] = [];
   for (const sample of history) upsertThroughputSample(canonical, sample);
   const reduced = compact(
@@ -246,13 +239,7 @@ export function compactThroughputHistory(
     spanMs,
     4,
   );
-  if (
-    reduced.length === history.length &&
-    reduced.every((sample, i) => sample === history[i])
-  )
-    return false;
   history.splice(0, history.length, ...reduced);
-  return true;
 }
 
 function extremes(bin: readonly ThroughputSample[]): ThroughputSample[] {

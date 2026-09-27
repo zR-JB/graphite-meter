@@ -25,7 +25,7 @@ test("a running stage spans its plan and its leading edge carries the glided rat
   expect(graph.area.endsWith("Z")).toBe(true);
 });
 
-test("latency height is time added over the idle median, clamped to the track", () => {
+test("a reply below the idle median sits below its line; the track clamps at its top", () => {
   const graph = stageGraph({
     ...base,
     lanes: [[]],
@@ -36,6 +36,10 @@ test("latency height is time added over the idle median, clamped to the track", 
       { t: 9000, ms: 30 },
     ],
   });
-  expect(graph.dots.map((dot) => dot.y)).toEqual([18.5, 10, 1.5]);
+  const [below, above, capped] = graph.dots.map((dot) => dot.y);
+  expect(graph.dots).toHaveLength(3);
+  expect(below).toBeGreaterThan(graph.baselineY!);
+  expect(above).toBeLessThan(graph.baselineY!);
+  expect(capped).toBe(1.5);
   expect(graph.lines).toEqual([""]);
 });

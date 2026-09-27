@@ -4,7 +4,6 @@ import { singleLatencyBucket } from "../runner/series";
 import {
   gaugeLatency,
   latencyAxisMs,
-  latencyBucketExceedsScale,
   latencyScale,
   throughputScales,
 } from "./scales";
@@ -71,8 +70,6 @@ test("latency axes follow the p95 on the tier ladder, live over 8 s", () => {
   expect(latencyAxisMs(history.slice(0, 80), false)).toBe(200);
   expect(latencyAxisMs(history, false)).toBe(20);
   expect(latencyAxisMs(history, true)).toBe(200);
-  const spike = { ...singleLatencyBucket(0, 10, false), maxRttMs: 25 };
-  expect(latencyBucketExceedsScale(spike, latencyScale([10]))).toBe(true);
 });
 
 test("the gauge uses the shared axis only once a bucket measured the RTT it shows", () => {

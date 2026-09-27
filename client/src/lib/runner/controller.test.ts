@@ -379,16 +379,16 @@ test("returning to start releases the run so late events cannot reach the fresh 
     controller.returnToStart();
     expect(store.phase).toBe("idle");
     late({
-      type: "serverFailure",
-      failure: {
-        serverId: "self",
-        stage: "download",
-        atMs: 0,
-        scope: "throughput",
-        reason: "connection-lost",
-        message: "",
+      type: "serverDetails",
+      details: {
+        selection: [],
+        participants: [],
+        latencyFocus: "self",
+        intervals: [],
+        omittedIntervals: 0,
+        failures: [],
+        servers: [],
       },
-      participants: [],
     });
     expect(store.serverDetails).toBeNull();
   });

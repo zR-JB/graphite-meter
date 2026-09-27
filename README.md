@@ -40,8 +40,9 @@ both the interface and measurement routes on public deployments.
 
 - **Throughput measured at the receiver:** downloads count bytes the client consumed; upload bytes and timing come
   from the server, so a sender queue cannot inflate the result. Download, upload and bidirectional stages.
-- **One to four servers** from the operator's catalogue on one stage schedule, shown **Combined** or per server. A
-  server that drops out leaves an explicit Partial result with its reason.
+- **One to four servers** from the operator's catalogue on one stage schedule, shown together or one at a time.
+  Latency is measured on every selected server. A server that drops out leaves an explicit Partial result with
+  its reason.
 - **Latency under load:** idle and loaded latency per stage with median, p95, jitter and probe timeouts; added
   latency is the loaded median minus the idle median. Missing evidence stays explicit.
 - **Control over the connection path:** throughput and latency paths chosen independently over HTTP/1.1, HTTP/2,
@@ -55,15 +56,17 @@ for controlled performance testing.
 
 ## Browser client
 
-Run a test from a phone or desktop without installing a client. The gauge, timeline, and latency
-profiles keep transfer speed and responsiveness visible together.
+Run a test from a phone or desktop without installing a client. The dial, the latency card and one card
+per stage keep transfer speed and responsiveness visible together: each stage card graphs its rate with the
+latency its load added underneath.
 
-- **Flexible tests:** stage toggles, duration presets or custom timings, automatic or fixed stream
-  counts, and optional early completion when a stage stabilizes.
+- **Flexible tests:** stage switches beside Start, duration presets or custom timings, automatic or fixed
+  stream counts, and optional early completion when a stage stabilizes.
 - **Server selection:** a **Test servers** checklist in Settings, independent sign-in for protected
-  peers, and one **Combined** / per-server selector in results. Automatic paths resolve per server.
-- **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and
-  keyboard or touch chart inspection with reduced-motion support.
+  peers, and one server selector over the results (all servers, or one) that the latency card and
+  Details follow. Automatic paths resolve per server.
+- **Display choices:** light and dark themes, decimal or binary bits/bytes, gauge scaling, and graph
+  inspection by pointer, keyboard or touch, with reduced-motion support.
 - **Phone layout:** one vertical reading order; the bottom status bar keeps the current stage and remaining
   time visible while you scroll.
 - **Wide desktop workspace:** open Settings and Details side by side with the meter. Resize

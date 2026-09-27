@@ -140,7 +140,6 @@
   --statusbar-h: 28px;
 
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-snap: cubic-bezier(0.2, 0.8, 0.2, 1);
   --dur-hover: 120ms;
   --dur-slide: 180ms;
   --dur-sheet: 420ms;
@@ -174,7 +173,6 @@
   --type-body: 13px;
   --type-md: 14px;
   --type-lg: clamp(16px, 15px + 0.2vw, 18px);
-  --type-xl: clamp(20px, 17px + 0.5vw, 26px);
   --w-normal: 450;
   --w-strong: 600;
   --w-heavy: 700;
@@ -247,8 +245,6 @@
   --phase-upload: light-dark(oklch(0.63 0.15 58), oklch(0.83 0.125 66));
   --phase-bidirectional: light-dark(oklch(0.47 0.17 352), oklch(0.7 0.155 350));
   --phase-complete: var(--ok);
-  /* Latency probed under load is drawn over a phase's fill, so it takes ink, not a hue. */
-  --latency-loaded: var(--text);
 
   --ok: light-dark(oklch(0.5 0.095 155), oklch(0.8 0.1 155));
   --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
@@ -257,10 +253,6 @@
   --err: light-dark(oklch(0.52 0.14 25), oklch(0.74 0.12 22));
   --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
-  --grid-line: light-dark(
-    oklch(0.3 0.02 255 / 0.07),
-    oklch(0.92 0.02 255 / 0.06)
-  );
   --brand-line: color-mix(in oklab, var(--brand) 50%, var(--border));
   --err-line: color-mix(in oklab, var(--err) 45%, var(--border));
   --scrim: color-mix(in oklab, var(--canvas) 55%, transparent);

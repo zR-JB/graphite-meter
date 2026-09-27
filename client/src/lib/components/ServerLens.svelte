@@ -13,7 +13,7 @@
   } = $props();
   const controller = getApplicationController();
   const details = $derived(store.result?.multiServer ?? store.serverDetails);
-  // A server without a result of its own cannot be shown on its own.
+  // A server without a result of its own cannot be shown on its own; a running stage has only all servers' rate.
   const unmeasured = $derived(
     details
       ? servers
@@ -34,6 +34,7 @@
       ? `${participants.length} of ${servers.length} servers`
       : `All ${servers.length} servers`}
     disabledIds={unmeasured}
+    disabled={store.isRunning}
   />
 </span>
 

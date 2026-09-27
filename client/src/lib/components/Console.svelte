@@ -939,6 +939,9 @@
   }
 
   @media (max-width: 759px) {
+    .stage {
+      padding-inline: var(--space-4);
+    }
     .topbar {
       gap: var(--space-1);
       padding-inline: 6px;

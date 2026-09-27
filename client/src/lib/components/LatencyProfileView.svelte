@@ -173,7 +173,10 @@
     setHover(lane, metrics[next].metric, event.currentTarget as HTMLElement);
   }
 
-  function accessibleLane(lane: LatencyProfileViewLane): string {
+  function accessibleLane(
+    lane: LatencyProfileViewLane,
+    plus: number | null,
+  ): string {
     const values = [
       lane.center == null
         ? null
@@ -186,6 +189,7 @@
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
       lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
+      plus == null ? null : `added over idle ${fmtAddedMs(plus)} milliseconds`,
       live && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
         : null,
@@ -335,7 +339,7 @@
             class="track"
             role="slider"
             tabindex={metrics.length ? 0 : -1}
-            aria-label={accessibleLane(lane)}
+            aria-label={accessibleLane(lane, plus)}
             aria-disabled={!metrics.length}
             aria-valuemin={0}
             aria-valuemax={Math.max(0, metrics.length - 1)}
@@ -834,7 +838,43 @@
       margin-top: var(--space-2);
     }
   }
-  @container latency (max-width: 520px) {
+  /* A phone gives each population two lines: its numbers, then its plot at full width. */
+  @container latency (max-width: 420px) {
+    .lanes {
+      grid-template-columns: minmax(0, 1fr) max-content max-content;
+      grid-template-rows: none;
+      column-gap: var(--space-3);
+    }
+    .lane {
+      grid-template-rows: auto auto;
+      row-gap: 2px;
+      padding-block: var(--space-1);
+    }
+    .lane-name {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .lane-median {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .lane-added {
+      grid-column: 3;
+      grid-row: 1;
+    }
+    .lane-head,
+    .lane-jitter {
+      display: none;
+    }
+    .track {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .ticks {
+      grid-column: 1 / -1;
+    }
+  }
+  @container latency (min-width: 421px) and (max-width: 520px) {
     .lanes {
       grid-template-columns:
         [name] max-content [median] max-content [jitter] 0
