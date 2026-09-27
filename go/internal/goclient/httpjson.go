@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 func controlJSON(
@@ -28,7 +30,7 @@ func controlJSON(
 		if err := authResponseError(res); err != nil {
 			return nil, err
 		}
-		return nil, statusError{res.StatusCode, what}
+		return nil, statusError{code: res.StatusCode, from: what}
 	}
 	return res, readControlJSON(res.Body, out)
 }
@@ -37,7 +39,9 @@ func unexpectedStatus(res *http.Response) error {
 	if err := authResponseError(res); err != nil {
 		return err
 	}
-	return statusError{res.StatusCode, res.Request.URL.Redacted()}
+	// Delta-seconds only; 32 bits keep the duration from overflowing.
+	seconds, _ := strconv.ParseUint(res.Header.Get("Retry-After"), 10, 32)
+	return statusError{res.StatusCode, res.Request.URL.Redacted(), time.Duration(seconds) * time.Second}
 }
 
 const maxControlBytes = 64 * 1024

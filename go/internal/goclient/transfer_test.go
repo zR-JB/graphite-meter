@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -134,8 +135,8 @@ func TestLanePersistence(t *testing.T) {
 		reason   FailureReason
 		requests int
 	}{
-		{"busy", both, status(http.StatusTooManyRequests, nil), time.Minute, FailureServerBusy, 5},
-		{"unavailable", both, status(http.StatusServiceUnavailable, nil), time.Minute, FailureServerBusy, 5},
+		{"busy", both, status(http.StatusTooManyRequests, nil), time.Minute, FailureServerBusy, 4},
+		{"unavailable", both, status(http.StatusServiceUnavailable, nil), time.Minute, FailureServerBusy, 4},
 		{"gone", both, status(http.StatusGone, nil), time.Minute, FailureProtocol, 1},
 		{"unreachable", both, refused, time.Minute, FailureConnectionLost, 5},
 		{"empty", []Direction{Down}, status(http.StatusOK, nil), time.Minute, FailureInsufficientEvidence, 5},
@@ -161,6 +162,38 @@ func TestLanePersistence(t *testing.T) {
 				if reason != c.reason || requests != c.requests {
 					t.Errorf("%s %s: %v after %d requests, want %q after %d", c.name, dir, err, requests, c.reason,
 						c.requests)
+				}
+			})
+		}
+	}
+}
+
+func TestBusyLaneBacksOffLikeTheBrowser(t *testing.T) {
+	t.Parallel()
+	const ms = time.Millisecond
+	for retryAfter, want := range map[string][]time.Duration{
+		"":                              {300 * ms, 600 * ms, 1200 * ms},
+		"Wed, 21 Oct 2026 07:28:00 GMT": {300 * ms, 600 * ms, 1200 * ms},
+		"1":                             {1000 * ms, 1000 * ms},
+		"5":                             {1200 * ms, 1200 * ms},
+	} {
+		for _, dir := range []Direction{Down, Up} {
+			synctest.Test(t, func(t *testing.T) {
+				var gaps []time.Duration
+				last := time.Now()
+				transport := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					if now := time.Now(); now != last {
+						gaps = append(gaps, now.Sub(last))
+						last = now
+					}
+					header := http.Header{"Retry-After": {retryAfter}}
+					return &http.Response{StatusCode: http.StatusTooManyRequests, Header: header, Body: http.NoBody,
+						Request: req}, nil
+				})
+				r := &runner{http: &http.Client{Transport: transport}, target: fetchTarget("http://meter.test")}
+				err := lane(r, dir, "http://meter.test/download")(t.Context())
+				if failureReason(err, false) != FailureServerBusy || !slices.Equal(gaps, want) {
+					t.Errorf("Retry-After %q %s: %v after gaps %v, want server busy after %v", retryAfter, dir, err, gaps, want)
 				}
 			})
 		}

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/quic-go/webtransport-go"
@@ -32,8 +33,9 @@ var (
 )
 
 type statusError struct {
-	code int
-	from string
+	code       int
+	from       string
+	retryAfter time.Duration
 }
 
 func (e statusError) Error() string { return fmt.Sprintf("HTTP %d from %s", e.code, e.from) }

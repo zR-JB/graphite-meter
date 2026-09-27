@@ -14,9 +14,11 @@ import (
 )
 
 const (
-	retryBackoff = 500 * time.Millisecond
-	redialWindow = 2 * time.Second
-	laneStagger  = 75 * time.Millisecond
+	retryBackoff   = 500 * time.Millisecond
+	busyBackoff    = 300 * time.Millisecond
+	busyBackoffCap = 1200 * time.Millisecond
+	redialWindow   = 2 * time.Second
+	laneStagger    = 75 * time.Millisecond
 )
 
 func pause(ctx context.Context, d time.Duration) bool {
@@ -68,6 +70,7 @@ func permanent(err error) bool {
 // persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
 func persist(ctx context.Context, attempt func(context.Context) (progressed bool, err error)) error {
 	var failingSince time.Time
+	var busyDelay time.Duration
 	for {
 		started := time.Now()
 		progressed, err := attempt(ctx)
@@ -85,7 +88,17 @@ func persist(ctx context.Context, attempt func(context.Context) (progressed bool
 		if !progressed && time.Since(failingSince) >= redialWindow {
 			return cmp.Or(err, errNoBytes)
 		}
-		if (err != nil || !progressed) && time.Since(started) < retryBackoff && !pause(ctx, retryBackoff) {
+		var delay time.Duration
+		if status, ok := errors.AsType[statusError](err); ok && status.busy() {
+			busyDelay = min(busyBackoffCap, max(busyBackoff, 2*busyDelay))
+			delay = min(busyBackoffCap, max(busyDelay, status.retryAfter))
+		} else {
+			busyDelay = 0
+			if (err != nil || !progressed) && time.Since(started) < retryBackoff {
+				delay = retryBackoff
+			}
+		}
+		if delay > 0 && !pause(ctx, delay) {
 			return nil
 		}
 	}
