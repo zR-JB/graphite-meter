@@ -384,7 +384,12 @@ export type Trace = NonNullable<ReturnType<typeof tracePaths>>;
 export function serverIssues(details: MultiServerResult, scope = "") {
   const lines = new Map<
     string,
-    { server: string; stages: string[]; reason: string }
+    {
+      server: string;
+      stages: string[];
+      reason: string;
+      throughput: TransportRole[];
+    }
   >();
   for (const failure of details.failures) {
     if (scope && failure.serverId !== scope) continue;
@@ -394,17 +399,18 @@ export function serverIssues(details: MultiServerResult, scope = "") {
         server: serverName(details.selection, failure.serverId),
         stages: [],
         reason: reasonLabel(failure.reason),
+        throughput: [],
       });
-    lines
-      .get(key)!
-      .stages.push(
-        `${STAGE[failure.stage].label}${failure.scope === "latency" ? " latency" : ""}`,
-      );
+    const line = lines.get(key)!;
+    const latency = failure.scope === "latency";
+    line.stages.push(
+      `${STAGE[failure.stage].label}${latency ? " latency" : ""}`,
+    );
+    if (!latency) line.throughput.push(failure.stage);
   }
-  return [...lines.values()].map(({ server, stages, reason }) => ({
-    server,
+  return [...lines.values()].map(({ stages, ...line }) => ({
+    ...line,
     stages: stages.join(", "),
-    reason,
   }));
 }
 

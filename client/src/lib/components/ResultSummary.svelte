@@ -6,6 +6,7 @@
     type SummaryCard,
   } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
+  import type { TransportRole } from "../runner/contract";
   import ServerScope from "./ServerScope.svelte";
   import { term, tipGroup, tooltip } from "../actions/tooltip";
   import { STAGE, STATUS, STATUS_TONE } from "../presentation/vocabulary";
@@ -24,12 +25,25 @@
     fade?: number;
     reserve?: boolean;
     details?: MultiServerResult | null;
-    issues?: { server: string; stages: string; reason: string }[];
+    issues?: {
+      server: string;
+      stages: string;
+      reason: string;
+      throughput: TransportRole[];
+    }[];
     scope?: string;
     onscope?: (id: string) => void;
     locked?: boolean;
   } = $props();
   const uid = $props.id();
+  // One shown server's reasons sit on the chips they failed; only All servers needs an attributed list.
+  const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
+  const onChips = $derived(
+    attributed ? [] : issues.filter((issue) => issue.throughput.length),
+  );
+  const listed = $derived(
+    attributed ? issues : issues.filter((issue) => !issue.throughput.length),
+  );
 </script>
 
 <div class="result-summary" style:--cards={Math.min(4, cards.length)}>
@@ -59,6 +73,9 @@
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
       {@const line = cardLine(card)}
+      {@const reason = line
+        ? ""
+        : onChips.find((issue) => issue.throughput.includes(card.key))?.reason}
       <article
         class="chip {card.status}"
         data-tone={card.key}
@@ -140,15 +157,16 @@
               >
             {/if}
           </span>
+        {:else if reason && !quiet}
+          <span class="facts"><span class="fact">{reason}</span></span>
         {/if}
         {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
       </article>
     {/each}
   </div>
-  {#if issues.length}
-    {@const attributed = (details?.selection.length ?? 1) > 1 && !scope}
+  {#if listed.length}
     <dl class="issues enter" class:attributed aria-label="Issues">
-      {#each issues as issue, index (index)}
+      {#each listed as issue, index (index)}
         {#if attributed}<dt>{issue.server}</dt>
           <dd>{issue.stages}</dd>
         {:else}<dt>{issue.stages}</dt>{/if}

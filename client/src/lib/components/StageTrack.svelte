@@ -98,10 +98,11 @@
       ),
     ]),
   ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
+  const SETTLED = new Set(["partial", "failed", "stopped"]);
 </script>
 
 <fieldset class="stage-track" class:quad={segments.length === 4}>
-  <legend class="caps"
+  <legend
     >Test stages<span class="sr-only">
       — toggle to include or skip</span
     ></legend
@@ -141,7 +142,8 @@
           <span class="seg-ico"><Icon name={s.icon} /></span>
           <span class="seg-label">{s.label}</span>
         </span>
-        {#if look.reason}
+        <!-- A settled result's word lives on its chip below; the bar's pattern keeps the state here. -->
+        {#if look.reason && !SETTLED.has(look.state)}
           <span
             class="seg-tag"
             data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
@@ -168,6 +170,8 @@
   }
   legend {
     margin-bottom: var(--space-2);
+    color: var(--text-soft);
+    font: var(--w-strong) var(--type-xs) / 1.2 var(--font-sans);
   }
   @container (max-width: 430px) {
     .stage-track.quad {
@@ -312,23 +316,23 @@
     margin-left: auto;
     color: var(--ok);
   }
+  /* A status reads like the result chips: a dot and a word in its tone. */
   .seg-tag {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
-    height: 18px;
+    gap: 5px;
     margin-left: auto;
-    padding: 0 6px;
-    border: var(--hairline) solid var(--border-subtle);
-    border-radius: var(--r-well);
-    background: var(--surface-inset);
     color: var(--text-soft);
-    font: var(--w-heavy) var(--type-2xs) / 1 var(--font-mono);
-    letter-spacing: var(--track-caps);
-    text-transform: uppercase;
+    font: var(--w-strong) var(--type-xs) / 1 var(--font-sans);
+  }
+  .seg-tag::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
   }
   .seg-tag[data-tone] {
-    border-color: var(--tone-line);
     color: var(--tone);
   }
   @container viz (max-width: 680px) {
