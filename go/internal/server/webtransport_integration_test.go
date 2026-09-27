@@ -101,7 +101,7 @@ func dialWT(t *testing.T, wtTransport *testWTTransport, url string) *webtranspor
 	return sess
 }
 
-// acceptFeed accepts an upload session's progress feed.
+// acceptFeed accepts an upload session's progress feed, readable for ten seconds.
 func acceptFeed(t *testing.T, sess *webtransport.Session) *bufio.Scanner {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -110,6 +110,7 @@ func acceptFeed(t *testing.T, sess *webtransport.Session) *bufio.Scanner {
 	if err != nil {
 		t.Fatalf("accept progress feed: %v", err)
 	}
+	_ = feed.SetReadDeadline(time.Now().Add(10 * time.Second))
 	return bufio.NewScanner(feed)
 }
 
@@ -226,32 +227,27 @@ func TestWebTransportUploadDrainsDatagrams(t *testing.T) {
 
 	// Datagrams are lossy, so the assertion is that the drain counts them, not that every one lands.
 	payload := make([]byte, 1000)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
+	stop := make(chan struct{})
+	var sending sync.WaitGroup
+	sending.Go(func() {
+		for sess.SendDatagram(payload) == nil {
 			select {
-			case <-done:
+			case <-stop:
 				return
-			default:
+			case <-time.After(2 * time.Millisecond):
 			}
-			if err := sess.SendDatagram(payload); err != nil {
-				return
-			}
-			time.Sleep(2 * time.Millisecond)
 		}
-	}()
-	defer sess.CloseWithError(0, "") //nolint:errcheck // the test is ending either way
-
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+	})
+	defer sending.Wait()
+	defer close(stop)
+	for {
 		switch record := nextRecord(t, feed); {
 		case record.Type == "":
-			t.Fatal("the feed ended before counting a datagram")
+			t.Fatal("the feed ended before it counted a datagram")
 		case record.Type == "progress" && record.Bytes > 0:
 			return
 		}
 	}
-	t.Fatal("datagram upload never reached the server-authoritative counter")
 }
 
 func TestWebTransportDatagramFloodRepeats(t *testing.T) {
@@ -288,6 +284,7 @@ func TestWebTransportVerifySessionLingersAndServesNothing(t *testing.T) {
 	}
 }
 
+// A server-ended session names its cause, then its sessions-only QUIC connection closes a linger later.
 func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -298,17 +295,70 @@ func TestWebTransportSessionEndingsCarryTheirCause(t *testing.T) {
 	}{
 		{"idle", 1, nil, idleBound(300 * time.Millisecond)},
 		{"lifetime", 2, func(c *config.Config) { c.MaxOperationDuration = 300 * time.Millisecond }, nil},
+		{"shutdown", 4, nil, nil},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
 			t.Parallel()
-			base, _, wtTransport := wtTestServer(t, tc.tune, tc.shape)
-			sess := dialWT(t, wtTransport, base+"/wt/ping")
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			sockets := newTestListenerSockets(t)
+			cfg := config.Default()
+			cfg.Native.H1, cfg.Native.H3 = sockets.reserveTCP(), sockets.reserveH3()
+			cfg.TLSCert, cfg.TLSKey = runTestTLS(t)
+			if tc.tune != nil {
+				tc.tune(&cfg)
+			}
+			ctx, shutdown := context.WithCancel(t.Context())
+			defer shutdown()
+			build, err := newListenerBuild(ctx, &cfg, sockets)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.shape != nil {
+				tc.shape(build.e)
+			}
+			if err := build.assemble(); err != nil {
+				t.Fatal(err)
+			}
+			served := make(chan error, 1)
+			go func() { served <- runServices(ctx, &cfg, build.services) }()
+			defer func() { shutdown(); <-served }()
+
+			dialing, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			_, err := sess.AcceptUniStream(ctx)
-			closed, ok := errors.AsType[*webtransport.SessionError](err)
-			if !ok || closed.ErrorCode != tc.code || closed.Message != tc.reason {
+			conn, err := quic.DialAddr(dialing, cfg.Native.H3, &tls.Config{InsecureSkipVerify: true,
+				NextProtos: []string{http3.NextProtoH3}}, transport.NewQUICConfig()) //nolint:gosec // test certificate
+			if err != nil {
+				t.Fatal(err)
+			}
+			client, err := insecureWTTransport().NewClientConn(conn)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, sess, err := client.Dial(dialing, "https://"+cfg.Native.H3+"/wt/ping", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.reason == "shutdown" {
+				shutdown()
+			}
+			_, err = sess.AcceptUniStream(dialing)
+			if closed, ok := errors.AsType[*webtransport.SessionError](err); !ok || closed.ErrorCode != tc.code ||
+				closed.Message != tc.reason {
 				t.Fatalf("session ended with %v, want %d %q", err, tc.code, tc.reason)
+			}
+			if tc.reason == "shutdown" {
+				return
+			}
+			ended := time.Now()
+			select {
+			case <-conn.Context().Done():
+				closed, ok := errors.AsType[*quic.ApplicationError](context.Cause(conn.Context()))
+				if !ok || !closed.Remote || closed.ErrorCode != quic.ApplicationErrorCode(http3.ErrCodeNoError) ||
+					time.Since(ended) < wtCloseLinger/2 {
+					t.Fatalf("connection closed after %v with %v, want the server's H3_NO_ERROR a linger later",
+						time.Since(ended), context.Cause(conn.Context()))
+				}
+			case <-dialing.Done():
+				t.Fatal("the server kept the connection of its ended session open")
 			}
 		})
 	}
@@ -575,8 +625,8 @@ func TestWebTransportUploadRefusesAnotherClientsReceiver(t *testing.T) {
 func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTransport string) {
 	t.Helper()
 	_, httpBase, _ := wtServer(t, func(c *config.Config) {
-		c.MaxOperationDuration = 500 * time.Millisecond
-		c.MaxSessionDuration = 500 * time.Millisecond
+		c.MaxOperationDuration = 400 * time.Millisecond
+		c.MaxSessionDuration = 400 * time.Millisecond
 	}, nil)
 
 	clientCfg := goclient.DefaultConfig()
@@ -586,9 +636,9 @@ func runGoClientUnderLifetimeCaps(t *testing.T, throughputTransport, latencyTran
 	clientCfg.InsecureSkipTLSVerify = true
 	clientCfg.Stages = goclient.StageSet{Latency: true, Download: true, Upload: true}
 	clientCfg.Warmup = 100 * time.Millisecond
-	clientCfg.LatencyDuration = 1200 * time.Millisecond
-	clientCfg.DownloadDuration = 1200 * time.Millisecond
-	clientCfg.UploadDuration = 1200 * time.Millisecond
+	clientCfg.LatencyDuration = goclient.StageBound.Min
+	clientCfg.DownloadDuration = goclient.StageBound.Min
+	clientCfg.UploadDuration = goclient.StageBound.Min
 
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	defer cancel()

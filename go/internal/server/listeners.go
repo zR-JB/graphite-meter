@@ -301,6 +301,7 @@ func serveWebTransport(ctx context.Context, wt *webtransport.Server, ln *quic.Li
 // its client slot ~15 s, any other after idle, as a stream stalled before its headers stops HTTP/3's own timer.
 type quicUse struct {
 	conn               *quic.Conn
+	carried            *sessionConns
 	idle               time.Duration
 	unused             *time.Timer
 	mu                 sync.Mutex
@@ -313,9 +314,9 @@ const wtCloseLinger = time.Second
 
 type quicUseKey struct{}
 
-func withQUICUse(idle time.Duration) func(context.Context, *quic.Conn) context.Context {
+func withQUICUse(idle time.Duration, carried *sessionConns) func(context.Context, *quic.Conn) context.Context {
 	return func(ctx context.Context, conn *quic.Conn) context.Context {
-		u := &quicUse{conn: conn, idle: idle}
+		u := &quicUse{conn: conn, carried: carried, idle: idle}
 		u.unused = time.AfterFunc(idle, func() { u.closeIfIdle(true) })
 		return context.WithValue(ctx, quicUseKey{}, u)
 	}
@@ -370,6 +371,9 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
 		return func(bool) {}
 	}
 	u.mu.Lock()
+	if !u.sessions {
+		u.carried.track(u.conn)
+	}
 	u.sessions = true
 	u.mu.Unlock()
 	return func(byPeer bool) {
@@ -379,6 +383,44 @@ func webTransportSession(r *http.Request) (ended func(byPeer bool)) {
 			u.linger = wtCloseLinger
 		}
 		u.mu.Unlock()
+	}
+}
+
+// sessionConns counts open connections that carried a session, so a shutdown lets each end with its cause.
+type sessionConns struct {
+	mu      sync.Mutex
+	open    int
+	drained chan struct{} // closed while open is zero
+}
+
+func newSessionConns() *sessionConns {
+	c := &sessionConns{drained: make(chan struct{})}
+	close(c.drained)
+	return c
+}
+
+func (c *sessionConns) track(conn *quic.Conn) {
+	c.mu.Lock()
+	if c.open++; c.open == 1 {
+		c.drained = make(chan struct{})
+	}
+	c.mu.Unlock()
+	context.AfterFunc(conn.Context(), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.open--; c.open == 0 {
+			close(c.drained)
+		}
+	})
+}
+
+func (c *sessionConns) wait(ctx context.Context) {
+	c.mu.Lock()
+	drained := c.drained
+	c.mu.Unlock()
+	select {
+	case <-drained:
+	case <-ctx.Done():
 	}
 }
 
@@ -401,7 +443,8 @@ func (b *listenerBuild) addH3() error {
 	webtransport.ConfigureHTTP3Server(h3)
 	h3.Handler = countQUICUse(boundedRequest(b.authn.Enforce(newMux(b.ctx, b.e, muxTopology{transfers: true, wt: wt},
 		nil, b.authn), auth.Listener{WebTransport: true}), b.e.controlTimeout))
-	h3.ConnContext = withQUICUse(b.e.controlTimeout)
+	carried := newSessionConns()
+	h3.ConnContext = withQUICUse(b.e.controlTimeout, carried)
 	h3.MaxHeaderBytes = h3MaxHeaderBytes
 	pc, err := b.sockets.listenUDP(b.cfg.Native.H3)
 	if err != nil {
@@ -422,7 +465,9 @@ func (b *listenerBuild) addH3() error {
 					return nil
 				}
 				return err
-			}, stop: func(context.Context) error {
+			}, stop: func(ctx context.Context) error {
+				// Sessions end with the shutdown cause; their connections close a linger later.
+				carried.wait(ctx)
 				err := wt.Close()
 				_ = quicListener.Close()
 				_ = quicTransport.Close()
