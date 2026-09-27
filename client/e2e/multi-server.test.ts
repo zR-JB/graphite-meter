@@ -94,7 +94,7 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
   await expect(path("throughput")).toContainText("Used");
-  await expect(path("latency")).toHaveText("Not selected");
+  await expect(path("latency")).toHaveText("Not measured");
   await info.getByRole("combobox", { name: "Inspect server" }).fill("self");
   await expect(path("latency")).toContainText("Used");
 });
