@@ -186,7 +186,6 @@
   }
   @container viz (max-width: 520px) {
     .stage-track {
-      flex-wrap: nowrap;
       gap: 0;
     }
     .chip {

@@ -834,7 +834,43 @@
       margin-top: var(--space-2);
     }
   }
-  @container latency (max-width: 520px) {
+  /* A phone gives each population two lines: its numbers, then its plot at full width. */
+  @container latency (max-width: 420px) {
+    .lanes {
+      grid-template-columns: minmax(0, 1fr) max-content max-content;
+      grid-template-rows: none;
+      column-gap: var(--space-3);
+    }
+    .lane {
+      grid-template-rows: auto auto;
+      row-gap: 2px;
+      padding-block: var(--space-1);
+    }
+    .lane-name {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .lane-median {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .lane-added {
+      grid-column: 3;
+      grid-row: 1;
+    }
+    .lane-head,
+    .lane-jitter {
+      display: none;
+    }
+    .track {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .ticks {
+      grid-column: 1 / -1;
+    }
+  }
+  @container latency (min-width: 421px) and (max-width: 520px) {
     .lanes {
       grid-template-columns:
         [name] max-content [median] max-content [jitter] 0
