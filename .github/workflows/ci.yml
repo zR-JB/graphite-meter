@@ -214,9 +214,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Python tools, pinned cargo-deny and Rust
+      - name: Set up Rust, pinned cargo-deny and cargo-nextest
         uses: ./.github/actions/setup-project
-        with: {rust: 'true', cargo-deny: 'true'}
+        with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
       - name: Check experimental Rust implementation and dependency policy
         run: mise run rust-check
       - name: Keep only dependency builds in a new cache

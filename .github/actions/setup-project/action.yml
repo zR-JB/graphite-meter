@@ -41,6 +41,10 @@ inputs:
     description: Include pinned cargo-deny
     required: false
     default: 'false'
+  cargo-nextest:
+    description: Include pinned cargo-nextest
+    required: false
+    default: 'false'
 outputs:
   chrome-version:
     description: Exact Chrome for Testing version from mise.toml
@@ -59,6 +63,7 @@ runs:
         INCLUDE_GOVULNCHECK: ${{ inputs.govulncheck }}
         INCLUDE_GITLEAKS: ${{ inputs.gitleaks }}
         INCLUDE_CARGO_DENY: ${{ inputs.cargo-deny }}
+        INCLUDE_CARGO_NEXTEST: ${{ inputs.cargo-nextest }}
       run: |
         tools=(python)
         if [[ "$INCLUDE_GO" == true ]]; then tools+=(go); fi
@@ -68,6 +73,7 @@ runs:
         if [[ "$INCLUDE_GOVULNCHECK" == true ]]; then tools+=(go:golang.org/x/vuln/cmd/govulncheck); fi
         if [[ "$INCLUDE_GITLEAKS" == true ]]; then tools+=(aqua:gitleaks/gitleaks); fi
         if [[ "$INCLUDE_CARGO_DENY" == true ]]; then tools+=(aqua:EmbarkStudios/cargo-deny); fi
+        if [[ "$INCLUDE_CARGO_NEXTEST" == true ]]; then tools+=(aqua:nextest-rs/nextest/cargo-nextest); fi
         printf 'install-args=%s\n' "${tools[*]}" >> "$GITHUB_OUTPUT"
 
     - name: Install pinned mise toolchain

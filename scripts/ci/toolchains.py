@@ -19,6 +19,7 @@ TOOL_KEYS = {
     "actionlint": "aqua:rhysd/actionlint",
     "zizmor": "aqua:zizmorcore/zizmor",
     "cargo-deny": "aqua:EmbarkStudios/cargo-deny",
+    "cargo-nextest": "aqua:nextest-rs/nextest/cargo-nextest",
 }
 PIN_PATTERNS = {
     "browser": {"chrome": r"\d+\.\d+\.\d+\.\d+"},

@@ -253,6 +253,66 @@ checksum = "sha256:d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332af
 url = "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip"
 url_api = "https://api.github.com/repos/gitleaks/gitleaks/releases/assets/378333178"
 
+[[tools."aqua:nextest-rs/nextest/cargo-nextest"]]
+version = "0.9.145"
+backend = "aqua:nextest-rs/nextest/cargo-nextest"
+specifiers = ["0.9.145"]
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-arm64"]
+checksum = "sha256:0ad2815fd91a7ecec3a7e25c749b584f66729ac688fd26b2fd494f7ff94b7fd0"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-aarch64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568837128"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-arm64-musl"]
+checksum = "sha256:103a8f68b20fb01ee5daf2eb4c037b54ace550a04a288ee35761c5e7b0351311"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-aarch64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568839937"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-x64"]
+checksum = "sha256:32aa82416099eb12fffae9cf1a279ad201fecbd3f74826c613e32e9006b29867"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568838794"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-x64-baseline"]
+checksum = "sha256:32aa82416099eb12fffae9cf1a279ad201fecbd3f74826c613e32e9006b29867"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-gnu.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568838794"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-x64-musl"]
+checksum = "sha256:cd3c85194e8b28ad26676d287f41f0d6b4d456cef5bd94700def5dea8e328883"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568841304"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.linux-x64-musl-baseline"]
+checksum = "sha256:cd3c85194e8b28ad26676d287f41f0d6b4d456cef5bd94700def5dea8e328883"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-unknown-linux-musl.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568841304"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.macos-arm64"]
+checksum = "sha256:52ecaedb4f5af9267ef7ed02bc937d2a15a94ff96cb663080e81311f798c9905"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848732"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.macos-x64"]
+checksum = "sha256:52ecaedb4f5af9267ef7ed02bc937d2a15a94ff96cb663080e81311f798c9905"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848732"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.macos-x64-baseline"]
+checksum = "sha256:52ecaedb4f5af9267ef7ed02bc937d2a15a94ff96cb663080e81311f798c9905"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-universal-apple-darwin.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848732"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.windows-x64"]
+checksum = "sha256:bfecd545af057adb83be7ddfe135fd067fb9c990544da1ea111e675f45d628a9"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848391"
+
+[tools."aqua:nextest-rs/nextest/cargo-nextest"."platforms.windows-x64-baseline"]
+checksum = "sha256:bfecd545af057adb83be7ddfe135fd067fb9c990544da1ea111e675f45d628a9"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.145/cargo-nextest-0.9.145-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/568848391"
+
 [[tools."aqua:rhysd/actionlint"]]
 version = "1.7.12"
 backend = "aqua:rhysd/actionlint"
