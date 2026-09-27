@@ -129,14 +129,23 @@ func TestConnContextAdmitsAndReleasesOnCancel(t *testing.T) {
 	})
 }
 
-// Under load a QUIC Initial holds a connection slot only once Retry has validated its source address.
+// Under load, or once its client holds a QUIC share, an Initial holds a slot only after Retry validated its source.
 func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 	_, cm := protocolTestTLS(t)
-	for _, loaded := range []bool{false, true} {
-		t.Run(map[bool]string{false: "idle", true: "loaded"}[loaded], func(t *testing.T) {
-			a := newConnectionAdmission(4, 4, nil)
-			if loaded {
-				release, _ := a.acquire(testAddr("192.0.2.1:1"), false)
+	for name, tc := range map[string]struct {
+		held     []string
+		quic     bool
+		verified bool
+	}{
+		"idle":                   {},
+		"loaded":                 {[]string{"192.0.2.1:1", "192.0.2.2:1"}, false, true},
+		"client holds QUIC":      {[]string{"127.0.0.1:1"}, true, true},
+		"client holds TCP alone": {[]string{"127.0.0.1:1"}, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := newConnectionAdmission(8, 4, nil)
+			for _, addr := range tc.held {
+				release, _ := a.acquire(testAddr(addr), tc.quic)
 				defer release()
 			}
 			pc, err := net.ListenPacket("udp", "127.0.0.1:0")
@@ -164,8 +173,8 @@ func TestLoadedQUICAdmissionValidatesTheSourceFirst(t *testing.T) {
 				t.Fatalf("dial: %v", err)
 			}
 			defer conn.CloseWithError(0, "")
-			if got := <-verified; got != loaded {
-				t.Fatalf("admitted with a validated source = %v, want %v", got, loaded)
+			if got := <-verified; got != tc.verified {
+				t.Fatalf("admitted with a validated source = %v, want %v", got, tc.verified)
 			}
 		})
 	}

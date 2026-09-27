@@ -82,7 +82,8 @@ func Default() Config {
 		ServerName:    "graphite-meter", EngineVersion: EngineVersion,
 		MaxActiveMeasurements: 256, MaxActiveMeasurementsPerClient: 32,
 		MaxActiveSessions: 64, MaxSessionsPerClient: 8,
-		MaxConnections: 512, MaxConnectionsPerClient: 64,
+		// Connections cost only descriptors; a small pool would let a few prefixes shut out every client.
+		MaxConnections: 4096, MaxConnectionsPerClient: 64,
 		MaxOperationDuration: 5 * time.Minute,
 		MaxSessionDuration:   2 * time.Hour,
 		Auth:                 AuthConfig{Mode: "off", OIDCProviderName: "Authelia"},
