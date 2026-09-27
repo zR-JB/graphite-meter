@@ -16,6 +16,7 @@ const (
 	csrfCookie         = "__Host-gm_csrf"
 	loginCookie        = "__Host-gm_login"
 	transactionCookie  = "__Host-gm_oidc"
+	deviceCookie       = "__Host-gm_device"
 	maxSessions        = 1024
 	maxSubjectSessions = 8
 	sessionLifetime    = 8 * time.Hour

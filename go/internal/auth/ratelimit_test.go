@@ -2,10 +2,14 @@ package auth
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -59,8 +63,7 @@ func TestAddressBudgets(t *testing.T) {
 	}
 }
 
-// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across, so it
-// alone cannot engage the global ceiling that would lock the operator out.
+// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across.
 func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
 	s := testService(t)
 	allowed := 0
@@ -131,4 +134,56 @@ func TestAddressStoreStaysBoundedAndExpires(t *testing.T) {
 			t.Fatal("expired addresses still occupied the bounded store")
 		}
 	})
+}
+
+func TestKnownDeviceSignsInPastTheGlobalCeiling(t *testing.T) {
+	s := testService(t)
+	mux := http.NewServeMux()
+	s.Mount(mux)
+	signIn := func(remote, password string, device *http.Cookie) *http.Response {
+		const token = "abcdefghijklmnopqrstuvwxyz0123456789"
+		form := url.Values{"csrf": {token}, "password": {password}}.Encode()
+		r := secureRequest(http.MethodPost, "/auth/password", strings.NewReader(form))
+		r.RemoteAddr = remote
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Origin", s.origin)
+		r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+		if device != nil {
+			r.AddCookie(device)
+		}
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, r)
+		return rr.Result()
+	}
+	signedIn := func(res *http.Response) bool { return res.Header.Get("Location") == "/" }
+	var device *http.Cookie
+	for _, c := range signIn("198.51.100.7:40000", "secret", nil).Cookies() {
+		if c.Name == deviceCookie {
+			device = c
+		}
+	}
+	if device == nil || !device.HttpOnly || !device.Secure || device.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("sign-in issued device cookie %v, want HttpOnly, Secure and SameSite=Strict", device)
+	}
+	for i := range maxGlobalAttempts {
+		if signedIn(signIn(addressFrom(i), "wrong", nil)) {
+			t.Fatal("a wrong password signed in")
+		}
+	}
+	if signedIn(signIn("203.0.113.9:40000", "secret", nil)) {
+		t.Fatal("an unknown address signed in past the engaged ceiling")
+	}
+	if !signedIn(signIn("192.0.2.1:40000", "secret", device)) {
+		t.Fatal("a known device was locked out by other addresses' wrong passwords")
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(device.Value)
+	raw[len(raw)-1] ^= 1
+	past := time.Now().Add(-time.Minute).Unix()
+	expired := append(binary.BigEndian.AppendUint64(nil, uint64(past)), s.deviceTag(past)...)
+	for name, value := range map[string][]byte{"forged": raw, "expired": expired} {
+		if signedIn(signIn("192.0.2.2:40000", "secret", &http.Cookie{Name: deviceCookie,
+			Value: base64.RawURLEncoding.EncodeToString(value)})) {
+			t.Fatalf("a %s device cookie skipped the global ceiling", name)
+		}
+	}
 }

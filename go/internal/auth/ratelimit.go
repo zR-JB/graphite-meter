@@ -1,6 +1,10 @@
 package auth
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"log"
 	"maps"
 	"net/http"
@@ -16,6 +20,7 @@ const (
 	maxAddressOIDCStarts = 10
 	maxAddressApprovals  = 10
 	ceilingLogInterval   = time.Minute
+	deviceLifetime       = 30 * 24 * time.Hour
 )
 
 func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, name string, limit int,
@@ -54,15 +59,46 @@ func (s *Service) allowAddress(r *http.Request, store map[string][]time.Time, na
 	return true
 }
 
+// A browser that signed in before skips the global ceiling, so others' wrong passwords cannot lock the operator out.
 func (s *Service) allowAttempt(r *http.Request) bool {
-	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, &s.globalAttempts)
+	global := &s.globalAttempts
+	if s.knownDevice(r) {
+		global = nil
+	}
+	return s.allowAddress(r, s.attempts, "password-attempt", maxAddressAttempts, global)
 }
 
-// Only a wrong password spends the global ceiling, so addresses that merely try cannot lock the operator out.
 func (s *Service) noteFailedPassword() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.globalAttempts = append(recentAttempts(s.globalAttempts, time.Now()), time.Now())
+}
+
+// The key is the password hash, so a device survives restarts and is forgotten when the password changes.
+func (s *Service) deviceTag(expires int64) []byte {
+	mac := hmac.New(sha256.New, []byte(s.passwordHash))
+	mac.Write(binary.BigEndian.AppendUint64(nil, uint64(expires)))
+	return mac.Sum(nil)
+}
+
+func (s *Service) issueDeviceCookie(w http.ResponseWriter) {
+	expires := time.Now().Add(deviceLifetime)
+	value := binary.BigEndian.AppendUint64(nil, uint64(expires.Unix()))
+	value = append(value, s.deviceTag(expires.Unix())...)
+	setCookie(w, deviceCookie, base64.RawURLEncoding.EncodeToString(value), expires, http.SameSiteStrictMode)
+}
+
+func (s *Service) knownDevice(r *http.Request) bool {
+	c := uniqueCookie(r, deviceCookie)
+	if c == nil {
+		return false
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+	if err != nil || len(raw) != 8+sha256.Size {
+		return false
+	}
+	expires := int64(binary.BigEndian.Uint64(raw))
+	return time.Now().Unix() < expires && hmac.Equal(raw[8:], s.deviceTag(expires))
 }
 
 func (s *Service) allowExchange(r *http.Request) bool {
