@@ -158,7 +158,8 @@ test("stage populations stay separate and added latency is signed per loaded sta
   for (let i = 0; i < 100; i++) latency.observe("download", reply(20), 0, 0);
   latency.observe("upload", reply(300), 0, 0);
   latency.observe("upload", reply(250, true), 0, 0);
-  expect(latency.result()).toMatchObject({ reportedMs: 15 });
+  expect(latency.result()).toMatchObject({ reportedMs: 15, jitterMs: 10 });
+  expect(latency.result()?.stabilityPct).toBeCloseTo(100 / 3);
   expect(latency.addedLatency()).toEqual({
     download: 5,
     upload: 285,

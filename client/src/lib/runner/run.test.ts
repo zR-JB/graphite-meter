@@ -620,6 +620,27 @@ test("the headline latency source is fixed before the run and is not pooled", as
   expect(result.multiServer.servers[1].latency?.reportedMs).toBe(2);
 });
 
+test("a focus server lost in the latency stage hands the headline to a survivor", async () => {
+  const h = await harness(
+    [
+      { id: "b", measure: probe(2, 4) },
+      {
+        id: "c",
+        measure: (host) => (probe(40, 4)(host), fail(10)(host)),
+      },
+    ],
+    { latency: true, download: true },
+    { latencyMs: 50, downloadMs: 1_000 },
+    { latencySource: "c" },
+  );
+  h.start();
+  const result = await h.result();
+  expect(result.latency?.reportedMs).toBe(2);
+  expect(result.multiServer.latencyFocus).toBe("b");
+  expect(result.stages).toMatchObject({ latency: "partial" });
+  expect(result.outcome).toBe("partial");
+});
+
 test("a stable feed completes early and each result arrives before the next stage", async () => {
   const h = await harness(
     two(),

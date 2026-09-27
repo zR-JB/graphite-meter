@@ -401,9 +401,14 @@ export class ServerLatency {
   result(): LatencyResult | null {
     const summary = this.summary("latency");
     if (summary?.p50Ms == null) return null;
+    const { p50Ms, jitterMs } = summary;
     return {
-      reportedMs: summary.p50Ms,
-      jitterMs: summary.jitterMs,
+      reportedMs: p50Ms,
+      jitterMs,
+      stabilityPct:
+        jitterMs == null
+          ? null
+          : Math.max(0, 100 * (1 - jitterMs / Math.max(p50Ms, 1))),
     };
   }
 

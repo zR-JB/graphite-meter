@@ -1128,6 +1128,16 @@ export class Run {
       server.buckets.restart(this.#elapsed, this.#continuity);
   }
 
+  /** A removed focus hands the headline latency to a survivor that measured it. */
+  #focus(): Participant {
+    const source = this.#latencySource;
+    return source.removed
+      ? (this.#latencyParticipants().find((server) =>
+          server.latency.result(),
+        ) ?? source)
+      : source;
+  }
+
   #latencyParticipants(): Participant[] {
     return this.#participants().filter(
       (server) => server.paths.latency && !server.latency.failed.has("latency"),
@@ -1224,7 +1234,7 @@ export class Run {
   #reduce(stage: TransportRole): void {
     const results = this.#results;
     if (stage === "latency") {
-      results.latency = this.#latencySource.latency.result();
+      results.latency = this.#focus().latency.result();
       if (results.latency)
         this.#emit({ type: "stageResult", stage, result: results.latency });
       return;
@@ -1269,7 +1279,7 @@ export class Run {
     if (entered && !failed && !lanes.every(Boolean)) {
       const ids =
         stage === "latency"
-          ? [this.#latencySource.server.id]
+          ? [this.#focus().server.id]
           : (this.#aggregate.intervals.findLast(
               (interval) => interval.stage === stage,
             )?.participants ?? this.#ids());
@@ -1290,7 +1300,7 @@ export class Run {
     this.#running = false;
     this.#completed = true;
     const durationMs = this.#now();
-    const source = this.#latencySource.latency;
+    const source = this.#focus().latency;
     const stages = Object.fromEntries(
       STAGES.map((stage) => [stage, this.#settle(stage)]),
     ) as RunResult["stages"];
@@ -1330,7 +1340,7 @@ export class Run {
         ({ server }) => server,
       ),
       participants: this.#ids(),
-      latencyFocus: this.#latencySource.server.id,
+      latencyFocus: this.#focus().server.id,
       intervals: structuredClone(aggregate.intervals),
       omittedIntervals: aggregate.omittedIntervals,
       failures: [...this.#failures],
