@@ -111,10 +111,15 @@
       target.transport === "fetch-stream" ? "Fetch stream" : "Session stream";
     return `${carrier} over ${connections.throughput.carrier}`;
   });
+  // A failed server's last load reading no longer describes it.
   const serverLoad = $derived(
-    serverLoadSummary(
-      (activePaths?.throughput ?? validation.throughput.path)?.probe.load,
-    ),
+    failures.length ||
+      (selectedServer &&
+        store.servers.get(selectedServer.id)?.readiness === "failed")
+      ? null
+      : serverLoadSummary(
+          (activePaths?.throughput ?? validation.throughput.path)?.probe.load,
+        ),
   );
   const httpPaths = $derived(advertisedServerHttpPaths(discovery));
 
@@ -225,7 +230,13 @@
                 data-tone={status.tone}
                 aria-hidden="true"
               ></span>{/if}
-            <span>{inTest ? connection.summary : "Not selected"}</span>
+            <span
+              >{inTest
+                ? connection.summary
+                : pathMode === "live"
+                  ? "Not selected"
+                  : "Not measured"}</span
+            >
             {#if inTest && connection.validation !== "verified"}<span
                 class="status">{status.label}</span
               >{:else if inTest}<span class="sr-only">{status.label}</span>{/if}
