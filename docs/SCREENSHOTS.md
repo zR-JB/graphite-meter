@@ -2,8 +2,8 @@
 
 [Project overview](../README.md) · [Quick deployment](DEPLOYMENT.md#fast-local-deployment) · [What the numbers mean](MEASUREMENTS.md)
 
-Every capture is a real run against local servers on loopback (the `mise run e2e` fleet), so the rates show software
-limits on one machine, not a network or a benchmark.
+Every capture is a real run against local servers over loopback held to 1 Gbit/s, so the rates show that limit on
+one machine, not a network or a benchmark.
 
 ## The completed test
 
@@ -22,7 +22,7 @@ beside the meter.
 
 <img src="assets/settings.png" alt="Settings docked beside the completed test, with the server checklist and connection paths" width="1080">
 
-<img src="assets/endpoint.png" alt="Details with the throughput path open, showing browser- and server-observed protocol evidence" width="1080">
+<img src="assets/endpoint.png" alt="Details beside the completed test: the tested server, the paths used and the protocol evidence from browser and server" width="1080">
 
 <img src="assets/workspace.png" alt="Wide desktop with Settings and Details docked on both sides of the meter" width="1080">
 
