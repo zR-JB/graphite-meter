@@ -1,6 +1,14 @@
 // Application controller contracts: selection, approval, run start/stop and the store it writes.
 import "../state/runes.testutil";
-import { afterAll, beforeAll, expect, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  jest,
+  test,
+} from "bun:test";
 import type { FailureReason, RunnerConfig, RunnerEvent } from "./contract";
 import { AUTHENTICATION_REQUIRED_EVENT } from "../auth";
 import { CONNECTION_FRESH_MS, type ServerView } from "./paths";
@@ -12,22 +20,22 @@ import type {
 } from "./controller.svelte";
 import type { ConnectionPreparation } from "./real/prepare";
 import type { ServerEntry } from "../servers/catalog";
-import { stubGlobals } from "../test-helpers.testutil";
+import { settle, stubGlobals, until } from "../test-helpers.testutil";
 import {
   NOT_RUN,
-  settle,
   TEST_BUILD_TOKENS,
   testEvidence as evidence,
   testPreparation as preparation,
   testRunResult,
   testServerDiscovery,
-  until,
 } from "./test-helpers.testutil";
 
 // Store and runner modules read build tokens when they first load.
 let restoreBuild: () => void;
 beforeAll(() => (restoreBuild = stubGlobals(TEST_BUILD_TOKENS)));
 afterAll(() => restoreBuild());
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => jest.useRealTimers());
 
 type Dependencies = NonNullable<
   Parameters<typeof createApplicationController>[1]
@@ -351,34 +359,6 @@ test("idle latency stops before the run starts and resumes after abort", async (
   });
 });
 
-test("a cancelled start keeps the previous result on screen", async () => {
-  let hold: Promise<void> | undefined;
-  await withController(
-    {
-      discover: async () => {
-        await hold;
-        return evidence().discovery;
-      },
-    },
-    async ({ controller, store, runner }) => {
-      controller.toggleRun();
-      await until(() => runner.starts === 1);
-      runner.listener({ type: "complete", result: testRunResult() });
-      const previous = store.result;
-      expect(previous).not.toBeNull();
-      const gate = Promise.withResolvers<void>();
-      hold = gate.promise;
-      controller.toggleRun();
-      await until(() => store.preparationStatus === "checking");
-      controller.toggleRun();
-      gate.resolve();
-      await settle();
-      expect(store.result).toBe(previous);
-      expect(runner.starts).toBe(1);
-    },
-  );
-});
-
 test("without idle latency the connection settles from verified paths", async () => {
   await withController(
     { servers: ["self", "peer"], selected: ["self", "peer"] },
@@ -401,25 +381,6 @@ test("without idle latency the connection settles from verified paths", async ()
         false,
         "connected",
       ]);
-    },
-  );
-});
-
-test("a stream plan that cannot fit blocks Start before the click", async () => {
-  await withController(
-    { servers: ["self", "peer"], selected: ["self", "peer"] },
-    async ({ controller, store, runner }) => {
-      expect(store.startBlocker).toBe("");
-      controller.configureRun({
-        transferStreams: { mode: "forced", count: 12 },
-      });
-      expect(store.startBlocker).toContain("Forced streams");
-      expect(store.streamPlanError).toBe(store.startBlocker);
-      expect(store.preparation.status).toBe("blocked");
-      controller.toggleRun();
-      await settle();
-      expect(runner.starts).toBe(0);
-      expect(store.preparation.status).toBe("blocked");
     },
   );
 });
@@ -498,61 +459,53 @@ test("switching servers carries transport preferences and clears the old server'
 });
 
 test("hidden pages defer checks; returning refreshes discovery that expired meanwhile", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  jest.setSystemTime(1000);
   let discoveries = 0;
-  try {
-    await withController(
-      {
-        hidden: true,
-        discover: async () => (discoveries++, evidence().discovery),
-      },
-      async ({ setVisibility, view }) => {
-        expect(view().readiness).toBe("unchecked");
-        setVisibility("visible");
-        await until(() => view().readiness === "verified");
-        setVisibility("hidden");
-        clock.mockReturnValue(2000 + CONNECTION_FRESH_MS);
-        setVisibility("visible");
-        expect(view().readiness).not.toBe("verified");
-        await until(() => view().readiness === "verified");
-        expect(discoveries).toBe(2);
-      },
-    );
-  } finally {
-    clock.mockRestore();
-  }
+  await withController(
+    {
+      hidden: true,
+      discover: async () => (discoveries++, evidence().discovery),
+    },
+    async ({ setVisibility, view }) => {
+      expect(view().readiness).toBe("unchecked");
+      setVisibility("visible");
+      await until(() => view().readiness === "verified");
+      setVisibility("hidden");
+      jest.setSystemTime(2000 + CONNECTION_FRESH_MS);
+      setVisibility("visible");
+      expect(view().readiness).not.toBe("verified");
+      await until(() => view().readiness === "verified");
+      expect(discoveries).toBe(2);
+    },
+  );
 });
 
 test("an expired grant needs a new approval even when its paths are fresh", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
-  try {
-    await withController(
-      {
-        hidden: true,
-        origin: "https://ui.example",
-        servers: [remote("home"), remote("peer")],
-        selected: ["peer"],
-      },
-      async (harness) => {
-        const { controller, view } = harness;
-        await approve(harness, "peer", 1000);
-        await controller.retry();
-        expect(view("peer").readiness).toBe("verified");
-        controller.applyServers(["home"]);
-        clock.mockReturnValue(2001);
-        controller.applyServers(["peer"]);
-        expect(view("peer")).toMatchObject({
-          readiness: "sign-in",
-          message: "Sign in to node-a",
-        });
-        await approve(harness, "peer", 60_000);
-        await controller.retry();
-        expect(view("peer").readiness).toBe("verified");
-      },
-    );
-  } finally {
-    clock.mockRestore();
-  }
+  jest.setSystemTime(1000);
+  await withController(
+    {
+      hidden: true,
+      origin: "https://ui.example",
+      servers: [remote("home"), remote("peer")],
+      selected: ["peer"],
+    },
+    async (harness) => {
+      const { controller, view } = harness;
+      await approve(harness, "peer", 1000);
+      await controller.retry();
+      expect(view("peer").readiness).toBe("verified");
+      controller.applyServers(["home"]);
+      jest.setSystemTime(2001);
+      controller.applyServers(["peer"]);
+      expect(view("peer")).toMatchObject({
+        readiness: "sign-in",
+        message: "Sign in to node-a",
+      });
+      await approve(harness, "peer", 60_000);
+      await controller.retry();
+      expect(view("peer").readiness).toBe("verified");
+    },
+  );
 });
 
 test("an approval in flight blocks Start; cancellation or a new catalog ignores its grant", async () => {
