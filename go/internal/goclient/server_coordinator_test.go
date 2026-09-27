@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,26 +19,6 @@ import (
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
-
-type pacedBody struct {
-	io.ReadCloser
-	ctx    context.Context
-	failed *atomic.Bool
-}
-
-func (b pacedBody) Read(p []byte) (int, error) {
-	if b.failed.Load() {
-		return 0, errors.New("fixture disconnected")
-	}
-	timer := time.NewTimer(time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-b.ctx.Done():
-		return 0, b.ctx.Err()
-	case <-timer.C:
-	}
-	return b.ReadCloser.Read(p[:min(len(p), 8192)])
-}
 
 type serverFixture struct {
 	server               *httptest.Server
@@ -141,7 +120,7 @@ func coordinatedFixture(t *testing.T, name string) *serverFixture {
 			return
 		}
 		if r.URL.Path == route.Upload {
-			r.Body = pacedBody{r.Body, r.Context(), &f.failed}
+			r.Body = pacedBody{r.Body, r.Context(), f.failed.Load}
 		}
 		mux.ServeHTTP(w, r)
 	}))

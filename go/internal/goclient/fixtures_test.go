@@ -3,6 +3,7 @@ package goclient
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -10,11 +11,11 @@ import (
 	"net/http/httptest"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/zR-JB/graphite-meter/go/internal/endpoint"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
 	"github.com/zR-JB/graphite-meter/go/internal/wire"
 )
@@ -185,76 +186,72 @@ func writeDownload(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write(make([]byte, 64*1024))
 }
 
-func receiveUpload(received *atomic.Uint64, interrupt func() bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if interrupt != nil && interrupt() {
-			w.WriteHeader(http.StatusGone)
+// mountUploadReceiver serves the server's own receiver; paced bodies let virtual time advance, and a fault
+// refuses new lanes and drops running ones.
+func mountUploadReceiver(mux *http.ServeMux, fault func() bool) {
+	upload := endpoint.NewUpload(nil, nil)
+	mux.HandleFunc(route.UploadSession, upload.ServeSession)
+	mux.HandleFunc(route.UploadProgress, upload.ServeProgress)
+	mux.HandleFunc(route.UploadCheckpoint, upload.ServeCheckpoint)
+	lanes := upload.Handler(wire.IdleBound)
+	mux.HandleFunc(route.Upload, func(w http.ResponseWriter, r *http.Request) {
+		if fault != nil && fault() {
+			http.Error(w, "fixture dropout", http.StatusGone)
 			return
 		}
-		buf := make([]byte, 32*1024)
-		for {
-			time.Sleep(time.Millisecond)
-			n, err := r.Body.Read(buf)
-			received.Add(uint64(n))
-			if err != nil {
-				return
-			}
-			if interrupt != nil && interrupt() {
-				panic(http.ErrAbortHandler)
-			}
-		}
-	}
+		r.Body = pacedBody{r.Body, r.Context(), fault}
+		lanes.ServeHTTP(w, r)
+	})
 }
 
-// mountUploadReceiver reports reported as the receiver's counters and completes its feed on DELETE.
-func mountUploadReceiver(mux *http.ServeMux, reported *atomic.Uint64, upload http.HandlerFunc) {
-	mux.HandleFunc("/upload/session", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "fixture-upload"})
+type pacedBody struct {
+	io.ReadCloser
+	ctx   context.Context
+	fault func() bool
+}
+
+func (b pacedBody) Read(p []byte) (int, error) {
+	if b.fault != nil && b.fault() {
+		return 0, errors.New("fixture disconnected")
+	}
+	timer := time.NewTimer(time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-b.ctx.Done():
+		return 0, b.ctx.Err()
+	case <-timer.C:
+	}
+	return b.ReadCloser.Read(p[:min(len(p), 8192)])
+}
+
+// mountSilentReceiver accepts upload bytes but reports none, while receiver time advances.
+func mountSilentReceiver(mux *http.ServeMux) {
+	mux.HandleFunc(route.UploadSession, func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.MarshalWrite(w, uploadSessionResponse{UploadID: "silent"})
 	})
-	mux.HandleFunc("/upload", upload)
+	mux.HandleFunc(route.Upload, func(_ http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) })
 	started := time.Now()
-	mux.HandleFunc("/upload/checkpoint", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, `{"bytes":%d,"nanos":%d}`, reported.Load(), time.Since(started))
+	mux.HandleFunc(route.UploadCheckpoint, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"bytes":0,"nanos":%d}`, time.Since(started)+1)
 	})
-	done := make(chan struct{})
-	var once sync.Once
-	mux.HandleFunc("/upload/progress", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(route.UploadProgress, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodDelete {
-			once.Do(func() { close(done) })
-			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		w.Header().Set("Content-Type", "application/x-ndjson")
-		send := func(kind string) {
-			bytes, nanos := reported.Load(), time.Since(started)
-			_, _ = fmt.Fprintf(w, "{\"type\":%q,\"bytes\":%d,\"nanos\":%d}\n", kind, bytes, nanos)
+		_, _ = fmt.Fprintln(w, `{"type":"ready"}`)
+		for ctx := r.Context(); ctx.Err() == nil; time.Sleep(10 * time.Millisecond) {
+			_, _ = fmt.Fprintf(w, "{\"type\":\"progress\",\"bytes\":0,\"nanos\":%d}\n", time.Since(started)+1)
 			w.(http.Flusher).Flush()
 		}
-		send("ready")
-		ticker := time.Tick(10 * time.Millisecond)
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-done:
-				send("complete")
-				return
-			case <-ticker:
-				send("progress")
-			}
-		}
 	})
 }
-
-func discardUpload(_ http.ResponseWriter, r *http.Request) { _, _ = io.Copy(io.Discard, r.Body) }
 
 func newTransferServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	var received atomic.Uint64
 	mux := http.NewServeMux()
 	mountDiscovery(mux)
 	mux.HandleFunc("/download", writeDownload)
-	mountUploadReceiver(mux, &received, receiveUpload(&received, nil))
+	mountUploadReceiver(mux, nil)
 	mux.Handle("/ws/ping", pingHandler(answerAll, 0))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -308,7 +305,7 @@ func pipedRunner(t *testing.T, handler http.Handler) *runner {
 	tr := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		client, server := net.Pipe()
 		select {
-		case ln.conns <- server:
+		case ln.conns <- loopbackConn{server}:
 			return client, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -331,6 +328,11 @@ func pipedRunner(t *testing.T, handler http.Handler) *runner {
 		emit:          func(Event) {},
 	}
 }
+
+// loopbackConn gives a pipe the loopback address the upload receiver keys its owner by.
+type loopbackConn struct{ net.Conn }
+
+func (loopbackConn) RemoteAddr() net.Addr { return &net.TCPAddr{IP: net.IPv6loopback, Port: 1} }
 
 type pipeListener struct {
 	conns  chan net.Conn

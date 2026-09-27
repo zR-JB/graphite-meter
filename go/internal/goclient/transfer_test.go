@@ -204,7 +204,7 @@ func TestStageCancellationIsPrompt(t *testing.T) {
 		{"already cancelled", StageDownload, func(mux *http.ServeMux) { mux.HandleFunc("/download", writeDownload) },
 			0, 0},
 		{"stalled upload", StageUpload, func(mux *http.ServeMux) {
-			mountUploadReceiver(mux, new(atomic.Uint64), discardUpload)
+			mountSilentReceiver(mux)
 		}, 200 * time.Millisecond, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
