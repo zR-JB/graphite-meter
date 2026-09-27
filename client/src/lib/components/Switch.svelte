@@ -35,22 +35,25 @@
     {disabled}
     onchange={handleChange}
   />
+  <span class="track" aria-hidden="true"><span class="knob"></span></span>
   {#if tooltipText}<span class="sr-only" id={describedBy}>{tooltipText}</span
     >{/if}
   {#if label}<span
       class="label"
       {@attach tooltipText ? tooltip(() => tooltipText) : null}>{label}</span
     >{/if}
-  <span class="track" aria-hidden="true"><span class="knob"></span></span>
 </label>
 
 <style>
   /* Contains the hidden checkbox so focusing it cannot scroll the panel. */
   .switch {
     position: relative;
-    display: inline-flex;
+    display: flex;
+    flex-direction: row-reverse;
     align-items: center;
-    gap: 10px;
+    justify-content: space-between;
+    gap: var(--space-3);
+    min-height: var(--control-h);
     border-radius: var(--r-well);
     user-select: none;
   }
@@ -68,28 +71,27 @@
     flex: none;
     width: 36px;
     height: 20px;
-    border: 1px solid var(--field-edge);
     border-radius: var(--r-full);
-    background: var(--surface-inset);
+    background: var(--track);
     transition: var(--transition-control);
   }
   .knob {
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
     border-radius: var(--r-full);
     background: var(--text-soft);
+    box-shadow: 0 1px 2px color-mix(in oklab, var(--shade) 30%, transparent);
     transition:
       translate var(--dur-hover) var(--ease-snap),
       background-color var(--dur-hover) var(--ease-out);
   }
-  input:checked ~ .track {
-    border-color: var(--brand-line);
-    background: var(--brand-soft);
+  input:checked + .track {
+    background: var(--selected-wash);
   }
-  input:checked ~ .track .knob {
+  input:checked + .track .knob {
     translate: 16px 0;
     background: var(--brand);
   }
