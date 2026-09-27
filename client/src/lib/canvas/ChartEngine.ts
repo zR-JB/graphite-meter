@@ -634,28 +634,29 @@ export class ChartEngine {
         })
       : [];
     const phaseStats: ChartPresentation["phaseStats"][number][] = [];
-    // Left to right, a label moves past any it would cover and is left out when no room remains.
+    // Left to right, a label sits above its line, else below; it moves past any it would cover or stays out.
+    const last = plot.right - STAT_LABEL.width;
     for (const stat of this.#result ? this.#phaseStats(data.resultRates) : []) {
       const { x0, x1 } = this.#clipSpan(stat.t0, stat.t1);
       if (x1 <= x0) continue;
       const lineY = this.#layout.throughputY(stat.bytesPerSec);
-      const y =
-        lineY - 4 - STAT_LABEL.height < plot.top
-          ? lineY + 4
-          : lineY - 4 - STAT_LABEL.height;
-      const last = plot.right - STAT_LABEL.width;
-      let x = Math.min(x0 + 3, last);
-      for (const other of phaseStats)
-        if (Math.abs(other.y - y) < STAT_LABEL.height)
-          x = Math.max(x, other.x + STAT_LABEL.width);
-      if (x > last) continue;
-      phaseStats.push({
-        lane: stat.lane,
-        tone: stat.area,
-        bytesPerSec: stat.bytesPerSec,
-        x,
-        y,
-      });
+      const above = lineY - 4 - STAT_LABEL.height;
+      const place = (above < plot.top ? [lineY + 4] : [above, lineY + 4])
+        .map((y) => {
+          let x = Math.min(x0 + 3, last);
+          for (const other of phaseStats)
+            if (Math.abs(other.y - y) < STAT_LABEL.height)
+              x = Math.max(x, other.x + STAT_LABEL.width);
+          return { x, y };
+        })
+        .find(({ x }) => x <= last);
+      if (place)
+        phaseStats.push({
+          lane: stat.lane,
+          tone: stat.area,
+          bytesPerSec: stat.bytesPerSec,
+          ...place,
+        });
     }
     this.#onPresentation({
       layout: this.#layout,
