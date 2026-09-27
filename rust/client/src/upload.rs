@@ -447,11 +447,7 @@ async fn progress_loop(
         let result = read_progress(transport, id, epoch, state, &mut recovery).await;
         match result {
             Ok(()) => return Ok(()),
-            Err(error)
-                if error.is::<crate::net::AuthRequired>() || error.is::<InvalidProgress>() =>
-            {
-                return Err(error);
-            }
+            Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
             Err(_) => {
                 let deadline =
                     *recovery.get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
@@ -463,15 +459,6 @@ async fn progress_loop(
         }
     }
 }
-#[derive(Debug)]
-struct InvalidProgress(&'static str);
-impl std::fmt::Display for InvalidProgress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.0)
-    }
-}
-impl std::error::Error for InvalidProgress {}
-
 async fn read_progress(
     transport: &Transport,
     id: &str,
@@ -504,7 +491,7 @@ async fn read_progress(
         };
         for part in chunk.split_inclusive(|byte| *byte == b'\n') {
             if part.len() > MAX_LINE - line.len() {
-                return Err(InvalidProgress("upload progress line exceeds 64 KiB").into());
+                return Err("upload progress line exceeds 64 KiB".into());
             }
             line.extend_from_slice(part);
             if !line.ends_with(b"\n") {
@@ -517,9 +504,11 @@ async fn read_progress(
             if line.is_empty() {
                 continue;
             }
-            let event = wire::decode_upload_progress(&line)
-                .map_err(|_| InvalidProgress("invalid upload progress record"))?;
+            let event = wire::decode_upload_progress(&line);
             line.clear();
+            let Ok(event) = event else {
+                continue;
+            };
             if apply_event(event, epoch, state, &mut ready)? {
                 return Ok(());
             }
@@ -625,11 +614,7 @@ async fn progress_feed(
         };
         match read.await {
             Ok(()) => return Ok(()),
-            Err(error)
-                if error.is::<InvalidProgress>() || error.is::<crate::net::AuthRequired>() =>
-            {
-                return Err(error);
-            }
+            Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
             Err(_) => {}
         }
         // Reattach only the receiver's control feed. Payload lanes remain WT.
@@ -656,12 +641,9 @@ fn apply_event(
             }));
         }
         UploadProgress::Progress { bytes, nanos } | UploadProgress::Complete { bytes, nanos } => {
-            if !*ready {
-                return Err(InvalidProgress("upload progress preceded ready").into());
-            }
             let old = state.borrow().latest;
             if old.is_some_and(|old| bytes < old.bytes || nanos < old.nanos) {
-                return Err(InvalidProgress("upload receiver counters regressed").into());
+                return Ok(false);
             }
             let count = ReceiverProgress {
                 bytes,
@@ -819,61 +801,43 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn receiver_evidence_requires_ready_and_rejects_regression() {
-        let epoch = Instant::now();
-        let (state, observed) = watch::channel(State::default());
-        let mut ready = false;
-        assert!(
-            apply_event(
-                UploadProgress::Progress {
-                    bytes: 10,
-                    nanos: 20
-                },
-                epoch,
-                &state,
-                &mut ready
-            )
-            .is_err()
-        );
-        assert!(observed.borrow().latest.is_none());
-        apply_event(UploadProgress::Ready, epoch, &state, &mut ready).unwrap();
-        apply_event(
-            UploadProgress::Progress {
-                bytes: 10,
-                nanos: 20,
-            },
-            epoch,
-            &state,
-            &mut ready,
+    #[tokio::test]
+    async fn progress_feed_ignores_malformed_unknown_and_stale_records() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let count = stream.read(&mut [0_u8; 4096]).await?;
+            assert!(count > 0);
+            let body = concat!(
+                "{\"type\":\"ready\"}\n",
+                "{\"type\":\"progress\",\"bytes\":10,\"nanos\":20}\n",
+                "not json\n\n",
+                "{\"type\":\"future\"}\n",
+                "{\"type\":\"progress\",\"bytes\":9,\"nanos\":21}\n",
+                "{\"type\":\"complete\",\"bytes\":11,\"nanos\":19}\n",
+                "{\"type\":\"complete\",\"bytes\":12,\"nanos\":30}\n",
+            );
+            let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
+            stream.write_all(headers.as_bytes()).await?;
+            stream.write_all(body.as_bytes()).await?;
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(
+            crate::net::Http::new(false)?,
+            &origin,
+            graphite_meter_core::discovery::Protocol::Http1,
+            false,
         )
-        .unwrap();
-        for event in [
-            UploadProgress::Progress {
-                bytes: 9,
-                nanos: 21,
-            },
-            UploadProgress::Complete {
-                bytes: 11,
-                nanos: 19,
-            },
-        ] {
-            assert!(apply_event(event, epoch, &state, &mut ready).is_err());
-        }
-        assert_eq!(observed.borrow().latest.unwrap().bytes, 10);
-        assert!(!observed.borrow().complete);
-        assert!(
-            apply_event(
-                UploadProgress::Complete {
-                    bytes: 10,
-                    nanos: 20
-                },
-                epoch,
-                &state,
-                &mut ready
-            )
-            .unwrap()
-        );
-        assert!(observed.borrow().complete);
+        .await?;
+        let (state, observed) = watch::channel(State::default());
+        progress_loop(&transport, "test-session", Instant::now(), &state).await?;
+        server.await??;
+        let observed = observed.borrow();
+        assert!(observed.complete);
+        let latest = observed.latest.unwrap();
+        assert_eq!((latest.bytes, latest.nanos), (12, 30));
+        Ok(())
     }
 }

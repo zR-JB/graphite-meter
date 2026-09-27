@@ -634,10 +634,9 @@ impl UploadProgress {
                 .extend_from_slice(&self.pending.split_to(count));
             if end.is_some() {
                 let line = std::mem::take(&mut self.buffered);
-                if line.iter().all(u8::is_ascii_whitespace) {
-                    continue;
+                if let Ok(event) = graphite_meter_core::wire::decode_upload_progress(&line) {
+                    return Ok(event);
                 }
-                return Ok(graphite_meter_core::wire::decode_upload_progress(&line)?);
             }
         }
     }
