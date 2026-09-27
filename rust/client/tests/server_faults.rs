@@ -219,7 +219,12 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
         }
     } else {
         assert!(
-            error.to_string().contains("stopped moving bytes"),
+            matches!(
+                error.downcast_ref::<graphite_meter_client::failure::LaneFailure>(),
+                Some(graphite_meter_client::failure::LaneFailure(
+                    graphite_meter_core::failure::LaneEnding::Idle
+                ))
+            ),
             "{error:?}"
         );
     }
