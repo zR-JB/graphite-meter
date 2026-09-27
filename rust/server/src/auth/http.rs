@@ -81,13 +81,13 @@ impl Service {
         );
         Ok(service)
     }
-    pub fn configure_logging(&self, verbose: bool) {
+    pub(crate) fn configure_logging(&self, verbose: bool) {
         self.log.configure(verbose);
         if self.password.is_some() {
             self.log.debug("local password hash loaded and validated");
         }
     }
-    pub async fn security_log(&self) {
+    pub(crate) async fn security_log(&self) {
         let aggregate = async {
             let mut last = [0; Counter::COUNT];
             let mut ticker = tokio::time::interval(Duration::from_secs(60));

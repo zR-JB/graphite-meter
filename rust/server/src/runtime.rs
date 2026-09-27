@@ -132,6 +132,17 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             .await
         }));
     }
+    if config.auth.mode != crate::config::AuthMode::Off {
+        let server = server.clone();
+        let stopped = stopped.clone();
+        services.push(Box::pin(async move {
+            tokio::select! {
+                _ = cancelled(stopped) => {},
+                _ = server.security_log() => {},
+            }
+            Ok(())
+        }));
+    }
     if config.verbose {
         let server = server.clone();
         let stopped = stopped.clone();

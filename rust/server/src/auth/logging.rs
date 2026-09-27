@@ -26,7 +26,7 @@ impl Counter {
     pub const COUNT: usize = Self::Capacity as usize + 1;
 }
 
-const COUNTERS: [&str; 10] = [
+const COUNTERS: [&str; Counter::COUNT] = [
     "local",
     "oidc",
     "invalid-password",

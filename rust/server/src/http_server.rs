@@ -100,9 +100,18 @@ impl HttpServer {
 
     pub async fn initialize_auth(&self) -> Result<(), ConfigError> {
         if let Some(auth) = &self.auth {
+            auth.configure_logging(self.config.verbose);
             auth.initialize().await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn security_log(&self) {
+        self.auth
+            .as_ref()
+            .expect("authentication enabled")
+            .security_log()
+            .await;
     }
 
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
