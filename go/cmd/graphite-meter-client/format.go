@@ -198,7 +198,7 @@ func reflectorTimingFacts(s *goclient.ReflectorTimingStats) (string, []string) {
 
 var eighths = []string{"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"}
 
-func (s styles) bar(value, scale float64, width int) string {
+func (s styles) bar(fill lipgloss.Style, value, scale float64, width int) string {
 	cells := 0.0
 	if scale > 0 {
 		cells = min(max(value/scale*float64(width), 0), float64(width))
@@ -209,7 +209,7 @@ func (s styles) bar(value, scale float64, width int) string {
 	if part != "" {
 		rest--
 	}
-	return s.accent.Render(strings.Repeat("█", full)+part) + s.muted.Render(strings.Repeat("░", rest))
+	return fill.Render(strings.Repeat("█", full)+part) + s.muted.Render(strings.Repeat("░", rest))
 }
 
 func pad(s string, w int) string {

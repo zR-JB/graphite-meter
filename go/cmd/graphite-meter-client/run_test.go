@@ -554,8 +554,8 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 	m, _ = modelAndCmd(m.Update(press("d")))
 	details := ansi.Strip(view(m))
-	combined, perServer := strings.Index(details, "Combined"), strings.Index(details, "│ A ")
-	if m.popup != popupDetails || combined < 0 || perServer < combined || !strings.Contains(details, "24.00 Mbit/s") {
+	all, perServer := strings.Index(details, "│ All servers "), strings.Index(details, "│ A ")
+	if m.popup != popupDetails || all < 0 || perServer < all || !strings.Contains(details, "24.00 Mbit/s") {
 		t.Fatalf("details must lead with the result table: %s", details)
 	}
 	if m, _ = modelAndCmd(m.Update(press("esc"))); m.popup != popupNone {
@@ -854,9 +854,9 @@ func TestChartJoinsSamplesAndBreaksOnlyAtGaps(t *testing.T) {
 		tr = tr.add(float64(i)*0.1, v)
 	}
 	st := newStyles(true)
-	marks := []mark{{0, "Latency"}, {4, "Download"}, {19.5, "Upload"}}
+	marks := []mark{{0, goclient.StageLatency}, {4, goclient.StageDownload}, {19.5, goclient.StageUpload}}
 	for _, w := range []int{36, 76, 116} {
-		chart := ansi.Strip(st.chart([]series{{st.down, tr.points}}, marks, rateAxis, 20, w, 12))
+		chart := ansi.Strip(st.chart([]series{{st.stage[goclient.StageDownload], tr.points}}, marks, rateAxis, 20, w, 12))
 		lines := strings.Split(chart, "\n")
 		inked := map[int]bool{}
 		for _, line := range lines[:len(lines)-2] {
