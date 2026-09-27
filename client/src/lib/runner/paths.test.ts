@@ -3,7 +3,6 @@ import {
   CONNECTION_FRESH_MS,
   connectionDraftRoleKey,
   describeTransferStreams,
-  FETCH_FORCED_MAX,
   planServerStreams,
   preparedPaths,
   roleNeedsValidation,
@@ -74,15 +73,15 @@ test("forced streams are exact per direction, capped by a session or the per-cli
     ).toEqual({ down: 12, up: 12 });
     expect(
       plan(protocol, { mode: "forced", count: 128 }, "bidirectional"),
-    ).toEqual({ down: FETCH_FORCED_MAX, up: FETCH_FORCED_MAX });
+    ).toEqual({ down: 128, up: 128 });
   }
   expect(
     plan("http3", { mode: "forced", count: 128 }, "download", { wt: true })
       .down,
   ).toBe(WT_MAX_LANES);
-  expect(() =>
-    plan("http1", { mode: "forced", count: 12 }, "bidirectional"),
-  ).toThrow("Forced streams");
+  expect(plan("http1", { mode: "forced", count: 12 }, "bidirectional")).toEqual(
+    { down: 12, up: 12 },
+  );
 });
 
 test("stream diagnostics describe the policy each stage resolves", () => {
@@ -125,13 +124,7 @@ test("stream diagnostics describe the policy each stage resolves", () => {
       "webtransport",
       `Forced · ${WT_MAX_LANES} per direction (capped from 128 by the session)`,
     ],
-    [
-      forced,
-      download,
-      "http3",
-      "fetch-stream",
-      `Forced · ${FETCH_FORCED_MAX} per direction (capped from 128 by the server's per-client limit)`,
-    ],
+    [forced, download, "http3", "fetch-stream", "Forced · 128 per direction"],
     [
       forced,
       download,

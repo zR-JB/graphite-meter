@@ -165,12 +165,6 @@ export const JARGON = {
   loadedLatency:
     "Loaded latency\nHighest median round trip while a transfer ran\n" +
     "Across download, upload and bidirectional",
-  liveRate:
-    "Live rate\nMean since the rate last shifted, over at least 0.8 s\n" +
-    "A lasting 25% drop or 20% rise restarts it\nThe result uses its own interval",
-  liveLatency:
-    "Live latency\nMedian of the latest group of probe replies\n" +
-    "The result is the median of the whole stage",
   transferred:
     "Transferred\nPayload bytes measured in this stage, each counted once",
   peak:
@@ -273,7 +267,7 @@ export const JARGON = {
     "HTTP/2 and HTTP/3 choose their own count",
   forcedStreamCount:
     "Streams per server and direction\nOpens exactly this many requests\n" +
-    "Fetch at most 14 per server, WebTransport 16 per session, within connection limits",
+    "WebTransport carries at most 16 per session\nThe browser or server may queue or refuse more",
 } as const;
 
 export const PHASE_HINT: Partial<

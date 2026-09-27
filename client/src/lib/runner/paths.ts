@@ -53,7 +53,6 @@ export const ROUTES = {
 export const PER_STREAM_BYTES = 64 * 1024 * 1024 * 1024;
 /** The server clamps WebTransport lanes here in both directions. */
 export const WT_MAX_LANES = 16;
-export const FETCH_FORCED_MAX = 14;
 const BROWSER_CONNECTION_BUDGET = 6;
 export const MAX_STREAMS = 128;
 
@@ -416,11 +415,11 @@ function streamCount(
   pings: boolean,
   webTransport = false,
 ): number {
+  // Forced means exactly this many; only a WebTransport session cannot carry more than its lanes.
   if (policy.mode === "forced")
-    return Math.min(
-      webTransport ? WT_MAX_LANES : FETCH_FORCED_MAX,
-      normalizeStreamCount(policy.count),
-    );
+    return webTransport
+      ? Math.min(WT_MAX_LANES, normalizeStreamCount(policy.count))
+      : normalizeStreamCount(policy.count);
   if (webTransport) return 1;
   if (MULTIPLEXED[protocol]) return MULTIPLEXED[protocol][dir];
   const available = Math.max(
@@ -485,6 +484,7 @@ export function planServerStreams(
     if (needsPings(activity) && paths.latency?.target.transport === "websocket")
       occupy(paths.latency.target.origin);
   }
+  if (config.transferStreams.mode === "forced") return plan;
   for (const [origin, lanes] of h1) {
     const available =
       BROWSER_CONNECTION_BUDGET -
@@ -499,11 +499,6 @@ export function planServerStreams(
       available
     )
       continue;
-    if (config.transferStreams.mode === "forced")
-      throw new Error(
-        `Forced streams would occupy the progress and control capacity of ${names(lanes)}. ` +
-          "Reduce streams or use Automatic",
-      );
     // Every lane keeps one stream; the rest is dealt round-robin up to each ceiling.
     const ceilings = lanes.map((lane) => plan[lane.id][lane.dir]);
     for (const lane of lanes) plan[lane.id][lane.dir] = 1;
@@ -544,9 +539,8 @@ export function describeTransferStreams(
   const forced = normalizeStreamCount(policy.count);
   if (policy.mode === "forced") {
     const session = transport === "webtransport";
-    const cap = session ? WT_MAX_LANES : FETCH_FORCED_MAX;
-    return forced > cap
-      ? `Forced · ${cap} per direction (capped from ${forced} by the ${session ? "session" : "server's per-client limit"})`
+    return session && forced > WT_MAX_LANES
+      ? `Forced · ${WT_MAX_LANES} per direction (capped from ${forced} by the session)`
       : `Forced · ${forced} per direction`;
   }
   if (transport === "webtransport")

@@ -254,18 +254,21 @@
     <div class="facts">
       {#if accounting.length}
         <section class="group">
-          <h3 class="caps">Probes</h3>
+          <h3 class="caps">
+            <span
+              {@attach tooltip(() =>
+                accounting.some((lane) => lane.accountingComplete === false)
+                  ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
+                  : JARGON.probeAccounting,
+              )}>Probes</span
+            >
+          </h3>
           <dl class="kv" data-tip-group {@attach tipGroup}>
             {#each accounting as lane (lane.key)}
               {@const counts = probeAccountingSummary(lane)}
               <div
                 data-tone={lane.key}
                 aria-label={`${lane.label}: ${probeAccountingDetails(lane)}`}
-                {@attach tooltip(() =>
-                  lane.accountingComplete === false
-                    ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
-                    : JARGON.probeAccounting,
-                )}
               >
                 <dt>{lane.label}</dt>
                 <dd>
@@ -315,12 +318,14 @@
                 <dd>{row.latency}</dd>
               </div>
             {/if}
-            <div {@attach tooltip(() => JARGON.throughputPath)}>
-              <dt>Throughput path</dt>
+            <div>
+              <dt {@attach tooltip(() => JARGON.throughputPath)}>
+                Throughput path
+              </dt>
               <dd>{row.throughputPath}</dd>
             </div>
-            <div {@attach tooltip(() => JARGON.latencyPath)}>
-              <dt>Latency path</dt>
+            <div>
+              <dt {@attach tooltip(() => JARGON.latencyPath)}>Latency path</dt>
               <dd>{row.latencyPath}</dd>
             </div>
           </dl>

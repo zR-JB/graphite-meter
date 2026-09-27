@@ -24,8 +24,8 @@
 </script>
 
 {#snippet line({ label, value, stage, tip }: SummaryRow)}
-  <span class="line" {@attach tip ? tooltip(() => tip) : null}>
-    <span class="line-label">
+  <span class="line">
+    <span class="line-label" {@attach tip ? tooltip(() => tip) : null}>
       {#if stage}<span class="line-icon" data-tone={stage}
           ><Icon name={STAGE[stage].icon} /></span
         >{#if label !== STAGE[stage].short}<span class="sr-only"
@@ -56,12 +56,14 @@
   <div class="result-cards" data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
       <article class="surface result-card enter {card.status}">
-        <span class="headline" {@attach tooltip(() => card.tip)}>
+        <span class="headline">
           <span class="head" data-tone={card.key}>
             <span class="tone-icon" aria-hidden="true"
               ><Icon name={card.icon} /></span
             >
-            <span class="label">{card.label}</span>
+            <span class="label" {@attach tooltip(() => card.tip)}
+              >{card.label}</span
+            >
             {#if card.status === "partial" || card.status === "failed" || card.status === "stopped"}
               <span class="badge" data-tone={STATUS_TONE[card.status]}
                 >{STATUS[card.status]}</span
@@ -83,9 +85,10 @@
           <span class="readout enter">
             {#if card.wire}
               {@const wire = card.wire}
-              <span class="wire" {@attach tooltip(() => wire.tip)}
-                ><span>{wire.value}</span><span class="wire-tag"
-                  >wire {wire.overhead}</span
+              <span class="wire"
+                ><span>{wire.value}</span><span
+                  class="wire-tag"
+                  {@attach tooltip(() => wire.tip)}>wire {wire.overhead}</span
                 ></span
               >
             {/if}
@@ -244,9 +247,9 @@
     transition: color var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
-    .line:hover .line-label,
-    .headline:hover .unit,
-    .wire:hover .wire-tag {
+    .line-label:hover,
+    .label:hover,
+    .wire-tag:hover {
       color: var(--text);
     }
   }

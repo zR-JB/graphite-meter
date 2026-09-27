@@ -656,7 +656,7 @@
     font-variant-numeric: tabular-nums;
     word-spacing: 0.12em;
   }
-  .group > .kv > [tabindex]:is(:hover, :focus-visible) dt {
+  .group > .kv dt[tabindex]:is(:hover, :focus-visible) {
     color: var(--text);
   }
 

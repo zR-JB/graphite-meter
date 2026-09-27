@@ -16,6 +16,9 @@
     tooltip: tooltipText = "",
   }: Props = $props();
 
+  const uid = $props.id();
+  const describedBy = `${uid}-tip`;
+
   function handleChange(e: Event & { currentTarget: HTMLInputElement }) {
     const next = e.currentTarget.checked;
     e.currentTarget.checked = checked;
@@ -23,16 +26,22 @@
   }
 </script>
 
-<label class="switch" class:disabled {@attach tooltip(() => tooltipText)}>
+<label class="switch" class:disabled>
   <input
     class="sr-only"
     type="checkbox"
+    aria-describedby={tooltipText ? describedBy : undefined}
     {checked}
     {disabled}
     onchange={handleChange}
   />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
-  {#if label}<span class="label">{label}</span>{/if}
+  {#if tooltipText}<span class="sr-only" id={describedBy}>{tooltipText}</span
+    >{/if}
+  {#if label}<span
+      class="label"
+      {@attach tooltipText ? tooltip(() => tooltipText) : null}>{label}</span
+    >{/if}
 </label>
 
 <style>

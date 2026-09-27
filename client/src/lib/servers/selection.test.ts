@@ -124,9 +124,10 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     ...config,
     transferStreams: { mode: "forced" as const, count: 3 },
   };
-  expect(() => planServerStreams(forced, paths, activity)).toThrow(
-    "control capacity of A, B.",
-  );
+  expect(planServerStreams(forced, paths, activity)).toEqual({
+    a: { down: 0, up: 3 },
+    b: { down: 0, up: 3 },
+  });
 });
 test("a direct H1 upload reserves progress and receiver checkpoint capacity", () => {
   const paths = [
@@ -148,16 +149,8 @@ test("a direct H1 upload reserves progress and receiver checkpoint capacity", ()
       activity,
     ).self.up,
   ).toBe(3);
-  expect(() => planServerStreams(config, paths, activity)).toThrow(
-    "control capacity",
-  );
-  expect(() =>
-    planServerStreams(
-      { ...config, transferStreams: { mode: "forced", count: 5 } },
-      paths,
-      activity,
-    ),
-  ).toThrow("control capacity");
+  // Forced is exact, even past the browser's connections.
+  expect(planServerStreams(config, paths, activity).self.up).toBe(4);
 });
 
 test("valid prototype-named server IDs retain their streams", () => {

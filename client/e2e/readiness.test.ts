@@ -11,9 +11,7 @@ import {
   runButton,
   spawnPeer,
 } from "./fleet";
-import { expect, test, type Page } from "./webview";
-
-const footer = (page: Page) => page.locator("footer.status .label");
+import { expect, test } from "./webview";
 
 test("a verified peer that dies fails its idle recheck, and Start leaves it out", async (page) => {
   const oslo = await spawnPeer("Oslo");
@@ -40,21 +38,19 @@ test("a verified peer that dies fails its idle recheck, and Start leaves it out"
   }
 });
 
-test("a stream plan that cannot fit shows its reason before Start", async (page) => {
+test("a forced stream count beyond the browser's connections is kept exactly", async (page) => {
   await open(page, home.url, {
     config: { transferStreams: { mode: "forced", count: 12 } },
   });
   const settings = await openSettings(page);
-  await expect(settings.locator('[data-readiness="blocked"]')).toBeVisible({
+  await expect(settings.locator('[data-readiness="verified"]')).toBeVisible({
     timeout: 15_000,
   });
-  const reason = `Forced streams would occupy the progress and control capacity of ${home.name}.`;
-  await expect(settings.locator(".notice")).toContainText(reason);
   await closeSettings(page);
-  await expect(page.locator(".gauge-hint")).toContainText(reason);
-  await runButton(page, "Start test").click();
-  await expect(footer(page)).toHaveText("Test cannot start");
-  await expect(phase(page, "idle")).toHaveCount(1);
+  await page.getByRole("button", { name: "Details" }).click();
+  await expect(page.locator(".infra")).toContainText(
+    "Forced · 12 per direction",
+  );
 });
 
 test("without idle latency the page settles Connected and never shows a blocker while loading", async (page) => {

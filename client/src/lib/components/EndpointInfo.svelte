@@ -176,8 +176,8 @@
 </script>
 
 {#snippet row(label: string, value: string, tip?: string)}
-  <div {@attach tip ? tooltip(() => tip) : null}>
-    <dt>{label}</dt>
+  <div>
+    <dt {@attach tip ? tooltip(() => tip) : null}>{label}</dt>
     <dd>{value}</dd>
   </div>
 {/snippet}
@@ -215,12 +215,10 @@
         {@const connection = connections[role]}
         {@const status = endpointPathStatus(connection.validation, pathMode)}
         {@const inTest = role === "throughput" || latencyRequested}
-        <div
-          class="path"
-          data-role={role}
-          {@attach tooltip(() => JARGON[`${role}Path`])}
-        >
-          <dt>{role === "throughput" ? "Throughput path" : "Latency path"}</dt>
+        <div class="path" data-role={role}>
+          <dt {@attach tooltip(() => JARGON[`${role}Path`])}>
+            {role === "throughput" ? "Throughput path" : "Latency path"}
+          </dt>
           <dd>
             {inTest ? connection.summary : "Not selected"}
             <span class="badge" data-tone={inTest ? status.tone : "neutral"}

@@ -66,7 +66,6 @@
         class="choice"
         class:selected={selected === option.value}
         class:unavailable={option.disabled || locked}
-        {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
         <input
           type="radio"
@@ -79,7 +78,9 @@
         <span class="radio-dot" aria-hidden="true"></span>
         <span class="copy">
           <strong>{option.label}</strong>
-          <small>{option.detail}</small>
+          <small {@attach tooltip(() => `${option.label}\n${option.detail}`)}
+            >{option.detail}</small
+          >
         </span>
       </label>
     {/each}

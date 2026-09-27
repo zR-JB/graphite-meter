@@ -84,17 +84,6 @@
               choices.delete(server.id);
             };
           }}
-          {@attach tooltip(() =>
-            [
-              server.name,
-              [new URL(server.url).host, server.location]
-                .filter(Boolean)
-                .join(" · "),
-              preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
-            ]
-              .filter(Boolean)
-              .join("\n"),
-          )}
           class:checked
           style:--server-accent={serverAccent(
             server,
@@ -117,7 +106,20 @@
               )}
           />
           <span class="server-identity">
-            <span class="server-name">{serverLabel(server)}</span>
+            <span
+              class="server-name"
+              {@attach tooltip(() =>
+                [
+                  server.name,
+                  [new URL(server.url).host, server.location]
+                    .filter(Boolean)
+                    .join(" · "),
+                  preflightMs == null ? "" : preflightNote(fmtMs(preflightMs)),
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              )}>{serverLabel(server)}</span
+            >
             {#if status}<small class="server-status" data-state={readiness}
                 >{status}</small
               >{/if}

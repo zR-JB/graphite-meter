@@ -280,7 +280,9 @@
   </section>
 
   <section class="group">
-    <h3 class="caps">Duration</h3>
+    <h3 class="caps">
+      <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
+    </h3>
     <div class="kv">
       <div>
         <div
@@ -300,11 +302,11 @@
         </div>
       </div>
       {#each activeDurationFields as [key, label] (key)}
-        {@const tip = key === "warmupMs" ? JARGON.warmup : JARGON.stageTime}
+        {@const tip = key === "warmupMs" ? JARGON.warmup : ""}
         {#if durationMode === "custom"}
           <div>
-            <label class="row" {@attach tooltip(() => tip)}>
-              <span>{label}</span>
+            <label class="row">
+              <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
               <span class="number">
                 <input
                   type="number"
@@ -320,8 +322,8 @@
             </label>
           </div>
         {:else}
-          <div class="row" {@attach tooltip(() => tip)}>
-            <span>{label}</span>
+          <div class="row">
+            <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
             <span class="value"
               >{fmtDuration(DURATION_PRESETS[durationMode][key])}</span
             >
@@ -406,8 +408,8 @@
       )}
       {#if !vizAuto}
         <div>
-          <label class="row" {@attach tooltip(() => JARGON.gaugeMax)}>
-            <span>Maximum</span>
+          <label class="row">
+            <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
             <span class="number">
               <input
                 type="number"
@@ -454,8 +456,8 @@
     <div class="kv">
       {#each CADENCES as [key, label, tip] (key)}
         <div>
-          <label class="row" {@attach tooltip(() => tip)}>
-            <span>{label}</span>
+          <label class="row">
+            <span {@attach tooltip(() => tip)}>{label}</span>
             <select
               value={store.config[key]}
               onchange={(event) =>
@@ -493,13 +495,11 @@
         running || store.preparing,
       )}
       <div>
-        <label
-          class="row"
-          {@attach tooltip(() =>
-            forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
-          )}
-        >
+        <label class="row">
           <span
+            {@attach tooltip(() =>
+              forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+            )}
             >{forced
               ? "Streams per server and direction"
               : "Maximum H1 streams per direction"}</span

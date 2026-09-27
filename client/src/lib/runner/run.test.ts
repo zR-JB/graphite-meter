@@ -732,28 +732,6 @@ test("a 0 ms stage is not planned, and a plan without a stage is refused", async
   expect(result.outcome).toBe("complete");
 });
 
-test("a conflicting live stream plan is rejected without changing the running schedule", async () => {
-  const h = await harness(
-    [{ id: "self", rate: 3, latency: false }],
-    { download: true },
-    { downloadMs: 1_200 },
-  );
-  h.config.transferStreams = { mode: "forced", count: 5 };
-  h.start();
-  await elapse(100);
-  const { stages, duration, adaptive } = h.config;
-  expect(() =>
-    h.run.reconfigure({
-      stages: { ...stages, upload: true },
-      duration: { ...duration, uploadMs: 1_200 },
-      adaptive,
-    }),
-  ).toThrow("Forced streams");
-  const result = await h.result();
-  near(result.download?.reportedBytesPerSec, 3_000);
-  expect(result.upload).toBeNull();
-});
-
 test("an expired grant at the final checkpoint asks for sign-in and removes only that server", async () => {
   const server = { id: "a", name: "a", url: "https://a.example" };
   const h = await harness(

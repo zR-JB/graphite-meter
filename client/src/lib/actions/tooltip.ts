@@ -5,6 +5,8 @@ const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
 const HOVER_DELAY_MS = 350;
+// An explainer waits longer than a control's name, so it appears only when the pointer means to ask.
+const EXPLAINER_DELAY_MS = 700;
 const TOUCH_DISMISS_MS = 4000;
 /** An attachment; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
@@ -148,10 +150,13 @@ function tooltipAction(node: HTMLElement, initial: string) {
     if (event.pointerType !== "mouse") return;
     clearHoverTimer();
     // Not motion: a hovered tip waits before it opens.
-    hoverTimer = window.setTimeout(() => {
-      hoverTimer = 0;
-      show();
-    }, HOVER_DELAY_MS);
+    hoverTimer = window.setTimeout(
+      () => {
+        hoverTimer = 0;
+        show();
+      },
+      text.includes("\n") ? EXPLAINER_DELAY_MS : HOVER_DELAY_MS,
+    );
   }
   function onPointerLeave(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;

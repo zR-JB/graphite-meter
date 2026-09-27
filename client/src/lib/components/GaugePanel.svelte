@@ -20,7 +20,6 @@
   import { primaryResultGaugeArc, resultGaugeArcs } from "./resultGauge";
   import { gaugeReadout } from "./gaugeReadout";
   import {
-    JARGON,
     MISSING,
     OUTCOME,
     PHASE_HINT,
@@ -161,18 +160,6 @@
       : { value: MISSING, unit: "" });
   const display = $derived(rateDisplay(liveRates));
   const spoken = $derived(rateDisplay(liveTarget));
-  const heroTip = $derived(
-    readout.terminal
-      ? JARGON[readout.terminal.direction]
-      : display.value === MISSING
-        ? ""
-        : phase === "complete"
-          ? JARGON.latency
-          : phase === "latency"
-            ? JARGON.liveLatency
-            : JARGON.liveRate,
-  );
-
   const dialState = $derived.by<GaugeDialState>(() => {
     const p = phase;
     const scale = store.scales.gaugeBytesPerSec;
@@ -243,11 +230,7 @@
           </div>
         {/if}
         <div class="metric-wrap" style:opacity={view.opacity}>
-          <div
-            class="hero"
-            class:terminal={!!readout.terminal}
-            {@attach heroTip ? tooltip(() => heroTip) : null}
-          >
+          <div class="hero" class:terminal={!!readout.terminal}>
             {#if readout.terminal}
               <div
                 class="terminal-readout"
