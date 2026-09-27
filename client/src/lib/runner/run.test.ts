@@ -998,7 +998,7 @@ test("an aborted stage end delivers no late events", async () => {
   h.run.dispose();
 });
 
-test("evidence that stops late in a stage fails that stage, and a sole server stalls the run", async () => {
+test("evidence that stops below the silence limit ends with its stage, and a sole server stalls the run", async () => {
   const silent = (activity: PhaseActivity, ms: number) =>
     activity.stage === "download" && ms >= 400;
   const stall = (host: ParticipantHost, activity: PhaseActivity) => {
@@ -1015,10 +1015,9 @@ test("evidence that stops late in a stage fails that stage, and a sole server st
   );
   h.start();
   const result = await h.result();
-  expect(result.multiServer.failures).toMatchObject([
-    { serverId: "a", stage: "download", message: "quiet" },
-  ]);
-  expect(result.multiServer.participants).toEqual(["b"]);
+  expect(result.multiServer.failures).toEqual([]);
+  expect(result.multiServer.participants).toEqual(["a", "b"]);
+  expect(h.calls.filter((call) => call === "measure:a")).toHaveLength(2);
   expect(h.events.some((event) => event.type === "stall")).toBe(false);
 
   // Evidence silent past the progress window leaves the interval within the stage, reported or not.

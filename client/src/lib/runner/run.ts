@@ -672,18 +672,10 @@ export class Run {
     if (this.#measuring && activity.transfer.length)
       await this.#finalBoundary(end);
     this.#measuring = false;
-    // Evidence that stopped in this stage fails this stage, not the next one.
-    for (const server of this.#participants()) {
+    // A latency channel not back by its stage end fails there; a throughput stall below the silence limit does not.
+    for (const server of this.#participants())
       if (server.latencyStall)
         this.#failLatency(server, activity.stage, server.latencyStall.detail);
-      const info = server.recovery?.info;
-      if (info && this.#recovering(server))
-        this.#remove(
-          server,
-          info.reason,
-          info.detail ?? "Server stopped delivering measured data",
-        );
-    }
     for (const server of this.#stageParticipants(activity)) end(server);
     await Promise.all(ending.values());
     if (generation !== this.#generation) return;

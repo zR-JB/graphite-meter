@@ -150,10 +150,13 @@ async function http(
     fail: (_reason, message) => failures.push(message),
     stall: (info) => stalls.push(info.rotate ? "rotate" : info.detail),
   });
-  const stage = (phase: PhaseActivity) =>
+  const stage = (
+    phase: PhaseActivity,
+    paths = testPreparedPaths({ latency: null }),
+  ) =>
     new ServerStage({
       host,
-      paths: testPreparedPaths({ latency: null }),
+      paths,
       activity: phase,
       streams: { down: 1, up: 1 },
       seed: "t",
@@ -569,6 +572,37 @@ test("a busy upload feed during preparation retries with the busy backoff, then 
   expect(await preparing).toBe("ServerBusyError");
   expect(h.failures).toEqual([]);
   stage.discard();
+});
+
+test("loaded latency that never answers leaves throughput ready; the latency stage still fails", async () => {
+  const h = await http();
+  jest.useFakeTimers();
+  const loaded = h.stage(
+    { ...activity("download"), loadedLatency: true },
+    testPreparedPaths(),
+  );
+  await loaded.prepare();
+  const ready = loaded.ready(new AbortController().signal);
+  workers("download")[0].emit({ type: "progress", bytes: 10 });
+  for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  jest.advanceTimersByTime(3_500);
+  await ready;
+  expect(h.failures).toEqual([]);
+  loaded.discard();
+
+  const idle = h.stage(
+    { stage: "latency", transfer: [], loadedLatency: false },
+    testPreparedPaths(),
+  );
+  await idle.prepare();
+  const waiting = idle
+    .ready(new AbortController().signal)
+    .catch((cause: Error) => cause.message);
+  jest.advanceTimersByTime(3_500);
+  expect(await waiting).toBe(
+    "Primed measurement connections did not become ready",
+  );
+  idle.discard();
 });
 
 test("stage readiness wakes on the first bytes of every download lane", async () => {

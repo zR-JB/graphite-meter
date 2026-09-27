@@ -90,10 +90,19 @@ export function incoherence(
     if (status === "not-run" && (lanes.some(Boolean) || spans.length))
       problems.push(`${name} is not-run but has evidence`);
     if (name !== "latency" && status === "complete") {
-      if (!spans.some(({ headline }) => sufficient(headline)))
+      const dirs =
+        name === "bidirectional"
+          ? (["down", "up"] as const)
+          : ([name === "download" ? "down" : "up"] as const);
+      if (
+        !dirs.every((dir) =>
+          spans.some(({ headline }) => sufficient(headline, dir)),
+        )
+      )
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
-      const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);
+      // From the first to the last evidence, so a hidden-page gap between intervals still counts as run time.
+      const covered = spans.length ? spans.at(-1)!.endMs - spans[0].startMs : 0;
       const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
       if (config && covered < plannedMs * floor)
         problems.push(
@@ -403,9 +412,11 @@ function fromSchema4(saved: Schema4): HistoryRecord {
       stages: statuses,
       outcome:
         saved.outcome ??
-        (Object.values(statuses).some((s) => s === "partial" || s === "failed")
-          ? "partial"
-          : "complete"),
+        (Object.values(statuses).includes("failed")
+          ? "incomplete"
+          : Object.values(statuses).includes("partial")
+            ? "partial"
+            : "complete"),
       startedAt: saved.startedAt,
       durationMs: saved.durationMs,
     },

@@ -320,6 +320,8 @@ export class ServerStage implements StageTransport {
   readonly #streams: Record<FlowDirection, number>;
   readonly #seed: string;
   readonly #abort = new AbortController();
+  /** One readiness budget from the start of preparation, however many steps a stage needs. */
+  #budget = AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS);
   #lanes: Partial<Record<FlowDirection, LaneSet>> = {};
   receiver: UploadReceiver | null = null;
   #checkpoint: Promise<ReceiverCheckpoint | null> | null = null;
@@ -338,6 +340,9 @@ export class ServerStage implements StageTransport {
   }
 
   async prepare(): Promise<void> {
+    this.#budget = AbortSignal.timeout(
+      ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
+    );
     const { latency, credentials } = this.#paths;
     if (needsPings(this.#activity) && latency) {
       const cfg = this.host.config;
@@ -353,34 +358,40 @@ export class ServerStage implements StageTransport {
       throw new Error("server offers no supported latency transport");
     if (this.#activity.transfer.includes("down")) this.#open("down");
     if (this.#activity.transfer.includes("up"))
-      await this.#prepareUpload(this.#abort.signal);
+      await this.#prepareUpload(
+        AbortSignal.any([this.#abort.signal, this.#budget]),
+      );
   }
 
   async ready(owner: AbortSignal): Promise<void> {
-    const signal = AbortSignal.any([
-      owner,
-      this.#abort.signal,
-      AbortSignal.timeout(ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS),
-    ]);
+    const signal = AbortSignal.any([owner, this.#abort.signal, this.#budget]);
+    let transferReady = false;
     try {
       for (;;) {
         const changed = new Promise<void>(
           (resolve) => (this.readinessChanged = resolve),
         );
-        if (
-          !(this.#lanes.down?.ready ?? true) ||
-          !(this.#latency?.ready ?? true)
-        ) {
+        transferReady = false;
+        if (!(this.#lanes.down?.ready ?? true)) {
           await abortable(changed, signal);
           continue;
         }
-        if (!this.#activity.transfer.includes("up")) return;
-        // Receiver evidence is checked last; a transient failure retries within this budget.
-        const checkpoint = await this.checkpoint(signal).catch(() => null);
-        if ((checkpoint?.nanos ?? 0) > 0) return;
-        await abortableDelay(50, signal);
+        if (this.#activity.transfer.includes("up")) {
+          // A transient checkpoint failure retries within this budget.
+          const checkpoint = await this.checkpoint(signal).catch(() => null);
+          if (!((checkpoint?.nanos ?? 0) > 0)) {
+            await abortableDelay(50, signal);
+            continue;
+          }
+        }
+        transferReady = true;
+        if (this.#latency?.ready ?? true) return;
+        await abortable(changed, signal);
       }
     } catch {
+      // Loaded latency never holds back throughput; its channel reports its own stall.
+      if (transferReady && this.#activity.stage !== "latency" && !owner.aborted)
+        return;
       if (this.busy)
         throw new ServerBusyError("Server refused the connections as busy");
       throw new Error("Primed measurement connections did not become ready", {
@@ -484,7 +495,7 @@ export class ServerStage implements StageTransport {
     this.receiver = receiver;
     // A session lane carries its own feed; HTTP lanes write only after the feed is open.
     if (wt) this.#open("up", id, feed);
-    if (!(await receiver.opened))
+    if (!(await abortable(receiver.opened, owner).catch(() => false)))
       throw this.busy
         ? new ServerBusyError("Server refused the upload as busy")
         : new Error("upload progress feed did not open");

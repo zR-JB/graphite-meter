@@ -869,11 +869,11 @@ export class ThroughputAggregate {
         const open = this.#interval(record);
         if (!record.complete || !record.full || !open) continue;
         const window =
-          stable && sufficient(record.headline)
+          stable && sufficient(record.headline, dir)
             ? record.headline!
             : record.full;
         const rate = rateOf(window, dir);
-        if (!rate || !sufficient(window)) continue;
+        if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
         return {
           reportedBytesPerSec: rate,
@@ -893,7 +893,7 @@ export class ThroughputAggregate {
         ({ stage: at, complete, headline }) =>
           at === stage &&
           complete &&
-          sufficient(headline) &&
+          sufficient(headline, dir) &&
           !!rateOf(headline!, dir),
       )?.headline ?? null
     );
@@ -942,14 +942,18 @@ function raise(
   peaks.set(id, peak);
 }
 
-/** A reportable window spans the evidence floor in the client clock and in every receiver clock. */
-export function sufficient(window: AggregateWindow | null): boolean {
+/** A reportable window spans the evidence floor in the client clock and in every receiver clock of `dir`, or of both. */
+export function sufficient(
+  window: AggregateWindow | null,
+  dir?: FlowDirection,
+): boolean {
   return (
     !!window &&
     window.endMs - window.startMs >= MIN_EVIDENCE_MS &&
-    [...(window.down ?? []), ...(window.up ?? [])].every(
-      (c) => c.durationMs >= MIN_EVIDENCE_MS,
-    )
+    [
+      ...(dir === "up" ? [] : (window.down ?? [])),
+      ...(dir === "down" ? [] : (window.up ?? [])),
+    ].every((c) => c.durationMs >= MIN_EVIDENCE_MS)
   );
 }
 

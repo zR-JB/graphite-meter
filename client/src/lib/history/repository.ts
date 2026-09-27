@@ -156,13 +156,14 @@ export class HistoryRepository {
         return tx.abort();
       }
       written = true;
-      const keys = results.index(HISTORY_DB.completedAtIndex).getAllKeys();
-      keys.onsuccess = () => {
-        for (const key of keys.result.slice(
-          0,
-          Math.max(0, keys.result.length - HISTORY_LIMIT),
-        ))
-          results.delete(key);
+      // Only readable results count toward the limit; unreadable ones stay untouched.
+      const values = results.index(HISTORY_DB.completedAtIndex).getAll();
+      values.onsuccess = () => {
+        const ids = values.result.flatMap(
+          (value) => readHistoryRecord(value)?.id ?? [],
+        );
+        for (const id of ids.slice(0, Math.max(0, ids.length - HISTORY_LIMIT)))
+          results.delete(id);
       };
     };
     await done(tx).catch((error: unknown) => {
