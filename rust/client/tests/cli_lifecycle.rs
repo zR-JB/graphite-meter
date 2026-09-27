@@ -236,7 +236,8 @@ finally:
                 result["text"]
                     .as_str()
                     .unwrap()
-                    .contains("Graphite Meter · Stopped")
+                    .contains("Graphite Meter · Stopped"),
+                "{mode}: {text:?}"
             );
         }
     }

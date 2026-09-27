@@ -272,7 +272,12 @@ impl Controller {
             self.cancel_deadline
                 .get_or_insert(Instant::now() + CANCEL_GRACE);
             self.snapshots.send_modify(|snapshot| {
-                snapshot.status = "Cancelling; waiting for owned IO".into();
+                if matches!(
+                    snapshot.phase,
+                    Phase::Preparing | Phase::Warmup | Phase::Measuring
+                ) {
+                    snapshot.status = "Cancelling; waiting for owned IO".into();
+                }
                 snapshot.auth = None;
             });
         }
@@ -369,7 +374,7 @@ impl Controller {
             self.snapshots.send_modify(|snapshot| {
                 if matches!(
                     snapshot.phase,
-                    Phase::Preparing | Phase::Warmup | Phase::Measuring
+                    Phase::Preparing | Phase::Warmup | Phase::Measuring | Phase::Cancelled
                 ) {
                     snapshot.phase = Phase::Cancelled;
                     snapshot.status = "Stopped".into();
@@ -510,25 +515,46 @@ mod tests {
     #[tokio::test]
     async fn shutdown_joins_operation_before_returning_its_partial_result() {
         let _ = crate::crypto::provider().install_default();
-        let (snapshots, _) = watch::channel(Snapshot {
-            phase: Phase::Measuring,
-            ..Snapshot::default()
-        });
-        let mut controller =
-            Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
-        let (cancel, mut cancelled_signal) = watch::channel(false);
-        controller.cancel = Some(cancel);
-        let (joined, completed) = tokio::sync::oneshot::channel();
-        controller.operations.spawn(async move {
-            cancelled(&mut cancelled_signal).await;
-            snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
-            let _ = joined.send(());
-            Ok(None)
-        });
-        controller.stop().await;
-        completed.await.unwrap();
-        assert!(controller.operations.is_empty());
-        assert_eq!(controller.snapshots.borrow().phase, Phase::Cancelled);
-        assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
+        for phase in [Phase::Measuring, Phase::Cancelled, Phase::Complete] {
+            let (snapshots, _) = watch::channel(Snapshot {
+                phase,
+                status: if phase == Phase::Complete {
+                    "Complete"
+                } else {
+                    "Stopped"
+                }
+                .into(),
+                ..Snapshot::default()
+            });
+            let mut controller =
+                Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
+            let (cancel, mut cancelled_signal) = watch::channel(false);
+            controller.cancel = Some(cancel);
+            let (joined, completed) = tokio::sync::oneshot::channel();
+            controller.operations.spawn(async move {
+                cancelled(&mut cancelled_signal).await;
+                snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
+                let _ = joined.send(());
+                Ok(None)
+            });
+            controller.stop().await;
+            completed.await.unwrap();
+            assert!(controller.operations.is_empty());
+            let expected = if phase == Phase::Complete {
+                Phase::Complete
+            } else {
+                Phase::Cancelled
+            };
+            assert_eq!(controller.snapshots.borrow().phase, expected);
+            assert_eq!(
+                controller.snapshots.borrow().status,
+                if phase == Phase::Complete {
+                    "Complete"
+                } else {
+                    "Stopped"
+                }
+            );
+            assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
+        }
     }
 }
