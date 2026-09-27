@@ -62,7 +62,7 @@ def add_cargo_sources(archive: tarfile.TarFile, repo: Path, components: list[Com
                        cwd=repo / 'rust', stdout=subprocess.DEVNULL, check=True, timeout=600)
         for component in components:
             name = f'{component.name}-{component.version}'
-            add_tree(archive, destination / name, f'third_party/cargo/{name}')
+            add_tree(archive, destination / name, f'third_party/cargo/{name}', destination / name)
 
 
 def artifacts(messages: list[dict], package_id: str, binary: str) -> dict[str, dict]:
@@ -316,7 +316,7 @@ def main() -> None:
                 for component in browser_components:
                     if component.source_path is not None:
                         add_tree(archive, component.source_path,
-                                 f'third_party/{component.ecosystem}/{component.name}-{component.version}')
+                                 f'third_party/{component.ecosystem}/{component.name}-{component.version}', component.source_path)
                 add_bytes(archive, 'inventory.json', (output / 'inventory.json').read_bytes())
                 add_bytes(archive, 'LEGAL.txt', (output / 'LEGAL.txt').read_bytes())
                 add_bytes(archive, 'legal/rust-forks.json', (repo / 'legal/rust-forks.json').read_bytes())
@@ -324,7 +324,7 @@ def main() -> None:
                     for file in entry.localLegalFiles:
                         add_bytes(archive, file.name, (repo / file.name).read_bytes())
                     for path in entry.localPaths:
-                        add_tree(archive, repo / path, path)
+                        add_tree(archive, repo / path, path, repo / path)
 
 
 if __name__ == '__main__':
