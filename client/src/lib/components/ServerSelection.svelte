@@ -4,7 +4,6 @@
   import ServerScope from "./ServerScope.svelte";
   import {
     serverAccent,
-    serverLabel,
     catalogSelection,
   } from "../presentation/serverAppearance";
   import { store } from "../state/store.svelte";
@@ -41,7 +40,7 @@
     (store.serverCatalog?.servers ?? []).filter(
       (server) =>
         store.selectedServers.includes(server.id) &&
-        ((store.serverCatalog?.servers.length ?? 0) > 1 ||
+        (store.selectedServers.length > 1 ||
           store.servers.get(server.id)?.readiness === "sign-in") &&
         (retrying.includes(server.id) ||
           ["failed", "sign-in"].includes(
@@ -54,7 +53,7 @@
 {#if (store.serverCatalog?.servers.length ?? 0) > 1}
   <div class="server-setting">
     <div class="server-heading">
-      <strong {@attach tooltip(() => JARGON.testServers)}>Test servers</strong>
+      <span {@attach tooltip(() => JARGON.testServers)}>Test servers</span>
       <small>{selected.length} selected · up to 4</small>
     </div>
     <div
@@ -118,10 +117,13 @@
                 ]
                   .filter(Boolean)
                   .join("\n"),
-              )}>{serverLabel(server)}</span
+              )}>{server.name}</span
             >
-            {#if status}<small class="server-status" data-state={readiness}
-                >{status}</small
+            {#if server.location || status}<small
+                >{server.location}{#if server.location && status}{" · "}{/if}{#if status}<span
+                    class="server-status"
+                    data-state={readiness}>{status}</span
+                  >{/if}</small
               >{/if}
           </span>
           {#if preflightMs != null && !["failed", "sign-in", "checking"].includes(readiness ?? "")}<small
@@ -137,28 +139,6 @@
       >Preflight request times include connection setup and the response. They
       are not latency measurements.</span
     >
-    {#if selected.length > 1 && store.latencyEnabled}
-      <label class="latency-policy">
-        <strong {@attach tooltip(() => JARGON.latencyServer)}
-          >Latency server</strong
-        >
-        <ServerScope
-          servers={selected}
-          value={store.latencySelection.mode === "all"
-            ? ""
-            : store.primaryLatencyServer}
-          label="Latency measurement servers"
-          aggregate="Combined"
-          hint="Measure latency to every server"
-          disabled={locked}
-          onchange={(id) =>
-            controller.configureLatency(
-              id ? "primary" : "all",
-              id || store.primaryLatencyServer,
-            )}
-        />
-      </label>
-    {/if}
   </div>
 {/if}
 {#if store.unresolvedServers.length}
@@ -191,43 +171,42 @@
 {#each problems as server (server.id)}
   {@const pending = retrying.includes(server.id)}
   <div class="server-feedback" role="status">
-    <div>
-      <strong>{server.name}</strong>{#if server.location}<small
-          >{server.location}</small
-        >{/if}
+    <div class="feedback-row">
+      <p class="feedback-message">
+        <strong>{server.name}</strong>
+        {#key pending}<span class="enter"
+            >{pending
+              ? `${READINESS.checking.label}…`
+              : store.servers.get(server.id)?.message}</span
+          >{/key}
+      </p>
+      {#if store.servers.get(server.id)?.readiness === "sign-in"}
+        <button
+          class="btn"
+          type="button"
+          disabled={locked ||
+            (store.serverApproval?.id === server.id &&
+              !store.serverApproval.message)}
+          aria-label={`Sign in to ${server.name}`}
+          onclick={() => void controller.signInServer(server.id)}
+          >{store.serverApproval?.id === server.id &&
+          !store.serverApproval.message
+            ? "Waiting for approval…"
+            : `Sign in to ${server.name}`}</button
+        >
+      {:else}
+        <button
+          class="btn"
+          type="button"
+          disabled={locked}
+          aria-label={`Retry ${server.name}`}
+          aria-disabled={pending}
+          aria-busy={pending}
+          onclick={(event) => void retry(server.id, event.currentTarget)}
+          >Retry</button
+        >
+      {/if}
     </div>
-    <p class="feedback-message">
-      {#key pending}<span class="enter"
-          >{pending
-            ? `Checking ${server.name}…`
-            : store.servers.get(server.id)?.message}</span
-        >{/key}
-    </p>
-    {#if store.servers.get(server.id)?.readiness === "sign-in"}
-      <button
-        class="btn"
-        type="button"
-        disabled={locked ||
-          (store.serverApproval?.id === server.id &&
-            !store.serverApproval.message)}
-        aria-label={`Sign in to ${server.name}`}
-        onclick={() => void controller.signInServer(server.id)}
-        >{store.serverApproval?.id === server.id &&
-        !store.serverApproval.message
-          ? "Waiting for approval…"
-          : `Sign in to ${server.name}`}</button
-      >
-    {:else}
-      <button
-        class="btn"
-        type="button"
-        disabled={locked}
-        aria-disabled={pending}
-        aria-busy={pending}
-        onclick={(event) => void retry(server.id, event.currentTarget)}
-        >{pending ? READINESS.checking.label : `Retry ${server.name}`}</button
-      >
-    {/if}
     {#if store.serverApproval?.id === server.id}
       {#if store.serverApproval.renewUrl}
         <p>
@@ -269,12 +248,32 @@
   </div>
 {/each}
 
+{#if selected.length > 1 && store.latencyEnabled}
+  <label class="latency-policy">
+    <span {@attach tooltip(() => JARGON.latencyServer)}>Latency server</span>
+    <ServerScope
+      servers={selected}
+      value={store.latencySelection.mode === "all"
+        ? ""
+        : store.primaryLatencyServer}
+      label="Latency measurement servers"
+      aggregate="Combined"
+      hint="Measure latency to every server"
+      disabled={locked}
+      onchange={(id) =>
+        controller.configureLatency(
+          id ? "primary" : "all",
+          id || store.primaryLatencyServer,
+        )}
+    />
+  </label>
+{/if}
+
 <style>
   .server-setting {
     display: grid;
     gap: var(--space-2);
     min-width: 0;
-    font: var(--type-sm) / 1.4 var(--font-sans);
   }
   .server-heading {
     display: flex;
@@ -283,7 +282,6 @@
     gap: var(--space-2);
   }
   strong {
-    font-size: var(--type-sm);
     font-weight: var(--w-strong);
   }
   small {
@@ -300,14 +298,9 @@
   }
   .server-choices {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr));
     gap: 2px;
     max-height: 220px;
     overflow-y: auto;
-    padding: 3px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
   }
   .server-choices label {
     --ring-offset: 1px;
@@ -368,14 +361,16 @@
   }
   .server-name {
     overflow: hidden;
-    font-size: var(--type-xs);
+    font-size: var(--type-sm);
     font-weight: var(--w-strong);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .server-status {
-    font-size: var(--type-2xs);
+  .server-identity small {
+    overflow: hidden;
     line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .server-status[data-state="failed"],
   .server-status[data-state="sign-in"] {
@@ -410,11 +405,13 @@
     padding-block: var(--space-1);
     font: var(--type-xs) / 1.5 var(--font-sans);
   }
-  .server-feedback > div {
+  .feedback-row {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1) var(--space-2);
+    width: 100%;
   }
   p {
     color: var(--text-muted);

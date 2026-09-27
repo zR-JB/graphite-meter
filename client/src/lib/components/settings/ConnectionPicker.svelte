@@ -27,20 +27,28 @@
       : store.selectedServers,
   );
   const simultaneous = $derived(serverIds.length > 1);
+  // The server list states a server's own failure once; the paths speak for the rest.
+  const unlisted = $derived(
+    serverIds.filter((id) => {
+      const readiness = store.servers.get(id)?.readiness;
+      return !(
+        readiness === "sign-in" ||
+        (readiness === "failed" && store.selectedServers.length > 1)
+      );
+    }),
+  );
   const roleSummary = $derived(
-    summarizeRoleValidation(role, serverIds, store.servers),
+    summarizeRoleValidation(role, unlisted, store.servers),
   );
   const validation = $derived(
-    simultaneous
-      ? store.unresolvedServers.length
-        ? "failed"
-        : roleSummary.state
-      : connection.validation,
+    simultaneous ? roleSummary.state : connection.validation,
   );
   const summary = $derived(
-    simultaneous
-      ? `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`
-      : (connection.message ?? connection.summary),
+    !simultaneous
+      ? (connection.message ?? connection.summary)
+      : roleSummary.verified === roleSummary.total
+        ? "Paths resolve independently on each server."
+        : `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`,
   );
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
@@ -88,23 +96,23 @@
       >Use Automatic</button
     >
   {/if}
-  <div class="validation">
-    <span class="dot" data-tone={READINESS[validation].tone}></span>
-    <span class="validation-copy">
-      <strong>{locked ? "In use" : READINESS[validation].label}</strong>
-      <small>{summary}</small>
-    </span>
-    {#if !locked && (validation === "failed" || validation === "stale")}
-      <!-- Both pickers mount at once and a <legend> does not name a descendant
+  {#if unlisted.length}<div class="validation">
+      <span class="dot" data-tone={READINESS[validation].tone}></span>
+      <span class="validation-copy">
+        <strong>{locked ? "In use" : READINESS[validation].label}</strong>
+        <small>{summary}</small>
+      </span>
+      {#if !locked && (validation === "failed" || validation === "stale")}
+        <!-- Both pickers mount at once and a <legend> does not name a descendant
            button, so without this the rotor reads "Retry, Retry". -->
-      <button
-        class="btn"
-        type="button"
-        aria-label={`Retry ${title}`}
-        onclick={() => void controller.retry({ role })}>Retry</button
-      >
-    {/if}
-  </div>
+        <button
+          class="btn"
+          type="button"
+          aria-label={`Retry ${title}`}
+          onclick={() => void controller.retry({ role })}>Retry</button
+        >
+      {/if}
+    </div>{/if}
 </fieldset>
 
 <style>
@@ -115,8 +123,6 @@
   }
   legend {
     margin-bottom: 6px;
-    color: var(--text-soft);
-    font-size: var(--type-body);
   }
   .options {
     display: grid;
