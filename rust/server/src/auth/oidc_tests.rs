@@ -23,7 +23,6 @@ use crate::test_identity;
 #[derive(Clone, Copy, Default)]
 struct Claims {
     wrong_nonce: bool,
-    wrong_party: bool,
     wrong_subject: bool,
     denied_group: bool,
 }
@@ -234,7 +233,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                             let nonce = nonces.lock().unwrap().get(&challenge).cloned().expect("PKCE verifier matches a started transaction");
                             assert!(headers.contains(&format!("authorization: Basic {}\r\n", STANDARD.encode("meter:secret"))), "{headers}");
                             let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-                            let mut token_claims = json!({"iss": issuer, "aud": "meter", "azp": if claims.wrong_party {"other-client"} else {"meter"}, "sub": "operator", "iat": now, "exp": now + 300, "nonce": if claims.wrong_nonce { "invalid" } else { nonce.as_str() }, "at_hash": at_hash("access")});
+                            let mut token_claims = json!({"iss": issuer, "aud": "meter", "sub": "operator", "iat": now, "exp": now + 300, "nonce": if claims.wrong_nonce { "invalid" } else { nonce.as_str() }, "at_hash": at_hash("access")});
                             for (key, value) in twist.claims.as_ref().and_then(Value::as_object).into_iter().flatten() {
                                 token_claims[key] = value.clone();
                             }
@@ -284,7 +283,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
 }
 
 impl ProviderDouble {
-    async fn login(&self, claims: Claims) -> Result<Identity, OidcFailure> {
+    async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
         self.oidc.retry_discovery().await;
         let started = self
             .oidc
@@ -297,9 +296,12 @@ impl ProviderDouble {
             .unwrap()
             .insert(fields["code_challenge"].clone(), fields["nonce"].clone());
         *self.claims.lock().unwrap() = claims;
-        self.oidc
-            .finish(&fields["state"], &started.browser, "valid-code", Some(&self.issuer))
-            .await
+        let tx = self
+            .oidc
+            .take(&fields["state"], &started.browser, Some(&self.issuer))
+            .map_err(|(reason, _)| reason)?;
+        assert_eq!(tx.challenge, "challenge");
+        self.oidc.complete(&tx, "valid-code").await
     }
     async fn stop(self) {
         self.stop.send(()).unwrap();
@@ -312,11 +314,10 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
     let display_name = format!(" {}", "é".repeat(127));
     provider.twist.lock().unwrap().name = Some(format!("\u{009b}{display_name}\u{202e}🙂{}", "x".repeat(256 * 1024)));
-    for scenario in 0..5 {
+    for scenario in 0..4 {
         let result = provider
             .login(Claims {
                 wrong_nonce: scenario == 1,
-                wrong_party: scenario == 4,
                 wrong_subject: scenario == 2,
                 denied_group: scenario == 3,
             })
@@ -326,9 +327,8 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
             assert_eq!(identity.subject, "oidc:operator");
             assert_eq!(identity.name, display_name);
             assert!(identity.name.capacity() <= 256);
-            assert_eq!(identity.challenge, "challenge");
         } else if scenario == 3 {
-            assert!(matches!(result, Err(OidcFailure::GroupDenial)));
+            assert!(matches!(result, Err(Reason::GroupDenied)));
         } else {
             assert!(result.is_err(), "scenario {scenario} authenticated");
         }
@@ -340,14 +340,7 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
 async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once() {
     let provider = provider_double("localhost", &["RS256", "ES256", "HS256", "none"], Proxy::default()).await;
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let refused: [(&str, Twist); 10] = [
-        (
-            "second audience",
-            Twist {
-                claims: Some(json!({"aud": ["meter", "other"]})),
-                ..Twist::default()
-            },
-        ),
+    let refused: [(&str, Twist); 9] = [
         (
             "foreign audience",
             Twist {
@@ -506,14 +499,18 @@ async fn unavailable_provider_refuses_logins_until_discovery_recovers_once() {
     let address = "192.0.2.1".parse().unwrap();
     assert!(matches!(
         provider.oidc.start(address, String::new(), None).await,
-        Err(OidcFailure::Failed)
+        Err(Reason::ProviderNotReady)
     ));
     provider.twist.lock().unwrap().unavailable = false;
     provider.oidc.retry_discovery().await;
     let ready = provider.oidc.ready().unwrap().clone();
     provider.oidc.retry_discovery().await;
     assert!(Arc::ptr_eq(&ready, provider.oidc.ready().unwrap()));
-    assert_eq!(provider.jwks_requests.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        provider.jwks_requests.load(Ordering::SeqCst),
+        0,
+        "keys wait for the first token"
+    );
     assert!(provider.oidc.start(address, String::new(), None).await.is_ok());
     provider.stop().await;
 }

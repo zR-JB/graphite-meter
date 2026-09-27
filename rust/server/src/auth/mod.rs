@@ -9,6 +9,7 @@ pub mod pages;
 pub mod password_login;
 pub mod policy;
 pub mod rate;
+pub mod reason;
 mod session;
 mod ticket;
 

@@ -74,10 +74,22 @@ impl SecurityLog {
     pub fn count(&self, counter: Counter) {
         self.counters[counter as usize].fetch_add(1, Ordering::Relaxed);
     }
-    pub fn debug(&self, message: &'static str) {
+    pub fn debug(&self, message: std::fmt::Arguments<'_>) {
         if self.verbose.load(Ordering::Relaxed) {
             crate::log!("[gm:auth:debug] {message}");
         }
+    }
+    pub fn refused(&self, reason: super::reason::Reason) {
+        use super::reason::Reason;
+        self.debug(format_args!("login rejected reason={}", reason.code()));
+        self.count(match reason {
+            Reason::Throttled => Counter::Throttled,
+            Reason::PasswordMismatch => Counter::InvalidPassword,
+            Reason::SessionCapacity | Reason::TransactionCapacity => Counter::Capacity,
+            Reason::TransactionReplay => Counter::ReplayExpiry,
+            Reason::GroupDenied => Counter::GroupDenial,
+            _ => return,
+        });
     }
     pub fn ceiling(&self, ceiling: Ceiling) {
         if self.ceiling_due(ceiling) {

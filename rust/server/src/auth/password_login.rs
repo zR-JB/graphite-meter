@@ -4,6 +4,7 @@ use super::{
     SessionLease, SessionStore,
     policy::constant_equal,
     rate::{AttemptLimiter, Budget},
+    reason::Reason,
 };
 use crate::{
     config::{AuthConfig, ConfigError},
@@ -24,25 +25,14 @@ use zeroize::Zeroizing;
 
 const DEVICE_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginFailure {
-    Failed,
-    Stale,
-    Throttled,
-    Busy,
-    Capacity,
-    Password,
-}
-
-impl LoginFailure {
-    pub const fn notice(self) -> &'static str {
-        match self {
-            Self::Failed => "failed",
-            Self::Stale => "stale",
-            Self::Throttled => "throttled",
-            Self::Busy | Self::Capacity => "busy",
-            Self::Password => "password",
-        }
+pub fn check_csrf(public: &str, origin: &str, nonce: Option<&str>, token: &str) -> Result<(), Reason> {
+    match (origin, nonce) {
+        ("", _) => Err(Reason::CsrfOriginMissing),
+        (origin, _) if origin != public => Err(Reason::CsrfOriginMismatch),
+        (_, None) => Err(Reason::CsrfCookieMissing),
+        _ if token.is_empty() => Err(Reason::CsrfTokenMissing),
+        (_, Some(nonce)) if !constant_equal(nonce, token) => Err(Reason::CsrfTokenMismatch),
+        _ => Ok(()),
     }
 }
 
@@ -88,30 +78,25 @@ impl PasswordLogin {
         })
     }
 
-    pub async fn attempt(&self, attempt: PasswordAttempt<'_>) -> Result<(String, SessionLease), LoginFailure> {
-        if attempt.origin.is_empty() || attempt.origin != self.public_origin {
-            return Err(LoginFailure::Failed);
-        }
-        let nonce = attempt.nonce_cookie.ok_or(LoginFailure::Stale)?;
-        if attempt.csrf.is_empty() {
-            return Err(LoginFailure::Stale);
-        }
-        if !constant_equal(nonce, attempt.csrf) {
-            return Err(LoginFailure::Failed);
-        }
-        let client = attempt.client.ok_or(LoginFailure::Throttled)?;
+    pub async fn attempt(&self, attempt: PasswordAttempt<'_>) -> Result<(String, SessionLease), Reason> {
+        check_csrf(&self.public_origin, attempt.origin, attempt.nonce_cookie, attempt.csrf)?;
+        let client = attempt.client.ok_or(Reason::Throttled)?;
         let budget = if attempt.device_cookie.is_some_and(|cookie| self.known_device(cookie)) {
             Budget::KnownDevice
         } else {
             Budget::Password
         };
         if !self.attempts.allow(budget, client) {
-            return Err(LoginFailure::Throttled);
+            return Err(Reason::Throttled);
         }
-        let permit = self.slots.clone().try_acquire_owned().map_err(|_| LoginFailure::Busy)?;
+        let permit = self
+            .slots
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| Reason::VerifierBusy)?;
         if crate::password::validate_password(attempt.password).is_err() {
             self.attempts.note_failed_password();
-            return Err(LoginFailure::Password);
+            return Err(Reason::PasswordMismatch);
         }
         let hash = self.hash.clone();
         let password = Zeroizing::new(attempt.password.to_owned());
@@ -122,19 +107,16 @@ impl PasswordLogin {
             hash.verify(&password)
         })
         .await
-        .map_err(|_| LoginFailure::Busy)?;
+        .map_err(|_| Reason::VerifierBusy)?;
         if !verified {
             self.attempts.note_failed_password();
-            return Err(LoginFailure::Password);
+            return Err(Reason::PasswordMismatch);
         }
         // No login is issued by an abandoned worker: only this awaiting request
         // may commit the session and rotate its explicitly supplied predecessor.
         self.sessions
             .create("local-operator", "Local operator", "local", attempt.prior_session)
-            .map_err(|failure| match failure {
-                super::SessionError::Capacity => LoginFailure::Capacity,
-                super::SessionError::RandomUnavailable => LoginFailure::Busy,
-            })
+            .map_err(|_| Reason::SessionCapacity)
     }
 
     pub fn device_cookie(&self, now: SystemTime) -> (String, SystemTime) {
@@ -233,11 +215,11 @@ mod tests {
         for _ in 0..10 {
             let mut request = attempt(&wrong);
             request.origin = "https://attacker.example";
-            assert!(matches!(login.attempt(request).await, Err(LoginFailure::Failed)));
+            assert!(matches!(login.attempt(request).await, Err(Reason::CsrfOriginMismatch)));
         }
         let mut request = attempt(&wrong);
         request.nonce_cookie = None;
-        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Stale)));
+        assert!(matches!(login.attempt(request).await, Err(Reason::CsrfCookieMissing)));
         let (token, _) = login.attempt(attempt(&password)).await.unwrap();
         assert!(login.sessions.lookup(&token).is_some());
     }
@@ -248,15 +230,15 @@ mod tests {
         let wrong = random_password();
         let _occupied = login.slots.clone().acquire_many_owned(2).await.unwrap();
         for _ in 0..5 {
-            assert!(matches!(login.attempt(attempt(&wrong)).await, Err(LoginFailure::Busy)));
+            assert!(matches!(
+                login.attempt(attempt(&wrong)).await,
+                Err(Reason::VerifierBusy)
+            ));
         }
-        assert!(matches!(
-            login.attempt(attempt(&wrong)).await,
-            Err(LoginFailure::Throttled)
-        ));
+        assert!(matches!(login.attempt(attempt(&wrong)).await, Err(Reason::Throttled)));
         let mut request = attempt(&wrong);
         request.client = None;
-        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Throttled)));
+        assert!(matches!(login.attempt(request).await, Err(Reason::Throttled)));
     }
 
     #[tokio::test]
@@ -268,7 +250,7 @@ mod tests {
         let (_, sibling) = store.create("local-operator", "Local operator", "local", None).unwrap();
         let mut request = attempt(&wrong);
         request.prior_session = Some(&prior);
-        assert!(matches!(login.attempt(request).await, Err(LoginFailure::Password)));
+        assert!(matches!(login.attempt(request).await, Err(Reason::PasswordMismatch)));
         assert!(old.is_active());
         let mut request = attempt(&password);
         request.prior_session = Some(&prior);

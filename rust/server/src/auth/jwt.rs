@@ -55,6 +55,9 @@ pub(super) enum Reject {
     UnknownKey,
     Signature,
     Claims,
+    /// The nonce differs from the sign-in's, or a name is mistyped.
+    Nonce,
+    AccessTokenHash,
 }
 
 enum Material {
@@ -250,11 +253,8 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
             .collect::<Result<_, _>>()?,
         _ => return Err(Reject::Claims),
     };
-    if claims.get("iss").and_then(Value::as_str) != Some(issuer)
-        || audiences.len() != 1
-        || !audiences.contains(&client_id)
-        || audiences.iter().any(|aud| *aud != client_id)
-    {
+    // Like Go's go-oidc: the audience includes this client, whatever else it names, and azp is not read.
+    if claims.get("iss").and_then(Value::as_str) != Some(issuer) || !audiences.contains(&client_id) {
         return Err(Reject::Claims);
     }
     Ok(())
@@ -262,42 +262,46 @@ pub(super) fn audience_and_issuer(claims: &Map<String, Value>, issuer: &str, cli
 
 pub(super) fn id_token(verified: Verified, expected: &Expected<'_>) -> Result<IdClaims, Reject> {
     #[derive(Deserialize)]
-    struct Claims {
+    struct Standard {
         sub: String,
         exp: f64,
-        #[serde(rename = "iat")]
-        _iat: f64,
         nbf: Option<f64>,
-        nonce: Option<String>,
-        azp: Option<String>,
-        at_hash: Option<String>,
+        #[serde(default)]
+        nonce: String,
+        #[serde(default)]
+        at_hash: String,
+    }
+    #[derive(Deserialize)]
+    struct Names {
         name: Option<String>,
         preferred_username: Option<String>,
     }
     audience_and_issuer(&verified.claims, expected.issuer, expected.client_id)?;
-    let claims: Claims = serde_json::from_value(Value::Object(verified.claims)).map_err(|_| Reject::Claims)?;
+    // Go takes any issue time, as a number or a numeric string, or none.
+    let issued = match verified.claims.get("iat") {
+        None => true,
+        Some(Value::String(time)) => serde_json::from_str::<serde_json::Number>(time).is_ok(),
+        Some(time) => time.is_number(),
+    };
+    let claims = Value::Object(verified.claims);
+    let standard = Standard::deserialize(&claims).map_err(|_| Reject::Claims)?;
     let now = expected.now as f64;
-    let digest = |value: &str| digest::digest(&digest::SHA256, value.as_bytes());
-    let nonce_matches = claims
-        .nonce
-        .as_deref()
-        .is_some_and(|nonce| digest(nonce).as_ref() == digest(expected.nonce).as_ref());
-    let at_hash_matches = claims.at_hash.as_deref().is_none_or(|expected_hash| {
-        let hash = digest::digest(verified.alg.digest(), expected.access_token.as_bytes());
-        B64.encode(&hash.as_ref()[..hash.as_ref().len() / 2]) == expected_hash
-    });
-    if now >= claims.exp
-        || claims.nbf.is_some_and(|nbf| nbf > now + 300.0)
-        || !nonce_matches
-        || claims.azp.as_deref().is_some_and(|azp| azp != expected.client_id)
-        || !at_hash_matches
-    {
+    if !issued || now >= standard.exp || standard.nbf.is_some_and(|nbf| nbf > now + 300.0) {
         return Err(Reject::Claims);
     }
+    let names = Names::deserialize(&claims).map_err(|_| Reject::Nonce)?;
+    let digest = |value: &str| digest::digest(&digest::SHA256, value.as_bytes());
+    if standard.nonce.is_empty() || digest(&standard.nonce).as_ref() != digest(expected.nonce).as_ref() {
+        return Err(Reject::Nonce);
+    }
+    let hash = digest::digest(verified.alg.digest(), expected.access_token.as_bytes());
+    if !standard.at_hash.is_empty() && B64.encode(&hash.as_ref()[..hash.as_ref().len() / 2]) != standard.at_hash {
+        return Err(Reject::AccessTokenHash);
+    }
     Ok(IdClaims {
-        subject: claims.sub,
-        name: claims.name,
-        preferred_username: claims.preferred_username,
+        subject: standard.sub,
+        name: names.name,
+        preferred_username: names.preferred_username,
     })
 }
 

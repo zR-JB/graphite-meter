@@ -221,34 +221,34 @@ fn id_token_claims_bind_issuer_audience_nonce_time_and_access_token() {
             "{alg}"
         );
     }
-    assert!(
-        check(
-            "RS256",
-            "rsa",
-            json!({"aud": ["meter"], "azp": "meter", "nbf": now + 299})
-        )
-        .is_ok()
-    );
     for changes in [
-        json!({"iss": "https://id.example/"}),
-        json!({"aud": "other"}),
-        json!({"aud": ["meter", "other"]}),
+        json!({"aud": ["meter"], "azp": "meter", "nbf": now + 299}),
+        json!({"aud": ["other", "meter"], "azp": "other"}),
         json!({"aud": ["meter", "meter"]}),
-        json!({"aud": null}),
-        json!({"azp": "other"}),
-        json!({"exp": now}),
-        json!({"exp": null}),
         json!({"iat": null}),
-        json!({"nbf": now + 301}),
-        json!({"nonce": "other"}),
-        json!({"nonce": null}),
-        json!({"at_hash": at_hash(&ring::digest::SHA384)}),
-        json!({"sub": 7}),
+        json!({"iat": now.to_string()}),
     ] {
-        assert_eq!(
-            check("RS256", "rsa", changes.clone()).err(),
-            Some(Reject::Claims),
-            "{changes}"
-        );
+        assert!(check("RS256", "rsa", changes.clone()).is_ok(), "{changes}");
+    }
+    for (changes, reject) in [
+        (json!({"iss": "https://id.example/"}), Reject::Claims),
+        (json!({"aud": "other"}), Reject::Claims),
+        (json!({"aud": []}), Reject::Claims),
+        (json!({"aud": ["meter", 7]}), Reject::Claims),
+        (json!({"aud": null}), Reject::Claims),
+        (json!({"exp": now}), Reject::Claims),
+        (json!({"exp": null}), Reject::Claims),
+        (json!({"iat": "soon"}), Reject::Claims),
+        (json!({"nbf": now + 301}), Reject::Claims),
+        (json!({"sub": 7}), Reject::Claims),
+        (json!({"nonce": "other"}), Reject::Nonce),
+        (json!({"nonce": null}), Reject::Nonce),
+        (json!({"name": 7}), Reject::Nonce),
+        (
+            json!({"at_hash": at_hash(&ring::digest::SHA384)}),
+            Reject::AccessTokenHash,
+        ),
+    ] {
+        assert_eq!(check("RS256", "rsa", changes.clone()).err(), Some(reject), "{changes}");
     }
 }

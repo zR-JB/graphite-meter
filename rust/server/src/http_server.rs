@@ -616,13 +616,20 @@ impl HttpServer {
                 // Even public auth endpoints collect only 4096 bytes within 15s.
                 let execute = async {
                     let authorized = authorized.try_map_body(collect_auth_body).await?;
-                    let response = auth.handle(&authorized).await.unwrap_or_else(|| {
-                        Response::builder()
-                            .status(StatusCode::NOT_FOUND)
-                            .body(Bytes::new())
-                            .unwrap()
-                    });
-                    Ok::<_, io::Error>(response.map(ResponseBody::bytes))
+                    let mut response = match auth.handle(&authorized).await {
+                        Some(response) => response.map(ResponseBody::bytes),
+                        None => text_response(StatusCode::NOT_FOUND),
+                    };
+                    let request = authorized.request();
+                    // The rest of an oversized body would read as the next request.
+                    if request.body().len() > crate::auth::http::FORM_BYTES
+                        && request.version() <= http::Version::HTTP_11
+                    {
+                        response
+                            .headers_mut()
+                            .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
+                    }
+                    Ok::<_, io::Error>(response)
                 };
                 let mut response = tokio::select! {
                     biased;
@@ -819,6 +826,10 @@ impl HttpServer {
                 format!("{public}/login").parse().expect("validated public origin"),
             );
             if connection.listener.ui && request.method() == Method::GET && request.uri().path() == "/" {
+                self.auth
+                    .as_ref()
+                    .expect("auth enabled")
+                    .debug(format_args!("unauthenticated UI root redirected to login"));
                 *response.status_mut() = StatusCode::TEMPORARY_REDIRECT;
                 response.headers_mut().insert(
                     header::LOCATION,
@@ -908,18 +919,18 @@ async fn lease_ended(lease: Option<AuthLease>) {
     }
 }
 
+/// Like Go's `MaxBytesReader`, collecting one byte past the limit marks the body oversized.
 async fn collect_auth_body<B>(mut body: B) -> io::Result<Bytes>
 where
     B: Body<Data = Bytes> + Unpin,
     B::Error: std::error::Error + Send + Sync + 'static,
 {
     let mut bytes = bytes::BytesMut::new();
-    while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
+    while bytes.len() <= crate::auth::http::FORM_BYTES
+        && let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await
+    {
         if let Ok(data) = frame.map_err(io::Error::other)?.into_data() {
-            if data.len() > 4096 - bytes.len() {
-                return Err(io::ErrorKind::InvalidData.into());
-            }
-            bytes.extend_from_slice(&data);
+            bytes.extend_from_slice(&data[..data.len().min(crate::auth::http::FORM_BYTES + 1 - bytes.len())]);
         }
     }
     Ok(bytes.freeze())

@@ -177,6 +177,9 @@ async fn password_flow() {
     assert!(denied.contains("x-frame-options: DENY\r\n") && denied.contains("content-length: 0\r\n"));
     assert!(!denied.contains("access-control-allow-origin: *"));
     let (session, csrf) = h.login().await;
+    let form = "Origin: https://localhost\r\nContent-Type: application/x-www-form-urlencoded\r\n";
+    let (oversized, _) = h.request("POST", "/auth/password", form, &"x".repeat(5000)).await;
+    assert!(oversized.contains("location: /login?error=failed\r\n"), "{oversized}");
     let headers = credentials(&session, &csrf);
     let (_, info) = h.request("GET", "/auth/session", &headers, "").await;
     let info: serde_json::Value = serde_json::from_slice(&info).unwrap();
