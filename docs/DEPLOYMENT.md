@@ -260,7 +260,8 @@ terminal and `NO_COLOR` is unset.
 Setup is one list: **Start test** (focused at launch), then connection paths, stages and a collapsed **Advanced**
 group. The footer explains the focused row and its steps, then names what enter does; `?` shows every key for the
 current screen. **Latency server** chooses whose latency is the run's result (Automatic: the lowest preparation
-round trip); every selected server is still probed, and `l` switches the server shown.
+round trip); if that server leaves the test, a surviving one takes over. Every selected server is still probed, and
+`l` switches the server shown; the printed report keeps the result's.
 
 | Key | Where | Action |
 | --- | --- | --- |
@@ -274,7 +275,7 @@ round trip); every selected server is still probed, and `l` switches the server 
 | enter (r), esc | finished | Run again; back to setup. |
 | d, l | running / finished | Details (servers, intervals, failures; esc closes); with several servers, the latency server. |
 | ↑/↓, pgup/pgdn, home/end | any | Scroll the body. |
-| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. |
+| ?, q, ctrl+c | any | Keys for this screen; quit. While editing, ? and q are typed; ctrl+c quits. A running test stops first and prints its report; a second ctrl+c quits at once. |
 
 ## Upgrading
 

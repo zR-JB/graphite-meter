@@ -97,7 +97,12 @@ func main() {
 		}
 	} else {
 		program := tea.NewProgram(m, tea.WithFPS(fps), tea.WithoutSignalHandler())
-		onSignal(signals, &caught, program.Quit)
+		go func() {
+			for caughtSignal := range signals {
+				caught.Store(caughtSignal)
+				program.Send(interruptMsg{})
+			}
+		}()
 		final, err := program.Run()
 		m.controller.Close()
 		if err != nil {
