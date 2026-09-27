@@ -324,7 +324,6 @@ def main() -> None:
                 or platform.linked(link_map, sysroot, cargo_outputs) != facts['inputs']
                 or platform.imports(executable, args.target) != facts['libraries']):
             raise LegalError('embedded-notice rebuild changed the compiled dependency or native closure')
-        # Checked without running the executable, which may be built for another platform.
         script = next(message for message in rebuilt_messages
                       if message.get('reason') == 'build-script-executed' and message['package_id'] == root_id)
         payload = (Path(script['out_dir']) / 'LEGAL.zlib').read_bytes()

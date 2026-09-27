@@ -118,7 +118,6 @@ fn interrupts(headless: bool, caught: Arc<AtomicU8>) -> Result<mpsc::Receiver<()
             }
         });
     }
-    // Like Go on Windows: Ctrl-C and Ctrl-Break interrupt, closing the console terminates.
     #[cfg(windows)]
     {
         use tokio::signal::windows;

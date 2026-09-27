@@ -50,7 +50,6 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
     base = f"graphite-meter-client_{version}_{goos}_{goarch}_rust"
     name = "graphite-meter-client.exe" if goos == "windows" else "graphite-meter-client"
     environment = dict(os.environ, GM_ENGINE_VERSION=f"{version}-rust")
-    # Legal generation and packaging must refer to the same freshly rebuilt executable.
     cargo = REPO / "rust/target"
     environment["CARGO_TARGET_DIR"] = str(cargo)
     cargo.mkdir(parents=True, exist_ok=True)
