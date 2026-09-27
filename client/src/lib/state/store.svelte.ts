@@ -565,6 +565,8 @@ class AppStore {
       this.run?.servers.find(
         ({ server }) => server.id === result.multiServer.latencyFocus,
       ) ?? this.run?.servers[0];
+    // A finished run has no current stage, whichever one ran or failed last.
+    this.phaseStage = null;
     this.historyCandidate = this.savingResults
       ? buildHistoryRecord(
           result,
