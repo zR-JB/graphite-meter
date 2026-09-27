@@ -296,7 +296,7 @@ impl Upload {
             .await;
             let count = match response {
                 Ok(Ok(count)) => count,
-                Ok(Err(error)) if self.control.retryable_transfer_error(&error) => {
+                Ok(Err(error)) if crate::net::authentication_required(error.as_ref()).is_none() => {
                     let remaining = deadline.saturating_duration_since(Instant::now());
                     if remaining.is_zero() {
                         return Err(std::io::Error::new(
@@ -740,7 +740,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_retries_a_dropped_response_without_inventing_bytes() -> Result<(), Error> {
+    async fn checkpoint_retries_a_failed_response_without_inventing_bytes() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
@@ -757,6 +757,11 @@ mod tests {
                 let count = stream.read(&mut request).await?;
                 assert!(request[..count].starts_with(b"POST /upload/checkpoint?id=test-session"));
                 if attempt == 0 {
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+                        )
+                        .await?;
                     first_closed = Some(Instant::now());
                     continue;
                 }
