@@ -46,24 +46,12 @@
     "modified": false,
     "artifactScopes": ["server/browser", "container"],
     "localPaths": [
-      "client/public/fonts/ibm-plex-mono-400-latin1.woff2",
-      "client/public/fonts/ibm-plex-mono-400-latin2.woff2",
       "client/public/fonts/ibm-plex-mono-500-latin1.woff2",
       "client/public/fonts/ibm-plex-mono-500-latin2.woff2",
       "client/public/fonts/ibm-plex-mono-600-latin1.woff2",
-      "client/public/fonts/ibm-plex-mono-600-latin2.woff2",
-      "client/public/fonts/ibm-plex-mono-700-latin1.woff2",
-      "client/public/fonts/ibm-plex-mono-700-latin2.woff2"
+      "client/public/fonts/ibm-plex-mono-600-latin2.woff2"
     ],
     "localArtifacts": [
-      {
-        "path": "client/public/fonts/ibm-plex-mono-400-latin1.woff2",
-        "sha256": "e8993d946649b9d01abb1ed06d574b19d8ea3e66b5c3948602db335c44c18e56"
-      },
-      {
-        "path": "client/public/fonts/ibm-plex-mono-400-latin2.woff2",
-        "sha256": "8c5e48e4c6ee60346744db62fd8bbf530c21e531e1a1498c3a410ed8f7d3986e"
-      },
       {
         "path": "client/public/fonts/ibm-plex-mono-500-latin1.woff2",
         "sha256": "41201b658a328b9d00368215c2f1102770f80b15952ab82631e4006255e6365d"
@@ -79,14 +67,6 @@
       {
         "path": "client/public/fonts/ibm-plex-mono-600-latin2.woff2",
         "sha256": "68730f933dc5bbd8b011abaf59fdc151bd1eeb8461979aafa84c14c33f5869d2"
-      },
-      {
-        "path": "client/public/fonts/ibm-plex-mono-700-latin1.woff2",
-        "sha256": "e256c6e8225a8792d0274ac83ead8d668b3c0668f9bd8d36a57a56594ef777e5"
-      },
-      {
-        "path": "client/public/fonts/ibm-plex-mono-700-latin2.woff2",
-        "sha256": "2501d0baaf7005f1892e097296265d4d1291c34c868ad3601995ace9508136c3"
       }
     ],
     "localLegalFiles": [
@@ -96,7 +76,7 @@
       }
     ],
     "correspondingSource": "third_party/manual/fonts/ibm-plex-mono",
-    "reviewNotes": "Self-hosted upstream split webfonts (Latin1 and Latin2 of Regular, Medium, SemiBold, Bold), renamed only; the shipped WOFF2 files are hash-tracked and are not modified."
+    "reviewNotes": "Self-hosted upstream split webfonts (Latin1 and Latin2 of Medium and SemiBold), renamed only; the shipped WOFF2 files are hash-tracked and are not modified."
   },
   {
     "ecosystem": "container",

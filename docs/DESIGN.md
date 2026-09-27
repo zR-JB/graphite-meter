@@ -85,13 +85,14 @@ Both `prefers-contrast: more` and `prefers-reduced-transparency` make glass opaq
 | Body, grouped lists, settings rows | Plex Sans | `--type-body` 13 px | `--w-normal` 450 values, 400 labels |
 | Secondary text, hints | Plex Sans | `--type-sm` 12 px, `--type-xs` 11 px | 450 |
 | Instrument chrome: axes, units, lane stats, status bar, `kbd` | Plex Mono (`--font-mono`) | `--type-xs` to `--type-sm` | 500 to 600 |
-| Axis names and unit captions (`.caps`) | Plex Mono | `--type-2xs` 10 px, `--track-caps` | 700 |
+| Axis names and unit captions (`.caps`) | Plex Mono | `--type-2xs` 10 px, `--track-caps` | `--w-heavy` |
 
 - 10 px is the floor for any text. Only headings scale with the viewport.
 - Figures are tabular everywhere (Plex draws tabular digits by default, and `body` sets `tabular-nums`).
 - Plex distinguishes `I`, `l` and `1` in the sans, and `0` and `O` in the mono, without stylistic sets.
 - Weights come from three tokens: `--w-normal` 450, `--w-strong` 600, `--w-heavy` 700. Hierarchy uses weight and
-  tone, not extra sizes.
+  tone, not extra sizes. Plex Sans is variable (100–700). Plex Mono ships Medium and SemiBold only, so mono text
+  renders at 500 up to `--w-normal` and at 600 above it.
 
 ## Space, grid and radii
 

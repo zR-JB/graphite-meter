@@ -46,29 +46,6 @@
 @font-face {
   font-family: "IBM Plex Mono";
   font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/ibm-plex-mono-400-latin1.woff2") format("woff2");
-  unicode-range:
-    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
-    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
-    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/ibm-plex-mono-400-latin2.woff2") format("woff2");
-  unicode-range:
-    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
-    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
-    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
-    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
   font-weight: 500;
   font-display: swap;
   src: url("/fonts/ibm-plex-mono-500-latin1.woff2") format("woff2");
@@ -106,29 +83,6 @@
   font-weight: 600;
   font-display: swap;
   src: url("/fonts/ibm-plex-mono-600-latin2.woff2") format("woff2");
-  unicode-range:
-    U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
-    U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
-    U+1E80-1E85, U+1E9E, U+20A1, U+20A4, U+20A6, U+20A8-20AA, U+20AD-20AE,
-    U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/ibm-plex-mono-700-latin1.woff2") format("woff2");
-  unicode-range:
-    U+0000, U+000D, U+0020-007E, U+00A0-00FF, U+0131, U+0152-0153, U+02C6,
-    U+02DA, U+02DC, U+2013-2014, U+2018-201A, U+201C-201E, U+2020-2022, U+2026,
-    U+2030, U+2039-203A, U+2044, U+20AC, U+2122, U+2212, U+FB01-FB02;
-}
-@font-face {
-  font-family: "IBM Plex Mono";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/ibm-plex-mono-700-latin2.woff2") format("woff2");
   unicode-range:
     U+0100-0101, U+0104-0130, U+0132-0151, U+0154-017F, U+018F, U+0192,
     U+01A0-01A1, U+01AF-01B0, U+01FA-01FF, U+0218-021B, U+0237, U+0259,
