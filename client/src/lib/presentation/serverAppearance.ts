@@ -21,7 +21,7 @@ export function serverLabel(
 ): string {
   return server.location &&
     !server.name.toLowerCase().includes(server.location.toLowerCase())
-    ? `${server.name} · ${server.location}`
+    ? `${server.name}, ${server.location}`
     : server.name;
 }
 
