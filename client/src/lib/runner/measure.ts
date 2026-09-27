@@ -429,7 +429,7 @@ export class ServerLatency {
 
   /** Each loaded median against the full idle median; a negative difference stays negative. */
   addedLatency(): AddedLatency | null {
-    const idleMs = this.stages.latency.summary()?.p50Ms;
+    const idleMs = this.summary("latency")?.p50Ms;
     const loaded = (["download", "upload", "bidirectional"] as const).map(
       (stage) => [stage, this.summary(stage)?.p50Ms ?? null] as const,
     );

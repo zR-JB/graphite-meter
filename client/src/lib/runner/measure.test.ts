@@ -180,7 +180,9 @@ test("a failed population shows its median only after three outcomes", () => {
   latency.observe("latency", reply(10), 0, 0);
   latency.observe("latency", reply(20, true), 0, 0);
   latency.observe("download", reply(40), 0, 0);
+  latency.observe("upload", reply(50), 0, 0);
   expect(latency.result()).toBeNull();
+  expect(latency.addedLatency()).toBeNull();
   expect(latency.summaries().download).toMatchObject({
     p50Ms: null,
     probeCount: 1,
