@@ -300,19 +300,17 @@
         {READINESS[readiness].label}
       </span>
     </div>
-    <div class="kv connection">
-      <ServerSelection />
-      <ConnectionPicker
-        role="throughput"
-        options={throughputTargets}
-        locked={running || store.preparing}
-      />
-      <ConnectionPicker
-        role="latency"
-        options={latencyTargets}
-        locked={running || store.preparing}
-      />
-    </div>
+    <ServerSelection />
+    <ConnectionPicker
+      role="throughput"
+      options={throughputTargets}
+      locked={running || store.preparing}
+    />
+    <ConnectionPicker
+      role="latency"
+      options={latencyTargets}
+      locked={running || store.preparing}
+    />
   </section>
 
   <section class="group">
@@ -634,14 +632,9 @@
     min-width: 0;
     min-height: var(--control-h);
   }
-  .connection {
-    gap: var(--space-3);
-    padding-block: var(--space-3);
-  }
   .switch-row > :global(.switch) {
     flex: 1;
     flex-direction: row-reverse;
-    justify-content: space-between;
     min-height: var(--control-h);
   }
   .value {
@@ -659,8 +652,8 @@
     text-align: end;
   }
   .row select {
-    flex: none;
-    width: 10rem;
+    width: auto;
+    max-width: 11rem;
   }
   .presets {
     flex: 1;

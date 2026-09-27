@@ -123,6 +123,8 @@
   }
   legend {
     margin-bottom: 6px;
+    color: var(--text-soft);
+    font-size: var(--type-body);
   }
   .options {
     display: grid;
