@@ -30,7 +30,7 @@ const REFUSALS: Record<string, LaneFailure> = {
   ownerMismatch: { reason: "protocol-error", retry: false },
   globalFull: busy,
   clientFull: busy,
-  idle: lost,
+  idle: { reason: "timeout", retry: true },
   revoked: signIn,
 };
 
@@ -46,10 +46,10 @@ export function classifyUploadFailure(
   return { reason: "protocol-error", retry: false };
 }
 
-/** The delta-seconds Retry-After a busy server sends. */
+/** The delta-seconds Retry-After a busy server sends; whole seconds only, as natively. */
 export function retryAfterMs(headers: Headers): number | undefined {
-  const seconds = Number(headers.get("Retry-After") || NaN);
-  return seconds > 0 ? seconds * 1000 : undefined;
+  const seconds = headers.get("Retry-After") ?? "";
+  return /^\d+$/.test(seconds) && +seconds > 0 ? +seconds * 1000 : undefined;
 }
 
 const oversized = () =>

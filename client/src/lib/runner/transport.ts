@@ -125,8 +125,8 @@ export function openLane(
     if (!failed) on(msg);
     failed = true;
   };
-  const lost = (detail: string) =>
-    fail({ type: "error", detail, reason: "connection-lost", retry: true });
+  const lost = (detail: string, reason: FailureReason = "connection-lost") =>
+    fail({ type: "error", detail, reason, retry: true });
   const handle = (msg: WorkerMsg) => {
     if (msg.type === "established") clearTimeout(establish);
     if (msg.type === "stopped") stopped?.();
@@ -144,7 +144,7 @@ export function openLane(
   worker.postMessage({ type: "start", ...start });
   const establish = session
     ? setTimeout(
-        () => lost("webtransport session did not establish"),
+        () => lost("webtransport session did not establish", "timeout"),
         ESTABLISH_BUDGET_MS + ESTABLISH_MARGIN_MS,
       )
     : undefined;

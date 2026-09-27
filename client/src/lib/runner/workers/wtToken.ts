@@ -105,6 +105,8 @@ export async function mintWtToken(
 
 /** The server closes a session with this code when sign-out or a revoked grant ends it (api/laneendings.txt). */
 export const SESSION_REVOKED = 3;
+/** Idle and lifetime session endings are timeouts, not lost connections. */
+export const SESSION_TIMEOUTS: readonly number[] = [1, 2];
 /** The WebSocket close for the same ending. */
 export const SOCKET_REVOKED = { code: 1008, reason: "authentication required" };
 
