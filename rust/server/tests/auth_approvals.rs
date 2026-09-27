@@ -159,18 +159,25 @@ fn approval_caps_and_revocation_are_bounded_and_reclaimable() {
     ));
     store.revoke(&session);
     assert!(matches!(store.exchange_cli("cli-0").unwrap(), Exchange::Pending));
-    for i in 0..256 {
+    let client = |network, i: usize| std::net::IpAddr::V4(std::net::Ipv4Addr::new(network, 0, 2, (i / 8) as u8));
+    for i in 0..128 {
         store
-            .begin_browser_approval(
-                &challenge(&format!("browser-{i}")),
-                AUDIENCE,
-                None,
-                std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, (i / 8) as u8)),
-            )
+            .begin_browser_approval(&challenge(&format!("browser-{i}")), AUDIENCE, None, client(192, i))
             .unwrap();
     }
     assert!(matches!(
-        store.begin_browser_approval(&challenge("overflow"), AUDIENCE, None, "192.0.2.1".parse().unwrap()),
+        store.begin_browser_approval(&challenge("anonymous"), AUDIENCE, None, client(198, 0)),
+        Err(ApprovalError::Capacity)
+    ));
+    for i in 0..128 {
+        let (_, session) = store.create(&format!("subject-{i}"), "Name", "local", None).unwrap();
+        store
+            .begin_cli_approval(&session, &challenge(&format!("signed-in-{i}")), client(203, i))
+            .unwrap();
+    }
+    let (_, session) = store.create("last", "Name", "local", None).unwrap();
+    assert!(matches!(
+        store.begin_cli_approval(&session, &challenge("overflow"), client(198, 0)),
         Err(ApprovalError::Capacity)
     ));
     assert!(

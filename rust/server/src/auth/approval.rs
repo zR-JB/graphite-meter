@@ -86,8 +86,15 @@ impl Approval {
 }
 
 impl State {
-    fn approval_capacity(&self, client: IpAddr) -> bool {
+    fn approval_capacity(&self, client: IpAddr, signed_in: bool) -> bool {
+        let anonymous = || {
+            self.approvals
+                .values()
+                .filter(|approval| approval.session.is_none())
+                .count()
+        };
         self.approvals.len() >= MAX_APPROVALS
+            || !signed_in && anonymous() >= MAX_APPROVALS / 2
             || crate::client_address::share_full(
                 &crate::client_address::client_keys(client),
                 MAX_CLIENT_APPROVALS,
@@ -122,7 +129,7 @@ impl SessionStore {
                 Err(ApprovalError::InvalidApproval)
             };
         }
-        if state.approval_capacity(client)
+        if state.approval_capacity(client, true)
             || state
                 .approvals
                 .values()
@@ -167,7 +174,7 @@ impl SessionStore {
             return Err(ApprovalError::NoSession);
         }
         if !state.approvals.contains_key(challenge) {
-            if state.approval_capacity(client) {
+            if state.approval_capacity(client, session.is_some()) {
                 return Err(ApprovalError::Capacity);
             }
             state.approvals.insert(
