@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -225,11 +226,12 @@ func (a *connectionAdmission) stats() budget {
 	return a.connections.snapshot()
 }
 
-// verifySourceAddress requires Retry under load, so spoofed Initials cannot hold slots.
-func (a *connectionAdmission) verifySourceAddress(net.Addr) bool {
+// verifySourceAddress requires Retry under load or past a client's first QUIC connection, against spoofed Initials.
+func (a *connectionAdmission) verifySourceAddress(addr net.Addr) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.connections.active >= a.connections.limit/4
+	return a.connections.active >= a.connections.limit/4 ||
+		slices.ContainsFunc(socketKeys(addr, a.trusted), func(key string) bool { return a.quic.clients[key] > 0 })
 }
 
 func (a *connectionAdmission) connContext(ctx context.Context, info *quic.ClientInfo) (context.Context, error) {

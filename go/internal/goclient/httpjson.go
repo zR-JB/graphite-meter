@@ -27,21 +27,25 @@ func controlJSON(
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		if err := authResponseError(res); err != nil {
-			return nil, err
-		}
-		return nil, statusError{code: res.StatusCode, from: what}
+		return nil, statusOf(res, what)
 	}
 	return res, readControlJSON(res.Body, out)
 }
 
-func unexpectedStatus(res *http.Response) error {
+func unexpectedStatus(res *http.Response) error { return statusOf(res, res.Request.URL.Path) }
+
+// statusOf takes the source from the caller: dial responses carry no Request.
+func statusOf(res *http.Response, from string) error {
 	if err := authResponseError(res); err != nil {
 		return err
 	}
 	// Delta-seconds only; 32 bits keep the duration from overflowing.
 	seconds, _ := strconv.ParseUint(res.Header.Get("Retry-After"), 10, 32)
-	return statusError{res.StatusCode, res.Request.URL.Redacted(), time.Duration(seconds) * time.Second}
+	status := statusError{res.StatusCode, from, time.Duration(seconds) * time.Second}
+	if code := res.Header.Get("X-Graphite-Upload-Refusal"); code != "" {
+		return uploadRefusal(code, status)
+	}
+	return status
 }
 
 const maxControlBytes = 64 * 1024

@@ -14,6 +14,7 @@ interface Activity {
   requests: string[];
   catalogs: string[];
   inFlight: number;
+  discovering: number;
   peak: number;
   probes: number;
   workers: number;
@@ -36,7 +37,11 @@ async function observe(page: Page, hold: string[] = []) {
         if (url.pathname === "/servers") activity.catalogs.push(url.origin);
         if (url.pathname !== "/preflight") return original(input, init);
         activity.requests.push(url.origin);
-        activity.peak = Math.max(activity.peak, ++activity.inFlight);
+        // The selected page server's own check may overlap; it is not settings discovery.
+        const discovery = url.origin !== location.origin;
+        activity.inFlight++;
+        if (discovery)
+          activity.peak = Math.max(activity.peak, ++activity.discovering);
         try {
           if (activity.hold.includes(url.origin))
             await new Promise((_resolve, reject) => {
@@ -48,6 +53,7 @@ async function observe(page: Page, hold: string[] = []) {
           return await original(input, init);
         } finally {
           activity.inFlight--;
+          if (discovery) activity.discovering--;
         }
       }) as typeof fetch;
       window.Worker = new Proxy(window.Worker, {
@@ -70,6 +76,7 @@ async function observe(page: Page, hold: string[] = []) {
       requests: [],
       catalogs: [],
       inFlight: 0,
+      discovering: 0,
       peak: 0,
       probes: 0,
       workers: 0,

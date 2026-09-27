@@ -29,10 +29,15 @@ export async function readJSONResponse(response: Response): Promise<unknown> {
   }
 }
 
+export const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+export const isCount = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+
 function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("expected control response object");
-  return value as Record<string, unknown>;
+  if (!isRecord(value)) throw new Error("expected control response object");
+  return value;
 }
 
 function string(value: unknown, max: number, allowEmpty = false): string {
@@ -57,11 +62,34 @@ export function displayText(value: unknown, max: number, allowEmpty = false) {
 export const safeDetail = (text: string, max: number) =>
   UNSAFE_TEXT.test(text) ? "" : text.slice(0, max);
 
-function member<T extends string>(value: unknown, values: readonly T[]): T {
-  if (typeof value !== "string" || !values.includes(value as T))
-    throw new Error("unsupported control response value");
-  return value as T;
+const known = <T extends string>(
+  value: unknown,
+  values: readonly T[],
+): value is T => values.includes(value as T);
+
+/** A newer server's mechanism is skipped; a missing one refuses the document (api/preflight.forward.golden.json). */
+function mechanism<T extends string>(
+  value: unknown,
+  values: readonly T[],
+): T | null {
+  if (known(value, values)) return value;
+  if (typeof value === "string" && value) return null;
+  throw new Error("unsupported control response value");
 }
+
+function member<T extends string>(value: unknown, values: readonly T[]): T {
+  if (!known(value, values))
+    throw new Error("unsupported control response value");
+  return value;
+}
+
+const THROUGHPUT_TRANSPORTS = [
+  "fetch-stream",
+  "webtransport",
+  "webtransport-datagram",
+] as const;
+const THROUGHPUT_PROTOCOLS = ["http1", "http2", "http3", "negotiated"] as const;
+const LATENCY_TRANSPORTS = ["websocket", "webtransport"] as const;
 
 function origin(value: unknown): string {
   const raw = string(value, 2048);
@@ -116,29 +144,20 @@ export function parsePreflight(value: unknown) {
       ...(capabilities.uploadCheckpoint === undefined
         ? {}
         : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
-      throughput: targets(capabilities.throughput).map((value) => {
+      throughput: targets(capabilities.throughput).flatMap((value) => {
         const target = record(value);
-        return {
-          baseUrl: origin(target.baseUrl),
-          transport: member(target.transport, [
-            "fetch-stream",
-            "webtransport",
-            "webtransport-datagram",
-          ]),
-          protocol: member(target.protocol, [
-            "http1",
-            "http2",
-            "http3",
-            "negotiated",
-          ]),
-        };
+        const transport = mechanism(target.transport, THROUGHPUT_TRANSPORTS);
+        const protocol = mechanism(target.protocol, THROUGHPUT_PROTOCOLS);
+        return transport && protocol
+          ? [{ baseUrl: origin(target.baseUrl), transport, protocol }]
+          : [];
       }),
-      latency: targets(capabilities.latency).map((value) => {
+      latency: targets(capabilities.latency).flatMap((value) => {
         const target = record(value);
-        return {
-          baseUrl: origin(target.baseUrl),
-          transport: member(target.transport, ["websocket", "webtransport"]),
-        };
+        const transport = mechanism(target.transport, LATENCY_TRANSPORTS);
+        return transport
+          ? [{ baseUrl: origin(target.baseUrl), transport }]
+          : [];
       }),
     },
   };
@@ -152,14 +171,9 @@ export function parseProbe(value: unknown): Probe {
   let load: Probe["load"];
   if (input.load !== undefined) {
     const raw = record(input.load);
-    if (
-      !Number.isSafeInteger(raw.active) ||
-      !Number.isSafeInteger(raw.max) ||
-      (raw.active as number) < 0 ||
-      (raw.max as number) < 1
-    )
+    if (!isCount(raw.active) || !isCount(raw.max) || raw.max < 1)
       throw new Error("invalid probe load");
-    load = { active: raw.active as number, max: raw.max as number };
+    load = { active: raw.active, max: raw.max };
   }
   return {
     clientIp: string(input.clientIp, 64),
@@ -223,11 +237,6 @@ export function parseWtToken(value: unknown): {
   const input = record(value);
   const token = string(input.token, 8192, true);
   const { expires } = input;
-  if (
-    typeof expires !== "number" ||
-    !Number.isSafeInteger(expires) ||
-    expires < 0
-  )
-    throw new Error("invalid WebTransport token expiry");
+  if (!isCount(expires)) throw new Error("invalid WebTransport token expiry");
   return { token, expires };
 }

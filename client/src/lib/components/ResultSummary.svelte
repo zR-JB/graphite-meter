@@ -1,47 +1,70 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
-  import Disclosure from "./Disclosure.svelte";
   import type { SummaryCard, SummaryRow } from "../presentation/resultSummary";
   import type { MultiServerResult } from "../runner/measure";
   import ServerScope from "./ServerScope.svelte";
-  import { JARGON, STAGE, STATUS } from "../presentation/vocabulary";
+  import { tipGroup, tooltip } from "../actions/tooltip";
+  import {
+    MISSING,
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+  } from "../presentation/vocabulary";
 
   let {
     cards,
+    fade = 1,
+    reserve = false,
     details,
+    issues = [],
     scope = "",
     onscope,
     locked = false,
   }: {
     cards: SummaryCard[];
+    fade?: number;
+    reserve?: boolean;
     details?: MultiServerResult | null;
+    issues?: { server: string; text: string }[];
     scope?: string;
     onscope?: (id: string) => void;
     locked?: boolean;
   } = $props();
-  // One state for every card, so the row of cards opens and closes together.
-  let open = $state(false);
 </script>
 
-{#snippet line({ label, value, stage, note }: SummaryRow)}
-  <span class="line">
-    <span class="line-label">
-      {#if stage}<span class="line-icon" data-tone={stage}
-          ><Icon name={STAGE[stage].icon} /></span
-        >{#if label !== STAGE[stage].short}<span class="sr-only"
-            >{STAGE[stage].short}</span
-          >{/if}{/if}{label}
-    </span>
-    <span class="line-value">{value}</span>
-    {#if note}<span class="line-note">{note}</span>{/if}
-  </span>
+<!-- Facts read "value term"; the term carries the explainer, a run of stage icons shares one term. -->
+{#snippet facts(rows: SummaryRow[])}
+  <span class="facts"
+    ><span class="facts-line">
+      {#each rows as row, i (row.label + row.stage)}
+        {@const lane = row.stage && row.label === STAGE[row.stage].short}
+        {@const joined = row.stage && rows[i + 1]?.label === row.label}
+        <span class="fact">
+          {#if row.stage}<span class="fact-icon" data-tone={row.stage}
+              ><Icon name={STAGE[row.stage].icon} /></span
+            ><span class="sr-only">{STAGE[row.stage].short}</span>{/if}
+          <span class="fact-value">{row.value}</span>
+          {#if !lane && !joined}<span
+              class="fact-term"
+              {@attach row.tip ? tooltip(() => row.tip!) : null}
+              >{row.label.toLowerCase()}</span
+            >{/if}
+        </span>
+      {/each}
+    </span></span
+  >
 {/snippet}
 
-<div class="result-summary" style:--cards={Math.min(4, cards.length)}>
+<div
+  class="result-summary"
+  class:reserve
+  style:--cards={Math.min(4, cards.length)}
+  style:--fade={fade}
+>
   {#if details && details.selection.length > 1 && onscope}
     <div class="summary-scope">
       {#if details.participants.length < details.selection.length}<span
-          class="caps"
+          class="hint"
           >{details.participants.length} of {details.selection.length} servers</span
         >{/if}
       <ServerScope
@@ -49,57 +72,87 @@
         value={scope}
         onchange={onscope}
         disabled={locked}
+        disabledIds={details.selection
+          .filter(
+            ({ id }) => !details.servers.some(({ server }) => server.id === id),
+          )
+          .map(({ id }) => id)}
         aggregate="Combined"
         label="Result measurements"
       />
     </div>
   {/if}
-  <div class="result-cards">
+  <div class="result-cards" data-tip-group {@attach tipGroup}>
     {#each cards as card (card.key)}
-      <Disclosure class="surface result-card enter {card.status}" bind:open>
-        {#snippet summary()}
-          <span class="head" data-tone={card.key}>
-            <span class="tone-icon" aria-hidden="true"
-              ><Icon name={card.icon} /></span
+      {@const stability = card.rows.find((row) => row.label === "Stability")}
+      <article class="surface result-card enter {card.status}">
+        <span class="head" data-tone={card.key}>
+          <span class="tone-icon" aria-hidden="true"
+            ><Icon name={card.icon} /></span
+          >
+          <span class="label" {@attach tooltip(() => card.tip)}
+            >{card.label}</span
+          >
+          {#if card.status !== "complete" && card.status !== "active" && card.status !== "pending"}
+            <span class="badge" data-tone={STATUS_TONE[card.status]}
+              >{STATUS[card.status]}</span
             >
-            <span class="label">{card.label}</span>
-            {#if card.status === "partial" || card.status === "failed"}
-              <span class="badge" data-tone="err">{STATUS[card.status]}</span>
-            {/if}
-          </span>
-          {#key scope}
-            <span class="readout enter">
+          {:else if stability && stability.value !== MISSING}
+            <span class="stability"
+              >{stability.value}
               <span
-                class="val"
-                aria-hidden={card.accessible ? "true" : undefined}
-              >
-                <span class="num">{card.num}</span>
-                {#if card.unit}<span class="unit">{card.unit}</span>{/if}
-              </span>
-              {#if card.accessible}<span class="sr-only">{card.accessible}</span
-                >{/if}
-              {#each card.rows as row (row.label + row.stage)}
-                {@render line(row)}
-              {/each}
+                class="fact-term"
+                {@attach stability.tip ? tooltip(() => stability.tip!) : null}
+                >stable</span
+              ></span
+            >
+          {/if}
+        </span>
+        {#key scope}
+          <span class="readout enter">
+            <span
+              class="val"
+              aria-hidden={card.accessible ? "true" : undefined}
+            >
+              <span class="num">{card.num}</span>
+              {#if card.unit}<span class="unit">{card.unit}</span>{/if}
             </span>
-          {/key}
-        {/snippet}
-        <div class="readout details">
-          {#each card.details as row (row.label)}
-            {@render line(row)}
-          {:else}
-            <p class="hint">No further measurements.</p>
-          {/each}
-        </div>
-        {#if card.key === "latency"}
-          <p class="hint">{JARGON.jitter}</p>
-          {#if card.rows.length > 1}<p class="hint">
-              {JARGON.addedLatency}
-            </p>{/if}
-        {/if}
-      </Disclosure>
+            {#if card.wire}
+              {@const wire = card.wire}
+              <span class="wire"
+                >{wire.value}
+                <span class="fact-term" {@attach tooltip(() => wire.tip)}
+                  >wire {wire.overhead}</span
+                ></span
+              >
+            {:else if card.wire === null}
+              <span class="wire"></span>
+            {/if}
+            {@render facts(card.rows.filter((row) => row !== stability))}
+          </span>
+        {/key}
+        {#if card.accessible}<span class="sr-only">{card.accessible}</span>{/if}
+      </article>
     {/each}
   </div>
+  <!-- One shown server needs no attribution: its reasons sit as quiet lines under the cards. -->
+  {#if issues.length && ((details?.selection.length ?? 1) <= 1 || scope)}
+    <ul class="issue-lines enter" aria-label="Issues">
+      {#each issues as issue, index (index)}<li>{issue.text}</li>{/each}
+    </ul>
+  {:else if issues.length}
+    <section class="group enter" aria-label="Issues">
+      <h3>Issues</h3>
+      <dl class="kv">
+        {#each issues as issue, index (index)}
+          <div>
+            <dt>{issue.server}</dt>
+            <dd>{issue.text}</dd>
+          </div>
+        {/each}
+      </dl>
+    </section>
+  {/if}
 </div>
 
 <style>
@@ -131,16 +184,20 @@
       grid-column: 1 / -1;
     }
   }
-  @container results (max-width: 330px) {
+  @container results (max-width: 480px) {
     .result-cards {
       grid-template-columns: minmax(0, 1fr);
     }
   }
-  .result-cards > :global(.result-card) {
-    --disclosure-pad: var(--space-3);
+  .result-card {
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    min-width: 0;
+    padding: 10px var(--space-3);
     transition: var(--transition-control);
   }
-  .result-cards > :global(.active) {
+  .result-card.active {
     border-color: var(--brand-line);
   }
   .head {
@@ -149,27 +206,28 @@
     gap: var(--space-2);
     min-width: 0;
   }
-  .head .badge {
+  .head .badge,
+  .stability {
     margin-left: auto;
   }
   .label {
     font-size: var(--type-sm);
     font-weight: var(--w-heavy);
   }
+  .readout > *,
+  .head .badge,
+  .stability {
+    opacity: var(--fade);
+  }
   .readout {
     display: grid;
     gap: 3px;
     min-width: 0;
   }
-  .details {
-    padding-top: var(--space-2);
-    border-top: 1px solid var(--border-subtle);
-  }
   .val {
     display: flex;
     align-items: baseline;
     gap: 6px;
-    margin: 2px 0 var(--space-1);
   }
   .num {
     font: var(--w-strong) var(--type-xl) / 1 var(--font-display);
@@ -180,38 +238,62 @@
     color: var(--text-soft);
     font: var(--w-heavy) var(--type-xs) var(--font-mono);
   }
-  .line {
+  .wire,
+  .facts,
+  .stability {
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
+    font-variant-numeric: tabular-nums;
+  }
+  /* Each fact wraps whole; its middot sits in the gap before it, clipped at a line start. */
+  .facts {
+    display: block;
+    overflow: hidden;
+  }
+  .wire {
+    min-height: 1lh;
+  }
+  @container results (min-width: 481px) {
+    .reserve .facts {
+      min-height: 2lh;
+    }
+  }
+  .facts-line {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0 var(--space-2);
-    min-width: 0;
+    margin-left: calc(-1 * var(--space-3));
   }
-  .line-label {
+  .fact {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-1);
-    color: var(--text-soft);
-    font-size: var(--type-xs);
+    gap: 3px;
+    padding-left: var(--space-3);
+    white-space: nowrap;
   }
-  .line-icon {
+  .fact::before {
+    content: "·";
+    position: absolute;
+    left: calc(var(--space-3) / 2);
+    translate: -50%;
+    color: var(--text-soft);
+  }
+  .issue-lines {
+    display: grid;
+    justify-items: center;
+    color: var(--text-muted);
+    font: var(--w-normal) var(--type-sm) / 1.5 var(--font-sans);
+    text-align: center;
+  }
+  .fact-icon {
     display: inline-grid;
     color: var(--tone);
   }
-  .line-icon :global(svg) {
-    width: 12px;
-    height: 12px;
+  .fact-icon :global(svg) {
+    width: 11px;
+    height: 11px;
   }
-  .line-note {
-    flex-basis: 100%;
+  .fact-term {
     color: var(--text-soft);
-    font-size: var(--type-xs);
-  }
-  .line-value {
-    margin-left: auto;
-    font: var(--w-strong) var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    text-align: end;
   }
 </style>

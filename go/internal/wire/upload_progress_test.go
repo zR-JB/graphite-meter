@@ -3,21 +3,18 @@ package wire
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"os"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestUploadProgressConformance(t *testing.T) {
-	data, err := os.ReadFile("../../../api/upload-progress.testvectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var cases []struct {
 		Name   string         `json:"name"`
 		Record jsontext.Value `json:"record"`
 		Valid  bool           `json:"valid"`
 	}
-	if err := json.Unmarshal(data, &cases); err != nil {
+	if err := json.Unmarshal(apipin.Read(t, "upload-progress.testvectors.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {
@@ -25,6 +22,16 @@ func TestUploadProgressConformance(t *testing.T) {
 			event, err := DecodeUploadProgress(tc.Record)
 			if (err == nil) != tc.Valid {
 				t.Fatalf("decode %s = %+v, %v; valid=%t", tc.Record, event, err, tc.Valid)
+			}
+			var kind struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(tc.Record, &kind) == nil && (kind.Type == "progress" || kind.Type == "complete") {
+				var c UploadCheckpoint
+				err := json.Unmarshal(tc.Record, &c)
+				if (err == nil) != tc.Valid || err == nil && (c.Bytes != event.Bytes || c.Nanos != event.Nanos) {
+					t.Fatalf("checkpoint %s = %+v, %v; valid=%t", tc.Record, c, err, tc.Valid)
+				}
 			}
 			if tc.Valid {
 				encoded, err := json.Marshal(event)

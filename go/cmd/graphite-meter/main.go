@@ -43,15 +43,21 @@ func main() {
 }
 
 func parseConfig(name string, args []string, usage io.Writer) (config.Config, error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return config.Config{}, err
-	}
+	cfg := config.Default()
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(usage)
+	fs.Usage = func() {
+		fmt.Fprintf(usage, "Usage:\n  %[1]s [flags]\n  %[1]s version | --version\n"+
+			"  %[1]s hash-password    read a password twice on stdin, print its Argon2id hash\n\nFlags:\n", name)
+		fs.PrintDefaults()
+	}
 	config.RegisterFlags(fs, &cfg)
+	envErr := cfg.LoadEnv()
 	if err := fs.Parse(args); err != nil {
 		return config.Config{}, err
+	}
+	if envErr != nil {
+		return config.Config{}, envErr
 	}
 	if err := cfg.Validate(); err != nil {
 		return config.Config{}, err

@@ -1,9 +1,11 @@
 import type { LatencyBucket, Phase, ThroughputSample } from "./contract";
 import { nearestRank, sortedMedian } from "./measure";
 
-/** Points kept per presented history; the producer keeps as many closed buckets for late revisions. */
+/** Points kept per presented history. */
 export const SERIES_LIMIT = 1_200;
 const BUCKET_MS = 200;
+const REVISION_MS = 10_000;
+const NONE: LatencyBucket[] = [];
 
 type Bucket = {
   startT: number;
@@ -79,17 +81,21 @@ export class LatencyPresentationBuckets {
     target.pings++;
     if (timedOut) target.timeouts++;
     else if (Number.isFinite(rttMs)) target.rtts.push(Math.max(0, rttMs));
-    if (target !== pending) emitted.push(this.#summarize(target, target.endT));
-    return emitted;
+    return target === pending
+      ? emitted
+      : [...emitted, this.#summarize(target, target.endT)];
   }
 
-  /** Closes buckets on the run's deadline even when no later ping arrives. */
+  /** Closes buckets on the run's deadline even when no later ping arrives; never mutate the result. */
   closeThrough(t: number): LatencyBucket[] {
-    const emitted: LatencyBucket[] = [];
+    let emitted = NONE;
     while (this.#pending && t >= this.#pending.endT) {
       const pending = this.#pending;
-      if (pending.pings) emitted.push(this.#summarize(pending, pending.endT));
-      if (this.#closed.push(pending) > SERIES_LIMIT) this.#closed.shift();
+      if (pending.pings)
+        emitted = [...emitted, this.#summarize(pending, pending.endT)];
+      this.#closed.push(pending);
+      while (this.#closed[0].endT < pending.endT - REVISION_MS)
+        this.#closed.shift();
       this.#pending = this.#empty(pending.endT);
     }
     return emitted;
@@ -274,13 +280,10 @@ function compact<T extends { t: number }>(
   );
   let reduced: T[];
   do {
-    const bins = new Map<string, T[]>();
-    for (const value of history) {
-      const key = `${series(value)}:${Math.floor(value.t / width)}`;
-      const bin = bins.get(key);
-      if (bin) bin.push(value);
-      else bins.set(key, [value]);
-    }
+    const bins = Map.groupBy(
+      history,
+      (value) => `${series(value)}:${Math.floor(value.t / width)}`,
+    );
     reduced = [...bins.values()].flatMap(merge).sort((a, b) => a.t - b.t);
     width *= 2;
   } while (reduced.length > limit && width / 2 < span);

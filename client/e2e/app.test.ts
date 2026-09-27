@@ -120,8 +120,10 @@ test("reduced motion still updates every readout and completes", async (page) =>
     .poll(async () => (await elapsed.textContent()) !== first)
     .toBe(true);
   await expect(page.locator(".gauge-value")).toHaveText(/\d/);
+  await expect(page.locator(".chart .axis-unit").nth(0)).toHaveText(/bit\/s/);
   const saved = await savedResult(page);
   expect(saved.result.outcome).toBe("complete");
+  await expect(page.locator(".chart .stat-label")).toBeVisible();
 });
 
 test("a run in a hidden tab completes and saves", async (page) => {

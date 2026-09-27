@@ -7,25 +7,25 @@
   import { tooltip } from "../actions/tooltip";
   import { fmtDuration } from "../format";
   import { handoff } from "../presentation/motion.svelte";
-  import {
-    BLOCKED,
-    resolvedPhase,
-    runActionLabel,
-  } from "../presentation/vocabulary";
+  import { BLOCKED, runActionLabel } from "../presentation/vocabulary";
 
   const pending = $derived(store.preparing);
   const idle = $derived(!store.isRunning && !pending);
-  const resolved = $derived(resolvedPhase(store.phase));
+  const eta = $derived(fmtDuration(store.totalEtaMs, 0));
   const action = handoff(
     () => ({
       label: runActionLabel(pending, store.isRunning, store.phase),
       running: store.isRunning,
       pending,
+      eta: idle ? eta : "",
     }),
     (shown) => shown.label,
   );
   const { label, running } = $derived(action.shown);
-  const eta = $derived(fmtDuration(store.totalEtaMs, 0));
+  // The skins crossfade through the handoff: half-way at its swap, settled once it has faded in.
+  const stop = $derived(
+    running ? (1 + action.opacity) / 2 : (1 - action.opacity) / 2,
+  );
   const blocker = $derived(
     idle && !store.catalogLoading ? store.startBlocker : "",
   );
@@ -38,19 +38,12 @@
   aria-busy={pending}
   aria-disabled={!!blocker}
   aria-describedby={idle ? "run-duration" : undefined}
+  style:--stop={stop}
   onclick={controller.toggleRun}
-  {@attach tooltip(
-    () =>
-      blocker ||
-      (pending
-        ? "Cancel starting the test (Space / Esc)"
-        : store.isRunning
-          ? "Stop the test (Space / Esc)"
-          : resolved
-            ? "Run the test again (Space / R)"
-            : "Start the test (Space)"),
-  )}
+  {@attach tooltip(() => blocker)}
 >
+  <span class="skin" aria-hidden="true"></span>
+  <span class="skin stop" aria-hidden="true"></span>
   <span class="run-button-content" style:opacity={action.opacity}>
     {#if running}
       <span class="stop-sq" aria-hidden="true"></span>
@@ -59,8 +52,10 @@
     {/if}
     {label}
   </span>
-  {#if idle}
-    <span class="duration" aria-hidden="true">~{eta}</span>
+  {#if action.shown.eta}
+    <span class="duration" aria-hidden="true" style:opacity={action.opacity}
+      >~{action.shown.eta}</span
+    >
   {/if}
 </button>
 {#if idle}
@@ -74,19 +69,23 @@
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    display: inline-flex;
+    /* The label centres in the middle track; the estimate takes the end track, pushing the label rather than covering it. */
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
     width: 100%;
     max-width: 320px;
     min-height: 46px;
     align-self: center;
-    border: 1px solid var(--brand-line);
+    border: 0;
     border-radius: var(--r-pill);
-    background: linear-gradient(180deg, var(--brand-strong), var(--brand));
-    box-shadow:
-      inset 0 1px 0 var(--edge-highlight),
-      0 2px 8px color-mix(in srgb, var(--brand) 10%, transparent);
+    background: none;
+    box-shadow: 0 2px 8px
+      color-mix(
+        in srgb,
+        var(--brand) calc(10% * (1 - var(--stop))),
+        transparent
+      );
     color: var(--text-inverse);
     font-family: var(--font-display);
     font-weight: var(--w-strong);
@@ -105,10 +104,23 @@
   .run-button:active {
     transform: scale(0.985);
   }
-  .run-button.running {
+  .skin {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border: 1px solid var(--brand-line);
+    border-radius: inherit;
+    background: linear-gradient(180deg, var(--brand-strong), var(--brand));
+    box-shadow: inset 0 1px 0 var(--edge-highlight);
+    opacity: calc(1 - var(--stop));
+  }
+  .skin.stop {
     border-color: var(--err-line);
     background: var(--err-soft);
     box-shadow: none;
+    opacity: var(--stop);
+  }
+  .run-button.running {
     color: var(--err);
   }
   .run-button.pending,
@@ -120,6 +132,7 @@
     cursor: not-allowed;
   }
   .run-button-content {
+    grid-column: 2;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -135,8 +148,10 @@
     background: currentColor;
   }
   .duration {
-    position: absolute;
-    inset-inline-end: var(--space-3);
+    grid-column: 3;
+    justify-self: end;
+    margin-inline: var(--space-2) var(--space-3);
+    white-space: nowrap;
     padding: var(--space-1) 6px;
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: var(--r-well);

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"math"
@@ -81,16 +82,11 @@ func (m model) handlePreparation(msg preparationMsg) (tea.Model, tea.Cmd) {
 	return m, expiry
 }
 
-func isAuthRequired(err error) bool {
-	_, ok := errors.AsType[*goclient.AuthRequiredError](err)
-	return ok
-}
-
 func (m model) challengedServer() string {
 	if m.preparedRun == nil {
 		return ""
 	}
-	i := slices.IndexFunc(m.preparedRun.Servers, func(s goclient.PreparedServer) bool { return isAuthRequired(s.Err) })
+	i := slices.IndexFunc(m.preparedRun.Servers, func(s goclient.PreparedServer) bool { return goclient.IsAuthRequired(s.Err) })
 	if i < 0 {
 		return ""
 	}
@@ -153,6 +149,7 @@ type runState struct {
 	plan     []goclient.StagePlan
 	stages   []stageProgress
 	started  time.Time
+	finished time.Time
 	stage    goclient.Stage
 	phase    goclient.Phase
 	details  *goclient.RunDetails
@@ -165,6 +162,7 @@ type runState struct {
 	timeouts map[string]int
 	marks    []mark
 	focus    string
+	pick     string
 	outcome  goclient.Outcome
 	err      error
 }
@@ -189,7 +187,7 @@ type stageProgress struct {
 	since    time.Time
 }
 
-func newRunState(cfg goclient.Config, focus string, started time.Time) *runState {
+func newRunState(cfg goclient.Config, started time.Time) *runState {
 	r := &runState{
 		plan:     cfg.Plan(),
 		started:  started,
@@ -199,7 +197,6 @@ func newRunState(cfg goclient.Config, focus string, started time.Time) *runState
 		rtt:      map[string]trace{},
 		latest:   map[string]goclient.LatencySample{},
 		timeouts: map[string]int{},
-		focus:    focus,
 		outcome:  goclient.OutcomeRunning,
 	}
 	for _, stage := range r.plan {
@@ -215,17 +212,20 @@ func waitEvents(seq int, events <-chan goclient.Event) tea.Cmd {
 			return nil
 		}
 		batch := []goclient.Event{e}
-		for {
+		frame := time.NewTimer(frameInterval)
+		defer frame.Stop()
+		for e.Kind != goclient.EventDone {
 			select {
-			case e, ok := <-events:
+			case e, ok = <-events:
 				if !ok {
 					return eventsMsg{seq: seq, events: batch}
 				}
 				batch = append(batch, e)
-			default:
+			case <-frame.C:
 				return eventsMsg{seq: seq, events: batch}
 			}
 		}
+		return eventsMsg{seq: seq, events: batch}
 	}
 }
 
@@ -236,15 +236,11 @@ func (m model) startRun() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.invalidatePreparation()
-	focus := ""
-	if slices.Contains(m.cfg.ServerIDs, m.latencyChoice) {
-		focus = m.latencyChoice
-	}
 	m.runSeq++
 	m.now = time.Now()
 	m.events = m.controller.Start(m.cfg, m.preparedRun)
-	m.next = newRunState(m.cfg, focus, m.now)
-	m.stopPrompt, m.popup, m.waiting = false, popupNone, true
+	m.next = newRunState(m.cfg, m.now)
+	m.stopPrompt, m.popup, m.waiting, m.edit = false, popupNone, true, nil
 	m.notice = "Checking paths before the test. Press esc to stop."
 	return m, tea.Batch(waitEvents(m.runSeq, m.events), m.spin.Tick)
 }
@@ -276,14 +272,15 @@ func (m model) startFailed(done goclient.Event) (tea.Model, tea.Cmd) {
 	switch {
 	case m.quitting:
 		return m, tea.Quit
-	case isAuthRequired(done.Err):
+	case goclient.IsAuthRequired(done.Err):
 		m.run = nil
 		m.notice = "Sign-in required; run graphite-meter-client in a terminal to sign in."
 		return m.reprepare()
 	case m.last == goclient.OutcomeStopped:
 		m.notice = "Test stopped before it started."
 	default:
-		m.notice = blocked + ": " + errorText(done.Err)
+		m.notice = startFailed + ": " + errorText(done.Err)
+		return m.reprepare()
 	}
 	return m, nil
 }
@@ -292,7 +289,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	m.stopPrompt = false
 	r := m.run
 	r.adopt(done.Servers)
-	r.outcome = done.Outcome()
+	r.outcome, r.finished = done.Outcome(), done.At
 	m.last = r.outcome
 	if done.Err != nil && !errors.Is(done.Err, context.Canceled) {
 		r.err = done.Err
@@ -306,7 +303,7 @@ func (m model) finishRun(done goclient.Event) (tea.Model, tea.Cmd) {
 	if m.quitting {
 		return m, tea.Quit
 	}
-	if isAuthRequired(done.Err) {
+	if goclient.IsAuthRequired(done.Err) {
 		m.run = nil
 		m.notice = "Sign-in expired. Checking the selected servers…"
 		return m.reprepare()
@@ -321,7 +318,7 @@ func (m *model) apply(e goclient.Event) {
 	case goclient.EventServers:
 		r.adopt(e.Servers)
 	case goclient.EventServerFailure:
-		m.notice = m.serverName(e.ServerID) + ": " + errorText(e.Failure.Err)
+		m.notice = m.serverName(e.ServerID) + ": " + failureLabels[e.Failure.Reason]
 	case goclient.EventStage:
 		r.stage, r.phase = e.Stage, e.Phase
 		if e.Phase == goclient.PhasePreparing {
@@ -340,7 +337,7 @@ func (m *model) apply(e goclient.Event) {
 		left := func(f goclient.ServerFailure) bool { return f.Stage == e.Stage }
 		switch {
 		case state != stageDone:
-		case slices.ContainsFunc(r.results, unavailable):
+		case slices.ContainsFunc(r.results, unavailable), e.Stage == goclient.StageLatency && !r.measuredLatency():
 			state = stageFailed
 		case r.details != nil && slices.ContainsFunc(r.details.Failures, left):
 			state = stagePartial
@@ -386,19 +383,40 @@ func (m *model) apply(e goclient.Event) {
 
 func (r *runState) live() bool { return r.outcome == goclient.OutcomeRunning }
 
+func (r *runState) measuredLatency() bool {
+	for _, server := range r.details.Servers {
+		if server.Server.ID == r.details.LatencyFocus {
+			return slices.ContainsFunc(server.Results, func(result goclient.Result) bool {
+				return result.Stage == goclient.StageLatency && result.Direction == "" && result.HasMedian()
+			})
+		}
+	}
+	return false
+}
+
 func (r *runState) adopt(details *goclient.RunDetails) {
 	if details == nil {
 		return
 	}
 	r.details = details
-	if !slices.ContainsFunc(details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus }) {
-		r.focus = details.LatencyFocus
+	r.focus = cmp.Or(details.LatencyFocus, r.focus)
+	if !slices.Contains(details.Participants, r.pick) {
+		r.pick = ""
 	}
 }
 
+func (r *runState) latencyServer() string { return cmp.Or(r.pick, r.focus) }
+
 func (r *runState) nextFocus() {
-	i := slices.IndexFunc(r.details.Servers, func(s goclient.ServerRunSummary) bool { return s.Server.ID == r.focus })
-	r.focus = r.details.Servers[(i+1)%len(r.details.Servers)].Server.ID
+	ids := r.details.Participants
+	if len(ids) == 0 {
+		return
+	}
+	next := ids[(slices.Index(ids, r.latencyServer())+1)%len(ids)]
+	r.pick = next
+	if next == r.focus {
+		r.pick = ""
+	}
 }
 
 func (r *runState) meanRates(stage goclient.Stage) string {
@@ -409,8 +427,7 @@ func (r *runState) meanRates(stage goclient.Stage) string {
 			if !result.Unavailable {
 				rate = fmtRate(result.MeanBps)
 			}
-			arrow := map[goclient.Direction]string{goclient.Down: "↓ ", goclient.Up: "↑ "}[result.Direction]
-			parts = append(parts, arrow+rate)
+			parts = append(parts, arrows[result.Direction]+" "+rate)
 		}
 	}
 	return strings.Join(parts, "  ")
@@ -422,7 +439,7 @@ func (r *runState) latencyPopulations() map[goclient.Stage]goclient.Result {
 		return out
 	}
 	for _, server := range r.details.Servers {
-		if server.Server.ID != r.focus {
+		if server.Server.ID != r.latencyServer() {
 			continue
 		}
 		for _, result := range server.Results {
@@ -449,8 +466,15 @@ func (m model) statusLabel() string {
 		}
 		return stageLabels[r.stage]
 	}
-	if m.prepare == prepareSignIn || m.cfg.Validate() != nil {
+	switch {
+	case m.cfg.Validate() != nil:
 		return blocked
+	case m.auth != nil && m.auth.opened:
+		return checkingSignIn
+	case m.prepare == prepareSignIn:
+		return pathLabels[pathSignIn]
+	case m.prepare == prepareFailed && len(m.readyServers()) == 0:
+		return startFailed
 	}
 	return notStarted
 }

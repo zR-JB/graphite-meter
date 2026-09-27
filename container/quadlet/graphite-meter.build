@@ -1,7 +1,7 @@
 # Quadlet .build unit - builds the Graphite Meter production image.
-# Referenced by graphite-meter.container via `Image=graphite-meter.build`, so
-# the build runs automatically (as graphite-meter-build.service) before the
-# container starts. Install: see ./README.md.
+# graphite-meter.container uses it with `Image=graphite-meter.build`, so the
+# build runs (as graphite-meter-build.service) before the container starts.
+# Install: see ./README.md.
 #
 # Docs: https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html
 
@@ -11,9 +11,9 @@ Description=Build the Graphite Meter production image (arm64)
 [Build]
 ImageTag=localhost/graphite-meter:latest
 
-# Containerfile + build context. The Dockerfile COPYs client/, go/ and api/,
-# so the context (SetWorkingDirectory) MUST be the repo root, and File= is
-# resolved relative to it.
+# Containerfile + build context. The Dockerfile COPYs client/, go/, LICENSE,
+# COPYRIGHT and legal/generated/, so the context (SetWorkingDirectory) MUST be
+# the repo root, and File= is resolved relative to it.
 #   ▸ Set SetWorkingDirectory to the ABSOLUTE path of your checkout on this host
 #     (quadlet units live in a systemd search dir, not in the repo - see README).
 SetWorkingDirectory=/path/to/graphite-meter

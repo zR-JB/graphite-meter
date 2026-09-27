@@ -3,8 +3,9 @@
   import { store } from "../state/store.svelte";
   import { fmtBytes, fmtDuration } from "../format";
   import { BUILD } from "../buildenv";
-  import type { Handoff } from "../presentation/motion.svelte";
+  import { handoff, type Handoff } from "../presentation/motion.svelte";
   import type { Phase } from "../runner/contract";
+  import { CONNECTIVITY, STATUS_LABEL_CH } from "../presentation/vocabulary";
 
   let { status: label }: { status: Handoff<{ phase: Phase; label: string }> } =
     $props();
@@ -17,40 +18,56 @@
   );
 
   const showRemaining = $derived(store.isRunning && store.phaseBudgetMs > 0);
+  const recovering = $derived(store.effectiveConnectivity === "recovering");
+  const counters = handoff(
+    () => ({
+      run: store.runSeq,
+      elapsedMs,
+      bytes: fmtBytes(store.bytesTransferred, store.unitBase),
+    }),
+    (shown) => shown.run,
+  );
+  const left = handoff(
+    () => ({ show: showRemaining, recovering, ms: remainingMs }),
+    (shown) => `${shown.show}:${shown.recovering}`,
+  );
   const { status } = $derived(store.preparation);
   const refused = $derived(status === "blocked" || status === "failed");
 </script>
 
-{#if refused}
-  <span
-    class="label"
-    style:opacity={label.opacity}
-    {@attach tooltip(() => store.startError || store.startBlocker)}
-    >{label.shown.label}</span
-  >
-{:else}
-  <span class="label" style:opacity={label.opacity}>{label.shown.label}</span>
-{/if}
+<span
+  class="label"
+  style:opacity={label.opacity}
+  style:min-width="{STATUS_LABEL_CH}ch"
+  {@attach refused
+    ? tooltip(() => store.startError || store.startBlocker)
+    : null}>{label.shown.label}</span
+>
 <span
   class="elapsed"
-  class:secondary={showRemaining}
-  {@attach tooltip(() => `Elapsed ${fmtDuration(elapsedMs)}`)}
+  class:secondary={left.shown.show}
+  style:opacity={counters.opacity}
   ><span class="caption">elapsed&nbsp;</span><span class="readout"
-    >{fmtDuration(elapsedMs)}</span
+    >{fmtDuration(counters.shown.elapsedMs)}</span
   ></span
 >
-<span class="transferred"
-  ><span class="readout"
-    >{fmtBytes(store.bytesTransferred, store.unitBase)}</span
-  ><span class="caption">&nbsp;transferred</span></span
+<span class="transferred" style:opacity={counters.opacity}
+  ><span class="readout">{counters.shown.bytes}</span><span class="caption"
+    >&nbsp;transferred</span
+  ></span
 >
-{#if showRemaining}
-  <span class="remaining" class:paused={!store.measuring}>
-    {#if store.measuring}<span class="readout">{fmtDuration(remainingMs)}</span> left{:else}Paused<span
+{#if left.shown.show}
+  <span
+    class="remaining"
+    data-tone={left.shown.recovering ? CONNECTIVITY.recovering.tone : undefined}
+    style:opacity={left.opacity}
+  >
+    {#if left.shown.recovering}{CONNECTIVITY.recovering.label}<span
         class="caption"
       >
-        · {fmtDuration(remainingMs)} left</span
-      >{/if}
+        · {fmtDuration(left.shown.ms)} left</span
+      >{:else}<span class="readout">{fmtDuration(left.shown.ms)}</span>
+      left{/if}
   </span>
 {/if}
 <span class="build">{BUILD.identity}</span>
@@ -61,7 +78,6 @@
   }
   /* Fixed widths and a trailing countdown keep changing text from moving the strip. */
   .label {
-    min-width: 16ch;
     color: var(--text);
     font-weight: var(--w-strong);
   }
@@ -75,8 +91,8 @@
     margin-left: auto;
     color: var(--text-soft);
   }
-  .paused {
-    color: var(--err);
+  .remaining[data-tone] {
+    color: var(--tone);
     font-weight: var(--w-strong);
   }
   @container status (max-width: 800px) {

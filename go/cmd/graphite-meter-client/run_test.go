@@ -178,12 +178,12 @@ func finishFrom(t *testing.T, m model) model {
 func TestRunKeys(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	m, _ = modelAndCmd(m.Update(press("x")))
 	if m, _ = modelAndCmd(m.Update(press("esc"))); !m.stopPrompt {
 		t.Fatal("esc did not ask before stopping")
 	}
-	if m, _ = modelAndCmd(m.Update(press("x"))); m.stopPrompt || !m.running() || m.notice != "Test continues." {
+	if m, _ = modelAndCmd(m.Update(press("x"))); m.stopPrompt || !m.running() {
 		t.Fatal("another key did not continue the test")
 	}
 	if m, _ = modelAndCmd(m.Update(press("r"))); m.runSeq != 0 {
@@ -200,24 +200,31 @@ func TestQuitDuringARunStopsAndReports(t *testing.T) {
 	url, entered, left := hangingServer(t)
 	cfg := goclient.DefaultConfig()
 	cfg.BaseURL = url
-	m := newModel(cfg)
-	t.Cleanup(m.controller.Close)
-	m, _ = modelAndCmd(m.startRun())
-	within(t, entered, "run never reached preparation")
-	m, cmd := modelAndCmd(m.Update(press("q")))
-	if cmd != nil || !m.quitting {
-		t.Fatal("q quit before the running test stopped")
-	}
-	within(t, left, "q left the run's request alive")
-	for !quits(cmd) {
-		msg := waitEvents(m.runSeq, m.events)()
-		if msg == nil {
-			t.Fatal("the run ended without its terminal event")
+	for _, k := range []string{"q", "ctrl+c"} {
+		m := newModel(cfg)
+		t.Cleanup(m.controller.Close)
+		m, _ = modelAndCmd(m.startRun())
+		within(t, entered, "run never reached preparation")
+		m, cmd := modelAndCmd(m.Update(press(k)))
+		if cmd != nil || !m.quitting {
+			t.Fatalf("%s quit before the running test stopped", k)
 		}
-		m, cmd = modelAndCmd(m.Update(msg))
+		within(t, left, k+" left the run's request alive")
+		for !quits(cmd) {
+			msg := waitEvents(m.runSeq, m.events)()
+			if msg == nil {
+				t.Fatal("the run ended without its terminal event")
+			}
+			m, cmd = modelAndCmd(m.Update(msg))
+		}
+		if m.running() || m.last != goclient.OutcomeStopped || m.interrupted != (k == "ctrl+c") {
+			t.Fatalf("%s before the first server report ended as %q", k, m.last)
+		}
 	}
-	if m.running() || m.last != goclient.OutcomeStopped {
-		t.Fatalf("quitting before the first server report ended as %q", m.last)
+	m := runModel(t, "a")
+	m, _ = modelAndCmd(m.Update(interruptMsg{}))
+	if _, cmd := modelAndCmd(m.Update(press("ctrl+c"))); !m.quitting || !quits(cmd) {
+		t.Fatal("a second interrupt did not quit at once")
 	}
 }
 
@@ -225,7 +232,7 @@ func runModel(t *testing.T, servers ...string) model {
 	t.Helper()
 	m := testModel(t)
 	m.cfg.Stages.Bidirectional = true
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	details := &goclient.RunDetails{LatencyFocus: servers[0], Participants: servers, Outcome: goclient.OutcomeRunning}
 	for _, id := range servers {
 		origin := "https://" + id
@@ -291,8 +298,8 @@ func TestStatusLabelsFollowTheLifecycle(t *testing.T) {
 	setup := testModel(t)
 	for state, want := range map[prepareState]string{
 		prepareChecking: "Not started",
-		prepareSignIn:   "Test cannot start",
-		prepareFailed:   "Not started",
+		prepareSignIn:   "Sign in",
+		prepareFailed:   "Test could not start",
 		prepareReady:    "Not started",
 	} {
 		setup.prepare = state
@@ -341,7 +348,7 @@ func TestTerminalEventKeepsBufferedResults(t *testing.T) {
 	}
 	screen := view(m)
 	for _, want := range []string{
-		"Bi-dir ↓ incomplete: transfer failed",
+		"Bi-dir ↓: Connection lost",
 		"Loaded latency · Bidirectional",
 		"Bi-dir ↓",
 		missing,
@@ -380,26 +387,24 @@ func TestResultsNameEveryPopulation(t *testing.T) {
 		goclient.Result{Stage: goclient.StageLatency, Latency: idle},
 		goclient.Result{Stage: goclient.StageDownload, Latency: loaded})
 	m.run.outcome = goclient.OutcomeComplete
-	text := m.finalReport()
+	text := ansi.Strip(m.finalReport())
 	for _, want := range []string{
-		"Graphite Meter · Complete", "Median", "Probe timeouts",
-		"Idle latency", "10.0 ms", "12.0 ms", "0.4 ms", "Idle latency: 16 replies · 4.0 s",
-		"Server timing (2 paired replies, means): raw 10.0 ms · handling < 0.1 ms",
-		"940.0 Mbit/s", "Download: peak 1000 Mbit/s · 1.2 GB · 10.0 s · 38 samples",
-		"17.8 ms", "+7.8 ms", "2/42 (4.8%)", "Loaded latency · Download: 40 replies",
-		"40.00 Mbit/s", "receiver-timed", "Upload stopped.", "Bi-dir",
-		"Added: loaded median minus idle median.",
+		outcomeLabels[goclient.OutcomeComplete], compactPopulation(goclient.StageLatency),
+		populationLabel(goclient.StageDownload), fmtMs(idle.P50), fmtMs(idle.P95), fmtMs(idle.Jitter),
+		fmtRate(117_500_000), "peak 1000 ·", fmtBytes(1_200_000_000), fmtMs(loaded.P50),
+		fmtAdded(loaded.P50 - idle.P50), fmtRate(5_000_000), stageLabels[goclient.StageBidirectional],
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lost %q:\n%s", want, text)
 		}
 	}
-	m.run.stages[3].state = stageStopped
-	if text := m.finalReport(); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
+	m.run.stages[3].state, m.run.outcome = stageStopped, goclient.OutcomeStopped
+	if text = ansi.Strip(m.finalReport()); !strings.Contains(text, "Stopped") || strings.Contains(text, "canceled") {
 		t.Errorf("a stage stopped before measuring is not named: %s", text)
 	}
-	if strings.Contains(text, "\x1b") || strings.Contains(strings.ToLower(text), "loss") {
-		t.Errorf("report styling or vocabulary: %q", text)
+	if strings.Contains(strings.ToLower(text), "loss") || !strings.Contains(text, "Upload stopped") ||
+		strings.Contains(text, populationLabel(goclient.StageLatency)) {
+		t.Errorf("report vocabulary or a population note without an issue: %q", text)
 	}
 	m.run = nil
 	if m.finalReport() != "" {
@@ -479,11 +484,13 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	stage := func(stage goclient.Stage, phase goclient.Phase) goclient.Event {
 		return goclient.Event{Kind: goclient.EventStage, Stage: stage, Phase: phase, At: start}
 	}
+	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency, Latency: goclient.LatencyStats{
+		Count: 3, P50: 4 * time.Millisecond}})
 	m.apply(stage(goclient.StageLatency, goclient.PhaseFinished))
 	m.apply(stage(goclient.StageDownload, goclient.PhaseMeasuring))
 	m.apply(stage(goclient.StageUpload, goclient.Phase(99)))
 	track := ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "2.5 s / 10 s", "○ 10 s"} {
+	for _, want := range []string{"✓ 4.0 ms median", "2.5 s / 10 s", "○ 10 s"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
@@ -497,7 +504,7 @@ func TestStageTrackFollowsStageEvents(t *testing.T) {
 	m.run.details.Failures = []goclient.ServerFailure{{ServerID: "a", Stage: goclient.StageUpload}}
 	m.apply(stage(goclient.StageUpload, goclient.PhaseFinished))
 	track = ansi.Strip(strings.Join(m.stageTrack(80), "\n"))
-	for _, want := range []string{"✓ 4 s", "Download      ✗ Failed", "Upload        ! Partial"} {
+	for _, want := range []string{"✓ 4.0 ms median", "Download      ✗ Failed", "Upload        ! Partial"} {
 		if !strings.Contains(track, want) {
 			t.Errorf("stage track lost %q: %q", want, track)
 		}
@@ -523,22 +530,27 @@ func TestMultiServerRunViews(t *testing.T) {
 			{
 				Kind:     goclient.EventServerFailure,
 				ServerID: "b",
-				Failure:  &goclient.ServerFailure{ServerID: "b", Err: errors.New("connection lost")},
+				Failure: &goclient.ServerFailure{ServerID: "b", Reason: goclient.FailureConnectionLost,
+					Err: errors.New(`Get "http://b/download": EOF`)},
 			},
 		},
 	}))
-	if m.notice != "B: connection lost" {
-		t.Fatalf("failure notice = %q, want the server's name", m.notice)
+	if m.notice != "B: Connection lost" {
+		t.Fatalf("failure notice = %q, want the server's name and reason", m.notice)
 	}
 	m.run.outcome = goclient.OutcomeComplete
 	if screen := view(m); !strings.Contains(screen, "latency to A") || !strings.Contains(screen, "10.0 ms") {
 		t.Fatalf("focus A: %q", screen)
 	}
 	m, _ = modelAndCmd(m.Update(press("l")))
-	if screen := view(m); m.run.focus != "b" ||
+	if screen := view(m); m.run.latencyServer() != "b" ||
 		!strings.Contains(screen, "latency to B") ||
 		!strings.Contains(screen, "90.0 ms") {
 		t.Fatalf("focus did not move to B")
+	}
+	if report := ansi.Strip(m.finalReport()); !strings.Contains(report, "Latency to A") ||
+		!strings.Contains(report, "10.0 ms") {
+		t.Fatalf("the report followed the viewer's pick instead of the run's focus: %s", report)
 	}
 	m, _ = modelAndCmd(m.Update(press("d")))
 	details := ansi.Strip(view(m))
@@ -548,6 +560,33 @@ func TestMultiServerRunViews(t *testing.T) {
 	}
 	if m, _ = modelAndCmd(m.Update(press("esc"))); m.popup != popupNone {
 		t.Fatal("esc did not close details")
+	}
+}
+
+func TestLatencyFollowsTheRunFocus(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a", "b")
+	publish := func(focus string, participants ...string) {
+		details := *m.run.details
+		details.LatencyFocus, details.Participants = focus, participants
+		m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{
+			{Kind: goclient.EventServers, Servers: &details},
+		}}))
+	}
+	m, _ = modelAndCmd(m.Update(press("l")))
+	for _, c := range []struct {
+		focus        string
+		participants []string
+		want         string
+	}{
+		{"a", []string{"a", "b"}, "b"},
+		{"a", []string{"a"}, "a"},
+		{"b", []string{"b"}, "b"},
+		{"", nil, "b"},
+	} {
+		if publish(c.focus, c.participants...); m.run.latencyServer() != c.want {
+			t.Errorf("focus %q with %v shows %q, want %q", c.focus, c.participants, m.run.latencyServer(), c.want)
+		}
 	}
 }
 
@@ -561,7 +600,7 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 		"A",
 		"Ready",
 		"B",
-		"Sign-in required",
+		"Sign in",
 		"C",
 		"Failed",
 		"connection refused",
@@ -571,8 +610,8 @@ func TestReadinessRowsAndAvailableServers(t *testing.T) {
 			t.Errorf("plan lost %q: %q", want, plan)
 		}
 	}
-	if !m.canUseAvailable() || !strings.Contains(serversRow.row(m).note, "1 of 3 ready") {
-		t.Fatalf("available servers not offered: %q", serversRow.row(m).note)
+	if !m.canUseAvailable() || !strings.Contains(serversRow.row(m).value, "1 of 3 ready") {
+		t.Fatalf("available servers not offered: %q", serversRow.row(m).value)
 	}
 	m, _ = modelAndCmd(m.Update(press("u")))
 	if m.notice == "" {
@@ -598,7 +637,7 @@ func TestRunAgainKeepsTheLastResultsUntilTheNextRunStarts(t *testing.T) {
 	if m.run != previous || m.statusLabel() != "Checking paths" || !m.running() {
 		t.Fatalf("run again replaced the results before the run started: %q", m.statusLabel())
 	}
-	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test cannot start:") {
+	if m = finishFrom(t, m); m.run != previous || !strings.HasPrefix(m.notice, "Test could not start:") {
 		t.Fatalf("a failed start lost the previous run or its reason: %q", m.notice)
 	}
 }
@@ -719,7 +758,7 @@ func TestEventsBeforeTheServersLeaveThePreviousRunAlone(t *testing.T) {
 	t.Parallel()
 	m := runModel(t, "a")
 	previous := m.run
-	m.next = newRunState(m.cfg, "", time.Now())
+	m.next = newRunState(m.cfg, time.Now())
 	stage := goclient.Event{Kind: goclient.EventStage, Stage: goclient.StageDownload, Phase: goclient.PhaseMeasuring}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{stage}}))
 	if m.run != previous || m.next == nil || previous.stage != "" {
@@ -730,10 +769,10 @@ func TestEventsBeforeTheServersLeaveThePreviousRunAlone(t *testing.T) {
 func TestFailedRunShowsNoActivity(t *testing.T) {
 	t.Parallel()
 	m := testModel(t)
-	m.run = newRunState(m.cfg, "", time.Now())
+	m.run = newRunState(m.cfg, time.Now())
 	done := goclient.Event{Kind: goclient.EventDone, Err: errors.New("refused")}
 	m, _ = modelAndCmd(m.Update(eventsMsg{seq: m.runSeq, events: []goclient.Event{done}}))
-	screen, report := view(m), m.finalReport()
+	screen, report := view(m), ansi.Strip(m.finalReport())
 	for _, stale := range []string{"Checking paths", "○", "Median"} {
 		if strings.Contains(screen+report, stale) {
 			t.Errorf("failed run still shows %q:\n%s\n%s", stale, screen, report)
@@ -791,7 +830,7 @@ func TestResetAsksFirst(t *testing.T) {
 		t.Fatal("reset did not ask first")
 	}
 	m, _ = modelAndCmd(m.Update(press("x")))
-	if m.cfg.Warmup != time.Second || m.resetPrompt || m.notice != "Settings kept." {
+	if m.cfg.Warmup != time.Second || m.resetPrompt {
 		t.Fatal("another key did not keep the settings")
 	}
 	m, _ = modelAndCmd(m.Update(press("enter")))
@@ -872,5 +911,27 @@ func TestFinishedRunGivesTheRoomToTheTimeline(t *testing.T) {
 			strings.Contains(screen, "✓") {
 			t.Errorf("%dx%d finished screen:\n%s", size[0], size[1], screen)
 		}
+	}
+}
+
+func TestMissingEvidenceIsNeverShownAsMeasured(t *testing.T) {
+	t.Parallel()
+	m := runModel(t, "a")
+	m.cfg.Stages = goclient.StageSet{Latency: true, Upload: true}
+	m.run.plan = m.cfg.Plan()
+	m.run.outcome = goclient.OutcomeIncomplete
+	m.run.results = []goclient.Result{{Stage: goclient.StageUpload, Direction: goclient.Up, Unavailable: true}}
+	m.run.details.Outcome = goclient.OutcomeIncomplete
+	m.run.details.Intervals = []goclient.AggregationInterval{{Stage: goclient.StageUpload}}
+	withPopulation(m.run.details, "a", goclient.Result{Stage: goclient.StageLatency,
+		Latency: goclient.LatencyStats{Count: 3, P50: time.Millisecond}})
+	details, report := ansi.Strip(m.detailsView(120, true)), ansi.Strip(m.finalReport())
+	for _, wrong := range []string{"0 B", "·  ·", "Added"} {
+		if strings.Contains(details+report, wrong) {
+			t.Errorf("unmeasured evidence reads %q:\n%s\n%s", wrong, details, report)
+		}
+	}
+	if chart := ansi.Strip(m.st.chart(nil, nil, rateAxis, 1, 40, 6)); strings.Contains(chart, "bit/s") {
+		t.Errorf("an empty chart claims a scale:\n%s", chart)
 	}
 }

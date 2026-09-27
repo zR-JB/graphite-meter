@@ -1,3 +1,4 @@
+import { isRecord } from "../api/decode";
 import type { RunnerConfig } from "../runner/contract";
 import { normalizeStreamCount } from "../runner/paths";
 import { clampDuration, DEFAULT_CONFIG, DURATION_LIMITS } from "./defaults";
@@ -35,7 +36,7 @@ export const DEFAULT_HISTORY_COLUMNS: readonly HistoryColumn[] = [
   "loaded",
 ];
 
-export const DEFAULT_DOCK_WIDTH = { left: 400, right: 400 };
+export const DEFAULT_DOCK_WIDTH = { left: 400, right: 416 };
 
 export interface LatencySelection {
   mode: "primary" | "all";
@@ -49,6 +50,7 @@ interface PersistedState {
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
+  keyShortcuts: boolean;
   resultHistoryPreference: ResultHistoryPreference;
   historyColumns: HistoryColumn[];
   dockWidth: { left: number; right: number };
@@ -69,6 +71,7 @@ export function defaultPersisted(): PersistedState {
     unitKind: "bits",
     theme: "auto",
     showWireEstimates: true,
+    keyShortcuts: true,
     resultHistoryPreference: "default",
     historyColumns: [...DEFAULT_HISTORY_COLUMNS],
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
@@ -94,9 +97,7 @@ export function writeStored(key: string, value: unknown): boolean {
 }
 
 const record = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+  isRecord(value) ? value : {};
 const choice = <T extends string>(
   value: unknown,
   values: readonly T[],
@@ -122,6 +123,11 @@ export function loadPersisted(): PersistedState {
   const config = record(saved.config);
   const stages = record(config.stages);
   const duration = record(config.duration);
+  // Earlier versions skipped a stage by giving it 0 ms; only its flag skips now.
+  const skipped = (key: DurationKey) =>
+    key !== "warmupMs" &&
+    typeof duration[key] === "number" &&
+    duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
   const latency = record(saved.latencySelection);
@@ -143,10 +149,14 @@ export function loadPersisted(): PersistedState {
     },
     config: {
       stages: {
-        latency: flag(stages.latency, base.stages.latency),
-        download: flag(stages.download, base.stages.download),
-        upload: flag(stages.upload, base.stages.upload),
-        bidirectional: flag(stages.bidirectional, base.stages.bidirectional),
+        latency:
+          flag(stages.latency, base.stages.latency) && !skipped("latencyMs"),
+        download:
+          flag(stages.download, base.stages.download) && !skipped("downloadMs"),
+        upload: flag(stages.upload, base.stages.upload) && !skipped("uploadMs"),
+        bidirectional:
+          flag(stages.bidirectional, base.stages.bidirectional) &&
+          !skipped("bidirectionalMs"),
       },
       skipLoadedLatencyWhenStageOff: flag(
         config.skipLoadedLatencyWhenStageOff,
@@ -155,7 +165,7 @@ export function loadPersisted(): PersistedState {
       duration: Object.fromEntries(
         (Object.keys(DURATION_LIMITS) as DurationKey[]).map((key) => [
           key,
-          clampDuration(key, duration[key]),
+          clampDuration(key, skipped(key) ? undefined : duration[key]),
         ]),
       ) as RunnerConfig["duration"],
       pingCadence: choice(config.pingCadence, CADENCES, base.pingCadence),
@@ -198,6 +208,7 @@ export function loadPersisted(): PersistedState {
     unitKind: choice(saved.unitKind, ["bits", "bytes"], defaults.unitKind),
     theme: choice(saved.theme, ["dark", "light", "auto"], defaults.theme),
     showWireEstimates: flag(saved.showWireEstimates, true),
+    keyShortcuts: flag(saved.keyShortcuts, true),
     resultHistoryPreference: choice(
       saved.resultHistoryPreference,
       ["default", "enabled", "disabled"],

@@ -2,10 +2,14 @@ package auth
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -31,6 +35,7 @@ func TestAddressBudgets(t *testing.T) {
 	}{
 		{"password", maxAddressAttempts, (*Service).allowAttempt},
 		{"exchange", maxAddressExchanges, (*Service).allowExchange},
+		{"oidc start", maxAddressOIDCStarts, (*Service).allowOIDCStart},
 		{"approval", maxAddressApprovals, (*Service).allowBrowserApproval},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,8 +63,7 @@ func TestAddressBudgets(t *testing.T) {
 	}
 }
 
-// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across, so it
-// alone cannot engage the global ceiling that would lock the operator out.
+// One IPv6 /48 cannot spend more than four clients' password budget, however many /64s it spreads across.
 func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
 	s := testService(t)
 	allowed := 0
@@ -77,23 +81,22 @@ func TestOneAllocationHoldsABoundedShareOfThePasswordBudget(t *testing.T) {
 	}
 }
 
-func TestPasswordCeilingIsGlobalAndLogsOncePerWindow(t *testing.T) {
+func TestPasswordCeilingCountsOnlyFailuresAndLogsOncePerWindow(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := testService(t)
-		for i := range 61 {
-			if got := s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", "192.0.2.1:1234")); got != (i < 5) {
-				t.Fatalf("attempt %d allowed=%v", i+1, got)
+		for i := range maxGlobalAttempts + 20 {
+			if !s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(i%200))) {
+				t.Fatalf("attempt %d without a wrong password met the global ceiling", i+1)
 			}
-		}
-		if len(s.globalAttempts) != maxAddressAttempts {
-			t.Fatalf("per-address refusals spent the global budget: %d", len(s.globalAttempts))
 		}
 		var out bytes.Buffer
 		log.SetOutput(&out)
 		t.Cleanup(func() { log.SetOutput(os.Stderr) })
 		spend := func() {
 			for i := range maxGlobalAttempts + 20 {
-				s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(i%200)))
+				if s.allowAttempt(requestFrom(http.MethodPost, "/auth/password", addressFrom(200+i%200))) {
+					s.noteFailedPassword()
+				}
 			}
 		}
 		for _, want := range []int{1, 1} {
@@ -131,4 +134,79 @@ func TestAddressStoreStaysBoundedAndExpires(t *testing.T) {
 			t.Fatal("expired addresses still occupied the bounded store")
 		}
 	})
+}
+
+// Other clients can engage the global ceiling or fill the address table; neither locks out a known device.
+func TestKnownDeviceSignsInPastOtherClientsAttempts(t *testing.T) {
+	for name, spend := range map[string]func(*Service, func(remote, password string)){
+		"global ceiling": func(_ *Service, signIn func(string, string)) {
+			for i := range maxGlobalAttempts {
+				signIn(addressFrom(i), "wrong")
+			}
+		},
+		"full address table": func(s *Service, signIn func(string, string)) {
+			for range cap(s.argon) {
+				s.argon <- struct{}{}
+			}
+			for i := range maxBudgetKeys {
+				signIn(addressFrom(i), "secret")
+			}
+			for range cap(s.argon) {
+				<-s.argon
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			s := testService(t)
+			mux := http.NewServeMux()
+			s.Mount(mux)
+			signIn := func(remote, password string, device *http.Cookie) *http.Response {
+				const token = "abcdefghijklmnopqrstuvwxyz0123456789"
+				form := url.Values{"csrf": {token}, "password": {password}}.Encode()
+				r := secureRequest(http.MethodPost, "/auth/password", strings.NewReader(form))
+				r.RemoteAddr = remote
+				r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				r.Header.Set("Origin", s.origin)
+				r.AddCookie(&http.Cookie{Name: loginCookie, Value: token})
+				if device != nil {
+					r.AddCookie(device)
+				}
+				rr := httptest.NewRecorder()
+				mux.ServeHTTP(rr, r)
+				return rr.Result()
+			}
+			signedIn := func(res *http.Response) bool { return res.Header.Get("Location") == "/" }
+			var device *http.Cookie
+			for _, c := range signIn("198.51.100.7:40000", "secret", nil).Cookies() {
+				if c.Name == deviceCookie {
+					device = c
+				}
+			}
+			if device == nil || !device.HttpOnly || !device.Secure || device.SameSite != http.SameSiteStrictMode {
+				t.Fatalf("sign-in issued device cookie %v, want HttpOnly, Secure and SameSite=Strict", device)
+			}
+			spend(s, func(remote, password string) {
+				if signedIn(signIn(remote, password, nil)) && password != "secret" {
+					t.Fatal("a wrong password signed in")
+				}
+			})
+			if signedIn(signIn("203.0.113.9:40000", "secret", nil)) {
+				t.Fatal("an unknown address signed in past the other clients' attempts")
+			}
+			if !signedIn(signIn("192.0.2.1:40000", "secret", device)) {
+				t.Fatal("a known device was locked out by other clients' attempts")
+			}
+			raw, _ := base64.RawURLEncoding.DecodeString(device.Value)
+			raw[len(raw)-1] ^= 1
+			past := time.Now().Add(-time.Minute).Unix()
+			expired := append(binary.BigEndian.AppendUint64(nil, uint64(past)), s.deviceTag(past)...)
+			for name, value := range map[string][]byte{"forged": raw, "expired": expired} {
+				if signedIn(signIn("192.0.2.2:40000", "secret", &http.Cookie{Name: deviceCookie,
+					Value: base64.RawURLEncoding.EncodeToString(value)})) {
+					t.Fatalf("a %s device cookie skipped the other clients' bounds", name)
+				}
+			}
+		})
+	}
 }

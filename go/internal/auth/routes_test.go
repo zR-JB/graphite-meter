@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestCORSPreflight(t *testing.T) {
@@ -55,13 +57,22 @@ func TestCORSPreflight(t *testing.T) {
 	}
 	methods := []string{http.MethodGet, http.MethodHead, http.MethodPost, http.MethodDelete, http.MethodConnect,
 		http.MethodOptions, http.MethodPut, ""}
-	for path, permitted := range map[string][]string{
-		"/preflight": {http.MethodGet}, "/probe": {http.MethodGet}, "/download": {http.MethodGet},
-		"/upload/session": {http.MethodPost}, "/upload": {http.MethodPost}, "/wt/session": {http.MethodPost},
-		"/upload/progress": {http.MethodGet, http.MethodDelete}, "/ws/ping": {http.MethodGet},
-		"/wt/download": {http.MethodConnect}, "/wt/upload": {http.MethodConnect}, "/wt/ping": {http.MethodConnect},
-		"/login": nil, "/download/": nil, "/secret": nil,
-	} {
+	byName := map[string][]string{
+		"preflight": {http.MethodGet}, "probe": {http.MethodGet}, "download": {http.MethodGet},
+		"servers": {http.MethodGet}, "uploadSession": {http.MethodPost}, "upload": {http.MethodPost},
+		"uploadCheckpoint": {http.MethodPost}, "wtSession": {http.MethodPost}, "wsSession": {http.MethodPost},
+		"uploadProgress": {http.MethodGet, http.MethodDelete}, "ping": {http.MethodGet},
+		"wtDownload": {http.MethodConnect}, "wtUpload": {http.MethodConnect}, "wtPing": {http.MethodConnect},
+	}
+	routes := map[string][]string{"/login": nil, "/download/": nil, "/secret": nil}
+	for _, row := range apipin.Rows(t, "routes.txt", 3) {
+		permitted, ok := byName[row[0]]
+		if !ok {
+			t.Fatalf("pinned route %s has no expected CORS methods", row[0])
+		}
+		routes[row[1]] = permitted
+	}
+	for path, permitted := range routes {
 		for _, method := range methods {
 			want := http.StatusForbidden
 			if slices.Contains(permitted, method) {

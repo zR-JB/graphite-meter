@@ -21,7 +21,7 @@ export interface ChartLayout {
   throughputY(bytesPerSec: number): number;
   latencyY(rttMs: number): number;
 }
-const CHART_PADDING = { left: 46, right: 46, top: 12, bottom: 24 };
+const CHART_PADDING = { left: 46, right: 46, top: 24, bottom: 24 };
 function niceTimeStep(target: number): number {
   const steps = [1000, 2000, 5000, 10000, 20000, 30000, 60000];
   for (const step of steps) if (step >= target) return step;
@@ -68,9 +68,9 @@ export function chartLayout(
       t <= viewport.tMax;
       t += step
     ) {
-      const tickX = Math.round(x(t)) + 0.5;
-      if (tickX >= plot.left && tickX <= plot.right)
-        ticks.push({ t, x: tickX });
+      const px = Math.round(x(t));
+      if (px >= Math.round(plot.left) && px <= Math.round(plot.right))
+        ticks.push({ t, x: px + 0.5 });
     }
     return ticks;
   };

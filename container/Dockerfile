@@ -61,7 +61,7 @@ RUN set -eux; test -f /usr/share/doc/ca-certificates/copyright; mkdir -p /legal/
 
 # ---------------------------------------------------------------------------
 # Final: a single static binary. The Svelte client is embedded inside it.
-# Config comes from env (GM_*, PUBLIC_*) and/or flags - read natively by the
+# Config comes from GM_* env and/or flags - read natively by the
 # binary, so no shell entrypoint is needed (scratch has no shell anyway).
 # ---------------------------------------------------------------------------
 FROM scratch
@@ -76,4 +76,6 @@ EXPOSE 7247/tcp
 EXPOSE 7248/tcp
 EXPOSE 7249/tcp
 EXPOSE 7249/udp
+# Distroless "nonroot"; mounted keys and secrets must be readable by it.
+USER 65532:65532
 ENTRYPOINT ["/graphite-meter"]

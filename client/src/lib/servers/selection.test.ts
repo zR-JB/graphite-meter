@@ -74,6 +74,22 @@ test("automatic may use different reliable protocols while explicit compatibilit
     ),
   ).toBe(false);
 });
+test("path availability ignores a failed server's stale discovery", () => {
+  const views = new Map(
+    [...discoveries].map(([id, view]) => [
+      id,
+      { ...view, readiness: id === "b" ? "failed" : "verified" },
+    ]),
+  );
+  const option = pathOptions(
+    "throughput",
+    servers,
+    views,
+    configFor("throughput", "auto", false),
+  ).find((option) => option.value === "protocol:http1");
+  expect(option).toMatchObject({ disabled: false, detail: "Available on A" });
+});
+
 test("server transport options name the browser's IPv6 configuration remedy", () => {
   const origin = "http://[::1]:7246";
   const discovery = classifyTransportDiscovery(
@@ -124,9 +140,10 @@ test("shared H1 origins preserve progress and checkpoint capacity", () => {
     ...config,
     transferStreams: { mode: "forced" as const, count: 3 },
   };
-  expect(() => planServerStreams(forced, paths, activity)).toThrow(
-    "control capacity of A, B.",
-  );
+  expect(planServerStreams(forced, paths, activity)).toEqual({
+    a: { down: 0, up: 3 },
+    b: { down: 0, up: 3 },
+  });
 });
 test("a direct H1 upload reserves progress and receiver checkpoint capacity", () => {
   const paths = [
@@ -148,38 +165,11 @@ test("a direct H1 upload reserves progress and receiver checkpoint capacity", ()
       activity,
     ).self.up,
   ).toBe(3);
-  expect(() => planServerStreams(config, paths, activity)).toThrow(
-    "control capacity",
-  );
-  expect(() =>
-    planServerStreams(
-      { ...config, transferStreams: { mode: "forced", count: 5 } },
-      paths,
-      activity,
-    ),
-  ).toThrow("control capacity");
+  // Forced is exact, even past the browser's connections.
+  expect(planServerStreams(config, paths, activity).self.up).toBe(4);
 });
 
-test("four participants share a run-wide 128 stream ceiling", () => {
-  const paths = Array.from({ length: 4 }, (_, i) => {
-    const paths = testPreparedPaths();
-    paths.throughput.fetch.protocol = "http2";
-    return { server: { id: String(i), name: String(i) }, paths };
-  });
-  const config = {
-    ...structuredClone(DEFAULT_CONFIG),
-    transferStreams: { mode: "forced" as const, count: 33 },
-  };
-  expect(() =>
-    planServerStreams(config, paths, {
-      stage: "download",
-      transfer: ["down"],
-      loadedLatency: false,
-    }),
-  ).toThrow("128 streams");
-});
-
-test("valid prototype-named server IDs retain their streams and count toward the run limit", () => {
+test("valid prototype-named server IDs retain their streams", () => {
   const ids = ["constructor", "toString", "__proto__"];
   const catalog = parseCatalog(
     {
@@ -202,7 +192,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   });
   const config = {
     ...structuredClone(DEFAULT_CONFIG),
-    transferStreams: { mode: "forced" as const, count: 42 },
+    transferStreams: { mode: "forced" as const, count: 12 },
   };
   const activity = {
     stage: "download" as const,
@@ -211,17 +201,7 @@ test("valid prototype-named server IDs retain their streams and count toward the
   };
   const plan = planServerStreams(config, paths, activity);
   expect(Object.keys(plan)).toEqual(ids);
-  for (const id of ids) expect(plan[id]).toEqual({ down: 42, up: 0 });
-  expect(
-    Object.values(plan).reduce((total, streams) => total + streams.down, 0),
-  ).toBe(126);
-  expect(() =>
-    planServerStreams(
-      { ...config, transferStreams: { mode: "forced", count: 43 } },
-      paths,
-      activity,
-    ),
-  ).toThrow("128 streams");
+  for (const id of ids) expect(plan[id]).toEqual({ down: 12, up: 0 });
 });
 
 test("switching servers carries a transport preference without the previous origin", () => {

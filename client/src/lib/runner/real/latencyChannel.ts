@@ -141,12 +141,7 @@ export class LatencyChannel {
       (msg) => {
         if (this.#worker === worker) this.#onMessage(msg);
       },
-      (detail) => {
-        if (this.#worker !== worker) return;
-        this.#deps.host.latencyIncomplete();
-        this.#onMessage({ type: "stall", detail });
-        if (this.#worker === worker) this.teardown();
-      },
+      (detail) => this.#abandon(worker, detail),
     );
     this.#worker = worker;
   }
@@ -167,29 +162,32 @@ export class LatencyChannel {
     const worker = this.#worker;
     this.#clearEstablishTimer();
     this.#cutoffEpochMs = this.#timeOriginMs + pageMs();
-    let resolve!: () => void;
-    const promise = new Promise<void>((done) => {
-      resolve = done;
-    });
-    const timer = setTimeout(() => {
-      if (this.#worker !== worker) return;
-      this.#deps.host.latencyIncomplete();
-      this.#deps.host.stallLatency(
-        "latency worker did not finish its pending probes",
-      );
-      if (this.#worker === worker) this.teardown();
-    }, PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const timer = setTimeout(
+      () =>
+        this.#abandon(
+          worker,
+          "latency worker did not finish its pending probes",
+        ),
+      PING_TIMEOUT_CEIL_MS + PING_STOP_MARGIN_MS,
+    );
     this.#finishing = { promise, resolve, timer };
     try {
       worker.postMessage({ type: "stop", cutoffEpochMs: this.#cutoffEpochMs });
     } catch {
-      this.#deps.host.latencyIncomplete();
-      this.#deps.host.stallLatency(
+      this.#abandon(
+        worker,
         "latency worker could not finalize its pending probes",
       );
-      if (this.#worker === worker) this.teardown();
     }
     return promise;
+  }
+
+  #abandon(worker: Worker, detail: string): void {
+    if (this.#worker !== worker) return;
+    this.#deps.host.latencyIncomplete();
+    this.#deps.host.stallLatency(detail);
+    this.teardown();
   }
 
   /** Hard stage failure cannot establish which buffered or pending outcomes were discarded. */
@@ -214,7 +212,6 @@ export class LatencyChannel {
     }
   }
 
-  /* Handle a message from the ping worker. */
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return; // late message after teardown
     if (msg.type === "auth-required") {
@@ -311,7 +308,6 @@ export class IdleKeepalive {
   #probeReady: { finish: (error?: Error) => void } | null = null;
   /** Readiness alone is not liveness; only a pong or stall establishes connectivity. */
   #connectivity: "connected" | "offline" | null = null;
-  /** Pending respawn of an idle worker that dies at load time. Cleared on stop. */
   #respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
@@ -324,7 +320,6 @@ export class IdleKeepalive {
     this.#timeOriginMs = timeOriginMs;
   }
 
-  /* Start the persistent idle ping at `intervalMs`. */
   start(intervalMs = IDLE_PING_INTERVAL_MS): void {
     if (this.#active) return;
     this.#active = true;
@@ -412,7 +407,6 @@ export class IdleKeepalive {
     });
   }
 
-  /* Re-spawn an idle worker that dies at load time. */
   #scheduleRespawn(intervalMs?: number): void {
     if (!this.#active || this.#respawnTimer) return;
     this.#respawnTimer = setTimeout(() => {
@@ -423,7 +417,6 @@ export class IdleKeepalive {
     }, IDLE_RESPAWN_MS);
   }
 
-  /* Handle a message from the idle ping worker. */
   #onMessage(msg: PingWorkerEvent): void {
     if (!this.#active) return;
     if (msg.type === "auth-required") {

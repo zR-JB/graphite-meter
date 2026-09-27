@@ -1,20 +1,5 @@
 import { expect, test } from "bun:test";
-import {
-  pingSample,
-  pingSampleContextTime,
-  reflectorHandlingMs,
-} from "./pingSample";
-
-test("ping outcome time translates across different performance origins", () => {
-  const sample = pingSample(12, false, 350, 10_000);
-
-  expect(sample).toEqual({
-    rtt: 12,
-    timedOut: false,
-    observedAtEpochMs: 10_350,
-  });
-  expect(pingSampleContextTime(sample, 9_500)).toBe(850);
-});
+import { reflectorHandlingMs } from "./pingSample";
 
 test("reflector timing rejects impossible clock pairs without clamping", () => {
   expect(reflectorHandlingMs(0, "0")).toBe(0);

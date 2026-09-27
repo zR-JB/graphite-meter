@@ -11,7 +11,7 @@ from workflow_policy import check_repository
 
 ROOT = Path(__file__).resolve().parents[2]
 W = ".github/workflows/"
-OCI = ".github/actions/build-oci/action.yml"
+SETUP = ".github/actions/setup-project/action.yml"
 PINNED_STEP = "\n      - uses: {}@" + "a" * 40 + "\n        with: {{persist-credentials: false}}\n"
 REQUEST = W + "release-request.yml"
 PREPARE = "        run: python3 scripts/ci/release.py prepare\n"
@@ -25,11 +25,11 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "true", "only from the default branch"),
     (W + "fork-upkeep.yml", "repositories: ${{ steps.inventory.outputs.repositories }}",
      "repositories: all", "fork inventory"),
-    (OCI, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
+    (SETUP, None, "# ${{ secrets.TOKEN }}\n", r"secrets\."),
     (W + "ci.yml", "runs-on: ubuntu-24.04", "runs-on: ubuntu-latest", "ubuntu-latest"),
     (W + "release.yml", "run: python3 scripts/ci/release.py recheck",
      'run: echo "${{ github.head_ref }}"', "through env"),
-    (OCI, "        if [[ -z", "        echo ${{ inputs.version }}\n        if [[ -z",
+    (REQUEST, "          if [[ -z", "          echo ${{ github.ref }}\n          if [[ -z",
      "through env"),
     ("container/Dockerfile", None, "FROM docker.io/library/alpine:3 AS extra\n", "digest-pinned"),
     ("container/Dockerfile", "# Graphite Meter", "#Syntax = example/frontend\n# Graphite Meter",
@@ -37,16 +37,19 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
     (W + "release.yml", "cache: false", "cache: true", "cache: false"),
-    (".github/actions/setup-project/action.yml", "install_args:", "args:", "install_args"),
-    (REQUEST, "bun-cache: 'false'", "bun-cache: 'true'", "disable every cache"),
-    (OCI, "buildkitd-flags: --log-level=info",
+    (SETUP, "install_args:", "args:", "install_args"),
+    (REQUEST, "cache: 'false'", "cache: 'true'", "disable every cache"),
+    (SETUP, "inputs.client-deps == 'true' && inputs.cache == 'true'", "inputs.client-deps == 'true'",
+     "follow the cache input"),
+    (SETUP, "cache: ${{ inputs.cache }}", "cache: true", "follow the cache input"),
+    (REQUEST, "buildkitd-flags: --log-level=info",
      "buildkitd-flags: --allow-insecure-entitlement network.host", "insecure-entitlement"),
     (W + "release.yml", "TARGET_SHA: ${{ github.sha }}",
      "TARGET_SHA: ${{ needs.verify.outputs.sha }}", "TARGET_SHA"),
-    (OCI, "provenance: mode=max", "provenance: false", "provenance"),
+    (REQUEST, "provenance: mode=max", "provenance: false", "provenance"),
     (REQUEST, "if: ${{ github.ref == format(", "if: ${{ true || (", "default_branch"),
-    (REQUEST, "source-sha: ${{ steps.request.outputs.remote_sha }}",
-     "source-sha: ${{ inputs.sha }}", "misorders invariant|dispatch inputs"),
+    (REQUEST, "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}",
+     "SOURCE_SHA: ${{ inputs.sha }}", "remote_sha"),
     (REQUEST, PREPARE, PREPARE + "\n      - run: echo \"$RAW\"\n        env:\n"
      "          RAW: ${{ inputs.sha }}\n", "only the request validator"),
     (W + "release.yml", "environment: ghcr-release", "environment: other", "ghcr-release"),
@@ -92,8 +95,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (REQUEST, PREPARE, "        run: python3 -c pass\n", "release.py prepare"),
     (REQUEST, 'python3 scripts/ci/verify_release_assets.py "$VERSION"', "true",
      "verify_release_assets"),
-    (REQUEST, "uses: ./.github/actions/build-oci", "uses: ./.github/actions/setup-project",
-     "misorders invariant"),
+    (REQUEST, "uses: docker/build-push-action@", "uses: docker/bake-action@", "misorders invariant"),
     (RELEASE, "github.event.workflow_run.conclusion == 'success'\n      && ", "",
      "conclusion == 'success'"),
     (RELEASE, "workflow_run.event == 'workflow_dispatch'", "workflow_run.event != 'push'",
@@ -113,16 +115,18 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     (RELEASE, "SOURCE_SHA: ${{ needs.verify.outputs.sha }}",
      "SOURCE_SHA: ${{ github.event.pull_request.head.sha }}", "pull_request.head|SOURCE_SHA"),
     (RELEASE, "secrets.GHCR_TOKEN", "secrets['GHCR_TOKEN']", r"secrets\["),
-    (OCI, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
-    (OCI, "no-cache: true", "no-cache: false", "no-cache"),
-    (OCI, "        no-cache: true\n", "        no-cache: true\n        cache-from: type=gha\n",
+    (REQUEST, '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', '[[ -n "$SOURCE_SHA" ]]', "SOURCE_SHA"),
+    (REQUEST, "no-cache: true", "no-cache: false", "no-cache"),
+    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          cache-from: type=gha\n",
      "cache-from"),
-    (OCI, "        no-cache: true\n", "        no-cache: true\n        cache-to: type=gha\n",
+    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          cache-to: type=gha\n",
      "cache-to"),
-    (OCI, "        no-cache: true\n", "        no-cache: true\n        secrets: GIT_AUTH_TOKEN=x\n",
+    (REQUEST, "          no-cache: true\n", "          no-cache: true\n          secrets: GIT_AUTH_TOKEN=x\n",
      "GIT_AUTH_TOKEN"),
-    (OCI, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
-    (OCI, "          GM_CLIENT_REVISION=${{ inputs.revision }}\n", "", "GM_CLIENT_REVISION"),
+    (REQUEST, "github-token: ''", "github-token: ${{ github.token }}", "github-token"),
+    (REQUEST, "            GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n", "",
+     "GM_CLIENT_REVISION"),
+    (REQUEST, "/rust-tui\n          no-cache: true\n", "/rust-tui\n", "every image build must declare no-cache"),
 )
 
 

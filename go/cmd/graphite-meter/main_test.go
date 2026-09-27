@@ -14,6 +14,13 @@ import (
 )
 
 func TestParseConfig(t *testing.T) {
+	// The operator's own GM_* settings must not leak into the cases.
+	for _, kv := range os.Environ() {
+		if key, _, _ := strings.Cut(kv, "="); strings.HasPrefix(key, "GM_") {
+			t.Setenv(key, "")
+			os.Unsetenv(key)
+		}
+	}
 	for _, tc := range []struct {
 		name  string
 		env   string // a GM_H2_ADDR the flags must complete
@@ -73,12 +80,21 @@ func TestParseConfig(t *testing.T) {
 			}
 		})
 	}
+	t.Setenv("GM_H1_ADDR", "127.0.0.1:9999")
+	t.Setenv("GM_MAX_CONNECTIONS", "many")
 	var help strings.Builder
 	if _, err := parseConfig("test", []string{"-h"}, &help); !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("parseConfig(-h) = %v, want flag.ErrHelp", err)
 	}
-	if !strings.Contains(help.String(), "-h1-addr address\n    \tclear HTTP/1.1 listen address (env GM_H1_ADDR)") {
-		t.Fatalf("help omits the environment name:\n%s", help.String())
+	for _, want := range []string{"test hash-password", "test version | --version",
+		"-h1-addr address\n    \tclear HTTP/1.1 listen address (env GM_H1_ADDR) (default :7246)",
+		"(env GM_ADVERTISED_NATIVE_ENDPOINTS) (default all)", "(env GM_MAX_CONNECTIONS) (default 4096)"} {
+		if !strings.Contains(help.String(), want) {
+			t.Fatalf("help lacks %q:\n%s", want, help.String())
+		}
+	}
+	if _, err := parseConfig("test", nil, io.Discard); err == nil || !strings.Contains(err.Error(), "GM_MAX_CONNECTIONS") {
+		t.Fatalf("an invalid environment ran as %v", err)
 	}
 }
 

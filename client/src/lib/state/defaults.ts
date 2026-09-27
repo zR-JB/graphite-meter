@@ -36,7 +36,7 @@ export function clampDuration(key: DurationKey, value: unknown): number {
   const [min, max] = DURATION_LIMITS[key];
   if (typeof value !== "number" || !Number.isFinite(value))
     return DEFAULT_CONFIG.duration[key];
-  return value <= 0 ? 0 : Math.min(max, Math.max(min, Math.round(value)));
+  return Math.min(max, Math.max(min, Math.round(value)));
 }
 
 export const DURATION_PRESETS = {

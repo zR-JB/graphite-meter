@@ -4,47 +4,100 @@
   import { store } from "../state/store.svelte";
   import { getApplicationController } from "../runner/controllerContext";
   import { tooltip } from "../actions/tooltip";
-  import { lockReason, stageShown, stageTrackModel } from "./stageTrack";
-  import { STAGE, STATUS, reasonLabel } from "../presentation/vocabulary";
-  import { STAGES } from "../runner/schedule";
-  import { handoff } from "../presentation/motion.svelte";
+  import {
+    lockReason,
+    stageShown,
+    stageTip,
+    stageTrackModel,
+  } from "./stageTrack";
+  import {
+    STAGE,
+    STATUS,
+    STATUS_TONE,
+    type Tone,
+  } from "../presentation/vocabulary";
+  import { formatLatency, formatRate } from "../format";
+  import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
+  import type { StageKey } from "../state/store.svelte";
+  import { planned, STAGES } from "../runner/schedule";
+  import { handoff, type Handoff } from "../presentation/motion.svelte";
 
   const controller = getApplicationController();
 
-  const segments = $derived(
-    STAGES.filter((key) =>
-      stageShown(key, store.config.stages[key], store.stagePresentation[key]),
-    ).map((key) => {
+  function resultValue(key: StageKey): string | null {
+    if (key === "latency") {
+      const latency = store.stageResults.latency;
+      return latency ? formatLatency(latency.reportedMs) : null;
+    }
+    const bytes =
+      key === "bidirectional"
+        ? bidirectionalResultPresentation(
+            store.result?.bidirectional?.down?.reportedBytesPerSec,
+            store.result?.bidirectional?.up?.reportedBytesPerSec,
+          ).combinedBytesPerSec
+        : store.stageResults[key]?.reportedBytesPerSec;
+    return bytes == null
+      ? null
+      : formatRate(bytes, { base: store.unitBase, kind: store.unitKind });
+  }
+
+  const model = $derived(
+    STAGES.map((key) => {
       const execution = store.stagePresentation[key];
-      const selected = store.config.stages[key];
+      // The run skips a stage without a duration, so the chip does too.
+      const selected = planned(store.config, key);
       const locked = !store.canToggleStage(key);
       const model = stageTrackModel({ selected, locked, execution });
       const reason =
         model.tag ??
         lockReason(!locked, store.phase, store.phaseStage, key, model.state);
-      const label = STAGE[key].short;
-      const hint = execution.failure
-        ? reasonLabel(execution.failure)
-        : key === "bidirectional" && !locked
-          ? "concurrent download and upload. Toggle to exclude (re-enable in Settings)."
-          : reason === STATUS["not-run"] && !locked
-            ? "skipped, toggle to include"
-            : (reason ?? (selected ? "toggle to skip" : "toggle to include"));
       return {
         ...model,
         key,
-        label,
+        label: STAGE[key].short,
         icon: STAGE[key].icon,
         reason,
-        tip: `${label} — ${hint}`,
+        tip: stageTip({
+          selected,
+          locked,
+          state: model.state,
+          reason,
+          failure: execution.failure,
+          value: resultValue(key),
+        }),
       };
     }),
   );
-  const track = handoff(
-    () => segments,
-    (list) => list.map((s) => `${s.state}:${s.reason}`).join(),
+  const segments = $derived(
+    model.filter((s) =>
+      stageShown(s.key, s.selected, store.stagePresentation[s.key]),
+    ),
   );
-  const shown = $derived(new Map(track.shown.map((s) => [s.key, s])));
+  const look = (key: StageKey) => {
+    const s = model.find((s) => s.key === key)!;
+    const live = s.state === "active" && store.phaseBudgetMs > 0;
+    return {
+      state: s.state,
+      reason: s.reason,
+      tone: s.state === "recovering" ? STATUS_TONE.recovering : key,
+      live,
+      progress:
+        s.state === "warmup" || s.state === "failed"
+          ? 1
+          : live
+            ? store.phaseClock.current / store.phaseBudgetMs
+            : s.fill / 100,
+    };
+  };
+  const looks = Object.fromEntries(
+    STAGES.map((key) => [
+      key,
+      handoff(
+        () => look(key),
+        (shown) => `${shown.state}:${shown.reason}`,
+      ),
+    ]),
+  ) as Record<StageKey, Handoff<ReturnType<typeof look>>>;
 </script>
 
 <fieldset class="stage-track" class:quad={segments.length === 4}>
@@ -54,7 +107,8 @@
     ></legend
   >
   {#each segments as s (s.key)}
-    {@const look = shown.get(s.key) ?? s}
+    {@const view = looks[s.key]}
+    {@const look = view.shown}
     <button
       type="button"
       class="seg seg--{s.state}"
@@ -71,23 +125,16 @@
       onclick={() => controller.toggleStage(s.key)}
     >
       <div class="seg-bar" aria-hidden="true">
-        {#if s.state === "warmup" && look.state === "warmup"}
-          <span class="seg-fill seg-fill--warmup"></span>
-        {:else if s.state === "failed"}
-          <span class="seg-fill seg-fill--failed"></span>
-        {:else if s.state === "active" || s.state === "recovering" || s.state === "complete" || s.state === "partial"}
-          {@const live = s.state === "active" && store.phaseBudgetMs > 0}
-          <span
-            class="seg-fill"
-            data-tone={s.key}
-            class:is-done={s.state === "complete" || s.state === "partial"}
-            class:is-stalled={s.state === "recovering"}
-            class:is-live={live}
-            style:--progress={live
-              ? store.phaseClock.current / store.phaseBudgetMs
-              : s.fill / 100}
-          ></span>
-        {/if}
+        <span
+          class="seg-fill"
+          data-tone={look.tone}
+          class:seg-fill--warmup={look.state === "warmup"}
+          class:seg-fill--failed={look.state === "failed"}
+          class:is-partial={look.state === "partial"}
+          class:is-stalled={look.state === "recovering"}
+          class:is-live={look.live}
+          style:--progress={look.progress}
+        ></span>
       </div>
       <span class="seg-row">
         <span class="seg-main">
@@ -95,11 +142,13 @@
           <span class="seg-label">{s.label}</span>
         </span>
         {#if look.reason}
-          <span class="seg-tag" style:opacity={track.opacity}
-            >{look.reason}</span
+          <span
+            class="seg-tag"
+            data-tone={(STATUS_TONE as Record<string, Tone>)[look.state]}
+            style:opacity={view.opacity}>{look.reason}</span
           >
         {:else if look.state === "complete"}
-          <span class="seg-ico seg-check" style:opacity={track.opacity}
+          <span class="seg-ico seg-check" style:opacity={view.opacity}
             ><Icon name="check" /></span
           >
         {/if}
@@ -158,7 +207,11 @@
     background: var(--brand-soft);
     color: var(--text);
   }
+  /* A deselected stage stays operable, so it reads soft rather than dimmed; only a locked one dims. */
   .seg--disabled {
+    color: var(--text-soft);
+  }
+  .seg:disabled {
     opacity: 0.5;
   }
 
@@ -184,16 +237,19 @@
   .seg-fill.is-live {
     transition: background-color var(--dur-graph) var(--ease-out);
   }
-  .seg-fill.is-done {
-    background: var(--ok);
+  /* A finished stage keeps its phase tone; partial is hatched like the gauge's dashed arc. */
+  .seg-fill.is-partial {
+    background: repeating-linear-gradient(
+      90deg,
+      var(--tone) 0 6px,
+      transparent 6px 9px
+    );
   }
   .seg-fill--failed {
-    --progress: 1;
     background: var(--err);
     opacity: 0.45;
   }
   .seg-fill.is-stalled {
-    background: var(--err);
     animation: stall-pulse var(--dur-pulse) var(--ease-out) infinite;
   }
   @keyframes stall-pulse {
@@ -202,12 +258,10 @@
     }
   }
   .seg-fill--warmup {
-    --progress: 1;
     width: 45%;
     background: color-mix(in srgb, var(--brand) 55%, transparent);
     animation: warmup-sweep var(--dur-pulse) var(--ease-out) infinite;
   }
-  /* Reduced motion keeps warmup legible as a steady, dimmed bar. */
   @media (prefers-reduced-motion: reduce) {
     .seg-fill--warmup {
       width: 100%;
@@ -273,10 +327,9 @@
     letter-spacing: var(--track-caps);
     text-transform: uppercase;
   }
-  .seg--failed .seg-tag,
-  .seg--partial .seg-tag {
-    border-color: var(--err-line);
-    color: var(--err);
+  .seg-tag[data-tone] {
+    border-color: var(--tone-line);
+    color: var(--tone);
   }
   @container viz (max-width: 680px) {
     .seg {
@@ -286,7 +339,8 @@
     .seg-bar {
       height: 3px;
     }
-    .seg-row {
+    /* A tag word takes its own line; a lone check stays beside the label. */
+    .seg-row:has(> .seg-tag) {
       display: grid;
       grid-template-rows: 14px 12px;
       gap: 2px;

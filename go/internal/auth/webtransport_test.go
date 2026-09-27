@@ -14,6 +14,7 @@ import (
 
 	"github.com/zR-JB/graphite-meter/go/internal/config"
 	"github.com/zR-JB/graphite-meter/go/internal/route"
+	"github.com/zR-JB/graphite-meter/go/internal/testkit"
 )
 
 // mintTicket mints a ticket for path as p's client does, from p's browser origin if it has one.
@@ -158,8 +159,7 @@ func TestSocketTokenHandler(t *testing.T) {
 		if p != nil {
 			r = r.WithContext(context.WithValue(r.Context(), principalKey{}, *p))
 		}
-		w := httptest.NewRecorder()
-		authn.SocketTokenHandler(route.WebTransport).ServeHTTP(w, r)
+		w := testkit.Record(authn.SocketTokenHandler(route.WebTransport).ServeHTTP, r)
 		var body struct {
 			Token   string `json:"token"`
 			Expires int64  `json:"expires"`

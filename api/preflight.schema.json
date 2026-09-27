@@ -11,23 +11,26 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["name"],
-      "properties": { "name": { "type": "string" }, "location": { "type": "string" } }
+      "properties": {
+        "name": { "type": "string", "maxLength": 256 },
+        "location": { "type": "string", "maxLength": 256 }
+      }
     },
-    "engineVersion": { "type": "string" },
-    "generation": { "type": "string", "minLength": 1 },
+    "engineVersion": { "type": "string", "maxLength": 256 },
+    "generation": { "type": "string", "minLength": 1, "maxLength": 256 },
     "capabilities": {
       "type": "object",
       "additionalProperties": false,
       "required": ["throughput", "latency"],
       "properties": {
         "uploadCheckpoint": { "type": "boolean", "description": "Fresh owner-checked receiver windows are available." },
-        "throughput": { "type": "array", "items": { "$ref": "#/$defs/throughputEndpoint" } },
-        "latency": { "type": "array", "items": { "$ref": "#/$defs/latencyEndpoint" } }
+        "throughput": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/throughputEndpoint" } },
+        "latency": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/latencyEndpoint" } }
       }
     }
   },
   "$defs": {
-    "baseUrl": { "type": "string", "pattern": "^(\\.|https?://[^/]+)$" },
+    "baseUrl": { "type": "string", "maxLength": 2048, "pattern": "^(\\.|https?://[^/@?#\\\\\\s]+)$" },
     "throughputEndpoint": {
       "type": "object", "additionalProperties": false,
       "required": ["baseUrl", "transport", "protocol"],

@@ -17,11 +17,10 @@ Two ways to run it:
 - **`graphite-meter.container` - the default.** Pulls the published release
   image (`ghcr.io/zr-jb/graphite-meter`); nothing is built locally, no checkout
   needed beyond this one file.
-- **`graphite-meter-source.container` + `graphite-meter.build` - build from
-  source.** For developers or custom builds. The `.container` references the
-  `.build` unit via
-  `Image=graphite-meter.build`, so a start builds first, then runs. Requires
-  **Podman 5.0+** (`.build` unit support).
+- **`graphite-meter.container` + `graphite-meter.build` - build from
+  source.** For developers or custom builds. Pointing the `.container` at the
+  `.build` unit with `Image=graphite-meter.build` makes a start build first,
+  then run. Requires **Podman 5.0+** (`.build` unit support).
 
 Two complete multi-unit deployments live in subdirectories:
 
@@ -59,24 +58,28 @@ checkout's absolute path: `SetWorkingDirectory=` (the build context) and the
 
 ### 2. Install the units
 
+The container unit is the default one with its image replaced by the build:
+
 ```sh
 mkdir -p ~/.config/containers/systemd
-cp graphite-meter.build graphite-meter-source.container ~/.config/containers/systemd/
+cp graphite-meter.build ~/.config/containers/systemd/
+sed 's/^Image=.*/Image=graphite-meter.build/' graphite-meter.container \
+  > ~/.config/containers/systemd/graphite-meter.container
 loginctl enable-linger "$USER"
 systemctl --user daemon-reload
-systemctl --user start graphite-meter-source.service
+systemctl --user start graphite-meter.service
 ```
 
-> The build runs as `graphite-meter-build.service`; the container as
-> `graphite-meter-source.service`. Don't install `graphite-meter.container`
-> and `graphite-meter-source.container` at the same time - both want the
-> container name `graphite-meter` and the same host port.
+The build runs as `graphite-meter-build.service` before the container starts.
 
 ## Enable authentication
 
 Authentication is off by default. Uncomment the `GM_AUTH_*` block in
 `graphite-meter.container`, point `GM_AUTH_PUBLIC_URL` at the exact public HTTPS
 origin (no path, and no `:443`), and create the podman secrets the unit mounts.
+Publish 7246 on `127.0.0.1` only (or use `Network=host`) and trust only the
+proxy's own address: `GM_TRUSTED_PROXIES` lets a peer name the client and the
+HTTPS origin, so no other client may share it.
 
 ```sh
 podman run --rm -it ghcr.io/zr-jb/graphite-meter:latest hash-password
@@ -97,9 +100,8 @@ systemctl --user status graphite-meter.service --no-pager
 journalctl --user -u graphite-meter.service -f
 ```
 
-For the source variant, substitute `graphite-meter-source.service`. The supplied `[Install]`
-sections make the generated services start with the user manager; lingering keeps that manager
-available after logout. Do not run `systemctl enable` on generated Quadlet services.
+The supplied `[Install]` sections make the generated services start with the user manager;
+lingering keeps that manager available after logout. Do not run `systemctl enable` on generated Quadlet services.
 See [Podman's Quadlet documentation](https://docs.podman.io/en/latest/markdown/podman-systemd.unit.5.html#enabling-unit-files).
 
 Upgrade native clients with the server and reload browser tabs; see

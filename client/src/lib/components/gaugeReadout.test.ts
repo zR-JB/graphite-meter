@@ -12,7 +12,6 @@ const input = (overrides: Partial<GaugeReadoutInput>): GaugeReadoutInput => ({
   latencyMs: 12,
   hasLatencyResult: false,
   unusable: false,
-  arcs: [],
   headline: null,
   rate: (bytesPerSec) => String(bytesPerSec),
   unit: "B/s",
@@ -56,8 +55,5 @@ test("terminal readouts carry the measured direction and status", () => {
   const complete = gaugeReadout(input({ phase: "complete", headline: arc }));
   expect(complete.terminal?.direction).toBe("download");
   expect(gaugeReadout(input({ phase: "aborted" })).status?.error).toBe(false);
-  expect(gaugeReadout(input({ phase: "error" })).status).toMatchObject({
-    error: true,
-    headline: "Something went wrong",
-  });
+  expect(gaugeReadout(input({ phase: "error" })).status?.error).toBe(true);
 });

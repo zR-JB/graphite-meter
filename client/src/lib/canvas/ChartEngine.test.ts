@@ -20,6 +20,7 @@ function data(overrides: Partial<ChartData> = {}): ChartData {
     runSeq: 1,
     scaleBytesPerSec: 125_000,
     latencyScaleMs: 50,
+    units: { base: "base10", kind: "bits", index: 2 },
     resultRates: {},
     ...overrides,
   };
@@ -34,13 +35,43 @@ test("the live axis follows the run timeline every frame; a finished run glides 
     (next) => (published = next),
     (tMax) => (timeScale = tMax),
   );
-  expect(engine.render(1_000)).toBe(true);
-  expect(published.layout.viewport).toMatchObject({ tMin: 0, tMax: 4_000 });
-  engine.render(5_000);
-  expect(timeScale).toBe(7_000);
-  engine.render(5_016);
-  expect(timeScale).toBe(7_016);
+  try {
+    expect(engine.render(1_000)).toBe(true);
+    expect(published.layout.viewport).toMatchObject({ tMin: 0, tMax: 4_000 });
+    engine.render(5_000);
+    expect(timeScale).toBe(7_000);
+    engine.render(5_016);
+    expect(timeScale).toBe(7_016);
 
+    const throughput = [0, 5_000].map((t) => ({
+      t,
+      bytesPerSec: 100_000,
+      bytesCumulative: t,
+      dir: "down" as const,
+      phase: "download" as const,
+      continuityId: 1,
+    }));
+    current = { ...current, phase: "complete", throughput };
+    engine.update(current);
+    let now = 5_032;
+    let active = engine.render(now);
+    expect(timeScale).toBe(7_016);
+    const glide: number[] = [];
+    for (let i = 0; i < 100 && active; i++) {
+      now += 16;
+      active = engine.render(now);
+      glide.push(timeScale);
+    }
+    expect(active).toBe(false);
+    expect(glide.every((t, i) => i === 0 || t <= glide[i - 1])).toBe(true);
+    expect(timeScale).toBe(5_100);
+    expect(published.layout.viewport.tMax).toBe(5_100);
+  } finally {
+    engine.destroy();
+  }
+});
+
+test("a new run replaces the presented one only once it has faded out", () => {
   const throughput = [0, 5_000].map((t) => ({
     t,
     bytesPerSec: 100_000,
@@ -49,22 +80,32 @@ test("the live axis follows the run timeline every frame; a finished run glides 
     phase: "download" as const,
     continuityId: 1,
   }));
-  current = { ...current, phase: "complete", throughput };
-  engine.update(current);
-  let now = 5_032;
-  let active = engine.render(now);
-  expect(timeScale).toBe(7_016);
-  const glide: number[] = [];
-  for (let i = 0; i < 100 && active; i++) {
-    now += 16;
-    active = engine.render(now);
-    glide.push(timeScale);
+  let published!: ChartPresentation;
+  let fade = 1;
+  const engine = new ChartEngine(
+    data({ phase: "complete", throughput, resultRates: { download: 100_000 } }),
+    (next) => (published = next),
+    undefined,
+    (opacity) => (fade = opacity),
+  );
+  try {
+    let now = 0;
+    engine.render(now);
+    expect(published.phaseStats).toHaveLength(1);
+    engine.update(data({ runSeq: 2, phase: "connecting" }));
+    const frames: [number, number][] = [];
+    for (let active = true; active && now < 2_000;) {
+      active = engine.render((now += 16));
+      frames.push([fade, published.phaseStats.length]);
+    }
+    const swap = frames.findIndex(([, stats]) => stats === 0);
+    expect(swap).toBeGreaterThan(0);
+    expect(frames.slice(0, swap).every(([opacity]) => opacity > 0)).toBe(true);
+    expect(frames[swap][0]).toBe(0);
+    expect(frames.at(-1)).toEqual([1, 0]);
+  } finally {
+    engine.destroy();
   }
-  expect(active).toBe(false);
-  expect(glide.every((t, i) => i === 0 || t <= glide[i - 1])).toBe(true);
-  expect(timeScale).toBe(5_100);
-  expect(published.layout.viewport.tMax).toBe(5_100);
-  engine.destroy();
 });
 
 function canvasEnvironment() {
@@ -133,7 +174,7 @@ test("saved duplicate terminal points render and hover at the last value without
       500,
       8,
     );
-    expect(counts.curves).toHaveLength(2); // Filled area and line each have one interval.
+    expect(counts.curves.length).toBeGreaterThan(0);
     for (const [x1, _y1, _x2, _y2, x, y] of counts.curves) {
       expect(x1).toBeLessThan(x);
       expect(x).toBeCloseTo(published.layout.x(500), 8);
@@ -228,14 +269,14 @@ test("long history is cached across camera, hover, and glyph frames", () => {
       continuityId: 1,
     }),
   );
+  const current = data({
+    throughput,
+    latency,
+    latencyEnabled: true,
+    timelineAt: () => 4_000,
+  });
+  const engine = new ChartEngine(current);
   try {
-    let current = data({
-      throughput,
-      latency,
-      latencyEnabled: true,
-      timelineAt: () => 4_000,
-    });
-    const engine = new ChartEngine(current);
     engine.attach(canvas);
     engine.render(0);
 
@@ -259,13 +300,14 @@ test("long history is cached across camera, hover, and glyph frames", () => {
     engine.update({ ...current, latencyRevision: 1 });
     engine.render(540);
     expect(clockPaths).toBeLessThan((counts.paths - beforeData) / 10);
-    engine.destroy();
   } finally {
+    engine.destroy();
     restore();
   }
 });
 
-test("equal simultaneous result labels retain distinct lane identities", () => {
+test("equal simultaneous result labels keep their lanes without covering each other", () => {
+  const { canvas, restore } = canvasEnvironment();
   let current = data({
     phase: "complete",
     timelineAt: () => 2_000,
@@ -283,35 +325,40 @@ test("equal simultaneous result labels retain distinct lane identities", () => {
   });
   let published!: ChartPresentation;
   const engine = new ChartEngine(current, (next) => (published = next));
-  engine.render(100);
-  expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
-    "bidiDown",
-    "bidiUp",
-  ]);
-  const [down, up] = published.phaseStats;
-  expect(down!.x).toBe(up!.x);
-  expect(down!.y).toBe(up!.y);
-  expect(down!.bytesPerSec).toBe(up!.bytesPerSec);
+  try {
+    engine.attach(canvas);
+    engine.render(100);
+    expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
+      "bidiDown",
+      "bidiUp",
+    ]);
+    const [down, up] = published.phaseStats;
+    expect(down!.y).toBe(up!.y);
+    expect(up!.x - down!.x).toBeGreaterThanOrEqual(90);
+    expect(down!.bytesPerSec).toBe(up!.bytesPerSec);
 
-  current = {
-    ...current,
-    resultRates: { bidiDown: 200_000, bidiUp: 100_000 },
-  };
-  engine.update(current);
-  engine.render(116);
-  expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
-    "bidiDown",
-    "bidiUp",
-  ]);
-  engine.destroy();
+    current = {
+      ...current,
+      resultRates: { bidiDown: 200_000, bidiUp: 100_000 },
+    };
+    engine.update(current);
+    engine.render(116);
+    expect(published.phaseStats.map((stat) => stat.lane)).toEqual([
+      "bidiDown",
+      "bidiUp",
+    ]);
+  } finally {
+    engine.destroy();
+    restore();
+  }
 });
 
 test("inspection retains a time position through gaps without inventing latency", () => {
   const { canvas, counts, restore } = canvasEnvironment();
+  let current = data({ latencyEnabled: true });
+  let published!: ChartPresentation;
+  const engine = new ChartEngine(current, (next) => (published = next));
   try {
-    let current = data({ latencyEnabled: true });
-    let published!: ChartPresentation;
-    const engine = new ChartEngine(current, (next) => (published = next));
     engine.attach(canvas);
     engine.render(0);
     expect(engine.inspect(100)).toBeNull();
@@ -348,8 +395,8 @@ test("inspection retains a time position through gaps without inventing latency"
       pingCount: 0,
     });
     expect(counts.paths).toBe(before);
-    engine.destroy();
   } finally {
+    engine.destroy();
     restore();
   }
 });

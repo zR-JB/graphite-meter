@@ -3,7 +3,6 @@ import {
   CONNECTION_FRESH_MS,
   connectionDraftRoleKey,
   describeTransferStreams,
-  normalizeStreamCount,
   planServerStreams,
   preparedPaths,
   roleNeedsValidation,
@@ -19,7 +18,6 @@ import type {
   TransferStreamPolicy,
 } from "./contract";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { presentConnections } from "../presentation/paths";
 import { testPreparedPaths } from "./test-helpers.testutil";
 
 const auto = { mode: "auto", count: 6 } as const;
@@ -68,18 +66,22 @@ test("automatic streams follow the protocol table, and HTTP/1 reserves control c
   ).toBe(1);
 });
 
-test("forced streams are exact per direction, capped only by a session", () => {
-  for (const protocol of ["http2", "http3"] as const)
+test("forced streams are exact per direction, capped by a session or the per-client admission", () => {
+  for (const protocol of ["http2", "http3"] as const) {
     expect(
       plan(protocol, { mode: "forced", count: 12 }, "bidirectional"),
     ).toEqual({ down: 12, up: 12 });
+    expect(
+      plan(protocol, { mode: "forced", count: 128 }, "bidirectional"),
+    ).toEqual({ down: 128, up: 128 });
+  }
   expect(
     plan("http3", { mode: "forced", count: 128 }, "download", { wt: true })
       .down,
   ).toBe(WT_MAX_LANES);
-  expect(() =>
-    plan("http1", { mode: "forced", count: 12 }, "bidirectional"),
-  ).toThrow("Forced streams");
+  expect(plan("http1", { mode: "forced", count: 12 }, "bidirectional")).toEqual(
+    { down: 12, up: 12 },
+  );
 });
 
 test("stream diagnostics describe the policy each stage resolves", () => {
@@ -134,13 +136,6 @@ test("stream diagnostics describe the policy each stage resolves", () => {
     expect(describeTransferStreams(policy, stages, protocol, transport)).toBe(
       expected,
     );
-  for (const [value, expected] of [
-    [Number.NaN, 1],
-    [0, 1],
-    [2.4, 2],
-    [999, 128],
-  ] as const)
-    expect(normalizeStreamCount(value)).toBe(expected);
 });
 
 const verified = (paths: PreparedPaths): ConnectionValidation => ({
@@ -168,14 +163,6 @@ test("equivalent selections and display or stage edits reuse verified paths", ()
   expect(
     roleNeedsValidation(edited, validation, "throughput", paths.discovery),
   ).toBe(false);
-});
-
-test("a path card names the carrier beneath each mechanism", () => {
-  const paths = testPreparedPaths();
-  const cards = presentConnections(config(), paths.discovery, verified(paths));
-  expect(cards.throughput.carrier).toBe("HTTP/1.1 · clear");
-  expect(cards.throughput.summary).toEndWith(" · HTTP/1.1 · clear");
-  expect(cards.latency.carrier).toBe("HTTP/1.1 · clear");
 });
 
 test("prepared runs require fresh verified evidence for every needed role", () => {

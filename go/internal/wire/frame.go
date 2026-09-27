@@ -49,7 +49,11 @@ func DecodePong(message string) (Pong, error) {
 }
 
 func EncodePing(id uint32) string {
-	return "PING," + strconv.FormatUint(uint64(id), 10)
+	return string(AppendPing(nil, id))
+}
+
+func AppendPing(dst []byte, id uint32) []byte {
+	return strconv.AppendUint(append(dst, "PING,"...), uint64(id), 10)
 }
 
 func EncodePong(id uint32, handlingNanos uint64) string {

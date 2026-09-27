@@ -1,6 +1,6 @@
 // Pure geometry, formatting, and hover-selection logic behind LatencyProfile.svelte.
-import { fmtMs } from "../format";
-import { niceDomain, type NiceDomain } from "../presentation/scales";
+import { fmtCount, fmtMs } from "../format";
+import { latencyCeiling, latencyScale } from "../presentation/scales";
 import type { ReflectorTimingSummary, TransportRole } from "../runner/contract";
 import { LATENCY_POPULATION } from "../presentation/vocabulary";
 import { STAGES } from "../runner/schedule";
@@ -23,13 +23,14 @@ const METRIC_ORDER: readonly MetricKey[] = [
   "current",
 ];
 
-const METRIC_LABELS: Record<Exclude<MetricKey, "center">, string> = {
-  min: "Min",
-  p10: "P10",
-  p90: "P90",
-  p95: "P95",
-  max: "Max",
-  current: "Latest",
+const METRICS: Record<MetricKey, { label: string; meaning: string }> = {
+  min: { label: "Min", meaning: "Fastest reply" },
+  p10: { label: "P10", meaning: "10% of replies at or below" },
+  center: { label: "Median", meaning: "Half of the replies were faster" },
+  p90: { label: "P90", meaning: "90% of replies at or below" },
+  p95: { label: "P95", meaning: "95% of replies at or below" },
+  max: { label: "Max", meaning: "Slowest reply" },
+  current: { label: "Latest", meaning: "Median of the latest replies" },
 };
 
 type LatencyProfileLaneLike = {
@@ -56,26 +57,26 @@ export interface LatencyProfileViewLane extends LatencyProfileLaneLike {
   active?: boolean;
 }
 
-/** Shared value-domain policy for live and finalized latency profiles. */
+/** The lanes' axis runs from zero to the latency ceiling above their slowest reply, like the gauge's. */
 export function profileDomain(
   lanes: readonly LatencyProfileLaneLike[],
-): NiceDomain {
-  const values = lanes.flatMap((lane) =>
-    [lane.min, lane.max].filter((value): value is number => value != null),
-  );
-  return niceDomain(values, 1);
+): number {
+  const slowest = lanes.flatMap((lane) => lane.max ?? lane.min ?? []);
+  return slowest.length
+    ? latencyCeiling(Math.max(...slowest))
+    : latencyScale([]);
 }
 
 // Position of a value as a 0 to 100% offset along the track, clamped at both ends.
-export function pos(value: number | null, domain: NiceDomain): number {
+export function pos(value: number | null, maxMs: number): number {
   if (value == null) return 0;
-  return Math.min(100, Math.max(0, ((value - domain.min) / domain.span) * 100));
+  return Math.min(100, Math.max(0, (value / maxMs) * 100));
 }
 
 // Sub-1% timeouts keeps a second decimal so a rare drop is still legible.
 export function timeoutLabel(ratio: number): string {
   if (ratio <= 0) return "";
-  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% timeouts`;
+  return `${(ratio * 100).toFixed(ratio < 0.01 ? 2 : 1)}% probe timeouts`;
 }
 
 /** Both supported latency transports provide application probe timeout evidence. */
@@ -90,15 +91,8 @@ export function metricValue(
   return lane[metric] ?? null;
 }
 
-export function metricLabel(metric: MetricKey): string {
-  return metric === "center" ? "Median" : METRIC_LABELS[metric];
-}
-
-function centerLabel(lane: LatencyProfileLaneLike): string {
-  return lane.center == null
-    ? ""
-    : `${metricLabel("center")} ${fmtMs(lane.center)}`;
-}
+export const metricLabel = (metric: MetricKey) => METRICS[metric].label;
+export const metricMeaning = (metric: MetricKey) => METRICS[metric].meaning;
 
 // The present metrics in label order, dropping any the lane has not measured.
 export function entries(
@@ -124,25 +118,6 @@ export function nearestMetric(
   }, null);
 }
 
-// Secondary line under the hovered metric: the band it belongs to, or the lane's center as a fallback anchor.
-export function hoverContext(
-  lane: LatencyProfileLaneLike,
-  metric: MetricKey,
-): string {
-  if (metric === "p10" || metric === "p90") {
-    if (lane.p10 == null || lane.p90 == null) return "";
-    return `P10–P90 ${fmtMs(lane.p10)} – ${fmtMs(lane.p90)}`;
-  }
-  if (metric === "current") {
-    return centerLabel(lane);
-  }
-  if (metric === "center") {
-    if (lane.min == null || lane.max == null) return "";
-    return `Range ${fmtMs(lane.min)} – ${fmtMs(lane.max)}`;
-  }
-  return centerLabel(lane);
-}
-
 export const PARTIAL_ACCOUNTING_HELP =
   "Some probe outcomes are unknown. Counts cover known outcomes only.";
 
@@ -157,12 +132,16 @@ export function probeAccountingDetails(
   >,
 ): string {
   const counts = [
-    `${lane.count} resolved`,
-    lane.timeoutCount == null ? null : `${lane.timeoutCount} timeouts`,
-    lane.unresolvedCount == null ? null : `${lane.unresolvedCount} unresolved`,
+    `${fmtCount(lane.count)} resolved`,
+    lane.timeoutCount == null
+      ? null
+      : `${fmtCount(lane.timeoutCount)} timeouts`,
+    lane.unresolvedCount == null
+      ? null
+      : `${fmtCount(lane.unresolvedCount)} unresolved`,
     lane.sendFailureCount == null
       ? null
-      : `${lane.sendFailureCount} send failures`,
+      : `${fmtCount(lane.sendFailureCount)} send failures`,
   ]
     .filter((value): value is string => value !== null)
     .join(" · ");
@@ -200,25 +179,28 @@ export function probeAccountingSummary(
   return {
     replies:
       replied == null
-        ? `${count} resolved`
-        : `${replied} ${replied === 1 ? "reply" : "replies"}`,
+        ? `${fmtCount(count)} resolved`
+        : `${fmtCount(replied)} ${replied === 1 ? "reply" : "replies"}`,
     exceptions: [
       (lane.timeoutCount ?? 0) > 0
-        ? `${lane.timeoutCount} ${lane.timeoutCount === 1 ? "timeout" : "timeouts"}`
+        ? `${fmtCount(lane.timeoutCount ?? 0)} ${lane.timeoutCount === 1 ? "timeout" : "timeouts"}`
         : null,
       (lane.unresolvedCount ?? 0) > 0
-        ? `${lane.unresolvedCount} unresolved`
+        ? `${fmtCount(lane.unresolvedCount ?? 0)} unresolved`
         : null,
       (lane.sendFailureCount ?? 0) > 0
-        ? `${lane.sendFailureCount} ${lane.sendFailureCount === 1 ? "send failure" : "send failures"}`
+        ? `${fmtCount(lane.sendFailureCount ?? 0)} ${lane.sendFailureCount === 1 ? "send failure" : "send failures"}`
         : null,
     ].filter((value): value is string => value !== null),
   };
 }
 
-export function reflectorTimingDescription(
-  timing: ReflectorTimingSummary,
-): string {
-  return `Server timing · ${timing.sampleCount} paired replies
-Mean server handling ${fmtMs(timing.meanHandlingMs)} ms within a mean RTT of ${fmtMs(timing.meanRawRttMs)} ms.`;
-}
+export const probeOutcomes = (
+  lane: Parameters<typeof probeAccountingDetails>[0] & { label: string },
+) =>
+  `${lane.label} probe outcomes\n${probeAccountingDetails(lane)}\n` +
+  "A timeout is a missing reply, not packet loss";
+
+export const serverHandling = (timing: ReflectorTimingSummary) =>
+  `Server handling ${fmtMs(timing.meanHandlingMs)} ms of a ${fmtMs(timing.meanRawRttMs)} ms ` +
+  `mean round trip (${fmtCount(timing.sampleCount)} paired replies)`;

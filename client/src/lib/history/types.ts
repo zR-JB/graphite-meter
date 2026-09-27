@@ -10,8 +10,15 @@ import {
   type TransportRole,
 } from "../runner/contract";
 import type { CompensationBreakdown } from "../compensation";
+import { isRecord } from "../api/decode";
 import { createUuid } from "../uuid";
-import { planned, STAGES } from "../runner/schedule";
+import {
+  failureScope,
+  outcomeOf,
+  planned,
+  stageLanes,
+  STAGES,
+} from "../runner/schedule";
 import {
   EARLY_FINISH,
   sufficient,
@@ -55,11 +62,6 @@ export function buildHistoryRecord(
   return record;
 }
 
-const lanesOf = (result: RunResult, stage: TransportRole) =>
-  stage === "bidirectional"
-    ? [result.bidirectional?.down, result.bidirectional?.up]
-    : [result[stage]];
-
 /** Invariants a saved result must hold; with the run's config, planned stages must also be covered. */
 export function incoherence(
   result: RunResult,
@@ -72,8 +74,8 @@ export function incoherence(
       problems.push(`unknown failure reason ${failure.reason}`);
   for (const name of STAGES) {
     const status = result.stages[name];
-    const lanes = lanesOf(result, name);
-    const scope = name === "latency" ? "latency" : "throughput";
+    const lanes = stageLanes(result, name);
+    const scope = failureScope(name);
     const explained = failures.some(
       (f) => f.stage === name && f.scope === scope,
     );
@@ -90,10 +92,18 @@ export function incoherence(
     if (status === "not-run" && (lanes.some(Boolean) || spans.length))
       problems.push(`${name} is not-run but has evidence`);
     if (name !== "latency" && status === "complete") {
-      if (!spans.some(({ headline }) => sufficient(headline)))
+      const dirs =
+        name === "bidirectional"
+          ? (["down", "up"] as const)
+          : ([name === "download" ? "down" : "up"] as const);
+      if (
+        !dirs.every((dir) =>
+          spans.some(({ headline }) => sufficient(headline, dir)),
+        )
+      )
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
-      const covered = spans.reduce((ms, i) => ms + i.endMs - i.startMs, 0);
+      const covered = spans.length ? spans.at(-1)!.endMs - spans[0].startMs : 0;
       const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
       if (config && covered < plannedMs * floor)
         problems.push(
@@ -104,19 +114,12 @@ export function incoherence(
   const statuses = Object.values(result.stages);
   if (statuses.every((status) => status === "not-run"))
     problems.push("no stage ran");
-  const expected = statuses.includes("failed")
-    ? "incomplete"
-    : failures.length
-      ? "partial"
-      : "complete";
+  const expected = outcomeOf(statuses, failures.length);
   if (result.outcome !== expected)
     problems.push(`outcome ${result.outcome} should be ${expected}`);
   return problems;
 }
 
-type Plain = Record<string, unknown>;
-const object = (value: unknown): value is Plain =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
 const time = (value: unknown) =>
   typeof value === "number" && !Number.isNaN(new Date(value).getTime());
 
@@ -133,7 +136,7 @@ function plain(value: unknown, depth = 0): boolean {
 }
 
 type Check = (value: unknown) => boolean;
-const num: Check = (value) => typeof value === "number";
+const num: Check = (value) => Number.isFinite(value);
 const str: Check = (value) => typeof value === "string";
 const maybe =
   (check: Check): Check =>
@@ -146,7 +149,7 @@ const list =
 const shape =
   (fields: Record<string, Check>): Check =>
   (value) =>
-    object(value) &&
+    isRecord(value) &&
     Object.entries(fields).every(([key, check]) => check(value[key]));
 const each = (check: Check) =>
   shape(Object.fromEntries(STAGES.map((stage) => [stage, check])));
@@ -193,7 +196,7 @@ const readable = shape({
     ...measured,
     outcome: (value) =>
       ["complete", "partial", "incomplete"].includes(`${value}`),
-    stages: object,
+    stages: isRecord,
     durationMs: num,
     multiServer: shape({
       latencyFocus: str,
@@ -205,7 +208,7 @@ const readable = shape({
           throughput: shape({ transport: str }),
           latencyTarget: maybe(shape({ transport: str })),
           totalBytes: shape({ down: num, up: num }),
-          stages: object,
+          stages: isRecord,
         }),
       ),
       failures: list(
@@ -221,7 +224,7 @@ const readable = shape({
 
 /** A saved record, with schema 4 lifted into a result, or null when a view could not read it. */
 export function readHistoryRecord(value: unknown): HistoryRecord | null {
-  if (!object(value) || !plain(value)) return null;
+  if (!isRecord(value) || !plain(value)) return null;
   const record =
     value.schemaVersion === 4 && liftable(value) ? fromSchema4(value) : value;
   return readable(record) ? (record as HistoryRecord) : null;
@@ -269,16 +272,16 @@ interface Schema4 {
 const liftable = shape({
   id: str,
   stages: shape({
-    latency: shape({ lanes: each(maybe(object)) }),
-    download: object,
-    upload: object,
-    bidirectional: object,
+    latency: shape({ lanes: each(maybe(isRecord)) }),
+    download: isRecord,
+    upload: isRecord,
+    bidirectional: isRecord,
   }),
-  server: object,
-  client: object,
-  transport: shape({ throughput: object, latency: object }),
-  wireEstimates: maybe(shape({ breakdown: object })),
-  multiServer: maybe(shape({ servers: list(object) })),
+  server: isRecord,
+  client: isRecord,
+  transport: shape({ throughput: isRecord, latency: isRecord }),
+  wireEstimates: maybe(shape({ breakdown: isRecord })),
+  multiServer: maybe(shape({ servers: list(isRecord) })),
 }) as (value: unknown) => value is Schema4;
 
 const summary = (
@@ -403,9 +406,11 @@ function fromSchema4(saved: Schema4): HistoryRecord {
       stages: statuses,
       outcome:
         saved.outcome ??
-        (Object.values(statuses).some((s) => s === "partial" || s === "failed")
-          ? "partial"
-          : "complete"),
+        (Object.values(statuses).includes("failed")
+          ? "incomplete"
+          : Object.values(statuses).includes("partial")
+            ? "partial"
+            : "complete"),
       startedAt: saved.startedAt,
       durationMs: saved.durationMs,
     },

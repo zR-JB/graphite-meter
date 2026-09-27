@@ -3,18 +3,16 @@ package goclient
 import (
 	"encoding/json/v2"
 	"math"
-	"os"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestLatencyMatchesTheSharedVectors(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../../api/latency.testvectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := apipin.Read(t, "latency.testvectors.json")
 	var cases []struct {
 		Name       string
 		DeadlineMs []float64

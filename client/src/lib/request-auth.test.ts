@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import {
   redirectForCredentials,
   sessionAuthenticationRequired,
@@ -113,6 +113,46 @@ test("canceling a classification aborts its request without reporting expiry", a
   caller.abort();
   expect(await pending).toBe(false);
   expect(requestSignal!.aborted).toBe(true);
+});
+
+test("classification gives up on a silent server after 3 s and leaves no timer after success", async () => {
+  const requests: AbortSignal[] = [];
+  const request = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init!.signal!;
+    requests.push(signal);
+    if (requests.length > 1)
+      return new Response(null, {
+        status: 403,
+        headers: { "Graphite-Meter-Auth": "required" },
+      });
+    return new Promise<Response>((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason)),
+    );
+  };
+  jest.useFakeTimers();
+  try {
+    const silent = sessionAuthenticationRequired(
+      "https://meter.test",
+      undefined,
+      request,
+    );
+    jest.advanceTimersByTime(2_999);
+    expect(requests[0].aborted).toBe(false);
+    jest.advanceTimersByTime(1);
+    expect(requests[0].aborted).toBe(true);
+    expect(await silent).toBe(false);
+    expect(
+      await sessionAuthenticationRequired(
+        "https://meter.test",
+        undefined,
+        request,
+      ),
+    ).toBe(true);
+    jest.advanceTimersByTime(3_000);
+    expect(requests[1].aborted).toBe(false);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test("an explicit auth marker survives failure while discarding its body", async () => {

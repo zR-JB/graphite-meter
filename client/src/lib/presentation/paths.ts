@@ -131,8 +131,8 @@ function availability(
       disabled: false,
       detail:
         candidates(discovery, role).length > 1
-          ? `Tries ${first} first, then verifies advertised alternatives.`
-          : `Checks ${first}.`,
+          ? `Tries ${first} first, then verifies advertised alternatives`
+          : `Checks ${first}`,
     };
   }
   if (target) {
@@ -170,7 +170,10 @@ function availability(
 export function pathOptions(
   role: ConnectionRole,
   servers: readonly ServerIdentity[],
-  views: ReadonlyMap<string, { discovery: TransportDiscovery | null }>,
+  views: ReadonlyMap<
+    string,
+    { discovery: TransportDiscovery | null; readiness?: string }
+  >,
   config: RunnerConfig,
   observed?: { id?: string; protocol?: ProtocolTarget },
   simultaneous = servers.length > 1,
@@ -237,9 +240,14 @@ export function pathOptions(
   }
   if (!groups.some(([value]) => value === selected))
     groups.push([selected, "Selected origin"]);
+  // A failed server's last discovery says nothing about today.
+  const reachable = servers.filter(
+    (server) => views.get(server.id)?.readiness !== "failed",
+  );
+  const counted = reachable.length ? reachable : servers;
   return groups.map(([value, label]) => {
-    const missing = servers.filter((server) => !discovery(server.id));
-    const incompatible = servers.filter(
+    const missing = counted.filter((server) => !discovery(server.id));
+    const incompatible = counted.filter(
       (server) =>
         discovery(server.id) &&
         availability(discovery(server.id), role, value).disabled,
@@ -260,7 +268,9 @@ export function pathOptions(
           ? `Unavailable on ${names(incompatible)}`
           : missing.length
             ? `Checking ${names(missing)}`
-            : `Available on all ${servers.length} selected servers`;
+            : counted.length === servers.length && counted.length > 1
+              ? `Available on all ${counted.length} selected servers`
+              : `Available on ${names(counted)}`;
     return {
       value,
       label,

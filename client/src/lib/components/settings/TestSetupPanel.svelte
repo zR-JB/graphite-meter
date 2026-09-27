@@ -10,21 +10,30 @@
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
   import { pathOptions } from "../../presentation/paths";
-  import { normalizeStreamCount } from "../../runner/paths";
+  import {
+    BROWSER_CONNECTION_BUDGET,
+    normalizeStreamCount,
+  } from "../../runner/paths";
   import { tooltip } from "../../actions/tooltip";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import {
+    BLOCKED,
     JARGON,
     phaseLabel,
     PING_CADENCE,
     READINESS,
-    counted,
+    READINESS_TIP,
     STAGE,
   } from "../../presentation/vocabulary";
-  import { fmtDuration } from "../../format";
+  import {
+    fmtDuration,
+    rateUnit,
+    rateValueAt,
+    rawRateFrom,
+  } from "../../format";
   import { untrack } from "svelte";
   import {
     announce,
@@ -32,12 +41,17 @@
   } from "../../presentation/announcer.svelte";
   import ConfirmDialog from "../ConfirmDialog.svelte";
 
-  let { onOpenHistory }: { onOpenHistory: (invoker: HTMLElement) => void } =
+  let {
+    open,
+    onOpenHistory,
+  }: { open: boolean; onOpenHistory: (invoker: HTMLElement) => void } =
     $props();
   const running = $derived(store.isRunning);
   let resetConfirmOpen = $state(false);
+  // The panel stays mounted when closed; server discovery runs only while it shows.
   $effect(() => {
     if (
+      open &&
       store.serverCatalog &&
       !store.catalogLoading &&
       !store.isRunning &&
@@ -46,6 +60,10 @@
       untrack(() => controller.loadServerMetadata());
       return () => controller.cancelServerMetadata();
     }
+  });
+  // A confirmation belongs to the visible panel; closing the panel dismisses it.
+  $effect(() => {
+    if (!open) resetConfirmOpen = false;
   });
   function resetSettings() {
     resetConfirmOpen = false;
@@ -93,8 +111,8 @@
   );
 
   const CADENCES = [
-    ["pingCadence", "Idle latency cadence"],
-    ["loadedPingCadence", "Loaded latency cadence"],
+    ["pingCadence", "Idle latency cadence", JARGON.idleCadence],
+    ["loadedPingCadence", "Loaded latency cadence", JARGON.loadedCadence],
   ] as const;
   type Preset = "short" | "medium" | "long" | "custom";
   const PRESETS: Preset[] = ["short", "medium", "long", "custom"];
@@ -167,15 +185,27 @@
       ? DURATION_FIELDS
       : DURATION_FIELDS.filter(([key]) => key !== "bidirectionalMs"),
   );
-  const presetCells = $derived.by(() => {
-    const preset = durationMode;
-    if (preset === "custom") return [];
-    return activeDurationFields.map(([key, label]) => ({
-      label,
-      value: fmtDuration(DURATION_PRESETS[preset][key]),
-    }));
-  });
+  function presetTip(preset: Preset) {
+    const name = preset[0].toUpperCase() + preset.slice(1);
+    if (preset === "custom") return `${name}\nSet each stage's time`;
+    const times = DURATION_PRESETS[preset];
+    return `${name}\n${activeDurationFields
+      .map(([key, label]) => `${label} ${fmtDuration(times[key])}`)
+      .join(" · ")}`;
+  }
 
+  const forced = $derived(store.config.transferStreams.mode === "forced");
+  const queuedStreams = $derived(
+    forced &&
+      store.config.transferStreams.count > BROWSER_CONNECTION_BUDGET &&
+      store.selectedServers.some((id) => {
+        const path = store.servers.get(id)?.paths?.throughput;
+        return (
+          path?.target.transport === "fetch-stream" &&
+          path.fetch.protocol === "http1"
+        );
+      }),
+  );
   const streams = (patch: Partial<RunnerConfig["transferStreams"]>) =>
     controller.configureRun({
       transferStreams: { ...store.config.transferStreams, ...patch },
@@ -186,11 +216,19 @@
   const vizAuto = $derived(
     store.config.visualization.throughputMaxBytesPerSec === "auto",
   );
+  // The maximum keeps one prefix, so a typed number never changes meaning.
+  const MAX_UNIT = 2;
+  const vizUnit = $derived(rateUnit(store.unitBase, store.unitKind, MAX_UNIT));
   const vizDisplay = $derived(
     vizAuto
       ? 0
-      : store.toUnit(
-          store.config.visualization.throughputMaxBytesPerSec as number,
+      : Number(
+          rateValueAt(
+            store.config.visualization.throughputMaxBytesPerSec as number,
+            store.unitBase,
+            store.unitKind,
+            MAX_UNIT,
+          ).toPrecision(4),
         ),
   );
   function setVizAuto(auto: boolean) {
@@ -199,20 +237,32 @@
     );
   }
   function setVizMax(event: Event) {
-    const current = Number(vizDisplay.toFixed(2));
     commitNumber(
       event,
       "gauge",
-      current,
-      (value) => (value > 0 ? value : current),
-      (value) => gaugeMax(Math.max(1, Math.round(store.fromUnit(value)))),
+      vizDisplay,
+      (value) => (value > 0 ? value : vizDisplay),
+      (value) =>
+        gaugeMax(
+          Math.max(
+            1,
+            Math.round(
+              rawRateFrom(value, store.unitBase, store.unitKind, MAX_UNIT),
+            ),
+          ),
+        ),
     );
   }
 
   const readiness = $derived(
     store.startBlocker ? "blocked" : store.selectionValidation,
   );
-  announceChanges(() => `Connection paths: ${READINESS[readiness].label}`);
+  // Settings stays mounted: only a path problem is worth interrupting for.
+  announceChanges(() =>
+    READINESS[readiness].tone === "err" || readiness === "blocked"
+      ? `Connection paths: ${READINESS[readiness].label}`
+      : "",
+  );
 </script>
 
 {#snippet rejectedHint(field: typeof rejected)}
@@ -221,19 +271,30 @@
     </p>{/if}
 {/snippet}
 
-<div class="setup-grid">
-  <h2 class="caps tier-label">Test</h2>
-  <section class="surface-inset panel wide primary">
-    <div class="section-heading">
-      <h3 class="caps">Connection paths</h3>
+{#snippet toggle(
+  label: string,
+  tip: string,
+  checked: boolean,
+  onToggle: (next: boolean) => void,
+  disabled = false,
+)}
+  <div class="switch-row">
+    <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
+  </div>
+{/snippet}
+
+<div class="settings">
+  <section class="group">
+    <div class="group-head">
+      <h3>Connection</h3>
       <span
         class="badge"
         data-readiness={readiness}
         data-tone={READINESS[readiness].tone}
         {@attach tooltip(() =>
-          readiness === "verified"
-            ? JARGON.checkReuse
-            : READINESS[readiness].label,
+          readiness === "blocked"
+            ? `${BLOCKED}\n${store.startBlocker}`
+            : READINESS_TIP[readiness],
         )}
       >
         {READINESS[readiness].label}
@@ -251,272 +312,284 @@
       locked={running || store.preparing}
     />
   </section>
-  <section class="surface-inset panel">
-    <h3 class="caps">Duration &amp; stages</h3>
-    <div class="segmented presets" role="group" aria-label="Duration preset">
-      {#each PRESETS as preset}
-        <button
-          type="button"
-          aria-pressed={durationMode === preset}
-          disabled={store.preparing}
-          onclick={() => setPreset(preset)}>{preset}</button
+
+  <section class="group">
+    <h3>
+      <span {@attach tooltip(() => JARGON.stageTime)}>Duration</span>
+    </h3>
+    <div class="kv">
+      <div>
+        <div
+          class="segmented presets"
+          role="group"
+          aria-label="Duration preset"
         >
-      {/each}
-    </div>
-    <Switch
-      checked={store.config.stages.bidirectional}
-      onToggle={setBidirectional}
-      disabled={store.preparing ||
-        (running && store.phaseStage === "bidirectional")}
-      label="Include concurrent download + upload"
-    />
-    {#if durationMode === "custom"}
-      <div class="duration-fields">
-        {#each activeDurationFields as [key, label]}
-          <label class="field">
-            <span>{label} ms</span>
-            <input
-              type="number"
-              min="0"
-              max={DURATION_LIMITS[key][1]}
-              step="500"
+          {#each PRESETS as preset}
+            <button
+              type="button"
+              aria-pressed={durationMode === preset}
               disabled={store.preparing}
-              value={store.config.duration[key]}
-              onchange={(event) => setDuration(key, event)}
-            />
-          </label>
-        {/each}
+              {@attach tooltip(() => presetTip(preset))}
+              onclick={() => setPreset(preset)}>{preset}</button
+            >
+          {/each}
+        </div>
       </div>
-      <p class="hint">Stages run 1 s to 5 min; 0 skips a stage.</p>
-    {:else}
-      <div class="dur-summary">
-        {#each presetCells as cell}
-          <div class="dur-cell">
-            <span class="caps">{cell.label}</span>
-            <strong>{cell.value}</strong>
+      {#each activeDurationFields as [key, label] (key)}
+        {@const [min, max] = DURATION_LIMITS[key]}
+        {@const tip =
+          key === "warmupMs"
+            ? JARGON.warmup
+            : durationMode === "custom"
+              ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
+              : ""}
+        {#if durationMode === "custom"}
+          <div>
+            <label class="row">
+              <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
+              <span class="number">
+                <input
+                  type="number"
+                  {min}
+                  {max}
+                  step="500"
+                  disabled={store.preparing}
+                  value={store.config.duration[key]}
+                  onchange={(event) => setDuration(key, event)}
+                />
+                <span>ms</span>
+              </span>
+            </label>
           </div>
-        {/each}
-      </div>
-    {/if}
+        {:else}
+          <div class="row">
+            <span {@attach tip ? tooltip(() => tip) : null}>{label}</span>
+            <span class="value"
+              >{fmtDuration(DURATION_PRESETS[durationMode][key])}</span
+            >
+          </div>
+        {/if}
+      {/each}
+      {@render toggle(
+        "Bidirectional stage",
+        JARGON.bidirectionalStage,
+        store.config.stages.bidirectional,
+        setBidirectional,
+        store.preparing || (running && store.phaseStage === "bidirectional"),
+      )}
+      {@render toggle(
+        "Finish stable stages early",
+        JARGON.earlyFinish,
+        store.config.adaptive,
+        (adaptive) => controller.configureRun({ adaptive }),
+        store.preparing,
+      )}
+    </div>
     {@render rejectedHint("duration")}
     {#if running}
-      <p class="hint">
-        Active and future durations, plus unstarted stages, update this run.
-      </p>
+      <p class="hint">Changes apply to the current and unstarted stages.</p>
     {/if}
   </section>
-  <h2 class="caps tier-label">Results</h2>
-  <section class="surface-inset panel">
-    <h3 class="caps">Display units</h3>
-    <div class="two">
-      <div class="field">
-        <span>Rate</span>
+
+  <section class="group">
+    <h3>Display</h3>
+    <div class="kv">
+      <div class="row">
+        <span {@attach tooltip(() => JARGON.rateUnit)}>Rate unit</span>
         <div class="segmented" role="group" aria-label="Rate unit">
           <button
             type="button"
             aria-pressed={store.unitKind === "bits"}
-            {@attach tooltip(() => JARGON.unitBits)}
             onclick={() => store.prefer({ unitKind: "bits" })}>Bits</button
           >
           <button
             type="button"
             aria-pressed={store.unitKind === "bytes"}
-            {@attach tooltip(() => JARGON.unitBytes)}
             onclick={() => store.prefer({ unitKind: "bytes" })}>Bytes</button
           >
         </div>
       </div>
-      <div class="field">
-        <span>Prefix</span>
+      <div class="row">
+        <span {@attach tooltip(() => JARGON.unitPrefix)}>Prefix</span>
         <div class="segmented" role="group" aria-label="Prefix scale">
           <button
             type="button"
             aria-pressed={store.unitBase === "base10"}
-            {@attach tooltip(() => JARGON.unitDecimal)}
             onclick={() => store.prefer({ unitBase: "base10" })}>Decimal</button
           >
           <button
             type="button"
             aria-pressed={store.unitBase === "base2"}
-            {@attach tooltip(() => JARGON.unitBinary)}
             onclick={() => store.prefer({ unitBase: "base2" })}>Binary</button
           >
         </div>
       </div>
-    </div>
-    <p class="hint">Applies to all displayed rates.</p>
-  </section>
-  <section class="surface-inset panel wide">
-    <h3 class="caps">Result history</h3>
-    <Switch
-      checked={store.savingResults}
-      onToggle={(enabled) =>
-        store.prefer({
-          resultHistoryPreference: enabled ? "enabled" : "disabled",
-        })}
-      label="Save completed results on this device"
-    />
-    <a
-      class="btn"
-      href="#/history"
-      onclick={(event) => {
-        event.preventDefault();
-        onOpenHistory(event.currentTarget as HTMLElement);
-      }}><Icon name="history" />Open History</a
-    >
-  </section>
-  <section class="surface-inset panel wide">
-    <h3 class="caps">Wire-rate estimates</h3>
-    <Switch
-      checked={store.showWireEstimates}
-      onToggle={(showWireEstimates) => store.prefer({ showWireEstimates })}
-      label="Show estimated wire rate"
-      tooltip={JARGON.wireRate}
-    />
-    <p class="hint">
-      Estimated Ethernet rate from measured protocol bytes and available
-      connection details.
-    </p>
-  </section>
-  <section class="surface-inset panel">
-    <h3 class="caps">Gauge scale</h3>
-    <Switch
-      checked={vizAuto}
-      onToggle={setVizAuto}
-      label="Scale throughput automatically"
-    />
-    {#if !vizAuto}
-      <label class="field">
-        <span>Maximum {store.unitLabel}</span>
-        <input
-          type="number"
-          min="1"
-          value={Number(vizDisplay.toFixed(2))}
-          onchange={setVizMax}
-        />
-      </label>
-    {/if}
-    {@render rejectedHint("gauge")}
-    <p class="hint">
-      {#if vizAuto}
-        The chart follows the measured peak. The gauge starts at 1 Gbit/s and
-        grows in powers of ten.
-      {:else}
-        Sets the chart ceiling; the gauge rounds up to a readable scale.
+      {@render toggle(
+        "Show estimated wire rate",
+        JARGON.wireRate,
+        store.showWireEstimates,
+        (showWireEstimates) => store.prefer({ showWireEstimates }),
+      )}
+      {@render toggle(
+        "Keyboard shortcuts",
+        JARGON.keyShortcuts,
+        store.keyShortcuts,
+        (keyShortcuts) => store.prefer({ keyShortcuts }),
+      )}
+      {@render toggle(
+        "Scale throughput automatically",
+        JARGON.gaugeAuto,
+        vizAuto,
+        setVizAuto,
+      )}
+      {#if !vizAuto}
+        <div>
+          <label class="row">
+            <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
+            <span class="number">
+              <input
+                type="number"
+                min="1"
+                value={vizDisplay}
+                onchange={setVizMax}
+              />
+              <span>{vizUnit}</span>
+            </span>
+          </label>
+        </div>
       {/if}
-    </p>
+    </div>
+    {@render rejectedHint("gauge")}
   </section>
-  <h2 class="caps tier-label">Advanced</h2>
-  <section class="surface-inset panel">
-    <h3 class="caps">Early finish</h3>
-    <Switch
-      checked={store.config.adaptive}
-      onToggle={(adaptive) => controller.configureRun({ adaptive })}
-      disabled={store.preparing}
-      label="Finish stable stages early"
-    />
+
+  <section class="group">
+    <div class="group-head">
+      <h3>History</h3>
+      <a
+        class="btn btn-quiet"
+        href="#/history"
+        onclick={(event) => {
+          event.preventDefault();
+          onOpenHistory(event.currentTarget as HTMLElement);
+        }}><Icon name="history" />Open History</a
+      >
+    </div>
+    <div class="kv">
+      {@render toggle(
+        "Save completed results on this device",
+        JARGON.saveResults,
+        store.savingResults,
+        (enabled) =>
+          store.prefer({
+            resultHistoryPreference: enabled ? "enabled" : "disabled",
+          }),
+      )}
+    </div>
   </section>
-  <section class="surface-inset panel">
-    <h3 class="caps">Latency timing</h3>
-    {#each CADENCES as [key, label] (key)}
-      <label class="field">
-        <span>{label}</span>
-        <select
-          value={store.config[key]}
-          onchange={(event) =>
-            controller.configureRun({
-              [key]: event.currentTarget.value as PingCadence,
-            })}
-          disabled={running || store.preparing}
-        >
-          {#each Object.entries(PING_CADENCE) as [value, name] (value)}
-            <option {value}>{name}</option>
-          {/each}
-        </select>
-      </label>
-    {/each}
-    <Switch
-      checked={store.config.skipLoadedLatencyWhenStageOff}
-      onToggle={(skipLoadedLatencyWhenStageOff) =>
-        controller.configureRun({ skipLoadedLatencyWhenStageOff })}
-      disabled={running || store.preparing}
-      label="Skip loaded latency when latency is off"
-    />
+
+  <section class="group">
+    <h3>Latency probes</h3>
+    <div class="kv">
+      {#each CADENCES as [key, label, tip] (key)}
+        <div>
+          <label class="row">
+            <span {@attach tooltip(() => tip)}>{label}</span>
+            <select
+              value={store.config[key]}
+              onchange={(event) =>
+                controller.configureRun({
+                  [key]: event.currentTarget.value as PingCadence,
+                })}
+              disabled={running || store.preparing}
+            >
+              {#each Object.entries(PING_CADENCE) as [value, name] (value)}
+                <option {value}>{name}</option>
+              {/each}
+            </select>
+          </label>
+        </div>
+      {/each}
+      {@render toggle(
+        "Skip loaded latency when latency is off",
+        JARGON.skipLoadedLatency,
+        store.config.skipLoadedLatencyWhenStageOff,
+        (skipLoadedLatencyWhenStageOff) =>
+          controller.configureRun({ skipLoadedLatencyWhenStageOff }),
+        running || store.preparing,
+      )}
+    </div>
   </section>
-  <section class="surface-inset panel">
-    <h3 class="caps">Datagram throughput</h3>
-    {#if store.config.experimentalDatagramThroughput || datagramSelected}
-      <!-- Above the toggle, where a long scroll ends; a status, not an alert. -->
-      <p class="notice" data-tone="warn" role="status">
-        <strong>Measures application datagram delivery.</strong> Datagrams are not
-        retransmitted. Missing deliveries can come from network or endpoint queues;
-        they do not identify physical packet loss. Expect a lower received rate than
-        stream transfers, especially for browser uploads.
+
+  <section class="group">
+    <h3>Transfers</h3>
+    <div class="kv">
+      {@render toggle(
+        "Force exact stream count",
+        JARGON.forcedStreams,
+        forced,
+        (on) => streams({ mode: on ? "forced" : "auto" }),
+        running || store.preparing,
+      )}
+      <div>
+        <label class="row">
+          <span
+            {@attach tooltip(() =>
+              forced ? JARGON.forcedStreamCount : JARGON.autoStreamCount,
+            )}
+            >{forced
+              ? "Streams per server and direction"
+              : "Maximum H1 streams per direction"}</span
+          >
+          <input
+            type="number"
+            min="1"
+            max="128"
+            step="1"
+            disabled={running || store.preparing}
+            value={store.config.transferStreams.count}
+            onchange={(event) =>
+              commitNumber(
+                event,
+                "streams",
+                store.config.transferStreams.count,
+                normalizeStreamCount,
+                (count) => streams({ count }),
+              )}
+          />
+        </label>
+      </div>
+      {@render toggle(
+        "Datagram throughput (experimental)",
+        JARGON.datagramThroughput,
+        store.config.experimentalDatagramThroughput,
+        (experimentalDatagramThroughput) =>
+          controller.configureRun({ experimentalDatagramThroughput }),
+        running || store.preparing,
+      )}
+    </div>
+    {@render rejectedHint("streams")}
+    {#if queuedStreams}
+      <p class="hint">
+        Browsers run {BROWSER_CONNECTION_BUDGET} HTTP/1.1 requests per server at once.
+        Streams past that wait for a free connection.
       </p>
     {/if}
-    <Switch
-      checked={store.config.experimentalDatagramThroughput}
-      onToggle={(experimentalDatagramThroughput) =>
-        controller.configureRun({ experimentalDatagramThroughput })}
-      disabled={running || store.preparing}
-      label="Datagram throughput (experimental)"
-    />
-    <p class="hint">
-      Adds the WebTransport datagram card to the connection picker.
-    </p>
-  </section>
-  <section class="surface-inset panel">
-    <h3 class="caps">Transfer streams</h3>
-    <Switch
-      checked={store.config.transferStreams.mode === "forced"}
-      onToggle={(forced) => streams({ mode: forced ? "forced" : "auto" })}
-      disabled={running || store.preparing}
-      label="Force exact stream count"
-      tooltip={JARGON.forcedStreams}
-    />
-    <label class="field">
-      <span
-        >{store.config.transferStreams.mode === "forced"
-          ? "Streams per server and direction"
-          : "Maximum H1 streams per direction"}</span
-      >
-      <input
-        type="number"
-        min="1"
-        max="128"
-        step="1"
-        disabled={running || store.preparing}
-        value={store.config.transferStreams.count}
-        onchange={(event) =>
-          commitNumber(
-            event,
-            "streams",
-            store.config.transferStreams.count,
-            normalizeStreamCount,
-            (count) => streams({ count }),
-          )}
-      />
-    </label>
-    {@render rejectedHint("streams")}
     {#if store.streamPlanError}
       <p class="notice" data-tone="warn" role="status">
         {store.streamPlanError}
       </p>
     {/if}
-    {#if store.config.transferStreams.mode === "forced"}
-      <p class="hint">
-        Starts exactly {counted(store.config.transferStreams.count, "request")} per
-        server and active direction. The run reserves progress and control capacity
-        and allows at most 128 streams per direction.
-      </p>
-    {:else}
-      <p class="hint">
-        Automatic caps HTTP/1.1 at {store.config.transferStreams.count}. HTTP/2
-        and HTTP/3 choose safe multiplexed request counts automatically.
+    {#if store.config.experimentalDatagramThroughput || datagramSelected}
+      <p class="notice" data-tone="warn" role="status">
+        <span
+          ><strong>Datagram delivery, not packet loss.</strong> Datagrams are never
+          resent; expect lower rates than streams, mostly for uploads.</span
+        >
       </p>
     {/if}
   </section>
-  <div class="settings-reset wide">
+
+  <div class="settings-reset">
     <button
       class="btn btn-danger"
       type="button"
@@ -530,7 +603,7 @@
   open={resetConfirmOpen}
   id="settings-reset-confirm"
   title="Reset settings?"
-  description={JARGON.resetSettings}
+  description="Restore test, display and history-saving settings to their defaults? Your theme, panel layout and saved results are kept."
   cancelLabel="Keep settings"
   confirmLabel="Reset settings"
   onCancel={() => (resetConfirmOpen = false)}
@@ -538,80 +611,61 @@
 />
 
 <style>
-  .setup-grid {
+  .settings {
     display: grid;
-    /* Connection cards share this breakpoint so a widened dock reflows as one. */
-    --settings-card-min: 180px;
-    grid-template-columns: repeat(
-      auto-fit,
-      minmax(min(100%, var(--settings-card-min)), 1fr)
-    );
-    gap: var(--space-3);
-    container: settings-grid / inline-size;
+    gap: var(--space-4);
+    container: settings / inline-size;
   }
-  .panel {
-    display: grid;
-    align-content: start;
-    gap: var(--space-3);
-    min-width: 0;
-    padding: var(--space-3);
-  }
-  .wide,
-  .tier-label {
-    grid-column: 1 / -1;
-  }
-  .primary {
-    border-color: color-mix(in srgb, var(--brand) 24%, var(--border));
-  }
-  .tier-label {
-    margin-top: var(--space-1);
-  }
-  .tier-label:first-child {
-    margin-top: 0;
-  }
-  .section-heading {
+  .group-head {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: var(--space-2);
+  }
+  /* One row per setting: its name on the left, its control on the right. */
+  .row {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: space-between;
     gap: var(--space-3);
+    min-width: 0;
+    min-height: var(--control-h);
+  }
+  .switch-row > :global(.switch) {
+    flex: 1;
+    flex-direction: row-reverse;
+    justify-content: space-between;
+    min-height: var(--control-h);
+  }
+  .value {
+    font-weight: var(--w-normal);
+  }
+  .number {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-soft);
+    font-size: var(--type-sm);
+  }
+  .row input {
+    width: 7rem;
+    text-align: end;
+  }
+  .row select {
+    width: auto;
+    max-width: 11rem;
+  }
+  .presets {
+    flex: 1;
   }
   .presets > button {
     text-transform: capitalize;
   }
-  a.btn {
-    justify-self: start;
+  .row > .segmented {
+    flex: 0 1 12rem;
   }
   .settings-reset {
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border);
-  }
-  .two,
-  .duration-fields {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: var(--space-2) var(--space-3);
-  }
-  .dur-summary {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 70px), 1fr));
-    gap: 6px;
-  }
-  .dur-cell {
-    display: grid;
-    gap: 2px;
-    min-width: 0;
-    padding: 6px var(--space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--r-well);
-    background: var(--surface-1);
-  }
-  .dur-cell span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .dur-cell strong {
-    font: var(--w-strong) var(--type-sm) var(--font-mono);
-    font-variant-numeric: tabular-nums;
+    margin-top: var(--space-2);
   }
 </style>

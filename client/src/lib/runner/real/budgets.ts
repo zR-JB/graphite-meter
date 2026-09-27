@@ -16,6 +16,12 @@ export const DIRECTION_PROGRESS_WINDOW_MS = 1500;
 export const BUSY_RESTART_CAP_MS =
   DIRECTION_PROGRESS_WINDOW_MS - LANE_RESTART_BACKOFF_MS;
 
+export const restartDelayMs = (busyRefusals: number, retryAfterMs = 0) =>
+  Math.min(
+    BUSY_RESTART_CAP_MS,
+    Math.max(LANE_RESTART_BACKOFF_MS * 2 ** busyRefusals, retryAfterMs),
+  );
+
 /** Time a graceful stop is given to finalize and acknowledge. */
 export const STOP_GRACE_MS = 2500;
 

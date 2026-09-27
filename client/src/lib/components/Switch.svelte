@@ -16,6 +16,9 @@
     tooltip: tooltipText = "",
   }: Props = $props();
 
+  const uid = $props.id();
+  const describedBy = `${uid}-tip`;
+
   function handleChange(e: Event & { currentTarget: HTMLInputElement }) {
     const next = e.currentTarget.checked;
     e.currentTarget.checked = checked;
@@ -23,16 +26,22 @@
   }
 </script>
 
-<label class="switch" class:disabled {@attach tooltip(() => tooltipText)}>
+<label class="switch" class:disabled>
   <input
     class="sr-only"
     type="checkbox"
+    aria-describedby={tooltipText ? describedBy : undefined}
     {checked}
     {disabled}
     onchange={handleChange}
   />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
-  {#if label}<span class="label">{label}</span>{/if}
+  {#if tooltipText}<span class="sr-only" id={describedBy}>{tooltipText}</span
+    >{/if}
+  {#if label}<span
+      class="label"
+      {@attach tooltipText ? tooltip(() => tooltipText) : null}>{label}</span
+    >{/if}
 </label>
 
 <style>
@@ -45,6 +54,11 @@
     border-radius: var(--r-well);
     user-select: none;
   }
+  @media (pointer: coarse) {
+    .switch {
+      min-height: var(--hit);
+    }
+  }
   .switch.disabled {
     cursor: not-allowed;
     opacity: 0.5;
@@ -54,7 +68,7 @@
     flex: none;
     width: 36px;
     height: 20px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--field-edge);
     border-radius: var(--r-full);
     background: var(--surface-inset);
     transition: var(--transition-control);
@@ -80,8 +94,7 @@
     background: var(--brand);
   }
   .label {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     min-width: 0;
-    font-size: var(--type-sm);
   }
 </style>

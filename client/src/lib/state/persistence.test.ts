@@ -1,38 +1,28 @@
 // In-memory storage and cloned defaults keep persistence tests isolated within Bun.
-import { test, expect, beforeEach } from "bun:test";
+import { test, expect, beforeEach, afterAll } from "bun:test";
 import { DEFAULT_CONFIG } from "./defaults";
+import { stubGlobals } from "../test-helpers.testutil";
 
-class MemoryStorage {
-  private map = new Map<string, string>();
-  getItem(key: string): string | null {
-    return this.map.get(key) ?? null;
-  }
-  setItem(key: string, value: string): void {
-    this.map.set(key, value);
-  }
-  clear(): void {
-    this.map.clear();
-  }
-}
-const memoryStorage = new MemoryStorage();
-(globalThis as { window?: unknown }).window = { localStorage: memoryStorage };
+const stored = new Map<string, string>();
+const restore = stubGlobals({
+  window: {
+    localStorage: {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+    },
+  },
+});
+afterAll(restore);
 
 const loaded = (value: unknown) => {
-  memoryStorage.setItem(STORAGE_KEY, JSON.stringify(value));
+  stored.set(STORAGE_KEY, JSON.stringify(value));
   return loadPersisted();
 };
 
-beforeEach(() => {
-  memoryStorage.clear();
-});
+beforeEach(() => stored.clear());
 
-const {
-  loadPersisted,
-  savePersisted,
-  defaultPersisted,
-  resolveResultHistoryPreference,
-  STORAGE_KEY,
-} = await import("./persistence");
+const { loadPersisted, savePersisted, defaultPersisted, STORAGE_KEY } =
+  await import("./persistence");
 
 test("stored value at the current shape: hydrates as-is", () => {
   const snapshot = defaultPersisted();
@@ -51,15 +41,6 @@ test("invalid history preference falls back to default and preserves explicit ov
     JSON.stringify({ ...snapshot, resultHistoryPreference: "corrupt" }),
   );
   expect(loadPersisted().resultHistoryPreference).toBe("default");
-});
-
-test("history preference resolves explicit choices over either operator default", () => {
-  expect(resolveResultHistoryPreference("default", false)).toBe(false);
-  expect(resolveResultHistoryPreference("default", true)).toBe(true);
-  expect(resolveResultHistoryPreference("enabled", false)).toBe(true);
-  expect(resolveResultHistoryPreference("enabled", true)).toBe(true);
-  expect(resolveResultHistoryPreference("disabled", false)).toBe(false);
-  expect(resolveResultHistoryPreference("disabled", true)).toBe(false);
 });
 
 test("history columns default, validate, deduplicate, and preserve order", () => {
@@ -99,13 +80,6 @@ test("the early-finish switch loads from both saved shapes", () => {
     ["yes", DEFAULT_CONFIG.adaptive],
   ] as const)
     expect(loaded({ config: { adaptive } }).config.adaptive).toBe(expected);
-});
-
-test("new installations use reply-driven unloaded and medium loaded cadence", () => {
-  expect(loadPersisted().config).toMatchObject({
-    pingCadence: "reply-driven",
-    loadedPingCadence: "medium",
-  });
 });
 
 test("obsolete settings load as current defaults", () => {
@@ -149,6 +123,19 @@ test("saved numbers keep their type and stay within bounds", () => {
   });
 });
 
+test("a stage saved with 0 ms loads switched off at its default time", () => {
+  const config = loaded({
+    config: {
+      stages: { latency: true, download: true, upload: true },
+      duration: { warmupMs: 0, uploadMs: 0 },
+    },
+  }).config;
+  expect(config.stages.upload).toBe(false);
+  expect(config.stages.download).toBe(true);
+  expect(config.duration.uploadMs).toBe(DEFAULT_CONFIG.duration.uploadMs);
+  expect(config.duration.warmupMs).toBe(0);
+});
+
 test("invalid forced stream settings are normalized", () => {
   expect(
     loaded({ config: { transferStreams: { mode: "forced", count: 999.4 } } })
@@ -157,7 +144,7 @@ test("invalid forced stream settings are normalized", () => {
 });
 
 test("corrupt (non-JSON) stored value: falls back to defaults without throwing", () => {
-  memoryStorage.setItem(STORAGE_KEY, "{not valid json");
+  stored.set(STORAGE_KEY, "{not valid json");
   expect(() => loadPersisted()).not.toThrow();
   expect(loadPersisted()).toEqual(defaultPersisted());
 });

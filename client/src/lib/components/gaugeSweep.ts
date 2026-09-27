@@ -10,7 +10,7 @@ export interface SweepTargetInput {
   valueBytesPerSec: number;
   /** Absolute throughput scale (bytes/sec); <=0 is treated as 1 (no scale yet). */
   scaleBytesPerSec: number;
-  /** True only after an authoritative sample for the current transfer phase. */
+  /** True once the run's transfer rates have evidence; a warmup holds the last stage's. */
   throughputEvidence: boolean;
   /** Full-scale ms for the latency phase; <=0 is treated as 1. */
   latencyScaleMs: number;
@@ -19,37 +19,24 @@ export interface SweepTargetInput {
   /** Metric represented after completion. */
   completedKind: "speed" | "latency";
 }
-/** Fixed positions for the phases that carry no measurable value. */
-const NEUTRAL_SWEEP = 0.5;
-const FAULT_SWEEP = 0.05;
-/** The 0-1 sweep fraction the dial eases toward for the given frame's state. */
-export function sweepTarget(s: SweepTargetInput): number {
-  const throughput = () => {
-    if (!s.throughputEvidence) return NEUTRAL_SWEEP;
-    return throughputGaugeFraction(s.valueBytesPerSec, s.scaleBytesPerSec);
-  };
-  const latency = () => {
-    const scale = s.latencyScaleMs > 0 ? s.latencyScaleMs : 1;
-    return clamp01(s.rtt / scale);
-  };
+/** The 0-1 sweep for the value the dial shows, or null while it shows none. */
+export function sweepTarget(s: SweepTargetInput): number | null {
+  const latency = () =>
+    clamp01(s.rtt / (s.latencyScaleMs > 0 ? s.latencyScaleMs : 1));
   switch (s.phase) {
+    case "latency":
+      return latency();
+    case "warmup":
     case "download":
     case "upload":
     case "bidirectional":
-      return throughput();
-    case "connecting":
-    case "warmup":
-      return NEUTRAL_SWEEP;
-    case "latency":
-      return latency();
-    case "idle":
-      return NEUTRAL_SWEEP;
+      return s.throughputEvidence
+        ? throughputGaugeFraction(s.valueBytesPerSec, s.scaleBytesPerSec)
+        : null;
     case "complete":
-      return s.completedKind === "latency" ? latency() : throughput();
-    case "aborted":
-    case "error":
+      return s.completedKind === "latency" ? latency() : null;
     default:
-      return FAULT_SWEEP;
+      return null;
   }
 }
 /** Map a 0-1 sweep fraction to its position (radians) along the dial's arc. */

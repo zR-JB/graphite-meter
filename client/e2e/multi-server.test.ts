@@ -3,6 +3,7 @@ import {
   amsterdam,
   baseConfig,
   closeSettings,
+  countSaves,
   frankfurt,
   helsinki,
   home,
@@ -59,8 +60,9 @@ test("four servers share one run and keep separate receiver windows", async (pag
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();
-  await page.getByRole("button", { name: /^Servers & paths/ }).click();
-  const servers = page.locator(".result-detail tbody tr");
+  const servers = page.locator(".result-detail section.group", {
+    hasText: "Address",
+  });
   await expect(servers).toHaveCount(4);
   await expect(servers.nth(1)).toContainText(new URL(frankfurt.url).host);
   expect(await savedResult(page)).toEqual(saved);
@@ -88,14 +90,13 @@ test("an HTTP page without WebTransport verifies clear and TLS HTTP/1.1", async 
 
   await page.getByRole("button", { name: "Details" }).click();
   const info = page.locator(".infra");
-  const badge = (role: string) =>
-    info.locator(".path", { hasText: `${role} path` }).locator(".badge");
+  const path = (role: string) => info.locator(`.path[data-role="${role}"] dd`);
   await info.getByRole("combobox", { name: "Inspect server" }).fill("server-1");
   await expect(info.locator(".server-card")).toContainText(frankfurt.url);
-  await expect(badge("throughput")).toHaveText("Used");
-  await expect(badge("latency")).toHaveText("Not in test");
+  await expect(path("throughput")).toContainText("Used");
+  await expect(path("latency")).toHaveText("Not measured");
   await info.getByRole("combobox", { name: "Inspect server" }).fill("self");
-  await expect(badge("latency")).toHaveText("Used");
+  await expect(path("latency")).toContainText("Used");
 });
 
 test("deselecting a verified peer starts a self-only run at once", async (page) => {
@@ -110,12 +111,12 @@ test("deselecting a verified peer starts a self-only run at once", async (page) 
   expect(saved.result.upload?.reportedBytesPerSec).toBeGreaterThan(0);
 });
 
-test("one missed upload checkpoint keeps the interval and the run", async (page) => {
+test("a missed final upload checkpoint is retried and keeps the interval and the run", async (page) => {
   await open(page, home.url, { servers: [home, frankfurt], config: combined });
   await ready(page);
   await page.evaluate((origin) => {
     const original = window.fetch.bind(window);
-    Object.assign(window, { missed: 0 });
+    Object.assign(window, { checkpoints: 0 });
     window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), location.href);
       const uploading =
@@ -123,17 +124,18 @@ test("one missed upload checkpoint keeps the interval and the run", async (page)
         "upload";
       if (
         !uploading ||
-        (window as any).missed ||
         url.origin !== origin ||
-        url.pathname !== "/upload/checkpoint"
+        url.pathname !== "/upload/checkpoint" ||
+        (window as any).checkpoints++
       )
         return original(input, init);
-      (window as any).missed++;
       return Promise.resolve(new Response(null, { status: 503 }));
     }) as typeof fetch;
   }, frankfurt.url);
   const saved = await run(page);
-  expect(await page.evaluate(() => (window as any).missed)).toBe(1);
+  expect(
+    await page.evaluate(() => (window as any).checkpoints),
+  ).toBeGreaterThan(1);
   expect(saved.result.outcome).toBe("complete");
   expect(saved.result.multiServer.failures).toEqual([]);
   const upload = saved.result.multiServer.intervals.filter(
@@ -155,13 +157,9 @@ test("switching the latency server after completion keeps the saved record", asy
     config: combined,
   });
   await ready(page);
-  await page.evaluate(() => {
-    Object.assign(window, { saves: 0 });
-    new BroadcastChannel("graphite-meter-history").onmessage = () =>
-      (window as any).saves++;
-  });
+  const saves = await countSaves(page);
   const saved = await run(page);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
   const source = saved.result.multiServer.latencyFocus;
   const other = source === "self" ? "server-1" : "self";
   const focus = page.getByRole("combobox", {
@@ -171,7 +169,7 @@ test("switching the latency server after completion keeps the saved record", asy
   await focus.fill(other);
   await expect(focus).toHaveValue(other);
   expect(await savedResult(page)).toEqual(saved);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
 
   await page.evaluate((id) => (location.hash = `/history/${id}`), saved.id);
   await page.reload();

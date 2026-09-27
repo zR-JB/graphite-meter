@@ -189,7 +189,7 @@ class RustServerReleaseTests(unittest.TestCase):
 
 class RustRequestBoundaryTests(unittest.TestCase):
     def test_dispatch_selection_cannot_be_forged_in_the_artifact(self) -> None:
-        from fixtures import fake, git_head
+        from fixtures import git_head, github
         from release import OCI, Release, request_title, verify_request
         from test_trust import (MAIN, HEAD, REPO, REQUEST_RUN, ARTIFACTS,
                                 artifacts, dispatch_run, trusted)
@@ -224,21 +224,21 @@ class RustRequestBoundaryTests(unittest.TestCase):
                             (request / name).mkdir()
                         dispatched = Release(release.tag, release.sha, release.pr,
                                              "tui" if selection == "none" else "none") if forged else release
-                        api = fake(trusted(stable, "validate") | {
+                        responses = trusted(stable, "validate") | {
                             REQUEST_RUN: dispatch_run(31337, 4242, request_title("validate", dispatched, MAIN)),
                             ARTIFACTS: artifacts(*names),
-                        })
+                        }
                         environment = {
                             "REPOSITORY": REPO, "REPOSITORY_OWNER": "zR-JB", "PUBLISHER_SHA": MAIN,
                             "WORKFLOW_REF": f"{REPO}/.github/workflows/release.yml@refs/heads/main",
                             "REQUEST_RUN_ID": "4242",
                         } | git_head(root, MAIN)
-                        with patch.dict(os.environ, environment):
+                        with patch.dict(os.environ, environment), github(responses):
                             if forged:
                                 with self.assertRaisesRegex(VerificationError, "dispatch inputs"):
-                                    verify_request(request, api=api)
+                                    verify_request(request)
                             else:
-                                self.assertEqual(verify_request(request, api=api), (release, False))
+                                self.assertEqual(verify_request(request), (release, False))
 
     def test_rust_oci_requires_one_amd64_image_with_matching_provenance(self) -> None:
         from fixtures import ATTESTED, RUNNABLE, index

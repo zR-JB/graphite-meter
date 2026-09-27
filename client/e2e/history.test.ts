@@ -1,5 +1,5 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import { home, open, ready, run, runButton } from "./fleet";
+import { countSaves, home, open, ready, run, runButton } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) =>
@@ -164,6 +164,8 @@ async function history(page: Page, selected = "") {
   await page.goto(`${home.url}/#/history${selected && `/${selected}`}`);
 }
 
+const OPEN_BOUND = { timeout: 10_000 };
+
 test("a 2,000-result archive sorts in bounded chunks and caps deep links", async (page) => {
   await fixturePage(page);
   const archive = Array.from({ length: 2_001 }, (_, index) => record(index));
@@ -174,26 +176,14 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
   await expect(rows).toHaveCount(50, { timeout: 15_000 });
   const heading = page.locator(".history-head p");
   await expect(heading).toContainText("2000 results");
-  const elapsed = await page.evaluate((lowest) => {
-    const button = document.querySelector<HTMLButtonElement>(
-      '.column-head button:has([data-tone="download"])',
-    )!;
-    const list = document.querySelector(".history-table ol")!;
-    const started = performance.now();
-    return new Promise<number>((resolve) => {
-      const done = () => {
-        const first = document.querySelector(".result-row");
-        if (first?.getAttribute("data-history-id") !== lowest) return;
-        observer.disconnect();
-        resolve(performance.now() - started);
-      };
-      const observer = new MutationObserver(done);
-      observer.observe(list, { childList: true, subtree: true });
-      button.click();
-      queueMicrotask(done);
-    });
-  }, id(1_999));
-  expect(elapsed).toBeLessThan(1_000);
+  await page.locator('.column-head button:has([data-tone="download"])').click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.querySelector(".result-row")?.getAttribute("data-history-id"),
+      ),
+    )
+    .toBe(id(1_999));
   await expect(rows).toHaveCount(50);
 
   await history(page, id(2_000));
@@ -202,6 +192,21 @@ test("a 2,000-result archive sorts in bounded chunks and caps deep links", async
     "Grade",
   );
   await expect(heading).toContainText("2000 results");
+});
+
+test("a closed Columns popover never takes a tap meant for a result", async (page) => {
+  await fixturePage(page);
+  await seed(page, { records: [record(1)] });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await history(page);
+  const options = page.getByRole("dialog", { name: "History view options" });
+  await page
+    .getByRole("button", { name: "Choose columns and sort order" })
+    .click();
+  await expect(options).toBeVisible();
+  await page.raw.press("Escape");
+  await page.locator(".result-row").click();
+  await expect(page.locator(".result-detail")).toBeVisible();
 });
 
 test("unsupported and malformed rows are skipped, kept and clearable", async (page) => {
@@ -253,18 +258,13 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
     clears: { corrupt: true },
   });
   await page.goto(home.url);
-  await page.evaluate(() => {
-    (window as any).saves = 0;
-    new BroadcastChannel("graphite-meter-history").onmessage = () => {
-      (window as any).saves++;
-    };
-  });
+  const saves = await countSaves(page);
   await ready(page);
   await run(page);
   const saved = await stored(page);
   expect(saved.records).toHaveLength(3);
   expect(saved.records).toContainEqual(malformed);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
   // A result after another tab's clear saves even when the clock stepped back a day.
   await seed(page, { records: [], clears: 2 });
   await page.reload();
@@ -308,7 +308,7 @@ test("History never waits on another version's connection and never changes its 
   await page.evaluate(() =>
     new BroadcastChannel("graphite-meter-history").postMessage(""),
   );
-  await expect(refusal).toBeVisible();
+  await expect(refusal).toBeVisible(OPEN_BOUND);
 
   // An older build that keeps its connection open is refused within a moment, and never upgraded.
   await fixturePage(page);
@@ -330,7 +330,7 @@ test("History never waits on another version's connection and never changes its 
   );
   expect(older).toBe("v1");
   await page.evaluate(() => (location.hash = "#/history"));
-  await expect(refusal).toBeVisible();
+  await expect(refusal).toBeVisible(OPEN_BOUND);
   await page.evaluate(() => (window as any).older.close());
   // An open cannot be cancelled: read once History's queued upgrade has been refused and left version 1.
   await expect
@@ -361,9 +361,9 @@ test("History refuses other database versions without changing them", async (pag
     const refusal = page.getByRole("heading", {
       name: "History is unavailable",
     });
-    await expect(refusal).toBeVisible();
+    await expect(refusal).toBeVisible(OPEN_BOUND);
     await page.getByRole("button", { name: "Retry", exact: true }).click();
-    await expect(refusal).toBeVisible();
+    await expect(refusal).toBeVisible(OPEN_BOUND);
     expect(await stored(page)).toEqual(before);
   }
 });

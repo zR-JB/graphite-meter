@@ -1,26 +1,16 @@
 package wire
 
 import (
-	"os"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/zR-JB/graphite-meter/go/internal/apipin"
 )
 
 func TestCodecMatchesCorpus(t *testing.T) {
-	corpus, err := os.ReadFile("../../../api/wire.testvectors.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for line := range strings.SplitSeq(string(corpus), "\n") {
-		if strings.HasPrefix(line, "#") || line == "" {
-			continue
-		}
-		parts := strings.Split(line, "|")
-		if len(parts) != 3 {
-			t.Fatalf("malformed corpus row: %s", line)
-		}
-		op, input, expected := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	for _, row := range apipin.Rows(t, "wire.testvectors.txt", 3) {
+		op, input, expected := row[0], row[1], row[2]
 		t.Run(op+"/"+input, func(t *testing.T) {
 			var actual string
 			var err error

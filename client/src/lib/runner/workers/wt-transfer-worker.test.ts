@@ -1,13 +1,14 @@
 import { test, expect, afterEach, beforeEach, jest } from "bun:test";
 import {
   bootWorker,
-  elapse,
-  taskTurn,
+  fakeWebTransport,
+  type FakeWebTransport,
   type WorkerRealm,
 } from "./test-helpers.testutil";
+import { elapse, taskTurn } from "../../test-helpers.testutil";
 import type { LaneFailure } from "../contract";
+import { PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 
-const globals = globalThis as Record<string, unknown>;
 const SESSION_URL = "https://meter.test/wt/upload?id=gmu_test";
 const DOWNLOAD_URL = "https://meter.test/wt/download?bytes=1024";
 const PROGRESS_URL = "https://meter.test/upload/progress?id=gmu_test";
@@ -98,106 +99,81 @@ function fakeDatagrams(timing: Timing, tick: () => void) {
     },
   };
 }
-let timing: Timing = "macro";
-let mintRefuses = false;
-let dialRefuses = false;
-let dialReady: Promise<void> | undefined;
+interface Setup {
+  timing: Timing;
+  dialRefuses: boolean;
+  holdDial: boolean;
+  mintRefuses: boolean;
+  fetch?: typeof fetch;
+}
 let mints = 0;
-const dialUrls: string[] = [];
+let feed: FeedStream;
+let flood: ReturnType<typeof fakeDatagrams>;
+let transport: ReturnType<typeof fakeWebTransport>;
+let realm: Realm | undefined;
 const tokenOf = (url: string): string =>
   new URL(url).searchParams.get("token") ?? "";
-const dialed: FakeSession[] = [];
-class FakeSession {
-  readonly ready =
-    dialReady ??
-    (dialRefuses
-      ? Promise.reject(new Error("connect refused"))
-      : Promise.resolve());
-  end!: (info: WebTransportCloseInfo) => void;
-  readonly closed = new Promise<WebTransportCloseInfo>(
-    (resolve) => (this.end = resolve),
-  );
-  readonly datagrams = fakeDatagrams(timing, () => jest.advanceTimersByTime(1));
-  readonly feed = new FeedStream();
-  closes = 0;
-  lanes = 0;
-  #incoming!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
-  readonly incomingUnidirectionalStreams = new ReadableStream<
-    ReadableStream<Uint8Array>
-  >({
-    start: (controller) => (this.#incoming = controller),
-  });
-  constructor(url = SESSION_URL) {
-    this.#incoming.enqueue(this.feed.readable);
-    dialUrls.push(url);
-    dialed.push(this);
-  }
-  refusal(record: object): void {
-    const stream = new FeedStream();
-    this.#incoming.enqueue(stream.readable);
-    stream.push(record);
-    stream.close();
-  }
-  createUnidirectionalStream(): Promise<WritableStream<Uint8Array>> {
-    this.lanes++;
-    return Promise.resolve(new WritableStream<Uint8Array>({ write: park }));
-  }
-  close(): void {
-    this.closes++;
-  }
+const session = (): FakeWebTransport => transport.sessions.at(-1)!;
+function refusal(record: object): void {
+  const stream = new FeedStream();
+  session().incoming(stream.readable);
+  stream.push(record);
+  stream.close();
 }
-const session = (): FakeSession => dialed[dialed.length - 1];
-const realFetch = globalThis.fetch;
-const realPost = globals.postMessage;
-const realWebTransport = globals.WebTransport;
-const fakeFetch = async (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-): Promise<Response> => {
-  const url = String(input);
-  if (new URL(url).pathname === "/wt/session") {
-    if (mintRefuses)
-      return new Response("", {
-        status: 403,
-        headers: { "Graphite-Meter-Auth": "required" },
+function mintFetch(mintRefuses: boolean): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (new URL(url).pathname === "/wt/session") {
+      if (mintRefuses)
+        return new Response("", {
+          status: 403,
+          headers: { "Graphite-Meter-Auth": "required" },
+        });
+      mints++;
+      return Response.json({
+        token: `mint-${mints}`,
+        expires: Date.now() + 30_000,
       });
-    mints++;
-    return Response.json({
-      token: `mint-${mints}`,
-      expires: Date.now() + 30_000,
-    });
-  }
-  if (url === PROGRESS_URL && init?.method === "DELETE") {
-    session().feed.finish();
-    return new Response(null);
-  }
-  throw new Error(`unexpected fetch ${url}`);
-};
-function install(sinkTiming: Timing = "macro"): void {
-  timing = sinkTiming;
-  mintRefuses = false;
-  dialRefuses = false;
-  dialReady = undefined;
-  mints = 0;
-  dialUrls.length = 0;
-  dialed.length = 0;
-  globals.WebTransport = FakeSession;
-  globalThis.fetch = fakeFetch as typeof fetch;
+    }
+    if (url === PROGRESS_URL && init?.method === "DELETE") {
+      feed.finish();
+      return new Response(null);
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
 }
 beforeEach(() => jest.useFakeTimers());
 afterEach(() => {
+  realm?.restore();
+  realm = undefined;
   jest.useRealTimers();
-  globalThis.fetch = realFetch;
-  globals.postMessage = realPost;
-  globalThis.onmessage = null;
-  if (realWebTransport === undefined)
-    Reflect.deleteProperty(globals, "WebTransport");
-  else globals.WebTransport = realWebTransport;
 });
 type Realm = WorkerRealm<Out>;
-let realms = 0;
-async function boot(): Promise<Realm> {
-  return bootWorker("./wt-transfer-worker.ts", realms++);
+async function boot(
+  configure: (setup: Setup) => void = () => {},
+): Promise<Realm> {
+  const setup: Setup = {
+    timing: "macro",
+    dialRefuses: false,
+    holdDial: false,
+    mintRefuses: false,
+  };
+  configure(setup);
+  mints = 0;
+  transport = fakeWebTransport((dialled) => {
+    if (setup.dialRefuses) dialled.refuse(new Error("connect refused"));
+    else if (!setup.holdDial) dialled.accept();
+    flood = dialled.datagrams = fakeDatagrams(setup.timing, () =>
+      jest.advanceTimersByTime(1),
+    );
+    feed = new FeedStream();
+    dialled.incoming(feed.readable);
+  });
+  realm = await bootWorker<Out>("./wt-transfer-worker.ts", {
+    WebTransport: transport.WebTransport,
+    fetch: setup.fetch ?? mintFetch(setup.mintRefuses),
+  });
+  return realm;
 }
 const errors = (realm: Realm): Out[] =>
   realm.posted.filter((msg) => msg.type === "error");
@@ -219,46 +195,32 @@ function startTransfer(
 }
 async function bootTransfer(
   options: Partial<Omit<Start, "type">> = {},
-  configure: () => void = () => {},
+  configure: (setup: Setup) => void = () => {},
 ): Promise<Realm> {
-  install();
-  configure();
-  const realm = await boot();
+  const realm = await boot(configure);
   startTransfer(realm, options);
   return realm;
 }
-async function packetsBeforeStopSeen(
-  dir: "up" | "down",
-  sinkTiming: Timing,
-): Promise<number> {
-  install(sinkTiming);
-  const realm = await boot();
-  startTransfer(realm, { dir, lanes: 0, datagrams: true });
-  await taskTurn();
-  const { writes, reads } = session().datagrams;
-  realm.send({ type: "stop" });
-  return dir === "up" ? writes : reads;
-}
-test("the datagram upload loop yields to its own message queue", async () => {
-  const micro = await packetsBeforeStopSeen("up", "micro");
-  const macro = await packetsBeforeStopSeen("up", "macro");
-
-  expect(micro).toBeLessThan(DRAIN_BUDGET);
-  expect(macro).toBeLessThan(DRAIN_BUDGET);
-});
-test("the datagram download loop yields to its own message queue", async () => {
-  const micro = await packetsBeforeStopSeen("down", "micro");
-  const macro = await packetsBeforeStopSeen("down", "macro");
-
-  expect(micro).toBeLessThan(DRAIN_BUDGET);
-  expect(macro).toBeLessThan(DRAIN_BUDGET);
-});
+test.each(["up", "down"] as const)(
+  "the datagram %s loop yields to its own message queue",
+  async (dir) => {
+    for (const timing of ["micro", "macro"] as const) {
+      const realm = await boot((setup) => (setup.timing = timing));
+      startTransfer(realm, { dir, lanes: 0, datagrams: true });
+      await taskTurn();
+      const packets = dir === "up" ? flood.writes : flood.reads;
+      realm.send({ type: "stop" });
+      expect(packets).toBeLessThan(DRAIN_BUDGET);
+      realm.restore();
+    }
+  },
+);
 test("a progress feed that ends without a terminal record is reported", async () => {
   const realm = await bootTransfer();
   await taskTurn();
-  session().feed.push({ type: "ready" });
-  session().feed.push({ type: "progress", bytes: 100, nanos: 1 });
-  session().feed.close();
+  feed.push({ type: "ready" });
+  feed.push({ type: "progress", bytes: 100, nanos: 1 });
+  feed.close();
   await taskTurn();
 
   expect(
@@ -278,8 +240,8 @@ test("a progress feed that ends without a terminal record is reported", async ()
 test("a later upload refusal stream preserves its disposition", async () => {
   const realm = await bootTransfer();
   await taskTurn();
-  session().feed.push({ type: "ready" });
-  session().refusal({
+  feed.push({ type: "ready" });
+  refusal({
     type: "error",
     code: "invalid",
     message: "unknown upload id",
@@ -293,7 +255,7 @@ test("a later upload refusal stream preserves its disposition", async () => {
     msg: {
       type: "fatal",
       detail: "unknown upload id",
-      reason: "connection-lost",
+      reason: "protocol-error",
       retry: false,
       rotate: true,
     },
@@ -303,7 +265,7 @@ test("a later upload refusal stream preserves its disposition", async () => {
 test("a datagram size that collapses to zero is reported", async () => {
   const realm = await bootTransfer({ lanes: 0, datagrams: true });
   await taskTurn();
-  session().datagrams.collapseAfter = 3;
+  flood.collapseAfter = 3;
   await elapse(20);
 
   expect(errors(realm)).toEqual([
@@ -322,14 +284,16 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   const mintUrl = "https://unspent.meter.test/wt/session";
   const realm = await bootTransfer(
     { dir: "down", mint: { url: mintUrl } },
-    () => (dialRefuses = true),
+    (setup) => (setup.dialRefuses = true),
   );
   await taskTurn();
   startDownload(realm, mintUrl);
   await taskTurn();
 
-  expect(dialUrls.length).toBe(2);
-  expect(tokenOf(dialUrls[1])).toBe(tokenOf(dialUrls[0]));
+  expect(transport.sessions).toHaveLength(2);
+  expect(tokenOf(transport.sessions[1].url)).toBe(
+    tokenOf(transport.sessions[0].url),
+  );
   expect(mints).toBe(1);
 });
 test("a session that established never offers its token again", async () => {
@@ -339,8 +303,10 @@ test("a session that established never offers its token again", async () => {
   startDownload(realm, mintUrl);
   await taskTurn();
 
-  expect(dialUrls.length).toBe(2);
-  expect(tokenOf(dialUrls[1])).not.toBe(tokenOf(dialUrls[0]));
+  expect(transport.sessions).toHaveLength(2);
+  expect(tokenOf(transport.sessions[1].url)).not.toBe(
+    tokenOf(transport.sessions[0].url),
+  );
   expect(mints).toBe(2);
 });
 test("a session the server revokes asks for sign-in instead of redialling", async () => {
@@ -357,7 +323,7 @@ test("a session the server revokes asks for sign-in instead of redialling", asyn
 test("a stop after auth-required is still acknowledged", async () => {
   const realm = await bootTransfer(
     { mint: { url: MINT_URL } },
-    () => (mintRefuses = true),
+    (setup) => (setup.mintRefuses = true),
   );
   await taskTurn();
   expect(realm.posted.map((msg) => msg.type)).toEqual(["auth-required"]);
@@ -378,13 +344,11 @@ test("authenticated WebTransport upload cleanup refuses redirects for session an
       credentials === "include"
         ? { "X-CSRF-Token": "session-csrf" }
         : { Authorization: "Bearer peer-grant" };
-    const realm = await bootTransfer({ credentials, headers }, () => {
-      globalThis.fetch = (async (
-        input: RequestInfo | URL,
-        init?: RequestInit,
-      ) => {
+    const realm = await bootTransfer({ credentials, headers }, (setup) => {
+      const serve = mintFetch(false);
+      setup.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
         if (init?.method === "DELETE") cleanup = init;
-        return fakeFetch(input, init);
+        return serve(input, init);
       }) as typeof fetch;
     });
     await taskTurn();
@@ -394,23 +358,36 @@ test("authenticated WebTransport upload cleanup refuses redirects for session an
     expect(cleanup!.credentials).toBe(credentials);
     expect(cleanup!.headers).toEqual(headers);
     expect(cleanup!.redirect).toBe("error");
+    realm.restore();
   }
 });
 
 test("stopping a pending WebTransport dial cannot publish late establishment", async () => {
-  let ready!: () => void;
-  const realm = await bootTransfer({}, () => {
-    dialReady = new Promise<void>((resolve) => {
-      ready = resolve;
-    });
-  });
+  const realm = await bootTransfer({}, (setup) => (setup.holdDial = true));
   await taskTurn();
   const pendingSession = session();
   realm.send({ type: "stop" });
   expect(pendingSession.closes).toBe(1);
-  ready();
+  pendingSession.accept();
   await taskTurn();
   expect(realm.posted.map((message) => message.type)).toEqual(["stopped"]);
-  expect(pendingSession.lanes).toBe(0);
+  expect(pendingSession.lanesOpened).toBe(0);
   expect(pendingSession.incomingUnidirectionalStreams.locked).toBe(false);
+});
+
+test("a stop whose progress feed never completes is acknowledged after the final grace", async () => {
+  const realm = await bootTransfer({}, (setup) => {
+    const serve = mintFetch(false);
+    setup.fetch = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      init?.method === "DELETE"
+        ? new Response(null)
+        : serve(input, init)) as typeof fetch;
+  });
+  await taskTurn();
+  feed.push({ type: "ready" });
+  realm.send({ type: "stop" });
+  await elapse(PROGRESS_FINAL_GRACE_MS - 5);
+  expect(realm.posted.map((msg) => msg.type)).not.toContain("stopped");
+  await elapse(5);
+  expect(realm.posted.at(-1)?.type).toBe("stopped");
 });

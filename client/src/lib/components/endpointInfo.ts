@@ -90,11 +90,10 @@ export function pathEvidence(
 ): string {
   const evidence = [
     role === "throughput" && browserProtocol
-      ? `Browser observed ${httpProtocolLabel(browserProtocol)}`
+      ? `Browser ${httpProtocolLabel(browserProtocol)}`
       : null,
-    serverProtocol
-      ? `Server observed ${httpProtocolLabel(serverProtocol)}`
-      : null,
+    serverProtocol ? `server ${httpProtocolLabel(serverProtocol)}` : null,
   ].filter((value): value is string => value != null);
-  return evidence.join(" · ") || "Pending";
+  const text = evidence.join(" · ");
+  return text ? text[0].toUpperCase() + text.slice(1) : "Pending";
 }

@@ -19,9 +19,10 @@ import tomllib
 from dataclasses import replace
 from pathlib import Path
 
+from ..ci.github_api import ControlPlaneError, local_path
 from .artifacts import add_bytes, add_tree, notices
 from .discovery import discover_browser
-from .model import Component, LegalError, Project, Provenance, Review, array, local_path, marshal, obj, read_json, sha256, strings, text
+from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
 from .review import add_provenance, component_legal_files, validate_review
 from .rust_platform import notice as platform_notice, verify_dynamic_runtime
 
@@ -333,5 +334,5 @@ def main() -> None:
 if __name__ == '__main__':
     try:
         main()
-    except (LegalError, OSError, ValueError, subprocess.CalledProcessError) as error:
+    except (ControlPlaneError, LegalError, OSError, ValueError, subprocess.CalledProcessError) as error:
         sys.exit(str(error))

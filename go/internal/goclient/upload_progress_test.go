@@ -1,6 +1,7 @@
 package goclient
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -36,7 +37,7 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 		p := newUploadProgress(t.Context(), "id")
 		advanced := p.advanced()
 		for _, feed := range c.feeds {
-			p.read(io.NopCloser(strings.NewReader(`{"type":"ready"}` + "\n" + strings.Join(feed, "\n"))))
+			p.read(testFeed(strings.NewReader(strings.Join(feed, "\n")), func() {}))
 		}
 		if bytes, nanos := p.counters(); bytes != c.bytes || nanos != c.nanos {
 			t.Errorf("%s: receiver pair = (%d, %d), want (%d, %d)", c.name, bytes, nanos, c.bytes, c.nanos)
@@ -46,10 +47,11 @@ func TestUploadProgressKeepsAForwardPair(t *testing.T) {
 		default:
 			t.Errorf("%s: an accepted count did not signal waiters", c.name)
 		}
-		if err := p.awaitReady(t.Context()); err != nil {
-			t.Errorf("%s: ready = %v", c.name, err)
-		}
 	}
+}
+
+func testFeed(body io.Reader, stop func()) progressFeed {
+	return progressFeed{bufio.NewScanner(body), "test feed", stop}
 }
 
 func TestReattachUploadProgressResumesTheSameAggregate(t *testing.T) {
@@ -91,7 +93,7 @@ func TestUploadProgressPermanentLossFails(t *testing.T) {
 	})}}
 	p := newUploadProgress(t.Context(), "id")
 	defer p.close()
-	p.attach(io.NopCloser(strings.NewReader("")), func(ctx context.Context) (io.ReadCloser, error) {
+	p.attach(testFeed(strings.NewReader(""), func() {}), func(ctx context.Context) (progressFeed, error) {
 		return r.openUploadFeed(p.ctx, ctx, "http://progress.invalid/upload/progress")
 	})
 	<-p.ctx.Done()
@@ -131,15 +133,12 @@ func TestUploadProgressCloseJoinsReadersAndRecovery(t *testing.T) {
 			if err := r.followUploadFeed(t.Context(), p, target); err != nil {
 				t.Fatal(err)
 			}
-			if err := p.awaitReady(t.Context()); err != nil {
-				t.Fatal(err)
-			}
 			p.close()
 			if !body.closed.Load() {
 				t.Fatal("close returned before the reader released its feed")
 			}
 			late := &closeRecorder{Reader: strings.NewReader("{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n")}
-			p.attach(late, nil)
+			p.attach(testFeed(late, func() { _ = late.Close() }), nil)
 			if bytes, _ := p.counters(); !late.closed.Load() || bytes != 0 {
 				t.Fatalf("a feed offered after close was adopted: closed=%v bytes=%d", late.closed.Load(), bytes)
 			}

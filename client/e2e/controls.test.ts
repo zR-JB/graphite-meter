@@ -1,5 +1,6 @@
 import {
   baseConfig,
+  catalog,
   frankfurt,
   open,
   openSettings,
@@ -75,7 +76,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   ).toBeFocused();
 });
 
-test("Escape closes the docked Settings panel before it stops a running test", async (page) => {
+test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
@@ -84,18 +85,48 @@ test("Escape closes the docked Settings panel before it stops a running test", a
   await runButton(page, "Start test").click();
   await expect(runButton(page, "Stop test")).toBeVisible();
   const settings = await openSettings(page);
+  const details = page.locator('dialog[aria-label="Details"]');
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  const closed = (panel: typeof settings) =>
+    expect
+      .poll(() =>
+        panel.all((els: HTMLElement[]) => els.every((el) => el.inert)),
+      )
+      .toBe(true);
   await settings
-    .getByRole("checkbox")
-    .nth(0)
+    .getByRole("button", { name: "Close Settings" })
     .evaluate((el: HTMLElement) => el.focus());
   await page.raw.press("Escape");
-  await expect
-    .poll(() =>
-      settings.all((els: HTMLElement[]) => els.every((el) => el.inert)),
-    )
-    .toBe(true);
-  await expect(runButton(page, "Stop test")).toBeVisible();
+  await closed(settings);
+  expect(
+    await details.all((els: HTMLElement[]) => els.some((el) => !el.inert)),
+  ).toBe(true);
+  // Focus returns to the Settings button, whose tip takes the first Escape.
   await page.raw.press("Escape");
+  await page.raw.press("Escape");
+  await closed(details);
+  await page.raw.press("Escape");
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  await runButton(page, "Stop test").click();
+  await expect(phase(page, "aborted")).toHaveCount(1);
+});
+
+test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
+  await open(page, undefined, {
+    config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
+  });
+  await ready(page);
+  // As after a fresh load: focus left the Settings button that ready() used.
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await page.raw.press(" ");
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  await page.raw.press("r");
+  await expect(phase(page, "aborted")).toHaveCount(1);
+  await page
+    .getByRole("switch", { name: /^Upload stage/ })
+    .evaluate((el: HTMLElement) => el.focus());
+  await page.raw.press(" ");
+  await expect(runButton(page, "Run again")).toBeVisible();
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
 
@@ -110,12 +141,9 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toContainText("Third-party software");
 
-  const summary = dialog.locator(".component:last-child summary");
   const link = dialog.locator(".component:last-child a");
   const close = dialog.getByRole("button", { name: "Close", exact: true });
-  await summary.evaluate((el: HTMLElement) => el.focus());
-  await page.raw.press("Tab");
-  await expect(link).toBeFocused();
+  await link.evaluate((el: HTMLElement) => el.focus());
   // Past the last control a modal hands focus to the browser, never the page.
   await page.raw.press("Tab");
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe(
@@ -186,14 +214,11 @@ test("the topbar menu opens, moves, acts and closes from the keyboard", async (p
 });
 
 test("the first result saves after the application server becomes unreachable", async (page) => {
-  const { id, name, url } = frankfurt;
-  const oslo = await spawnPeer("Oslo", {
-    GM_SERVER_CATALOG: JSON.stringify({ servers: [{ id, name, url }] }),
-  });
+  const oslo = await spawnPeer("Oslo", catalog(frankfurt));
   try {
     await open(page, oslo.server.url, {
       servers: [frankfurt],
-      latency: { mode: "primary", serverId: id },
+      latency: { mode: "primary", serverId: frankfurt.id },
       config: {
         stages: { ...baseConfig.stages, latency: false, upload: false },
         skipLoadedLatencyWhenStageOff: true,

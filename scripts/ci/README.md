@@ -5,8 +5,8 @@ pinned tools and project commands. Stdlib-only, type-checked Python in this
 directory owns trust decisions, GitHub JSON validation and artifact
 verification. `publish.sh` holds the Skopeo registry writes and `release.py
 publish` the GitHub Release; `test_release_transaction.py` runs both against a
-stateful fake GitHub, Docker and Skopeo. `fixtures.py` fakes `gh` by exact API path and pagination, the
-checked-out commit and the container engine, so trust tests run the real
+stateful fake GitHub, Docker and Skopeo. `fixtures.py` fakes the GitHub API by exact path and
+pagination, the checked-out commit and the container engine, so trust tests run the real
 commands.
 
 ## Working on the pipeline
@@ -21,17 +21,6 @@ CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
 narrow PR runs only; every push to main runs every job. `advisories.yml`
 rechecks Rust dependencies against the live RustSec database daily.
-
-| Job | mise task |
-| --- | --- |
-| `tooling` | `workflow-check`, `pipeline-test` |
-| `core` | `legal-check`, `core-check` |
-| `go` | `server-race` |
-| `e2e` | `e2e` ([real-server fleet](../../docs/DEVELOPMENT.md#tests)) |
-| `smoke` | `container-smoke` |
-| `release` | `release-check` |
-| `security` | `security`, `client-audit` |
-| `secret-scan` | `secret-scan-ci` |
 
 ## Releases
 

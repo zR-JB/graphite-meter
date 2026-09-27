@@ -19,6 +19,7 @@ from fixtures import (
     descriptor,
     engine,
     index,
+    outcome,
     source_members,
     write_checksums,
     write_release_assets,
@@ -35,7 +36,6 @@ from verify_oci import (
 from github_api import ControlPlaneError
 from verify_release_assets import (
     archive_names,
-    release_dist,
     tui_archives,
     verify_artifacts,
     verify_checksums,
@@ -113,11 +113,7 @@ class ReleaseAssetTests(unittest.TestCase):
         ):
             write_tar(self.dist / f"{root}.tar.gz", base | extra)
             with self.subTest(error=error):
-                if error is None:
-                    verify_third_party_source_archive(self.dist, "1.2.3")
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        verify_third_party_source_archive(self.dist, "1.2.3")
+                outcome(self, error, lambda: verify_third_party_source_archive(self.dist, "1.2.3"))
 
     def test_tui_archives_follow_targets_and_require_the_binary(self) -> None:
         targets = self.dist / "targets.txt"
@@ -168,11 +164,7 @@ class ReleaseAssetTests(unittest.TestCase):
             if edit is not None:
                 edit(dist)
             with self.subTest(error=error):
-                if error is None:
-                    verify_artifacts("1.2.3", dist)
-                else:
-                    with self.assertRaisesRegex(ControlPlaneError, error):
-                        verify_artifacts("1.2.3", dist)
+                outcome(self, error, lambda: verify_artifacts("1.2.3", dist))
 
     def test_the_host_tui_archive_reports_the_release_version(self) -> None:
         write_release_assets(self.dist / "valid", "1.2.3")
@@ -180,17 +172,6 @@ class ReleaseAssetTests(unittest.TestCase):
         write_release_assets(self.dist / "stale", "1.2.3", reported="1.2.2")
         with self.assertRaisesRegex(ControlPlaneError, "reports 'graphite-meter-client 1.2.2'"):
             verify_release("1.2.3", self.dist / "stale")
-
-    def test_release_dist_stays_in_the_checkout_or_a_temporary_directory(self) -> None:
-        with patch.dict(os.environ, {"RELEASE_DIST": str(self.dist / "dist")}):
-            self.assertEqual(release_dist(), self.dist.resolve() / "dist")
-        with patch.dict(os.environ):
-            os.environ.pop("RELEASE_DIST", None)
-            self.assertEqual(release_dist(), Path("go/dist").resolve())
-        for outside in ("/", "/etc/../usr/bin"):
-            with (self.subTest(outside=outside), patch.dict(os.environ, {"RELEASE_DIST": outside}),
-                  self.assertRaisesRegex(ControlPlaneError, "is outside")):
-                release_dist()
 
 
 class OCITests(unittest.TestCase):
@@ -243,11 +224,8 @@ class OCITests(unittest.TestCase):
                     key: value if isinstance(value, str) else json.dumps(value)
                     for key, value in change.items()}
                 with patch.dict(os.environ, env):
-                    if error is None:
-                        self.assertEqual(verify_oci(version, "f" * 40, archive), AMD)
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            verify_oci(version, "f" * 40, archive)
+                    self.assertEqual(outcome(self, error, lambda: verify_oci(version, "f" * 40, archive)),
+                                     None if error else AMD)
                 log = (root / "engine.log").read_text()
                 for call in (line.split() for line in log.splitlines()):
                     self.assertEqual(call[:5], ["run", "--rm", "--network", "none",
@@ -277,11 +255,7 @@ class OCITests(unittest.TestCase):
                                 predicate=predicate)
                 env = engine(Path(directory), "example/repo", "1.2.3", "f" * 40, oci)
                 with patch.dict(os.environ, env), patch("verify_oci.BLOB_LIMIT", limit):
-                    if error is None:
-                        verify_oci("1.2.3", "f" * 40, archive)
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            verify_oci("1.2.3", "f" * 40, archive)
+                    outcome(self, error, lambda: verify_oci("1.2.3", "f" * 40, archive))
 
     def test_engine_is_a_known_name_resolved_on_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -292,11 +266,7 @@ class OCITests(unittest.TestCase):
                                       ("sh", "must be one of")):
                 with (self.subTest(configured=configured),
                       patch.dict(os.environ, env | {"CONTAINER_ENGINE": configured})):
-                    if error is None:
-                        self.assertEqual(select_engine(), "docker")
-                    else:
-                        with self.assertRaisesRegex(ControlPlaneError, error):
-                            select_engine()
+                    self.assertEqual(outcome(self, error, select_engine), None if error else "docker")
 
     def test_symlinked_or_empty_archive_is_refused_before_the_engine_runs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

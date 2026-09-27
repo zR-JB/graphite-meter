@@ -43,7 +43,7 @@ func newStyles(dark bool) styles {
 	}
 	s.selected = s.text.Bold(true).Background(tone("#eaeae4", "#23262b"))
 	s.heading = s.accent.Bold(true)
-	s.down, s.up, s.rtt = s.accent, s.value.UnsetBold(), s.ok
+	s.down, s.up, s.rtt = s.accent, fg(tone("#8f6425", "#bda36c")), s.ok
 	return s
 }
 

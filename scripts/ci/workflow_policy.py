@@ -29,7 +29,8 @@ ALLOWED_USES = {
     "fork-upkeep.yml": {"actions/checkout", "jdx/mise-action", "actions/create-github-app-token"},
     "release-request.yml": {
         "actions/checkout", "jdx/mise-action", "./.github/actions/setup-project",
-        "./.github/actions/build-oci", "actions/upload-artifact",
+        "docker/setup-qemu-action", "docker/setup-buildx-action", "docker/build-push-action",
+        "actions/upload-artifact",
     },
     "release.yml": {
         "actions/checkout", "jdx/mise-action", "actions/download-artifact",
@@ -41,8 +42,8 @@ ORDERED = {
         "if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}",
         "run: python3 scripts/ci/release.py prepare",
         "VERSION= mise run legal-check\n",
-        "uses: ./.github/actions/build-oci",
-        "source-sha: ${{ steps.request.outputs.remote_sha }}",
+        "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
+        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
         'python3 scripts/ci/verify_release_assets.py "$VERSION"',
     ),
     "workflows/release.yml": (
@@ -54,10 +55,6 @@ ORDERED = {
         "group: release-publish-${{ github.repository }}\n", "cancel-in-progress: false\n",
         "run: python3 scripts/ci/release.py recheck", "run: scripts/ci/publish.sh image",
         "run: python3 scripts/ci/release.py publish", "run: scripts/ci/publish.sh aliases",
-    ),
-    "actions/build-oci/action.yml": (
-        '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "no-cache: true", "provenance: mode=max",
-        "github-token: ''", "GM_CLIENT_REVISION=${{ inputs.revision }}\n",
     ),
 }
 # Identity that release.py trusts comes from the run context, never from dispatch inputs.
@@ -89,9 +86,13 @@ CONTEXT = {
         "RUST": "needs.verify.outputs.rust",
     },
 }
+IMAGE_BUILD = (
+    "no-cache: true\n", "provenance: mode=max\n", "github-token: ''\n",
+    "GM_CLIENT_REVISION=${{ steps.request.outputs.sha }}\n",
+)
 FORBIDDEN = {
     "workflows/release.yml": ("head_sha", "pull_request.head", "mise run", "secrets["),
-    "actions/build-oci/action.yml": (
+    "workflows/release-request.yml": (
         "allow-insecure-entitlement", "cache-from:", "cache-to:", "GIT_AUTH_TOKEN",
     ),
 }
@@ -144,6 +145,9 @@ def check_actions(root: Path) -> None:
                     required += ["install_args: --locked python\n", "cache: false"]
                 if missing := [item for item in required if item not in step]:
                     fail(f"{name}: mise setup must declare {missing[0].strip()}")
+            if "uses: docker/build-push-action@" in step:
+                if missing := [item for item in IMAGE_BUILD if item not in step]:
+                    fail(f"{name}: every image build must declare {missing[0].strip()}")
             for marker, bindings in CONTEXT.items():
                 env = re.findall(r"(?m)^ +([A-Z][A-Z0-9_]*): (.*)$", step) if marker in step else []
                 for variable, value in bindings.items() if env else ():
@@ -208,8 +212,12 @@ def check_workflows(root: Path) -> None:
     for step in STEP.split(request.split("\njobs:", 1)[1]):
         if "${{ inputs." in step and "run: python3 scripts/ci/release.py prepare" not in step:
             fail("release-request.yml: dispatch inputs may reach only the request validator")
-        if "setup-project" in step and step.count("cache: 'false'") != 3:
+        if "setup-project" in step and "cache: 'false'" not in step:
             fail("release-request.yml: the untrusted build must disable every cache")
+    for step in STEP.split(read(root, ".github/actions/setup-project/action.yml")):
+        if ("uses: actions/cache@" in step and "inputs.cache == 'true'" not in step
+                or "uses: jdx/mise-action@" in step and "cache: ${{ inputs.cache }}" not in step):
+            fail("setup-project: every cache must follow the cache input")
     if "VERSION= mise run legal-check\n" not in request:
         fail("release-request.yml: stable builds must check committed legal outputs first")
 

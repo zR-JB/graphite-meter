@@ -9,10 +9,6 @@ inputs:
     description: Include the pinned Go toolchain
     required: false
     default: 'false'
-  go-cache:
-    description: Cache Go modules and build results for this job
-    required: false
-    default: 'true'
   bun:
     description: Include the pinned Bun runtime
     required: false
@@ -21,12 +17,8 @@ inputs:
     description: Install frozen client dependencies
     required: false
     default: 'false'
-  bun-cache:
-    description: Cache Bun packages
-    required: false
-    default: 'true'
   cache:
-    description: Cache mise and installed tool binaries
+    description: Cache mise tools, Go modules and build results, and Bun packages
     required: false
     default: 'true'
   staticcheck:
@@ -89,14 +81,14 @@ runs:
 
     - id: go-cache
       name: Locate Go caches
-      if: inputs.go == 'true' && inputs.go-cache == 'true'
+      if: inputs.go == 'true' && inputs.cache == 'true'
       shell: bash
       run: |
         printf 'modules=%s\n' "$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
         printf 'build=%s\n' "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
 
     - name: Cache Go modules and build results
-      if: inputs.go == 'true' && inputs.go-cache == 'true'
+      if: inputs.go == 'true' && inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: |
@@ -119,7 +111,7 @@ runs:
         bun --revision
 
     - name: Cache Bun packages
-      if: inputs.client-deps == 'true' && inputs.bun-cache == 'true'
+      if: inputs.client-deps == 'true' && inputs.cache == 'true'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.bun/install/cache
