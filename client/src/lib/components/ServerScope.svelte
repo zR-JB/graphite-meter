@@ -58,7 +58,7 @@
     .server-scope::picker(select) {
       margin-block: 4px;
       padding: var(--space-1);
-      border: 1px solid var(--border-strong);
+      border: var(--hairline) solid var(--border-strong);
       border-radius: var(--r-chrome);
       background: var(--surface-1);
       box-shadow: var(--elev-float);

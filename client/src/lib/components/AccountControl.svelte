@@ -121,7 +121,7 @@
     max-width: min(36vw, 300px);
     height: var(--control-h);
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
     box-shadow: var(--elev-tile);

@@ -497,7 +497,7 @@
     position: relative;
     width: 100%;
     height: var(--profile-track-height, 30px);
-    border: 1px solid var(--border);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-well);
     background:
       linear-gradient(90deg, var(--border-subtle) 1px, transparent 1px) 0 0 /

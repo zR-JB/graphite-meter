@@ -24,19 +24,19 @@ Reference package metadata: https://packages.debian.org/source/stable/ca-certifi
 
 ============================================================
 
-Component: Instrument Sans
-Version: 2022 webfont
-Source: https://github.com/Instrument/instrument-sans
+Component: IBM Plex Mono
+Version: @ibm/plex-mono 2.5.0
+Source: https://github.com/IBM/plex
 License: OFL-1.1
 Modified by Graphite Meter: no
 
---- INSTRUMENT-OFL-1.1.txt ---
+--- IBM-PLEX-OFL-1.1.txt ---
 
-Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans)
+Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
-This license is copied below, and is also available with a FAQ at:
-https://scripts.sil.org/OFL
+
+This license is copied below, and is also available with a FAQ at: http://scripts.sil.org/OFL
 
 
 -----------------------------------------------------------
@@ -52,7 +52,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded, 
+fonts, including any derivative works, can be bundled, embedded,
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The
@@ -128,19 +128,19 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 ============================================================
 
-Component: Spline Sans Mono
-Version: 1.002 webfont
-Source: https://github.com/SorkinType/SplineSansMono
+Component: IBM Plex Sans
+Version: @ibm/plex-sans-variable 0.2.0
+Source: https://github.com/IBM/plex
 License: OFL-1.1
 Modified by Graphite Meter: no
 
---- OFL-1.1.txt ---
+--- IBM-PLEX-OFL-1.1.txt ---
 
-Copyright 2022 The Spline Sans Mono Project Authors (https://github.com/SorkinType/SplineSansMono)
+Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
-This license is copied below, and is also available with a FAQ at:
-https://scripts.sil.org/OFL
+
+This license is copied below, and is also available with a FAQ at: http://scripts.sil.org/OFL
 
 
 -----------------------------------------------------------
@@ -156,7 +156,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded, 
+fonts, including any derivative works, can be bundled, embedded,
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The

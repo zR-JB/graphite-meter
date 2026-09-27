@@ -182,7 +182,7 @@
     height: 46px;
     padding: var(--space-2);
     overflow: hidden;
-    border: 1px solid var(--border);
+    border: var(--hairline) solid var(--border);
     border-radius: var(--r-chrome);
     background: var(--surface-2);
     box-shadow: var(--elev-tile);
@@ -319,7 +319,7 @@
     height: 18px;
     margin-left: auto;
     padding: 0 6px;
-    border: 1px solid var(--border-subtle);
+    border: var(--hairline) solid var(--border-subtle);
     border-radius: var(--r-well);
     background: var(--surface-inset);
     color: var(--text-soft);

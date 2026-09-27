@@ -768,7 +768,7 @@
     align-items: center;
     gap: var(--space-2);
     padding-inline: var(--space-4);
-    border-bottom: 1px solid var(--border);
+    border-bottom: var(--hairline) solid var(--border);
     container: topbar / inline-size;
   }
   .topbar > :global(*) {
@@ -910,7 +910,7 @@
     min-width: 0;
     overflow: hidden;
     padding: 0 var(--space-4) env(safe-area-inset-bottom, 0px);
-    border-top: 1px solid var(--border);
+    border-top: var(--hairline) solid var(--border);
     background: var(--surface-1);
     color: var(--text-soft);
     font: var(--type-xs) var(--font-mono);

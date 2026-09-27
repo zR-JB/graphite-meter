@@ -7,11 +7,10 @@
 :root {
   color-scheme: light dark;
 
-  --font-display: "Instrument Sans", "Inter Tight", system-ui, sans-serif;
-  --font-sans: "Instrument Sans", "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-sans);
   --font-mono:
-    "Spline Sans Mono", "JetBrains Mono", "SFMono-Regular", Consolas,
-    "Liberation Mono", monospace;
+    "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
   --r-well: 6px;
   --r-chrome: 8px;
@@ -29,33 +28,45 @@
 
   --focus-ring: 2px solid var(--brand);
 
-  --canvas: light-dark(#f0f2f3, #131518);
-  --surface-1: light-dark(#ffffff, #1c1f23);
-  --surface-inset: light-dark(#f3f5f6, #16191d);
-  --border: light-dark(rgb(43 44 40 / 0.13), rgb(211 219 227 / 0.11));
+  --canvas: light-dark(oklch(0.962 0.005 255), oklch(0.18 0.009 255));
+  --surface-1: light-dark(oklch(0.995 0.002 255), oklch(0.222 0.011 255));
+  --surface-inset: light-dark(oklch(0.952 0.006 255), oklch(0.172 0.009 255));
+  --border: light-dark(oklch(0.3 0.02 255 / 0.14), oklch(0.92 0.02 255 / 0.11));
 
-  --text: light-dark(#26272a, #d9dce0);
-  --text-muted: light-dark(#454a4d, #9ba2aa);
-  --text-inverse: light-dark(#ffffff, #111315);
+  --text: light-dark(oklch(0.255 0.012 255), oklch(0.925 0.007 255));
+  --text-muted: light-dark(oklch(0.4 0.014 255), oklch(0.79 0.012 255));
+  --text-inverse: light-dark(oklch(1 0 0), oklch(0.18 0.009 255));
 
-  --brand: light-dark(#2f717a, #6db0b8);
-  --brand-strong: light-dark(#235257, #93cdd4);
+  --brand: light-dark(oklch(0.52 0.088 205), oklch(0.78 0.115 205));
+  --brand-strong: light-dark(oklch(0.42 0.07 205), oklch(0.87 0.085 205));
   --edge-highlight: rgb(255 255 255 / 0.22);
 
-  --signal: light-dark(#4b6076, #8ba3ba);
-  --signal-soft: light-dark(rgb(75 96 118 / 0.12), rgb(139 163 186 / 0.14));
+  --signal: light-dark(oklch(0.5 0.12 262), oklch(0.75 0.105 262));
+  --signal-soft: color-mix(in oklab, var(--signal) 14%, transparent);
 
-  --err: light-dark(#a04a4a, #d89393);
-  --err-soft: light-dark(rgb(160 74 74 / 0.13), rgb(216 147 147 / 0.15));
+  --err: light-dark(oklch(0.52 0.16 25), oklch(0.72 0.14 22));
+  --err-soft: color-mix(in oklab, var(--err) 14%, transparent);
 
-  --ok: light-dark(#285443, #79ad91);
-  --ok-soft: light-dark(rgb(50 99 80 / 0.13), rgb(121 173 145 / 0.14));
-  --warn: light-dark(#6f5426, #c4a568);
-  --warn-soft: light-dark(rgb(111 84 38 / 0.13), rgb(196 165 104 / 0.14));
+  --ok: light-dark(oklch(0.5 0.11 155), oklch(0.78 0.12 155));
+  --ok-soft: color-mix(in oklab, var(--ok) 14%, transparent);
+  --warn: light-dark(oklch(0.53 0.105 85), oklch(0.85 0.12 92));
+  --warn-soft: color-mix(in oklab, var(--warn) 14%, transparent);
 
   --shadow-card:
-    0 1px 1px light-dark(rgb(43 44 40 / 0.06), rgb(0 0 0 / 0.3)),
-    0 10px 28px light-dark(rgb(43 44 40 / 0.08), rgb(5 7 9 / 0.4));
+    0 1px 2px
+      light-dark(oklch(0.25 0.02 255 / 0.06), oklch(0.05 0.01 255 / 0.35)),
+    0 12px 32px -8px
+      light-dark(oklch(0.25 0.02 255 / 0.16), oklch(0.05 0.01 255 / 0.6));
+}
+@media (color-gamut: p3) {
+  :root {
+    --brand: light-dark(oklch(0.52 0.11 205), oklch(0.78 0.144 205));
+    --brand-strong: light-dark(oklch(0.42 0.088 205), oklch(0.87 0.106 205));
+    --signal: light-dark(oklch(0.5 0.15 262), oklch(0.75 0.131 262));
+    --ok: light-dark(oklch(0.5 0.138 155), oklch(0.78 0.15 155));
+    --warn: light-dark(oklch(0.53 0.118 85), oklch(0.85 0.15 92));
+    --err: light-dark(oklch(0.52 0.2 25), oklch(0.72 0.175 22));
+  }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -141,12 +152,12 @@ input {
 }
 button {
   padding: 9px 14px;
-  border: 1px solid color-mix(in srgb, var(--brand) 42%, var(--border));
+  border: 1px solid color-mix(in oklab, var(--brand) 42%, var(--border));
   border-radius: var(--r-pill);
   background: linear-gradient(180deg, var(--brand-strong), var(--brand));
   box-shadow:
     inset 0 1px 0 var(--edge-highlight),
-    0 8px 24px color-mix(in srgb, var(--brand) 24%, transparent);
+    0 8px 24px color-mix(in oklab, var(--brand) 24%, transparent);
   color: var(--text-inverse);
   font-family: var(--font-display);
   font-weight: 600;
@@ -182,7 +193,7 @@ form[data-busy] button[type="submit"]::after {
   width: 18px;
   height: 18px;
   margin: -9px 0 0 -9px;
-  border: 2px solid color-mix(in srgb, var(--text-inverse) 35%, transparent);
+  border: 2px solid color-mix(in oklab, var(--text-inverse) 35%, transparent);
   border-top-color: var(--text-inverse);
   border-radius: var(--r-full);
   animation: spin 620ms linear infinite;
@@ -239,22 +250,22 @@ form + .warn {
    .notice an expected, neutral state (blue); .ok a successful outcome
    (green). */
 .message {
-  border-color: color-mix(in srgb, var(--err) 38%, transparent);
+  border-color: color-mix(in oklab, var(--err) 38%, transparent);
   background: var(--err-soft);
   color: var(--err);
 }
 .warn {
-  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+  border-color: color-mix(in oklab, var(--warn) 38%, transparent);
   background: var(--warn-soft);
   color: var(--warn);
 }
 .notice {
-  border-color: color-mix(in srgb, var(--signal) 38%, transparent);
+  border-color: color-mix(in oklab, var(--signal) 38%, transparent);
   background: var(--signal-soft);
   color: var(--signal);
 }
 .ok {
-  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  border-color: color-mix(in oklab, var(--ok) 38%, transparent);
   background: var(--ok-soft);
   color: var(--ok);
 }
