@@ -3,8 +3,12 @@
   import { authenticatedFetch } from "../auth";
   import { readJSONResponse, parseAccountSession } from "../api/decode";
   import { tooltip } from "../actions/tooltip";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
 
   let session = $state<ReturnType<typeof parseAccountSession> | null>(null);
+  let form = $state<HTMLFormElement>();
+  let everywhere = $state<HTMLButtonElement>();
+  let confirming = $state(false);
 
   const label = $derived(
     session?.provider === "local" ? "Local operator" : (session?.name ?? ""),
@@ -44,6 +48,7 @@
 
 {#if session}
   <form
+    bind:this={form}
     class="account"
     method="post"
     action="/auth/logout"
@@ -60,10 +65,15 @@
       <strong class="name">{label}</strong>
     </div>
     <button
+      bind:this={everywhere}
       class="btn btn-icon btn-quiet signout everywhere"
       type="submit"
       name="scope"
       value="all"
+      onclick={(event) => {
+        event.preventDefault();
+        confirming = true;
+      }}
       {@attach tooltip(() => "End all sessions for this account")}
       aria-label={`Sign out ${label} everywhere`}
     >
@@ -85,6 +95,20 @@
       </svg>
     </button>
   </form>
+  <ConfirmDialog
+    open={confirming}
+    id="sign-out-everywhere"
+    invoker={everywhere}
+    title="Sign out everywhere?"
+    description={`End every session of ${label} on all devices, including this one.`}
+    cancelLabel="Stay signed in"
+    confirmLabel="Sign out everywhere"
+    onCancel={() => (confirming = false)}
+    onConfirm={() => {
+      confirming = false;
+      form?.requestSubmit(everywhere);
+    }}
+  />
 {/if}
 
 <style>
