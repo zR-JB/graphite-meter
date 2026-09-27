@@ -217,7 +217,9 @@
       </h2>
       {#if result.outcome !== "complete"}
         <span class="outcome"
-          ><span class="status-dot" data-tone={STATUS_TONE[result.outcome]}
+          ><span
+            class="status-dot inline"
+            data-tone={STATUS_TONE[result.outcome]}
           ></span>{OUTCOME[result.outcome]}</span
         >
       {/if}
@@ -305,7 +307,8 @@
             {#if row.failure}<div>
                 <dt>Status</dt>
                 <dd class="status">
-                  <span class="status-dot" data-tone="err"></span>{row.failure}
+                  <span class="status-dot inline" data-tone="err"
+                  ></span>{row.failure}
                 </dd>
               </div>{/if}
             {#if ipVersion && row.id === run.latencyFocus}<div>
@@ -438,12 +441,6 @@
   }
   .latency {
     grid-column: 1 / -1;
-  }
-  .group-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2);
   }
   .source,
   .aside {

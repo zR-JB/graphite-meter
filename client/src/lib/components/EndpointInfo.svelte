@@ -258,7 +258,7 @@
             >
             {#if inTest}<span class="path-status" data-tone={status.tone}
                 >{#if status.tone !== "neutral"}<span
-                    class="status-dot"
+                    class="status-dot inline"
                     data-tone={status.tone}
                     aria-hidden="true"
                   ></span>{/if}{status.label}</span
@@ -355,12 +355,6 @@
   .infra {
     display: grid;
     gap: var(--space-5);
-  }
-  .group-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
   }
   .path dd {
     display: flex;

@@ -578,11 +578,12 @@
             {/each}
           </div>
           {#each groups as group, index (group.heading || index)}
-            <section class="day">
+            <section class="group day">
               {#if group.heading}<h3 id={`history-day-${index}`}>
                   {group.heading}
                 </h3>{/if}
               <ol
+                class="kv"
                 aria-label={group.heading ? undefined : "Saved results"}
                 aria-labelledby={group.heading
                   ? `history-day-${index}`
@@ -611,7 +612,7 @@
                         </time>
                         <span class="outcome">
                           {#if row.outcome !== "complete"}<span
-                              class="status-dot"
+                              class="status-dot inline"
                               data-tone={STATUS_TONE[row.outcome]}
                             ></span>{OUTCOME[row.outcome]}{/if}
                         </span>
@@ -644,7 +645,7 @@
                             >{dateLabel(record.completedAt)}</time
                           >
                           <span class="outcome"
-                            ><span class="status-dot" data-tone="warn"
+                            ><span class="status-dot inline" data-tone="warn"
                             ></span>Unreadable</span
                           >
                         </a>
@@ -921,37 +922,26 @@
     color: var(--text-soft);
     font: var(--w-strong) var(--type-xs) var(--font-mono);
   }
-  .day {
-    row-gap: 6px;
-  }
   .day > h3 {
     grid-column: 1 / -1;
-    padding-inline: var(--space-3);
-    color: var(--text-muted);
-    font: var(--w-strong) var(--type-sm) / 1.3 var(--font-sans);
   }
   ol {
     overflow: hidden;
-    border: var(--hairline) solid var(--border);
-    border-radius: var(--r-chrome);
-    background: var(--surface-inset);
-    box-shadow: var(--elev-recess);
+    padding-inline: 0;
   }
-  li + li {
-    border-top: var(--hairline) solid var(--border-subtle);
+  li {
+    padding-block: 0;
   }
   .result-row {
     align-items: center;
-    min-height: var(--control-h);
-    font-size: var(--type-body);
-    line-height: 1.4;
+    min-height: var(--row-h);
   }
   .result-row:focus-visible {
     outline-offset: -2px;
   }
   .result-row > * {
     min-width: 0;
-    padding: 6px var(--space-3);
+    padding: 7px var(--space-3);
   }
   time {
     display: flex;
