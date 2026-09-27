@@ -42,7 +42,10 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
     task::{Context, Poll, ready},
     time::Duration,
 };
@@ -73,6 +76,8 @@ pub struct HttpServer {
     connections: Connections,
     stopping: tokio::sync::watch::Sender<bool>,
     memory: Arc<http_quic::MemoryBudget>,
+    handshake_bytes: AtomicUsize,
+    endpoint_bytes: AtomicUsize,
     download_block: Bytes,
     download_meter: crate::meter::Meter,
     peers: crate::log::PeerLog,
@@ -111,6 +116,17 @@ impl HttpServer {
 
     pub(crate) async fn security_log(&self) {
         self.auth.as_ref().expect("authentication enabled").security_log().await;
+    }
+
+    pub fn cover_handshake(&self, handshake_bytes: usize) -> Result<(), ConfigError> {
+        check_buffer_budget(
+            &self.config,
+            self.memory.limit,
+            handshake_bytes,
+            self.endpoint_bytes.load(Ordering::Relaxed),
+        )?;
+        self.handshake_bytes.store(handshake_bytes, Ordering::Relaxed);
+        Ok(())
     }
 
     pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
@@ -157,6 +173,8 @@ impl HttpServer {
             connections,
             stopping: tokio::sync::watch::channel(false).0,
             memory,
+            handshake_bytes: AtomicUsize::new(0),
+            endpoint_bytes: AtomicUsize::new(0),
             download_block: block.into(),
             download_meter,
             peers: Default::default(),
@@ -1114,12 +1132,35 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     }
 }
 
-pub(crate) fn minimum_buffer_bytes(config: &Config) -> Option<(usize, usize)> {
-    let floor = http_quic::connection_floor(&config.limits).max(http_h2::BUFFER_BYTES as usize);
-    let minimum = floor
-        .checked_mul(config.max_connections)?
-        .checked_add(DOWNLOAD_BLOCK_BYTES)?;
-    Some((floor, minimum))
+pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {
+    let endpoint = if config.listener(crate::config::NativeKind::H3).address.is_empty() {
+        0
+    } else {
+        http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), config.max_connections, 0, 1)
+            .ok_or("QUIC endpoint buffer size overflow")?
+    };
+    check_buffer_budget(config, config.max_buffer_bytes, 0, endpoint)
+}
+
+fn check_buffer_budget(
+    config: &Config,
+    limit: usize,
+    handshake_bytes: usize,
+    endpoint_bytes: usize,
+) -> Result<(), ConfigError> {
+    let floor = http_quic::connection_floor(&config.limits, handshake_bytes).max(http_h2::BUFFER_BYTES as usize);
+    let minimum =
+        floor as u128 * config.max_connections as u128 + endpoint_bytes as u128 + DOWNLOAD_BLOCK_BYTES as u128;
+    if minimum > limit as u128 {
+        return Err(format!(
+            "GM_MAX_BUFFER_BYTES ({limit}) must be at least {minimum}: GM_MAX_CONNECTIONS ({}) connection floors \
+             of {floor} bytes, {endpoint_bytes} bytes of QUIC endpoint buffers and the {DOWNLOAD_BLOCK_BYTES}-byte \
+             download block",
+            config.max_connections
+        )
+        .into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

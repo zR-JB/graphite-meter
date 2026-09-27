@@ -43,34 +43,25 @@ impl HttpServer {
         let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
         let socket = runtime.wrap_udp_socket(socket)?;
         let endpoint_config = quinn::EndpointConfig::default();
-        let packet_bytes = usize::try_from(endpoint_config.get_max_udp_payload_size().min(64 * 1024))?;
-        let receive_bytes = packet_bytes
-            .checked_mul(socket.max_receive_segments().get())
-            .ok_or("QUIC receive segment size overflow")?;
-        let batch_bytes = receive_bytes
-            .checked_mul(quinn::udp::BATCH_SIZE)
-            .ok_or("QUIC receive batch size overflow")?;
-        let incoming_bytes = receive_bytes
-            .checked_mul(
-                self.config
-                    .max_connections
-                    .checked_add(1)
-                    .ok_or("QUIC incoming count overflow")?,
-            )
-            .and_then(|bytes| bytes.checked_add(INCOMING_TOTAL_BYTES as usize))
-            .ok_or("QUIC incoming buffer size overflow")?;
-        let bytes = kernel_bytes
-            .checked_add(batch_bytes)
-            .and_then(|bytes| bytes.checked_add(incoming_bytes))
-            .ok_or("QUIC endpoint buffer size overflow")?;
+        let bytes = endpoint_bytes(
+            &endpoint_config,
+            self.config.max_connections,
+            kernel_bytes,
+            socket.max_receive_segments().get(),
+        )
+        .ok_or("QUIC endpoint buffer size overflow")?;
+        check_buffer_budget(
+            &self.config,
+            self.memory.limit,
+            self.handshake_bytes.load(Ordering::Relaxed),
+            bytes,
+        )?;
         let lease = Arc::new(
             self.memory
                 .lease(bytes)
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
-        if self.memory.available() < connection_floor(&self.config.limits) {
-            return Err("server memory budget must cover QUIC endpoint buffers and one connection".into());
-        }
+        self.endpoint_bytes.store(bytes, Ordering::Relaxed);
         quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(self.quic_config(tls)?),
@@ -112,7 +103,6 @@ impl HttpServer {
     ) -> Result<(), ConfigError> {
         tokio::pin!(shutdown);
         let mut connections = JoinSet::new();
-        let floor = connection_floor(&self.config.limits);
         let result = loop {
             tokio::select! {
                 _ = &mut shutdown => break Ok(()),
@@ -132,6 +122,7 @@ impl HttpServer {
                         incoming.refuse();
                         continue;
                     };
+                    let floor = connection_floor(&self.config.limits, self.handshake_bytes.load(Ordering::Relaxed));
                     let Some(lease) = self.memory.lease(floor) else {
                         incoming.refuse();
                         continue;
@@ -391,15 +382,30 @@ pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
     limits.operations_per_client + limits.sessions_per_client + 4
 }
 
-pub(super) fn connection_floor(limits: &crate::admission::Limits) -> usize {
+pub(super) fn connection_floor(limits: &crate::admission::Limits, handshake_bytes: usize) -> usize {
     (max_requests(limits) + UNI_STREAMS as usize)
         .saturating_mul(STREAM_FLOOR_BYTES)
-        .saturating_add(crate::tls::HANDSHAKE_BYTES)
+        .saturating_add(handshake_bytes)
+}
+
+pub(super) fn endpoint_bytes(
+    config: &quinn::EndpointConfig,
+    max_connections: usize,
+    kernel_bytes: usize,
+    receive_segments: usize,
+) -> Option<usize> {
+    let packet = usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()?;
+    let receive = packet.checked_mul(receive_segments)?;
+    receive
+        .checked_mul(quinn::udp::BATCH_SIZE)?
+        .checked_add(receive.checked_mul(max_connections.checked_add(1)?)?)?
+        .checked_add(INCOMING_TOTAL_BYTES as usize)?
+        .checked_add(kernel_bytes)
 }
 
 #[derive(Debug)]
 pub(super) struct MemoryBudget {
-    limit: usize,
+    pub(super) limit: usize,
     used: AtomicUsize,
 }
 
@@ -418,6 +424,7 @@ impl MemoryBudget {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn available(&self) -> usize {
         self.limit - self.used.load(Ordering::Relaxed)
     }
@@ -940,34 +947,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endpoint_buffers_refuse_without_connection_capacity_and_refund_on_drop() {
+    async fn endpoint_leaves_every_connection_floor_and_refunds_on_drop() {
         use super::*;
         let config = Arc::new(Config {
             max_connections: 4,
             max_connections_per_client: 4,
             ..Config::default()
         });
-        let floor = connection_floor(&config.limits);
-        let small = HttpServer::with_memory(config.clone(), floor + DOWNLOAD_BLOCK_BYTES).unwrap();
-        let available = small.memory.available();
+        let floors = 4 * connection_floor(&config.limits, 0);
         let (tls, _) = tls();
-        assert!(
-            small
-                .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
-                .is_err()
-        );
+        let address = "127.0.0.1:0".parse().unwrap();
+        let measured = HttpServer::with_memory(config.clone(), 1 << 30).unwrap();
+        let idle = measured.memory.available();
+        let endpoint = measured.quic_endpoint(tls.clone(), address).unwrap();
+        let minimum = idle - measured.memory.available() + floors + DOWNLOAD_BLOCK_BYTES;
+        drop(endpoint);
+        let small = HttpServer::with_memory(config.clone(), minimum - 1).unwrap();
+        let available = small.memory.available();
+        let Err(error) = small.quic_endpoint(tls.clone(), address) else {
+            panic!("endpoint started without room for every connection floor");
+        };
+        assert!(error.to_string().contains(&format!("at least {minimum}")), "{error}");
         assert_eq!(small.memory.available(), available);
 
-        let server = HttpServer::with_memory(config, 64 * 1024 * 1024 + floor + DOWNLOAD_BLOCK_BYTES).unwrap();
+        let server = HttpServer::with_memory(config, minimum).unwrap();
         let available = server.memory.available();
-        let endpoint = server
-            .quic_endpoint(tls.clone(), "127.0.0.1:0".parse().unwrap())
-            .unwrap();
-        let reserved = available - server.memory.available();
-        assert!(reserved > INCOMING_TOTAL_BYTES as usize);
-        assert!(server.memory.available() >= floor);
-        let remaining = server.memory.lease(server.memory.available()).unwrap();
-        assert!(server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).is_err());
+        let endpoint = server.quic_endpoint(tls.clone(), address).unwrap();
+        assert_eq!(server.memory.available(), floors);
+        let Err(error) = server.cover_handshake(1) else {
+            panic!("certificate chain admitted without room in every connection floor");
+        };
+        assert!(
+            error.to_string().contains(&format!("at least {}", minimum + 4)),
+            "{error}"
+        );
+        let remaining = server.memory.lease(floors).unwrap();
+        assert!(server.quic_endpoint(tls, address).is_err());
         assert_eq!(server.memory.available(), 0);
         drop(remaining);
         let address = endpoint.local_addr().unwrap();
@@ -1272,7 +1287,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async {
             let requesting = client.connect(address, "localhost").unwrap().await.unwrap();
             let sibling = client.connect(address, "localhost").unwrap().await.unwrap();
-            let floor = connection_floor(&server.config.limits);
+            let floor = connection_floor(&server.config.limits, 0);
             let filler = server
                 .memory
                 .lease(settled(&server.memory, &[&requesting, &sibling]).await - 4096)
@@ -1328,7 +1343,7 @@ mod tests {
             assert!(silent.iter().all(Result::is_ok));
             let charged = idle - server.memory.available();
             eprintln!("{} silent connections charge {charged} bytes", silent.len());
-            let floor = connection_floor(&server.config.limits);
+            let floor = connection_floor(&server.config.limits, 0);
             assert!(charged < silent.len() * (floor + 64 * 1024));
             let fresh = clients[9].connect(address, "localhost").unwrap().await.unwrap();
             assert_eq!(download(fresh, 13).await.unwrap(), 13);
@@ -1358,7 +1373,7 @@ mod tests {
                 .with_single_cert(vec![certificate.clone()], key)
                 .unwrap();
             tls.alpn_protocols = vec![b"h2".to_vec()];
-            let floor = connection_floor(&Config::default().limits);
+            let floor = connection_floor(&Config::default().limits, 0);
             let server = HttpServer::with_memory(
                 Arc::new(Config {
                     max_connections_per_client: 128,

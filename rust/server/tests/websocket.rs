@@ -247,7 +247,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         tls_key: identity.directory().join("identity.key").to_str().unwrap().into(),
         ..Config::default()
     };
-    let tls = Certificates::load(&config, SystemTime::now())?.config(vec![b"http/1.1".to_vec()])?;
+    let tls = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?.config(vec![b"http/1.1".to_vec()])?;
     let mut roots = RootCertStore::empty();
     roots.add(CertificateDer::from_pem_file(&config.tls_cert)?)?;
     let mut client_tls = ClientConfig::builder()

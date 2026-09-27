@@ -22,17 +22,7 @@ impl Config {
         {
             return Err("per-client stream budgets exceed the QUIC stream limit".into());
         }
-        let Some((floor, minimum)) = crate::http_server::minimum_buffer_bytes(self) else {
-            return Err("GM_MAX_CONNECTIONS connection floors overflow the buffer budget".into());
-        };
-        if self.max_buffer_bytes < minimum {
-            return Err(format!(
-                "GM_MAX_BUFFER_BYTES must be at least {minimum}: GM_MAX_CONNECTIONS ({}) \
-                 connection floors of {floor} bytes plus the shared download block",
-                self.max_connections
-            )
-            .into());
-        }
+        crate::http_server::check_configured_budget(self)?;
         if self.trusted_proxies.iter().any(|prefix| prefix.prefix_len() == 0) {
             return Err("trusted proxy prefix must not cover every address".into());
         }

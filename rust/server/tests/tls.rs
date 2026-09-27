@@ -1,6 +1,6 @@
 use graphite_meter_server::{
     config::{Config, NativeKind},
-    tls::Certificates,
+    tls::{Certificates, handshake_bytes},
 };
 use rustls::{
     ClientConfig, RootCertStore,
@@ -62,7 +62,12 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     let original = CertificateDer::from_pem_file(&config.tls_cert)?;
     let replacement = CertificateDer::from_pem_file(second.directory().join("identity.pem"))?;
     let roots = [original.clone(), replacement.clone()];
-    let manager = Certificates::load(&config, SystemTime::now())?;
+    let budget = 2 * handshake_bytes(std::slice::from_ref(&original));
+    let manager = Certificates::load(&config, SystemTime::now(), move |bytes| {
+        (bytes <= budget)
+            .then_some(())
+            .ok_or_else(|| format!("{bytes} handshake bytes exceed the budget").into())
+    })?;
     let tls = manager.config(vec![b"http/1.1".to_vec()])?;
     assert_eq!(handshake(tls.clone(), &roots).await?, original);
     assert!(!manager.reload(SystemTime::now())?);
@@ -84,13 +89,17 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
     assert_eq!(handshake(tls.clone(), &roots).await?, replacement);
     fs::write(
         &config.tls_cert,
-        fs::read_to_string(second.directory().join("identity.pem"))?.repeat(9),
+        fs::read_to_string(second.directory().join("identity.pem"))?.repeat(80),
     )?;
-    assert_eq!(
-        manager.reload(SystemTime::now()).unwrap_err().to_string(),
-        "TLS certificate chain exceeds 8 certificates or 32 KiB"
+    assert!(
+        manager
+            .reload(SystemTime::now())
+            .unwrap_err()
+            .to_string()
+            .ends_with("handshake bytes exceed the budget")
     );
     assert_eq!(handshake(tls, &roots).await?, replacement);
+    Certificates::load(&config, SystemTime::now(), |_| Ok(()))?;
     Ok(())
 }
 
@@ -98,12 +107,12 @@ async fn renewal_is_atomic_and_failed_reloads_keep_the_previous_identity() -> Re
 fn startup_requires_valid_time_and_all_enabled_public_hostnames() -> Result<(), TestError> {
     let identity = support::Identity::generate();
     let mut config = config(&identity);
-    assert!(Certificates::load(&config, SystemTime::UNIX_EPOCH).is_err());
+    assert!(Certificates::load(&config, SystemTime::UNIX_EPOCH, |_| Ok(())).is_err());
     config.native[NativeKind::H2 as usize].address = ":8444".into();
     config.native[NativeKind::H2 as usize].public_origin = "https://other.example".into();
-    assert!(Certificates::load(&config, SystemTime::now()).is_err());
+    assert!(Certificates::load(&config, SystemTime::now(), |_| Ok(())).is_err());
     config.native[NativeKind::H2 as usize].address.clear();
-    Certificates::load(&config, SystemTime::now())?;
+    Certificates::load(&config, SystemTime::now(), |_| Ok(()))?;
     Ok(())
 }
 
@@ -115,7 +124,7 @@ async fn watcher_retries_invalid_replacement_and_stops_on_shutdown() -> Result<(
     let original = CertificateDer::from_pem_file(&config.tls_cert)?;
     let replacement = CertificateDer::from_pem_file(second.directory().join("identity.pem"))?;
     let roots = [original.clone(), replacement.clone()];
-    let manager = Certificates::load(&config, SystemTime::now())?;
+    let manager = Certificates::load(&config, SystemTime::now(), |_| Ok(()))?;
     let tls = manager.config(vec![b"http/1.1".to_vec()])?;
     let (stop, stopped) = tokio::sync::oneshot::channel();
     let (reports, mut reported) = tokio::sync::mpsc::channel(4);

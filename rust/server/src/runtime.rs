@@ -23,8 +23,9 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
         .into_iter()
         .any(|kind| !config.listener(kind).address.is_empty())
     {
+        let server = server.clone();
         Some(
-            Certificates::load(&config, SystemTime::now())
+            Certificates::load(&config, SystemTime::now(), move |bytes| server.cover_handshake(bytes))
                 .map_err(|error| format!("TLS certificate {} or key {}: {error}", config.tls_cert, config.tls_key))?,
         )
     } else {

@@ -16,18 +16,22 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-const MAX_CHAIN_CERTIFICATES: usize = 8;
-const MAX_CHAIN_BYTES: usize = 32 * 1024;
 /// With chain bytes C in N certificates: five server flights of C + 5N + 609 plus a C + 48N clone.
-pub(crate) const HANDSHAKE_BYTES: usize = {
-    let flight = MAX_CHAIN_BYTES + 5 * MAX_CHAIN_CERTIFICATES + 609;
-    5 * flight + MAX_CHAIN_BYTES + 48 * MAX_CHAIN_CERTIFICATES
-};
+pub fn handshake_bytes(chain: &[CertificateDer<'_>]) -> usize {
+    let (bytes, count) = (
+        chain.iter().map(|certificate| certificate.len()).sum::<usize>(),
+        chain.len(),
+    );
+    5 * (bytes + 5 * count + 609) + bytes + 48 * count
+}
+
+type Budget = Box<dyn Fn(usize) -> Result<(), ConfigError> + Send + Sync>;
 
 pub struct Certificates {
     certificate_path: PathBuf,
     key_path: PathBuf,
     advertised_names: Vec<ServerName<'static>>,
+    budget: Budget,
     current: RwLock<Arc<CertifiedKey>>,
 }
 
@@ -65,7 +69,11 @@ impl Certificates {
         }
     }
 
-    pub fn load(config: &Config, now: SystemTime) -> Result<Arc<Self>, ConfigError> {
+    pub fn load(
+        config: &Config,
+        now: SystemTime,
+        budget: impl Fn(usize) -> Result<(), ConfigError> + Send + Sync + 'static,
+    ) -> Result<Arc<Self>, ConfigError> {
         let mut names = Vec::new();
         for kind in [NativeKind::H1Tls, NativeKind::H2, NativeKind::H3] {
             let listener = config.listener(kind);
@@ -76,6 +84,7 @@ impl Certificates {
             names.push(ServerName::try_from(origin.host)?);
         }
         let current = read_identity(&config.tls_cert, &config.tls_key, &names, now)?;
+        budget(handshake_bytes(&current.cert))?;
         log_certificate(&current, now);
         #[cfg(unix)]
         {
@@ -93,6 +102,7 @@ impl Certificates {
             certificate_path: config.tls_cert.clone().into(),
             key_path: config.tls_key.clone().into(),
             advertised_names: names,
+            budget: Box::new(budget),
             current: RwLock::new(Arc::new(current)),
         }))
     }
@@ -107,6 +117,7 @@ impl Certificates {
             &self.advertised_names,
             now,
         )?);
+        (self.budget)(handshake_bytes(&replacement.cert))?;
         let mut current = self.current.write().unwrap_or_else(PoisonError::into_inner);
         let changed = current.cert != replacement.cert;
         if changed {
@@ -154,11 +165,6 @@ fn read_identity(
 ) -> Result<CertifiedKey, ConfigError> {
     let chain = CertificateDer::pem_file_iter(certificate_path)?.collect::<Result<Vec<_>, _>>()?;
     let leaf = chain.first().ok_or("TLS certificate chain is empty")?;
-    if chain.len() > MAX_CHAIN_CERTIFICATES
-        || chain.iter().map(|certificate| certificate.len()).sum::<usize>() > MAX_CHAIN_BYTES
-    {
-        return Err("TLS certificate chain exceeds 8 certificates or 32 KiB".into());
-    }
     let (not_before, not_after) = validity(leaf).ok_or("TLS certificate is malformed")?;
     if now < not_before {
         return Err("TLS certificate is not valid yet".into());
