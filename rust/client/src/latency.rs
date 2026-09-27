@@ -193,7 +193,7 @@ impl Reader {
 
 /// Check the actual latency channel before a run starts. A successful HTTP
 /// probe does not establish that QUIC datagrams or WebSocket pings work.
-pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<(), Error> {
+pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<Duration, Error> {
     let kind = match target.transport {
         LatencyTransport::WebSocket => Kind::WebSocket,
         LatencyTransport::WebTransport => Kind::WebTransport,
@@ -210,13 +210,14 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
                 Kind::WebSocket => Duration::from_secs(3),
             };
             loop {
+                let sent = Instant::now();
                 writer.send(wire::encode_ping(0)).await?;
                 let reply = tokio::time::timeout(reply_window, async {
                     loop {
                         match reader.next().await {
                             Some(Ok(Message::Text(text))) => {
                                 if wire::decode_pong(&text).is_ok_and(|pong| pong.id == 0) {
-                                    return Ok(());
+                                    return Ok(sent.elapsed());
                                 }
                             }
                             Some(Ok(Message::Close(frame))) => {

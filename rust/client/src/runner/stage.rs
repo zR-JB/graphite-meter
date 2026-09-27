@@ -576,8 +576,11 @@ impl<'a> StageRun<'a> {
                 latency.error.get_or_insert_with(|| error.to_string());
                 latency.latest_ms = None;
             }
-            if removed && let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
-                server.error = Some(error.to_string());
+            if removed {
+                snapshot.leave(id);
+                if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
+                    server.error = Some(error.to_string());
+                }
             }
             snapshot.status = format!("{id}: {}", reason.label());
         });

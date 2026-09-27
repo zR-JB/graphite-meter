@@ -167,7 +167,7 @@ struct Ui {
     notice: String,
     awaiting: bool,
     cancel: CancelState,
-    latency_focus: Option<String>,
+    latency_pick: Option<String>,
     received_at: tokio::time::Instant,
     shown_down: Option<f64>,
     shown_up: Option<f64>,
@@ -196,7 +196,7 @@ impl Ui {
             notice: String::new(),
             awaiting: false,
             cancel: CancelState::Idle,
-            latency_focus: None,
+            latency_pick: None,
             received_at: tokio::time::Instant::now(),
             shown_down,
             shown_up,
@@ -226,6 +226,13 @@ impl Ui {
         if snapshot.stage != self.snapshot.stage {
             self.shown_down = None;
             self.shown_up = None;
+        }
+        if self
+            .latency_pick
+            .as_ref()
+            .is_some_and(|pick| !snapshot.participants.contains(pick))
+        {
+            self.latency_pick = None;
         }
         self.received_at = tokio::time::Instant::now();
         self.snapshot = snapshot;
@@ -258,6 +265,9 @@ impl Ui {
         } else {
             ("", false)
         }
+    }
+    fn latency_server(&self) -> Option<&str> {
+        self.latency_pick.as_deref().or(self.snapshot.latency_focus.as_deref())
     }
     fn active(&self) -> bool {
         self.awaiting || matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring)
@@ -396,13 +406,11 @@ impl Ui {
                 self.popup = Popup::Details;
                 self.details_scroll = 0;
             }
-            KeyCode::Char('l') if !self.snapshot.server_latencies.is_empty() => {
-                let hosts = &self.snapshot.server_latencies;
-                let current = hosts
-                    .iter()
-                    .position(|host| Some(&host.id) == self.latency_focus.as_ref())
-                    .unwrap_or(0);
-                self.latency_focus = Some(hosts[(current + 1) % hosts.len()].id.clone());
+            KeyCode::Char('l') if self.snapshot.participants.len() > 1 => {
+                let ids = &self.snapshot.participants;
+                let shown = ids.iter().position(|id| Some(id.as_str()) == self.latency_server());
+                let next = &ids[shown.map_or(0, |index| index + 1) % ids.len()];
+                self.latency_pick = (Some(next) != self.snapshot.latency_focus.as_ref()).then(|| next.clone());
             }
             KeyCode::Char('r') | KeyCode::Enter
                 if !self.active()

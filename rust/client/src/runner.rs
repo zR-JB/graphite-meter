@@ -256,46 +256,24 @@ async fn prepare_server(
         Ok::<_, Error>((throughput, transport))
     };
     let latency_path = async {
-        let mut idle_rtt = Duration::ZERO;
-        let mut latency = needs_latency
+        let Some(mut target) = needs_latency
             .then(|| selection::latency(config, entry, &preflight))
-            .transpose()?;
-        if let Some(target) = &latency
-            && target.transport == LatencyTransport::WebTransport
-        {
-            match crate::latency::verify(&client, target, config.insecure).await {
-                Ok(()) => {}
-                Err(error) if crate::net::authentication_required(error.as_ref()).is_some() => {
-                    return Err(error);
-                }
-                Err(error) if config.latency_transport.is_none() => {
-                    latency = Some(
-                        selection::latency_with_transport(config, entry, &preflight, LatencyTransport::WebSocket)
-                            .map_err(|fallback_error| -> Error {
-                                format!(
-                                    "WebTransport latency unavailable ({error}); WebSocket fallback: {fallback_error}"
-                                )
-                                .into()
-                            })?,
-                    );
-                }
-                Err(error) => return Err(error),
+            .transpose()?
+        else {
+            return Ok((None, Duration::ZERO));
+        };
+        let rtt = match crate::latency::verify(&client, &target, config.insecure).await {
+            Err(error)
+                if target.transport == LatencyTransport::WebTransport
+                    && config.latency_transport.is_none()
+                    && crate::net::authentication_required(error.as_ref()).is_none() =>
+            {
+                target = selection::latency_with_transport(config, entry, &preflight, LatencyTransport::WebSocket)?;
+                crate::latency::verify(&client, &target, config.insecure).await?
             }
-        }
-        if let Some(target) = &latency {
-            if target.transport == LatencyTransport::WebTransport && config.ping_interval > Duration::from_secs(15) {
-                return Err("WebTransport ping interval must not exceed 15 seconds".into());
-            }
-            let started = Instant::now();
-            client
-                .probe(&target.base_url, graphite_meter_core::discovery::Protocol::Negotiated)
-                .await?;
-            idle_rtt = started.elapsed();
-            if target.transport == LatencyTransport::WebSocket {
-                crate::latency::verify(&client, target, config.insecure).await?;
-            }
-        }
-        Ok::<_, Error>((latency, idle_rtt))
+            rtt => rtt?,
+        };
+        Ok::<_, Error>((Some(target), rtt))
     };
     let ((throughput, transport), (latency, idle_rtt)) = tokio::try_join!(throughput_path, latency_path)?;
     Ok(PreparedServer {
@@ -339,6 +317,14 @@ async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, 
     }
 }
 
+fn latency_focus(servers: &[PreparedServer]) -> Option<String> {
+    let focus = servers.iter().reduce(|best, server| {
+        let lower = !server.idle_rtt.is_zero() && (best.idle_rtt.is_zero() || server.idle_rtt < best.idle_rtt);
+        if lower { server } else { best }
+    });
+    focus.map(|server| server.entry.id.clone())
+}
+
 fn lane_plan(config: &Config, stage: Stage, servers: &[PreparedServer]) -> Result<StageLanePlan, Error> {
     let participants: Vec<_> = servers
         .iter()
@@ -371,6 +357,8 @@ pub async fn run_prepared(
         snapshot.results.clear();
         snapshot.failures.clear();
         snapshot.server_latencies.clear();
+        snapshot.participants.clear();
+        snapshot.latency_focus = None;
         snapshot.history = Default::default();
         snapshot.latest = Point::default();
         snapshot.stage = None;
@@ -391,6 +379,10 @@ pub async fn run_prepared(
             preparation.servers
         }
     };
+    snapshots.send_modify(|snapshot| {
+        snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
+        snapshot.latency_focus = latency_focus(&prepared);
+    });
     let sole = (prepared.len() == 1).then(|| prepared[0].entry.clone());
     let mut retry_sole = false;
     for stage in &config.stages {

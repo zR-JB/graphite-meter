@@ -246,9 +246,28 @@ pub struct Snapshot {
     pub auth: Option<AuthPrompt>,
     pub server_latencies: Vec<ServerLatency>,
     pub failures: Vec<ServerFailure>,
+    pub participants: Vec<String>,
+    pub latency_focus: Option<String>,
 }
 
 impl Snapshot {
+    pub(crate) fn leave(&mut self, id: &str) {
+        self.participants.retain(|participant| participant != id);
+        if self.latency_focus.as_deref() != Some(id) {
+            return;
+        }
+        let idle = self.results.iter().find(|result| result.stage == Stage::Latency);
+        let measured = |participant: &&String| {
+            idle.is_some_and(|idle| {
+                idle.server_latencies
+                    .iter()
+                    .any(|host| host.id == **participant && host.median().is_some())
+            })
+        };
+        let focus = self.participants.iter().find(measured).or(self.participants.first());
+        self.latency_focus = focus.cloned();
+    }
+
     pub fn added_ms(&self, loaded: &StageResult, id: &str) -> Option<f64> {
         let median = |result: &StageResult| result.server_latencies.iter().find(|host| host.id == id)?.median();
         let idle = self.results.iter().find(|result| result.stage == Stage::Latency)?;

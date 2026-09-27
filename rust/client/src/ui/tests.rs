@@ -39,6 +39,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
                 }],
                 server_results: Vec::new(),
             }],
+            latency_focus: Some("self".into()),
             ..Snapshot::default()
         },
     );
@@ -56,7 +57,7 @@ fn finished_latency_result_remains_visible_after_live_probes_end() {
 
     // A selected peer absent from this stage must not inherit another
     // peer's RTT merely because its summary is first in the result.
-    ui.latency_focus = Some("other".into());
+    ui.latency_pick = Some("other".into());
     terminal.draw(|frame| ui.draw(frame)).unwrap();
     let rendered = terminal
         .backend()
@@ -230,6 +231,7 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
             server_latencies: Vec::new(),
             server_results: Vec::new(),
         }],
+        latency_focus: Some("near".into()),
         ..Snapshot::default()
     };
     let mut ui = Ui::new(Config::default(), snapshot);
@@ -369,6 +371,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
     assert_eq!(snapshot.history.points.front().unwrap().elapsed, Duration::ZERO);
     assert!(snapshot.history.points.len() <= 480);
     snapshot.server_latencies.push(host);
+    snapshot.latency_focus = Some("self".into());
     let config = Config {
         stages: vec![Stage::Latency, Stage::Download],
         latency_duration: Duration::from_secs(60),

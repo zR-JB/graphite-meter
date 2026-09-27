@@ -423,8 +423,7 @@ impl Ui {
         self.snapshot
             .server_latencies
             .iter()
-            .find(|host| Some(&host.id) == self.latency_focus.as_ref())
-            .or_else(|| self.snapshot.server_latencies.first())
+            .find(|host| Some(host.id.as_str()) == self.latency_server())
     }
     fn latency_name<'a>(&'a self, focus: Option<&'a crate::model::ServerLatency>) -> &'a str {
         focus
@@ -593,10 +592,11 @@ impl Ui {
         &'a self,
         result: &'a crate::model::StageResult,
     ) -> Option<&'a crate::model::ServerLatencyResult> {
-        match &self.latency_focus {
-            Some(id) => result.server_latencies.iter().find(|host| &host.id == id),
-            None => result.server_latencies.first(),
-        }
+        let shown = self.latency_server();
+        result
+            .server_latencies
+            .iter()
+            .find(|host| Some(host.id.as_str()) == shown)
     }
 
     fn draw_results(&self, frame: &mut Frame, area: Rect) {
