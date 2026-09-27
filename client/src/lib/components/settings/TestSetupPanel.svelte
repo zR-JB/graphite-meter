@@ -708,7 +708,9 @@
   }
   .field-unit {
     display: flex;
-    align-items: center;
+    flex-wrap: wrap;
+    align-content: center;
+    align-items: baseline;
     width: 7rem;
     height: var(--control-h);
     padding-inline: 10px;

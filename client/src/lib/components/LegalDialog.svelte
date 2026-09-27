@@ -49,7 +49,8 @@
   lightDismiss
 >
   <header class="sheet-head">
-    <h2 id="legal-dialog-title">About &amp; legal</h2>
+    <!-- svelte-ignore a11y_autofocus -->
+    <h2 id="legal-dialog-title" tabindex="-1" autofocus>About &amp; legal</h2>
     <div class="head-actions">
       <button
         class="btn btn-icon btn-quiet"
