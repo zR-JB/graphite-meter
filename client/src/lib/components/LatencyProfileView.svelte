@@ -3,7 +3,7 @@
   import { inView } from "../actions/inView";
   import { handoff, Smoothed } from "../presentation/motion.svelte";
   import Icon from "./Icon.svelte";
-  import { tooltip } from "../actions/tooltip";
+  import { term, tooltip } from "../actions/tooltip";
   import { restDetector, warmUp } from "../actions/intent";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtMs, formatLatency } from "../format";
@@ -268,8 +268,9 @@
               .join("\n"),
           )}>median {formatLatency(lane.center)}</strong
         >
-        <em class="jit" tabindex="-1" {@attach tooltip(() => JARGON.jitter)}
-          >jitter {formatLatency(lane.jitter)}</em
+        <em class="jit"
+          ><span tabindex="-1" {@attach term(() => JARGON.jitter)}>jitter</span>
+          {formatLatency(lane.jitter)}</em
         >
         <em
           class="range-label"

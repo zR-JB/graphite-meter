@@ -999,17 +999,40 @@
     white-space: pre-line;
     overflow-wrap: anywhere;
     opacity: 0;
-    translate: 0 2px;
+    scale: 0.95;
+    transform-origin: var(--arrow-x, 50%) 100%;
     transition:
-      opacity var(--dur-hover) var(--ease-out),
-      translate var(--dur-hover) var(--ease-out);
+      opacity var(--dur-slide) var(--ease-out),
+      scale var(--dur-slide) var(--ease-out);
   }
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-heavy);
   }
+  .tooltip[data-side="below"] {
+    transform-origin: var(--arrow-x, 50%) 0;
+  }
   .tooltip[data-show="true"] {
     opacity: 1;
-    translate: none;
+    scale: none;
+  }
+  .tooltip::before {
+    position: absolute;
+    top: calc(100% - 1px);
+    left: var(--arrow-x, 50%);
+    width: 8px;
+    height: 8px;
+    border: inherit;
+    border-width: 0 1px 1px 0;
+    background: inherit;
+    content: "";
+    clip-path: polygon(100% 0, 100% 100%, 0 100%);
+    translate: -50% -50%;
+    rotate: 45deg;
+  }
+  .tooltip[data-side="below"]::before {
+    top: 1px;
+    border-width: 1px 0 0 1px;
+    clip-path: polygon(0 0, 100% 0, 0 100%);
   }
 
   .enter,
@@ -1061,13 +1084,22 @@
   }
 }
 
-/* An explained term brightens while pointed at; unlayered so it outranks component tones. */
+/* Curated jargon carries a mark; every explained word brightens. Unlayered to outrank component tones. */
+:root [data-tip="term"] {
+  text-decoration: underline dotted
+    color-mix(in srgb, currentColor 50%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
 @media (hover: hover) {
   :root [data-tip] {
-    transition: color var(--dur-hover) var(--ease-out);
+    transition:
+      color var(--dur-hover) var(--ease-out),
+      text-decoration-color var(--dur-hover) var(--ease-out);
   }
   :root [data-tip]:is(:hover, :focus-visible) {
     color: var(--text);
+    text-decoration-color: currentColor;
   }
 }
 

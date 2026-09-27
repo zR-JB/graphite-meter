@@ -2,7 +2,7 @@
   import Icon from "../Icon.svelte";
   import { httpProtocolLabel } from "../../runner/paths";
   import { serverLabel } from "../../presentation/serverAppearance";
-  import { tipGroup, tooltip } from "../../actions/tooltip";
+  import { term, tipGroup, tooltip } from "../../actions/tooltip";
   import {
     fmtBytes,
     fmtDuration,
@@ -256,7 +256,7 @@
         <section class="group">
           <h3>
             <span
-              {@attach tooltip(() =>
+              {@attach term(() =>
                 accounting.some((lane) => lane.accountingComplete === false)
                   ? `${JARGON.probeAccounting}\nPartial: ${PARTIAL_ACCOUNTING_HELP}`
                   : JARGON.probeAccounting,

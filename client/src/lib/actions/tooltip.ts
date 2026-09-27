@@ -5,13 +5,17 @@ import { restDetector, warmUp } from "./intent";
 const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
-const HOVER_DELAY_MS = 500;
-// An explainer waits longer than a control's name, so it appears only when the pointer means to ask.
-const EXPLAINER_DELAY_MS = 1000;
+const TERM_REST_MS = 300;
+const REST_MS = 600;
 const LONG_PRESS_MS = 500;
-const TOUCH_DISMISS_MS = 4000;
-/** An attachment; the getter updates the text in place, so an open tip stays open. */
+/** A plain label or control; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
+/** Jargon: a quiet mark, a short rest, and a click or tap opens it outright. */
+export const term = (text: () => string) =>
+  fromAction(
+    (node: HTMLElement, initial: string) => tooltipAction(node, initial, true),
+    text,
+  );
 
 const STEP: Record<string, number> = {
   ArrowDown: 1,
@@ -58,7 +62,7 @@ export const tipGroup: Attachment<HTMLElement> = (node) => {
   };
 };
 
-function tooltipAction(node: HTMLElement, initial: string) {
+function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   let text = initial;
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
@@ -66,13 +70,9 @@ function tooltipAction(node: HTMLElement, initial: string) {
   let touchOpen = false;
   // A long press showed the tip; the click it ends in is not a tap on the control.
   let pressed = false;
-  let autoDismissTimer = 0;
   const rest = restDetector(() => {
     show();
-    if (!bubble || lastPointer !== "touch") return;
-    touchOpen = pressed = true;
-    // Not motion: a touch tip closes itself.
-    autoDismissTimer = window.setTimeout(hide, TOUCH_DISMISS_MS);
+    if (bubble && lastPointer === "touch") touchOpen = pressed = true;
   });
   let lastPointer = "";
   // A click answers the pointer; its tip waits until it leaves and comes back.
@@ -82,15 +82,30 @@ function tooltipAction(node: HTMLElement, initial: string) {
     "anchor-name",
     anchorNames ? `${anchorNames}, --${id}` : `--${id}`,
   );
-  // A term brightens on hover; one outside a control also takes a tab stop, shared within a tip group.
-  const inert = !node.closest(ACTIONABLE_SELECTOR);
-  if (!node.matches(ACTIONABLE_SELECTOR)) node.dataset.tip = "";
+  // A term inside a control explains while that control has keyboard focus.
+  const host = node.closest<HTMLElement>(ACTIONABLE_SELECTOR) ?? node;
+  const inert = host === node && !node.matches(ACTIONABLE_SELECTOR);
+  if (!node.matches(ACTIONABLE_SELECTOR))
+    node.dataset.tip = marked ? "term" : "";
   if (inert && node.tabIndex < 0 && !node.hasAttribute("tabindex"))
     node.tabIndex = node.closest("[data-tip-group]") ? -1 : 0;
   // A multi-line tip is an explainer: its first line titles the rest.
   function write(target: HTMLElement) {
     target.textContent = text;
     target.toggleAttribute("data-titled", text.includes("\n"));
+  }
+  // The arrow points at the term wherever the bubble had to sit; measured about the centre, so the entry scale cancels.
+  function aim(target: HTMLElement) {
+    target.style.removeProperty("--arrow-x");
+    const at = node.getBoundingClientRect();
+    const box = target.getBoundingClientRect();
+    const width = target.offsetWidth;
+    target.dataset.side = box.top >= at.top ? "below" : "above";
+    const x = at.left + at.width / 2 - (box.left + box.width / 2 - width / 2);
+    target.style.setProperty(
+      "--arrow-x",
+      `${Math.min(Math.max(x, 12), width - 12)}px`,
+    );
   }
   function show() {
     if (bubble || !text || !node.isConnected) return;
@@ -103,6 +118,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
     write(bubble);
     document.body.appendChild(bubble);
     bubble.showPopover();
+    aim(bubble);
     prevDescribedBy = node.getAttribute("aria-describedby");
     node.setAttribute(
       "aria-describedby",
@@ -113,8 +129,8 @@ function tooltipAction(node: HTMLElement, initial: string) {
       target.addEventListener(type, listener as EventListener, capture);
   }
   function onPopoverToggle(event: Event) {
-    const host = event.target as Node;
-    if ((event as ToggleEvent).newState === "closed" && host.contains(node))
+    const popover = event.target as Node;
+    if ((event as ToggleEvent).newState === "closed" && popover.contains(node))
       hide();
   }
   function onDocumentPointerDown(event: PointerEvent) {
@@ -127,10 +143,7 @@ function tooltipAction(node: HTMLElement, initial: string) {
   }
   function hide() {
     rest.cancel();
-    if (autoDismissTimer) {
-      clearTimeout(autoDismissTimer);
-      autoDismissTimer = 0;
-    }
+    touchOpen = false;
     if (!bubble) return;
     warmUp();
     const leaving = bubble;
@@ -144,7 +157,6 @@ function tooltipAction(node: HTMLElement, initial: string) {
     if (prevDescribedBy === null) node.removeAttribute("aria-describedby");
     else node.setAttribute("aria-describedby", prevDescribedBy);
     prevDescribedBy = null;
-    touchOpen = false;
     for (const [target, type, listener, capture] of dismissListeners)
       target.removeEventListener(type, listener as EventListener, capture);
   }
@@ -158,38 +170,34 @@ function tooltipAction(node: HTMLElement, initial: string) {
   function onPointerMove(event: PointerEvent) {
     lastPointer = event.pointerType;
     if (event.pointerType === "mouse" && !bubble && !clicked)
-      rest.move(
-        event,
-        text.includes("\n") ? EXPLAINER_DELAY_MS : HOVER_DELAY_MS,
-      );
+      rest.move(event, marked ? TERM_REST_MS : REST_MS);
   }
   function onPointerLeave(event: PointerEvent) {
     if (event.pointerType !== "mouse") return;
     clicked = false;
     hide();
   }
-  // Only :focus-visible shows the tip, a microtask later, once a closing popover has restored focus.
+  // Keyboard focus only (main.ts drops data-pointer on a key), a microtask later, once a closing popover has restored focus.
   function onFocus(event: FocusEvent) {
     const target = event.target as HTMLElement;
     queueMicrotask(() => {
-      if (target.matches(":focus-visible")) show();
+      if (
+        target.matches(":focus-visible") &&
+        !("pointer" in document.documentElement.dataset)
+      )
+        show();
     });
   }
-  // A tap on a control runs the control, so only an inert anchor shows a tip on tap; a long press shows any.
+  // A tap on a marked term asks (never pressing its label); anything else needs a long press, so a tap still runs its control.
   function onPointerUp(event: PointerEvent) {
     if (event.pointerType !== "touch") return;
     rest.cancel();
     if (pressed) return;
-    if (touchOpen) {
-      hide();
-      return;
+    if (touchOpen) hide();
+    else if (marked) {
+      show();
+      touchOpen = !!bubble;
     }
-    if (!inert) return;
-    show();
-    if (!bubble) return;
-    touchOpen = true;
-    // Not motion: a touch tip closes itself.
-    autoDismissTimer = window.setTimeout(hide, TOUCH_DISMISS_MS);
   }
   function onPointerDown(event: PointerEvent) {
     lastPointer = event.pointerType;
@@ -199,13 +207,13 @@ function tooltipAction(node: HTMLElement, initial: string) {
       return;
     }
     // A click on a term asks outright; a click on a control answers the pointer instead.
-    const open = !bubble && inert;
+    const open = !bubble && (inert || marked);
     clicked = true;
     hide();
     if (open) show();
   }
   function onClick(event: MouseEvent) {
-    if (pressed) {
+    if (pressed || marked) {
       pressed = false;
       event.preventDefault();
       event.stopPropagation();
@@ -221,31 +229,34 @@ function tooltipAction(node: HTMLElement, initial: string) {
     [document, "pointerdown", onDocumentPointerDown, true],
     [document, "keydown", onEscape, true],
   ] as const;
-  const nodeListeners = [
-    ["pointerdown", onPointerDown],
-    ["pointerenter", onPointerMove],
-    ["pointermove", onPointerMove],
-    ["pointerleave", onPointerLeave],
-    ["pointercancel", rest.cancel],
-    ["contextmenu", onContextMenu],
-    ["focusin", onFocus],
-    ["focusout", hide],
-    ["pointerup", onPointerUp],
-    ["click", onClick],
+  const listeners = [
+    [node, "pointerdown", onPointerDown],
+    [node, "pointerenter", onPointerMove],
+    [node, "pointermove", onPointerMove],
+    [node, "pointerleave", onPointerLeave],
+    [node, "pointercancel", rest.cancel],
+    [node, "contextmenu", onContextMenu],
+    [host, "focusin", onFocus],
+    [host, "focusout", hide],
+    [node, "pointerup", onPointerUp],
+    [node, "click", onClick],
   ] as const;
-  for (const [type, listener] of nodeListeners)
-    node.addEventListener(type, listener as EventListener);
+  for (const [target, type, listener] of listeners)
+    target.addEventListener(type, listener as EventListener);
   return {
     update(next: string) {
       text = next;
       if (!bubble) return;
       if (!text) hide();
-      else write(bubble);
+      else {
+        write(bubble);
+        aim(bubble);
+      }
     },
     destroy() {
       hide();
-      for (const [type, listener] of nodeListeners)
-        node.removeEventListener(type, listener as EventListener);
+      for (const [target, type, listener] of listeners)
+        target.removeEventListener(type, listener as EventListener);
     },
   };
 }
