@@ -240,7 +240,7 @@ func (m model) detailsView(w int, full bool) string {
 		}
 		return cells
 	}
-	rows := [][]string{row("Combined", r.results)}
+	rows := [][]string{row("All servers", r.results)}
 	latency := [][]string{}
 	for _, server := range details.Servers {
 		name := server.Server.Name
@@ -310,9 +310,9 @@ func (m model) outcomeNotice() string {
 	case m.run.outcome == goclient.OutcomeRunning && remaining < selected:
 		return fmt.Sprintf("%d of %d servers remaining", remaining, selected)
 	case m.run.outcome == goclient.OutcomeRunning:
-		return fmt.Sprintf("%d servers combined", selected)
+		return fmt.Sprintf("All %d servers", selected)
 	case remaining < selected:
 		return fmt.Sprintf("%s · %d of %d servers", outcomeLabels[m.run.outcome], remaining, selected)
 	}
-	return fmt.Sprintf("%s · %d servers combined", outcomeLabels[m.run.outcome], selected)
+	return fmt.Sprintf("%s · all %d servers", outcomeLabels[m.run.outcome], selected)
 }

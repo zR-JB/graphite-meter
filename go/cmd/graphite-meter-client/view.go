@@ -461,7 +461,7 @@ func (m model) testFields(w int) []string {
 		}
 		servers := strings.Join(names, ", ")
 		if len(names) > 1 {
-			servers += " · Combined"
+			servers += " (all servers)"
 			streams = "per server · " + streams
 		}
 		field("Servers", servers)
@@ -723,12 +723,12 @@ func (m model) resultsView(w int, latencyHeading string) results {
 	if out.added {
 		out.notes = append(out.notes, m.st.muted.Render(addedNote))
 	}
-	combined := ""
+	scope := ""
 	if m.multipleRunServers() {
-		combined = "Combined"
+		scope = "All servers"
 	}
 	if len(throughput) > 0 {
-		out.throughput = m.st.grid([]string{"Throughput", combined}, throughput, w)
+		out.throughput = m.st.grid([]string{"Throughput", scope}, throughput, w)
 	}
 	if len(latencyRows) > 0 {
 		headers := []string{latencyHeading, "Median", "Added", "P95", "Jitter", "Probe timeouts"}
