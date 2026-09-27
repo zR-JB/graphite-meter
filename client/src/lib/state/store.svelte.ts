@@ -181,7 +181,7 @@ class AppStore {
     void this.#latencyTail;
     return this.latencyByServer.get(this.latencyFocus) ?? NO_LATENCY;
   }
-  #focused = $derived(
+  latencyServer = $derived(
     this.serverDetails?.servers.find(
       ({ server }) => server.id === this.latencyFocus,
     ),
@@ -189,7 +189,7 @@ class AppStore {
   /** Saved summaries once complete, streamed ones while running. */
   latencySummaries = $derived.by((): LatencySummaries => {
     void this.#summaryTail;
-    const saved = this.#focused?.latencyByStage;
+    const saved = this.latencyServer?.latencyByStage;
     return (
       (this.phase === "complete" && saved) ||
       this.summariesByServer.get(this.latencyFocus) ||
