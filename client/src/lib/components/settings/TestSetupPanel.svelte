@@ -287,13 +287,13 @@
   onToggle: (next: boolean) => void,
   disabled = false,
 )}
-  <div class="switch-row">
+  <div>
     <Switch {checked} {onToggle} {disabled} {label} tooltip={tip} />
   </div>
 {/snippet}
 
 <div class="settings">
-  <section class="group connection">
+  <section class="group">
     <div class="group-head">
       <h3>Connection</h3>
       <span
@@ -356,29 +356,30 @@
                 : ""}
           {#if durationMode === "custom"}
             <label class="stage" data-tone={tone}>
-              <span {@attach tip ? term(() => tip) : null}>{label}</span>
-              <span class="measure">
-                <input
-                  type="number"
-                  {min}
-                  {max}
-                  step="500"
-                  disabled={store.preparing}
-                  value={store.config.duration[key]}
-                  onchange={(event) => setDuration(key, event)}
-                />
-                <span>ms</span>
-              </span>
+              <span class="caption"
+                ><span {@attach tip ? term(() => tip) : null}>{label}</span>
+                <span class="unit">ms</span></span
+              >
+              <input
+                type="number"
+                {min}
+                {max}
+                step="500"
+                disabled={store.preparing}
+                value={store.config.duration[key]}
+                onchange={(event) => setDuration(key, event)}
+              />
             </label>
           {:else}
             {@const [value, unit] = fmtDuration(
               DURATION_PRESETS[durationMode][key],
             ).split(" ")}
             <div class="stage" data-tone={tone}>
-              <span {@attach tip ? term(() => tip) : null}>{label}</span>
-              <span class="measure"
-                ><span class="value">{value}</span><span>{unit}</span></span
+              <span class="caption"
+                ><span {@attach tip ? term(() => tip) : null}>{label}</span>
+                <span class="unit">{unit}</span></span
               >
+              <span class="value">{value}</span>
             </div>
           {/if}
         {/each}
@@ -629,15 +630,6 @@
     gap: var(--space-5);
     container: settings / inline-size;
   }
-  .connection > .group-head {
-    padding-inline: var(--space-3);
-  }
-  .group-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
   .row {
     display: flex;
     flex: 1;
@@ -648,11 +640,6 @@
     min-width: 0;
     min-height: var(--control-h);
   }
-  .switch-row > :global(.switch) {
-    flex: 1;
-    justify-content: space-between;
-    min-height: var(--control-h);
-  }
   .row input {
     width: 6rem;
     text-align: end;
@@ -661,9 +648,6 @@
     width: auto;
     max-width: 11rem;
   }
-  .presets {
-    flex: 0 1 15rem;
-  }
   .presets > button {
     text-transform: capitalize;
   }
@@ -671,10 +655,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-2);
-  }
-  .controls > .segmented {
-    flex: none;
-    width: 7.5rem;
   }
   .stages {
     display: grid;
@@ -704,38 +684,45 @@
     border-radius: var(--r-full);
     background: var(--tone);
   }
-  /* A preset time sits where its custom field goes, so switching moves nothing. */
-  .measure {
-    position: relative;
+  .caption {
     display: flex;
-    align-items: baseline;
-    gap: 3px;
-    min-width: 0;
+    justify-content: space-between;
+    gap: var(--space-1);
   }
-  .measure > span:last-child {
-    color: var(--text-soft);
+  .unit {
     font-size: var(--type-2xs);
   }
-  div.stage .measure {
-    min-height: 36px;
-    padding-block: 8px;
-  }
-  .stage input + span {
-    position: absolute;
-    right: 9px;
-    bottom: 11px;
-  }
+  /* A preset time sits where its custom field goes, so switching moves nothing. */
   .value {
+    height: var(--control-h);
     color: var(--text);
     font-size: var(--type-body);
-    font-weight: var(--w-normal);
+    line-height: var(--control-h);
+  }
+  @media (pointer: coarse) {
+    .value {
+      height: var(--hit);
+      line-height: var(--hit);
+    }
   }
   .stage input {
-    padding-right: 26px;
     appearance: textfield;
   }
   .stage input::-webkit-inner-spin-button {
     appearance: none;
+  }
+  .measure {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-soft);
+    font-size: var(--type-xs);
+  }
+  .kv > div > :global(.switch) {
+    flex: 1;
+  }
+  .segmented > button {
+    flex: 1 0 auto;
   }
   .settings-reset {
     margin-top: var(--space-1);

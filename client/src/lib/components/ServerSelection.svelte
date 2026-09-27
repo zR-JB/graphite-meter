@@ -275,6 +275,7 @@
   .kv > .servers {
     display: grid;
     gap: 2px;
+    padding-block: 2px 6px;
   }
   .server-heading,
   .latency-policy {
