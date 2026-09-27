@@ -137,6 +137,12 @@ export class Smoothed {
   }
 
   #frame = (now: number): boolean => {
+    if (still()) {
+      const since = Math.max(0, now - this.#at);
+      this.#publish(Math.min(this.#max, this.#to + this.#rate * since));
+      this.#stop = null;
+      return false;
+    }
     const value = this.at(now);
     this.#publish(value);
     const moving =
@@ -190,7 +196,7 @@ export class Handoff<T> {
   }
 
   #frame = (): boolean => {
-    if (this.#fade.current > 0) return true;
+    if (this.#fade.current > 0 && !still()) return true;
     this.#swap();
     return false;
   };
