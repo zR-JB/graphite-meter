@@ -27,7 +27,11 @@ pub(crate) struct RetryBackoff {
 }
 
 impl RetryBackoff {
-    pub(crate) fn delay(&mut self, mut error: &(dyn std::error::Error + 'static)) -> Duration {
+    pub(crate) fn delay(
+        &mut self,
+        mut error: &(dyn std::error::Error + 'static),
+        started: Instant,
+    ) -> Duration {
         loop {
             if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
                 && matches!(http.status, 429 | 503)
@@ -46,7 +50,11 @@ impl RetryBackoff {
             error = source;
         }
         self.busy = Duration::ZERO;
-        TRANSFER_RETRY_BACKOFF
+        if started.elapsed() < TRANSFER_RETRY_BACKOFF {
+            TRANSFER_RETRY_BACKOFF
+        } else {
+            Duration::ZERO
+        }
     }
 }
 
@@ -78,7 +86,7 @@ impl TransferRetry {
         {
             return Err(error);
         }
-        tokio::time::sleep(self.backoff.delay(error.as_ref())).await;
+        tokio::time::sleep(self.backoff.delay(error.as_ref(), started)).await;
         Ok(())
     }
 }

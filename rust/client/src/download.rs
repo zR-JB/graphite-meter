@@ -332,13 +332,16 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
         let server = tokio::spawn(async move {
-            let mut first_closed = None;
-            for attempt in 0..2 {
+            let mut closed = tokio::time::Instant::now();
+            for (attempt, lasts) in [Duration::ZERO, 2 * TRANSFER_RETRY_BACKOFF, Duration::ZERO]
+                .into_iter()
+                .enumerate()
+            {
                 let (mut stream, _) = listener.accept().await?;
-                if attempt == 1 {
-                    assert!(first_closed.is_some_and(|closed: tokio::time::Instant| {
-                        closed.elapsed() >= TRANSFER_RETRY_BACKOFF
-                    }));
+                match attempt {
+                    1 => assert!(closed.elapsed() >= TRANSFER_RETRY_BACKOFF),
+                    2 => assert!(closed.elapsed() < TRANSFER_RETRY_BACKOFF),
+                    _ => {}
                 }
                 let mut request = [0_u8; 4096];
                 let count = stream.read(&mut request).await?;
@@ -347,10 +350,9 @@ mod tests {
                     .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n")
                     .await?;
                 stream.write_all(&[42; 1024]).await?;
+                tokio::time::sleep(lasts).await;
                 drop(stream);
-                if attempt == 0 {
-                    first_closed = Some(tokio::time::Instant::now());
-                }
+                closed = tokio::time::Instant::now();
             }
             Ok::<_, Error>(())
         });
@@ -359,7 +361,7 @@ mod tests {
         let (_stop, cancelled) = watch::channel(false);
         let mut download = Download::start(transport, 1, Duration::from_secs(5), cancelled).await?;
         tokio::time::timeout(Duration::from_secs(5), async {
-            while download.bytes() < 2048 {
+            while download.bytes() < 3072 {
                 download.health()?;
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }

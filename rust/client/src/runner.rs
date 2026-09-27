@@ -352,6 +352,7 @@ async fn verify_throughput_webtransport(
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut backoff = crate::transport::RetryBackoff::default();
     loop {
+        let started = Instant::now();
         let error = match tokio::time::timeout_at(
             deadline,
             crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3)),
@@ -370,8 +371,10 @@ async fn verify_throughput_webtransport(
         {
             return Err(error);
         }
-        tokio::time::sleep_until((Instant::now() + backoff.delay(error.as_ref())).min(deadline))
-            .await;
+        tokio::time::sleep_until(
+            (Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline),
+        )
+        .await;
         if Instant::now() >= deadline {
             return Err(error);
         }

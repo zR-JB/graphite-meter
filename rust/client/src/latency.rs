@@ -289,6 +289,7 @@ async fn connect(
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut backoff = crate::transport::RetryBackoff::default();
     loop {
+        let started = Instant::now();
         let error = match connect_once(http, origin, insecure, cancel, kind).await {
             Ok(bus) => return Ok(bus),
             Err(error) => error,
@@ -299,7 +300,7 @@ async fn connect(
         {
             return Err(error);
         }
-        let wake = (Instant::now() + backoff.delay(error.as_ref())).min(deadline);
+        let wake = (Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline);
         tokio::select! {
             biased;
             () = cancelled(cancel) => return Ok(None),
