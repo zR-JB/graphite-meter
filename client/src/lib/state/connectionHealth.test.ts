@@ -17,9 +17,9 @@ test("missing or stale evidence is checking; an isolated timeout or RTT spike is
   for (const values of [[null], [10, null], [10, 10, 300, 10, 10]])
     expect(connectionQuality(buckets(values))).toBe("connected");
 });
-test("repeated loss and sustained variation produce distinct warnings", () => {
+test("repeated loss warns; latency variation alone never does", () => {
   expect(connectionQuality(buckets([10, null, null]))).toBe("unstable");
-  expect(connectionQuality(buckets([10, 90, 10, 90, 10]))).toBe("degraded");
+  expect(connectionQuality(buckets([10, 90, 10, 90, 10]))).toBe("connected");
   expect(connectionQuality(buckets([100, 101, 103, 101, 100]))).toBe(
     "connected",
   );
