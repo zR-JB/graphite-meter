@@ -18,7 +18,7 @@ export interface StageGraphInput {
   span: number;
   /** Bytes/s at the top of the plot, shared by every card so heights compare. */
   ceiling: number;
-  /** The idle median: the latency track's floor, so height is latency added by the load. */
+  /** The idle median, drawn across the track: a reply's height over it is the latency its load added. */
   baseline: number | null;
   /** Ms at the top of the latency track, shared by every card. */
   latencyTop: number;
@@ -34,6 +34,7 @@ export interface StageGraph {
   area: string;
   heads: { x: number; y: number }[];
   dots: { x: number; y: number; t: number; ms: number }[];
+  baselineY: number | null;
   /** Per lane: bin centre times and rates, for the hover readout. */
   bins: GraphPoint[][];
 }
@@ -52,7 +53,7 @@ const path = (points: { x: number; y: number }[]) =>
         )
         .join("");
 
-/** Lanes binned to the plot's width over a zero baseline; latency replies as dots above the idle median. */
+/** Lanes binned to the plot's width over a zero baseline; latency replies as dots around the idle median. */
 export function stageGraph(input: StageGraphInput): StageGraph {
   const { start, span, width, plotHeight, trackHeight } = input;
   const columns = Math.max(8, Math.floor(width / BIN_PX));
@@ -98,23 +99,20 @@ export function stageGraph(input: StageGraphInput): StageGraph {
     first.length < 2
       ? ""
       : `${path(first)}L${first.at(-1)!.x} ${plotHeight}L${first[0].x} ${plotHeight}Z`;
-  const floor = input.baseline ?? 0;
-  const room = Math.max(1, input.latencyTop - floor);
+  // One scale from 0 ms, so a reply below the idle median sits below its line.
+  const trackY = (ms: number) =>
+    trackHeight -
+    1.5 -
+    Math.min(1, Math.max(0, ms / (input.latencyTop || 1))) * (trackHeight - 3);
   const dots = input.latency
     .filter((point) => point.t >= start && point.t <= start + span)
-    .map((point) => ({
-      ...point,
-      x: x(point.t),
-      y:
-        trackHeight -
-        1.5 -
-        Math.min(1, Math.max(0, (point.ms - floor) / room)) * (trackHeight - 3),
-    }));
+    .map((point) => ({ ...point, x: x(point.t), y: trackY(point.ms) }));
   return {
     lines: drawn.map(path),
     area,
     heads: heads.map(({ x, y }) => ({ x, y })),
     dots,
+    baselineY: input.baseline === null ? null : trackY(input.baseline),
     bins,
   };
 }

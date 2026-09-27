@@ -318,7 +318,6 @@ export function statusLabel(
   return phaseLabel(phase, outcome);
 }
 
-/** Bare "webtransport" names the session: streams carry throughput, datagrams latency. */
 /** A path choice's second line: what it does, in a few words; availability stays in its tip. */
 export const PATH_NOTE: Record<
   "throughput" | "latency",
@@ -339,6 +338,7 @@ export const PATH_NOTE: Record<
   },
 };
 
+/** Bare "webtransport" names the session: streams carry throughput, datagrams latency. */
 export const TRANSPORT: Record<TransportKind, string> = {
   "fetch-stream": "Fetch streams",
   websocket: "WebSocket",

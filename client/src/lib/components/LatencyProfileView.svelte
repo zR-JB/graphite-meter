@@ -173,7 +173,10 @@
     setHover(lane, metrics[next].metric, event.currentTarget as HTMLElement);
   }
 
-  function accessibleLane(lane: LatencyProfileViewLane): string {
+  function accessibleLane(
+    lane: LatencyProfileViewLane,
+    plus: number | null,
+  ): string {
     const values = [
       lane.center == null
         ? null
@@ -186,6 +189,7 @@
         : `P10 to P90 ${fmtMs(lane.p10)} to ${fmtMs(lane.p90)} milliseconds`,
       lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
+      plus == null ? null : `added over idle ${fmtAddedMs(plus)} milliseconds`,
       live && lane.timeoutRatio != null && lane.timeoutRatio > 0
         ? timeoutLabel(lane.timeoutRatio)
         : null,
@@ -335,7 +339,7 @@
             class="track"
             role="slider"
             tabindex={metrics.length ? 0 : -1}
-            aria-label={accessibleLane(lane)}
+            aria-label={accessibleLane(lane, plus)}
             aria-disabled={!metrics.length}
             aria-valuemin={0}
             aria-valuemax={Math.max(0, metrics.length - 1)}

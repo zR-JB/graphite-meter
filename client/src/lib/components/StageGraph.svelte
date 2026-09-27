@@ -63,9 +63,13 @@
 
   let hoverT = $state<number | null>(null);
   let keyboard = false;
+  // The readout reads measured samples; bins only draw, and their width changes with the card's.
+  const samples = $derived(
+    lanes.map((lane) => lane.filter((point) => point.t >= start)),
+  );
   const hover = $derived.by(() => {
     if (hoverT === null || !graph || !hasData) return null;
-    const rates = graph.bins.map((lane) => nearestAt(lane, hoverT!));
+    const rates = samples.map((lane) => nearestAt(lane, hoverT!));
     const at = rates.find(Boolean)!.t;
     const reply = nearestAt(latency, at);
     const near = reply && Math.abs(reply.t - at) <= span / 12 ? reply : null;
@@ -99,17 +103,19 @@
     pointerX = event.clientX;
     track();
   }
-  function onLeave() {
+  // A tap keeps its readout until focus moves on; touch always leaves as the finger lifts.
+  function onLeave(event: PointerEvent) {
+    if (event.pointerType !== "mouse") return;
     if (hoverT !== null) warmUp();
     if (!keyboard) hoverT = null;
   }
-  // Arrow keys walk the bins; the readout reads out where it stops.
+  // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
     const times = graph?.bins.find((lane) => lane.length)?.map((p) => p.t);
     if (!times?.length) return false;
     const index =
       hoverT === null
-        ? times.length - 1
+        ? times.length
         : times.indexOf(
             nearestAt(
               times.map((t) => ({ t })),
@@ -129,8 +135,10 @@
     return true;
   }
   function onKey(event: KeyboardEvent) {
-    if (event.key === "Escape") hoverT = null;
-    else if (!stepTo(event.key)) return;
+    if (event.key === "Escape") {
+      if (hoverT === null) return;
+      hoverT = null;
+    } else if (!stepTo(event.key)) return;
     event.preventDefault();
   }
 </script>
@@ -203,12 +211,12 @@
   <div class="track">
     {#if graph}
       <svg {width} height={TRACK} aria-hidden="true">
-        {#if baseline != null}<line
+        {#if graph.baselineY !== null}<line
             class="baseline"
             x1="0"
             x2={width}
-            y1={TRACK - 1.5}
-            y2={TRACK - 1.5}
+            y1={graph.baselineY}
+            y2={graph.baselineY}
           />{/if}
         {#each graph.dots as dot, index (index)}
           <circle class="dot" cx={dot.x} cy={dot.y} r="1.6" />

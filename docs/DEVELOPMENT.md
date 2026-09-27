@@ -51,7 +51,7 @@ warmup, boundaries, membership and cancellation; each participant owns its conne
 receiver observations. Live results and history consume the same summaries ([servers](SERVERS.md)).
 
 The browser separates connection preparation, measurement and presentation; workers own the transfer and probe hot
-paths, the gauge is SVG/CSS and the timeline a canvas. In the native client a controller owns preparation, sign-in
+paths, the gauge and the stage graphs are SVG/CSS. In the native client a controller owns preparation, sign-in
 polling and cancellation, and Bubble Tea owns input and rendering. Browser and native results reflect different
 runtimes and are not identical benchmark targets ([client differences](MEASUREMENTS.md#client-differences)).
 

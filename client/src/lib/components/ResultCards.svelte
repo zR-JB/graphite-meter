@@ -33,6 +33,9 @@
   const details = $derived(store.result?.multiServer);
   const units = $derived({ base: store.unitBase, kind: store.unitKind });
   const status = (key: Stage) => store.stagePresentation[key].status;
+  // A stalled stage is still running: it keeps its plan's width and its leading edge.
+  const running = (key: Stage) =>
+    status(key) === "active" || status(key) === "recovering";
 
   const settled = $derived.by(() => {
     const evidence = summaryEvidence(
@@ -49,7 +52,6 @@
       },
       details,
       shown,
-      details?.latencyFocus,
     );
     return summaryCards(evidence, units, store.showWireEstimates);
   });
@@ -85,9 +87,7 @@
         span:
           Math.max(
             measured,
-            status(key) === "active" || status(key) === "pending"
-              ? plan[`${key}Ms`]
-              : 0,
+            running(key) || status(key) === "pending" ? plan[`${key}Ms`] : 0,
           ) || 1,
       };
     };
@@ -101,7 +101,7 @@
   const head = $derived.by(() => {
     const key = live.phase;
     const rates = live.rates;
-    if (!key || !rates || status(key) !== "active") return null;
+    if (!key || !rates || !running(key)) return null;
     return {
       key,
       t: store.phaseStartedAtMs + store.phaseClock.current,
@@ -172,7 +172,7 @@
 
   // Animated values are visual only; the accessible value uses receiver accounting.
   function liveCard(key: Stage): SummaryCard {
-    const active = status(key) === "active" || status(key) === "recovering";
+    const active = running(key);
     // Warmup replies are not counted, so the card shows none, like the gauge.
     const own =
       active &&

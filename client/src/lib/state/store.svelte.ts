@@ -197,11 +197,8 @@ class AppStore {
       {}
     );
   });
-  latencyRevision = $state(0);
-
   focusLatencyServer(id: string) {
     this.latencyFocus = id;
-    this.latencyRevision++;
   }
 
   startError = $state("");
@@ -272,8 +269,6 @@ class AppStore {
     this.#throughput = value;
     this.#throughputTail++;
   }
-  /** Changes when existing points move, so incremental chart indexes rebuild. */
-  throughputRevision = $state(0);
   /** The current transfer stage's latest sample; null between stages. */
   live = $state.raw<LiveSample | null>(null);
   #idleLatency = $state.raw<LatencyBucket[]>([]);
@@ -533,8 +528,7 @@ class AppStore {
         phase,
         continuityId,
       };
-      if (appendThroughputSample(this.#throughput, sample, this.totalEtaMs))
-        this.throughputRevision++;
+      appendThroughputSample(this.#throughput, sample, this.totalEtaMs);
     }
     this.#throughputTail++;
   }
@@ -583,9 +577,8 @@ class AppStore {
         }
         const history = this.latencyByServer.get(event.serverId) ?? [];
         this.latencyByServer.set(event.serverId, history);
-        const moved = upsertLatencyBucket(history, event.sample);
+        upsertLatencyBucket(history, event.sample);
         if (event.serverId !== this.latencyFocus) break;
-        if (moved) this.latencyRevision++;
         this.#latencyTail++;
         break;
       }
@@ -598,14 +591,6 @@ class AppStore {
         break;
       case "serverDetails":
         this.serverDetails = event.details;
-        break;
-      case "serverFailure":
-        if (this.serverDetails)
-          this.serverDetails = {
-            ...this.serverDetails,
-            participants: event.participants,
-            failures: [...this.serverDetails.failures, event.failure],
-          };
         break;
       case "phase": {
         const { to, stage, t } = event.transition;
@@ -687,7 +672,6 @@ class AppStore {
       startError: "",
       preparationStatus: "idle",
       throughput: [],
-      throughputRevision: 0,
       live: null,
       idleLatency: [],
       serverDetails: null,

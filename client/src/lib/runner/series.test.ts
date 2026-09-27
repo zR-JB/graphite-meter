@@ -71,17 +71,11 @@ describe("latency presentation buckets", () => {
 });
 
 describe("latency history", () => {
-  test("a revision reports a structural change; a tail append does not", () => {
+  test("a revision replaces its bucket; an earlier start slots into order", () => {
     const history = [singleLatencyBucket(0, 10, false)];
-    expect(
-      upsertLatencyBucket(history, singleLatencyBucket(10, 12, false)),
-    ).toBe(false);
-    expect(
-      upsertLatencyBucket(history, singleLatencyBucket(10, 14, false)),
-    ).toBe(true);
-    expect(upsertLatencyBucket(history, singleLatencyBucket(5, 8, false))).toBe(
-      true,
-    );
+    upsertLatencyBucket(history, singleLatencyBucket(10, 12, false));
+    upsertLatencyBucket(history, singleLatencyBucket(10, 14, false));
+    upsertLatencyBucket(history, singleLatencyBucket(5, 8, false));
     expect(history.map((bucket) => bucket.medianRttMs)).toEqual([10, 8, 14]);
   });
 
@@ -129,7 +123,7 @@ describe("throughput history", () => {
     const history = Array.from({ length: 100 }, (_, i) => rate(i * 10, 100));
     history[40] = rate(400, 900);
     history[60] = rate(600, 1);
-    expect(compactThroughputHistory(history, 0, 20)).toBe(true);
+    compactThroughputHistory(history, 0, 20);
     expect(history.length).toBeLessThanOrEqual(20);
     const values = history.map((sample) => sample.bytesPerSec);
     expect(values).toContain(900);

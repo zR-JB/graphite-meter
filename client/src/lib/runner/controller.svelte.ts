@@ -284,6 +284,7 @@ export function createApplicationController(
     if (approval && !ids.includes(approval.id)) cancelServerApproval();
     cancelPendingStart();
     store.selectedServers = next;
+    if (store.resultScope && !next.includes(store.resultScope)) showServer("");
     store.unresolvedServers = [];
     selectIntent();
     writeStored(
@@ -370,6 +371,12 @@ export function createApplicationController(
       for (const connection of selected())
         connection.invalidate(CONNECTION_ROLES);
     store.ingest(event);
+    // Showing all servers follows the run's latency focus, which moves to a survivor when its server leaves.
+    if (
+      !store.resultScope &&
+      (event.type === "serverDetails" || event.type === "complete")
+    )
+      showServer("");
     if (
       event.type === "complete" ||
       event.type === "error" ||

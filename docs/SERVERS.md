@@ -87,8 +87,9 @@ latency measurement. Hover or focus shows name, location and host. Inline **Retr
 individual entries; **Use available servers** repairs a stale saved selection.
 
 With several servers, every one is probed for latency and the run's latency is the first selected server's
-([latency definitions](MEASUREMENTS.md#latency-probing)). The results, Details and History share one server selector
-(all servers, or one) that changes only what is shown.
+([latency definitions](MEASUREMENTS.md#latency-probing)). The results and Details share one server selector (all
+servers, or one) that waits for the run to finish, and a saved result in History has its own; both change only what
+is shown.
 
 Opening Settings discovers unselected entries (bounded concurrency, 5 s each) and closing it cancels that; failures
 back off (5 s doubling to 1 min, reset when the page or network returns), sign-in failures wait for Sign in or
