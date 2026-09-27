@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, expect, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  jest,
+  test,
+} from "bun:test";
 import type { RunnerConfig } from "./contract";
 import type { ConnectionHost, ServerConnection } from "./connection";
 import { CONNECTION_FRESH_MS } from "./paths";
@@ -10,13 +18,11 @@ import {
 } from "../servers/credentials";
 import { originLimiter } from "../servers/originLimiter";
 import { DEFAULT_CONFIG } from "../state/defaults";
-import { stubGlobals } from "../test-helpers.testutil";
+import { settle, stubGlobals, until } from "../test-helpers.testutil";
 import {
-  settle,
   TEST_BUILD_TOKENS,
   testEvidence as evidence,
   testPreparation as preparation,
-  until,
 } from "./test-helpers.testutil";
 
 let restoreBuild: () => void;
@@ -30,13 +36,11 @@ beforeAll(async () => {
 });
 afterAll(() => restoreBuild());
 const open: ServerConnection[] = [];
+beforeEach(() => jest.useFakeTimers());
 afterEach(() => {
   for (const connection of open.splice(0)) connection.close();
+  jest.useRealTimers();
 });
-
-const flush = async () => {
-  for (let turn = 0; turn < 100; turn++) await Promise.resolve();
-};
 
 const monitor = (stopped = () => {}) => ({
   start() {},
@@ -170,14 +174,14 @@ test("a new server generation cancels an in-flight role before accepting replace
   await connection.check();
   block = true;
   const old = connection.check({ force: true, role: "latency" });
-  await flush();
-  expect(heldSignal?.aborted).toBe(false);
+  await until(() => heldSignal !== undefined);
+  expect(heldSignal!.aborted).toBe(false);
   [generation, block] = ["gen-b", false];
   await connection.check({ force: true, role: "throughput" });
   await old;
   expect(heldSignal?.aborted).toBe(true);
   held.resolve(preparation());
-  await flush();
+  await settle();
   expect(connection.view.readiness).toBe("verified");
   expect(connection.view.validation.latency.path!.generation).toBe("gen-b");
 });
@@ -198,102 +202,90 @@ test("sign-in is required by a wrapped refusal or an expired grant and never ret
   });
   refused.resume();
   expect(refused.dueAt()).toBe(Infinity);
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
-  try {
-    let active = false;
-    const granted = connect({
-      id: "peer",
-      credentials: { kind: "grant", token: "t", expiresAt: 2000 },
-      active: () => active,
-    });
-    await granted.check();
-    expect(granted.view.readiness).toBe("verified");
-    expect(granted.dueAt()).toBe(2000);
-    clock.mockReturnValue(2001);
-    active = true;
-    granted.wake();
-    await until(() => granted.dueAt() === Infinity);
-    expect(granted.dueAt()).toBe(Infinity);
-    expect(granted.view).toMatchObject({
-      readiness: "sign-in",
-      message: "Sign in to node-a",
-    });
-    expect(granted.paths()).toBeNull();
-  } finally {
-    clock.mockRestore();
-  }
+  jest.setSystemTime(1000);
+  let active = false;
+  const granted = connect({
+    id: "peer",
+    credentials: { kind: "grant", token: "t", expiresAt: 2000 },
+    active: () => active,
+  });
+  await granted.check();
+  expect(granted.view.readiness).toBe("verified");
+  expect(granted.dueAt()).toBe(2000);
+  jest.setSystemTime(2001);
+  active = true;
+  granted.wake();
+  await until(() => granted.dueAt() === Infinity);
+  expect(granted.dueAt()).toBe(Infinity);
+  expect(granted.view).toMatchObject({
+    readiness: "sign-in",
+    message: "Sign in to node-a",
+  });
+  expect(granted.paths()).toBeNull();
 });
 
 test("a required sign-in yields to the next check; failures back off 5 s then 10 s", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  jest.setSystemTime(1000);
   let offline = false;
-  try {
-    const connection = connect({
-      discover: async () => {
-        if (offline) throw new Error("offline");
-        return evidence().discovery;
-      },
-    });
-    await connection.check();
-    connection.requireSignIn("Sign in again");
-    expect(connection.view).toMatchObject({
-      readiness: "sign-in",
-      message: "Sign in again",
-    });
-    expect(connection.dueAt()).toBe(Infinity);
-    offline = true;
-    await connection.check();
-    expect(connection.view).toMatchObject({
-      readiness: "failed",
-      message: "Connection check failed",
-    });
-    expect(connection.dueAt()).toBe(6_000);
-    await connection.check();
-    expect(connection.dueAt()).toBe(11_000);
-    connection.resume();
-    expect(connection.dueAt()).toBe(0);
-    await connection.check();
-    expect(connection.dueAt()).toBe(6_000);
-  } finally {
-    clock.mockRestore();
-  }
+  const connection = connect({
+    discover: async () => {
+      if (offline) throw new Error("offline");
+      return evidence().discovery;
+    },
+  });
+  await connection.check();
+  connection.requireSignIn("Sign in again");
+  expect(connection.view).toMatchObject({
+    readiness: "sign-in",
+    message: "Sign in again",
+  });
+  expect(connection.dueAt()).toBe(Infinity);
+  offline = true;
+  await connection.check();
+  expect(connection.view).toMatchObject({
+    readiness: "failed",
+    message: "Connection check failed",
+  });
+  expect(connection.dueAt()).toBe(6_000);
+  await connection.check();
+  expect(connection.dueAt()).toBe(11_000);
+  connection.resume();
+  expect(connection.dueAt()).toBe(0);
+  await connection.check();
+  expect(connection.dueAt()).toBe(6_000);
 });
 
 test("an unmonitored server quietly re-reads discovery, so a peer that died stops being Ready", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  jest.setSystemTime(1000);
   let active = false;
   let alive = true;
   let discoveries = 0;
   const shown: string[] = [];
-  try {
-    const connection = connect({
-      active: () => active,
-      publish: (view) => void shown.push(view.readiness),
-      discover: async () => {
-        discoveries++;
-        if (!alive) throw new TypeError("Failed to fetch");
-        return evidence().discovery;
-      },
-    });
-    await connection.check();
-    await connection.check({ fresh: true });
-    expect([discoveries, connection.view.readiness]).toEqual([2, "verified"]);
-    expect(connection.dueAt()).toBe(6_000);
-    [alive, active] = [false, true];
-    clock.mockReturnValue(6_000);
-    shown.length = 0;
-    connection.wake();
-    await until(() => connection.view.readiness === "failed");
-    expect(shown).toEqual(["failed"]);
-    expect(connection.view.message).toBe("Connection check failed");
-    expect(connection.paths(Infinity)).toBeNull();
-    alive = true;
-    connection.resume();
-    await until(() => connection.view.readiness === "verified");
-    expect(discoveries).toBe(4);
-  } finally {
-    clock.mockRestore();
-  }
+  const connection = connect({
+    active: () => active,
+    publish: (view) => void shown.push(view.readiness),
+    discover: async () => {
+      discoveries++;
+      if (!alive) throw new TypeError("Failed to fetch");
+      return evidence().discovery;
+    },
+  });
+  await connection.check();
+  await connection.check({ fresh: true });
+  expect([discoveries, connection.view.readiness]).toEqual([2, "verified"]);
+  expect(connection.dueAt()).toBe(6_000);
+  [alive, active] = [false, true];
+  jest.setSystemTime(6_000);
+  shown.length = 0;
+  connection.wake();
+  await until(() => connection.view.readiness === "failed");
+  expect(shown).toEqual(["failed"]);
+  expect(connection.view.message).toBe("Connection check failed");
+  expect(connection.paths(Infinity)).toBeNull();
+  alive = true;
+  connection.resume();
+  await until(() => connection.view.readiness === "verified");
+  expect(discoveries).toBe(4);
 });
 
 test("offline, a remote server blocks without checking until the device is back", async () => {
@@ -317,39 +309,35 @@ test("offline, a remote server blocks without checking until the device is back"
 });
 
 test("equivalent intent reuses fresh paths; an expired reselection refreshes discovery and both roles", async () => {
-  const clock = spyOn(Date, "now").mockReturnValue(1000);
+  jest.setSystemTime(1000);
   let discoveries = 0;
   let probes = 0;
-  try {
-    const connection = connect({
-      discover: async () => (discoveries++, evidence().discovery),
-      prepare: async (config) => (probes++, preparation(config)),
-    });
-    await connection.check();
-    const ready = connection.view;
-    const { throughput, latency } = evidence();
-    const config = structuredClone(DEFAULT_CONFIG);
-    config.transports.throughputTarget = throughput.target.origin;
-    config.transports.latencyTarget = latency!.target.origin;
-    connection.select(config);
-    await connection.check();
-    expect(connection.view.readiness).toBe("verified");
-    expect(connection.view.validation.throughput.path).toBe(
-      ready.validation.throughput.path,
-    );
-    const equivalent = connection.view;
-    connection.select(structuredClone(config));
-    expect(connection.view).toBe(equivalent);
-    connection.select(null);
-    clock.mockReturnValue(1000 + CONNECTION_FRESH_MS + 1);
-    connection.select(config);
-    expect(connection.view.readiness).toBe("unchecked");
-    await connection.check();
-    expect(connection.view.readiness).toBe("verified");
-    expect([discoveries, probes]).toEqual([2, 4]);
-  } finally {
-    clock.mockRestore();
-  }
+  const connection = connect({
+    discover: async () => (discoveries++, evidence().discovery),
+    prepare: async (config) => (probes++, preparation(config)),
+  });
+  await connection.check();
+  const ready = connection.view;
+  const { throughput, latency } = evidence();
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.transports.throughputTarget = throughput.target.origin;
+  config.transports.latencyTarget = latency!.target.origin;
+  connection.select(config);
+  await connection.check();
+  expect(connection.view.readiness).toBe("verified");
+  expect(connection.view.validation.throughput.path).toBe(
+    ready.validation.throughput.path,
+  );
+  const equivalent = connection.view;
+  connection.select(structuredClone(config));
+  expect(connection.view).toBe(equivalent);
+  connection.select(null);
+  jest.setSystemTime(1000 + CONNECTION_FRESH_MS + 1);
+  connection.select(config);
+  expect(connection.view.readiness).toBe("unchecked");
+  await connection.check();
+  expect(connection.view.readiness).toBe("verified");
+  expect([discoveries, probes]).toEqual([2, 4]);
 });
 
 test("idle evidence ends when its monitor stops watching and when the connection closes", async () => {

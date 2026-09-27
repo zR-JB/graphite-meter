@@ -1,148 +1,74 @@
 import { test, expect, afterEach, beforeEach, jest } from "bun:test";
 import type { PingWorkerEvent } from "./pingSample";
-import { bootWorker, elapse, type WorkerRealm } from "./test-helpers.testutil";
-
-const globals = globalThis as Record<string, unknown>;
+import {
+  bootWorker,
+  fakeWebTransport,
+  type FakeWebTransport,
+  type WorkerRealm,
+} from "./test-helpers.testutil";
+import { elapse, until } from "../../test-helpers.testutil";
 
 type Outcome = "accept" | "refuse" | "pending";
+type Realm = WorkerRealm<PingWorkerEvent>;
 
 class Scenario {
   mints = 0;
-  readonly dials: string[] = [];
-  readonly sessions: FakeSession[] = [];
   outcomes: Outcome[] = ["accept"];
   refuseFirstTicket = false;
   halted = false;
+  readonly transport = fakeWebTransport((session) => this.#open(session));
+  readonly pingUrl: string;
+  readonly mintUrl: string;
 
   constructor(readonly id: string) {
-    scenarios.set(id, this);
+    this.pingUrl = `https://${id}.meter.test/wt/ping`;
+    this.mintUrl = `https://${id}.meter.test/wt/session`;
   }
 
-  get pingUrl(): string {
-    return `https://${this.id}.meter.test/wt/ping`;
-  }
-
-  get mintUrl(): string {
-    return `https://${this.id}.meter.test/wt/session`;
-  }
-
-  outcomeFor(index: number): Outcome {
-    return this.outcomes[Math.min(index, this.outcomes.length - 1)];
+  get sessions(): FakeWebTransport[] {
+    return this.transport.sessions;
   }
 
   tokens(): string[] {
-    return this.dials.map(
-      (url) => new URL(url).searchParams.get("token") ?? "",
+    return this.sessions.map(
+      ({ url }) => new URL(url).searchParams.get("token") ?? "",
     );
   }
-}
 
-const scenarios = new Map<string, Scenario>();
-const scenarioOf = (url: string): Scenario => {
-  const id = new URL(url).hostname.split(".")[0];
-  const found = scenarios.get(id);
-  if (!found) throw new Error(`unexpected url ${url}`);
-  return found;
-};
-
-class FakeSession {
-  readonly ready: Promise<void>;
-  readonly closed: Promise<void>;
-  readonly sent: string[] = [];
-  #receiver!: ReadableStreamDefaultController<Uint8Array>;
-  readonly datagrams = {
-    writable: new WritableStream<Uint8Array>({
-      write: (message) => {
-        this.sent.push(new TextDecoder().decode(message));
-      },
-    }),
-    readable: new ReadableStream<Uint8Array>({
-      start: (controller) => {
-        this.#receiver = controller;
-      },
-    }),
-  };
-  #drop: () => void = () => {};
-  #accept: () => void = () => {};
-
-  constructor(url: string) {
-    const scenario = scenarioOf(url);
+  #open(session: FakeWebTransport): void {
+    const dial = this.sessions.length - 1;
     const outcome =
-      scenario.refuseFirstTicket &&
-      new URL(url).searchParams.get("token") === `tok-${scenario.id}-1`
+      this.refuseFirstTicket &&
+      new URL(session.url).searchParams.get("token") === `tok-${this.id}-1`
         ? "refuse"
-        : scenario.outcomeFor(scenario.dials.length);
-    scenario.dials.push(url);
-    scenario.sessions.push(this);
-    if (outcome === "refuse") {
-      const err = new Error("connect refused");
-      this.ready = this.closed = Promise.reject(err);
-      return;
-    }
-    if (outcome === "pending") {
-      this.ready = new Promise<void>((resolve) => {
-        this.#accept = resolve;
+        : this.outcomes[Math.min(dial, this.outcomes.length - 1)];
+    if (outcome === "refuse") session.refuse(new Error("connect refused"));
+    if (outcome === "accept") session.accept();
+  }
+
+  readonly fetch = async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url !== this.mintUrl) throw new Error(`unexpected fetch ${url}`);
+    if (this.halted)
+      return new Response("", {
+        status: 403,
+        headers: { "Graphite-Meter-Auth": "required" },
       });
-      this.closed = new Promise<void>((resolve) => {
-        this.#drop = resolve;
-      });
-      return;
-    }
-    this.ready = Promise.resolve();
-    this.closed = new Promise<void>((resolve) => {
-      this.#drop = resolve;
+    this.mints++;
+    return Response.json({
+      token: `tok-${this.id}-${this.mints}`,
+      expires: Date.now() + 30_000,
     });
-  }
-
-  receive(message: string): void {
-    this.#receiver.enqueue(new TextEncoder().encode(message));
-  }
-
-  accept(): void {
-    this.#accept();
-  }
-
-  drop(): void {
-    this.#drop();
-  }
-
-  close(): void {
-    this.#drop();
-  }
+  };
 }
 
-const realFetch = globalThis.fetch;
-const realPost = globals.postMessage;
-const realWebTransport = globals.WebTransport;
-
-const fakeFetch = async (input: RequestInfo | URL): Promise<Response> => {
-  const url = String(input);
-  const scenario = scenarioOf(url);
-  if (url !== scenario.mintUrl) throw new Error(`unexpected fetch ${url}`);
-  if (scenario.halted)
-    return new Response("", {
-      status: 403,
-      headers: { "Graphite-Meter-Auth": "required" },
-    });
-  scenario.mints++;
-  return Response.json({
-    token: `tok-${scenario.id}-${scenario.mints}`,
-    expires: Date.now() + 30_000,
-  });
-};
-
-let realms = 0;
-
-type Realm = WorkerRealm<PingWorkerEvent>;
-
-async function boot(): Promise<Realm> {
-  return bootWorker("./ping-worker.ts", realms++);
-}
+let realm: Realm | undefined;
 
 async function start(scenario: Scenario): Promise<Realm> {
-  globals.WebTransport = FakeSession;
-  globalThis.fetch = fakeFetch as typeof fetch;
-  const realm = await boot();
+  realm = await bootWorker<PingWorkerEvent>("./ping-worker.ts", {
+    WebTransport: scenario.transport.WebTransport,
+    fetch: scenario.fetch,
+  });
   realm.send({
     type: "start",
     url: scenario.pingUrl,
@@ -163,15 +89,23 @@ async function halt(scenario: Scenario): Promise<void> {
   await elapse(250);
 }
 
+const pings = (session: FakeWebTransport | undefined) =>
+  session?.sent.some((message) => message.startsWith("PING,")) === true;
+const samples = (realm: Realm) =>
+  realm.posted.flatMap((event) =>
+    event.type === "samples" ? event.samples : [],
+  );
+
 beforeEach(() => jest.useFakeTimers());
-afterEach(() => {
+afterEach(async () => {
+  realm?.send({
+    type: "stop",
+    cutoffEpochMs: performance.timeOrigin + performance.now(),
+  });
+  await elapse(1_000);
+  realm?.restore();
+  realm = undefined;
   jest.useRealTimers();
-  globalThis.fetch = realFetch;
-  globals.postMessage = realPost;
-  globalThis.onmessage = null;
-  if (realWebTransport === undefined)
-    Reflect.deleteProperty(globals, "WebTransport");
-  else globals.WebTransport = realWebTransport;
 });
 
 // A dial that never reaches authentication leaves its ticket reusable for a bounded retry.
@@ -182,7 +116,7 @@ test("a dial refused before acceptance re-dials on the same token", async () => 
   await elapse(200);
   await halt(scenario);
 
-  expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
+  expect(scenario.sessions.length).toBeGreaterThanOrEqual(2);
   expect(new Set(scenario.tokens()).size).toBe(1);
   expect(scenario.mints).toBe(1);
 });
@@ -193,13 +127,13 @@ test("a dial the server accepted never offers its token again", async () => {
   scenario.outcomes = ["accept"];
   await start(scenario);
   await elapse(50);
-  expect(scenario.dials.length).toBe(1);
+  expect(scenario.sessions.length).toBe(1);
 
-  scenario.sessions[0].drop();
+  scenario.sessions[0].end();
   await elapse(250);
   await halt(scenario);
 
-  expect(scenario.dials.length).toBeGreaterThanOrEqual(2);
+  expect(scenario.sessions.length).toBeGreaterThanOrEqual(2);
   expect(scenario.tokens()[1]).not.toBe(scenario.tokens()[0]);
   expect(scenario.mints).toBeGreaterThanOrEqual(2);
 });
@@ -210,120 +144,63 @@ test("a pending dial times out and retries with the same unspent token", async (
   await start(scenario);
   await elapse(3_300);
 
-  expect(scenario.dials).toHaveLength(2);
+  expect(scenario.sessions).toHaveLength(2);
   expect(scenario.tokens()[1]).toBe(scenario.tokens()[0]);
   expect(scenario.mints).toBe(1);
 
   scenario.halted = true;
-  scenario.sessions.at(-1)?.drop();
+  scenario.sessions.at(-1)?.end();
   await elapse(250);
 });
-
-async function waitUntil(predicate: () => boolean) {
-  const deadline = performance.now() + 2_000;
-  while (!predicate()) {
-    if (performance.now() > deadline)
-      throw new Error("worker transition did not settle");
-    await elapse(5);
-  }
-}
 
 test("WebTransport reconnect ignores stale datagrams and retains fresh reply timing", async () => {
   const scenario = new Scenario("timing-reconnect");
   const realm = await start(scenario);
-  try {
-    await waitUntil(
-      () =>
-        scenario.sessions[0]?.sent.some((message) =>
-          message.startsWith("PING,"),
-        ) === true,
-    );
-    const first = scenario.sessions[0];
-    expect(first.sent[0]).toBe("PING,0");
-    realm.send({ type: "measure" });
-    await waitUntil(() => first.sent.includes("PING,1"));
+  await until(() => pings(scenario.sessions[0]), 2_000);
+  const first = scenario.sessions[0];
+  expect(first.sent[0]).toBe("PING,0");
+  realm.send({ type: "measure" });
+  await until(() => first.sent.includes("PING,1"), 2_000);
 
-    first.receive("PONG,1,0");
-    await waitUntil(() =>
-      realm.posted.some((event) => event.type === "samples"),
-    );
-    first.drop();
-    await waitUntil(
-      () =>
-        scenario.sessions[1]?.sent.some((message) =>
-          message.startsWith("PING,"),
-        ) === true,
-    );
-    const fresh = scenario.sessions[1];
-    const id = fresh.sent
-      .find((message) => message.startsWith("PING,"))!
-      .slice(5);
+  first.datagram("PONG,1,0");
+  await until(() => samples(realm).length === 1, 2_000);
+  first.end();
+  await until(() => pings(scenario.sessions[1]), 2_000);
+  const fresh = scenario.sessions[1];
+  const id = fresh.sent
+    .find((message) => message.startsWith("PING,"))!
+    .slice(5);
 
-    first.receive(`PONG,${id},0`);
-    fresh.receive(`PONG,${id},0`);
-    await waitUntil(
-      () =>
-        realm.posted.flatMap((event) =>
-          event.type === "samples" ? event.samples : [],
-        ).length === 2,
-    );
-    const samples = realm.posted.flatMap((event) =>
-      event.type === "samples" ? event.samples : [],
-    );
-    expect(samples.map((sample) => sample.reflectorHandlingMs)).toEqual([0, 0]);
-    expect(samples.every((sample) => !sample.timedOut)).toBe(true);
-  } finally {
-    realm.send({
-      type: "stop",
-      cutoffEpochMs: performance.timeOrigin + performance.now(),
-    });
-  }
+  first.datagram(`PONG,${id},0`);
+  fresh.datagram(`PONG,${id},0`);
+  await until(() => samples(realm).length === 2, 2_000);
+  expect(samples(realm).map((sample) => sample.reflectorHandlingMs)).toEqual([
+    0, 0,
+  ]);
+  expect(samples(realm).every((sample) => !sample.timedOut)).toBe(true);
 });
 
 test("a closed WebTransport dial becoming ready cannot restart the replacement bus", async () => {
   const scenario = new Scenario("stale-ready");
   scenario.outcomes = ["pending", "accept"];
   const realm = await start(scenario);
-  try {
-    await waitUntil(() => scenario.sessions.length === 1);
-    const first = scenario.sessions[0];
-    first.drop();
-    await waitUntil(
-      () =>
-        scenario.sessions[1]?.sent.some((message) =>
-          message.startsWith("PING,"),
-        ) === true,
-    );
-    const openCount = realm.posted.filter(
-      (event) => event.type === "open",
-    ).length;
-    first.accept();
-    await elapse(10);
-    expect(first.sent).toEqual([]);
-    expect(realm.posted.filter((event) => event.type === "open")).toHaveLength(
-      openCount,
-    );
-    expect(openCount).toBe(1);
-  } finally {
-    realm.send({
-      type: "stop",
-      cutoffEpochMs: performance.timeOrigin + performance.now(),
-    });
-  }
+  await until(() => scenario.sessions.length === 1, 2_000);
+  const first = scenario.sessions[0];
+  first.end();
+  await until(() => pings(scenario.sessions[1]), 2_000);
+  const opens = () => realm.posted.filter((event) => event.type === "open");
+  expect(opens()).toHaveLength(1);
+  first.accept();
+  await elapse(10);
+  expect(first.sent).toEqual([]);
+  expect(opens()).toHaveLength(1);
 });
 
 test("a ticket spent by a temporary downstream refusal can recover within readiness budget", async () => {
   const scenario = new Scenario("spent-before-upgrade");
   scenario.refuseFirstTicket = true;
   const realm = await start(scenario);
-  try {
-    await elapse(3_400);
-    expect(realm.posted.some((message) => message.type === "open")).toBe(true);
-    expect(scenario.mints).toBeGreaterThanOrEqual(2);
-  } finally {
-    realm.send({
-      type: "stop",
-      cutoffEpochMs: performance.timeOrigin + performance.now(),
-    });
-  }
+  await elapse(3_400);
+  expect(realm.posted.some((message) => message.type === "open")).toBe(true);
+  expect(scenario.mints).toBeGreaterThanOrEqual(2);
 });

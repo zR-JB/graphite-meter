@@ -1,15 +1,11 @@
 import { test, expect } from "bun:test";
 import { encodePing, decodePong } from "./wire";
+import { readPin } from "../../test-helpers.testutil";
 
 // The Go codec verifies all four directions; the client verifies its two directions.
-const corpus = await Bun.file(
-  `${import.meta.dir}/../../../../../api/wire.testvectors.txt`,
-).text();
-for (const line of corpus.split("\n")) {
-  if (line.startsWith("#") || !line) continue;
-  const [operation, input, expected] = line
-    .split("|")
-    .map((part) => part.trim());
+for (const [operation, input, expected] of await readPin(
+  "wire.testvectors.txt",
+)) {
   if (operation !== "encode-ping" && operation !== "decode-pong") continue;
   test(`${operation}: ${input}`, () => {
     if (operation === "encode-ping") {

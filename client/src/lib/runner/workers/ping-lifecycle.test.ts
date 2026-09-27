@@ -1,5 +1,4 @@
-import { stubGlobals } from "../../test-helpers.testutil";
-import { testClock } from "./test-helpers.testutil";
+import { bootWorker, testClock } from "./test-helpers.testutil";
 import { expect, test } from "bun:test";
 import { LatencyPopulation } from "../measure";
 import type { PingSample } from "./pingSample";
@@ -11,7 +10,6 @@ type Output =
       type: "open" | "ready" | "stopped" | "stall" | "resume" | "auth-required";
     };
 
-let realm = 0;
 async function withWorker(
   run: (worker: {
     posted: Output[];
@@ -28,32 +26,27 @@ async function withWorker(
   completeWarmup = true,
 ) {
   const clock = testClock();
-  const posted: Output[] = [];
   let socket!: FakeSocket;
   const sockets: FakeSocket[] = [];
-  const overrides = {
-    self: globalThis,
-    WebSocket: class extends FakeSocket {
-      constructor() {
-        super();
-        socket = this;
-        sockets.push(this);
-      }
+  const { posted, send, restore } = await bootWorker<Output>(
+    "./ping-worker.ts",
+    {
+      self: globalThis,
+      WebSocket: class extends FakeSocket {
+        constructor() {
+          super();
+          socket = this;
+          sockets.push(this);
+        }
+      },
+      performance: { now: clock.now, timeOrigin: 10_000 },
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      setInterval: clock.setInterval,
+      clearInterval: clock.clearInterval,
     },
-    performance: { now: clock.now, timeOrigin: 10_000 },
-    postMessage: (message: Output) => posted.push(message),
-    setTimeout: clock.setTimeout,
-    clearTimeout: clock.clearTimeout,
-    setInterval: clock.setInterval,
-    clearInterval: clock.clearInterval,
-    onmessage: null,
-  };
-  const restore = stubGlobals(overrides);
+  );
   try {
-    await import(`./ping-worker.ts?lifecycle=${realm++}`);
-    const handler = globalThis.onmessage as (event: MessageEvent) => void;
-    const send = (data: unknown) =>
-      handler({ data, origin: "" } as MessageEvent);
     send({
       type: "start",
       url: "ws://meter.test/ws/ping",
@@ -192,22 +185,25 @@ test("disconnect during drain marks unresolved probes without timeout evidence o
   });
 });
 
-test("a local send failure is excluded from the probe timeout denominator", async () => {
-  await withWorker(({ reply, stop, socket, posted, samples, advance }) => {
-    socket.failSends = true;
-    reply(1);
-    stop();
-    advance(20_000);
-    expect(samples()).toHaveLength(1);
-    expect(samples()[0].timedOut).toBe(false);
-    expect(posted).toContainEqual({
-      type: "interrupted",
-      sentAtEpochMs: [10_000],
-      reason: "send-failed",
+test.each(["failSends", "rejectSends"] as const)(
+  "a local send failure (%s) is excluded from the probe timeout denominator",
+  async (failure) => {
+    await withWorker(async ({ reply, stop, socket, posted, samples }) => {
+      socket[failure] = true;
+      reply(1);
+      stop();
+      await Promise.resolve();
+      expect(samples()).toHaveLength(1);
+      expect(samples()[0].timedOut).toBe(false);
+      expect(posted).toContainEqual({
+        type: "interrupted",
+        sentAtEpochMs: [10_000],
+        reason: "send-failed",
+      });
+      expect(posted.at(-1)?.type).toBe("stopped");
     });
-    expect(posted.at(-1)?.type).toBe("stopped");
-  });
-});
+  },
+);
 
 test("a delayed stop excludes probes submitted after its cutoff", async () => {
   await withWorker(({ advance, reply, stop, posted, samples }) => {
@@ -218,22 +214,6 @@ test("a delayed stop excludes probes submitted after its cutoff", async () => {
     stop(0);
     expect(samples()).toHaveLength(1);
     expect(samples()[0].sentAtEpochMs).toBe(10_000);
-    expect(posted.at(-1)?.type).toBe("stopped");
-  });
-});
-
-test("a rejected asynchronous write is a local send failure, not a timeout", async () => {
-  await withWorker(async ({ reply, stop, socket, posted, samples }) => {
-    socket.rejectSends = true;
-    reply(1);
-    stop();
-    await Promise.resolve();
-    expect(samples()).toHaveLength(1);
-    expect(posted).toContainEqual({
-      type: "interrupted",
-      sentAtEpochMs: [10_000],
-      reason: "send-failed",
-    });
     expect(posted.at(-1)?.type).toBe("stopped");
   });
 });
@@ -306,6 +286,18 @@ for (const failure of ["failSends", "rejectSends"] as const) {
     });
   });
 }
+
+test("a fast reply burst produces bounded batches without discarding outcomes", async () => {
+  await withWorker(({ reply, advance, stop, posted, samples }) => {
+    for (let id = 1; id <= 1_025; id++) reply(id);
+    stop();
+    advance(1_000);
+    const batches = posted.filter((message) => message.type === "samples");
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.every((batch) => batch.samples.length <= 128)).toBe(true);
+    expect(samples().filter((sample) => !sample.timedOut)).toHaveLength(1_025);
+  });
+});
 
 test("application readiness requires one matched valid reply and excludes warmup samples", async () => {
   await withWorker(({ socket, posted, jump, reply, stop, samples }) => {

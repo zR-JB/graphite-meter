@@ -199,14 +199,6 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
   };
 }
 
-const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
-export async function until(done: () => boolean, turns = 100) {
-  for (let i = 0; i < turns && !done(); i++) await turn();
-  if (!done()) throw new Error(`condition not met within ${turns} turns`);
-}
-export async function settle() {
-  for (let i = 0; i < 10; i++) await turn();
-}
 /** Discovery and both verified paths of one server generation. */
 export function testEvidence(generation = "gen-a"): PreparedPaths {
   const paths = testPreparedPaths();

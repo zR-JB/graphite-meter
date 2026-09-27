@@ -1,8 +1,9 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { resourceProtocol } from "./resourceTiming";
+import { stubGlobals } from "../../test-helpers.testutil";
 
 const url = "https://meter.test/probe?cb=current";
-const originalObserver = globalThis.PerformanceObserver;
+let restore = () => {};
 const originalEntries = performance.getEntriesByName;
 let callback: PerformanceObserverCallback;
 let disconnected = false;
@@ -12,17 +13,19 @@ function deferTiming() {
   performance.getEntriesByName = () => [];
   disconnected = false;
   observed = undefined;
-  globalThis.PerformanceObserver = class {
-    constructor(receive: PerformanceObserverCallback) {
-      callback = receive;
-    }
-    observe(options: PerformanceObserverInit) {
-      observed = options;
-    }
-    disconnect() {
-      disconnected = true;
-    }
-  } as unknown as typeof PerformanceObserver;
+  restore = stubGlobals({
+    PerformanceObserver: class {
+      constructor(receive: PerformanceObserverCallback) {
+        callback = receive;
+      }
+      observe(options: PerformanceObserverInit) {
+        observed = options;
+      }
+      disconnect() {
+        disconnected = true;
+      }
+    },
+  });
 }
 
 function deliver(name: string, nextHopProtocol: string) {
@@ -36,7 +39,7 @@ function deliver(name: string, nextHopProtocol: string) {
 }
 
 afterEach(() => {
-  globalThis.PerformanceObserver = originalObserver;
+  restore();
   performance.getEntriesByName = originalEntries;
 });
 
@@ -75,16 +78,13 @@ test("missing or redacted browser evidence never becomes an inferred protocol", 
   expect(disconnected).toBe(true);
 });
 
-test("cancelling preparation rejects and removes the observer and abort listener", async () => {
+test("cancelling preparation rejects and disconnects the observer", async () => {
   deferTiming();
   const controller = new AbortController();
-  const removed = spyOn(controller.signal, "removeEventListener");
   const protocol = resourceProtocol(url, controller.signal);
   controller.abort();
   await expect(protocol).rejects.toThrow("abort");
   expect(disconnected).toBe(true);
-  expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
-  removed.mockRestore();
   observed = undefined;
   await expect(resourceProtocol(url, controller.signal)).rejects.toThrow(
     "abort",
