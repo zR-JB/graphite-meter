@@ -12,6 +12,12 @@ export const [home, frankfurt, amsterdam, helsinki, locked] = fleet;
 export const password: string = env.password;
 export const harness: string = env.harness;
 
+export const catalog = (...servers: Server[]) => ({
+  GM_SERVER_CATALOG: JSON.stringify({
+    servers: servers.map(({ id, name, url }) => ({ id, name, url })),
+  }),
+});
+
 export async function spawnPeer(name: string, env = {}) {
   const server = await describe(name.toLowerCase(), name);
   const child = await launch(
@@ -102,6 +108,16 @@ export async function ready(page: Page) {
     timeout: 15_000,
   });
   await closeSettings(page);
+}
+
+/** Counts History saves announced to other tabs from now on. */
+export async function countSaves(page: Page) {
+  await page.evaluate(() => {
+    Object.assign(window, { saves: 0 });
+    new BroadcastChannel("graphite-meter-history").onmessage = () =>
+      (window as any).saves++;
+  });
+  return () => page.evaluate<number>(() => (window as any).saves);
 }
 
 export const runButton = (page: Page, name: string | RegExp) =>

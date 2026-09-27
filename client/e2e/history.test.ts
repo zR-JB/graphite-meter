@@ -1,5 +1,5 @@
 import { HISTORY_DB } from "../src/lib/history/dbSchema";
-import { home, open, ready, run, runButton } from "./fleet";
+import { countSaves, home, open, ready, run, runButton } from "./fleet";
 import { expect, test, type Page } from "./webview";
 
 const id = (index: number) =>
@@ -253,18 +253,13 @@ test("a save ignores corrupt clear metadata, keeps raw rows, and trusts clears o
     clears: { corrupt: true },
   });
   await page.goto(home.url);
-  await page.evaluate(() => {
-    (window as any).saves = 0;
-    new BroadcastChannel("graphite-meter-history").onmessage = () => {
-      (window as any).saves++;
-    };
-  });
+  const saves = await countSaves(page);
   await ready(page);
   await run(page);
   const saved = await stored(page);
   expect(saved.records).toHaveLength(3);
   expect(saved.records).toContainEqual(malformed);
-  expect(await page.evaluate(() => (window as any).saves)).toBe(1);
+  expect(await saves()).toBe(1);
   // A result after another tab's clear saves even when the clock stepped back a day.
   await seed(page, { records: [], clears: 2 });
   await page.reload();
