@@ -110,7 +110,8 @@ function seed(page: Page, archive: Archive) {
             database.close();
             resolve();
           };
-          tx.onerror = () => reject(tx.error);
+          tx.onerror = tx.onabort = () =>
+            reject(tx.error ?? new Error("seed aborted"));
         };
       }),
     { db: HISTORY_DB, ...archive },
@@ -124,10 +125,22 @@ function stored(page: Page) {
         const opening = indexedDB.open(db.name);
         opening.onerror = () => reject(opening.error);
         opening.onblocked = () => reject(new Error("reading is blocked"));
+        opening.onupgradeneeded = () => {
+          opening.transaction?.abort();
+          reject(new Error("reading found no database"));
+        };
         opening.onsuccess = () => {
           const database = opening.result;
           const stores = [...database.objectStoreNames];
-          const tx = database.transaction(stores);
+          let tx: IDBTransaction;
+          try {
+            tx = database.transaction(stores);
+          } catch (error) {
+            database.close();
+            return reject(error);
+          }
+          tx.onerror = tx.onabort = () =>
+            reject(tx.error ?? new Error("read aborted"));
           const rows = tx.objectStore(db.resultsStore).getAll();
           const meta = stores.includes(db.metadataStore)
             ? tx.objectStore(db.metadataStore).get(db.clearsKey)
