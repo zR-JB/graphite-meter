@@ -67,17 +67,21 @@ impl Connections {
         let mut counts = crate::admission::recover(&self.0.counts, "connection");
         if crate::client_address::share_full(&keys, self.0.client_max, |key| {
             counts.clients.get(key).copied().unwrap_or_default()
-        }) || buffered
-            && crate::client_address::share_full(&keys, self.0.client_max.min(8), |key| {
-                counts.buffered.get(key).copied().unwrap_or_default()
-            })
-        {
+        }) {
             counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
             return Err(Refusal::ClientFull);
         }
         if counts.stats.active >= self.0.global_max {
             counts.stats.rejected_global = counts.stats.rejected_global.saturating_add(1);
             return Err(Refusal::GlobalFull);
+        }
+        // Checked last and left out of the counters, like Go's QUIC share.
+        if buffered
+            && crate::client_address::share_full(&keys, self.0.client_max.min(8), |key| {
+                counts.buffered.get(key).copied().unwrap_or_default()
+            })
+        {
+            return Err(Refusal::ClientFull);
         }
         counts.stats.active += 1;
         counts.stats.peak = counts.stats.peak.max(counts.stats.active);

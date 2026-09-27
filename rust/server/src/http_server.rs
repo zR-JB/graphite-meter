@@ -89,14 +89,24 @@ pub struct HttpServer {
 
 impl HttpServer {
     pub(crate) fn log_admission(&self) {
-        let (active, maximum) = self.admission.load();
-        let connections = self.connections.stats();
+        let (handlers, limits, connections) = (self.admission.stats(), self.config.limits, self.connections.stats());
         crate::log!(
-            "[gm:admission] measurements={active}/{maximum} connections={} peak={} refused-client={} refused-global={}",
+            "[gm:admission] handlers {} active / {} peak, rejected {} pool + {} client; sessions {} active / {} max, \
+             {} per client, rejected {} budget + {} client; connections {} active / {} peak, rejected {} global + {} \
+             client",
+            handlers.active,
+            handlers.peak,
+            handlers.refused_pool,
+            handlers.refused_client,
+            handlers.sessions,
+            limits.sessions,
+            limits.sessions_per_client,
+            handlers.sessions_refused_budget,
+            handlers.sessions_refused_client,
             connections.active,
             connections.peak,
-            connections.rejected_client,
-            connections.rejected_global
+            connections.rejected_global,
+            connections.rejected_client
         );
     }
 

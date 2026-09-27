@@ -53,10 +53,20 @@ pub(crate) fn recover<'a, T>(counts: &'a Mutex<T>, name: &str) -> MutexGuard<'a,
     })
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    pub active: usize,
+    pub peak: usize,
+    pub refused_pool: u64,
+    pub refused_client: u64,
+    pub sessions: usize,
+    pub sessions_refused_budget: u64,
+    pub sessions_refused_client: u64,
+}
+
 #[derive(Default)]
 struct Counts {
-    active: usize,
-    sessions: usize,
+    stats: Stats,
     requests_by_client: HashMap<String, usize>,
     sessions_by_client: HashMap<String, usize>,
 }
@@ -93,52 +103,68 @@ impl Admission {
 
     pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = recover(&self.0.counts, "operation");
-        let (clients, limit) = match class {
-            Class::Request => (&counts.requests_by_client, self.0.limits.operations_per_client),
-            Class::Session => (&counts.sessions_by_client, self.0.limits.sessions_per_client),
+        let Counts {
+            stats,
+            requests_by_client,
+            sessions_by_client,
+        } = &mut *counts;
+        let (held, limit, refused) = match class {
+            Class::Request => (
+                requests_by_client,
+                self.0.limits.operations_per_client,
+                &mut stats.refused_client,
+            ),
+            Class::Session => (
+                sessions_by_client,
+                self.0.limits.sessions_per_client,
+                &mut stats.sessions_refused_client,
+            ),
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
-        if crate::client_address::share_full(keys, limit, |key| clients.get(key).copied().unwrap_or(0)) {
+        if crate::client_address::share_full(keys, limit, |key| held.get(key).copied().unwrap_or(0)) {
+            *refused += 1;
             return Err(Refusal::ClientFull);
         }
-        if counts.active >= self.0.limits.operations {
+        if stats.active >= self.0.limits.operations {
+            stats.refused_pool += 1;
             return Err(Refusal::GlobalFull);
         }
-        if class == Class::Session && counts.sessions >= self.0.limits.sessions {
+        if class == Class::Session && stats.sessions >= self.0.limits.sessions {
+            stats.sessions_refused_budget += 1;
             return Err(Refusal::SessionsFull);
         }
-        let clients = keys.to_vec();
-        counts.active += 1;
+        stats.active += 1;
+        stats.peak = stats.peak.max(stats.active);
         if class == Class::Session {
-            counts.sessions += 1;
+            stats.sessions += 1;
         }
-        let held = match class {
-            Class::Request => &mut counts.requests_by_client,
-            Class::Session => &mut counts.sessions_by_client,
-        };
-        for client in &clients {
+        for client in keys {
             *held.entry(client.clone()).or_default() += 1;
         }
         Ok(Permit {
             admission: self.clone(),
             class,
-            clients,
+            clients: keys.to_vec(),
         })
     }
 
     pub fn load(&self) -> (usize, usize) {
-        (recover(&self.0.counts, "operation").active, self.0.limits.operations)
+        (self.stats().active, self.0.limits.operations)
+    }
+
+    pub fn stats(&self) -> Stats {
+        recover(&self.0.counts, "operation").stats
     }
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = recover(&self.admission.0.counts, "operation");
-        counts.active -= 1;
+        counts.stats.active -= 1;
         let clients = match self.class {
             Class::Request => &mut counts.requests_by_client,
             Class::Session => {
-                counts.sessions -= 1;
+                counts.stats.sessions -= 1;
                 &mut counts.sessions_by_client
             }
         };
@@ -173,9 +199,22 @@ mod tests {
             admission.acquire(Class::Session, "b").err(),
             Some(Refusal::SessionsFull)
         );
+        assert_eq!(admission.acquire(Class::Session, "a").err(), Some(Refusal::ClientFull));
         drop(session);
         assert_eq!(admission.load(), (0, 2));
         assert!(admission.acquire(Class::Session, "a").is_ok());
+        assert_eq!(
+            admission.stats(),
+            Stats {
+                active: 0,
+                peak: 2,
+                refused_pool: 1,
+                refused_client: 1,
+                sessions: 0,
+                sessions_refused_budget: 1,
+                sessions_refused_client: 1,
+            }
+        );
     }
 
     #[tokio::test]
