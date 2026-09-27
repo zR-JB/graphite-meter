@@ -919,10 +919,10 @@ pub(super) async fn measure(
             );
             accounting.observe(boundary);
         }
-        let mut progress: BTreeMap<String, (u64, Instant)> = resources
+        let mut movement: BTreeMap<String, [(u64, Instant); 2]> = resources
             .transfers
             .iter()
-            .map(|transfer| (transfer.id.clone(), (0, started)))
+            .map(|transfer| (transfer.id.clone(), [(0, started); 2]))
             .collect();
         let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -974,16 +974,21 @@ pub(super) async fn measure(
                             Ok(mut boundary) => {
                                 boundary.stalled = stalled_tick;
                                 let stalled = resources.transfers.iter().find_map(|transfer| {
-                                    let bytes = boundary.down.get(&transfer.id).copied().unwrap_or_default()
-                                        .saturating_add(boundary.observed_up.get(&transfer.id).map_or(0, |up| up.maximum)
-                                            .max(boundary.up.get(&transfer.id).map_or(0, |up| up.bytes)));
-                                    let (previous, last_progress) = progress.get_mut(&transfer.id).unwrap();
-                                    if bytes != *previous {
-                                        *previous = bytes;
-                                        *last_progress = Instant::now();
-                                    }
-                                    (last_progress.elapsed() >= TRANSFER_PROGRESS_TIMEOUT).then(|| ParticipantFailure {
-                                        id: transfer.id.clone(), source: Box::new(crate::failure::LaneFailure(graphite_meter_core::failure::LaneEnding::Idle)),
+                                    let id = &transfer.id;
+                                    let counters = [
+                                        transfer.down.as_ref().map(|_| boundary.down.get(id).copied().unwrap_or_default()),
+                                        transfer.up.as_ref().map(|_| boundary.observed_up.get(id).map_or(0, |up| up.maximum)
+                                            .max(boundary.up.get(id).map_or(0, |up| up.bytes))),
+                                    ];
+                                    let silent = counters.into_iter().zip(movement.get_mut(id).unwrap()).any(|(bytes, (previous, moved_at))| {
+                                        let Some(bytes) = bytes else { return false; };
+                                        if bytes > *previous {
+                                            (*previous, *moved_at) = (bytes, Instant::now());
+                                        }
+                                        moved_at.elapsed() >= TRANSFER_PROGRESS_TIMEOUT
+                                    });
+                                    silent.then(|| ParticipantFailure {
+                                        id: id.clone(), source: Box::new(crate::failure::LaneFailure(graphite_meter_core::failure::LaneEnding::Idle)),
                                     })
                                 });
                                 let window = accounting.observe(boundary);

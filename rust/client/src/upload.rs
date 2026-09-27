@@ -1,7 +1,7 @@
 //! Stage-owned upload lanes and authoritative receiver evidence.
 use crate::{
     Error,
-    transport::{TransferProgress, TransferRetry, Transport},
+    transport::{TransferRetry, Transport},
     webtransport::{ConnectRejected, SessionSlot},
 };
 use bytes::Bytes;
@@ -13,6 +13,7 @@ use graphite_meter_core::{
 use http::Method;
 use serde::Deserialize;
 use std::{
+    convert::Infallible,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -395,40 +396,41 @@ async fn send_lane(
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
     let lane = index.to_string();
-    let mut retry = TransferRetry::new();
+    let mut retry = TransferRetry::default();
     loop {
-        let progress = retry.progress.clone();
-        let active = active.clone();
-        let block = block.clone();
+        let started = Instant::now();
+        let moved = Arc::new(AtomicBool::new(false));
         let body = futures_util::stream::unfold(
-            (block, REQUEST_BYTES, active, progress),
-            |(block, remaining, active, progress)| async move {
+            (block.clone(), REQUEST_BYTES, active.clone(), moved.clone()),
+            |(block, remaining, active, moved)| async move {
                 if remaining == 0 {
                     return None;
                 }
                 active.store(true, Ordering::Release);
                 if remaining < REQUEST_BYTES {
-                    progress.record();
+                    moved.store(true, Ordering::Relaxed);
                 }
                 let size = remaining.min(block.len() as u64) as usize;
                 Some((
                     Ok::<_, Error>(block.slice(..size)),
-                    (block, remaining - size as u64, active, progress),
+                    (block, remaining - size as u64, active, moved),
                 ))
             },
         );
-        let result = retry
-            .run(transport.send(
+        let result = transport
+            .send(
                 Route::Upload,
                 &[("id", id), ("lane", &lane)],
                 body,
                 REQUEST_BYTES,
                 REQUEST_LIFETIME,
-            ))
+            )
             .await;
         if let Err(error) = result {
             let retryable = transport.retryable_transfer_error(&error);
-            retry.retry(error, false, retryable).await?;
+            retry
+                .retry(error, started, moved.load(Ordering::Relaxed), retryable)
+                .await?;
         } else {
             retry.progressed();
         }
@@ -562,9 +564,9 @@ async fn failed(state: &mut watch::Receiver<State>) {
 async fn send_wt_lane(
     session: &crate::webtransport::Session,
     block: Bytes,
-    active: Arc<AtomicBool>,
-    progress: Arc<TransferProgress>,
-) -> Result<(), Error> {
+    active: &AtomicBool,
+    moved: &mut bool,
+) -> Result<Infallible, Error> {
     loop {
         let mut stream = session.open_uni().await?;
         let mut remaining = REQUEST_BYTES;
@@ -573,7 +575,7 @@ async fn send_wt_lane(
             stream.write_chunk(block.slice(..size)).await?;
             remaining -= size as u64;
             active.store(true, Ordering::Release);
-            progress.record();
+            *moved = true;
         }
         stream.finish()?;
     }
@@ -584,30 +586,21 @@ async fn send_wt_reconnecting(
     block: Bytes,
     active: Arc<AtomicBool>,
 ) -> Result<(), Error> {
-    let mut retry = TransferRetry::new();
+    let mut retry = TransferRetry::default();
     loop {
-        let progress = retry.progress.clone();
-        let session = retry.run(async { Ok(slot.current().await) }).await?;
-        let error = match retry
-            .run(send_wt_lane(
-                &session,
-                block.clone(),
-                active.clone(),
-                progress,
-            ))
-            .await
-        {
-            Ok(()) => return Ok(()),
-            Err(error) => error,
-        };
+        let session = slot.current().await;
+        let started = Instant::now();
+        let mut moved = false;
+        let Err(error) = send_wt_lane(&session, block.clone(), &active, &mut moved).await;
         let retryable = session.retryable_failure(&error);
-        retry.retry(error, false, retryable).await?;
-        if session.is_closed()
-            && let Err(error) = retry.run(slot.reconnect(&session)).await
-        {
-            let retryable =
-                !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
-            retry.retry(error, false, retryable).await?;
+        retry.retry(error, started, moved, retryable).await?;
+        if session.is_closed() {
+            let started = Instant::now();
+            if let Err(error) = slot.reconnect(&session).await {
+                let retryable =
+                    !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
+                retry.retry(error, started, false, retryable).await?;
+            }
         }
     }
 }
@@ -694,42 +687,6 @@ mod tests {
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
-
-    #[tokio::test]
-    async fn buffered_failed_upload_attempts_do_not_extend_recovery_forever() -> Result<(), Error> {
-        let _ = crate::crypto::provider().install_default();
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let origin = format!("http://{}", listener.local_addr()?);
-        let peer = tokio::spawn(async move {
-            loop {
-                let Ok((mut stream, _)) = listener.accept().await else {
-                    return;
-                };
-                let _ = stream.read(&mut [0_u8; 65536]).await;
-            }
-        });
-        let transport = Transport::connect(
-            crate::net::Http::new(false)?,
-            &origin,
-            graphite_meter_core::discovery::Protocol::Http1,
-            false,
-        )
-        .await?;
-        let result = tokio::time::timeout(
-            Duration::from_secs(4),
-            send_lane(
-                &transport,
-                "test-session",
-                0,
-                Bytes::from(vec![0; 65536]),
-                Arc::new(AtomicBool::new(false)),
-            ),
-        )
-        .await;
-        peer.abort();
-        assert!(result?.unwrap_err().is::<hyper::Error>());
-        Ok(())
-    }
 
     #[tokio::test]
     async fn http_lane_retries_dropped_streaming_request() -> Result<(), Error> {

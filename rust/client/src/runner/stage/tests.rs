@@ -4,7 +4,7 @@ use crate::{model::ServerSummary, net::Http};
 use graphite_meter_core::discovery::Protocol;
 use graphite_meter_core::{catalog::ServerEntry, discovery::ThroughputTarget};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -36,6 +36,9 @@ async fn download_peer_with_gate(
     let failed = Arc::new(AtomicU8::new(0));
     let flag = failed.clone();
     let first_request = Arc::new(AtomicBool::new(false));
+    let checkpoints = Arc::new(AtomicU64::new(0));
+    let finalized = Arc::new(AtomicBool::new(false));
+    let receiver_clock = std::time::Instant::now();
     let login_url = format!("{origin}/login");
     let server = tokio::spawn(async move {
         let mut clients = JoinSet::new();
@@ -47,6 +50,8 @@ async fn download_peer_with_gate(
                     let acceptor = acceptor.clone();
                     let gate = gate.clone();
                     let first_request = first_request.clone();
+                    let checkpoints = checkpoints.clone();
+                    let finalized = finalized.clone();
                     let login_url = login_url.clone();
                     clients.spawn(async move {
                         let Ok(mut stream) = acceptor.accept(stream).await else { return; };
@@ -88,6 +93,7 @@ async fn download_peer_with_gate(
                             return;
                         }
                         if request.starts_with(b"POST /upload/session") {
+                            finalized.store(false, Ordering::SeqCst);
                             let body = br#"{"uploadId":"test-session"}"#;
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                             let _ = stream.write_all(header.as_bytes()).await;
@@ -96,20 +102,28 @@ async fn download_peer_with_gate(
                         }
                         if request.starts_with(b"GET /upload/progress") {
                             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 68719476736\r\n\r\n{\"type\":\"ready\"}\n").await;
-                            while stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
+                            while !finalized.load(Ordering::SeqCst) && stream.write_all(b"{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n").await.is_ok() {
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
+                            let _ = stream.write_all(b"{\"type\":\"complete\",\"bytes\":1,\"nanos\":1}\n").await;
+                            return;
+                        }
+                        if request.starts_with(b"DELETE /upload/progress") {
+                            finalized.store(true, Ordering::SeqCst);
+                            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n").await;
                             return;
                         }
                         if request.starts_with(b"POST /upload?") {
                             while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {}
                             return;
                         }
-                        if request.starts_with(b"POST /upload/checkpoint") && flag.load(Ordering::SeqCst) == 0 {
-                            let body = br#"{"bytes":123,"nanos":456}"#;
+                        let mode = flag.load(Ordering::SeqCst);
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7) {
+                            let bytes = if mode == 7 { checkpoints.load(Ordering::SeqCst) } else { checkpoints.fetch_add(1 << 16, Ordering::SeqCst) };
+                            let body = format!(r#"{{"bytes":{bytes},"nanos":{}}}"#, receiver_clock.elapsed().as_nanos() + 1);
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                             let _ = stream.write_all(header.as_bytes()).await;
-                            let _ = stream.write_all(body).await;
+                            let _ = stream.write_all(body.as_bytes()).await;
                             return;
                         }
                         if !first_request.swap(true, Ordering::SeqCst)
@@ -617,10 +631,11 @@ async fn mid_stage_auth_failure_keeps_reapproval_cause() -> Result<(), Error> {
 }
 
 #[tokio::test]
-async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Error> {
+async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
-    let (near, _, near_task) = download_peer().await?;
-    let (far, mode, far_task) = download_peer().await?;
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, far_mode, far_task) = download_peer().await?;
+    near_mode.store(5, Ordering::SeqCst);
     let http = Http::new(true)?;
     let servers = vec![
         prepared_download("near", &near, &http).await?,
@@ -628,8 +643,8 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
     ];
     let config = Config {
         warmup: Duration::ZERO,
-        download_duration: Duration::from_secs(4),
-        streams: 1,
+        bidirectional_duration: Duration::from_secs(3),
+        streams: 2,
         loaded_latency: false,
         ..Config::default()
     };
@@ -644,16 +659,22 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
         ..Snapshot::default()
     });
     let (_stop, cancelled) = watch::channel(false);
-    let stall = async {
+    let stall_upload = async {
         observed
             .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
             .await
             .unwrap();
-        mode.store(4, Ordering::SeqCst);
+        far_mode.store(7, Ordering::SeqCst);
     };
     let (result, ()) = tokio::join!(
-        measure(Stage::Download, &config, &servers, &snapshots, cancelled,),
-        stall
+        measure(
+            Stage::Bidirectional,
+            &config,
+            &servers,
+            &snapshots,
+            cancelled
+        ),
+        stall_upload
     );
     near_task.abort();
     far_task.abort();
@@ -661,17 +682,13 @@ async fn stalled_peer_leaves_survivors_with_partial_results() -> Result<(), Erro
     let snapshot = observed.borrow();
     let result = &snapshot.results[0];
     assert!(!result.complete);
+    assert_eq!(snapshot.failures.len(), 1);
     assert_eq!(
-        snapshot
-            .failures
-            .iter()
-            .find(|failure| failure.server_id == "far")
-            .unwrap()
-            .reason,
+        snapshot.failures[0].reason,
         graphite_meter_core::failure::FailureReason::Timeout
     );
-    assert!(result.down_bps().is_some());
     assert!(result.server_results[0].down_bps().is_some());
+    assert!(result.server_results[0].up_bps().is_some());
     Ok(())
 }
 
@@ -770,36 +787,6 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
     drop(resources);
     peer.abort();
     healthy_peer.abort();
-    Ok(())
-}
-
-#[tokio::test]
-async fn stalled_lane_expires_while_its_sibling_keeps_receiving() -> Result<(), Error> {
-    let _ = crate::crypto::provider().install_default();
-    let (origin, mode, peer) = download_peer().await?;
-    mode.store(5, Ordering::SeqCst);
-    let transport =
-        Arc::new(Transport::connect(Http::new(true)?, &origin, Protocol::Http1, true).await?);
-    let (_stop, cancelled) = watch::channel(false);
-    let mut download = Download::start(transport, 2, Duration::from_secs(30), cancelled).await?;
-    let baseline = download.bytes();
-    let failure = tokio::time::timeout(Duration::from_secs(3), async {
-        let mut tick = tokio::time::interval(Duration::from_millis(20));
-        loop {
-            tick.tick().await;
-            if let Err(error) = download.health() {
-                break error;
-            }
-        }
-    })
-    .await;
-    assert!(download.bytes() > baseline);
-    download.stop().await;
-    peer.abort();
-    assert_eq!(
-        crate::failure::reason(failure?.as_ref(), false),
-        graphite_meter_core::failure::FailureReason::Timeout
-    );
     Ok(())
 }
 
