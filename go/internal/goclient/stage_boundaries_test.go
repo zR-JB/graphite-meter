@@ -141,7 +141,8 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 				if time.Since(started) > 2*time.Second {
 					t.Fatal("stage failure did not promptly cancel its siblings and release progress")
 				}
-				want := OutcomeIncomplete
+				// A late failure keeps the interval the server finished, so the stage is Partial.
+				want := OutcomePartial
 				if interruption == "cancel" {
 					want = OutcomeStopped
 				}
@@ -157,11 +158,8 @@ func TestInterruptedTransferPreservesAttributableReceiverWindows(t *testing.T) {
 					if result.Err == nil || result.TotalBytes == 0 {
 						t.Fatalf("partial population lost its cause or receiver attribution: %+v", result)
 					}
-					if interruption == "cancel" && (result.Unavailable || result.MeanBps <= 0) {
-						t.Fatalf("cancel discarded the measured interval: %+v", result)
-					}
-					if interruption != "cancel" && !result.Unavailable {
-						t.Fatalf("removed participant retained a headline: %+v", result)
+					if result.Unavailable || result.MeanBps <= 0 {
+						t.Fatalf("interruption discarded the finished interval: %+v", result)
 					}
 				}
 			})

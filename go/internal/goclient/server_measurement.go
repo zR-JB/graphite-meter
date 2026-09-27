@@ -324,7 +324,7 @@ func evidence(components []ComponentWindow) error {
 func (a *aggregateMeasurements) result(dir Direction) Result {
 	result := Result{Stage: a.stage, Direction: dir, Unavailable: true, Err: errInsufficientEvidence}
 	result.TotalBytes = a.total(dir)
-	if latest := a.current(); latest == nil || len(latest.Participants) == 0 {
+	if a.current() == nil {
 		return result
 	}
 	for i := len(a.intervals) - 1; i >= 0 && a.intervals[i].Stage == a.stage; i-- {

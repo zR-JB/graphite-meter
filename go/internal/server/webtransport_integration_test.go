@@ -753,10 +753,10 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 	if len(downloadResults) != 1 {
 		t.Fatalf("failed download emitted %d results, want one incomplete receiver window", len(downloadResults))
 	}
-	// A sole server skips the stage: the run goes on, and the stage names why it has no rate.
+	// A sole server lost late keeps the rate of the interval it finished; the run goes on and names why.
 	result := downloadResults[0]
-	if err != nil || result.Err == nil || result.TotalBytes == 0 || !result.Unavailable || result.ReceiverTimed() {
-		t.Fatalf("a refused sole server must keep bytes and fail the stage without a rate: %+v; run error: %v",
+	if err != nil || result.Err == nil || result.TotalBytes == 0 || result.Unavailable || result.MeanBps <= 0 {
+		t.Fatalf("a sole server refused mid-window must keep its finished interval's rate: %+v; run error: %v",
 			result, err)
 	}
 	// Whichever detector wins, the error names the lost session or its stalled lane.
@@ -764,7 +764,7 @@ func TestWebTransportStageFailsWhenTheSessionIsRefusedMidWindow(t *testing.T) {
 		!strings.Contains(result.Err.Error(), "stopped delivering bytes") {
 		t.Fatalf("stage err = %q, want it to name the unreplaced session or its stall", result.Err)
 	}
-	if details == nil || details.Outcome != goclient.OutcomeIncomplete || len(details.Failures) != 1 ||
+	if details == nil || details.Outcome != goclient.OutcomePartial || len(details.Failures) != 1 ||
 		len(details.Intervals) < 2 ||
 		details.Intervals[0].Window == nil || *details.Intervals[0].Window.DownBytesPerSec <= 0 {
 		t.Fatalf("earlier receiver window lost: %+v", details)
