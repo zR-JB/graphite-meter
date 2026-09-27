@@ -48,8 +48,6 @@ fn shared_aggregation_contract() {
                             id: snapshot["id"].as_str().unwrap().into(),
                             bytes: snapshot["bytes"].as_u64().unwrap(),
                             nanos: snapshot["nanos"].as_u64().unwrap(),
-                            requested_at_nanos: 0,
-                            received_at_nanos: 0,
                         },
                     );
                 }

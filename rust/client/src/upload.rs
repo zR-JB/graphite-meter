@@ -31,7 +31,6 @@ const MAX_LINE: usize = 64 * 1024;
 pub struct ReceiverProgress {
     pub bytes: u64,
     pub nanos: u64,
-    pub received_at_nanos: u64,
 }
 #[derive(Clone, Default)]
 struct State {
@@ -64,7 +63,6 @@ pub struct Upload {
     transport: Arc<Transport>,
     control: Arc<Transport>,
     id: String,
-    epoch: Instant,
     state: watch::Receiver<State>,
     stop_lanes: watch::Sender<bool>,
     stop_all: watch::Sender<bool>,
@@ -74,40 +72,32 @@ pub struct Upload {
 }
 
 impl Upload {
-    pub async fn start(
-        transport: Arc<Transport>,
-        lanes: usize,
-        epoch: Instant,
-        cancel: watch::Receiver<bool>,
-    ) -> Result<Self, Error> {
-        Self::start_staggered(transport, lanes, epoch, Duration::ZERO, cancel).await
+    pub async fn start(transport: Arc<Transport>, lanes: usize, cancel: watch::Receiver<bool>) -> Result<Self, Error> {
+        Self::start_staggered(transport, lanes, Duration::ZERO, cancel).await
     }
 
     /// Stagger first HTTP requests inside the stage-owned cancellation scope.
     pub async fn start_staggered(
         transport: Arc<Transport>,
         lanes: usize,
-        epoch: Instant,
         stagger: Duration,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, epoch, cancel, false, stagger).await
+        Self::start_inner(transport, lanes, cancel, false, stagger).await
     }
     pub async fn start_webtransport(
         transport: Arc<Transport>,
         lanes: usize,
-        epoch: Instant,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
         if lanes > 16 {
             return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
-        Self::start_inner(transport, lanes, epoch, cancel, true, Duration::ZERO).await
+        Self::start_inner(transport, lanes, cancel, true, Duration::ZERO).await
     }
     async fn start_inner(
         transport: Arc<Transport>,
         lanes: usize,
-        epoch: Instant,
         mut cancel: watch::Receiver<bool>,
         webtransport: bool,
         stagger: Duration,
@@ -146,7 +136,6 @@ impl Upload {
             transport,
             control,
             id: minted.upload_id,
-            epoch,
             state,
             stop_lanes,
             stop_all,
@@ -173,7 +162,7 @@ impl Upload {
                 tokio::select! {
                     biased;
                     () = cancelled(&mut stop) => {},
-                    result = progress_feed(&transport, &id, epoch, &state, session) => {
+                    result = progress_feed(&transport, &id, &state, session) => {
                         if let Err(error) = result {
                             fail(&state, error);
                         }
@@ -281,7 +270,6 @@ impl Upload {
         let deadline = Instant::now() + budget;
         loop {
             self.health()?;
-            let requested_at_nanos = elapsed(self.epoch)?;
             let response = tokio::time::timeout_at(
                 deadline,
                 self.control
@@ -311,7 +299,6 @@ impl Upload {
                     .into());
                 }
             };
-            let received_at_nanos = elapsed(self.epoch)?;
             if count.bytes > MAX_UPLOAD_COUNTER || count.nanos == 0 || count.nanos > MAX_UPLOAD_COUNTER {
                 return Err(wire::WireError::InvalidReceiverCheckpoint.into());
             }
@@ -320,8 +307,6 @@ impl Upload {
                 id: self.id.clone(),
                 bytes: count.bytes,
                 nanos: count.nanos,
-                requested_at_nanos,
-                received_at_nanos,
             });
         }
     }
@@ -432,15 +417,10 @@ async fn send_lane(
         }
     }
 }
-async fn progress_loop(
-    transport: &Transport,
-    id: &str,
-    epoch: Instant,
-    state: &watch::Sender<State>,
-) -> Result<(), Error> {
+async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<(), Error> {
     let mut recovery = None;
     loop {
-        let result = read_progress(transport, id, epoch, state, &mut recovery).await;
+        let result = read_progress(transport, id, state, &mut recovery).await;
         match result {
             Ok(()) => return Ok(()),
             Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
@@ -457,7 +437,6 @@ async fn progress_loop(
 async fn read_progress(
     transport: &Transport,
     id: &str,
-    epoch: Instant,
     state: &watch::Sender<State>,
     recovery: &mut Option<Instant>,
 ) -> Result<(), Error> {
@@ -504,7 +483,7 @@ async fn read_progress(
             let Ok(event) = event else {
                 continue;
             };
-            if apply_event(event, epoch, state, &mut ready)? {
+            if apply_event(event, state, &mut ready)? {
                 return Ok(());
             }
             if ready {
@@ -513,12 +492,6 @@ async fn read_progress(
         }
     }
     Err("upload progress ended without complete".into())
-}
-fn elapsed(epoch: Instant) -> Result<u64, Error> {
-    Ok(
-        u64::try_from(Instant::now().saturating_duration_since(epoch).as_nanos())
-            .map_err(|_| "client measurement clock overflow")?,
-    )
 }
 fn fail(state: &watch::Sender<State>, error: Error) {
     state.send_modify(|state| {
@@ -587,7 +560,6 @@ async fn send_wt_reconnecting(slot: &SessionSlot, block: Bytes, active: Arc<Atom
 async fn progress_feed(
     transport: &Transport,
     id: &str,
-    epoch: Instant,
     state: &watch::Sender<State>,
     session: Option<Arc<SessionSlot>>,
 ) -> Result<(), Error> {
@@ -597,7 +569,7 @@ async fn progress_feed(
             let mut ready = false;
             loop {
                 let event = tokio::time::timeout(CONTROL_TIMEOUT, stream.next()).await??;
-                if apply_event(event, epoch, state, &mut ready)? {
+                if apply_event(event, state, &mut ready)? {
                     return Ok::<_, Error>(());
                 }
             }
@@ -609,14 +581,9 @@ async fn progress_feed(
         }
         // Reattach only the receiver's control feed. Payload lanes remain WT.
     }
-    progress_loop(transport, id, epoch, state).await
+    progress_loop(transport, id, state).await
 }
-fn apply_event(
-    event: UploadProgress,
-    epoch: Instant,
-    state: &watch::Sender<State>,
-    ready: &mut bool,
-) -> Result<bool, Error> {
+fn apply_event(event: UploadProgress, state: &watch::Sender<State>, ready: &mut bool) -> Result<bool, Error> {
     match event {
         UploadProgress::Ready => {
             *ready = true;
@@ -635,11 +602,7 @@ fn apply_event(
             if old.is_some_and(|old| bytes < old.bytes || nanos < old.nanos) {
                 return Ok(false);
             }
-            let count = ReceiverProgress {
-                bytes,
-                nanos,
-                received_at_nanos: elapsed(epoch)?,
-            };
+            let count = ReceiverProgress { bytes, nanos };
             let complete = matches!(event, UploadProgress::Complete { .. });
             state.send_modify(|state| {
                 state.latest = Some(count);
@@ -774,7 +737,6 @@ mod tests {
             transport: transport.clone(),
             control: transport,
             id: "test-session".into(),
-            epoch: Instant::now(),
             state,
             stop_lanes,
             stop_all,
@@ -786,7 +748,6 @@ mod tests {
             .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
             .await?;
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
-        assert!(snapshot.received_at_nanos >= snapshot.requested_at_nanos);
         assert!(state_sender.borrow().latest.is_none());
         server.await??;
         Ok(())
@@ -823,7 +784,7 @@ mod tests {
         )
         .await?;
         let (state, observed) = watch::channel(State::default());
-        progress_loop(&transport, "test-session", Instant::now(), &state).await?;
+        progress_loop(&transport, "test-session", &state).await?;
         server.await??;
         let observed = observed.borrow();
         assert!(observed.complete);

@@ -296,7 +296,6 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
         &plan,
         &config,
         StageTiming {
-            epoch: Instant::now(),
             operation_limit: Duration::from_secs(60),
             ready_by: Instant::now() + Duration::from_millis(300),
         },
@@ -649,8 +648,8 @@ async fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() ->
     let transport = Arc::new(Transport::connect(http, &origin, Protocol::Http1, true).await?);
     let (stop, cancelled) = watch::channel(false);
     let epoch = Instant::now();
-    let upload = Upload::start(transport, 1, epoch, cancelled.clone()).await?;
-    let healthy_upload = Upload::start(healthy_transport, 1, epoch, cancelled).await?;
+    let upload = Upload::start(transport, 1, cancelled.clone()).await?;
+    let healthy_upload = Upload::start(healthy_transport, 1, cancelled).await?;
     let mut resources = StageResources {
         transfers: vec![
             Transfer {

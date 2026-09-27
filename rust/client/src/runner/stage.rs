@@ -407,7 +407,6 @@ const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Copy)]
 struct StageTiming {
-    epoch: Instant,
     operation_limit: Duration,
     ready_by: Instant,
 }
@@ -476,13 +475,12 @@ async fn start_transfer(
                     Upload::start_staggered(
                         upload_transport.clone(),
                         lanes.upload,
-                        timing.epoch,
                         lane_stagger(config.warmup, server.idle_rtt, lanes.upload),
                         stopped.clone(),
                     )
                     .await?
                 } else {
-                    Upload::start_webtransport(upload_transport, lanes.upload, timing.epoch, stopped.clone()).await?
+                    Upload::start_webtransport(upload_transport, lanes.upload, stopped.clone()).await?
                 });
             }
         }
@@ -640,7 +638,6 @@ pub(super) async fn measure(
                             plan,
                             config,
                             StageTiming {
-                                epoch,
                                 operation_limit,
                                 ready_by,
                             },
@@ -769,8 +766,7 @@ pub(super) async fn measure(
         let end = started + config.duration(stage);
         measurement_start = Some(started);
         if let (Some(stage), Some(mut boundary)) = (transfer_stage, initial) {
-            // Receiver snapshots retain their request/response brackets. Refresh
-            // the local download counters at the actual measurement start.
+            // Local counters restart at the actual measurement start.
             let local = resources.local_boundary(epoch);
             boundary.at_nanos = local.at_nanos;
             boundary.down = local.down;

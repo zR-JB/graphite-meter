@@ -58,8 +58,6 @@ pub struct ReceiverSnapshot {
     pub id: String,
     pub bytes: u64,
     pub nanos: u64,
-    pub requested_at_nanos: u64,
-    pub received_at_nanos: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,23 +76,12 @@ pub struct Boundary {
     pub observed_up: BTreeMap<String, ObservedUpload>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Clock {
-    ClientMonotonic,
-    Receiver,
-}
-
 #[derive(Debug, Clone)]
 pub struct ComponentWindow {
     pub server_id: String,
     pub bytes: u64,
     pub duration_nanos: u64,
     pub bytes_per_sec: f64,
-    pub clock: Clock,
-    pub start_bytes: u64,
-    pub end_bytes: u64,
-    pub start_receiver: Option<ReceiverSnapshot>,
-    pub end_receiver: Option<ReceiverSnapshot>,
 }
 
 #[derive(Debug, Clone)]
@@ -534,11 +521,6 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
                 bytes,
                 duration_nanos: elapsed,
                 bytes_per_sec: rate,
-                clock: Clock::ClientMonotonic,
-                start_bytes: start,
-                end_bytes: end,
-                start_receiver: None,
-                end_receiver: None,
             });
             *window.down_bytes_per_sec.get_or_insert(0.0) += rate;
         }
@@ -560,11 +542,6 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
                 bytes,
                 duration_nanos: duration,
                 bytes_per_sec: rate,
-                clock: Clock::Receiver,
-                start_bytes: start.bytes,
-                end_bytes: end.bytes,
-                start_receiver: Some(start.clone()),
-                end_receiver: Some(end.clone()),
             });
             *window.up_bytes_per_sec.get_or_insert(0.0) += rate;
         }

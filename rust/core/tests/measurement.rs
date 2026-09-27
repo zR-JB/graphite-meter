@@ -18,8 +18,6 @@ fn boundary(ms: u64, down: &[(&str, u64)], up: &[(&str, &str, u64, u64)]) -> Bou
                         id: id.to_string(),
                         bytes: *bytes,
                         nanos: receiver_ms * MS,
-                        requested_at_nanos: 0,
-                        received_at_nanos: 0,
                     },
                 )
             })
