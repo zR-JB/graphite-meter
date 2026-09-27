@@ -426,6 +426,7 @@ run = [
   "cargo fmt --all --check",
   "python3 ../scripts/legal/check_git_sources.py",
   "python3 ../scripts/ci/rust_crate_budget.py",
+  "cargo deny --locked check",
   "cargo clippy --workspace --all-targets --locked -- -D warnings",
   "cargo test --workspace --all-targets --locked",
 ]

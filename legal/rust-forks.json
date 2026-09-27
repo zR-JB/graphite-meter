@@ -6,6 +6,7 @@
     "upstream": "https://github.com/hyperium/h3",
     "baseTag": "h3-quinn-v0.0.10",
     "base": "2dc3412bdf6083451920d5bfd7a9484d054c1859",
+    "prereleaseException": "hyperium/h3 publishes every release, including h3 0.0.8 and h3-quinn 0.0.10, as a GitHub pre-release and has no stable line; the HTTP/3 and WebTransport listeners require it.",
     "diffSha256": "30f4b65e6e086508f1d21e723b887dc67ed7b3c7379d4090e85723448fb96b45",
     "modifiedPackages": [
       "h3",

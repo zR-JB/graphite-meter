@@ -233,13 +233,11 @@ jobs:
             ~/.cargo/.crates2.json
             rust/target
           key: rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('rust/rust-toolchain.toml', 'rust/Cargo.lock') }}
-      - name: Check experimental Rust implementation
-        run: mise run rust-check
-      - name: Check Rust dependency policy
+      - name: Install pinned cargo-deny
         working-directory: rust
-        run: |
-          cargo install cargo-deny --version 0.20.2 --locked
-          cargo deny --locked check
+        run: cargo install cargo-deny --version 0.20.2 --locked
+      - name: Check experimental Rust implementation and dependency policy
+        run: mise run rust-check
       - name: Keep only dependency builds in a new cache
         if: steps.cargo-cache.outputs.cache-hit != 'true'
         working-directory: rust

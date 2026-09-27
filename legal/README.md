@@ -103,18 +103,30 @@ year or year range. The generator never derives it from the wall clock.
 
 ## Pinned fork upkeep
 
-After Rust lands on the default branch, enable graphite-meter's daily/manual `Fork upkeep`.
-It reads `rust-forks.json`; keeping the scheduler here leaves fork defaults as pure upstream
-mirrors. Ordinary Git pushes reject divergence, including concurrent changes. Rebases update
-only `<patch-branch>-next`; pending reviews wait, and conflicts or merge-only edits open an
-issue. Canonical branches remain protected. Integrate reviewed changes through a normal
-merge or a new versioned protected patch branch with an updated inventory mapping.
+Forks carry Graphite Meter patches only on the latest stable upstream release: a tag with the
+`baseTag` prefix and a plain `MAJOR.MINOR.PATCH` version, never a branch head or pre-release
+tag. Each protected patch branch is `graphite-meter/<crate>-v<version>`. Exception: hyperium/h3
+publishes every release, including h3 0.0.8 and h3-quinn 0.0.10, as a GitHub pre-release and has
+no stable line; the h3 fork records this as `prereleaseException` in `rust-forks.json`.
 
-Install a dedicated GitHub App only on graphite-meter and the three forks, with Contents,
-Pull requests, Issues and Workflows write permissions. Workflows permission is needed to
-mirror upstream workflow changes. Set repository variable `FORK_UPKEEP_APP_CLIENT_ID` and
-secret `FORK_UPKEEP_APP_PRIVATE_KEY`. No variable or no landed Rust inventory means no
-publishing; dispatch accepts only the default branch. No fork Actions setup is needed.
+After Rust lands on the default branch, enable graphite-meter's daily/manual `Fork upkeep`.
+It reads `rust-forks.json` and keeps fork default branches as pure upstream mirrors. Ordinary
+Git pushes reject divergence, including concurrent changes. When a newer stable release exists,
+upkeep rebases the canonical patch onto it as `<patch-branch>-next` and opens an issue; pending
+proposals are never replaced, and conflicts or merge-only edits also open an issue. Canonical
+branches remain protected. Integrate a reviewed proposal as the new versioned protected branch
+and update the inventory mapping.
+
+Upkeep uses two GitHub Apps so the credential that writes forks cannot write this repository:
+
+- Fork upkeep App, installed only on the three forks: Contents, Issues and Workflows write
+  (Workflows because mirrors and proposals carry upstream workflow changes). Set repository
+  variable `FORK_UPKEEP_APP_CLIENT_ID` and secret `FORK_UPKEEP_APP_PRIVATE_KEY`.
+- Fork pin App, installed only on graphite-meter: Contents and Pull requests write, no Workflows.
+  Set repository variable `FORK_PIN_APP_CLIENT_ID` and secret `FORK_PIN_APP_PRIVATE_KEY`.
+
+Without both variables or a landed Rust inventory nothing is published; dispatch accepts only
+the default branch. No fork Actions setup is needed.
 
 Canonical updates get draft Cargo.toml pin PRs on SHA-specific branches. Existing proposals
 and reviewer edits are never overwritten. Lockfiles and reviewed provenance stay unchanged,

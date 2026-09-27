@@ -19,7 +19,8 @@ mise run pipeline-test     # ty type check, control-plane and legal tests
 `mise run check` is the deterministic developer gate; `mise run ci` runs every
 CI job's task locally, and the policy fails if one of its steps has no CI job.
 `Gate` is the only required status. Path filters (`.github/ci-paths.yml`)
-narrow PR runs only; every push to main runs every job.
+narrow PR runs only; every push to main runs every job. `advisories.yml`
+rechecks Rust dependencies against the live RustSec database daily.
 
 | Job | mise task |
 | --- | --- |
@@ -101,6 +102,8 @@ it. Build arguments carry no secrets because max provenance records them.
    the Release App as the only bypass actor; `main` requires pull requests, the
    `Gate` and CodeQL checks and blocks force pushes and deletion.
 7. **Releases:** enable release immutability.
+8. **Code scanning:** CodeQL default setup analyses every product language,
+   including Rust.
 
 ## Workflow policy
 

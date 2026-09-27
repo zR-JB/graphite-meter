@@ -17,7 +17,7 @@ env:
 
 jobs:
   upkeep:
-    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && vars.FORK_UPKEEP_APP_CLIENT_ID != '' }}
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && vars.FORK_UPKEEP_APP_CLIENT_ID != '' && vars.FORK_PIN_APP_CLIENT_ID != '' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -34,7 +34,24 @@ jobs:
           cache: false
       - id: inventory
         run: echo "repositories=$(python3 scripts/ci/fork_upkeep.py --repositories)" >> "$GITHUB_OUTPUT"
-      - id: app-token
+      - id: pin-token
+        if: steps.inventory.outputs.repositories != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          client-id: ${{ vars.FORK_PIN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FORK_PIN_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Propose reviewed pins
+        if: steps.inventory.outputs.repositories != ''
+        env:
+          GH_TOKEN: ${{ steps.pin-token.outputs.token }}
+          APP_SLUG: ${{ steps.pin-token.outputs.app-slug }}
+        run: |
+          gh auth setup-git
+          python3 scripts/ci/fork_upkeep.py --publish pins
+      - id: fork-token
         if: steps.inventory.outputs.repositories != ''
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
@@ -43,17 +60,13 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ steps.inventory.outputs.repositories }}
           permission-contents: write
-          permission-pull-requests: write
           permission-issues: write
           permission-workflows: write
-      - name: Mirror and propose reviewed updates
+      - name: Mirror forks and propose stable releases
         if: steps.inventory.outputs.repositories != ''
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          GH_TOKEN: ${{ steps.fork-token.outputs.token }}
+          APP_SLUG: ${{ steps.fork-token.outputs.app-slug }}
         run: |
           gh auth setup-git
-          export GIT_AUTHOR_NAME="$APP_SLUG[bot]"
-          bot_id=$(gh api "users/$GIT_AUTHOR_NAME" --jq .id)
-          export GIT_AUTHOR_EMAIL="$bot_id+$GIT_AUTHOR_NAME@users.noreply.github.com"
-          python3 scripts/ci/fork_upkeep.py --publish
+          python3 scripts/ci/fork_upkeep.py --publish forks

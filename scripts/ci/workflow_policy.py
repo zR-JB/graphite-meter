@@ -19,6 +19,7 @@ JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 
 TRIGGERS = {
+    "advisories.yml": {"schedule", "workflow_dispatch"},
     "ci.yml": {"pull_request", "push"},
     "fork-upkeep.yml": {"schedule", "workflow_dispatch"},
     "release-request.yml": {"workflow_dispatch"},
@@ -178,8 +179,11 @@ def check_workflows(root: Path) -> None:
             if extra := actions - ALLOWED_USES[name]:
                 fail(f"{name} must not run repository code or actions: {sorted(extra)}")
     upkeep = (workflows / "fork-upkeep.yml").read_text(encoding="utf-8")
-    if set(re.findall(r"secrets\.(\w+)", upkeep)) != {"FORK_UPKEEP_APP_PRIVATE_KEY"}:
-        fail("fork-upkeep.yml: only the fork upkeep App private key is allowed")
+    if set(re.findall(r"secrets\.(\w+)", upkeep)) != {"FORK_UPKEEP_APP_PRIVATE_KEY", "FORK_PIN_APP_PRIVATE_KEY"}:
+        fail("fork-upkeep.yml: only the fork upkeep App and pin App private keys are allowed")
+    pin = next(step for step in STEP.split(upkeep) if "secrets.FORK_PIN_APP_PRIVATE_KEY" in step)
+    if "repositories: ${{ github.event.repository.name }}\n" not in pin or "permission-workflows" in pin:
+        fail("fork-upkeep.yml: the pin App token may write only this repository, never its workflows")
     if "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)" not in upkeep:
         fail("fork-upkeep.yml: upkeep may run only from the default branch")
     if "repositories: ${{ steps.inventory.outputs.repositories }}" not in upkeep:
