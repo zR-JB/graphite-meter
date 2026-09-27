@@ -32,18 +32,35 @@ export function createPingScheduler(
   let pacing = initialPacing;
   let lastSendAt: number | null = null;
   let timer: unknown = null;
+  let firesAt = Infinity;
+  let wakeAt = Infinity;
   let running = false;
 
+  // One timer serves every rearm: a later due time waits for the earlier wake, which checks it again.
   const arm = (delayMs: number): void => {
-    if (timer !== null) clock.clearTimeout(timer);
-    timer = clock.setTimeout(() => {
-      timer = null;
-      trySend();
-    }, delayMs);
+    const now = clock.now();
+    wakeAt = now + delayMs;
+    if (timer !== null && firesAt <= wakeAt) return;
+    disarm();
+    wakeAt = firesAt = now + delayMs;
+    timer = clock.setTimeout(wake, delayMs);
   };
-  const sendAndArm = (backupDelayMs: () => number): void => {
+  const disarm = (): void => {
     if (timer !== null) clock.clearTimeout(timer);
     timer = null;
+    wakeAt = firesAt = Infinity;
+  };
+  function wake(): void {
+    timer = null;
+    firesAt = Infinity;
+    const now = clock.now();
+    if (wakeAt === Infinity) return;
+    if (now < wakeAt) return arm(wakeAt - now);
+    wakeAt = Infinity;
+    trySend();
+  }
+  const sendAndArm = (backupDelayMs: () => number): void => {
+    wakeAt = Infinity;
     const now = clock.now();
     if (!send(now)) return;
     lastSendAt = now;
@@ -74,8 +91,7 @@ export function createPingScheduler(
     },
     stop(): void {
       running = false;
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = null;
+      disarm();
     },
     reset(): void {
       this.stop();
@@ -83,8 +99,7 @@ export function createPingScheduler(
     },
     restartNow(): void {
       if (!running) return;
-      if (timer !== null) clock.clearTimeout(timer);
-      timer = null;
+      disarm();
       lastSendAt = null;
       trySend();
     },

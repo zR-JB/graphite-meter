@@ -495,12 +495,12 @@ function recordOutcome(
   observedAt: number,
   handlingMs?: number,
 ): void {
-  const handling = timedOut ? undefined : handlingMs;
-  record({
-    ...pingSample(observedAt - ping.sentAt, timedOut, observedAt),
-    sentAtEpochMs: performance.timeOrigin + ping.sentAt,
-    ...(handling === undefined ? {} : { reflectorHandlingMs: handling }),
-  });
+  // One object per outcome: this runs for every reply on the timestamping thread.
+  const sample = pingSample(observedAt - ping.sentAt, timedOut, observedAt);
+  sample.sentAtEpochMs = performance.timeOrigin + ping.sentAt;
+  if (!timedOut && handlingMs !== undefined)
+    sample.reflectorHandlingMs = handlingMs;
+  record(sample);
 }
 
 function interruptPending(reason: PingInterruptionReason): void {

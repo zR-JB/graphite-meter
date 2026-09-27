@@ -1158,9 +1158,11 @@ export class Run {
       : { score: 0, sampleCount: 0 };
   }
 
+  /** Stability only serves early finish, so it is not computed while that is off. */
   #updateStability(): boolean {
     const segment = this.#active;
-    if (!segment || segment.phase === "warmup") return false;
+    if (!segment || segment.phase === "warmup" || !this.#cfg!.adaptive)
+      return false;
     const confidence = this.#confidence(segment.phase);
     if (segment.phase !== "latency")
       this.#aggregate.trackStable(confidence.score);
