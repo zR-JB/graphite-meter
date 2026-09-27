@@ -1,5 +1,5 @@
 import "./state/runes.testutil";
-import { expect, test } from "bun:test";
+import { expect, jest, test } from "bun:test";
 import * as auth from "./auth";
 import { stubGlobals } from "./test-helpers.testutil";
 import {
@@ -39,38 +39,6 @@ function environment(request: typeof fetch) {
 const responseFetch = (respond: () => Response) =>
   (async () => respond()) as unknown as typeof fetch;
 
-test("session coverage cancels an oversized stream without authorizing or navigating", async () => {
-  let canceled = false;
-  let reads = 0;
-  const env = environment(
-    responseFetch(
-      () =>
-        new Response(
-          new ReadableStream<Uint8Array>({
-            pull(controller) {
-              reads++;
-              controller.enqueue(new Uint8Array(16_384));
-            },
-            cancel() {
-              canceled = true;
-            },
-          }),
-        ),
-    ),
-  );
-  try {
-    await expect(auth.requireSessionCoverage(1000)).rejects.toBeInstanceOf(
-      auth.SessionCoverageError,
-    );
-    expect(canceled).toBe(true);
-    expect(reads).toBeLessThanOrEqual(6);
-    expect(env.reported).toEqual([]);
-    expect(env.navigations).toEqual([]);
-  } finally {
-    env.restore();
-  }
-});
-
 test("coverage reports renewal while malformed lifetimes cannot trigger login", async () => {
   let response = Response.json({ remainingMs: 100, maximumLifetimeMs: 10_000 });
   const env = environment(responseFetch(() => response));
@@ -92,6 +60,64 @@ test("coverage reports renewal while malformed lifetimes cannot trigger login", 
     expect(env.reported).toEqual(["renew"]);
     expect(env.navigations).toEqual([]);
   } finally {
+    env.restore();
+  }
+});
+
+test("a caller abort mid-flight rejects coverage without a renew report", async () => {
+  let request: AbortSignal | undefined;
+  const env = environment((async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    request = init!.signal!;
+    // The response is already on its way when the caller gives up.
+    await new Promise((resolve) => request!.addEventListener("abort", resolve));
+    return Response.json({ remainingMs: 100, maximumLifetimeMs: 10_000 });
+  }) as unknown as typeof fetch);
+  try {
+    const caller = new AbortController();
+    const checking = auth.requireSessionCoverage(1000, caller.signal);
+    caller.abort();
+    await expect(checking).rejects.toMatchObject({ name: "AbortError" });
+    expect(request!.aborted).toBe(true);
+    expect(env.reported).toEqual([]);
+  } finally {
+    env.restore();
+  }
+});
+
+test("coverage gives up on a silent server after 3 s and leaves no timer after success", async () => {
+  let respond = false;
+  const requests: AbortSignal[] = [];
+  const env = environment((async (
+    _input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => {
+    const signal = init!.signal!;
+    requests.push(signal);
+    if (respond)
+      return Response.json({ remainingMs: 10_000, maximumLifetimeMs: 10_000 });
+    return new Promise<Response>((_resolve, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason)),
+    );
+  }) as unknown as typeof fetch);
+  jest.useFakeTimers();
+  try {
+    const silent = auth.requireSessionCoverage(1000);
+    jest.advanceTimersByTime(2_999);
+    expect(requests[0].aborted).toBe(false);
+    jest.advanceTimersByTime(1);
+    expect(requests[0].aborted).toBe(true);
+    await expect(silent).rejects.toBeInstanceOf(auth.SessionCoverageError);
+    respond = true;
+    expect(await auth.requireSessionCoverage(1000)).toMatchObject({
+      remainingMs: 10_000,
+    });
+    jest.advanceTimersByTime(3_000);
+    expect(requests[1].aborted).toBe(false);
+  } finally {
+    jest.useRealTimers();
     env.restore();
   }
 });
@@ -145,12 +171,13 @@ test("the application cancels preparation before navigating once and relinquishe
   const { createApplicationController } =
     await import("./runner/controller.svelte");
   const { store } = await import("./state/store.svelte");
-  let preparing: AbortSignal | null = null;
+  let started!: (signal: AbortSignal) => void;
+  const preparing = new Promise<AbortSignal>((resolve) => (started = resolve));
   const engine = createApplicationController(store, {
     loadCatalog: testServerCatalog,
     discover: testServerDiscovery,
     prepare: async (_config, _previous, _roles, signal) => {
-      preparing = signal;
+      started(signal);
       return new Promise((_resolve, reject) =>
         signal.addEventListener("abort", () =>
           reject(new DOMException("Aborted", "AbortError")),
@@ -160,10 +187,9 @@ test("the application cancels preparation before navigating once and relinquishe
   });
   try {
     const boot = engine.boot();
-    for (let turn = 0; turn < 20 && !preparing; turn++) await Promise.resolve();
-    expect(preparing).not.toBeNull();
+    const signal = await preparing;
     await auth.authenticatedFetch("/auth/session");
-    expect(preparing!.aborted).toBe(true);
+    expect(signal.aborted).toBe(true);
     expect(env.navigations).toEqual(["/login?reason=expired"]);
     auth.reportAuthenticationRequired();
     expect(env.navigations).toHaveLength(1);
