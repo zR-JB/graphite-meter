@@ -664,7 +664,6 @@ export class Run {
     if (this.#measuring && activity.transfer.length)
       await this.#finalBoundary(end);
     this.#measuring = false;
-    // A latency channel not back by its stage end fails there; a throughput stall below the silence limit does not.
     for (const server of this.#participants())
       if (server.latencyStall)
         this.#failLatency(server, activity.stage, server.latencyStall.detail);
@@ -701,6 +700,9 @@ export class Run {
     const participants = this.#participants();
     const upload = this.#activity!.transfer.includes("up");
     const boundary = this.#snapshot();
+    const recovering = participants.filter((server) =>
+      this.#recovering(server),
+    );
     this.#measuring = false;
     const results = await Promise.allSettled(
       participants.map((server) =>
@@ -720,7 +722,6 @@ export class Run {
         boundary.up[server.server.id] = checkpoint;
       });
     this.#observe(boundary, true);
-    this.#aggregate.close();
     for (const [index, result] of results.entries())
       if (
         result.status === "rejected" &&
@@ -731,6 +732,17 @@ export class Run {
           "sign-in-required",
           result.reason.message,
         );
+    for (const server of recovering)
+      if (this.#recovering(server)) {
+        const { reason, detail, direction } = server.recovery!.info;
+        this.#remove(
+          server,
+          reason,
+          detail ?? `${direction} direction carried no data`,
+        );
+      }
+    this.#aggregate.dropout(this.#ids(), this.#now());
+    this.#aggregate.close();
   }
 
   #host(server: Participant): ParticipantHost {

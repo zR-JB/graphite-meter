@@ -52,13 +52,15 @@ contributions share the client's connection and are not independent capacity tes
   or regressing receiver closes its interval, which no longer counts, and starts an `evidence-resumed` one. A final
   boundary where any server's direction moved no bytes is skipped, so the result ends at the last good one.
 - **Dropouts:** a server leaves the stage where its measured bytes stop growing for the silence limit, a lane fails
-  for good, or its grant is refused (which asks for sign-in); only the refused grant removes it at the final
-  boundary. The interval ends at the boundary where the departing server's bytes last moved (in a bidirectional
-  stage, where its first direction stopped; at its first boundary, without a window, if they never moved), so its
-  silence is never measured, and the survivors' `dropout` interval starts there. A server that cannot prepare a
-  stage leaves the same way, and the run fails only when none survives. A removed server stays out for the rest of
-  the run, except that a sole server retries at the next stage. A latency-only failure keeps throughput, except in
-  the latency stage: a server lost there (connection lost or timed out) leaves the run while another remains.
+  for good, or its grant is refused (which asks for sign-in). At the final boundary a refused grant removes it, and
+  so does a stream still retrying a failure while that direction's bytes have not moved for 500 ms; the stage then
+  records that failure. The interval ends at the boundary where the departing server's bytes last moved (in a
+  bidirectional stage, where its first direction stopped; at its first boundary, without a window, if they never
+  moved), so its silence is never measured, and the survivors' `dropout` interval starts there. A server that cannot
+  prepare a stage leaves the same way, and the run fails only when none survives. A removed server stays out for the
+  rest of the run, except that a sole server retries at the next stage. A latency-only failure keeps throughput,
+  except in the latency stage: a server lost there (connection lost or timed out) leaves the run while another
+  remains.
 - **Headline:** the mean of the latest interval with at least 800 ms of client time and, for upload, 800 ms in
   every receiver clock, whose window moved bytes. After a late dropout the interval before it can hold the headline
   and the stage is Partial. With no such interval the stage fails with a [reason](#failure-reasons) and the run is
@@ -119,7 +121,7 @@ jitter, deadlines and added latency.
 | Forced streams | At most 14 per direction over HTTP/2 and HTTP/3 and 16 per WebTransport session, within a server's 32 measurements per client | At most 14 per direction |
 | Automatic streams | HTTP/1.1 up to 4 per direction, trimmed to the origin's six-connection budget; HTTP/2 1 down / 4 up; HTTP/3 and WebTransport 1 | `--auto-streams`, default 6 |
 | Path freshness | A verified path older than 2 min is checked again before a run | Preparation is reused for 30 s |
-| Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply |
+| Latency recovery | The ping channel reconnects with 100 ms–2 s backoff; a population fails after 7.3 s without replies, or when its stage ends while it is still down | Redials within 2 s, capped at the stage end; fails before the first reply, or when its stage ends while it is still down |
 | Warmup RTT | The latency focus server's path-check RTT | The highest RTT among active servers, updated to latency-stage medians |
 | Live rates | Per server and summed; a quiet receiver is bridged by lane completions within 25% of its last rate | Combined boundary rate, eased in the TUI |
 | Latency servers | One chosen **Latency server** (default: the first selected) or **Combined** (every server) | Every server; the result is the **Latency server**'s (default: the lowest preparation RTT); `l` rotates the shown one |

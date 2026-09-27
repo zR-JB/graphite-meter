@@ -67,26 +67,30 @@ func permanent(err error) bool {
 	return refused || IsAuthRequired(err)
 }
 
-// persist repeats a lane until ctx ends; one that moves nothing for redialWindow ends with its last error.
+// persist repeats a lane until ctx ends; one stalled for redialWindow, or still failing at the end, returns its error.
 func persist(ctx context.Context, attempt func(context.Context) (progressed bool, err error)) error {
 	var failingSince time.Time
 	var busyDelay time.Duration
+	var failing error
 	for {
 		started := time.Now()
 		progressed, err := attempt(ctx)
 		if ctx.Err() != nil {
-			return nil
+			if progressed || err == nil {
+				return nil
+			}
+			return failing
 		}
 		if permanent(err) {
 			return err
 		}
 		if progressed {
-			failingSince = time.Time{}
-		} else if failingSince.IsZero() {
-			failingSince = started
+			failingSince, failing = time.Time{}, nil
+		} else {
+			failingSince, failing = cmp.Or(failingSince, started), cmp.Or(err, errStalled)
 		}
 		if !progressed && time.Since(failingSince) >= redialWindow {
-			return cmp.Or(err, errStalled)
+			return failing
 		}
 		var delay time.Duration
 		if status, ok := errors.AsType[statusError](err); ok && status.busy() {
@@ -99,7 +103,7 @@ func persist(ctx context.Context, attempt func(context.Context) (progressed bool
 			}
 		}
 		if delay > 0 && !pause(ctx, delay) {
-			return nil
+			return failing
 		}
 	}
 }
@@ -172,13 +176,21 @@ func (r *runner) runLanes(
 	wait := func(until <-chan struct{}) error {
 		select {
 		case <-ctx.Done():
-			return context.Cause(ctx)
 		case err := <-lanes.errs:
 			return err
 		case <-progressFailed:
-			return context.Cause(progress.ctx)
+			if ctx.Err() == nil {
+				return context.Cause(progress.ctx)
+			}
 		case <-until:
 			return nil
+		}
+		lanes.stop()
+		select {
+		case err := <-lanes.errs:
+			return err
+		default:
+			return context.Cause(ctx)
 		}
 	}
 	for range cap(lanes.ready) {

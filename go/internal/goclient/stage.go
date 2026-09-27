@@ -14,6 +14,7 @@ const (
 	checkpointBudget             = 1500 * time.Millisecond
 	finalCheckpointBudget        = 500 * time.Millisecond
 	clientStall                  = 1500 * time.Millisecond
+	stallQuiet                   = 500 * time.Millisecond
 	minimumSurvivorEvidence      = 800 * time.Millisecond
 	minimumPeakWindow            = 500 * time.Millisecond
 	minimumFailedLatencyOutcomes = 3
@@ -66,13 +67,14 @@ type stageRun struct {
 	sampler      *sampler
 	sampling     sync.WaitGroup
 	ending       bool
+	ended        time.Time
 	lastMovement map[string]*byDirection[time.Time]
 	misses       map[string]int
 }
 
 func (c *coordinator) stage(ctx context.Context, plan StagePlan, handover bool) (err error) {
 	s := c.openStage(ctx, plan)
-	defer func() { s.close(err, handover) }()
+	defer func() { err = s.close(err, handover) }()
 	if err := s.ready(); err != nil {
 		return err
 	}
@@ -127,7 +129,7 @@ func (c *coordinator) openStage(ctx context.Context, plan StagePlan) *stageRun {
 
 func (s *stageRun) transfer() bool { return len(s.plan.Directions) > 0 }
 
-func (s *stageRun) close(err error, handover bool) {
+func (s *stageRun) close(err error, handover bool) error {
 	if s.sampler != nil {
 		s.sampler.cancel()
 	}
@@ -147,6 +149,14 @@ func (s *stageRun) close(err error, handover bool) {
 	close(s.outcomes)
 	for outcome := range s.outcomes {
 		s.c.retainLatency(outcome, err == nil)
+		if err == nil && s.failedAtEnd(outcome) {
+			s.fail(outcome.server, outcome.role, outcome.err, outcome.at)
+		}
+	}
+	if err == nil {
+		if err = s.lost(); err == nil && s.measuring && s.transfer() {
+			s.c.aggregate.dropout(s.c.ids(), time.Since(s.c.started))
+		}
 	}
 	switch {
 	case s.transfer() && (s.measuring || errors.Is(err, errStageSkipped)):
@@ -158,6 +168,17 @@ func (s *stageRun) close(err error, handover bool) {
 			}
 		}
 	}
+	return err
+}
+
+func (s *stageRun) failedAtEnd(outcome resourceOutcome) bool {
+	switch err := outcome.err; {
+	case err == nil, errors.Is(err, context.Canceled), errors.Is(err, errHandover), outcome.server.removed:
+		return false
+	case outcome.role == roleLatency:
+		return true
+	}
+	return s.ended.Sub(s.lastMovement[outcome.server.id()].of(Direction(outcome.role))) >= stallQuiet
 }
 
 func (s *stageRun) missing(server *stageServer) []string {
@@ -316,7 +337,7 @@ func (s *stageRun) results() <-chan sampledBoundary {
 }
 
 func (s *stageRun) final() error {
-	s.ending = true
+	s.ending, s.ended = true, time.Now()
 	close(s.sampler.finish)
 	return s.await(nil, func(e stageEvent) (bool, error) {
 		if e.sample == nil {
@@ -433,6 +454,7 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 	}
 	window, restarted := c.aggregate.observe(sample.boundary)
 	removed, final := false, sample.boundary.final
+	collected := c.started.Add(sample.boundary.at)
 	for _, server := range s.servers {
 		if server.removed {
 			continue
@@ -447,8 +469,8 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 		for _, dir := range s.plan.Directions {
 			switch {
 			case moved.of(dir) > before[id].of(dir):
-				s.lastMovement[id].set(dir, time.Now())
-			case !s.ending && time.Since(s.lastMovement[id].of(dir)) >= redialWindow:
+				s.lastMovement[id].set(dir, collected)
+			case collected.Sub(s.lastMovement[id].of(dir)) >= redialWindow:
 				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
 				s.fail(server, string(dir), err, time.Now())
 				removed = true

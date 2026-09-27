@@ -34,6 +34,11 @@ type serverFixture struct {
 	upload               atomic.Pointer[endpoint.Upload]
 }
 
+func (f *serverFixture) kill() {
+	f.dropLatency()
+	f.server.CloseClientConnections()
+}
+
 func (f *serverFixture) restart() {
 	f.upload.Store(endpoint.NewUpload(nil, nil))
 	f.server.CloseClientConnections()
@@ -277,6 +282,38 @@ func TestNativeCoordinatorDropout(t *testing.T) {
 				if cause != nil && own.Err != cause || cause == nil && own.Unavailable != result.Unavailable {
 					t.Errorf("%s kept a result its interval does not support: %+v", server.Server.ID, own)
 				}
+			}
+		})
+	}
+}
+
+func TestAServerLostNearTheStageEndFailsIt(t *testing.T) {
+	t.Parallel()
+	for _, stage := range []Stage{StageDownload, StageUpload} {
+		t.Run(string(stage), func(t *testing.T) {
+			t.Parallel()
+			a, b := coordinatedFixture(t, "a"), coordinatedFixture(t, "b")
+			cfg := fixtureConfig(a)
+			cfg.Stages = StageSet{Download: stage == StageDownload, Upload: stage == StageUpload}
+			cfg.DownloadDuration, cfg.UploadDuration = 2*time.Second, 2*time.Second
+			prepared := prepareFixtureRun(t, cfg, a, b)
+			var log eventLog
+			samples := 0
+			err := runSelected(t.Context(), cfg, prepared, func(e Event) {
+				if e.Kind == EventThroughput && !e.Throughput.Unavailable {
+					if samples++; samples == 4 {
+						b.kill()
+					}
+				}
+				log.emit(e)
+			})
+			details := log.details()
+			if err != nil || details.Outcome != OutcomePartial || !slices.ContainsFunc(details.Failures,
+				func(f ServerFailure) bool { return f.ServerID == "b" && f.Stage == stage && f.Scope == ScopeThroughput }) {
+				t.Fatalf("a server lost before the stage end passed as measured: %v %+v", err, details)
+			}
+			if first := details.Intervals[0]; first.End-first.Start >= 1500*time.Millisecond {
+				t.Errorf("the interval kept the lost server's silence: %v-%v", first.Start, first.End)
 			}
 		})
 	}
