@@ -69,9 +69,10 @@
     position: relative;
     isolation: isolate;
     overflow: hidden;
-    display: inline-flex;
+    /* The label centres in the middle track; the estimate takes the end track, pushing the label rather than covering it. */
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: center;
     width: 100%;
     max-width: 320px;
     min-height: 46px;
@@ -131,6 +132,7 @@
     cursor: not-allowed;
   }
   .run-button-content {
+    grid-column: 2;
     display: inline-flex;
     align-items: center;
     gap: var(--space-2);
@@ -146,8 +148,10 @@
     background: currentColor;
   }
   .duration {
-    position: absolute;
-    inset-inline-end: var(--space-3);
+    grid-column: 3;
+    justify-self: end;
+    margin-inline: var(--space-2) var(--space-3);
+    white-space: nowrap;
     padding: var(--space-1) 6px;
     border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
     border-radius: var(--r-well);
