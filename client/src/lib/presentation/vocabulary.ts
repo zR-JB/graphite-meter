@@ -188,6 +188,9 @@ export const JARGON = {
     "Jitter\nMean absolute change between consecutive replies\nProbe timeouts are left out",
   latencyMedian: "Median\nHalf of the stage's replies were faster, half slower",
   latencyRange: "Range\nFastest to slowest reply in the stage",
+  keyShortcuts:
+    "Keyboard shortcuts\nS, D, H, R and T act on the page when no field has focus\n" +
+    "Turn off if speech input or single keys trigger them",
   wireRate:
     "Wire rate\nPayload rate plus the protocol headers the link also carried\n" +
     "Ethernet, IP, TCP or QUIC, TLS and HTTP framing at a 1,500 B MTU\n" +

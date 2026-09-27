@@ -69,9 +69,9 @@ test("without idle latency the page settles Connected and never shows a blocker 
   await open(page, home.url, {
     config: { stages: { ...baseConfig.stages, latency: false } },
   });
-  await expect(page.locator('.pulse .dot[data-state="connected"]')).toBeVisible(
-    { timeout: 15_000 },
-  );
+  await expect(page.locator('.pulse .status-dot[data-tone="ok"]')).toBeVisible({
+    timeout: 15_000,
+  });
   expect(await page.evaluate(() => (window as any).__labels)).toEqual([
     "Not started",
   ]);

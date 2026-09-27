@@ -49,6 +49,7 @@ interface PersistedState {
   unitKind: "bits" | "bytes";
   theme: ThemePref;
   showWireEstimates: boolean;
+  keyShortcuts: boolean;
   resultHistoryPreference: ResultHistoryPreference;
   historyColumns: HistoryColumn[];
   dockWidth: { left: number; right: number };
@@ -69,6 +70,7 @@ export function defaultPersisted(): PersistedState {
     unitKind: "bits",
     theme: "auto",
     showWireEstimates: true,
+    keyShortcuts: true,
     resultHistoryPreference: "default",
     historyColumns: [...DEFAULT_HISTORY_COLUMNS],
     dockWidth: { ...DEFAULT_DOCK_WIDTH },
@@ -198,6 +200,7 @@ export function loadPersisted(): PersistedState {
     unitKind: choice(saved.unitKind, ["bits", "bytes"], defaults.unitKind),
     theme: choice(saved.theme, ["dark", "light", "auto"], defaults.theme),
     showWireEstimates: flag(saved.showWireEstimates, true),
+    keyShortcuts: flag(saved.keyShortcuts, true),
     resultHistoryPreference: choice(
       saved.resultHistoryPreference,
       ["default", "enabled", "disabled"],

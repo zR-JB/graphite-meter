@@ -132,6 +132,7 @@ type DisplayPreference =
   | "unitKind"
   | "theme"
   | "showWireEstimates"
+  | "keyShortcuts"
   | "resultHistoryPreference"
   | "historyColumns"
   | "dockWidth";
@@ -355,6 +356,7 @@ class AppStore {
   unitKind = $state<"bits" | "bytes">("bits");
   theme = $state<ThemePref>("dark");
   showWireEstimates = $state(true);
+  keyShortcuts = $state(true);
   resultHistoryPreference = $state<ResultHistoryPreference>("default");
   historyColumns = $state<HistoryColumn[]>([...DEFAULT_HISTORY_COLUMNS]);
   // Keep the completion snapshot plain because IndexedDB cannot clone proxies.
@@ -704,6 +706,7 @@ class AppStore {
     this.unitBase = defaults.unitBase;
     this.unitKind = defaults.unitKind;
     this.showWireEstimates = defaults.showWireEstimates;
+    this.keyShortcuts = defaults.keyShortcuts;
     this.resultHistoryPreference = defaults.resultHistoryPreference;
   }
 
@@ -764,6 +767,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         unitKind: store.unitKind,
         theme: store.theme,
         showWireEstimates: store.showWireEstimates,
+        keyShortcuts: store.keyShortcuts,
         resultHistoryPreference: store.resultHistoryPreference,
         historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),

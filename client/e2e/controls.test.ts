@@ -76,7 +76,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
   ).toBeFocused();
 });
 
-test("Escape closes the docked Settings panel before it stops a running test", async (page) => {
+test("Escape closes the docked panel holding focus and never stops a running test", async (page) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },
@@ -85,18 +85,29 @@ test("Escape closes the docked Settings panel before it stops a running test", a
   await runButton(page, "Start test").click();
   await expect(runButton(page, "Stop test")).toBeVisible();
   const settings = await openSettings(page);
+  const details = page.locator('dialog[aria-label="Details"]');
+  await page.getByRole("button", { name: "Details", exact: true }).click();
+  const closed = (panel: typeof settings) =>
+    expect
+      .poll(() =>
+        panel.all((els: HTMLElement[]) => els.every((el) => el.inert)),
+      )
+      .toBe(true);
   await settings
-    .getByRole("checkbox")
-    .nth(0)
+    .getByRole("button", { name: "Close Settings" })
     .evaluate((el: HTMLElement) => el.focus());
   await page.raw.press("Escape");
-  await expect
-    .poll(() =>
-      settings.all((els: HTMLElement[]) => els.every((el) => el.inert)),
-    )
-    .toBe(true);
-  await expect(runButton(page, "Stop test")).toBeVisible();
+  await closed(settings);
+  expect(
+    await details.all((els: HTMLElement[]) => els.some((el) => !el.inert)),
+  ).toBe(true);
+  // Focus returns to the Settings button, whose tip takes the first Escape.
   await page.raw.press("Escape");
+  await page.raw.press("Escape");
+  await closed(details);
+  await page.raw.press("Escape");
+  await expect(runButton(page, "Stop test")).toBeVisible();
+  await runButton(page, "Stop test").click();
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
 

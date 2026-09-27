@@ -6,6 +6,7 @@
   import type { Snippet } from "svelte";
   import { sheetDrag } from "../actions/sheetDrag";
   import { tooltip } from "../actions/tooltip";
+  import { activeModal } from "../actions/focus";
 
   interface Props {
     open: boolean;
@@ -115,32 +116,27 @@
   <Dialog
     {open}
     modal={false}
-    keepFocus={docked}
     onCancel={onClose}
     class="panel {side}"
     label={title}
     attach={(node) => {
       panelEl = node;
-      if (open && !docked) return sheetDrag(onClose)(node);
+      // Escape closes the panel holding focus; a modal on top or an open popover keeps it.
+      const escape = (event: KeyboardEvent) => {
+        if (event.key !== "Escape" || event.defaultPrevented || activeModal())
+          return;
+        if (document.querySelector(":popover-open:not(.tooltip)")) return;
+        event.preventDefault();
+        onClose();
+      };
+      node.addEventListener("keydown", escape);
+      const drag = open && !docked ? sheetDrag(onClose)(node) : undefined;
+      return () => {
+        node.removeEventListener("keydown", escape);
+        drag?.();
+      };
     }}
   >
-    {#if docked}
-      <div
-        class="resize-handle"
-        data-side={side}
-        role="slider"
-        aria-orientation="horizontal"
-        aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
-        aria-valuemin={MIN_DOCK_WIDTH}
-        aria-valuemax={dockMaxWidth}
-        aria-valuenow={dockWidth}
-        aria-valuetext={`${dockWidth} pixels wide`}
-        tabindex="0"
-        {@attach resizeHandle}
-        onkeydown={onHandleKey}
-        ondblclick={() => onResetWidth?.()}
-      ></div>
-    {/if}
     <div class="sheet-handle" aria-hidden="true">
       <span class="sheet-grip" aria-hidden="true"></span>
     </div>
@@ -160,6 +156,24 @@
     </header>
 
     <div class="panel-body">{@render children()}</div>
+    <!-- After the content: opening focuses the close button, not the handle. -->
+    {#if docked}
+      <div
+        class="resize-handle"
+        data-side={side}
+        role="slider"
+        aria-orientation="horizontal"
+        aria-label={`Resize ${title} panel (arrow keys; Enter to reset)`}
+        aria-valuemin={MIN_DOCK_WIDTH}
+        aria-valuemax={dockMaxWidth}
+        aria-valuenow={dockWidth}
+        aria-valuetext={`${dockWidth} pixels wide`}
+        tabindex="0"
+        {@attach resizeHandle}
+        onkeydown={onHandleKey}
+        ondblclick={() => onResetWidth?.()}
+      ></div>
+    {/if}
   </Dialog>
 </div>
 
@@ -292,6 +306,26 @@
     }
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
+    }
+  }
+  /* Short viewports (and 400% zoom) give the flyout the full height; the whole panel scrolls. */
+  @media (max-height: 480px) {
+    .panel-layer:not(.docked) > :global(dialog.panel:is(.left, .right)) {
+      top: 0;
+      bottom: 0;
+      overflow-y: auto;
+    }
+    .panel-layer:not(.docked) .panel-head {
+      position: sticky;
+      z-index: 1;
+      top: calc(-1 * var(--space-4));
+      margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0;
+      padding: var(--space-4);
+      background: var(--surface-2);
+    }
+    .panel-layer:not(.docked) .panel-body {
+      flex: none;
+      overflow: visible;
     }
   }
 
