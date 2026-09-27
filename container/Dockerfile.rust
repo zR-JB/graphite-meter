@@ -12,6 +12,7 @@ COPY LICENSE COPYRIGHT ./
 COPY scripts/ scripts/
 COPY legal/ legal/
 COPY rust/ rust/
+COPY api/ api/
 COPY go/internal/auth/assets/ go/internal/auth/assets/
 RUN python3 --version && cargo +1.98.1 --version
 
