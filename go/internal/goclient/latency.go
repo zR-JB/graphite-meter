@@ -6,7 +6,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -48,10 +47,6 @@ func (b *wsBus) Recv(ctx context.Context) ([]byte, error) {
 }
 
 func (b *wsBus) Close() { _ = b.conn.CloseNow() }
-
-func appendPing(dst []byte, id uint32) []byte {
-	return strconv.AppendUint(append(dst, "PING,"...), uint64(id), 10)
-}
 
 func (r *runner) dialPingBus(ctx context.Context) (pingBus, error) {
 	return dialLatencyBus(ctx, r.cred, r.websocketHTTP, r.latencyTarget)
@@ -103,7 +98,7 @@ func verifyLatency(
 	datagrams := target.Transport == wire.TransportWebTransport
 	for {
 		sent := time.Now()
-		if err := bus.Send(ctx, appendPing(nil, 0)); err != nil {
+		if err := bus.Send(ctx, wire.AppendPing(nil, 0)); err != nil {
 			return 0, fmt.Errorf("latency probe failed: %w", err)
 		}
 		for {
@@ -212,7 +207,7 @@ func (r *runner) measureLatency(
 		if replyDriven {
 			pace.Reset(probes.backup())
 		}
-		ping = appendPing(ping[:0], id)
+		ping = wire.AppendPing(ping[:0], id)
 		err := conn.Send(measureCtx, ping)
 		if err != nil {
 			probes.sendFailed(id)
