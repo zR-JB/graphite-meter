@@ -42,8 +42,7 @@ fn client(origin: &str) -> Command {
     command
 }
 
-#[tokio::test]
-async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Error> {
+async fn latency_peer() -> Result<(String, tokio::task::JoinHandle<()>), Error> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let origin = format!("http://{}", listener.local_addr()?);
     let peer = tokio::spawn(async move {
@@ -90,6 +89,12 @@ async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Erro
             });
         }
     });
+    Ok((origin, peer))
+}
+
+#[tokio::test]
+async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Error> {
+    let (origin, peer) = latency_peer().await?;
     let output = tokio::time::timeout(Duration::from_secs(5), client(&origin).output()).await??;
     peer.abort();
     assert_eq!(
@@ -139,5 +144,85 @@ async fn report_signal_exit_codes_and_failure_keep_the_final_outcome() -> Result
     peer.await??;
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8(output.stdout)?.contains("Failed"));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn confirmed_tui_stop_exits_one_without_a_signal() -> Result<(), Error> {
+    let (origin, peer) = latency_peer().await?;
+    let script = r#"
+import fcntl, json, os, pty, select, struct, subprocess, sys, termios, time
+master, slave = pty.openpty()
+fcntl.fcntl(master, fcntl.F_SETFL, os.O_NONBLOCK)
+fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
+def session():
+    os.setsid()
+    fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-latency-duration', '5s', '-warmup', '0', '-ping', '80ms'], stdin=slave, stdout=slave, stderr=slave, preexec_fn=session, env={**os.environ, 'TERM':'xterm-256color'})
+os.close(slave)
+output = b''
+step = 0
+deadline = time.monotonic() + 8
+try:
+    while time.monotonic() < deadline:
+        if select.select([master], [], [], 0.2)[0]:
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                break
+            output += data
+            if step == 0 and b'WebSocket' in output:
+                os.write(master, b'r')
+                step = 1
+            elif step == 1 and b'Running' in output:
+                os.write(master, b'\x1b')
+                step = 2
+            elif step == 2 and b'confirm stop' in output:
+                os.write(master, b'\x1b')
+                step = 3
+            elif step == 3 and b'Stopped' in output:
+                os.write(master, b'q')
+                step = 4
+        if p.poll() is not None:
+            while select.select([master], [], [], 0)[0]:
+                try:
+                    output += os.read(master, 65536)
+                except OSError:
+                    break
+            break
+    if p.poll() is None:
+        raise RuntimeError(f'TUI stop did not finish at step {step}: {output[-1000:]!r}')
+    print(json.dumps({'code':p.wait(), 'step':step, 'text':output.decode('utf-8', 'replace')}))
+finally:
+    if p.poll() is None:
+        p.kill()
+        p.wait()
+    os.close(master)
+"#;
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            script,
+            env!("CARGO_BIN_EXE_graphite-meter-client"),
+            &origin,
+        ])
+        .output()
+        .await?;
+    peer.abort();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(result["step"], 4);
+    assert_eq!(result["code"], 1);
+    assert!(
+        result["text"]
+            .as_str()
+            .unwrap()
+            .contains("Graphite Meter · Stopped")
+    );
     Ok(())
 }
