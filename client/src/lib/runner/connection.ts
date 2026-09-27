@@ -183,7 +183,7 @@ export class ServerConnection {
             ? LIVENESS_MS
             : Infinity,
       signal,
-      due,
+      due && !!this.config,
     );
     const config = this.config;
     if (!discovery || !config || signal?.aborted || this.#closed) return;
