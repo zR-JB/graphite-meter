@@ -27,6 +27,11 @@ def main() -> None:
     target.mkdir(exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix="client-interop-", dir=target))
     print(f"Evidence: {directory}", flush=True)
+    subprocess.run(
+        ["cargo", "test", "--locked", "-p", "graphite-meter-client",
+         "--test", "go_server_interop", "--no-run"],
+        cwd=ROOT / "rust", check=True, timeout=600,
+    )
     cert, key = directory / "cert.pem", directory / "key.pem"
     ca, ca_key, request = directory / "ca.pem", directory / "ca.key", directory / "server.csr"
     subprocess.run(
