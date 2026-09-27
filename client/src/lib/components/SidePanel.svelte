@@ -296,7 +296,7 @@
       width: 100%;
       height: 88dvh;
       padding-bottom: max(var(--space-4), env(safe-area-inset-bottom));
-      border-radius: var(--r-well) var(--r-well) 0 0;
+      border-radius: var(--r-surface) var(--r-surface) 0 0;
     }
     .panel-layer:not(.docked) .sheet-handle {
       display: flex;
