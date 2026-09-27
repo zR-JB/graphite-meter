@@ -37,6 +37,9 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const CONTROL_LIMIT: usize = 64 * 1024;
 const IDLE_PER_ORIGIN: usize = 32;
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
+// Go's client windows; hyper's defaults cap a 100 ms path at a few hundred Mbit/s.
+const H2_STREAM_WINDOW: u32 = 32 << 20;
+const H2_CONNECTION_WINDOW: u32 = 64 << 20;
 
 pub fn empty() -> Body {
     Empty::new().map_err(|never| match never {}).boxed_unsync()
@@ -130,7 +133,11 @@ impl Connections {
         }
         let io = TokioIo::new(connection.stream);
         if h2 {
-            let (sender, driver) = http2::handshake(TokioExecutor::new(), io).await?;
+            let (sender, driver) = http2::Builder::new(TokioExecutor::new())
+                .initial_stream_window_size(H2_STREAM_WINDOW)
+                .initial_connection_window_size(H2_CONNECTION_WINDOW)
+                .handshake(io)
+                .await?;
             tokio::spawn(driver);
             pool.h2 = Some(sender.clone());
             Ok(Sender::H2(sender))
