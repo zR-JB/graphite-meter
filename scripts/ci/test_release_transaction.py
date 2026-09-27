@@ -41,7 +41,7 @@ SHIM = """docker() {
   while [ "$1" != -ec ]; do [ "$1" = -e ] && export "$2"; shift; done
   sh -ec "$2"
 }
-gh() { printf '%s\\n' $RELEASES; }
+gh() { case "$*" in *_rust_*) printf '%s\\n' $RUST_RELEASES ;; *) printf '%s\\n' $RELEASES ;; esac; }
 """
 TAG, SHA, OTHER_SHA = "v1.2.3", "d" * 40, "e" * 40
 SOURCE = "graphite-meter_1.2.3_third-party-source.tar.gz"
@@ -212,6 +212,21 @@ class RegistryTests(unittest.TestCase):
                 status, output, tags = self.run_script("aliases", registry, releases)
                 self.assertEqual(status, 0, output)
                 self.assertEqual((tags["1.2"], tags["latest"]), (series, latest))
+
+    def test_rust_aliases_follow_the_highest_releases_that_shipped_rust(self) -> None:
+        rust = "sha256:" + "c" * 64
+        registry = {"1.2.3": VERIFIED, "1.2.3-rust": rust, "1.2.4": OTHER}
+        for digest, error in ((rust, None), (OTHER, "1.2.3-rust is not the verified")):
+            with self.subTest(error=error):
+                status, output, tags = self.run_script("aliases", registry, "v1.2.3 v1.2.4",
+                                                       RUST_DIGEST=digest, RUST_RELEASES="v1.2.3")
+                self.assertEqual((tags["1.2"], tags["latest"]), (OTHER, OTHER))
+                if error is None:
+                    self.assertEqual(status, 0, output)
+                    self.assertEqual((tags["1.2-rust"], tags["latest-rust"]), (rust, rust))
+                else:
+                    self.assertIn(error, output)
+                    self.assertNotIn("latest-rust", tags)
 
     def test_a_moved_or_unreleased_version_stops_promotion(self) -> None:
         for registry, releases, error in (({"1.2.3": OTHER}, "v1.2.3", "not the verified"),

@@ -37,8 +37,9 @@ The TUI can connect to either implementation's server.
 archive with reviewed dependency notices and matching source. Release requests can
 opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
-`VERSION-rust`. Every binary has a matching source offer. Go remains the release
-default; Rust prerelease integration remains gated.
+`VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. Every
+binary has a matching source offer. Go remains the release default; Rust
+prerelease integration remains gated.
 The experimental container uses `container/Dockerfile.rust`. The port remains
 blocked from merging until a human decides its design.
 

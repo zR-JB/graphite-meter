@@ -54,8 +54,9 @@ deployment when the Release run asks.
    credentials. It rechecks the handoff digests and all trust above, pushes the
    verified digest to its exact version tag, and for a stable release
    publishes the GitHub Release and points the `major.minor` and `latest`
-   aliases at the highest published releases, which also repairs aliases a
-   cancelled run left behind.
+   aliases (and their `-rust` forms, over releases that shipped a Rust image)
+   at the highest published releases, which also repairs aliases a cancelled
+   run left behind.
 
 The default `GITHUB_TOKEN` has no write scope in any workflow. Handoffs are
 retained 35 days to cover the approval window; the recheck fails closed.

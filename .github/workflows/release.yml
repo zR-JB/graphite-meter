@@ -235,4 +235,5 @@ jobs:
           REPOSITORY: ${{ github.repository }}
           VERSION: ${{ needs.verify.outputs.version }}
           DIGEST: ${{ needs.verify.outputs.digest }}
+          RUST_DIGEST: ${{ needs.verify.outputs.rust_digest }}
         run: scripts/ci/publish.sh aliases
