@@ -1186,8 +1186,12 @@ async fn stopped(stopping: tokio::sync::watch::Sender<bool>) {
     }
 }
 
-pub(crate) fn minimum_buffer_bytes(limits: &crate::admission::Limits) -> usize {
-    http_quic::connection_floor(limits).max(http_h2::BUFFER_BYTES as usize) + DOWNLOAD_BLOCK_BYTES
+pub(crate) fn minimum_buffer_bytes(config: &Config) -> Option<(usize, usize)> {
+    let floor = http_quic::connection_floor(&config.limits).max(http_h2::BUFFER_BYTES as usize);
+    let minimum = floor
+        .checked_mul(config.max_connections)?
+        .checked_add(DOWNLOAD_BLOCK_BYTES)?;
+    Some((floor, minimum))
 }
 
 #[cfg(test)]

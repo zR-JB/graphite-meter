@@ -419,9 +419,11 @@ async fn active_progress_is_not_idle_and_gets_a_fresh_idle_period_when_finished(
 #[tokio::test]
 async fn silent_connections_from_few_sources_leave_room_for_new_clients() {
     tokio::time::timeout(Duration::from_secs(20), async {
-        // The former 36 MiB reservation admitted only one connection here.
+        // The former 36 MiB reservation admitted only seven connections here.
         let harness = Harness::start_config(Config {
-            max_buffer_bytes: 64 * 1024 * 1024,
+            max_connections: 40,
+            max_connections_per_client: 8,
+            max_buffer_bytes: 256 * 1024 * 1024,
             ..Config::default()
         })
         .await;

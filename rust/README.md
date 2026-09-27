@@ -50,6 +50,9 @@ including allowed and denied group membership. Other deployments remain untested
 
 The server shares one buffer budget across QUIC and HTTP/2 listeners,
 configured by `GM_MAX_BUFFER_BYTES` or `--max-buffer-bytes` (default 8 GiB).
+It must cover `GM_MAX_CONNECTIONS` times the larger connection floor below plus
+the shared download block; QUIC endpoint buffers are checked when the listener
+starts.
 QUIC charges bytes when they are buffered instead of reserving connection
 windows up front. From accept until its task ends, a QUIC connection holds a
 floor of 80 KiB per stream the peer may open, covering one maximal HTTP/3 frame
