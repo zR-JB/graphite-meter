@@ -123,6 +123,11 @@ export function loadPersisted(): PersistedState {
   const config = record(saved.config);
   const stages = record(config.stages);
   const duration = record(config.duration);
+  // Earlier versions skipped a stage by giving it 0 ms; only its flag skips now.
+  const skipped = (key: DurationKey) =>
+    key !== "warmupMs" &&
+    typeof duration[key] === "number" &&
+    duration[key] <= 0;
   const streams = record(config.transferStreams);
   const transports = record(config.transports);
   const latency = record(saved.latencySelection);
@@ -144,10 +149,14 @@ export function loadPersisted(): PersistedState {
     },
     config: {
       stages: {
-        latency: flag(stages.latency, base.stages.latency),
-        download: flag(stages.download, base.stages.download),
-        upload: flag(stages.upload, base.stages.upload),
-        bidirectional: flag(stages.bidirectional, base.stages.bidirectional),
+        latency:
+          flag(stages.latency, base.stages.latency) && !skipped("latencyMs"),
+        download:
+          flag(stages.download, base.stages.download) && !skipped("downloadMs"),
+        upload: flag(stages.upload, base.stages.upload) && !skipped("uploadMs"),
+        bidirectional:
+          flag(stages.bidirectional, base.stages.bidirectional) &&
+          !skipped("bidirectionalMs"),
       },
       skipLoadedLatencyWhenStageOff: flag(
         config.skipLoadedLatencyWhenStageOff,
@@ -156,7 +165,7 @@ export function loadPersisted(): PersistedState {
       duration: Object.fromEntries(
         (Object.keys(DURATION_LIMITS) as DurationKey[]).map((key) => [
           key,
-          clampDuration(key, duration[key]),
+          clampDuration(key, skipped(key) ? undefined : duration[key]),
         ]),
       ) as RunnerConfig["duration"],
       pingCadence: choice(config.pingCadence, CADENCES, base.pingCadence),

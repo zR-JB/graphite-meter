@@ -160,11 +160,8 @@
     rejected = accepted ? null : field;
     if (!accepted) announce(rejection);
   }
-  // Idle, the only refusal is a schedule with no stage to run.
   const rejection = $derived(
-    running
-      ? store.startError || "This change cannot apply to the current run."
-      : "Give at least one stage a duration.",
+    store.startError || "This change cannot apply to the current run.",
   );
   function setDuration(key: DurationKey, event: Event) {
     commitNumber(
@@ -341,7 +338,13 @@
         </div>
       </div>
       {#each activeDurationFields as [key, label] (key)}
-        {@const tip = key === "warmupMs" ? JARGON.warmup : ""}
+        {@const [min, max] = DURATION_LIMITS[key]}
+        {@const tip =
+          key === "warmupMs"
+            ? JARGON.warmup
+            : durationMode === "custom"
+              ? `${label}\n${fmtDuration(min, 0)} to ${fmtDuration(max)}\nSwitch the stage off under Test stages to skip it`
+              : ""}
         {#if durationMode === "custom"}
           <div>
             <label class="row">
@@ -349,8 +352,8 @@
               <span class="number">
                 <input
                   type="number"
-                  min="0"
-                  max={DURATION_LIMITS[key][1]}
+                  {min}
+                  {max}
                   step="500"
                   disabled={store.preparing}
                   value={store.config.duration[key]}
