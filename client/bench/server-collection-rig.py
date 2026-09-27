@@ -16,6 +16,7 @@ from pathlib import Path
 import queue
 import random
 import re
+import signal
 import statistics
 import sys
 import threading
@@ -464,6 +465,8 @@ def output_directory():
 
 
 def main():
+    # As its PID namespace's init the rig would otherwise ignore SIGTERM.
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
     mapping = Path("/proc/self/uid_map").read_text().split()
     if os.getuid() != 0 or len(mapping) != 3 or mapping[0] != "0" or mapping[1] == "0" or mapping[2] != "1":
         raise RuntimeError("Run inside a disposable unprivileged user/network namespace")
