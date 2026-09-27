@@ -408,7 +408,6 @@ pub async fn run_prepared(
                 Ok(server) => {
                     snapshots.send_modify(|snapshot| {
                         if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
-                            summary.error = None;
                             summary.throughput.clone_from(&server.throughput);
                             summary.latency.clone_from(&server.latency);
                         }
@@ -428,9 +427,7 @@ pub async fn run_prepared(
                             },
                             &error,
                         );
-                        if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
-                            summary.error = Some(error.to_string());
-                        }
+                        let ending = crate::model::Ending::Failed(crate::failure::reason(error.as_ref(), true));
                         snapshot.results.push(crate::model::StageResult {
                             stage: *stage,
                             elapsed: Duration::ZERO,
@@ -438,18 +435,17 @@ pub async fn run_prepared(
                             up: None,
                             intervals: Default::default(),
                             omitted_intervals: 0,
-                            complete: false,
+                            stopped: false,
                             server_results: vec![crate::model::ServerContribution {
                                 id: entry.id.clone(),
                                 down: None,
                                 up: None,
-                                error: Some(error.to_string()),
                             }],
                             server_latencies: vec![crate::model::ServerLatencyResult {
                                 elapsed: None,
                                 id: entry.id.clone(),
                                 summary: Default::default(),
-                                error: Some(error.to_string()),
+                                ending: Some(ending),
                             }],
                         });
                     });
@@ -488,18 +484,17 @@ pub async fn run_prepared(
         }
         prepared.retain(|server| !failed.contains(&server.entry.id));
     }
+    let stopped = *cancel.borrow();
     snapshots.send_modify(|snapshot| {
-        let partial = snapshot.servers.iter().any(|server| server.error.is_some())
-            || snapshot.results.iter().any(|result| !result.complete);
-        (snapshot.phase, snapshot.status) = if *cancel.borrow() {
-            (Phase::Cancelled, "Stopped".into())
-        } else if snapshot
+        let missing = snapshot
             .results
             .iter()
-            .any(|result| result.status() == crate::model::StageStatus::Failed)
-        {
+            .any(|result| snapshot.stage_status(result) == crate::model::StageStatus::Failed);
+        (snapshot.phase, snapshot.status) = if stopped {
+            (Phase::Cancelled, "Stopped".into())
+        } else if missing {
             (Phase::Incomplete, "Incomplete".into())
-        } else if partial {
+        } else if !snapshot.failures.is_empty() {
             (Phase::Partial, "Partial".into())
         } else {
             (Phase::Complete, "Complete".into())

@@ -500,8 +500,12 @@ impl Ui {
                         )
                     }
                 }
-            } else if self.snapshot.phase == Phase::Cancelled {
-                "✗ Stopped".into()
+            } else if !self.active() {
+                format!(
+                    "{} {}",
+                    crate::vocabulary::MISSING,
+                    crate::model::StageStatus::Skipped.label()
+                )
             } else {
                 format!("○ {} s", self.requested.duration(*stage).as_secs())
             };
@@ -579,7 +583,7 @@ impl Ui {
             .collect::<Vec<_>>()
             .join(" / ")
         };
-        match result.status() {
+        match self.snapshot.stage_status(result) {
             crate::model::StageStatus::Complete => format!("✓ {headline}"),
             status @ crate::model::StageStatus::Partial => {
                 format!("! {headline} {}", status.label())

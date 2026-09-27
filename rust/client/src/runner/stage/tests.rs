@@ -1,6 +1,9 @@
 use super::*;
 use crate::transport::Transport;
-use crate::{model::ServerSummary, net::Http};
+use crate::{
+    model::{ServerSummary, StageStatus},
+    net::Http,
+};
 use graphite_meter_core::discovery::Protocol;
 use graphite_meter_core::{catalog::ServerEntry, discovery::ThroughputTarget};
 use std::sync::Arc;
@@ -220,7 +223,7 @@ async fn selected_peers_start_stage_together_and_keep_catalogue_order() -> Resul
     assert!(result.is_empty());
     let snapshot = observed.borrow();
     let stage = &snapshot.results[0];
-    assert!(stage.complete);
+    assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
     assert_eq!(stage.server_results[0].id, "near");
     assert_eq!(stage.server_results[1].id, "far");
     assert!(stage.server_results.iter().all(|server| server.down_bytes() > 0));
@@ -380,7 +383,6 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 2);
     assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
-    assert!(!snapshot.results[1].complete);
     assert!(snapshot.results[1].down_bytes() > 0);
     assert!(snapshot.results[1].down_bps().is_some());
     let contributions = &snapshot.results[1].server_results;
@@ -390,10 +392,7 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
         snapshot.results[1].down_bytes()
     );
     assert!(contributions[0].down_bps().is_none());
-    assert!(contributions[0].error.is_some());
     assert!(contributions[1].down_bps().is_some());
-    assert!(snapshot.servers[0].error.is_some());
-    assert!(snapshot.servers[1].error.is_none());
     drop(snapshot);
 
     far_failed.store(1, Ordering::SeqCst);
@@ -402,8 +401,8 @@ async fn first_stage_setup_failure_keeps_survivors_and_its_sign_in_cause() -> Re
     let snapshot = observed.borrow();
     assert_eq!(snapshot.results.len(), 3);
     assert_eq!(snapshot.results[0].down_bytes(), first_bytes);
-    assert!(!snapshot.results[2].complete);
-    assert!(snapshot.servers[1].error.is_some());
+    assert!(snapshot.results[2].down_bps().is_none());
+    assert!(snapshot.failures.iter().any(|failure| failure.server_id == "far"));
     near_task.abort();
     far_task.abort();
     Ok(())
@@ -553,14 +552,14 @@ async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Err
         let stage = &snapshot.results[0];
         assert_eq!(stage.server_results.len(), 3);
         assert!(stage.server_results.iter().all(|host| host.down_bytes() > 0));
-        assert!(!stage.complete);
+        assert!(snapshot.failures.iter().any(|failure| failure.server_id == "near"));
         assert!(stage.intervals.iter().all(|interval| interval.participants.len() == 3));
         let [near, far, quiet] =
             ["near", "far", "quiet"].map(|id| stage.server_latencies.iter().find(|host| host.id == id).unwrap());
-        assert!(near.error.is_some());
-        assert!(far.error.is_none());
+        assert!(near.ending.is_some());
+        assert!(far.ending.is_none());
         assert!(far.summary.count > 0);
-        assert!(quiet.error.is_none());
+        assert!(quiet.ending.is_none());
         assert!(quiet.summary.timeouts > 0);
         near_peer.abort();
         far_peer.abort();
@@ -646,7 +645,6 @@ async fn silent_direction_removes_its_server_but_a_silent_lane_does_not() -> Res
     assert_eq!(result?, ["far"]);
     let snapshot = observed.borrow();
     let result = &snapshot.results[0];
-    assert!(!result.complete);
     assert_eq!(snapshot.failures.len(), 1);
     assert_eq!(
         snapshot.failures[0].reason,
@@ -783,10 +781,10 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
     let snapshot = snapshots.borrow();
     assert_eq!(snapshot.phase, Phase::Incomplete);
     assert_eq!(snapshot.results.len(), 3);
-    assert!(snapshot.results[0].complete);
+    assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Complete);
     assert!(snapshot.results[0].down_bytes() > 0);
-    assert!(!snapshot.results[1].complete);
-    assert!(snapshot.results[2].complete);
+    assert_eq!(snapshot.stage_status(&snapshot.results[1]), StageStatus::Failed);
+    assert_eq!(snapshot.stage_status(&snapshot.results[2]), StageStatus::Complete);
     assert!(snapshot.results[2].down_bytes() > 0);
     assert!(snapshot.failures[0].at >= snapshot.results[0].elapsed);
     assert_eq!(
@@ -831,6 +829,65 @@ async fn a_selection_that_lost_a_server_in_preparation_gets_no_sole_retry() -> R
     let snapshot = snapshots.borrow();
     assert_eq!(snapshot.results.len(), 1);
     assert_eq!(snapshot.failures[0].server_id, "gone");
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    for (silent_focus, outcome) in [(false, Phase::Partial), (true, Phase::Incomplete)] {
+        let (near, near_mode, near_peer) = download_peer().await?;
+        let (far, far_mode, far_peer) = download_peer().await?;
+        let silent = if silent_focus { "near" } else { "far" };
+        [near_mode, far_mode][usize::from(!silent_focus)].store(8, Ordering::SeqCst);
+        let http = Http::new(true)?;
+        let mut servers = vec![
+            prepared_download("near", &near, &http).await?,
+            prepared_download("far", &far, &http).await?,
+        ];
+        for server in &mut servers {
+            server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
+                base_url: server.entry.url.clone(),
+                transport: LatencyTransport::WebSocket,
+            });
+        }
+        let config = Config {
+            stages: vec![Stage::Latency],
+            warmup: Duration::ZERO,
+            latency_duration: Duration::from_secs(1),
+            ping_interval: Duration::from_millis(100),
+            insecure: true,
+            ..Config::default()
+        };
+        let prepared = super::super::PreparedRun {
+            servers,
+            key: config.preparation_key(),
+            verified_at: Instant::now(),
+        };
+        let (snapshots, _) = watch::channel(Snapshot::default());
+        let (_stop, cancelled) = watch::channel(false);
+        super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+        near_peer.abort();
+        far_peer.abort();
+        let snapshot = snapshots.borrow();
+        assert_eq!(snapshot.latency_focus.as_deref(), Some("near"));
+        assert_eq!(
+            snapshot.phase, outcome,
+            "silent focus {silent_focus}: {:?}",
+            snapshot.failures
+        );
+        let [failure] = &snapshot.failures[..] else {
+            panic!("{:?}", snapshot.failures);
+        };
+        assert_eq!(
+            (failure.server_id.as_str(), failure.scope, failure.reason),
+            (
+                silent,
+                crate::model::FailureScope::Latency,
+                graphite_meter_core::failure::FailureReason::InsufficientEvidence
+            )
+        );
+    }
     Ok(())
 }
 
@@ -887,21 +944,15 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
     let [latency, download] = &snapshot.results[..] else {
         panic!("expected latency and download results");
     };
-    assert!(!latency.complete);
+    assert_eq!(snapshot.stage_status(latency), StageStatus::Failed);
     assert_eq!(download.server_results.len(), 1);
     assert!(download.down_bytes() > 0);
-    let departed: Vec<_> = snapshot
-        .servers
-        .iter()
-        .filter(|server| server.error.is_some())
-        .collect();
-    assert_eq!(departed.len(), 1);
     assert_eq!(
-        departed[0].id, "near",
+        snapshot.participants,
+        ["far"],
         "a server lost before its latency channel dialled stayed in the run"
     );
     assert_eq!(download.server_results[0].id, "far");
-    assert_eq!(snapshot.participants, ["far"]);
     assert_eq!(snapshot.latency_focus.as_deref(), Some("far"));
     Ok(())
 }

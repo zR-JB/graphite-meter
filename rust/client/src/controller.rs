@@ -260,9 +260,10 @@ impl Controller {
         if !self.operations.is_empty() {
             self.cancelling = true;
             self.cancel_deadline.get_or_insert(Instant::now() + CANCEL_GRACE);
+            let running = self.running;
             self.snapshots.send_modify(|snapshot| {
-                if matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
-                    snapshot.status = "Cancelling; waiting for owned IO".into();
+                if running && matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
+                    snapshot.status = "Stopping the test…".into();
                 }
                 snapshot.auth = None;
             });
@@ -275,10 +276,14 @@ impl Controller {
         self.cancel = None;
         self.cancel_deadline = None;
         if self.cancelling {
+            let running = self.running;
             self.snapshots.send_modify(|snapshot| {
                 if matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
-                    snapshot.phase = Phase::Cancelled;
-                    snapshot.status = "Stopped".into();
+                    (snapshot.phase, snapshot.status) = if running {
+                        (Phase::Cancelled, "Stopped".into())
+                    } else {
+                        (Phase::Setup, "Recheck needed".into())
+                    };
                     snapshot.error = None;
                 }
                 snapshot.auth = None;
@@ -483,6 +488,7 @@ mod tests {
                 ..Snapshot::default()
             });
             let mut controller = Controller::with_snapshots(&Config::default(), snapshots.clone()).unwrap();
+            controller.running = true;
             let (cancel, mut cancelled_signal) = watch::channel(false);
             controller.cancel = Some(cancel);
             let (joined, completed) = tokio::sync::oneshot::channel();

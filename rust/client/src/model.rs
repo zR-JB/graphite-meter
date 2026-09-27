@@ -58,7 +58,7 @@ pub struct StageResult {
     pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
     pub intervals: VecDeque<graphite_meter_core::measurement::AggregationInterval>,
     pub omitted_intervals: usize,
-    pub complete: bool,
+    pub stopped: bool,
     pub server_latencies: Vec<ServerLatencyResult>,
     pub server_results: Vec<ServerContribution>,
 }
@@ -76,16 +76,6 @@ impl StageResult {
     pub fn up_bytes(&self) -> u64 {
         self.up.as_ref().map_or(0, |result| result.total_bytes)
     }
-    pub fn status(&self) -> StageStatus {
-        let measured = (!self.stage.downloads() || self.down_bps().is_some())
-            && (!self.stage.uploads() || self.up_bps().is_some())
-            && (self.stage != Stage::Latency || self.server_latencies.iter().any(|host| host.median().is_some()));
-        match (measured, self.complete) {
-            (false, _) => StageStatus::Failed,
-            (true, false) => StageStatus::Partial,
-            (true, true) => StageStatus::Complete,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,6 +83,8 @@ pub enum StageStatus {
     Complete,
     Partial,
     Failed,
+    Stopped,
+    Skipped,
 }
 
 impl StageStatus {
@@ -101,8 +93,16 @@ impl StageStatus {
             Self::Complete => "Complete",
             Self::Partial => "Partial",
             Self::Failed => "Failed",
+            Self::Stopped => "Stopped",
+            Self::Skipped => "Skipped",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ending {
+    Stopped,
+    Failed(graphite_meter_core::failure::FailureReason),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,7 +126,6 @@ pub struct ServerContribution {
     pub id: String,
     pub down: Option<graphite_meter_core::measurement::MeasurementResult>,
     pub up: Option<graphite_meter_core::measurement::MeasurementResult>,
-    pub error: Option<String>,
 }
 
 impl ServerContribution {
@@ -149,12 +148,12 @@ pub struct ServerLatencyResult {
     pub elapsed: Option<Duration>,
     pub id: String,
     pub summary: graphite_meter_core::latency::LatencySummary,
-    pub error: Option<String>,
+    pub ending: Option<Ending>,
 }
 
 impl ServerLatencyResult {
     pub fn median(&self) -> Option<u64> {
-        if self.error.is_some() && self.summary.count + self.summary.timeouts < 3 {
+        if self.ending.is_some() && self.summary.count + self.summary.timeouts < 3 {
             return None;
         }
         self.summary.distribution.map(|distribution| distribution.p50)
@@ -166,7 +165,6 @@ pub struct ServerLatency {
     pub id: String,
     pub latest_ms: Option<f64>,
     pub history: Trace,
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -251,6 +249,36 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Failed when a planned result is missing (the latency focus's median included), partial after a failure.
+    pub fn stage_status(&self, result: &StageResult) -> StageStatus {
+        let unavailable = |measurement: &Option<graphite_meter_core::measurement::MeasurementResult>| {
+            measurement
+                .as_ref()
+                .is_none_or(|measurement| measurement.mean_bytes_per_sec.is_none())
+        };
+        let stage = result.stage;
+        if result.stopped {
+            StageStatus::Stopped
+        } else if stage.downloads() && unavailable(&result.down)
+            || stage.uploads() && unavailable(&result.up)
+            || stage == Stage::Latency && self.focus_latency(result).is_none_or(|host| host.median().is_none())
+        {
+            StageStatus::Failed
+        } else if self.failures.iter().any(|failure| failure.stage == stage) {
+            StageStatus::Partial
+        } else {
+            StageStatus::Complete
+        }
+    }
+
+    pub fn focus_latency<'a>(&self, result: &'a StageResult) -> Option<&'a ServerLatencyResult> {
+        let focus = self.latency_focus.as_deref();
+        result
+            .server_latencies
+            .iter()
+            .find(|host| Some(host.id.as_str()) == focus)
+    }
+
     pub(crate) fn leave(&mut self, id: &str) {
         self.participants.retain(|participant| participant != id);
         if self.latency_focus.as_deref() != Some(id) {

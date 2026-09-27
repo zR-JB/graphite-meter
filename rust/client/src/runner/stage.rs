@@ -7,7 +7,7 @@ use crate::{
     failure::MeasurementFailure,
     latency::{Observation, Stop},
     model::{
-        FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
+        Ending, FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
         StageResult,
     },
     stream_plan::StageLanePlan,
@@ -155,6 +155,7 @@ struct HostLatency {
     accumulator: LatencyAccumulator,
     latest: Option<f64>,
     ended_at: Option<Instant>,
+    ending: Option<Ending>,
 }
 
 type Start<'a> = BoxFuture<'a, (String, Result<Lanes, Error>)>;
@@ -550,8 +551,7 @@ impl<'a> StageRun<'a> {
         self.settle(removed)
     }
 
-    /// Records a failure once. A throughput failure removes its member, and so does a latency-stage loss while
-    /// another server remains.
+    /// Records a failure once; a throughput failure, or a latency-stage loss beside another server, removes it.
     fn fail(&mut self, id: &str, scope: FailureScope, error: Error, preparing: bool) -> bool {
         let Some(index) = self.members.iter().position(|member| member.id == id) else {
             return false;
@@ -570,17 +570,16 @@ impl<'a> StageRun<'a> {
             }
             FailureScope::Throughput => true,
         };
+        if let Some(host) = self.hosts.get_mut(id) {
+            host.ending.get_or_insert(Ending::Failed(reason));
+        }
         self.snapshots.send_modify(|snapshot| {
             snapshot.failure(id, scope, &error);
             if let Some(latency) = snapshot.server_latencies.iter_mut().find(|latency| latency.id == id) {
-                latency.error.get_or_insert_with(|| error.to_string());
                 latency.latest_ms = None;
             }
             if removed {
                 snapshot.leave(id);
-                if let Some(server) = snapshot.servers.iter_mut().find(|server| server.id == id) {
-                    server.error = Some(error.to_string());
-                }
             }
             snapshot.status = format!("{id}: {}", reason.label());
         });
@@ -772,10 +771,7 @@ impl<'a> StageRun<'a> {
             .members
             .iter_mut()
             .map(|member| std::mem::take(&mut member.lanes).close(confirm));
-        let closed = futures_util::future::join_all(lanes)
-            .await
-            .into_iter()
-            .all(|closed| closed.is_ok());
+        futures_util::future::join_all(lanes).await;
         while let Some(joined) = self.latency.join_next().await {
             if confirm {
                 let _ = self.latency_ended(joined);
@@ -788,14 +784,12 @@ impl<'a> StageRun<'a> {
         while let Some(Some(event)) = self.events.next().now_or_never() {
             observe(&mut self.hosts, self.window, event);
         }
-        if self.window.is_some() || result.is_err() && !stopped {
-            self.record(result.is_ok() && closed, stopped);
-        }
+        self.record(stopped);
         while self.retired.join_next().await.is_some() {}
         result.map(|()| self.removed)
     }
 
-    fn record(&mut self, finished: bool, stopped: bool) {
+    fn record(&mut self, stopped: bool) {
         let measuring = self.window.is_some();
         let (started, end) = self.window.unwrap_or((self.epoch, self.epoch));
         let ended = end.min(Instant::now());
@@ -811,12 +805,6 @@ impl<'a> StageRun<'a> {
         let missing = (self.stage.downloads()
             && down.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()))
             || (self.stage.uploads() && up.as_ref().is_none_or(|result| result.mean_bytes_per_sec.is_none()));
-        let complete = finished
-            && !stopped
-            && !missing
-            && self.removed.is_empty()
-            && self.members.iter().all(|member| !member.latency_failed)
-            && (self.stage != Stage::Latency || self.hosts.values().all(|host| host.accumulator.snapshot().count > 0));
         let hosts = &mut self.hosts;
         let accounting = &self.accounting;
         let (stage, transfer, members, participants) = (self.stage, self.transfer, &self.members, &self.participants);
@@ -824,10 +812,38 @@ impl<'a> StageRun<'a> {
             if measuring {
                 sample_hosts(hosts, snapshot, elapsed);
             }
-            if measuring && missing && !stopped {
-                let error: Error = Box::new(MeasurementFailure(FailureReason::InsufficientEvidence));
+            let server_latencies: Vec<_> = snapshot
+                .server_latencies
+                .iter()
+                .map(|host| {
+                    let own = hosts.get(&host.id);
+                    ServerLatencyResult {
+                        elapsed: own
+                            .and_then(|own| own.ended_at)
+                            .filter(|_| measuring)
+                            .map(|at| at.min(ended).saturating_duration_since(started)),
+                        id: host.id.clone(),
+                        summary: own.map(|own| own.accumulator.snapshot()).unwrap_or_default(),
+                        ending: own.and_then(|own| own.ending).or(stopped.then_some(Ending::Stopped)),
+                    }
+                })
+                .collect();
+            if measuring && !stopped {
+                let insufficient: Error = Box::new(MeasurementFailure(FailureReason::InsufficientEvidence));
+                let throughput_failed = snapshot
+                    .failures
+                    .iter()
+                    .any(|failure| failure.stage == stage && failure.scope == FailureScope::Throughput);
                 for member in members {
-                    snapshot.failure(&member.id, FailureScope::Throughput, &error);
+                    if missing && !throughput_failed {
+                        snapshot.failure(&member.id, FailureScope::Throughput, &insufficient);
+                    }
+                    let unmeasured = server_latencies
+                        .iter()
+                        .any(|host| host.id == member.id && host.median().is_none());
+                    if stage == Stage::Latency && unmeasured {
+                        snapshot.failure(&member.id, FailureScope::Latency, &insufficient);
+                    }
                 }
             }
             let server_results = transfer
@@ -840,31 +856,10 @@ impl<'a> StageRun<'a> {
                                 .needs_down()
                                 .then(|| accounting.server_result(id, Direction::Down)),
                             up: transfer.needs_up().then(|| accounting.server_result(id, Direction::Up)),
-                            error: snapshot
-                                .servers
-                                .iter()
-                                .find(|summary| summary.id == *id)
-                                .and_then(|summary| summary.error.clone()),
                         })
                         .collect()
                 })
                 .unwrap_or_default();
-            let server_latencies = snapshot
-                .server_latencies
-                .iter()
-                .map(|host| {
-                    let own = hosts.get(&host.id);
-                    ServerLatencyResult {
-                        elapsed: own
-                            .and_then(|own| own.ended_at)
-                            .filter(|_| measuring)
-                            .map(|at| at.min(ended).saturating_duration_since(started)),
-                        id: host.id.clone(),
-                        summary: own.map(|own| own.accumulator.snapshot()).unwrap_or_default(),
-                        error: host.error.clone().or_else(|| stopped.then(|| "Stopped".into())),
-                    }
-                })
-                .collect();
             snapshot.results.push(StageResult {
                 stage,
                 elapsed,
@@ -872,7 +867,7 @@ impl<'a> StageRun<'a> {
                 up,
                 intervals: accounting.intervals().clone(),
                 omitted_intervals: accounting.omitted_intervals(),
-                complete,
+                stopped,
                 server_latencies,
                 server_results,
             });

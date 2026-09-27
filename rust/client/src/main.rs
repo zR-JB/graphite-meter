@@ -119,7 +119,7 @@ fn report(snapshot: &Snapshot) {
         }
     }
     for result in &snapshot.results {
-        let ending = match result.status() {
+        let ending = match snapshot.stage_status(result) {
             graphite_meter_client::model::StageStatus::Complete => String::new(),
             status => format!(" · {}", status.label()),
         };
@@ -187,8 +187,8 @@ fn report(snapshot: &Snapshot) {
             if let Some(timing) = words::reflector_facts(host.summary) {
                 println!("    {timing}");
             }
-            if let Some(error) = &host.error {
-                println!("    Latency unavailable: {}", safe(error));
+            if let Some(ending) = host.ending {
+                println!("    Latency unavailable: {ending:?}");
             }
         }
         if result.server_results.len() > 1 {
@@ -207,9 +207,6 @@ fn report(snapshot: &Snapshot) {
                     graphite_meter_core::format::bytes(server.down_bytes()),
                     graphite_meter_core::format::bytes(server.up_bytes()),
                 );
-                if let Some(error) = &server.error {
-                    println!("    Unavailable: {}", safe(error));
-                }
             }
         }
     }

@@ -171,15 +171,16 @@ async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Err
             .zip([Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional])
     {
         assert_eq!(result.stage, stage);
-        assert!(result.complete, "{} stage remained partial", stage.name());
+        assert_eq!(
+            snapshot.stage_status(result),
+            graphite_meter_client::model::StageStatus::Complete,
+            "{} stage remained partial: {:?}",
+            stage.name(),
+            snapshot.failures
+        );
         if stage.downloads() || stage.uploads() {
             assert!(!result.server_results.is_empty());
         }
-        assert!(
-            result.server_results.iter().all(|server| server.error.is_none()),
-            "{} stage has a failed server",
-            stage.name()
-        );
         if stage.downloads() {
             assert!(result.down_bytes() > 0, "{} received no download", stage.name());
         }
