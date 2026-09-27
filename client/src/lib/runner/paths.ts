@@ -216,6 +216,12 @@ function matchesGroup(target: AnyTarget, selection: string): boolean {
 const isGroup = (selection: string) =>
   selection.startsWith("protocol:") || selection.startsWith("transport:");
 
+/** The origin a selection names; Automatic and protocol or transport groups name none. */
+export const selectionOrigin = (selection: string): string | null =>
+  selection === "auto" || isGroup(selection)
+    ? null
+    : selection.replace(/::(?:wt|wtdg)$/, "");
+
 /** A known browser policy restriction, only when it excludes every matching target. */
 export function blockedSelectionReason(
   discovery: TransportDiscovery,

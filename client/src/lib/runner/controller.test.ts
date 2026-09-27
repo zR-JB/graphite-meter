@@ -14,7 +14,6 @@ import type { ConnectionPreparation } from "./real/prepare";
 import type { ServerEntry } from "../servers/catalog";
 import { stubGlobals } from "../test-helpers.testutil";
 import {
-  deferred,
   NOT_RUN,
   settle,
   TEST_BUILD_TOKENS,
@@ -201,7 +200,7 @@ const remote = (id: string): ServerEntry => ({
 });
 
 test("a pending start ends on a second click or a draft change without blocking later checks", async () => {
-  const held = deferred<ConnectionPreparation>();
+  const held = Promise.withResolvers<ConnectionPreparation>();
   const signals: AbortSignal[] = [];
   let block = true;
   await withController(
@@ -367,7 +366,7 @@ test("a cancelled start keeps the previous result on screen", async () => {
       runner.listener({ type: "complete", result: testRunResult() });
       const previous = store.result;
       expect(previous).not.toBeNull();
-      const gate = deferred<void>();
+      const gate = Promise.withResolvers<void>();
       hold = gate.promise;
       controller.toggleRun();
       await until(() => store.preparationStatus === "checking");

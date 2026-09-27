@@ -11,8 +11,9 @@ import {
 } from "./wtToken";
 import { PROGRESS_FINAL_GRACE_MS } from "../real/budgets";
 import { incompressibleBlock } from "./payload";
-import { readProgressFeed, type ProgressEvent } from "./progressFeed";
-import type { FailureReason, LaneFailure } from "../contract";
+import { readProgressFeed } from "./progressFeed";
+import type { FailureReason } from "../contract";
+import type { WorkerMsg } from "../transport";
 import {
   progressWindow,
   readBytes,
@@ -49,17 +50,8 @@ type InMsg =
   | { type: "measure"; seq: number }
   | { type: "stop" };
 
-type OutMsg =
-  | { type: "established" }
-  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
-  | { type: "alive" }
-  | ({ type: "error"; detail: string } & LaneFailure)
-  | { type: "upload-progress"; msg: ProgressEvent }
-  | { type: "auth-required" }
-  | { type: "stopped" };
-
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const post = (m: OutMsg): void => ctx.postMessage(m);
+const post = (m: WorkerMsg): void => ctx.postMessage(m);
 
 /* A datagram loop iterates per packet, so an unthrottled alive would jank the thread latency is measured on. */
 const ALIVE_GAP_MS = 250;

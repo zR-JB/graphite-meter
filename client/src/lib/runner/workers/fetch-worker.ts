@@ -13,6 +13,7 @@ import {
 } from "./progressWindow";
 import { incompressibleBlock } from "./payload";
 import { classifyUploadFailure, retryAfterMs } from "./progressFeed";
+import type { WorkerMsg } from "../transport";
 import type { FlowDirection, LaneFailure } from "../contract";
 import { MAX_STREAMS, ROUTES } from "../paths";
 import {
@@ -37,12 +38,6 @@ type InMsg =
       headers?: Record<string, string>;
     }
   | { type: "measure"; seq: number };
-/* An upload's local byte/time pair is only a bounded presentation hint; the receiver feed stays authoritative. */
-type OutMsg =
-  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
-  | { type: "alive"; bytes: number; elapsedMs: number }
-  | ({ type: "error"; detail: string } & LaneFailure)
-  | { type: "auth-required" };
 
 /** Pool floor keeps adaptive sizing useful on constrained devices. */
 const MIN_POOL_BYTES = 2 * 1024 * 1024;
@@ -66,7 +61,7 @@ export const downloadFailure = (status: number): LaneFailure =>
 export const refusal = (
   res: Response,
   failure: LaneFailure,
-): Extract<OutMsg, { type: "error" }> => ({
+): Extract<WorkerMsg, { type: "error" }> => ({
   type: "error",
   detail: `HTTP ${res.status}`,
   ...failure,
@@ -122,7 +117,7 @@ export function uploadPoolBytes(
 }
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
-const post = (m: OutMsg) => ctx.postMessage(m);
+const post = (m: WorkerMsg) => ctx.postMessage(m);
 let init: RequestInit = fetchInit("same-origin");
 let measureSeq = 0;
 let progress = progressWindow(0, REPORT_GAP_MS);

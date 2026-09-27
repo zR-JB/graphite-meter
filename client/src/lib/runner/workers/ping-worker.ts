@@ -175,11 +175,8 @@ ctx.onmessage = (e: MessageEvent<unknown>): void => {
       url = m.url;
       transport = m.transport;
       mint = m.mint;
-      intervalMs = m.intervalMs;
-      replyDriven = m.replyDriven;
-      maxInFlight = m.maxInFlight;
-      deadlineK = m.deadlineK;
-      deadlineFloorMs = m.deadlineFloorMs;
+      ({ intervalMs, replyDriven, maxInFlight, deadlineK, deadlineFloorMs } =
+        m);
       checkAuthentication = m.checkAuthentication ?? false;
       scheduler = createPingScheduler(
         replyDriven

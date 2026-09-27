@@ -99,9 +99,10 @@ export interface StageOptions {
 const LANE_STAGGER_MS = 75;
 const CHECKPOINT_TIMEOUT_MS = 1500;
 
+/** What a fetch lane or WebTransport session worker reports; an alive's byte/time pair is a presentation hint only. */
 export type WorkerMsg =
   | { type: "established" | "stopped" | "auth-required" }
-  | { type: "progress"; bytes: number; elapsedMs?: number; seq?: number }
+  | { type: "progress"; bytes: number; elapsedMs: number; seq: number }
   | { type: "alive"; bytes?: number; elapsedMs?: number }
   | ({ type: "error"; detail: string } & LaneFailure)
   | { type: "upload-progress"; msg: ProgressEvent };

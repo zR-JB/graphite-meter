@@ -44,6 +44,7 @@ import {
   CONNECTION_ROLES,
   latencyPathNeeded,
   portableTransportSelection,
+  selectionOrigin,
   uploadCapabilityFailure,
 } from "./paths";
 import {
@@ -243,20 +244,11 @@ export function createApplicationController(
               store.latencySelection.mode === "all" ||
               server.id === store.primaryLatencyServer),
         );
-        const origin =
-          value !== "auto" &&
-          !value.startsWith("protocol:") &&
-          !value.startsWith("transport:");
+        const origin = selectionOrigin(value);
         if (
           servers.length > 1 ||
           (origin &&
-            servers.some(
-              (server) =>
-                !allowsServerOrigin(
-                  server,
-                  value.replace(/::(?:wt|wtdg)$/, ""),
-                ),
-            ))
+            servers.some((server) => !allowsServerOrigin(server, origin)))
         )
           makeTransportPortable(role);
       }

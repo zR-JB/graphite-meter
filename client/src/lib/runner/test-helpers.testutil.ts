@@ -1,5 +1,5 @@
 import { DEFAULT_CONFIG } from "../state/defaults";
-import type { FetchThroughputTarget, LatencyTarget } from "../api/endpoints";
+import type { FetchThroughputTarget } from "../api/endpoints";
 import type { PreparedPaths, RunResult, RunnerConfig } from "./contract";
 import type { ParticipantHost } from "./transport";
 import { classifyTransportDiscovery } from "./paths";
@@ -37,17 +37,6 @@ export const testTransfer = (
   transport: "fetch-stream",
   protocol,
   tls,
-});
-export const testLatency = (
-  id: string,
-  origin: string,
-  tls: boolean,
-): LatencyTarget => ({
-  id,
-  origin,
-  protocol: "http1",
-  tls,
-  transport: "websocket",
 });
 /** A participant host that ignores every report unless overridden. */
 export function testParticipantHost(
@@ -210,11 +199,6 @@ export function testRunResult(overrides: Partial<RunResult> = {}): RunResult {
   };
 }
 
-export function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => (resolve = done));
-  return { promise, resolve };
-}
 const turn = () => new Promise((resolve) => setTimeout(resolve, 0));
 /** Waits up to `turns` task turns for `done`, and fails the test when it never holds. */
 export async function until(done: () => boolean, turns = 100) {
