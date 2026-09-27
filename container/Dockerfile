@@ -33,6 +33,8 @@ COPY client/package.json client/bun.lock client/bunfig.toml ./
 RUN bun --bun install --frozen-lockfile
 # Then the source, then build.
 COPY client/ ./
+COPY api/ /app/api/
+COPY go/internal/auth/assets/ /app/go/internal/auth/assets/
 RUN if [ "$GM_CLIENT_VALIDATE" = "1" ]; then bun run build; else bun run build:bundle; fi
 
 # ---------------------------------------------------------------------------
