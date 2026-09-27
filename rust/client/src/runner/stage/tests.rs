@@ -66,6 +66,9 @@ async fn download_peer_with_gate(
                             let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(stream, tokio_tungstenite::tungstenite::protocol::Role::Server, None).await;
                             while let Some(Ok(tokio_tungstenite::tungstenite::Message::Text(text))) = socket.next().await {
                                 let Ok(id) = graphite_meter_core::wire::decode_ping(&text) else { return; };
+                                if flag.load(Ordering::SeqCst) == 8 {
+                                    continue;
+                                }
                                 if flag.load(Ordering::SeqCst) == 6 {
                                     let ending = graphite_meter_core::failure::LaneEnding::Idle;
                                     let _ = socket.send(tokio_tungstenite::tungstenite::Message::Close(Some(tokio_tungstenite::tungstenite::protocol::CloseFrame {
@@ -301,7 +304,7 @@ async fn timed_out_bidirectional_setup_drains_started_download() -> Result<(), E
         StageTiming {
             epoch: Instant::now(),
             operation_limit: Duration::from_secs(60),
-            setup_timeout: Duration::from_millis(300),
+            ready_by: Instant::now() + Duration::from_millis(300),
         },
         stopped,
     )
@@ -525,15 +528,18 @@ fn host_latency_populations_and_continuity_are_independent() {
 }
 
 #[tokio::test]
-async fn loaded_latency_failure_keeps_both_http_participants() -> Result<(), Error> {
+async fn loaded_latency_failure_keeps_every_http_participant() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
     for failure_phase in [Phase::Warmup, Phase::Measuring] {
         let (near, mode, near_peer) = download_peer().await?;
         let (far, _, far_peer) = download_peer().await?;
+        let (quiet, quiet_mode, quiet_peer) = download_peer().await?;
+        quiet_mode.store(8, Ordering::SeqCst);
         let http = Http::new(true)?;
         let mut servers = vec![
             prepared_download("near", &near, &http).await?,
             prepared_download("far", &far, &http).await?,
+            prepared_download("quiet", &quiet, &http).await?,
         ];
         for server in &mut servers {
             server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
@@ -562,7 +568,7 @@ async fn loaded_latency_failure_keeps_both_http_participants() -> Result<(), Err
         assert!(result?.is_empty());
         let snapshot = observed.borrow();
         let stage = &snapshot.results[0];
-        assert_eq!(stage.server_results.len(), 2);
+        assert_eq!(stage.server_results.len(), 3);
         assert!(
             stage
                 .server_results
@@ -574,23 +580,23 @@ async fn loaded_latency_failure_keeps_both_http_participants() -> Result<(), Err
             stage
                 .intervals
                 .iter()
-                .all(|interval| interval.participants.len() == 2)
+                .all(|interval| interval.participants.len() == 3)
         );
-        let near = stage
-            .server_latencies
-            .iter()
-            .find(|host| host.id == "near")
-            .unwrap();
-        let far = stage
-            .server_latencies
-            .iter()
-            .find(|host| host.id == "far")
-            .unwrap();
+        let [near, far, quiet] = ["near", "far", "quiet"].map(|id| {
+            stage
+                .server_latencies
+                .iter()
+                .find(|host| host.id == id)
+                .unwrap()
+        });
         assert!(near.error.is_some());
         assert!(far.error.is_none());
         assert!(far.summary.count > 0);
+        assert!(quiet.error.is_none());
+        assert!(quiet.summary.timeouts > 0);
         near_peer.abort();
         far_peer.abort();
+        quiet_peer.abort();
     }
     Ok(())
 }

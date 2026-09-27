@@ -102,6 +102,7 @@ pub(crate) async fn run_kind(
     // One estimate per stage, as in Go: a redial must not restart at the 250 ms floor.
     let mut estimator = DeadlineEstimator::default();
     loop {
+        emit(&observations, Observation::ConnectionBoundary)?;
         let result = measure(
             socket,
             interval,
@@ -118,7 +119,6 @@ pub(crate) async fn run_kind(
         if !error.is::<Disconnected>() {
             return Err(error);
         }
-        emit(&observations, Observation::ConnectionBoundary)?;
         let reconnect_until = (Instant::now() + Duration::from_secs(2)).min(end);
         socket = loop {
             if Instant::now() >= end {

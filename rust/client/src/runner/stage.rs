@@ -462,11 +462,13 @@ fn server_contributions(
         .collect()
 }
 
+const STAGE_READY_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Clone, Copy)]
 struct StageTiming {
     epoch: Instant,
     operation_limit: Duration,
-    setup_timeout: Duration,
+    ready_by: Instant,
 }
 
 async fn start_transfer(
@@ -483,7 +485,7 @@ async fn start_transfer(
         up: None,
         checkpoint_misses: 0,
     };
-    let started = tokio::time::timeout(timing.setup_timeout, async {
+    let started = tokio::time::timeout_at(timing.ready_by, async {
         if stage.downloads() || stage.uploads() {
             let target = server
                 .throughput
@@ -645,71 +647,9 @@ pub(super) async fn measure(
     let mut measurement_start = None;
     let mut measurement_end = None;
     let operation = async {
-        let mut last_failure = None;
-        // Start every selected peer within the same preparation window. One
-        // slow origin must not postpone another peer's first request.
-        let mut starts = servers
-            .iter()
-            .enumerate()
-            .map(|(index, server)| {
-                let stopped = stopped.clone();
-                let plan = &plan;
-                async move {
-                    (
-                        index,
-                        start_transfer(
-                            stage,
-                            server,
-                            plan,
-                            config,
-                            StageTiming {
-                                epoch,
-                                operation_limit,
-                                setup_timeout: Duration::from_secs(10),
-                            },
-                            stopped,
-                        )
-                        .await,
-                    )
-                }
-            })
-            .collect::<FuturesUnordered<_>>();
-        let mut started: Vec<Option<Result<Transfer, Error>>> =
-            (0..servers.len()).map(|_| None).collect();
-        while let Some((index, result)) = starts.next().await {
-            started[index] = Some(result);
-        }
-        for (server, result) in servers.iter().zip(started) {
-            match result.expect("every selected transfer preparation completed") {
-                Ok(transfer) => resources.transfers.push(transfer),
-                Err(error) => {
-                    resources.preparation_failure(&server.entry.id, &error, snapshots);
-                    if last_failure
-                        .as_ref()
-                        .is_none_or(|failure: &ParticipantFailure| {
-                            crate::net::authentication_required(failure.source.as_ref()).is_none()
-                        })
-                        || crate::net::authentication_required(error.as_ref()).is_some()
-                    {
-                        last_failure = Some(ParticipantFailure {
-                            id: server.entry.id.clone(),
-                            source: error,
-                        });
-                    }
-                }
-            }
-        }
-        if resources.transfers.is_empty() {
-            return Err(AllParticipantsFailed(
-                last_failure.expect("one preparation failure for each selected server"),
-            )
-            .into());
-        }
+        let ready_by = Instant::now() + STAGE_READY_TIMEOUT;
         if stage == Stage::Latency || config.loaded_latency {
-            for server in servers
-                .iter()
-                .filter(|server| !resources.failed.contains(&server.entry.id))
-            {
+            for server in servers {
                 let target = server
                     .latency
                     .clone()
@@ -769,46 +709,81 @@ pub(super) async fn measure(
                     }
                 });
             }
-            let mut ready = HashSet::new();
-            let readiness = async {
-                while resources.transfers.iter().any(|transfer| {
-                    !ready.contains(&transfer.id)
-                        && resources
-                            .stop_latency
-                            .get(&transfer.id)
-                            .is_none_or(|stop| !*stop.borrow())
-                }) {
-                    tokio::select! {
-                        event = events.next(), if !events.is_empty() => match event {
-                            Some((id, Observation::Sample { .. })) => {
-                                ready.insert(id);
+        }
+        // Transfers and latency sessions share one readiness budget; latency is ready once dialled.
+        let mut starts = servers
+            .iter()
+            .enumerate()
+            .map(|(index, server)| {
+                let stopped = stopped.clone();
+                let plan = &plan;
+                async move {
+                    (
+                        index,
+                        start_transfer(
+                            stage,
+                            server,
+                            plan,
+                            config,
+                            StageTiming {
+                                epoch,
+                                operation_limit,
+                                ready_by,
                             },
-                            Some(_) => {},
-                            // Streams end before their task joins; the join branch reports why.
-                            None => {}
-                        },
-                        task = resources.latency.join_next() => {
-                            let task = task.ok_or("missing latency task")?;
-                            resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
+                            stopped,
+                        )
+                        .await,
+                    )
+                }
+            })
+            .collect::<FuturesUnordered<_>>();
+        let mut started: Vec<Option<Transfer>> = (0..servers.len()).map(|_| None).collect();
+        let mut last_failure = None;
+        let mut dialled = HashSet::new();
+        let mut expired = false;
+        loop {
+            let dialling = resources
+                .stop_latency
+                .iter()
+                .any(|(id, stop)| !dialled.contains(id) && !*stop.borrow());
+            if starts.is_empty() && !dialling {
+                break;
+            }
+            tokio::select! {
+                Some((index, result)) = starts.next(), if !starts.is_empty() => match result {
+                    Ok(transfer) => started[index] = Some(transfer),
+                    Err(error) => {
+                        let id = &servers[index].entry.id;
+                        resources.preparation_failure(id, &error, snapshots);
+                        if last_failure
+                            .as_ref()
+                            .is_none_or(|failure: &ParticipantFailure| {
+                                crate::net::authentication_required(failure.source.as_ref()).is_none()
+                            })
+                            || crate::net::authentication_required(error.as_ref()).is_some()
+                        {
+                            last_failure = Some(ParticipantFailure {
+                                id: id.clone(),
+                                source: error,
+                            });
                         }
                     }
-                }
-                Ok::<(), Error>(())
-            };
-            match tokio::time::timeout(Duration::from_secs(12), readiness).await {
-                Ok(result) => result?,
-                Err(_) => {
+                },
+                Some((id, event)) = events.next(), if !events.is_empty() => {
+                    if matches!(event, Observation::ConnectionBoundary) {
+                        dialled.insert(id);
+                    }
+                },
+                Some(task) = resources.latency.join_next(), if !resources.latency.is_empty() => {
+                    resources.latency_completion(task, snapshots, stage == Stage::Latency)?;
+                },
+                () = tokio::time::sleep_until(ready_by), if !expired => {
+                    expired = true;
                     let missing: Vec<_> = resources
-                        .transfers
+                        .stop_latency
                         .iter()
-                        .filter(|transfer| {
-                            !ready.contains(&transfer.id)
-                                && resources
-                                    .stop_latency
-                                    .get(&transfer.id)
-                                    .is_some_and(|stop| !*stop.borrow())
-                        })
-                        .map(|transfer| transfer.id.clone())
+                        .filter(|(id, stop)| !dialled.contains(*id) && !*stop.borrow())
+                        .map(|(id, _)| id.clone())
                         .collect();
                     for id in missing {
                         resources.record_latency_failure(
@@ -816,19 +791,25 @@ pub(super) async fn measure(
                                 id,
                                 source: std::io::Error::new(
                                     std::io::ErrorKind::TimedOut,
-                                    "latency session was not ready within 12 seconds",
+                                    "latency session was not ready within 10 seconds",
                                 )
                                 .into(),
                             },
                             snapshots,
                         );
                     }
-                }
+                },
             }
-            if stage == Stage::Latency && resources.stop_latency.values().all(|stop| *stop.borrow())
-            {
-                return Err("all selected latency sessions failed".into());
-            }
+        }
+        resources.transfers.extend(started.into_iter().flatten());
+        if resources.transfers.is_empty() {
+            return Err(AllParticipantsFailed(
+                last_failure.expect("one preparation failure for each selected server"),
+            )
+            .into());
+        }
+        if stage == Stage::Latency && resources.stop_latency.values().all(|stop| *stop.borrow()) {
+            return Err("all selected latency sessions failed".into());
         }
         let warmup = servers
             .iter()
@@ -857,7 +838,6 @@ pub(super) async fn measure(
                 _ = events.next(), if !events.is_empty() => {},
             }
         }
-        let baseline_deadline = Instant::now() + Duration::from_secs(12);
         let mut initial = None;
         if transfer_stage.is_some() {
             loop {
@@ -867,12 +847,6 @@ pub(super) async fn measure(
                     loop {
                         tokio::select! {
                             biased;
-                            _ = tokio::time::sleep_until(baseline_deadline) => {
-                                break Err(std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut,
-                                    "initial receiver checkpoint exceeded preparation deadline",
-                                ).into());
-                            }
                             _ = events.next(), if !events.is_empty() => {},
                             boundary = &mut checkpoint => break boundary,
                         }
@@ -883,17 +857,14 @@ pub(super) async fn measure(
                         initial = Some(boundary);
                         break;
                     }
-                    Err(error) if error.is::<ParticipantFailure>() => {
-                        resources.recover(
-                            error,
-                            &mut accounting,
-                            transfer_stage,
-                            false,
-                            epoch,
-                            snapshots,
-                        )?;
-                    }
-                    Err(error) => return Err(error),
+                    Err(error) => resources.recover(
+                        error,
+                        &mut accounting,
+                        transfer_stage,
+                        false,
+                        epoch,
+                        snapshots,
+                    )?,
                 }
             }
         }
