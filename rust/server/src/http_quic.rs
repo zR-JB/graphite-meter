@@ -876,19 +876,21 @@ mod tests {
 
     fn held_udp_socket(address: std::net::SocketAddr) -> Option<std::path::PathBuf> {
         let port = format!(":{:04X}", address.port());
-        let sockets: Vec<_> = std::fs::read_to_string("/proc/net/udp")
-            .unwrap()
-            .lines()
-            .filter_map(|line| {
-                let fields: Vec<_> = line.split_whitespace().collect();
-                fields[1].ends_with(&port).then(|| format!("socket:[{}]", fields[9]))
-            })
-            .collect();
-        std::fs::read_dir("/proc/self/fd")
-            .unwrap()
-            .flatten()
-            .filter_map(|fd| std::fs::read_link(fd.path()).ok())
-            .find(|link| sockets.iter().any(|socket| link.as_os_str() == socket.as_str()))
+        (0..100).find_map(|_| {
+            let sockets: Vec<_> = std::fs::read_to_string("/proc/net/udp")
+                .unwrap()
+                .lines()
+                .filter_map(|line| {
+                    let fields: Vec<_> = line.split_whitespace().collect();
+                    fields[1].ends_with(&port).then(|| format!("socket:[{}]", fields[9]))
+                })
+                .collect();
+            std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .flatten()
+                .filter_map(|fd| std::fs::read_link(fd.path()).ok())
+                .find(|link| sockets.iter().any(|socket| link.as_os_str() == socket.as_str()))
+        })
     }
 
     async fn settled(memory: &super::MemoryBudget, peers: &[&quinn::Connection]) -> usize {
