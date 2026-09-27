@@ -82,7 +82,7 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
              f"FROM {pins['images']['golang']} AS server"),
         ],
-        ".github/actions/build-oci/action.yml": [
+        ".github/workflows/release-request.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),
         ],
     }
