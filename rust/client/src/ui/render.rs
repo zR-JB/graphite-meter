@@ -35,18 +35,11 @@ impl Ui {
             Constraint::Length(if self.help { 1 + help.len() as u16 } else { 2 }),
         ])
         .split(area);
-        let status = crate::report::status(&self.snapshot);
+        let (status, status_background) = self.status();
         let status = safe_text_width(status, usize::from(regions[0].width / 2).saturating_sub(4));
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
         let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
-        let status_background = match (self.snapshot.phase, self.snapshot.stage) {
-            (Phase::Complete, _) => self.theme.ok,
-            (Phase::Partial | Phase::Incomplete | Phase::Cancelled, _) => self.theme.warn,
-            (Phase::Failed, _) => self.theme.err,
-            (Phase::Measuring, Some(stage)) => self.theme.stage(stage),
-            _ => self.theme.muted,
-        };
         let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
         frame.render_widget(
             Paragraph::new(vec![
@@ -182,6 +175,35 @@ impl Ui {
         if self.snapshot.auth.is_some() {
             self.draw_auth(frame);
         }
+    }
+
+    /// Go's statusLabel and pill colour: setup states outside the run view, then the run's own.
+    fn status(&self) -> (&'static str, ratatui::style::Color) {
+        let snapshot = &self.snapshot;
+        if !self.live {
+            let label = if self.config.validate().is_err() {
+                "Test cannot start"
+            } else if snapshot.phase == Phase::Failed
+                && !snapshot
+                    .servers
+                    .iter()
+                    .any(|server| server.checked() && server.error.is_none())
+            {
+                "Test could not start"
+            } else {
+                "Not started"
+            };
+            return (label, self.theme.muted);
+        }
+        let background = match (snapshot.phase, snapshot.stage) {
+            (Phase::Failed, _) if !snapshot.started() => return ("Test could not start", self.theme.muted),
+            (Phase::Complete, _) => self.theme.ok,
+            (Phase::Partial | Phase::Incomplete | Phase::Cancelled, _) => self.theme.warn,
+            (Phase::Failed, _) => self.theme.err,
+            (Phase::Measuring, Some(stage)) => self.theme.stage(stage),
+            _ => self.theme.muted,
+        };
+        (crate::report::status(snapshot), background)
     }
 
     fn draw_auth(&mut self, frame: &mut Frame) {
@@ -1250,5 +1272,42 @@ mod tests {
         ui.latency_pick = None;
         ui.snapshot.servers.truncate(1);
         assert!(title(&mut ui).contains("╭Results──"), "{}", title(&mut ui));
+    }
+
+    #[test]
+    fn setup_pill_says_when_the_test_cannot_or_could_not_start() {
+        let unreachable = ServerSummary {
+            throughput: None,
+            latency: None,
+            error: Some("Server could not be reached".into()),
+            ..server("a", "Alpha", LatencyTransport::WebSocket)
+        };
+        let mut ui = Ui::new(
+            Config::default(),
+            Snapshot {
+                phase: Phase::Failed,
+                servers: vec![unreachable.clone()],
+                ..Snapshot::default()
+            },
+        );
+        assert_eq!(ui.status(), ("Test could not start", ui.theme.muted));
+        assert!(rows(&mut ui, 100, 30)[1].ends_with(" Test could not start  "));
+        // A server that is still ready leaves the test startable.
+        ui.snapshot
+            .servers
+            .push(server("b", "Beta", LatencyTransport::WebSocket));
+        assert_eq!(ui.status().0, "Not started");
+        ui.config.stages.clear();
+        assert_eq!(ui.status().0, "Test cannot start");
+        // A run that failed before any server started reads the same; one that started failed.
+        (ui.config, ui.live) = (Config::default(), true);
+        ui.snapshot.servers = vec![unreachable];
+        assert_eq!(ui.status(), ("Test could not start", ui.theme.muted));
+        ui.snapshot.participants = vec!["a".into()];
+        assert_eq!(ui.status(), ("Failed", ui.theme.err));
+        // Returning to setup after a run no longer shows its outcome.
+        ui.live = false;
+        ui.snapshot.phase = Phase::Complete;
+        assert_eq!(ui.status(), ("Not started", ui.theme.muted));
     }
 }
