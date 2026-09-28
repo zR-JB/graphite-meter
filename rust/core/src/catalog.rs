@@ -1,33 +1,42 @@
 //! Public measurement authorities and deterministic discovery boundaries.
 
 use crate::{
-    discovery::{DiscoveryError, Preflight},
+    discovery::{DiscoveryError, Preflight, null_default},
     origin::{browser_connect_source_supported, canonical_origin, catalog_origin, key, target_origin},
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fmt;
 
 pub const MAX_CATALOG_SERVERS: usize = 32;
 pub const MAX_SELECTED_SERVERS: usize = 4;
 
+/// Go reads a JSON null as the zero value, a list's elements included.
+fn null_list<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(deserializer: D) -> Result<Vec<T>, D::Error> {
+    let list = Option::<Vec<Option<T>>>::deserialize(deserializer)?.unwrap_or_default();
+    Ok(list.into_iter().map(Option::unwrap_or_default).collect())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ServerEntry {
+    #[serde(deserialize_with = "null_default")]
     pub id: String,
+    #[serde(deserialize_with = "null_default")]
     pub url: String,
+    #[serde(deserialize_with = "null_default")]
     pub name: String,
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(deserialize_with = "null_default", skip_serializing_if = "String::is_empty")]
     pub location: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "null_list", skip_serializing_if = "Vec::is_empty")]
     pub additional_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCatalog {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_list")]
     pub default_selection: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_list")]
     pub servers: Vec<ServerEntry>,
 }
 

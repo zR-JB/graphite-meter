@@ -173,3 +173,33 @@ fn a_received_catalogue_leaves_out_only_its_invalid_entries() {
     broken_self.servers[0].url = "https://two words.example".into();
     assert_eq!(broken_self.received().err(), Some(CatalogError::InvalidOrigin));
 }
+
+/// Go reads a JSON null as the zero value, in a field or a list, so a received catalogue loses only
+/// the entries its nulls leave invalid.
+#[test]
+fn a_received_catalogue_reads_null_as_empty() {
+    let json = br#"{"defaultSelection": null, "servers": [
+        {"id": "self", "url": ".", "name": null, "location": null, "additionalOrigins": null},
+        {"id": "listed", "url": "https://listed.example", "name": "listed", "additionalOrigins": [null]},
+        null,
+        {"id": "remote", "url": "https://remote.example", "name": "remote", "location": null}
+    ]}"#;
+    let catalog: ServerCatalog = graphite_meter_core::wire::decode_json(json).unwrap();
+    assert_eq!(catalog.servers[1].additional_origins, [""]);
+    let (received, rejected) = catalog.received().unwrap();
+    let ids: Vec<_> = received.servers.iter().map(|entry| entry.id.as_str()).collect();
+    assert_eq!(
+        (ids, received.default_selection),
+        (vec!["self", "remote"], vec!["self".into()])
+    );
+    let rejected: Vec<_> = rejected.iter().map(|left| (left.id.as_str(), left.error)).collect();
+    assert_eq!(
+        rejected,
+        [
+            ("listed", CatalogError::InvalidOrigin),
+            ("", CatalogError::InvalidIdentity)
+        ]
+    );
+    let nothing: ServerCatalog = graphite_meter_core::wire::decode_json(br#"{"servers": null}"#).unwrap();
+    assert_eq!(nothing.received().err(), Some(CatalogError::InvalidServers));
+}

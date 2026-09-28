@@ -29,7 +29,9 @@ impl fmt::Display for DiscoveryError {
 }
 impl std::error::Error for DiscoveryError {}
 
-fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(deserializer: D) -> Result<T, D::Error> {
+pub(crate) fn null_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(
+    deserializer: D,
+) -> Result<T, D::Error> {
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 fn is_false(value: &bool) -> bool {
