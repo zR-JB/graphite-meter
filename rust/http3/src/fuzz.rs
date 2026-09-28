@@ -1,6 +1,6 @@
 //! Fuzz target bodies for the libFuzzer targets in `fuzz/`.
 use crate::{
-    Code, WtCode, capsule, control, fields, frame,
+    Code, WtCode, capsule, code, control, fields, frame,
     message::{Event, Message},
     qpack, settings, varint,
 };
@@ -36,6 +36,7 @@ pub fn frames(data: &[u8]) {
 }
 
 /// SETTINGS read in arbitrary chunks give the same peer or error; the dialect decision is total.
+/// The payload's pairs, sent on our control stream, arrive as exactly one SETTINGS frame of them.
 pub fn settings(data: &[u8]) {
     let Some((&seed, payload)) = data.split_first() else {
         return;
@@ -53,6 +54,40 @@ pub fn settings(data: &[u8]) {
     if let Ok(peer) = whole {
         assert_eq!(peer.webtransport(false), None);
         let _ = peer.webtransport(true);
+    }
+    let (mut pairs, mut rest) = (Vec::new(), payload);
+    while let Some((id, a)) = varint::decode(rest)
+        && let Some((value, b)) = varint::decode(&rest[a..])
+    {
+        pairs.push((id, value));
+        rest = &rest[a + b..];
+    }
+    let stream = settings::control_stream(&pairs);
+    let (&0x00, frame) = stream.split_first().expect("a stream type") else {
+        panic!("not a control stream: {stream:x?}");
+    };
+    let (kind, a) = varint::decode(frame).expect("a frame type");
+    let (length, b) = varint::decode(&frame[a..]).expect("a frame length");
+    let mut body = &frame[a + b..];
+    assert_eq!((kind, length), (frame::SETTINGS, body.len() as u64));
+    let expected = settings::Reader::new(length).and_then(|mut reader| reader.read(&mut &body[..]));
+    let (mut sent, mut events) = (Vec::new(), Vec::new());
+    while let Some((id, a)) = varint::decode(body) {
+        let (value, b) = varint::decode(&body[a..]).expect("a setting's value");
+        sent.push((id, value));
+        body = &body[a + b..];
+    }
+    assert_eq!(sent, pairs);
+    let read = control::Reader::default().read(true, &mut Bytes::copy_from_slice(frame), |event| {
+        events.push(event);
+        Ok(())
+    });
+    match expected {
+        Ok(peer) => {
+            let peer = peer.expect("a whole frame");
+            assert_eq!((read, events), (Ok(()), vec![control::Event::Settings(peer)]));
+        }
+        Err(code) => assert_eq!(read, Err(code)),
     }
 }
 
@@ -391,7 +426,8 @@ pub fn huffman(data: &[u8]) {
     }
 }
 
-/// Capsules read in arbitrary chunks equal those read in one piece, errors included.
+/// Capsules read in arbitrary chunks equal those read in one piece, errors included. The input as
+/// a close reason, repeated, reads back cut only where its next character would pass 1024 bytes.
 pub fn capsules(data: &[u8]) {
     let Some((&seed, data)) = data.split_first() else {
         return;
@@ -410,9 +446,29 @@ pub fn capsules(data: &[u8]) {
         read(&|_| data.len()),
         read(&|index| (index * usize::from(seed)) % 13 + 1)
     );
+    let reason = String::from_utf8_lossy(data).repeat(usize::from(seed % 16) + 1);
+    let code = data
+        .iter()
+        .fold(u32::from(seed), |code, &byte| code.rotate_left(5) ^ u32::from(byte));
+    let (mut reader, mut input) = (capsule::Reader::default(), Bytes::from(capsule::close(code, &reason)));
+    let closed = reader.read(&mut input);
+    let Ok(Some(capsule::Capsule::Close {
+        code: sent,
+        reason: kept,
+    })) = closed
+    else {
+        panic!("{closed:?}");
+    };
+    assert!(sent == code && input.is_empty() && reader.at_boundary());
+    assert!(reason.starts_with(&kept) && kept.len() <= capsule::MAX_REASON);
+    if let Some(next) = reason[kept.len()..].chars().next() {
+        assert!(kept.len() + next.len_utf8() > capsule::MAX_REASON);
+    }
 }
 
-/// A stream's type and session read byte by byte match one read, and datagrams route to CONNECT stream IDs.
+/// A stream's type and session read byte by byte match one read, and datagrams route to CONNECT
+/// stream IDs. Application codes map to HTTP/3 codes and back: each 32-bit code to one codepoint
+/// that is not reserved, and each codepoint in the range is reserved or the image of one code.
 pub fn webtransport_ids(data: &[u8]) {
     let read = |chunk: &dyn Fn(usize) -> usize| {
         let mut header = frame::StreamType::default();
@@ -431,6 +487,23 @@ pub fn webtransport_ids(data: &[u8]) {
     if let Ok((session, payload)) = capsule::datagram(Bytes::copy_from_slice(data)) {
         assert!(session.is_multiple_of(4) && session < 1 << 62 && payload.len() < data.len());
     }
+    let Some(&[a, b, c, d]) = data.first_chunk() else {
+        return;
+    };
+    let application = u32::from_be_bytes([a, b, c, d]);
+    let http = code::to_http(application);
+    assert!(!(http - 0x21).is_multiple_of(0x1f) && http <= code::WT_LAST);
+    assert_eq!(code::from_http(http), Some(application));
+    let near = code::WT_FIRST + u64::from(application);
+    match code::from_http(near) {
+        Some(application) => assert_eq!(code::to_http(application), near),
+        None => assert!(near > code::WT_LAST || (near - 0x21).is_multiple_of(0x1f)),
+    }
+    match WtCode::from_http(Code(near)) {
+        Some(small) => assert_eq!(small.to_http(), Code(near)),
+        None => assert!(code::from_http(near).is_none_or(|application| application > 0xff)),
+    }
+    assert_eq!(WtCode::from_http(WtCode(a).to_http()), Some(WtCode(a)));
 }
 
 /// A request stream read in arbitrary chunks agrees with a whole-input reference model.

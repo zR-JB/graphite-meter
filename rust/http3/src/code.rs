@@ -26,8 +26,8 @@ impl Code {
     pub const WT_SESSION_GONE: Self = Self(0x170d7b68);
 }
 
-const WT_FIRST: u64 = 0x52e4a40fa8db;
-const WT_LAST: u64 = 0x52e5ac983162;
+pub(crate) const WT_FIRST: u64 = 0x52e4a40fa8db;
+pub(crate) const WT_LAST: u64 = 0x52e5ac983162;
 
 /// A WebTransport application error code. Firefox reads only 8 bits, so codes above 255 are unrepresentable.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,11 +45,11 @@ impl WtCode {
 }
 
 /// The draft's mapping skips one reserved codepoint every 0x1f.
-fn to_http(code: u32) -> u64 {
+pub(crate) fn to_http(code: u32) -> u64 {
     WT_FIRST + u64::from(code) + u64::from(code) / 0x1e
 }
 
-fn from_http(code: u64) -> Option<u32> {
+pub(crate) fn from_http(code: u64) -> Option<u32> {
     if !(WT_FIRST..=WT_LAST).contains(&code) || (code - 0x21).is_multiple_of(0x1f) {
         return None;
     }
