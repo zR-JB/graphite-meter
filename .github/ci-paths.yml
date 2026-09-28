@@ -34,6 +34,7 @@ deps:
   - 'client/bun.lock'
   - 'client/bunfig.toml'
 
+# Every input of the Rust image build, which the policy checks against Dockerfile.rust.
 rust:
   - *workflow
   - 'rust/**'
@@ -42,6 +43,9 @@ rust:
   - 'client/**'
   - 'legal/**'
   - 'container/Dockerfile.rust'
+  - '.dockerignore'
+  - 'LICENSE'
+  - 'COPYRIGHT'
 
 # Inputs of the Rust release exports, their staging and their verification.
 rust-release:
@@ -67,18 +71,28 @@ rust-release:
   - 'rust/legal_build.rs'
   - 'rust/rust-toolchain.toml'
 
-# Inputs that can change what a macOS TUI links or imports, or how its notices are checked.
+# Inputs that can change what a macOS TUI compiles, links or imports, or how its notices are
+# checked: the TUI's crates, and every script module packaging reaches, which the policy checks.
 darwin:
   - '.github/workflows/ci.yml'
   - '.github/ci-paths.yml'
   - 'mise.toml'
   - 'mise.lock'
+  - 'scripts/__init__.py'
+  - 'scripts/ci/__init__.py'
+  - 'scripts/ci/github_api.py'
   - 'scripts/legal/**'
   - 'scripts/package-rust.py'
   - 'scripts/tui-targets.txt'
   - 'legal/rust-*.json'
+  - 'legal/manual/**'
   - 'rust/Cargo.lock'
   - 'rust/Cargo.toml'
   - 'rust/*/Cargo.toml'
   - 'rust/*/build.rs'
+  - 'rust/legal_build.rs'
   - 'rust/rust-toolchain.toml'
+  - 'rust/client/**'
+  - 'rust/core/**'
+  - 'rust/net/**'
+  - 'rust/http3/**'

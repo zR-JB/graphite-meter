@@ -154,6 +154,12 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "run: cargo test --workspace --test connection_faults quic_downloads -- --ignored\n", "rust-delayed-downloads"),
     (W + "ci.yml", "--target server-artifacts", "--target server", "target server-artifacts"),
     (W + "ci.yml", "rust-release,\n            ", "", r"Gate must need every job: \['rust-release'\]"),
+    (".github/ci-paths.yml", "  - 'container/Dockerfile.rust'\n  - '.dockerignore'\n", "  - 'container/Dockerfile.rust'\n",
+     r"rust misses \['.dockerignore'\]"),
+    ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),
+    (".github/ci-paths.yml", "  - 'scripts/ci/github_api.py'\n", "", r"darwin misses \['scripts/ci/github_api.py'\]"),
+    ("scripts/legal/rust_platform.py", None, "from ..ci import toolchains\n",
+     r"darwin misses \['scripts/ci/toolchains.py'\]"),
 )
 
 
@@ -163,6 +169,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
+        shutil.copytree(ROOT / "scripts", root / "scripts", ignore=shutil.ignore_patterns("__pycache__"))
         for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
                      "rust/rust-toolchain.toml"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)

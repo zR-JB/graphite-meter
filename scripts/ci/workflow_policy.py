@@ -3,10 +3,11 @@
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from .github_api import PEM, TLS_NAME, ControlPlaneError, fail
 from .toolchains import check as check_toolchain_literals, pin
@@ -17,6 +18,8 @@ WRITE = re.compile(r"(?<![\w-])(?!permission-)([a-z-]+):\s*write\b")
 STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
+# The macOS TUIs are packaged by these scripts and every module they import or run with -m.
+DARWIN_SCRIPTS = ("scripts/package-rust.py",)
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},
@@ -251,6 +254,61 @@ def check_ci(root: Path) -> None:
         fail(f"CI Gate must need every job: {missing}")
 
 
+def path_filters(text: str) -> dict[str, list[str]]:
+    """The globs of each .github/ci-paths.yml filter, with its aliases expanded."""
+    filters: dict[str, list[str]] = {}
+    anchors: dict[str, list[str]] = {}
+    current: list[str] = []
+    for line in text.splitlines():
+        if match := re.fullmatch(r"([\w-]+):(?: &([\w-]+))?", line):
+            current = filters[match[1]] = []
+            if match[2]:
+                anchors[match[2]] = current
+        elif match := re.fullmatch(r"  - '([^']+)'|  - \*([\w-]+)", line):
+            current.extend([match[1]] if match[1] else anchors[match[2]])
+    return filters
+
+
+def script_modules(root: Path, scripts: tuple[str, ...]) -> set[str]:
+    """The repository files `scripts` load: modules they import or run with -m, and their packages."""
+    found: set[str] = set()
+    pending = [root / script for script in scripts]
+    while pending:
+        path = pending.pop()
+        if (relative := path.relative_to(root).as_posix()) in found:
+            continue
+        found.add(relative)
+        package = list(path.relative_to(root).parent.parts)
+        modules: list[list[str]] = []
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                base = package[:len(package) + 1 - node.level] if node.level else []
+                base = base + (node.module.split(".") if node.module else [])
+                modules += [base, *(base + [alias.name] for alias in node.names)]
+            elif isinstance(node, ast.Import):
+                modules += [alias.name.split(".") for alias in node.names]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and re.fullmatch(
+                    r"scripts(?:\.\w+)+", node.value):
+                modules.append(node.value.split("."))
+        for parts in modules:
+            for depth in range(1, len(parts) + 1):
+                prefix = root.joinpath(*parts[:depth])
+                pending += [file for file in (prefix / "__init__.py", prefix.with_suffix(".py"))
+                            if file.is_file() and (depth == len(parts) or file.name == "__init__.py")]
+    return found
+
+
+def check_paths(root: Path) -> None:
+    """PRs that change an input of the Rust image or of the macOS TUIs select the jobs that build them."""
+    filters = path_filters(read(root, ".github/ci-paths.yml"))
+    image = [source + "x" if source.endswith("/") else source for line in re.findall(
+        r"(?m)^COPY (?!--)(.+)$", read(root, "container/Dockerfile.rust")) for source in line.split()[:-1]]
+    for name, inputs in (("rust", [".dockerignore", *image]), ("darwin", sorted(script_modules(root, DARWIN_SCRIPTS)))):
+        if missing := [path for path in inputs
+                       if not any(PurePosixPath(path).full_match(glob) for glob in filters.get(name, []))]:
+            fail(f".github/ci-paths.yml {name} misses {missing}")
+
+
 def check_certificates(root: Path) -> None:
     listed = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=False)
     if listed.returncode == 0:
@@ -294,6 +352,7 @@ def check_repository(root: Path = ROOT) -> None:
     check_actions(root)
     check_workflows(root)
     check_ci(root)
+    check_paths(root)
     check_certificates(root)
 
 
