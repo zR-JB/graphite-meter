@@ -176,33 +176,7 @@ impl Ui {
             ]
         } else {
             let field = self.fields()[self.rows.selected().unwrap_or(0)];
-            use super::setup::Field;
-            let action = if field.stage().is_some() || matches!(field, Field::LoadedLatency | Field::Insecure) {
-                "Space toggle"
-            } else {
-                match field {
-                    Field::Servers => "Enter choose servers",
-                    Field::Advanced => "Enter show/hide",
-                    Field::Url
-                    | Field::ThroughputOrigin
-                    | Field::LatencyOrigin
-                    | Field::Streams
-                    | Field::AutoStreams => "Enter edit",
-                    Field::Warmup => "←/→ 0.1 s",
-                    _ => "←/→ choose",
-                }
-            };
-            vec![
-                action,
-                if field.stage().is_some() {
-                    "←/→ 1 s"
-                } else {
-                    "Tab focus"
-                },
-                "r Start test",
-                "? keys",
-                "q quit",
-            ]
+            [field.hints(), &["r Start test", "? keys", "q quit"][..]].concat()
         };
         let width = usize::from(regions[2].width);
         let mut lines = if self.help {

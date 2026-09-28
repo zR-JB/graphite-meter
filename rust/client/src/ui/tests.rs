@@ -172,6 +172,57 @@ fn setup_keys_work_during_the_path_check() {
     assert!(!ui.live, "a check after the run started returns to setup");
 }
 
+#[test]
+fn enter_edits_stage_and_warmup_durations_like_go() {
+    let (commands, _received) = mpsc::channel(4);
+    let mut ui = Ui::new(Config::default(), Snapshot::default());
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    ui.advanced = true;
+    for (field, typed, expected) in [
+        (Field::DownloadStage, "12", Ok(Duration::from_secs(12))),
+        (Field::DownloadStage, "1.5m", Ok(Duration::from_secs(90))),
+        (Field::DownloadStage, "0", Err("Download must be from 1 s to 300 s")),
+        (Field::DownloadStage, "6m", Err("Download must be from 1 s to 300 s")),
+        (Field::DownloadStage, "soon", Err("use a duration like 800ms")),
+        (Field::Warmup, "0", Ok(Duration::ZERO)),
+        (Field::Warmup, "800ms", Ok(Duration::from_millis(800))),
+        (Field::Warmup, "5s", Err("Warmup must be from 0 s to 4 s")),
+    ] {
+        let row = ui.fields().iter().position(|shown| *shown == field);
+        ui.rows.select(row);
+        press(&mut ui, KeyCode::Enter);
+        let opened = ui.edit.as_ref().map(|edit| edit.text());
+        assert!(
+            opened.as_ref().is_some_and(|text| text.ends_with('s')),
+            "{typed}: {opened:?}"
+        );
+        ui.edit = Some(Edit::new(field, typed.into()));
+        press(&mut ui, KeyCode::Enter);
+        let duration = match field {
+            Field::Warmup => ui.config.warmup,
+            _ => ui.config.download_duration,
+        };
+        match expected {
+            Ok(expected) => assert!(ui.edit.is_none() && duration == expected, "{typed}: {duration:?}"),
+            Err(error) => {
+                assert!(
+                    ui.edit.is_some() && ui.notice.starts_with(error),
+                    "{typed}: {}",
+                    ui.notice
+                );
+                press(&mut ui, KeyCode::Esc);
+            }
+        }
+    }
+    let download = ui.fields().iter().position(|shown| *shown == Field::DownloadStage);
+    ui.rows.select(download);
+    press(&mut ui, KeyCode::Char(' '));
+    assert!(
+        !ui.config.stages.contains(&Stage::Download),
+        "space turns the stage off"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn path_settings_are_checked_again_once_changes_settle() {
     use graphite_meter_core::discovery::ThroughputTransport;

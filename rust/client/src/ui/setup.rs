@@ -4,9 +4,13 @@ use crate::{Error, config::Config, model::Stage, vocabulary::CADENCES};
 use crossterm::event::KeyCode;
 use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    duration::parse_go_duration,
     origin::canonical_origin,
 };
-use std::time::Duration;
+use std::{ops::RangeInclusive, time::Duration};
+
+const STAGE: RangeInclusive<Duration> = Duration::from_secs(1)..=Duration::from_secs(300);
+const WARMUP: RangeInclusive<Duration> = Duration::ZERO..=Duration::from_secs(4);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Field {
@@ -61,25 +65,20 @@ impl Ui {
     pub(super) fn change_field(&mut self, direction: isize) {
         let field = self.fields()[self.rows.selected().unwrap_or(0)];
         if let Some(stage) = field.stage() {
-            let duration = match stage {
-                Stage::Latency => &mut self.config.latency_duration,
-                Stage::Download => &mut self.config.download_duration,
-                Stage::Upload => &mut self.config.upload_duration,
-                Stage::Bidirectional => &mut self.config.bidirectional_duration,
-            };
+            let duration = stage_duration(&mut self.config, stage);
             *duration = if direction > 0 {
                 duration.saturating_add(Duration::from_secs(1))
             } else {
                 duration.saturating_sub(Duration::from_secs(1))
             }
-            .clamp(Duration::from_secs(1), Duration::from_secs(300));
+            .clamp(*STAGE.start(), *STAGE.end());
         } else if field == Field::Warmup {
             self.config.warmup = if direction > 0 {
                 self.config.warmup.saturating_add(Duration::from_millis(100))
             } else {
                 self.config.warmup.saturating_sub(Duration::from_millis(100))
             }
-            .min(Duration::from_secs(4));
+            .min(*WARMUP.end());
         } else {
             let cycles = if direction > 0 {
                 1
@@ -96,6 +95,45 @@ impl Ui {
             }
         }
     }
+    /// Space turns a stage on or off and otherwise acts like Enter, as in Go.
+    pub(super) fn toggle(&mut self) {
+        let field = self.rows.selected().and_then(|index| self.fields().get(index));
+        let Some(stage) = field.and_then(|field| field.stage()) else {
+            return self.activate();
+        };
+        if self.config.stages.contains(&stage) {
+            self.config.stages.retain(|existing| *existing != stage);
+        } else {
+            self.config.stages.push(stage);
+            self.config.stages.sort_unstable();
+        }
+    }
+}
+
+fn stage_duration(config: &mut Config, stage: Stage) -> &mut Duration {
+    match stage {
+        Stage::Latency => &mut config.latency_duration,
+        Stage::Download => &mut config.download_duration,
+        Stage::Upload => &mut config.upload_duration,
+        Stage::Bidirectional => &mut config.bidirectional_duration,
+    }
+}
+
+/// As in the Go client, a bare number is seconds and anything else a Go duration.
+fn duration(value: &str, label: &str, bounds: RangeInclusive<Duration>) -> Result<Duration, Error> {
+    let nanos = match value.parse::<f64>() {
+        Ok(seconds) => parse_go_duration(&format!("{seconds}s")),
+        Err(_) => parse_go_duration(value),
+    }
+    .map_err(|_| "use a duration like 800ms, 4s, or 1m; a bare number is seconds")?;
+    u64::try_from(nanos)
+        .map(Duration::from_nanos)
+        .ok()
+        .filter(|duration| bounds.contains(duration))
+        .ok_or_else(|| {
+            let (start, end) = (seconds(*bounds.start()), seconds(*bounds.end()));
+            format!("{label} must be from {start} s to {end} s").into()
+        })
 }
 
 impl Field {
@@ -136,6 +174,22 @@ impl Field {
             _ => self.term().explanation,
         }
     }
+    /// Footer keys for this row, before those every row shares.
+    pub(super) fn hints(self) -> &'static [&'static str] {
+        match self {
+            Self::LatencyStage | Self::DownloadStage | Self::UploadStage | Self::BidiStage => {
+                &["Space toggle", "←/→ 1 s", "Enter edit"]
+            }
+            Self::LoadedLatency | Self::Insecure => &["Space toggle", "Tab focus"],
+            Self::Servers => &["Enter choose servers", "Tab focus"],
+            Self::Advanced => &["Enter show/hide", "Tab focus"],
+            Self::Url | Self::ThroughputOrigin | Self::LatencyOrigin | Self::Streams | Self::AutoStreams => {
+                &["Enter edit", "Tab focus"]
+            }
+            Self::Warmup => &["←/→ 0.1 s", "Enter edit"],
+            _ => &["←/→ choose", "Tab focus"],
+        }
+    }
     pub(super) fn stage(self) -> Option<Stage> {
         match self {
             Self::LatencyStage => Some(Stage::Latency),
@@ -150,7 +204,7 @@ impl Field {
             return format!(
                 "{} · {} s",
                 on_off(config.stages.contains(&stage)),
-                config.duration(stage).as_secs()
+                seconds(config.duration(stage))
             );
         }
         match self {
@@ -281,12 +335,7 @@ impl Ui {
             return;
         };
         if let Some(stage) = field.stage() {
-            if self.config.stages.contains(&stage) {
-                self.config.stages.retain(|existing| *existing != stage);
-            } else {
-                self.config.stages.push(stage);
-                self.config.stages.sort_unstable();
-            }
+            self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.duration(stage)))));
             return;
         }
         match field {
@@ -327,6 +376,7 @@ impl Ui {
             }
             Field::LoadedLatency => self.config.loaded_latency = !self.config.loaded_latency,
             Field::Insecure => self.config.insecure = !self.config.insecure,
+            Field::Warmup => self.edit = Some(Edit::new(field, format!("{}s", seconds(self.config.warmup)))),
             _ => self.edit = Some(Edit::new(field, field.value(&self.config))),
         }
     }
@@ -340,8 +390,11 @@ impl Ui {
             Field::LatencyOrigin => config.latency_origin = origin()?,
             Field::Streams => config.streams = value.parse()?,
             Field::AutoStreams => config.auto_streams = value.parse()?,
-            Field::Warmup => config.warmup = Duration::try_from_secs_f64(value.parse()?)?,
-            _ => return Err("this field is not editable text".into()),
+            Field::Warmup => config.warmup = duration(value, "Warmup", WARMUP)?,
+            _ => match field.stage() {
+                Some(stage) => *stage_duration(&mut config, stage) = duration(value, stage.name(), STAGE)?,
+                None => return Err("this field is not editable text".into()),
+            },
         }
         config.validate_settings()?;
         if field == Field::Url {

@@ -586,7 +586,8 @@ impl Ui {
             KeyCode::Right if !self.live => self.change_field(1),
             KeyCode::Up | KeyCode::Char('k') if !self.live => move_selection(&mut self.rows, field_count, -1),
             KeyCode::Down | KeyCode::Char('j') if !self.live => move_selection(&mut self.rows, field_count, 1),
-            KeyCode::Enter | KeyCode::Char(' ') if !self.live => self.activate(),
+            KeyCode::Enter if !self.live => self.activate(),
+            KeyCode::Char(' ') if !self.live => self.toggle(),
             _ => {}
         }
         self.recheck_if_changed(&before);
