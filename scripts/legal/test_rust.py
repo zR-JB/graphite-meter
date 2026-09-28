@@ -12,9 +12,9 @@ from unittest.mock import patch
 from copy import deepcopy
 
 from scripts.ci.github_api import ControlPlaneError
-from scripts.legal.model import Component, LegalError
+from scripts.legal.model import Component, LegalError, marshal, sha256
 from scripts.legal.rust import add_cargo_sources, artifacts, cargo
-from scripts.legal.rust_platform import link_map, linked, linker_version
+from scripts.legal.rust_platform import SYSROOT, candidate, link_map, linked, linker_version, notice
 
 
 class RustArtifactTests(unittest.TestCase):
@@ -91,6 +91,112 @@ class RustPlatformTests(unittest.TestCase):
         with patch.dict(os.environ, {'CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER': './linker'}):
             with self.assertRaisesRegex(LegalError, 'unreviewed linker'):
                 linker_version('x86_64-unknown-linux-gnu')
+
+
+class RustPlatformRecordTests(unittest.TestCase):
+    NATIVE = SYSROOT + 'lib/rustlib/t/lib/self-contained/libc.a'
+    CRT1 = SYSROOT + 'lib/rustlib/t/lib/self-contained/crt1.o'
+    STD = SYSROOT + 'lib/rustlib/t/lib/libstd-1.rlib'
+    MIT = SYSROOT + 'share/doc/rust/licenses/MIT.txt'
+
+    def setUp(self) -> None:
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.root = Path(scratch.name).resolve()
+        self.sysroot = self.root / 'sysroot'
+        zlib, libc = str(self.root / 'zlib/copyright'), str(self.root / 'libc/copyright')
+        self.files = {
+            SYSROOT + 'share/doc/rust/COPYRIGHT-library.html': '<p>library</p>\n', self.MIT: 'MIT\n',
+            SYSROOT + 'share/doc/rust/licenses/Apache-2.0.txt': 'Apache\n',
+            self.STD: 'std', SYSROOT + 'lib/rustlib/t/lib/libcore-2.rlib': 'core', self.NATIVE: 'libc',
+            zlib: 'zlib notice\n', libc: 'libc notice\n',
+        }
+        for path, content in self.files.items():
+            self.write(path, content)
+        # Every file above is an input; its listing and digest are computed here independently.
+        self.listing = ''.join(f'{path}\t{sha256(self.files[path].encode())}\n' for path in sorted(self.files))
+        self.entry: dict = {
+            'target': 't', 'rustc': 'rustc 1', 'nativeCompiler': 'cc 1', 'systemLibraries': ['libc.so.6'],
+            'reviewDecision': 'approved', 'reviewNotes': 'reviewed', 'description': 'Platform notices.',
+            'nativeInputs': [self.NATIVE],
+            # The record's order, not path order, orders its notices.
+            'notices': {zlib: 'zlib/copyright', libc: 'libc/copyright'},
+            'inputsSha256': sha256(self.listing.encode()),
+        }
+
+    def write(self, path: str, content: str) -> None:
+        local = self.sysroot / path.removeprefix(SYSROOT) if path.startswith(SYSROOT) else Path(path)
+        local.parent.mkdir(parents=True, exist_ok=True)
+        local.write_text(content)
+
+    def facts(self, **changes: object) -> dict:
+        return {'target': 't', 'compiler': 'rustc 1', 'sysroot': self.sysroot,
+                'inputs': {self.NATIVE, self.STD}, 'libraries': {'libc.so.6'}} | changes
+
+    def notice(self, entry: dict | None = None, **changes: object) -> str:
+        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
+            return notice(self.entry if entry is None else entry, **self.facts(**changes))
+
+    def test_notices_are_the_standard_library_texts_then_the_records_in_its_order(self) -> None:
+        self.assertEqual(self.notice(), 'Platform notices.\n'
+                         '\n--- rust-standard-library/COPYRIGHT-library.html ---\n\n<p>library</p>\n'
+                         '\n--- rust-standard-library/Apache-2.0.txt ---\n\nApache\n'
+                         '\n--- rust-standard-library/MIT.txt ---\n\nMIT\n'
+                         '\n--- zlib/copyright ---\n\nzlib notice\n'
+                         '\n--- libc/copyright ---\n\nlibc notice\n')
+
+    def test_any_changed_added_or_missing_input_is_refused(self) -> None:
+        for path, content in self.files.items():
+            with self.subTest(changed=path):
+                self.write(path, content + ' ')
+                with self.assertRaisesRegex(LegalError, 'inputs changed'):
+                    self.notice()
+                self.write(path, content)
+        for path in (SYSROOT + 'lib/rustlib/t/lib/libextra-3.rlib', SYSROOT + 'share/doc/rust/licenses/ISC.txt'):
+            with self.subTest(added=path):
+                self.write(path, 'added')
+                with self.assertRaisesRegex(LegalError, 'inputs changed'):
+                    self.notice()
+                (self.sysroot / path.removeprefix(SYSROOT)).unlink()
+        with self.assertRaisesRegex(LegalError, 'reviewed none'):
+            self.notice({key: value for key, value in self.entry.items() if key != 'inputsSha256'})
+        (self.sysroot / self.NATIVE.removeprefix(SYSROOT)).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.notice()
+
+    def test_a_linked_input_outside_the_rlibs_and_native_inputs_is_refused(self) -> None:
+        for linked_input in (self.CRT1, '/elsewhere/libother.rlib'):
+            with self.subTest(linked=linked_input), self.assertRaisesRegex(LegalError, 'native inputs lack review'):
+                self.notice(inputs={self.STD, linked_input})
+
+    def test_every_review_fact_is_still_required(self) -> None:
+        cases = [(None, {}, 'absent or stale'), ({'rustc': 'rustc 2'}, {}, 'absent or stale'),
+                 ({'reviewDecision': 'pending'}, {}, 'absent or stale'), ({'reviewNotes': ''}, {}, 'absent or stale'),
+                 ({'nativeCompiler': 'cc 2'}, {}, 'native linker toolchain differs'),
+                 ({}, {'libraries': {'libc.so.6', 'libm.so.6'}}, 'system libraries lack review'),
+                 ({'notices': {self.MIT: 'MIT'}}, {}, 'beyond the Rust standard library'),
+                 ({'notices': {str(self.root / 'zlib/copyright'): ''}}, {}, 'each with a name')]
+        for change, facts, message in cases:
+            with self.subTest(change=change, facts=facts), self.assertRaisesRegex(LegalError, message):
+                entry: dict | None = None if change is None else self.entry | change
+                with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
+                    notice(entry, **self.facts(**facts))
+
+    def test_the_candidate_is_the_complete_record_of_this_build_and_its_listing(self) -> None:
+        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
+            record, listing = candidate(self.entry, **self.facts())
+        self.assertEqual(listing, self.listing)
+        # Byte equality also compares the order of the fields and of the notices.
+        self.assertEqual(marshal(record), marshal(self.entry | {'reviewDecision': 'pending', 'reviewNotes': ''}))
+        # A build that links a new native input: the candidate lists it, and approving it passes.
+        self.write(self.CRT1, 'crt1')
+        with patch('scripts.legal.rust_platform.linker_version', return_value='cc 1'):
+            record, listing = candidate(None, **self.facts(inputs={self.STD, self.NATIVE, self.CRT1}))
+        self.assertEqual((record['nativeInputs'], record['notices']), ([self.CRT1, self.NATIVE], {}))
+        self.assertIn(f"{self.CRT1}\t{sha256(b'crt1')}\n", listing)
+        self.assertEqual(record['inputsSha256'], sha256(listing.encode()))
+        approved = record | {'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
+        self.assertIn('--- rust-standard-library/MIT.txt ---', self.notice(approved, inputs={self.STD, self.CRT1}))
 
 
 class RustSourceTests(unittest.TestCase):

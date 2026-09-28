@@ -229,7 +229,9 @@ def main() -> None:
     if args.review_template:
         (output / 'review-candidates.json').write_bytes(marshal(review_candidates(components)))
         (output / 'review-errors.json').write_bytes(marshal(failures))
-        (output / 'platform-candidate.json').write_bytes(marshal(platform.candidate(record, **facts)))
+        candidate, listing = platform.candidate(record, **facts)
+        (output / 'platform-candidate.json').write_bytes(marshal(candidate))
+        (output / 'platform-inputs.txt').write_bytes(listing.encode())
         return
     if failures:
         raise LegalError('Rust dependency notices need review:\n' + '\n'.join(failures))
@@ -238,8 +240,10 @@ def main() -> None:
     try:
         extra = platform.notice(record, **facts)
     except (LegalError, OSError) as error:
-        candidate = marshal(platform.candidate(record, **facts)).decode()
-        raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{candidate}') from error
+        candidate, listing = platform.candidate(record, **facts)
+        # Exiting adds the final line break: the output ends with exactly the listing inputsSha256 hashes.
+        raise LegalError(f'{error}\nUnreviewed platform record of this build:\n{marshal(candidate).decode()}'
+                         'Its inputsSha256 hashes this listing of its inputs:\n' + listing.removesuffix('\n')) from error
     browser_components: list[Component] = []
     browser_provenance: list[Provenance] = []
     staged_assets = None

@@ -87,15 +87,20 @@ pretend custom material is an ordinary MIT dependency to silence the gate.
 ## Rust platform records
 
 Each `rust-platform-*.json` file holds one reviewed record per Rust target of a build
-environment: the Rust sysroot and native startup files a linked executable contains, the
-package texts that cover them, and the system libraries it may import. `scripts.legal.rust`
-reads the linker map of every Rust build and refuses a target whose compiler, linked native
-files or imported libraries differ from its record; the error prints this build's unreviewed
-record, and `--review-template` writes it to `platform-candidate.json`. Review the candidate,
-add a `noticeName` for each package text that covers its native files, approve it and commit
-it to the environment's file. Texts the environment lacks, such as musl's and LLVM's for the
-static musl targets, are committed under `legal/manual` and named by repository path. macOS
-records come from the release request's macOS job, the only environment with Apple's SDK.
+environment: the linked native files beyond the target's sysroot rlibs (`nativeInputs`), the
+package texts that cover them (`notices`, path to notice name), and the system libraries the
+executable may import. The rlibs (`lib/rustlib/<target>/lib/*.rlib`) and the Rust
+standard-library texts (`share/doc/rust/COPYRIGHT-library.html` and `licenses/*`) come from the
+sysroot. `inputsSha256` is the SHA-256 of one `path<TAB>sha256` line per file of all four sets,
+sorted by path. `scripts.legal.rust` reads the linker map of every Rust build and refuses a
+target whose compiler, linked native files, imported libraries or inputs differ from its record;
+the error prints this build's unreviewed record and the listing it hashes, and
+`--review-template` writes them to `platform-candidate.json` and `platform-inputs.txt`. Review
+both, add each package text that covers the native files to `notices`, rerun with that record
+for its digest, then approve it and commit it to the environment's file. Texts the environment
+lacks, such as musl's and LLVM's for the static musl targets, are committed under `legal/manual`
+and named by repository path. macOS records come from the release request's macOS job, the only
+environment with Apple's SDK.
 
 ## Generated files
 

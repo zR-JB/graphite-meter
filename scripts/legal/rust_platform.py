@@ -1,4 +1,9 @@
-"""Reviewed native platform inputs not visible in Cargo's package graph."""
+"""Reviewed native platform inputs not visible in Cargo's package graph.
+
+A record lists the linked inputs beyond the target's sysroot rlibs (`nativeInputs`) and the notice
+texts beyond the Rust standard library's (`notices`); the rlibs and the standard-library texts are
+found in the sysroot by rule. `inputsSha256` hashes the canonical listing of all of these files.
+"""
 from __future__ import annotations
 
 import os
@@ -7,7 +12,7 @@ import subprocess
 from pathlib import Path
 
 from ..ci.github_api import confined_path
-from .model import Json, LegalError, array, obj, read_json, sha256, strings, text
+from .model import Json, LegalError, array, obj, read_json, sha256, string, strings, text
 
 SYSROOT = '$RUST_SYSROOT/'
 IMPORTS = {
@@ -64,6 +69,38 @@ def source(path: str, sysroot: Path) -> Path:
     return sysroot / path.removeprefix(SYSROOT) if path.startswith(SYSROOT) else Path(path)
 
 
+def rlibs(sysroot: Path, target: str) -> set[str]:
+    return {SYSROOT + path.relative_to(sysroot).as_posix()
+            for path in (sysroot / 'lib/rustlib' / target / 'lib').glob('*.rlib')}
+
+
+def own_notices(entry: dict[str, Json] | None) -> dict[str, str]:
+    return {path: string(name) for path, name in obj((entry or {}).get('notices', {})).items()}
+
+
+def notice_names(entry: dict[str, Json] | None, sysroot: Path) -> dict[str, str]:
+    """Every notice text in notice order: the Rust standard library's, named by rule, then the record's."""
+    documents = sysroot / 'share/doc/rust'
+    names = {SYSROOT + path.relative_to(sysroot).as_posix(): 'rust-standard-library/' + path.name
+             for path in [documents / 'COPYRIGHT-library.html', *sorted((documents / 'licenses').iterdir())]}
+    listed = own_notices(entry)
+    if names.keys() & listed.keys() or not all(listed.values()):
+        raise LegalError('record notices must name texts beyond the Rust standard library, each with a name')
+    return names | listed
+
+
+def fingerprint(paths: set[str], sysroot: Path, texts: set[str]) -> tuple[str, dict[str, bytes]]:
+    """The listing inputsSha256 hashes, `path<TAB>sha256<LF>` sorted by path, and the bytes of `texts`."""
+    lines: list[str] = []
+    kept: dict[str, bytes] = {}
+    for path in sorted(paths):
+        data = source(path, sysroot).read_bytes()
+        lines.append(f'{path}\t{sha256(data)}\n')
+        if path in texts:
+            kept[path] = data
+    return ''.join(lines), kept
+
+
 def notice(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot: Path,
            inputs: set[str], libraries: set[str]) -> str:
     if (entry is None or entry.get('rustc') != compiler or entry.get('reviewDecision') != 'approved'
@@ -71,38 +108,28 @@ def notice(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot
         raise LegalError(f'Rust platform review for {target} is absent or stale for this compiler')
     if text(entry, 'nativeCompiler') != linker_version(target):
         raise LegalError('native linker toolchain differs from reviewed platform')
-    reviewed = {text(item, 'path'): item for item in map(obj, array(entry.get('inputs', [])))}
-    if unreviewed := sorted(inputs - reviewed.keys()):
+    reviewed = rlibs(sysroot, target) | set(strings(entry, 'nativeInputs'))
+    if unreviewed := sorted(inputs - reviewed):
         raise LegalError(f'linked native inputs lack review: {unreviewed}')
     if unreviewed := sorted(libraries - set(strings(entry, 'systemLibraries'))):
         raise LegalError(f'imported system libraries lack review: {unreviewed}')
-    output = [text(entry, 'description') + '\n']
-    for path, item in reviewed.items():
-        data = source(path, sysroot).read_bytes()
-        if sha256(data) != text(item, 'sha256'):
-            raise LegalError(f'reviewed Rust platform input changed: {path}')
-        if name := text(item, 'noticeName'):
-            output.append(f'\n--- {name} ---\n\n' + data.decode())
-    if len(output) == 1:
-        raise LegalError('reviewed Rust platform has no notice files')
-    return ''.join(output)
+    names = notice_names(entry, sysroot)
+    listing, texts = fingerprint(reviewed | names.keys(), sysroot, set(names))
+    if (digest := sha256(listing.encode())) != (reviewed_digest := text(entry, 'inputsSha256')):
+        raise LegalError(f'reviewed Rust platform inputs changed: inputsSha256 is {digest}, '
+                         f'reviewed {reviewed_digest or "none"}')
+    return text(entry, 'description') + '\n' + ''.join(
+        f'\n--- {name} ---\n\n' + texts[path].decode() for path, name in names.items())
 
 
 def candidate(entry: dict[str, Json] | None, *, target: str, compiler: str, sysroot: Path,
-              inputs: set[str], libraries: set[str]) -> dict[str, object]:
-    documents = sysroot / 'share/doc/rust'
-    listed: dict[str, str] = {SYSROOT + path.relative_to(sysroot).as_posix(): 'rust-standard-library/' + path.name
-                              for path in [documents / 'COPYRIGHT-library.html', *sorted((documents / 'licenses').iterdir())]}
-    for item in map(obj, array((entry or {}).get('inputs', []))):
-        if text(item, 'noticeName') and not text(item, 'path').startswith(SYSROOT):
-            listed[text(item, 'path')] = text(item, 'noticeName')
-    for path in sorted(inputs) + [SYSROOT + path.relative_to(sysroot).as_posix()
-                                  for path in sorted((sysroot / 'lib/rustlib' / target / 'lib').glob('*.rlib'))]:
-        listed.setdefault(path, '')
+              inputs: set[str], libraries: set[str]) -> tuple[dict[str, object], str]:
+    """This build's unreviewed record, and the listing of its inputs that its inputsSha256 hashes."""
+    rlib = rlibs(sysroot, target)
+    listing, _ = fingerprint(rlib | inputs | notice_names(entry, sysroot).keys(), sysroot, set())
     return {
         'target': target, 'rustc': compiler, 'nativeCompiler': linker_version(target),
         'systemLibraries': sorted(libraries), 'reviewDecision': 'pending', 'reviewNotes': '',
-        'description': text(entry or {}, 'description'),
-        'inputs': [{'path': path, 'sha256': sha256(source(path, sysroot).read_bytes())}
-                   | ({'noticeName': name} if name else {}) for path, name in listed.items()],
-    }
+        'description': text(entry or {}, 'description'), 'nativeInputs': sorted(inputs - rlib),
+        'notices': own_notices(entry), 'inputsSha256': sha256(listing.encode()),
+    }, listing
