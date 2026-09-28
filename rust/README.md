@@ -153,6 +153,14 @@ and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
 requests; HTTPS uses CONNECT. As in Go, `socks5://` and `socks5h://` proxies
 both pass host names to the proxy and log in with the URL's user and password.
 
+The TUI trusts the roots Go 1.27 would: on Linux the first readable file of
+Go's list and every file in its directories, where `SSL_CERT_FILE` replaces only
+the file and `SSL_CERT_DIR` only the directories, and a missing one is skipped;
+on macOS and Windows the platform verifier, unless either variable is set. The
+store loads once, when the first verified TLS connection needs it; cleartext
+paths never read it, and a store without roots fails each TLS connection as
+not trusted instead of the whole client.
+
 Each path check and run opens connections of its own, as Go's client takes new
 transports, and TCP connections probe an idle peer after 30 seconds as Go's
 dialer does; a run within 30 seconds of its check keeps that check's

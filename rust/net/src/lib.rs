@@ -2,7 +2,6 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_core::origin::{Origin, target_origin};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
-use rustls_platform_verifier::BuilderVerifierExt;
 use std::{
     io,
     net::{IpAddr, SocketAddr},
@@ -48,10 +47,10 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
         Some(Ok(upstream)) => {
             let tcp = tcp(&upstream.origin.host, upstream.origin.port_number()).await?;
             let stream: Box<dyn Stream> = if upstream.origin.scheme == "https" {
-                let tls = proxy
-                    .tls
-                    .as_ref()
-                    .ok_or_else(|| io::Error::other("proxy TLS is unavailable"))?;
+                let tls = match &proxy.tls {
+                    Some(tls) => tls.clone(),
+                    None => proxy_tls().await?,
+                };
                 Box::new(tls.connect(server_name(&upstream.origin.host)?, tcp).await?)
             } else {
                 Box::new(tcp)
@@ -353,18 +352,11 @@ impl Proxy {
     pub fn new(http: &str, https: &str, no_proxy: &str) -> Self {
         let upstream = |raw: &str| (!raw.trim().is_empty()).then(|| upstream(raw.trim()));
         let (http, https) = (upstream(http), upstream(https));
-        let tls = [&http, &https]
-            .into_iter()
-            .flatten()
-            .flatten()
-            .any(|upstream| upstream.origin.scheme == "https")
-            .then(proxy_tls)
-            .flatten();
         Self {
             http,
             https,
             bypass: no_proxy.split(',').filter_map(bypass).collect(),
-            tls,
+            tls: None,
         }
     }
 
@@ -491,15 +483,25 @@ fn bypass(entry: &str) -> Option<Bypass> {
     })
 }
 
-fn proxy_tls() -> Option<TlsConnector> {
-    let config = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-        .with_safe_default_protocol_versions()
-        .ok()?
-        .with_platform_verifier()
-        .ok()?
-        .with_no_client_auth();
-    Some(TlsConnector::from(Arc::new(config)))
+/// Verified TLS to an HTTPS proxy, built once when the first connection needs it.
+async fn proxy_tls() -> io::Result<TlsConnector> {
+    static TLS: tokio::sync::OnceCell<TlsConnector> = tokio::sync::OnceCell::const_new();
+    let tls = TLS
+        .get_or_try_init(|| async {
+            let config =
+                rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+                    .with_safe_default_protocol_versions()
+                    .map_err(io::Error::other)?
+                    .dangerous()
+                    .with_custom_certificate_verifier(trust::verifier().await)
+                    .with_no_client_auth();
+            Ok::<_, io::Error>(TlsConnector::from(Arc::new(config)))
+        })
+        .await?;
+    Ok(tls.clone())
 }
+
+pub mod trust;
 
 #[cfg(test)]
 mod tests;

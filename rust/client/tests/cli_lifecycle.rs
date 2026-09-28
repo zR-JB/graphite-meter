@@ -159,6 +159,55 @@ async fn report_runs_a_real_latency_path_and_exits_complete() -> Result<(), Erro
     Ok(())
 }
 
+#[path = "../../test_identity.rs"]
+mod test_identity;
+
+/// As Go, the client runs without a trust store: cleartext paths never load one, and a TLS
+/// connection it cannot verify fails alone, with the certificate's reason.
+#[tokio::test]
+async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> {
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    let nowhere = "/nonexistent/graphite-meter-roots";
+    let run = |origin: &str| {
+        let mut command = client(origin);
+        command.env("SSL_CERT_FILE", nowhere).env("SSL_CERT_DIR", nowhere);
+        tokio::time::timeout(Duration::from_secs(5), command.output())
+    };
+    let (origin, peer) = latency_peer(false).await?;
+    let cleartext = run(&origin).await??;
+    peer.abort();
+    assert_eq!(
+        cleartext.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&cleartext.stderr)
+    );
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    let (certificate, key) = test_identity::generate_identity("localhost")?;
+    let tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
+        vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+        PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+    )?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("https://{}", listener.local_addr()?);
+    let peer = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move { acceptor.accept(socket).await.map(drop) });
+        }
+    });
+    let secure = run(&origin).await??;
+    peer.abort();
+    assert_eq!(secure.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8(secure.stderr)?,
+        "graphite-meter-client: Test could not start: Certificate not trusted: certificate signed by unknown \
+         authority. Turn on Skip TLS verify (-insecure) only for a server you trust.\n"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> {
     let (origin, peer) = latency_peer(true).await?;

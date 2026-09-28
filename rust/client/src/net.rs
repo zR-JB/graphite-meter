@@ -1,5 +1,5 @@
 //! Validated discovery and origin-scoped ephemeral credentials. Redirects never carry authority.
-use crate::Error;
+use crate::{Error, tls::Alpn};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
@@ -61,7 +61,7 @@ pub fn streaming(body: impl Stream<Item = Result<Bytes>> + Send + 'static) -> Bo
 
 struct Connections {
     proxy: Proxy,
-    tls: [TlsConnector; 3],
+    insecure: bool,
     pools: Mutex<HashMap<Key, Arc<Mutex<Pool>>>>,
     maintenance: OnceLock<tokio::task::JoinHandle<()>>,
     ids: AtomicU64,
@@ -206,24 +206,22 @@ async fn until<T>(deadline: Option<tokio::time::Instant>, work: impl Future<Outp
 }
 
 impl Connections {
-    fn new(insecure: bool, proxy: Proxy) -> Result<Self> {
-        let tls = |alpn: &[&[u8]]| -> Result<TlsConnector> {
-            Ok(TlsConnector::from(Arc::new(crate::tls::tcp_config(insecure, alpn)?)))
-        };
-        Ok(Self {
+    /// TLS is set up when an HTTPS connection first needs it.
+    fn new(insecure: bool, proxy: Proxy) -> Self {
+        Self {
             proxy,
-            tls: [tls(&[b"http/1.1"])?, tls(&[b"h2"])?, tls(&[b"h2", b"http/1.1"])?],
+            insecure,
             pools: Mutex::new(HashMap::new()),
             maintenance: OnceLock::new(),
             ids: AtomicU64::new(0),
-        })
+        }
     }
 
     /// The same proxy and TLS settings with no connections yet.
     fn renewed(&self) -> Self {
         Self {
             proxy: self.proxy.clone(),
-            tls: self.tls.clone(),
+            insecure: self.insecure,
             pools: Mutex::new(HashMap::new()),
             maintenance: OnceLock::new(),
             ids: AtomicU64::new(0),
@@ -258,12 +256,16 @@ impl Connections {
 
     async fn dial(&self, origin: &str, protocol: Protocol) -> Result<Sender> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
-        let tls = (target.scheme == "https").then(|| match protocol {
-            Protocol::Http1 => &self.tls[0],
-            Protocol::Http2 => &self.tls[1],
-            _ => &self.tls[2],
-        });
-        let connection = connect(&self.proxy, &target, tls).await?;
+        let alpn = match protocol {
+            Protocol::Http1 => Alpn::Http1,
+            Protocol::Http2 => Alpn::Http2,
+            _ => Alpn::Negotiated,
+        };
+        let tls = match target.scheme.as_str() {
+            "https" => Some(crate::tls::tcp(self.insecure, alpn).await?),
+            _ => None,
+        };
+        let connection = connect(&self.proxy, &target, tls.as_ref()).await?;
         let h2 = !connection.absolute_form
             && match connection.alpn.as_deref() {
                 Some(alpn) => alpn == b"h2",
@@ -518,7 +520,7 @@ impl Http {
             return Err("install a rustls crypto provider before constructing Http".into());
         }
         Ok(Self {
-            connections: Arc::new(Connections::new(insecure, Proxy::from_env())?),
+            connections: Arc::new(Connections::new(insecure, Proxy::from_env())),
             lanes: Lanes::Shared,
             insecure,
             grants: Arc::new(Mutex::new(HashMap::new())),

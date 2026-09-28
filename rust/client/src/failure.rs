@@ -102,6 +102,8 @@ pub fn text(error: &(dyn std::error::Error + 'static)) -> String {
                 Expired | ExpiredContext { .. } | NotValidYet | NotValidYetContext { .. } => {
                     "certificate has expired or is not yet valid".into()
                 }
+                // Its Display is the Debug form, so name the wrapped cause.
+                rustls::CertificateError::Other(other) => clean(&other.0.to_string(), 200),
                 other => clean(&other.to_string(), 200),
             };
             return format!(

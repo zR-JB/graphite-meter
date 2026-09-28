@@ -283,6 +283,96 @@ async fn dialled_connections_probe_idle_peers_like_go() {
 #[path = "../../test_identity.rs"]
 mod test_identity;
 
+/// A directory of its own under the system's temporary directory, removed on drop.
+struct Scratch(std::path::PathBuf);
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("graphite-meter-trust-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+    fn file(&self, name: &str, contents: &str) -> String {
+        let path = self.0.join(name);
+        std::fs::write(&path, contents).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+    fn dir(&self, name: &str) -> String {
+        let path = self.0.join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        path.to_str().unwrap().to_owned()
+    }
+}
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn certificate() -> (String, rustls::pki_types::CertificateDer<'static>) {
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+    let (pem, _) = test_identity::generate_identity("localhost").unwrap();
+    let der = CertificateDer::from_pem_slice(pem.as_bytes()).unwrap();
+    (pem, der)
+}
+
+/// Go's loadOnDiskRoots: SSL_CERT_FILE replaces the file list alone and SSL_CERT_DIR the
+/// directory list alone, so the other defaults still load; missing paths are skipped.
+#[test]
+fn trust_roots_follow_go_ssl_cert_rules() {
+    use std::ffi::OsStr;
+    let scratch = Scratch::new("rules");
+    let [
+        (file_pem, file_root),
+        (bundle_pem, bundle_root),
+        (dir_pem, dir_root),
+        (listed_pem, listed_root),
+    ] = [certificate(), certificate(), certificate(), certificate()];
+    let named = scratch.file("named.pem", &file_pem);
+    let bundle = scratch.file("bundle.pem", &bundle_pem);
+    let defaults = scratch.dir("certs");
+    std::fs::write(format!("{defaults}/root.pem"), &dir_pem).unwrap();
+    let listed = scratch.dir("listed");
+    std::fs::write(format!("{listed}/root.pem"), &listed_pem).unwrap();
+    let missing = format!("{}/missing", scratch.0.display());
+    let files = [missing.as_str(), bundle.as_str(), named.as_str()];
+    let roots = |file: Option<&str>, dirs: Option<&str>| {
+        let (roots, error) = trust::on_disk_roots(file.map(OsStr::new), dirs.map(OsStr::new), &files, &[&defaults]);
+        assert!(error.is_none(), "{error:?}");
+        roots
+    };
+    // Without either variable: the first file that reads, and every default directory.
+    assert_eq!(roots(None, None), [bundle_root.clone(), dir_root.clone()]);
+    // SSL_CERT_FILE keeps the default directories; SSL_CERT_DIR keeps the default files.
+    assert_eq!(roots(Some(&named), None), [file_root.clone(), dir_root.clone()]);
+    let both = format!("{listed}:{missing}");
+    assert_eq!(roots(None, Some(&both)), [bundle_root, listed_root.clone()]);
+    // A missing SSL_CERT_FILE loads no file, yet the directories still load.
+    assert_eq!(roots(Some(&missing), None), [dir_root]);
+    assert_eq!(roots(Some(&named), Some(&listed)), [file_root, listed_root]);
+}
+
+/// c_rehash's links within the directory are skipped, as Go skips them, so each root loads once;
+/// a directory that cannot be read is reported beside whatever did load.
+#[cfg(unix)]
+#[test]
+fn trust_roots_skip_hash_links_and_keep_the_first_failure() {
+    use std::ffi::OsStr;
+    let scratch = Scratch::new("links");
+    let (pem, root) = certificate();
+    let directory = scratch.dir("certs");
+    std::fs::write(format!("{directory}/root.pem"), &pem).unwrap();
+    std::os::unix::fs::symlink("root.pem", format!("{directory}/0123abcd.0")).unwrap();
+    let (roots, error) = trust::on_disk_roots(None, None, &[], &[&directory]);
+    assert_eq!(roots, std::slice::from_ref(&root));
+    assert!(error.is_none());
+    let not_a_directory = scratch.file("plain", &pem);
+    let listed = format!("{not_a_directory}:{directory}");
+    let (roots, error) = trust::on_disk_roots(None, Some(OsStr::new(&listed)), &[], &[]);
+    assert_eq!(roots, [root]);
+    assert!(error.is_some());
+}
+
 #[tokio::test]
 async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};

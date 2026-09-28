@@ -54,8 +54,7 @@ pub(crate) struct Connection {
 impl Connection {
     /// Tries each address in turn; a silent one gets 3 s, so it cannot spend the whole attempt.
     pub(crate) async fn dial(origin: &Origin, insecure: bool) -> Result<(Self, http3::client::SendRequest), Error> {
-        let tls = crate::tls::config(insecure)?;
-        let mut config = quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
+        let mut config = quinn::ClientConfig::new(crate::tls::quic(insecure).await?);
         let mut transport = quinn::TransportConfig::default();
         transport.max_concurrent_bidi_streams(0_u32.into());
         transport.max_concurrent_uni_streams(36_u32.into());

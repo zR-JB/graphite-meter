@@ -514,7 +514,6 @@ dependencies = [
  "noq",
  "ratatui",
  "rustls",
- "rustls-platform-verifier",
  "serde",
  "serde_json",
  "tokio",

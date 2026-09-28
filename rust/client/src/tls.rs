@@ -1,40 +1,86 @@
-//! Shared client TLS trust and signature verification.
+//! Client TLS configurations, built once on first use; cleartext never builds them.
 use crate::Error;
+use quinn::crypto::rustls::QuicClientConfig;
 use rustls::{
     DigitallySignedStruct, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
     pki_types::{CertificateDer, ServerName, UnixTime},
 };
-use rustls_platform_verifier::BuilderVerifierExt;
 use std::sync::Arc;
-pub(crate) fn config(insecure: bool) -> Result<rustls::ClientConfig, Error> {
-    let mut tls = build(insecure, &[&rustls::version::TLS13])?;
-    tls.alpn_protocols = vec![b"h3".to_vec()];
-    Ok(tls)
+use tokio::sync::OnceCell;
+use tokio_rustls::TlsConnector;
+
+/// The protocols a TCP connection offers.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Alpn {
+    Http1,
+    Http2,
+    Negotiated,
 }
 
-pub(crate) fn tcp_config(insecure: bool, alpn: &[&[u8]]) -> Result<rustls::ClientConfig, Error> {
-    let mut tls = build(insecure, rustls::DEFAULT_VERSIONS)?;
-    tls.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
-    Ok(tls)
+/// TCP takes TLS 1.2 and 1.3, as Go's client does; QUIC requires 1.3.
+struct Configs {
+    http1: TlsConnector,
+    http2: TlsConnector,
+    negotiated: TlsConnector,
+    quic: Arc<QuicClientConfig>,
 }
 
-fn build(
-    insecure: bool,
-    versions: &[&'static rustls::SupportedProtocolVersion],
-) -> Result<rustls::ClientConfig, Error> {
-    let provider = Arc::new(crate::crypto::provider());
-    let builder = rustls::ClientConfig::builder_with_provider(provider.clone()).with_protocol_versions(versions)?;
-    let tls = if insecure {
-        builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(InsecureVerifier { provider }))
-            .with_no_client_auth()
+impl Configs {
+    fn new(verifier: Arc<dyn ServerCertVerifier>) -> Result<Self, Error> {
+        let provider = Arc::new(crate::crypto::provider());
+        let build = |versions: &[&'static rustls::SupportedProtocolVersion], alpn: &[&[u8]]| {
+            let mut tls = rustls::ClientConfig::builder_with_provider(provider.clone())
+                .with_protocol_versions(versions)?
+                .dangerous()
+                .with_custom_certificate_verifier(verifier.clone())
+                .with_no_client_auth();
+            tls.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+            Ok::<_, Error>(tls)
+        };
+        let tcp = |alpn: &[&[u8]]| Ok::<_, Error>(TlsConnector::from(Arc::new(build(rustls::DEFAULT_VERSIONS, alpn)?)));
+        Ok(Self {
+            http1: tcp(&[b"http/1.1"])?,
+            http2: tcp(&[b"h2"])?,
+            negotiated: tcp(&[b"h2", b"http/1.1"])?,
+            quic: Arc::new(QuicClientConfig::try_from(build(
+                &[&rustls::version::TLS13],
+                &[b"h3"],
+            )?)?),
+        })
+    }
+}
+
+/// Verified configurations wait for the process's trust store, which loads on first use and
+/// fails each connection it cannot verify; skipping verification loads none.
+async fn configs(insecure: bool) -> Result<&'static Configs, Error> {
+    static VERIFIED: OnceCell<Configs> = OnceCell::const_new();
+    static INSECURE: OnceCell<Configs> = OnceCell::const_new();
+    if insecure {
+        let provider = Arc::new(crate::crypto::provider());
+        INSECURE
+            .get_or_try_init(|| async { Configs::new(Arc::new(InsecureVerifier { provider })) })
+            .await
     } else {
-        builder.with_platform_verifier()?.with_no_client_auth()
-    };
-    Ok(tls)
+        VERIFIED
+            .get_or_try_init(|| async { Configs::new(graphite_meter_net::trust::verifier().await) })
+            .await
+    }
+}
+
+pub(crate) async fn tcp(insecure: bool, alpn: Alpn) -> Result<TlsConnector, Error> {
+    let configs = configs(insecure).await?;
+    Ok(match alpn {
+        Alpn::Http1 => &configs.http1,
+        Alpn::Http2 => &configs.http2,
+        Alpn::Negotiated => &configs.negotiated,
+    }
+    .clone())
+}
+
+pub(crate) async fn quic(insecure: bool) -> Result<Arc<QuicClientConfig>, Error> {
+    Ok(configs(insecure).await?.quic.clone())
 }
 
 /// Explicit opt-in bypasses certificate trust/name checks only. Handshake
@@ -82,5 +128,26 @@ impl ServerCertVerifier for InsecureVerifier {
     }
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.provider.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every dial shares its mode's configurations, so none reloads the trust store.
+    #[tokio::test]
+    async fn configurations_are_built_once_per_mode() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        for insecure in [false, true] {
+            for alpn in [Alpn::Http1, Alpn::Http2, Alpn::Negotiated] {
+                let (first, again) = (tcp(insecure, alpn).await?, tcp(insecure, alpn).await?);
+                assert!(Arc::ptr_eq(first.config(), again.config()), "{alpn:?}");
+            }
+            assert!(Arc::ptr_eq(&quic(insecure).await?, &quic(insecure).await?));
+        }
+        let (verified, skipped) = (tcp(false, Alpn::Http1).await?, tcp(true, Alpn::Http1).await?);
+        assert!(!Arc::ptr_eq(verified.config(), skipped.config()));
+        Ok(())
     }
 }

@@ -330,10 +330,10 @@ async fn connect_ws(
         request.headers_mut().insert(http::header::AUTHORIZATION, authorization);
     }
     // TLS 1.2 and 1.3 as for throughput and in Go; only QUIC requires 1.3.
-    let tls = crate::tls::tcp_config(insecure, &[b"http/1.1"])?;
-    let tls = origin
-        .starts_with("https://")
-        .then(|| tokio_rustls::TlsConnector::from(Arc::new(tls)));
+    let tls = match origin.starts_with("https://") {
+        true => Some(crate::tls::tcp(insecure, crate::tls::Alpn::Http1).await?),
+        false => None,
+    };
     let config = WebSocketConfig::default()
         .read_buffer_size(4096)
         .write_buffer_size(0)
