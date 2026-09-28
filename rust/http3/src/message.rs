@@ -136,4 +136,9 @@ impl Message {
     pub(crate) fn buffered(&self) -> usize {
         self.section.capacity()
     }
+
+    /// Whether the head has been read, so a request may be in processing.
+    pub(crate) fn has_head(&self) -> bool {
+        self.phase != Phase::Head
+    }
 }

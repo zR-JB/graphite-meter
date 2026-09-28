@@ -605,6 +605,37 @@ async fn a_budget_refusal_rejects_only_the_new_request() -> Result<(), TestError
     Ok(())
 }
 
+/// A head the budget cannot hold once its stream was admitted was never processed, so it gets
+/// H3_REQUEST_REJECTED both ways, not the 431 of a head over the size limit: whole, the decoded
+/// head is refused, and in parts the stream cannot buffer the rest.
+#[tokio::test]
+async fn a_head_over_the_budget_rejects_the_admitted_request() -> Result<(), TestError> {
+    let section = section(&[
+        (":method", "GET"),
+        (":scheme", "https"),
+        (":authority", "localhost"),
+        (":path", "/"),
+    ]);
+    let header = [varint(0x01), varint(section.len() as u64)].concat();
+    for part in [&section[..], &section[..1]] {
+        let peers = peers(usize::MAX).await?;
+        let (serving, _) = serve(&peers, |_, _| async { panic!("a refused head reached its route") });
+        let (mut send, mut recv) = peers.client.open_bi().await?;
+        send.write_all(&header).await?;
+        // Admitted: from here the budget holds only the stream's two halves.
+        while peers.budget.used.load(Ordering::Relaxed) == 0 {
+            tokio::task::yield_now().await;
+        }
+        let used = peers.budget.used.load(Ordering::Relaxed);
+        peers.budget.limit.store(used, Ordering::Relaxed);
+        send.write_all(part).await?;
+        assert_eq!(response_bytes(&mut recv).await, Err(Code::H3_REQUEST_REJECTED));
+        assert_eq!(stopped(&send).await, Some(Code::H3_REQUEST_REJECTED));
+        drop(serving);
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), TestError> {
     let peers = peers(usize::MAX).await?;

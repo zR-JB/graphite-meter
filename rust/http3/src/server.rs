@@ -65,7 +65,8 @@ impl Request {
     }
 
     /// Reads and checks the head. A head over 4 KiB gets 431, and CONNECT for anything but
-    /// WebTransport gets 400; both then fail with `Refused`.
+    /// WebTransport gets 400; both then fail with `Refused`. One the budget cannot hold is aborted
+    /// with H3_REQUEST_REJECTED, which lets the client send it again.
     pub async fn resolve(self) -> Result<(http::Request<()>, RequestStream), Error> {
         let mut stream = self.0;
         let resolved = tokio::time::timeout(HEADER_TIMEOUT, async {
@@ -84,7 +85,7 @@ impl Request {
                                 stream.recv.content_length(head.content_length);
                                 return Ok(request);
                             }
-                            None => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+                            None => return Err(stream.recv_abort(Code::H3_REQUEST_REJECTED)),
                         }
                     }
                     Err(Invalid::TooLarge) => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,

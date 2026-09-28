@@ -172,7 +172,13 @@ impl RecvHalf {
         loop {
             let event = self.message.next(&mut self.input);
             if !self.charge.resize(size_of::<Self>() + self.message.buffered()) {
-                return Poll::Ready(Err(self.abort(Code::H3_EXCESSIVE_LOAD)));
+                // Refused before its head is read, a request was never processed (RFC 9114 §4.1.1).
+                let refusal = if self.message.has_head() {
+                    Code::H3_EXCESSIVE_LOAD
+                } else {
+                    Code::H3_REQUEST_REJECTED
+                };
+                return Poll::Ready(Err(self.abort(refusal)));
             }
             match event {
                 Err(code) => return Poll::Ready(Err(self.abort(code))),
