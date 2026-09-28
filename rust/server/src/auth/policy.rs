@@ -306,9 +306,7 @@ impl Policy {
 
     fn browser_preflight(&self, headers: &HeaderMap) -> Result<HeaderMap, Refusal> {
         let origin = unique_header(headers, header::ORIGIN.as_str()).ok_or(Refusal::Forbidden)?;
-        let raw = origin.to_str().map_err(|_| Refusal::Forbidden)?;
-        if !raw.starts_with("https://")
-            || canonical_origin(raw).ok().as_deref() != Some(raw)
+        if !origin.to_str().is_ok_and(super::secure_browser_origin)
             || text(headers, header::ACCESS_CONTROL_REQUEST_METHOD.as_str()) != Some("POST")
             || !text(headers, header::ACCESS_CONTROL_REQUEST_HEADERS.as_str()).is_some_and(|value| {
                 value

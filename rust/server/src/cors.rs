@@ -1,7 +1,7 @@
 //! Browser response visibility, separate from request authentication.
 
-use crate::route;
-use graphite_meter_core::{origin::canonical_origin, route::Route};
+use crate::{auth::secure_browser_origin, route};
+use graphite_meter_core::route::Route;
 use http::{HeaderMap, HeaderValue, header};
 
 /// The caller must authenticate an actual request before selecting its access.
@@ -96,11 +96,8 @@ pub fn authenticated_preflight<'a>(
     }
     let origin = unique(request, header::ORIGIN)?;
     let same_origin = origin == public_origin;
-    if !same_origin {
-        let raw = origin.to_str().ok()?;
-        if route == Route::Servers || !raw.starts_with("https://") || canonical_origin(raw).ok()?.as_str() != raw {
-            return None;
-        }
+    if !same_origin && (route == Route::Servers || !origin.to_str().is_ok_and(secure_browser_origin)) {
+        return None;
     }
 
     let requested_headers = match unique(request, header::ACCESS_CONTROL_REQUEST_HEADERS) {

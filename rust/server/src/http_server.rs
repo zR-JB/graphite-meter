@@ -846,11 +846,7 @@ impl HttpServer {
                 if origin == public {
                     Access::Cookie(origin).apply_response(response.headers_mut());
                 } else if graphite_meter_core::route::lookup(request.uri().path()).is_some()
-                    && origin.to_str().ok().is_some_and(|raw| {
-                        raw.starts_with("https://")
-                            && graphite_meter_core::origin::canonical_origin(raw)
-                                .is_ok_and(|canonical| canonical == raw)
-                    })
+                    && origin.to_str().is_ok_and(crate::auth::secure_browser_origin)
                 {
                     Access::Bearer(origin).apply_response(response.headers_mut());
                 }
