@@ -213,6 +213,7 @@ The workspace pins Rust 1.98.1. From the repository root:
 
 ```sh
 mise run rust-check
+mise run rust-check-targets  # needs gcc-mingw-w64-x86-64-win32 and mingw-w64-x86-64-dev
 mise run rust-format
 python3 rust/tests/server_interop.py
 python3 rust/tests/client_interop.py

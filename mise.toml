@@ -458,6 +458,17 @@ run = [
   "cargo nextest run --workspace --all-targets --locked",
 ]
 
+[tasks.rust-check-targets]
+description = "Check the Windows and musl TUIs, the HTTP/3 codec without I/O, and build the fuzz targets (needs mingw-w64)"
+dir = "rust"
+env = { CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "x86_64-linux-gnu-gcc" }
+run = [
+  "rustup target add x86_64-pc-windows-gnu x86_64-unknown-linux-musl",
+  "cargo check --locked -p graphite-meter-client --target x86_64-pc-windows-gnu --target x86_64-unknown-linux-musl",
+  "cargo check --locked -p graphite-meter-http3 --no-default-features",
+  "RUSTFLAGS='--cfg fuzzing' cargo build --locked --manifest-path http3/fuzz/Cargo.toml",
+]
+
 [tasks.rust-fuzz]
 description = "Fuzz one HTTP/3 codec target with libFuzzer on the pinned stable toolchain"
 dir = "rust/http3/fuzz"
