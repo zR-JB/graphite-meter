@@ -2,8 +2,10 @@
 
 use super::{AuthLease, SessionStore};
 use crate::{
+    client_address::unique_header,
     config::{AuthMode, ConfigError},
     cors::{self, Access},
+    http_server::query,
 };
 use graphite_meter_core::{
     origin::{canonical_origin, target_origin},
@@ -380,12 +382,6 @@ pub fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     found.map(|value| std::str::from_utf8(value).expect("cookie values are ASCII"))
 }
 
-fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .find(|(key, _)| key == name)
-        .map(|(_, value)| value.into_owned())
-}
-
 fn authority<B>(request: &Request<B>) -> Option<&str> {
     let host = if request.headers().contains_key(header::HOST) {
         Some(unique_header(request.headers(), header::HOST.as_str())?.to_str().ok()?)
@@ -405,12 +401,6 @@ fn text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
         None if headers.contains_key(name) => None,
         None => Some(""),
     }
-}
-
-fn unique_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a HeaderValue> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next()?;
-    values.next().is_none().then_some(value)
 }
 
 fn single_header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {

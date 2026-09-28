@@ -866,7 +866,7 @@ impl HttpServer {
                 return response;
             }
         };
-        let count = download_bytes(request.uri().query().unwrap_or_default());
+        let count = download_bytes(request);
         let mut body = ResponseBody {
             block: self.download_block.clone(),
             remaining: count,
@@ -950,11 +950,14 @@ impl Operation {
     }
 }
 
-fn download_bytes(query: &str) -> u64 {
-    let value = form_urlencoded::parse(query.as_bytes())
-        .find(|(key, _)| key == "bytes")
-        .map(|(_, value)| value);
-    value
+pub(crate) fn query<B>(request: &Request<B>, name: &str) -> Option<String> {
+    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value.into_owned())
+}
+
+fn download_bytes<B>(request: &Request<B>) -> u64 {
+    query(request, "bytes")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 0)
         .map_or(DEFAULT_DOWNLOAD_BYTES, |value| (value as u64).min(MAX_DOWNLOAD_BYTES))

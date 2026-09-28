@@ -15,7 +15,7 @@ impl HttpServer {
     }
 
     pub(super) fn upload_control(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        let id = upload_id(request);
+        let id = query(request, "id").unwrap_or_default();
         match request.uri().path() {
             "/upload/session" => match self.uploads.mint() {
                 Ok(id) => json_response(&serde_json::json!({"uploadId": id})),
@@ -102,7 +102,7 @@ impl HttpServer {
             .lock()
             .expect("connection operations poisoned")
             .push(operation.clone());
-        let mut lane = match self.uploads.begin(&upload_id(&request), owner) {
+        let mut lane = match self.uploads.begin(&query(&request, "id").unwrap_or_default(), owner) {
             Ok(lane) => lane,
             Err(error) => {
                 let mut response = refusal(error);
@@ -142,13 +142,6 @@ impl HttpServer {
         attach_operation(&mut response, operation);
         Ok(response)
     }
-}
-
-fn upload_id<B>(request: &Request<B>) -> String {
-    form_urlencoded::parse(request.uri().query().unwrap_or_default().as_bytes())
-        .find(|(key, _)| key == "id")
-        .map(|(_, value)| value.into_owned())
-        .unwrap_or_default()
 }
 
 fn attach_operation(response: &mut Response<ResponseBody>, operation: Arc<Mutex<Operation>>) {
