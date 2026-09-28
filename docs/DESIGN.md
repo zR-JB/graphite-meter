@@ -151,14 +151,18 @@ hue, never by a boxed icon.
 ## Components
 
 - **Instrument** (`GaugePanel`): the dial and the latency card share the top and take the height left over; the run
-  bar and three stage cards keep theirs. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen
-  scrolls rather than overlapping rows.
+  bar and three stage cards keep theirs. On a portrait screen, where the dial is bound by its width, the two share the
+  width evenly. Narrow, it stacks: dial, run bar, stage cards, latency. A tight screen scrolls rather than
+  overlapping rows. On a phone the dial takes about a third of the screen, so the running stage's card, its value and
+  its graph share the first screen with it.
 - **Server lens** (`ServerLens`, `ServerScope quiet`): with several servers, one quiet field over the instrument
   (All servers or one) drives the stage cards and which server's latency is shown once the run finishes. History's
   detail has its own.
 - **Stage card** (`ResultSummary`): a rule and wash in the stage hue; the name and a status word when not complete;
   the value (bidirectional: ↓ and ↑ in their own hues); the wire rate or a failure's reason; the graph; then facts:
-  Peak, Stability, Down + up, Transferred, wrapping to the card's width. A saved result has no graph row.
+  Peak, Stability, Down + up, Transferred, in columns of at least 84 px, so a phone's card holds three to a row. A
+  saved result has no graph row. On a phone the cards stack, and a card that has not run, or is done while the run
+  goes on, folds to its name and value; the running card and every card of a finished run are whole.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
@@ -168,9 +172,13 @@ hue, never by a boxed icon.
   then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
   tick, latest reply while live) and the added latency in its hue. Loaded rows carry the idle baseline and a span
   from it to their median. Rows share the card's height; narrow cards put the idle facts in one line above.
-- **Run bar**: the stage chips and the run button on one line. A chip is a switch before a run (filled bead on,
-  ring off), shows progress as a line and a wash while its stage runs, and a check once complete. The run button is
-  the one ink button, sentence case, with the estimate as a quiet suffix; Stop steps back to an outline.
+- **Run bar**: the stage chips and the run button on one line; on a phone the chips share one row in equal columns
+  and the run button spans the row under them at 44 px. A chip whose stage can still change is a switch drawn as an
+  ink control (`.btn`): a plate and a filled bead when on, its edge alone and a ring bead when off; hover strengthens
+  the edge and adds a wash, a press deepens the wash. A stage the run has reached locks its chip, which drops the
+  plate and shows progress instead: a line and a wash while its stage runs, and a check once complete (on a phone
+  the card says so). The run button is the one ink button, sentence case, with the estimate as a quiet suffix; Stop
+  steps back to an outline.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable; the ring or check
   alone marks the choice. Unavailable choices fold into one row.
@@ -196,8 +204,8 @@ hue, never by a boxed icon.
 | `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                         |
 | Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark             |
 | `.btn`                   | 32             | 8                  | control         | quiet: no ring, hover wash; disabled 0.5             |
-| Run button               | 40             | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
-| Stage chip               | 36 (32 narrow) | 8                  | 13 px, name 600 | on: filled bead; running: hue wash and progress line |
+| Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
+| Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, filled bead; off: edge; running: hue wash |
 | `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |
 | Switch                   | 22 × 38        | full               | row label       | on: ink track                                        |
 | Check, radio             | 18             | 4, full            | —               | ink fill or ring                                     |

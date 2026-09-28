@@ -337,6 +337,21 @@
         / minmax(0, 1fr);
     }
   }
+  /* Portrait, the dial is bound by its width, so it and the latency card share the width evenly. */
+  @media (orientation: portrait) {
+    @container viz (min-width: 760px) {
+      .instrument:has(.latency-slot) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  }
+  /* A phone keeps the dial compact, so the running stage's card shares the first screen with it. */
+  @container viz (max-width: 520px) {
+    .instrument {
+      grid-template-rows: clamp(232px, 32svh, 300px) repeat(3, auto);
+      row-gap: var(--space-3);
+    }
+  }
   .dial {
     grid-area: dial;
     position: relative;
@@ -364,6 +379,14 @@
     align-items: center;
     justify-content: center;
     gap: var(--space-3) var(--space-4);
+  }
+  /* A phone stacks them: the chips' row, then the run button across it. */
+  @container viz (max-width: 520px) {
+    .run-bar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--space-2);
+    }
   }
   .server-indicator {
     display: flex;

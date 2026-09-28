@@ -230,4 +230,5 @@
   details={details ?? store.serverDetails}
   issues={view.shown.issues}
   scope={details ? shown : ""}
+  running={store.isRunning}
 />
