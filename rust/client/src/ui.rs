@@ -179,6 +179,8 @@ struct Ui {
     config: Config,
     requested: Config,
     snapshot: Snapshot,
+    /// The results a run again replaces, shown again if it never starts.
+    previous: Option<Snapshot>,
     theme: Theme,
     advanced: bool,
     rows: ListState,
@@ -216,6 +218,7 @@ impl Ui {
             requested: config.clone(),
             config,
             snapshot,
+            previous: None,
             theme: Theme::terminal(),
             advanced: false,
             rows,
@@ -297,6 +300,25 @@ impl Ui {
             self.latency_pick = None;
         }
         self.received_at = tokio::time::Instant::now();
+        // As in Go, a run that never starts leaves the last results, or setup, in place.
+        if self.live
+            && !self.quitting
+            && matches!(snapshot.phase, Phase::Failed | Phase::Cancelled)
+            && !started(&snapshot)
+        {
+            if snapshot.phase == Phase::Cancelled {
+                self.notice = "Test stopped before it started.".into();
+            }
+            match self.previous.take() {
+                Some(previous) => {
+                    snapshot = Snapshot {
+                        error: snapshot.error,
+                        ..previous
+                    }
+                }
+                None => self.live = false,
+            }
+        }
         self.snapshot = snapshot;
         if self.open_chooser && !self.live && !self.checking() && !self.snapshot.servers.is_empty() {
             self.open_chooser = false;
@@ -553,6 +575,7 @@ impl Ui {
                 match self.config.validate() {
                     Ok(()) => {
                         if self.send(Command::Run(self.config.clone()), commands) {
+                            self.previous = (self.live && started(&self.snapshot)).then(|| self.snapshot.clone());
                             (self.live, self.starting, self.open_chooser) = (true, true, false);
                             self.popup = Popup::None;
                             self.notice = "Checking paths before the test. Press esc to stop.".into();
@@ -668,6 +691,9 @@ impl Ui {
     }
 }
 
+fn started(snapshot: &Snapshot) -> bool {
+    !snapshot.participants.is_empty() || !snapshot.results.is_empty()
+}
 fn move_selection(state: &mut ListState, length: usize, direction: isize) {
     if length == 0 {
         state.select(None);

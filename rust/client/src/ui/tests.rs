@@ -333,6 +333,47 @@ fn server_chooser_discards_on_escape_and_checks_again_on_enter() {
 }
 
 #[test]
+fn a_run_that_never_starts_keeps_the_last_results() {
+    use crate::model::StageResult;
+    let (commands, mut received) = mpsc::channel(4);
+    let finished = Snapshot {
+        phase: Phase::Complete,
+        participants: vec!["self".into()],
+        results: vec![StageResult {
+            stage: Stage::Download,
+            elapsed: Duration::from_secs(1),
+            down: Some(download_measurement()),
+            ..Default::default()
+        }],
+        plan: vec![Stage::Download],
+        ..Snapshot::default()
+    };
+    let mut ui = Ui::new(Config::default(), finished);
+    ui.live = true;
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    let unstarted = |phase, error: Option<&str>| Snapshot {
+        phase,
+        error: error.map(Into::into),
+        ..Snapshot::default()
+    };
+    press(&mut ui, KeyCode::Char('r'));
+    assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
+    ui.update(unstarted(Phase::Preparing, None));
+    let reason = "Test could not start: Server could not be reached";
+    ui.update(unstarted(Phase::Failed, Some(reason)));
+    assert!(ui.live && ui.snapshot.phase == Phase::Complete && ui.snapshot.results.len() == 1);
+    assert_eq!(ui.notice(), (reason, true));
+
+    press(&mut ui, KeyCode::Esc);
+    press(&mut ui, KeyCode::Char('r'));
+    assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
+    ui.update(unstarted(Phase::Preparing, None));
+    ui.update(unstarted(Phase::Cancelled, None));
+    assert!(!ui.live, "a run from setup that never starts returns there");
+    assert_eq!(ui.notice(), ("Test stopped before it started.", false));
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {
