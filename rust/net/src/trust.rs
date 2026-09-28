@@ -161,9 +161,22 @@ fn same_directory_link(entry: &fs::DirEntry, path: &Path) -> bool {
         && fs::read_link(path).is_ok_and(|target| target.components().count() == 1)
 }
 
-/// Go's AppendCertsFromPEM: every CERTIFICATE block, skipping what does not parse.
+/// Go's AppendCertsFromPEM: every CERTIFICATE block, skipping what does not parse. Each block is
+/// parsed from its own BEGIN line, where Go's pem.Decode starts over after a broken block, so one
+/// cut short loses no root after it.
 fn certificates(data: &[u8]) -> impl Iterator<Item = CertificateDer<'static>> + '_ {
-    CertificateDer::pem_slice_iter(data).filter_map(Result::ok)
+    const BEGIN: &[u8] = b"\n-----BEGIN ";
+    let mut rest = data;
+    let blocks = std::iter::from_fn(move || {
+        let end = rest
+            .windows(BEGIN.len())
+            .position(|window| window == BEGIN)
+            .map_or(rest.len(), |newline| newline + 1);
+        let (block, tail) = rest.split_at(end);
+        rest = tail;
+        (!block.is_empty()).then_some(block)
+    });
+    blocks.flat_map(|block| CertificateDer::pem_slice_iter(block).filter_map(Result::ok))
 }
 
 #[derive(Debug)]

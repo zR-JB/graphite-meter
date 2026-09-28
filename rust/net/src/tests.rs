@@ -406,6 +406,20 @@ fn trust_roots_follow_go_ssl_cert_rules() {
     assert_eq!(roots(Some(&named), Some(&listed)), [file_root, listed_root]);
 }
 
+/// A block cut short before its END line loses no root after it: Go's pem.Decode starts over at
+/// the next BEGIN line.
+#[test]
+fn trust_roots_survive_a_block_cut_short() {
+    use std::ffi::OsStr;
+    let scratch = Scratch::new("cut");
+    let [(cut, _), (pem, root)] = [certificate(), certificate()];
+    let cut: String = cut.lines().take(3).map(|line| format!("{line}\n")).collect();
+    let bundle = scratch.file("bundle.pem", &format!("{cut}{pem}"));
+    let (roots, error) = trust::on_disk_roots(Some(OsStr::new(&bundle)), None, &[], &[]);
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(roots, [root]);
+}
+
 /// c_rehash's links within the directory are skipped, as Go skips them, so each root loads once;
 /// a directory that cannot be read is reported beside whatever did load.
 #[cfg(unix)]
