@@ -247,7 +247,7 @@ fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 def session():
     os.setsid()
     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
-p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-latency-duration', '5s', '-warmup', '0', '-ping', '80ms'], stdin=slave, stdout=slave, stderr=slave, preexec_fn=session, env={**os.environ, 'TERM':'xterm-256color'})
+p = subprocess.Popen([sys.argv[1], '-url', sys.argv[2], '-stages', 'latency', '-latency-duration', '5s', '-warmup', '0', '-ping', '80ms'], stdin=subprocess.DEVNULL if sys.argv[3] == 'redirected-quit' else slave, stdout=slave, stderr=slave, preexec_fn=session, env={**os.environ, 'TERM':'xterm-256color'})
 os.close(slave)
 output = b''
 step = 0
@@ -255,6 +255,7 @@ mark = 0
 mode = sys.argv[3]
 measuring = '░'.encode()
 keys = {'check-quit': [(b'Checking', b'q')],
+        'redirected-quit': [(b'WebSocket', b'q')],
         'setup-interrupt': [(b'WebSocket', b'\x03')],
         'run-interrupt': [(b'WebSocket', b'r'), (measuring, b'\x03')],
         'run-quit': [(b'WebSocket', b'r'), (measuring, b'q')],
@@ -295,6 +296,8 @@ finally:
     let silent_origin = format!("http://{}", silent.local_addr()?);
     for (mode, step, code, report) in [
         ("check-quit", 1, 0, false),
+        // Like Go, the interface opens when only stdout is a terminal.
+        ("redirected-quit", 1, 0, false),
         ("setup-interrupt", 1, 0, false),
         ("run-interrupt", 2, 130, true),
         ("run-quit", 2, 1, true),

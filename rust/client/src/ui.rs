@@ -82,8 +82,9 @@ struct TerminalSession {
 }
 impl TerminalSession {
     fn enter() -> Result<Self, Error> {
-        if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-            return Err("interactive mode requires a terminal on stdin and stdout".into());
+        // Like Bubble Tea, crossterm reads keys from the terminal when stdin is redirected.
+        if !io::stdout().is_terminal() {
+            return Err("interactive mode requires a terminal on stdout".into());
         }
         let restore = Restore;
         let terminal = ratatui::try_init()?;
