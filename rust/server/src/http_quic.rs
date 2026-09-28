@@ -153,8 +153,9 @@ impl HttpServer {
                             result = tokio::time::timeout(Duration::from_secs(5), connecting) => match result {
                                 Ok(Ok(quic)) => quic,
                                 Ok(Err(error)) => {
+                                    // A peer's close reason is its own text: quoted, as Go quotes connection errors.
                                     if !ended_normally(&error.clone().into()) {
-                                        server.peers.write(format_args!("[gm:h3] QUIC handshake error from {}: {error}", peer.ip().to_canonical()));
+                                        server.peers.write(format_args!("[gm:h3] QUIC handshake error from {}: {:?}", peer.ip().to_canonical(), error.to_string()));
                                     }
                                     return;
                                 }
