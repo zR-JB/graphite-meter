@@ -324,7 +324,7 @@ fn owner_fields_cannot_collide_through_delimiters() {
     let subject_with_delimiter = Owner::principal("a\0browser:b");
     let delegated = Owner::delegated("a", "browser:b");
     assert_ne!(subject_with_delimiter, delegated);
-    assert_ne!(subject_with_delimiter.budget_key(), delegated.budget_key());
+    assert_ne!(subject_with_delimiter.client_keys()[0], delegated.client_keys()[0]);
     let first = Owner::delegated("a\0b", "c");
     let second = Owner::delegated("a", "b\0c");
     assert_ne!(first, second);
@@ -344,12 +344,12 @@ fn anonymous_owners_canonicalize_ipv4_and_share_ipv6_prefix() {
     let ipv4 = Owner::anonymous("192.0.2.1".parse().unwrap());
     let mapped = Owner::anonymous("::ffff:192.0.2.1".parse().unwrap());
     assert_eq!(ipv4, mapped);
-    assert_eq!(ipv4.budget_key(), "192.0.2.1");
+    assert_eq!(ipv4.client_keys()[0], "192.0.2.1");
     let first = Owner::anonymous("2001:db8:1:2::1".parse().unwrap());
     let second = Owner::anonymous("2001:db8:1:2:ffff::1234".parse().unwrap());
     let other = Owner::anonymous("2001:db8:1:3::1".parse().unwrap());
     assert_eq!(first, second);
-    assert_eq!(first.budget_key(), "2001:db8:1:2::/64");
+    assert_eq!(first.client_keys()[0], "2001:db8:1:2::/64");
     assert_ne!(first, other);
     assert_ne!(ipv4, Owner::principal("192.0.2.1"));
 }

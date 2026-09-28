@@ -38,7 +38,7 @@ impl Tls {
         let identity = support::Identity::generate();
         let certificate = CertificateDer::from_pem_file(identity.directory().join("identity.pem")).unwrap();
         let key = PrivateKeyDer::from_pem_file(identity.directory().join("identity.key")).unwrap();
-        let provider = graphite_meter_server::crypto::provider();
+        let provider = rustls::crypto::ring::default_provider();
         let key = Arc::new(CertifiedKey::from_der(vec![certificate.clone()], key, &provider).unwrap());
         Self {
             _identity: identity,
@@ -48,7 +48,7 @@ impl Tls {
     }
 
     fn server(&self, resolver: Arc<dyn ResolvesServerCert>) -> ServerConfig {
-        let provider = Arc::new(graphite_meter_server::crypto::provider());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut tls = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
@@ -59,7 +59,7 @@ impl Tls {
     }
 
     fn client(&self) -> TlsConnector {
-        let provider = Arc::new(graphite_meter_server::crypto::provider());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut roots = RootCertStore::empty();
         roots.add(self.certificate.clone()).unwrap();
         let mut tls = ClientConfig::builder_with_provider(provider)
@@ -280,7 +280,7 @@ async fn quic_server(
     tls: &Tls,
     config: Config,
 ) -> Result<(SocketAddr, tokio::task::JoinHandle<()>, oneshot::Sender<()>), TestError> {
-    let provider = Arc::new(graphite_meter_server::crypto::provider());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut server_tls = ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
@@ -301,7 +301,7 @@ async fn quic_server(
 }
 
 fn quic_client_config(tls: &Tls) -> Result<quinn::ClientConfig, TestError> {
-    let provider = Arc::new(graphite_meter_server::crypto::provider());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = RootCertStore::empty();
     roots.add(tls.certificate.clone())?;
     let mut client_tls = ClientConfig::builder_with_provider(provider)

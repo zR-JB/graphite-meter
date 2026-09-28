@@ -1,11 +1,11 @@
 use graphite_meter_core::discovery::ClientIpSource;
-use graphite_meter_server::client_address::resolve;
+use graphite_meter_server::client_address::{client_keys, resolve};
 use http::{HeaderMap, HeaderValue};
 use ipnet::IpNet;
 
 #[test]
 fn anonymous_ipv6_addresses_share_the_subnet_budget() {
-    let key = |peer: &str| resolve(peer.parse().unwrap(), &HeaderMap::new(), &[]).anonymous_key();
+    let key = |peer: &str| client_keys(resolve(peer.parse().unwrap(), &HeaderMap::new(), &[]).addr).remove(0);
     assert_eq!(key("[2001:db8:1:2::1]:9"), "2001:db8:1:2::/64");
     assert_eq!(key("[2001:db8:1:2::1]:9"), key("[2001:db8:1:2::ffff]:10"));
     assert_ne!(key("[2001:db8:1:2::1]:9"), key("[2001:db8:1:3::1]:9"));

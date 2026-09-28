@@ -15,10 +15,6 @@ impl ClientAddress {
     pub fn version(self) -> u8 {
         if self.addr.is_ipv4() { 4 } else { 6 }
     }
-
-    pub fn anonymous_key(self) -> String {
-        client_keys(self.addr).remove(0)
-    }
 }
 
 pub fn client_keys(addr: IpAddr) -> Vec<String> {

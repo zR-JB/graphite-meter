@@ -2,7 +2,7 @@
 use ipnet::IpNet;
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     sync::{Arc, Mutex},
 };
 
@@ -53,11 +53,7 @@ impl Connections {
         }))
     }
 
-    pub fn acquire(&self, peer: SocketAddr) -> Result<Permit, Refusal> {
-        self.acquire_buffered(peer, false)
-    }
-
-    pub fn acquire_buffered(&self, peer: SocketAddr, buffered: bool) -> Result<Permit, Refusal> {
+    pub fn acquire(&self, peer: SocketAddr, buffered: bool) -> Result<Permit, Refusal> {
         let addr = peer.ip().to_canonical();
         let keys = if self.0.trusted.iter().any(|prefix| prefix.contains(&addr)) {
             Vec::new()
@@ -124,14 +120,6 @@ impl Drop for Permit {
     }
 }
 
-/// Anonymous IPv6 clients share a /64; IPv4 clients use their individual address.
-pub fn subnet(addr: IpAddr) -> IpNet {
-    let addr = addr.to_canonical();
-    IpNet::new(addr, if addr.is_ipv4() { 32 } else { 64 })
-        .expect("valid prefix length")
-        .trunc()
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -144,7 +132,7 @@ mod tests {
         })
         .join()
         .unwrap_err();
-        drop(connections.acquire("192.0.2.1:1".parse().unwrap()).unwrap());
+        drop(connections.acquire("192.0.2.1:1".parse().unwrap(), false).unwrap());
         assert_eq!(connections.stats().active, 0);
         assert!(!connections.0.counts.is_poisoned(), "recovery must be reported once");
     }

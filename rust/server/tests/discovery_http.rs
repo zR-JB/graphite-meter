@@ -1,4 +1,4 @@
-use graphite_meter_server::{config::Config, discovery::Discovery};
+use graphite_meter_server::{admission::Admission, config::Config, discovery::Discovery};
 use http::{Request, StatusCode};
 use std::sync::Arc;
 
@@ -34,7 +34,7 @@ fn oversized_published_catalogue_is_withheld_while_preflight_answers() {
             ..ServerEntry::default()
         });
     }
-    let discovery = Discovery::new(Arc::new(config), None, None).unwrap();
+    let discovery = Discovery::new(Arc::new(config), Admission::new(Default::default())).unwrap();
     let servers = respond(&discovery, request("/servers", "GET"));
     assert_eq!(servers.status(), StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(servers.body(), "server catalogue unavailable\n");
@@ -46,7 +46,7 @@ fn oversized_published_catalogue_is_withheld_while_preflight_answers() {
 
 #[test]
 fn invalid_request_hosts_fall_back_to_localhost() {
-    let discovery = Discovery::new(Arc::new(Config::default()), None, None).unwrap();
+    let discovery = Discovery::new(Arc::new(Config::default()), Admission::new(Default::default())).unwrap();
     for host in [
         "bad_name",
         "-bad.example",

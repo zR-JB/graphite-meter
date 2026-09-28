@@ -413,18 +413,10 @@ impl Service {
             if !state.contains(&lease.session) || !lease.is_active() {
                 return response(StatusCode::FORBIDDEN);
             }
-            let keys: Vec<_> = if value(&form, "scope") == "all" {
-                state
-                    .sessions
-                    .values()
-                    .filter(|session| session.subject() == lease.session().subject())
-                    .map(|session| session.hash)
-                    .collect()
+            if value(&form, "scope") == "all" {
+                state.revoke_subject(lease.session().subject());
             } else {
-                vec![lease.session.0.hash]
-            };
-            for key in keys {
-                state.remove(&key);
+                state.remove(&lease.session.0.hash);
             }
         }
         self.log.count(Counter::Logout);
@@ -1281,5 +1273,35 @@ mod tests {
         assert!(service.log.window(&mut last).is_none());
         assert!(!window.contains(&raw_session));
         assert!(!window.contains("correct horse"));
+    }
+
+    #[tokio::test]
+    async fn logout_revokes_the_login_or_with_scope_all_every_login_of_its_subject() {
+        const PUBLIC: &str = "https://meter.example";
+        let config = AuthConfig {
+            mode: AuthMode::Password,
+            public_url: PUBLIC.into(),
+            password_hash:
+                "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0"
+                    .into(),
+            ..AuthConfig::default()
+        };
+        let service = Service::new(&config, vec![], None).unwrap();
+        for scope in ["", "all"] {
+            let (token, current) = service.sessions().create("subject", "name", "local", None).unwrap();
+            let (_, sibling) = service.sessions().create("subject", "name", "local", None).unwrap();
+            let (_, other) = service.sessions().create("other", "name", "local", None).unwrap();
+            let cookie = format!("__Host-gm_session={token}");
+            let headers = [
+                ("cookie", cookie.as_str()),
+                ("origin", PUBLIC),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ];
+            let form = encoded(&[("csrf", current.session().csrf()), ("scope", scope)]);
+            let logged_out = call(&service, Method::POST, "/auth/logout", &headers, form).await;
+            assert_eq!(logged_out.status(), StatusCode::SEE_OTHER);
+            assert!(!current.is_active() && other.is_active());
+            assert_eq!(sibling.is_active(), scope.is_empty(), "scope {scope:?}");
+        }
     }
 }

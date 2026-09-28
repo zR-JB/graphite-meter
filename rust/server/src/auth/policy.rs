@@ -47,11 +47,7 @@ pub struct AuthorizedRequest<B> {
     request: Request<B>,
     authorization: Authorization,
     connection: Connection,
-    route: Option<Route>,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SessionEnded;
 
 impl<B> AuthorizedRequest<B> {
     pub fn request(&self) -> &Request<B> {
@@ -63,18 +59,6 @@ impl<B> AuthorizedRequest<B> {
     pub fn connection(&self) -> Connection {
         self.connection
     }
-    pub fn measurement_route(&self) -> Option<Route> {
-        self.route
-    }
-    pub fn map_body<C>(self, map: impl FnOnce(B) -> C) -> AuthorizedRequest<C> {
-        AuthorizedRequest {
-            request: self.request.map(map),
-            authorization: self.authorization,
-            connection: self.connection,
-            route: self.route,
-        }
-    }
-
     /// Collect or adapt a body without changing the authority or route checked
     /// by the policy. The caller supplies the size and time bounds.
     pub async fn try_map_body<C, E>(self, map: impl AsyncFnOnce(B) -> Result<C, E>) -> Result<AuthorizedRequest<C>, E> {
@@ -83,32 +67,13 @@ impl<B> AuthorizedRequest<B> {
             request: Request::from_parts(parts, map(body).await?),
             authorization: self.authorization,
             connection: self.connection,
-            route: self.route,
         })
     }
 
     /// Only the transport dispatcher may split the checked request from its
     /// lease. It must retain that lease through the complete IO lifetime.
-    pub(crate) fn into_parts(self) -> (Request<B>, Authorization, Connection, Option<Route>) {
-        (self.request, self.authorization, self.connection, self.route)
-    }
-
-    /// Observe revocation before polling the operation, including a lease that
-    /// ended between authorization and activation. The operation must own its
-    /// complete transport lifetime, not merely prepare a streaming response.
-    pub async fn run<F, T>(self, operation: F) -> Result<T, SessionEnded>
-    where
-        F: AsyncFnOnce(Self) -> T,
-    {
-        let Authorization::Authenticated(lease) = &self.authorization else {
-            return Ok(operation(self).await);
-        };
-        let lease = lease.clone();
-        tokio::select! {
-            biased;
-            _ = lease.ended() => Err(SessionEnded),
-            result = operation(self) => Ok(result),
-        }
+    pub(crate) fn into_parts(self) -> (Request<B>, Authorization) {
+        (self.request, self.authorization)
     }
 }
 
@@ -200,7 +165,6 @@ impl Policy {
     ) -> Result<AuthorizedRequest<B>, Box<RejectedRequest<B>>> {
         match self.evaluate(&request, connection.peer, connection.tls, connection.listener) {
             Ok(authorization) => Ok(AuthorizedRequest {
-                route: route::lookup(request.uri().path()),
                 request,
                 authorization,
                 connection,

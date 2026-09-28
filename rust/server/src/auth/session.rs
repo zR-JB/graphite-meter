@@ -77,10 +77,6 @@ impl SessionLease {
         self.0.active_at(Instant::now())
     }
 
-    pub fn remaining(&self) -> Duration {
-        self.0.deadline.saturating_duration_since(Instant::now())
-    }
-
     /// Completes on logout, rotation, eviction, store shutdown or absolute expiry.
     /// Safe to call after revocation and to cancel/recreate inside a select loop.
     pub async fn ended(&self) {
@@ -138,15 +134,17 @@ impl State {
     }
 
     pub(super) fn sweep(&mut self, now: Instant) {
-        self.sessions.retain(|_, session| {
-            if session.active_at(now) {
-                true
-            } else {
-                session.revoke();
-                false
-            }
-        });
+        for (_, session) in self.sessions.extract_if(|_, session| !session.active_at(now)) {
+            session.revoke();
+        }
         self.reap_delegated(now);
+    }
+
+    pub(super) fn revoke_subject(&mut self, subject: &str) {
+        for (_, session) in self.sessions.extract_if(|_, session| session.subject == subject) {
+            session.revoke();
+        }
+        self.reap_delegated(Instant::now());
     }
 }
 
@@ -241,33 +239,7 @@ impl SessionStore {
 
     pub fn revoke(&self, lease: &SessionLease) -> bool {
         let mut state = self.0.lock().expect("session mutex poisoned");
-        if !state
-            .sessions
-            .get(&lease.0.hash)
-            .is_some_and(|stored| Arc::ptr_eq(stored, &lease.0))
-        {
-            return false;
-        }
-        state.remove(&lease.0.hash)
-    }
-
-    pub fn revoke_subject(&self, subject: &str) -> usize {
-        let mut state = self.0.lock().expect("session mutex poisoned");
-        let before = state.sessions.len();
-        state.sessions.retain(|_, session| {
-            if session.subject == subject {
-                session.revoke();
-                false
-            } else {
-                true
-            }
-        });
-        state.reap_delegated(Instant::now());
-        before - state.sessions.len()
-    }
-
-    pub fn sweep(&self) {
-        self.0.lock().expect("session mutex poisoned").sweep(Instant::now());
+        state.contains(lease) && state.remove(&lease.0.hash)
     }
 }
 

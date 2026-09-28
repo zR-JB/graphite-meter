@@ -51,10 +51,6 @@ impl Owner {
         }
     }
 
-    pub fn budget_key(&self) -> &str {
-        &self.client_keys[0]
-    }
-
     pub fn client_keys(&self) -> &[String] {
         &self.client_keys
     }
@@ -326,9 +322,6 @@ impl UploadStore {
             *next = now + Duration::from_secs(5);
         }
     }
-    pub fn sweep(&self) {
-        self.sweep_at(Instant::now());
-    }
     /// Also permits a caller-owned maintenance loop; no background task is spawned.
     pub fn sweep_at(&self, now: Instant) {
         let mut entries = self.inner.entries.lock().expect("upload store lock");
@@ -595,7 +588,7 @@ mod tests {
         let first = first.unwrap();
         let aggregate = store.inner.entries.lock().unwrap().by_id[&first].clone();
         aggregate.lock().unwrap().touched = Instant::now() - UPLOAD_RETENTION - Duration::from_secs(1);
-        store.sweep();
+        store.sweep_at(Instant::now());
 
         assert_eq!(store.retained(), MAX_UPLOADS_PER_CLIENT);
         drop(store.begin(&store.mint().unwrap(), &owner).unwrap());

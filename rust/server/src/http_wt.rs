@@ -58,7 +58,7 @@ impl HttpServer {
         let (request, lease) = if let Some(auth) = &self.auth {
             match auth.policy().authorize(request, connection) {
                 Ok(guard) => {
-                    let (request, authorization, _, _) = guard.into_parts();
+                    let (request, authorization) = guard.into_parts();
                     let Authorization::Authenticated(lease) = authorization else {
                         return answer(stream, self.harden(text_response(StatusCode::FORBIDDEN))).await;
                     };
@@ -91,7 +91,7 @@ impl HttpServer {
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let _permit = match self.admission.acquire_keys(class, owner.client_keys()) {
+        let _permit = match self.admission.acquire(class, owner.client_keys()) {
             Ok(permit) => permit,
             Err(error) => {
                 let mut response = text_response(StatusCode::from_u16(error.status()).expect("known status"));

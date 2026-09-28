@@ -190,7 +190,7 @@ mod tests {
                 ..AuthConfig::default()
             },
             store,
-            Arc::new(AttemptLimiter::new()),
+            Arc::new(AttemptLimiter::default()),
         )
         .unwrap();
         (login, password)
