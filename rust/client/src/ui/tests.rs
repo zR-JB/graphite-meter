@@ -122,6 +122,48 @@ fn reenabled_stage_runs_in_canonical_order() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn path_settings_are_checked_again_once_changes_settle() {
+    use graphite_meter_core::discovery::ThroughputTransport;
+    let (commands, mut received) = mpsc::channel(4);
+    let mut ui = Ui::new(Config::default(), Snapshot::default());
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    let select = |ui: &mut Ui, field| {
+        let row = ui.fields().iter().position(|shown| *shown == field);
+        ui.rows.select(row);
+    };
+
+    select(&mut ui, Field::DownloadStage);
+    press(&mut ui, KeyCode::Right);
+    tokio::time::advance(RECHECK_DELAY).await;
+    assert!(!ui.recheck(&commands), "a duration does not change the paths");
+
+    select(&mut ui, Field::ThroughputTransport);
+    for _ in 0..2 {
+        press(&mut ui, KeyCode::Right);
+        tokio::time::advance(RECHECK_DELAY / 2).await;
+        assert!(!ui.recheck(&commands));
+    }
+    tokio::time::advance(RECHECK_DELAY / 2).await;
+    assert!(ui.recheck(&commands));
+    let Ok(Command::Verify(config)) = received.try_recv() else {
+        panic!("changed paths were not checked again");
+    };
+    assert_eq!(config.throughput_transport, Some(ThroughputTransport::WebTransport));
+    assert!(received.try_recv().is_err());
+
+    ui.update(Snapshot {
+        phase: Phase::Complete,
+        ..Snapshot::default()
+    });
+    ui.live = true;
+    press(&mut ui, KeyCode::Esc);
+    assert!(!ui.live);
+    tokio::time::advance(RECHECK_DELAY).await;
+    assert!(ui.recheck(&commands), "setup after a run checks the paths again");
+    assert!(matches!(received.try_recv(), Ok(Command::Verify(_))));
+}
+
+#[tokio::test(start_paused = true)]
 async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
     use crate::model::AuthPrompt;
     use ratatui::{Terminal, backend::TestBackend};

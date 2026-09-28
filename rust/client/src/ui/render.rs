@@ -434,9 +434,9 @@ impl Ui {
                 safe_text(&self.config.servers.join(", "), 300)
             };
             let mut lines = vec![selected, String::new(), "Connection paths".into()];
-            if self.awaiting {
+            if self.awaiting || self.recheck.is_some() {
                 lines.push("Checking selected servers".into());
-            } else if self.config != self.requested {
+            } else if self.config.preparation_key() != self.requested.preparation_key() {
                 lines.push("Settings changed · verify again".into());
             } else {
                 let checked = self

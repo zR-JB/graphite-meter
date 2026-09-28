@@ -49,6 +49,8 @@ pub enum Command {
 
 const MAX_TEXT: usize = 4096;
 const MAX_SERVERS: usize = 128;
+/// As in the Go client, paths are checked again once path settings stop changing.
+const RECHECK_DELAY: Duration = Duration::from_millis(350);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum CancelState {
@@ -141,6 +143,7 @@ pub async fn run(
                         return Ok(ui.exit());
                     }
                 }
+                dirty |= ui.recheck(&commands);
                 if ui.active() {
                     ui.frame();
                     dirty = true;
@@ -187,6 +190,7 @@ struct Ui {
     help: bool,
     edit: Option<Edit>,
     notice: String,
+    recheck: Option<tokio::time::Instant>,
     awaiting: bool,
     cancel: CancelState,
     quitting: bool,
@@ -218,6 +222,7 @@ impl Ui {
             help: false,
             edit: None,
             notice: String::new(),
+            recheck: None,
             awaiting: false,
             cancel: CancelState::Idle,
             quitting: false,
@@ -348,6 +353,7 @@ impl Ui {
                 if let Some(requested) = requested {
                     self.requested = requested;
                     self.cancel = CancelState::Idle;
+                    self.recheck = None;
                 }
                 self.notice.clear();
                 self.awaiting = true;
@@ -362,6 +368,27 @@ impl Ui {
                 false
             }
         }
+    }
+    /// Paths depend on these settings, so changing one checks them again.
+    fn recheck_if_changed(&mut self, before: &Config) {
+        if before.preparation_key() != self.config.preparation_key() {
+            self.recheck_soon();
+        }
+    }
+    fn recheck_soon(&mut self) {
+        self.recheck = Some(tokio::time::Instant::now() + RECHECK_DELAY);
+    }
+    /// Sends a settled re-check, keeping the notice of the change behind it.
+    fn recheck(&mut self, commands: &mpsc::Sender<Command>) -> bool {
+        if self.recheck.is_none_or(|at| at > tokio::time::Instant::now()) {
+            return false;
+        }
+        self.recheck = None;
+        let notice = std::mem::take(&mut self.notice);
+        if self.send(Command::Verify(self.config.clone()), commands) {
+            self.notice = notice;
+        }
+        true
     }
     fn paste(&mut self, text: &str) {
         if self.snapshot.auth.is_none()
@@ -404,10 +431,12 @@ impl Ui {
                 KeyCode::Enter => {
                     let field = edit.field;
                     let value = edit.text();
+                    let before = self.config.clone();
                     match self.apply(field, value) {
                         Ok(()) => {
                             self.edit = None;
                             self.notice.clear();
+                            self.recheck_if_changed(&before);
                         }
                         Err(error) => self.notice = error.to_string(),
                     }
@@ -465,6 +494,7 @@ impl Ui {
             }
             return false;
         }
+        let before = self.config.clone();
         let field_count = self.fields().len();
         match key.code {
             KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() && !self.snapshot.results.is_empty() => {
@@ -504,6 +534,11 @@ impl Ui {
                 self.send(Command::Cancel, commands);
             }
             KeyCode::Esc => {
+                if self.live {
+                    // The run consumed the checked paths.
+                    self.recheck_soon();
+                    self.notice.clear();
+                }
                 self.live = false;
                 self.rows.select(Some(0));
             }
@@ -522,9 +557,6 @@ impl Ui {
                     .take(MAX_SELECTED_SERVERS)
                     .map(|server| server.id.clone())
                     .collect();
-                if !self.config.servers.is_empty() {
-                    self.send(Command::Verify(self.config.clone()), commands);
-                }
                 self.notice = "Using the available servers.".into();
             }
             KeyCode::Char('a') if !self.active() => {
@@ -542,6 +574,7 @@ impl Ui {
             KeyCode::Enter | KeyCode::Char(' ') if !self.live && !self.active() => self.activate(),
             _ => {}
         }
+        self.recheck_if_changed(&before);
         false
     }
     fn toggle_server(&mut self) {
