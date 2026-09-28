@@ -388,6 +388,87 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
     Ok(())
 }
 
+/// A reverse proxy speaks HTTP/2 to the client and HTTP/1.1 upstream, and the server reports its
+/// own hop; lanes use the version the client's connection negotiated, as Go's `response.Proto` does.
+#[tokio::test]
+async fn negotiated_protocol_behind_a_reverse_proxy_is_the_clients_own() -> Result<(), Error> {
+    use http_body_util::Full;
+    use hyper::{body::Bytes, server::conn::http2, service::service_fn};
+    use hyper_util::rt::{TokioExecutor, TokioIo};
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+    let _ = crate::crypto::provider().install_default();
+    let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
+    let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
+        vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+        PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+    )?;
+    tls.alpn_protocols = vec![b"h2".to_vec()];
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("https://{}", listener.local_addr()?);
+    let proxy = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let acceptor = acceptor.clone();
+            tokio::spawn(async move {
+                let Ok(stream) = acceptor.accept(socket).await else {
+                    return;
+                };
+                let service = service_fn(|request: http::Request<hyper::body::Incoming>| async move {
+                    let body = match request.uri().path() {
+                        "/servers" => serde_json::json!({
+                            "defaultSelection": ["self"],
+                            "servers": [{"id": "self", "url": ".", "name": "proxied"}]
+                        }),
+                        "/preflight" => serde_json::json!({
+                            "generation": "proxied",
+                            "capabilities": {
+                                "throughput": [{"baseUrl": ".", "transport": "fetch-stream", "protocol": "negotiated"}],
+                                "latency": []
+                            }
+                        }),
+                        // The upstream hop behind the proxy.
+                        _ => serde_json::json!({
+                            "clientIp": "127.0.0.1",
+                            "clientIpVersion": 4,
+                            "clientIpSource": "forwarded",
+                            "protocolNegotiated": "http/1.1"
+                        }),
+                    };
+                    Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(Bytes::from(body.to_string()))))
+                });
+                let _ = http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
+    });
+    let config = Config {
+        url: origin,
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        insecure: true,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let prepared = prepare(
+        &config,
+        &Http::new(true)?,
+        &snapshots,
+        Instant::now() + PREPARATION_TIMEOUT,
+    )
+    .await;
+    proxy.abort();
+    assert_eq!(
+        prepared?.servers[0]
+            .throughput
+            .as_ref()
+            .ok_or("no throughput path")?
+            .protocol,
+        Protocol::Http2
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();

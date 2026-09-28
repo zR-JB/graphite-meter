@@ -11,9 +11,7 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::route::Route;
 use graphite_meter_core::{
     catalog::ServerEntry,
-    discovery::{
-        LatencyTarget, LatencyTransport, Probe, Protocol, ProtocolNegotiated, ThroughputTarget, ThroughputTransport,
-    },
+    discovery::{LatencyTarget, LatencyTransport, Probe, Protocol, ThroughputTarget, ThroughputTransport},
 };
 use http::Method;
 use std::{sync::Arc, time::Duration};
@@ -218,14 +216,7 @@ async fn prepare_server(
             let connection =
                 Transport::connect(client.clone(), &target.base_url, target.protocol, config.insecure).await?;
             if target.protocol == Protocol::Negotiated {
-                let probe = client.probe(&target.base_url, Protocol::Negotiated).await?;
-                target.protocol = match probe.protocol_negotiated {
-                    ProtocolNegotiated::Http1 => Protocol::Http1,
-                    ProtocolNegotiated::Http2 => Protocol::Http2,
-                    ProtocolNegotiated::Http3 => {
-                        return Err("negotiated HTTP probe cannot use HTTP/3".into());
-                    }
-                };
+                (target.protocol, _) = client.probe(&target.base_url, Protocol::Negotiated).await?;
             } else {
                 let probe: Probe = connection.json(Method::GET, Route::Probe, &[]).await?;
                 probe.validate()?;

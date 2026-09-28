@@ -6,7 +6,7 @@ use futures_util::{Stream, TryStreamExt};
 use graphite_meter_core::{
     approval,
     catalog::{ServerCatalog, ServerEntry},
-    discovery::{Preflight, Probe, Protocol, ProtocolNegotiated},
+    discovery::{Preflight, Probe, Protocol},
     origin::{canonical_origin, split_url, target_origin},
     wire::decode_json,
 };
@@ -444,7 +444,10 @@ impl Http {
         entry.validate_discovery(&preflight)?;
         Ok(preflight)
     }
-    pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<Probe> {
+    /// The protocol is this connection's own HTTP version, as Go's `response.Proto`. The probe's
+    /// `protocolNegotiated` names the server's hop, which a reverse proxy may speak differently,
+    /// so it stays evidence for diagnostics only.
+    pub async fn probe(&self, origin: &str, protocol: Protocol) -> Result<(Protocol, Probe)> {
         let origin = canonical_origin(origin)?;
         let (version, bytes) = tokio::time::timeout(CONTROL_TIMEOUT, async {
             let response = self.request(Method::GET, &format!("{origin}/probe"), protocol).await?;
@@ -454,14 +457,11 @@ impl Http {
         .await??;
         let probe = Probe::decode(&bytes)?;
         let actual = match version {
-            Version::HTTP_11 => ProtocolNegotiated::Http1,
-            Version::HTTP_2 => ProtocolNegotiated::Http2,
+            Version::HTTP_11 => Protocol::Http1,
+            Version::HTTP_2 => Protocol::Http2,
             _ => return Err("probe used an unsupported HTTP protocol".into()),
         };
-        if probe.protocol_negotiated != actual {
-            return Err("probe reported a different HTTP protocol than the connection".into());
-        }
-        Ok(probe)
+        Ok((actual, probe))
     }
     /// Bind one selected server's grant to its validated HTTPS targets. The
     /// shared grant store retains issuer tokens only; overlapping target ports
