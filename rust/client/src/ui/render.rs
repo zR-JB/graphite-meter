@@ -3,7 +3,85 @@ use super::setup::{on_off, seconds};
 use super::*;
 use crate::model::Stage;
 
+/// The release this build reports, as `-version` prints it.
+const VERSION: &str = match option_env!("GM_ENGINE_VERSION") {
+    Some(version) => version,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-rust-dev"),
+};
+
+/// Go's terminal progress bar (OSC 9;4): indeterminate while paths are checked, then the share of stage time done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Progress {
+    Checking,
+    Done(u8),
+}
+
+/// The window title and progress bar Go's TUI sets, written when they change and cleared on exit.
+#[derive(Default)]
+pub(super) struct Chrome {
+    title: String,
+    progress: Option<Progress>,
+}
+
+impl Chrome {
+    pub(super) fn show(&mut self, title: String, progress: Option<Progress>) -> io::Result<()> {
+        use std::io::Write;
+        let sequences = self.update(title, progress);
+        if sequences.is_empty() {
+            return Ok(());
+        }
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(sequences.as_bytes())?;
+        stdout.flush()
+    }
+
+    fn update(&mut self, title: String, progress: Option<Progress>) -> String {
+        let mut sequences = String::new();
+        if title != self.title {
+            sequences.push_str(&format!("\x1b]2;{title}\x07"));
+            self.title = title;
+        }
+        if progress != self.progress {
+            sequences.push_str(&match progress {
+                None => "\x1b]9;4;0\x07".to_owned(),
+                Some(Progress::Checking) => "\x1b]9;4;3\x07".to_owned(),
+                Some(Progress::Done(percent)) => format!("\x1b]9;4;1;{percent}\x07"),
+            });
+            self.progress = progress;
+        }
+        sequences
+    }
+}
+
+impl Drop for Chrome {
+    fn drop(&mut self) {
+        let _ = self.show(String::new(), None);
+    }
+}
+
 impl Ui {
+    /// Go's window title.
+    pub(super) fn title(&self) -> String {
+        format!("Graphite Meter · {}", self.status().0)
+    }
+
+    /// Go counts planned stage time; every ended stage counts, where Go skips partial and failed ones.
+    pub(super) fn progress(&self) -> Option<Progress> {
+        if !self.live || !self.active() {
+            return None;
+        }
+        if !self.snapshot.phase.live() || !self.snapshot.started() {
+            return Some(Progress::Checking);
+        }
+        let duration = |stage: Stage| self.requested.duration(stage).as_secs_f64();
+        let total: f64 = self.requested.stages.iter().map(|stage| duration(*stage)).sum();
+        let mut done: f64 = self.snapshot.results.iter().map(|result| duration(result.stage)).sum();
+        if let (Phase::Measuring, Some(stage)) = (self.snapshot.phase, self.snapshot.stage) {
+            done += self.elapsed().as_secs_f64().min(duration(stage));
+        }
+        Some(Progress::Done((done / total.max(1.0) * 100.0).min(100.0) as u8))
+    }
+
     pub(super) fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
         if area.width < 40 || area.height < 12 {
@@ -41,6 +119,16 @@ impl Ui {
         let status_pill = format!(" {status} ");
         let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
         let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
+        let version = format!("native client {VERSION}  ");
+        let context = if self.live && self.snapshot.started() {
+            self.run_servers()
+                .iter()
+                .map(|server| server.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        } else {
+            self.config.url.clone()
+        };
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
@@ -48,23 +136,13 @@ impl Ui {
                     Span::raw(" ".repeat(spacer)),
                     Span::styled(status_pill, badge.bg(status_background)),
                 ]),
-                Line::styled(
-                    safe_text_width(
-                        &if self.live {
-                            self.snapshot
-                                .servers
-                                .iter()
-                                .filter(|server| server.has_check_result())
-                                .map(|server| server.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" · ")
-                        } else {
-                            self.config.url.clone()
-                        },
-                        usize::from(regions[0].width),
+                Line::from(vec![
+                    Span::styled(version.clone(), Style::new().fg(self.theme.muted)),
+                    Span::styled(
+                        safe_text_width(&context, usize::from(regions[0].width).saturating_sub(version.width())),
+                        Style::new().fg(self.theme.ink),
                     ),
-                    Style::new().fg(self.theme.ink),
-                ),
+                ]),
             ]),
             regions[0],
         );
@@ -1309,5 +1387,63 @@ mod tests {
         ui.live = false;
         ui.snapshot.phase = Phase::Complete;
         assert_eq!(ui.status(), ("Not started", ui.theme.muted));
+    }
+
+    #[test]
+    fn window_title_and_progress_bar_follow_the_run_like_go() {
+        use crate::model::StageResult;
+        let mut ui = Ui::new(Config::default(), Snapshot::default());
+        assert_eq!(ui.title(), "Graphite Meter · Not started");
+        assert_eq!(ui.progress(), None);
+        ui.live = true;
+        ui.update(Snapshot {
+            phase: Phase::Preparing,
+            ..Snapshot::default()
+        });
+        assert_eq!(ui.title(), "Graphite Meter · Checking paths");
+        assert_eq!(ui.progress(), Some(Progress::Checking));
+        // 4 s of latency and 5 s of download in a 24 s plan.
+        let mut snapshot = measuring();
+        snapshot.latest.elapsed = Duration::from_secs(5);
+        snapshot.results.push(StageResult {
+            stage: Stage::Latency,
+            elapsed: Duration::from_secs(4),
+            ..Default::default()
+        });
+        ui.update(snapshot);
+        assert_eq!(ui.title(), "Graphite Meter · Download");
+        assert_eq!(ui.progress(), Some(Progress::Done(37)));
+        ui.snapshot.phase = Phase::Complete;
+        assert_eq!(ui.title(), "Graphite Meter · Complete");
+        assert_eq!(ui.progress(), None);
+
+        let mut chrome = Chrome::default();
+        assert_eq!(
+            chrome.update("Graphite Meter · Checking paths".into(), Some(Progress::Checking)),
+            "\x1b]2;Graphite Meter · Checking paths\x07\x1b]9;4;3\x07"
+        );
+        assert_eq!(
+            chrome.update("Graphite Meter · Checking paths".into(), Some(Progress::Checking)),
+            ""
+        );
+        assert_eq!(
+            chrome.update("Graphite Meter · Download".into(), Some(Progress::Done(37))),
+            "\x1b]2;Graphite Meter · Download\x07\x1b]9;4;1;37\x07"
+        );
+        assert_eq!(
+            chrome.update("Graphite Meter · Complete".into(), None),
+            "\x1b]2;Graphite Meter · Complete\x07\x1b]9;4;0\x07"
+        );
+        // Leaving clears the title the TUI set.
+        assert_eq!(chrome.update(String::new(), None), "\x1b]2;\x07");
+    }
+
+    #[test]
+    fn header_shows_the_version_beside_the_catalogue_or_the_run_servers() {
+        let mut ui = Ui::new(Config::default(), measuring());
+        let version = format!(" native client {VERSION}  ");
+        assert!(rows(&mut ui, 100, 30)[2].starts_with(&format!("{version}http://127.0.0.1:7246 ")));
+        ui.live = true;
+        assert!(rows(&mut ui, 100, 30)[2].starts_with(&format!("{version}Alpha, Beta ")));
     }
 }

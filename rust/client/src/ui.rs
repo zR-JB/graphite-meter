@@ -102,6 +102,7 @@ pub async fn run(
     mut interrupts: mpsc::Receiver<()>,
 ) -> Result<Exit, Error> {
     let mut session = TerminalSession::enter()?;
+    let mut chrome = render::Chrome::default();
     let mut ui = Ui::new(config, snapshots.borrow_and_update().clone());
     let mut events = EventStream::new();
     let mut refresh = tokio::time::interval(Duration::from_millis(33));
@@ -135,6 +136,7 @@ pub async fn run(
                 }
                 if dirty {
                     session.terminal.draw(|frame| ui.draw(frame))?;
+                    chrome.show(ui.title(), ui.progress())?;
                     dirty = false;
                 }
             }
