@@ -80,8 +80,11 @@ export interface ConfidenceScore {
 }
 
 /** score = 1 − 2.2·CV − 1.4·|first third − last third| / mean over the trailing window. */
-export function transferConfidence(rates: readonly number[]): ConfidenceScore {
-  const values = rates.slice(-WINDOW_BUCKETS);
+export function transferConfidence(
+  rates: readonly number[],
+  buckets = WINDOW_BUCKETS,
+): ConfidenceScore {
+  const values = rates.slice(-buckets);
   const avg = mean(values);
   if (values.length < 2 || avg <= 0)
     return {
@@ -100,9 +103,12 @@ export function transferConfidence(rates: readonly number[]): ConfidenceScore {
   return { score, varianceRatio, slopeRatio, sampleCount: values.length };
 }
 
-/** Descriptive 0..100 steadiness of fixed-time rate buckets. */
+/** Descriptive 0..100 steadiness of every given fixed-time rate bucket. */
 export function stabilityPct(rates: readonly number[]): number {
-  const { sampleCount, varianceRatio = 1 } = transferConfidence(rates);
+  const { sampleCount, varianceRatio = 1 } = transferConfidence(
+    rates,
+    rates.length,
+  );
   return sampleCount >= 2 ? Math.max(0, 1 - varianceRatio) * 100 : 0;
 }
 
@@ -197,6 +203,19 @@ export function shouldExitPhase(input: {
     confidence.sampleCount >=
       confidenceSampleFloor(input.kind, durationMs, input.cadence)
   );
+}
+
+/** The share of its planned time a complete transfer stage's intervals span; an early finish may stop sooner. */
+export const minCoverage = (early: boolean) =>
+  early ? EARLY_FINISH.minCoverage : 0.75;
+
+/** From a stage's first interval to its last, so a page gap between them still counts. */
+export function coveredMs(
+  intervals: readonly AggregationInterval[],
+  stage: TransferStage,
+): number {
+  const spans = intervals.filter((interval) => interval.stage === stage);
+  return spans.length ? spans.at(-1)!.endMs - spans[0].startMs : 0;
 }
 
 /** Raw outcomes of one stage; presentation buckets never feed it. */
@@ -539,6 +558,8 @@ export interface AggregateWindow {
   up: ComponentWindow[] | null;
   downBytesPerSec: number | null;
   upBytesPerSec: number | null;
+  /** Time in the window when no server moved each direction. */
+  quietMs?: Totals;
 }
 export interface AggregationInterval {
   id: number;
@@ -628,6 +649,9 @@ interface OpenInterval {
   last: Boundary | null;
   stable: Boundary | null;
   wasStable: boolean;
+  /** Quiet time since the first boundary, and up to the stable one. */
+  quiet: Totals;
+  stableQuiet: Totals;
   combined: RateBuckets;
   total: Series;
   servers: Map<string, Series>;
@@ -706,6 +730,8 @@ export class ThroughputAggregate {
       last: null,
       stable: null,
       wasStable: false,
+      quiet: { down: 0, up: 0 },
+      stableQuiet: { down: 0, up: 0 },
       combined: new RateBuckets(WINDOW_BUCKETS),
       total: series(),
       servers: new Map(participants.map((id) => [id, series()])),
@@ -886,6 +912,9 @@ export class ThroughputAggregate {
     for (const dir of dirs) {
       const rate = rateOf(sample, dir)!;
       open.total[dir].observe((rate * ms) / 1000, ms);
+      // A step that no server moved is quiet on its evidence's clock: the client's, or the shortest receiver's.
+      if (!rate)
+        open.quiet[dir] += Math.min(...sample[dir]!.map((c) => c.durationMs));
       for (const component of sample[dir]!)
         open.servers
           .get(component.serverId)!
@@ -906,11 +935,16 @@ export class ThroughputAggregate {
           raise(open.peaks, c.serverId, dir, c.bytesPerSec);
       }
     }
+    full.quietMs = { ...open.quiet };
     record.full = full;
     record.endMs = boundary.atMs;
-    record.headline = open.stable
-      ? window(open.stable, boundary, record)
-      : full;
+    const headline = open.stable && window(open.stable, boundary, record);
+    if (headline)
+      headline.quietMs = {
+        down: open.quiet.down - open.stableQuiet.down,
+        up: open.quiet.up - open.stableQuiet.up,
+      };
+    record.headline = open.stable ? headline : full;
     const mark = this.#mark(open, boundary);
     for (const dir of dirs)
       for (const component of sample[dir]!)
@@ -936,6 +970,7 @@ export class ThroughputAggregate {
     if (!open || !open.record.complete) return false;
     const stable = isStillStable(open.wasStable, score);
     open.stable = stable ? (open.wasStable ? open.stable : open.last) : null;
+    if (stable && !open.wasStable) open.stableQuiet = { ...open.quiet };
     open.wasStable = stable;
     return stable;
   }
@@ -971,11 +1006,13 @@ export class ThroughputAggregate {
         const rate = rateOf(window, dir);
         if (!rate || !sufficient(window, dir)) continue;
         record.headline = window;
+        const from = Math.floor((window.startMs - record.startMs) / BUCKET_MS);
         return {
           reportedBytesPerSec: rate,
           totalBytes: this.#stageTotal(stage, dir),
           peakBytesPerSec: Math.max(open.peaks.get(COMBINED)?.[dir] ?? 0, rate),
-          stabilityPct: stabilityPct(open.total[dir].rates),
+          stabilityPct: stabilityPct(open.total[dir].rates.slice(from)),
+          quietMs: window.quietMs?.[dir] ?? 0,
         };
       }
       return null;

@@ -20,7 +20,8 @@ import {
   STAGES,
 } from "../runner/schedule";
 import {
-  EARLY_FINISH,
+  coveredMs,
+  minCoverage,
   sufficient,
   type LatencyLaneSnapshot,
   type MultiServerResult,
@@ -109,9 +110,8 @@ export function incoherence(
       )
         problems.push(`${name} is complete without 800 ms of evidence`);
       const plannedMs = config?.duration[`${name}Ms`] ?? 0;
-      const covered = spans.length ? spans.at(-1)!.endMs - spans[0].startMs : 0;
-      const floor = config?.adaptive ? EARLY_FINISH.minCoverage : 0.75;
-      if (config && covered < plannedMs * floor)
+      const covered = coveredMs(intervals, name);
+      if (config && covered < plannedMs * minCoverage(config.adaptive))
         problems.push(
           `${name} covers ${Math.round(covered)} of ${plannedMs} ms`,
         );

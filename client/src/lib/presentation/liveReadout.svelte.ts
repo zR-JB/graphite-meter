@@ -1,9 +1,8 @@
-// Live values on the frame clock: one stage's evidence at a time, gliding from the last stage and fading a stall.
+// Live values on the frame clock: one stage's evidence at a time, fading a stall.
 import type { LiveSample } from "../runner/contract";
 import { Smoothed } from "./motion.svelte";
 
 export const STALL_FADE_MS = 800;
-export const STAGE_GLIDE_MS = 400;
 
 interface RatePair {
   down: number;
@@ -20,7 +19,7 @@ export class LiveReadout {
   readonly down = new Smoothed();
   readonly up = new Smoothed();
   readonly rtt = new Smoothed();
-  /** The stage the rates measure; null until the run's first evidence. */
+  /** The stage the rates measure; null until that stage's first evidence. */
   phase = $state<LiveSample["phase"] | null>(null);
   #run = -1;
   #stalled = false;
@@ -29,21 +28,18 @@ export class LiveReadout {
     return this.phase ? { down: this.down.current, up: this.up.current } : null;
   }
 
-  /** Each sample corrects the readout; a sample without evidence holds it. */
+  /** Each sample corrects the readout; a sample without evidence holds it, and a new stage starts empty. */
   update(live: LiveSample | null, run: number, now?: number): void {
-    if (run !== this.#run) {
+    if (run !== this.#run || live?.phase !== this.phase) {
       this.#run = run;
       this.phase = null;
+      this.#stalled = false;
     }
     const target = liveTargets(live);
     if (!target || !live || (live.stalled && this.#stalled)) return;
     const correction = {
       snap: !this.phase,
-      over: live.stalled
-        ? STALL_FADE_MS
-        : this.phase && live.phase !== this.phase
-          ? STAGE_GLIDE_MS
-          : undefined,
+      over: live.stalled ? STALL_FADE_MS : undefined,
       now,
     };
     this.#stalled = live.stalled;

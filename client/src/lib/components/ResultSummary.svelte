@@ -46,7 +46,13 @@
   // Latency has its own card; this row holds the transfers.
   const transfers = $derived(cards.filter((card) => card.key !== "latency"));
   // Facts read the same way on every card: what the link peaked at, how steady it was, what moved.
-  const FACT_ORDER = ["Peak", "Stability", "Down + up", "Transferred"];
+  const FACT_ORDER = [
+    "Peak",
+    "Stability",
+    "No data",
+    "Down + up",
+    "Transferred",
+  ];
   const facts = (card: SummaryCard) =>
     card.rows
       .filter((row) => !row.stage)
@@ -142,7 +148,9 @@
         <dl class="facts">
           {#each facts(card) as row (row.label)}
             <div>
-              <dt>{row.label}</dt>
+              <dt {@attach row.tip ? term(() => row.tip!) : null}>
+                {row.label}
+              </dt>
               <dd>{row.value}</dd>
             </div>
           {/each}

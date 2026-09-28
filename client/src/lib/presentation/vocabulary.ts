@@ -172,8 +172,11 @@ export const JARGON = {
     "Peak\nHighest mean of the headline window and of consecutive windows " +
     "of at least 0.5 s across its interval\nNever below the headline",
   rateStability:
-    "Stability\n100% minus the coefficient of variation of 250 ms rates over the last 4 s\n" +
+    "Stability\n100% minus the coefficient of variation of the result's 250 ms rates\n" +
     "Coefficient of variation: standard deviation divided by the mean",
+  noData:
+    "No data\nTime in the result's window when no bytes arrived\n" +
+    "It counts in the average: a stall is part of the link",
   latencyStability: "Stability\n100% minus jitter as a share of the median",
   addedLatency:
     "Added latency\nLoaded median minus idle median, same server\nNegative: faster under load",
@@ -237,7 +240,8 @@ export const JARGON = {
   earlyFinish:
     "Early finish\nEnds a steady stage after 52% of its time\n" +
     "Steady: score ≥ 0.86 over 4 s, held for 1.1 s\n" +
-    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift",
+    "Needs 12 rate or 8 latency samples\nRate score: 1 − 2.2 × spread − 1.4 × drift\n" +
+    "A stage with a stall, gap or lost server runs its full time",
   saveResults:
     "Save results\nKeeps complete, partial and incomplete runs in this browser\n" +
     "The newest 2,000 stay; nothing is uploaded",
