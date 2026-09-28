@@ -381,3 +381,40 @@ async fn approval_pages_require_client_evidence_behind_a_trusted_proxy() {
     }
     h.stop().await;
 }
+
+#[tokio::test]
+async fn native_listeners_authorize_routes_they_do_not_mount_before_404() {
+    let h = Harness::start().await;
+    let (session, _) = h.login().await;
+    let stream = h
+        .h2_connector
+        .connect(
+            ServerName::try_from("localhost").unwrap(),
+            TcpStream::connect(h.h2).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    let (mut client, connection) = h2::client::handshake(stream).await.unwrap();
+    let driver = tokio::spawn(connection);
+    // The native HTTP/2 listener mounts neither WebSockets nor WebTransport.
+    for path in ["/ws/ping", "/wt/download"] {
+        for session in [None, Some(&session)] {
+            let mut request = Request::get(format!("https://localhost{path}")).header("origin", "https://localhost");
+            if let Some(session) = session {
+                request = request.header("cookie", format!("__Host-gm_session={session}"));
+            }
+            let (response, _) = client.send_request(request.body(()).unwrap(), true).unwrap();
+            let response = response.await.unwrap();
+            let expected = if session.is_some() { 404 } else { 403 };
+            assert_eq!(response.status(), expected, "{path}");
+            assert_eq!(
+                response.headers()["strict-transport-security"],
+                "max-age=31536000",
+                "{path}"
+            );
+        }
+    }
+    drop(client);
+    driver.abort();
+    h.stop().await;
+}

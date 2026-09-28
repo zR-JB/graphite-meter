@@ -497,11 +497,8 @@ impl HttpServer {
         if let Some(response) = self.validate_request(&request, request.body().is_end_stream()) {
             return Ok(response);
         }
-        let published = route::lookup(request.uri().path());
-        let route = published.filter(|&route| mounts(connection.listener, route));
-        if !connection.listener.ui && route != published {
-            return Ok(text_response(StatusCode::NOT_FOUND));
-        }
+        // A route this listener does not mount is authorized first, as in Go, then answered 404.
+        let route = route::lookup(request.uri().path()).filter(|&route| mounts(connection.listener, route));
         let mut lease = None;
         let mut origin = None;
         let request = if let Some(auth) = &self.auth {
