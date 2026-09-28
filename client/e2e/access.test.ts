@@ -86,11 +86,18 @@ test("failed and hanging unselected peers do not hold a selected pair", async (p
   await expect(choices).toHaveAttribute("aria-busy", "false", {
     timeout: 10_000,
   });
-  const settled = (await network(page)).preflights;
+  // Frankfurt is selected without an idle monitor, so it re-reads its discovery
+  // every 5 s on its own; reopening must not start any other preflight.
+  const preflights = async () => {
+    const counts = (await network(page)).preflights;
+    for (const origin of origins(frankfurt)) delete counts[origin];
+    return counts;
+  };
+  const settled = await preflights();
   await closeSettings(page);
   await openSettings(page);
   await expect(choices).toHaveAttribute("aria-busy", "false");
-  expect((await network(page)).preflights).toEqual(settled);
+  expect(await preflights()).toEqual(settled);
   expect((await network(page)).catalogs).toEqual([home.url]);
   expect(await selection(page)).toEqual(["self", "server-1"]);
 });
