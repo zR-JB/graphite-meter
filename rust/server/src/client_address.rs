@@ -2,7 +2,7 @@
 use std::net::{IpAddr, SocketAddr};
 
 use graphite_meter_core::discovery::ClientIpSource;
-use http::HeaderMap;
+use http::{HeaderMap, HeaderValue, header::AsHeaderName};
 use ipnet::IpNet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,9 +55,7 @@ pub fn resolve(peer: SocketAddr, headers: &HeaderMap, trusted: &[IpNet]) -> Clie
     {
         return client;
     }
-    let mut values = headers.get_all("x-real-ip").iter();
-    if let Some(value) = values.next()
-        && values.next().is_none()
+    if let Some(value) = unique_header(headers, "x-real-ip")
         && let Ok(value) = value.to_str()
         && let Ok(addr) = value.trim().parse::<IpAddr>()
     {
@@ -66,4 +64,10 @@ pub fn resolve(peer: SocketAddr, headers: &HeaderMap, trusted: &[IpNet]) -> Clie
         client.usable = true;
     }
     client
+}
+
+pub fn unique_header(headers: &HeaderMap, name: impl AsHeaderName) -> Option<&HeaderValue> {
+    let mut values = headers.get_all(name).iter();
+    let value = values.next()?;
+    values.next().is_none().then_some(value)
 }

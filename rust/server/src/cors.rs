@@ -1,6 +1,6 @@
 //! Browser response visibility, separate from request authentication.
 
-use crate::{auth::secure_browser_origin, route};
+use crate::{auth::secure_browser_origin, client_address::unique_header, route};
 use graphite_meter_core::route::Route;
 use http::{HeaderMap, HeaderValue, header};
 
@@ -90,17 +90,19 @@ pub fn authenticated_preflight<'a>(
         return None;
     }
     let route = route?;
-    let method = unique(request, header::ACCESS_CONTROL_REQUEST_METHOD)?.to_str().ok()?;
+    let method = unique_header(request, header::ACCESS_CONTROL_REQUEST_METHOD)?
+        .to_str()
+        .ok()?;
     if !route::spec(route).allows_cors_method(method) {
         return None;
     }
-    let origin = unique(request, header::ORIGIN)?;
+    let origin = unique_header(request, header::ORIGIN)?;
     let same_origin = origin == public_origin;
     if !same_origin && (route == Route::Servers || !origin.to_str().is_ok_and(secure_browser_origin)) {
         return None;
     }
 
-    let requested_headers = match unique(request, header::ACCESS_CONTROL_REQUEST_HEADERS) {
+    let requested_headers = match unique_header(request, header::ACCESS_CONTROL_REQUEST_HEADERS) {
         Some(value) => value.to_str().ok()?,
         None if request.contains_key(header::ACCESS_CONTROL_REQUEST_HEADERS) => return None,
         None => "",
@@ -123,10 +125,4 @@ pub fn authenticated_preflight<'a>(
     } else {
         None
     }
-}
-
-fn unique(headers: &HeaderMap, name: header::HeaderName) -> Option<&HeaderValue> {
-    let mut values = headers.get_all(name).iter();
-    let value = values.next()?;
-    values.next().is_none().then_some(value)
 }

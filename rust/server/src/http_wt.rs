@@ -113,21 +113,13 @@ impl HttpServer {
             _ = lease_ended(lease.clone()) => return Ok(()),
             session = Session::accept(stream) => session?,
         };
-        let query = request.uri().query().unwrap_or("");
-        let params: Vec<_> = form_urlencoded::parse(query.as_bytes()).collect();
-        let value = |name: &str| {
-            params
-                .iter()
-                .find(|(key, _)| key == name)
-                .map(|(_, value)| value.as_ref())
-        };
-        let datagrams = value("datagrams").is_some_and(datagram_mode);
-        let count = download_bytes(query);
+        let datagrams = query(&request, "datagrams").is_some_and(|value| datagram_mode(&value));
+        let count = download_bytes(&request);
         let verify = route == SessionRoute::Download && count == 0;
         let activity = Arc::new(Mutex::new(Instant::now()));
         let mut lanes: FuturesUnordered<Lane> = FuturesUnordered::new();
         let mut controls: FuturesUnordered<Lane> = FuturesUnordered::new();
-        let upload_id = value("id").unwrap_or("").to_owned();
+        let upload_id = query(&request, "id").unwrap_or_default();
         let mut datagram_lane = None;
         let mut refused = false;
         let mut awaiting_credit = false;
@@ -155,7 +147,7 @@ impl HttpServer {
                     }
                 }));
             } else {
-                let count_lanes = value("streams")
+                let count_lanes = query(&request, "streams")
                     .and_then(|v| v.parse::<i64>().ok())
                     .filter(|n| *n > 0)
                     .unwrap_or(1)
