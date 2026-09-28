@@ -458,12 +458,22 @@ impl<'a> StageRun<'a> {
         if self.transfer.is_none() {
             return Ok(());
         }
-        // As Go's final(): a transfer lost up to the final boundary leaves with its cause.
-        self.check_health()?;
-        let (mut boundary, misses) = self.collect(FINAL_CHECKPOINT_BUDGET, None).await.expect("no stage end");
-        self.check_health()?;
-        boundary.final_boundary = true;
-        self.observe_boundary(boundary, misses)?;
+        // As Go's final(): a transfer lost up to the final boundary leaves with its cause, and every
+        // removal there collects a fresh final boundary for the servers that remain.
+        loop {
+            self.check_health()?;
+            let remaining = self.members.len();
+            let (mut boundary, misses) = self.collect(FINAL_CHECKPOINT_BUDGET, None).await.expect("no stage end");
+            self.check_health()?;
+            if self.members.len() < remaining {
+                continue;
+            }
+            boundary.final_boundary = true;
+            self.observe_boundary(boundary, misses)?;
+            if self.members.len() == remaining {
+                break;
+            }
+        }
         let retrying = self
             .members
             .iter()

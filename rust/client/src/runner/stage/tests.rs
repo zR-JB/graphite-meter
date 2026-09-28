@@ -148,7 +148,10 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17) {
+                            if mode == 17 {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                            }
                             let bytes = if mode == 7 { checkpoints.load(Ordering::SeqCst) } else { checkpoints.fetch_add(1 << 16, Ordering::SeqCst) };
                             let body = format!(r#"{{"bytes":{bytes},"nanos":{}}}"#, receiver_clock.elapsed().as_nanos() + 1);
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
@@ -767,6 +770,65 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         )
     );
     assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_removal_at_the_final_boundary_collects_a_fresh_one_for_the_rest() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, far_mode, far_task) = download_peer().await?;
+    far_mode.store(17, Ordering::SeqCst);
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_secs(2),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    // After the last sample's checkpoints, before the final boundary's.
+    let revoke_near = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        tokio::time::sleep(config.upload_duration - Duration::from_millis(100)).await;
+        near_mode.store(3, Ordering::SeqCst);
+    };
+    let (result, ()) = tokio::join!(
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+        revoke_near
+    );
+    near_task.abort();
+    far_task.abort();
+    heartbeat.abort();
+    assert_eq!(result?, ["near"]);
+    let snapshot = observed.borrow();
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.server_id.as_str(), failure.reason),
+        ("near", graphite_meter_core::failure::FailureReason::SignInRequired)
+    );
+    let stage = &snapshot.results[0];
+    let (first, last) = (&stage.intervals[0], stage.intervals.back().unwrap());
+    assert_eq!(last.participants, ["far"]);
+    // The fresh boundary starts once far's first final checkpoint has answered, 100 ms after the stage end.
+    let fresh = config.upload_duration + Duration::from_millis(50);
+    assert!(
+        last.end_nanos - first.start_nanos >= fresh.as_nanos() as u64,
+        "{:?}",
+        stage.intervals
+    );
     Ok(())
 }
 
