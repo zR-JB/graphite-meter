@@ -1,6 +1,8 @@
 use crate::{Error, model::Stage};
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
+use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport};
 use std::time::Duration;
+
+pub const MAX_STREAMS: usize = 14;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
@@ -84,6 +86,15 @@ impl Config {
         }
     }
 
+    pub fn lanes(&self, target: &ThroughputTarget) -> (usize, usize) {
+        match (self.streams, target.transport, target.protocol) {
+            (0, ThroughputTransport::WebTransport, _) | (0, _, Protocol::Http3) => (1, 1),
+            (0, _, Protocol::Http2) => (1, 4),
+            (0, ..) => (self.auto_streams, self.auto_streams),
+            (forced, ..) => (forced, forced),
+        }
+    }
+
     pub fn validate(&self) -> Result<(), Error> {
         graphite_meter_core::origin::canonical_origin(&self.url)?;
         for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
@@ -101,10 +112,7 @@ impl Config {
         if self.stages.is_empty() {
             return Err("select at least one measurement stage".into());
         }
-        if self.auto_streams == 0
-            || self.auto_streams > crate::stream_plan::MAX_STREAMS
-            || self.streams > crate::stream_plan::MAX_STREAMS
-        {
+        if self.auto_streams == 0 || self.auto_streams > MAX_STREAMS || self.streams > MAX_STREAMS {
             return Err("stream counts must be within 1..=14 (0 means automatic for --streams)".into());
         }
         if [self.ping_interval, self.loaded_ping_interval].iter().any(|interval| {
