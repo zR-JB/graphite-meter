@@ -195,6 +195,22 @@ test("the shared golden documents decode unchanged", () => {
   expect<unknown>(parseProbe(probeGolden)).toEqual(probeGolden);
 });
 
+test("a stage limit is a whole number of milliseconds from a second to a day", () => {
+  const limit = (maxStageMs: unknown) => {
+    const value = discovery();
+    Object.assign(value.capabilities, { maxStageMs });
+    return parsePreflight(value).capabilities.maxStageMs;
+  };
+  expect([undefined, 1_000, 7_200_000, 86_400_000].map(limit)).toEqual([
+    undefined,
+    1_000,
+    7_200_000,
+    86_400_000,
+  ]);
+  for (const invalid of [999, 86_400_001, 1.5, "300000", null])
+    expect(() => limit(invalid)).toThrow("invalid stage limit");
+});
+
 test("only an explicit true advertises upload checkpoints", () => {
   const advertised = (uploadCheckpoint: unknown) => {
     const value = discovery();

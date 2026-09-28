@@ -20,6 +20,7 @@ import { safeDetail } from "../api/decode";
 import { identity, type ServerIdentity } from "../servers/catalog";
 import { ServerAuthenticationRequired } from "../servers/credentials";
 import { planServerStreams, validatePlan } from "./paths";
+import { after } from "./pageTimer";
 import { combineCompensationEstimates, wireModel } from "../compensation";
 import { headlineWire } from "../servers/wireEstimates";
 import {
@@ -141,7 +142,8 @@ export class Run {
 
   #segments: Segment[] = [];
   #active: Segment | null = null;
-  #timer: ReturnType<typeof setTimeout> | null = null;
+  /** Cancels the pending tick. */
+  #timer: (() => void) | null = null;
   #running = false;
   #clock = new RunClock();
   #elapsed = 0;
@@ -316,7 +318,7 @@ export class Run {
     if (!this.#running) return;
     this.#endRequested = true;
     if (this.#ending) return;
-    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer?.();
     this.#timer = null;
     this.#generation++;
     if (this.#active)
@@ -354,7 +356,7 @@ export class Run {
     this.#epoch++;
     this.#generation++;
     this.#measuring = this.#latencyOpen = false;
-    if (this.#timer) clearTimeout(this.#timer);
+    this.#timer?.();
     this.#timer = null;
     this.#boundaryAbort.abort();
     this.#boundaryAbort = new AbortController();
@@ -382,15 +384,12 @@ export class Run {
       const boundary = server.buckets.nextBoundaryT;
       if (boundary != null) deadlines.push(boundary - this.#elapsed);
     }
-    this.#timer = setTimeout(
-      () => {
-        this.#timer = null;
-        if (!this.#running) return;
-        this.#tick();
-        this.#arm();
-      },
-      Math.max(1, Math.min(...deadlines)),
-    );
+    this.#timer = after(Math.max(1, Math.min(...deadlines)), () => {
+      this.#timer = null;
+      if (!this.#running) return;
+      this.#tick();
+      this.#arm();
+    });
   }
 
   #tick(): void {

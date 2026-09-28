@@ -67,6 +67,15 @@ func (c *coordinator) start(ctx, teardown context.Context) error {
 	if !prepared.runnable() {
 		return errors.New("no selected server is ready")
 	}
+	// A stage longer than a selected server admits names that server rather than dropping it.
+	if limit, server := prepared.StageLimit(); server.ID != "" {
+		for _, stage := range c.cfg.Plan() {
+			if stage.Duration > limit {
+				return fmt.Errorf("%s allows stages up to %s; shorten the %s stage",
+					server.Name, shortDuration(limit), stage.Name)
+			}
+		}
+	}
 	for _, server := range prepared.Servers {
 		if !server.ready() {
 			c.servers = append(c.servers, &participant{prepared: server, removed: true})

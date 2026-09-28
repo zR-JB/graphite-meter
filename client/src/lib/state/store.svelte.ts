@@ -21,13 +21,15 @@ import {
   emptyConnectionValidation,
   latencyPathNeeded,
   needsPings,
+  stageLimit,
   validatePlan,
   type ConnectionValidation,
   type ConnectionValidationState,
   type ServerView,
 } from "../runner/paths";
 import { presentConnections } from "../presentation/paths";
-import { rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { fmtDuration, rateUnit, rateValueAt, rawRateFrom } from "../format";
+import { STAGE } from "../presentation/vocabulary";
 import { latencyAxisMs, throughputScales } from "../presentation/scales";
 import { Smoothed } from "../presentation/motion.svelte";
 import type { LatencyProfileViewLane } from "../components/latencyProfile";
@@ -219,7 +221,24 @@ class AppStore {
       return views.length > 1
         ? `${blocked.server.name}: ${blocked.blocked}`
         : blocked.blocked!;
-    return this.streamPlanError;
+    return this.stageLimitError || this.streamPlanError;
+  });
+  /** The longest stage the selected servers all admit (GM_MAX_STAGE_DURATION on each), and who sets it. */
+  stageLimit = $derived(
+    stageLimit(
+      this.selectedServers.flatMap((id) => this.servers.get(id) ?? []),
+    ),
+  );
+  /** A planned stage longer than a selected server admits; the start names the server rather than dropping it. */
+  stageLimitError = $derived.by((): string => {
+    const { ms, server } = this.stageLimit;
+    const stage = STAGES.find(
+      (key) =>
+        planned(this.config, key) && this.config.duration[`${key}Ms`] > ms,
+    );
+    return stage && server
+      ? `${server} allows stages up to ${fmtDuration(ms, 0)}; shorten the ${STAGE[stage].label.toLowerCase()} stage.`
+      : "";
   });
   /** Why the stream settings cannot fit the verified selection; Settings shows it by the setting. */
   streamPlanError = $derived.by((): string => {

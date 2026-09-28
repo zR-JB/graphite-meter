@@ -235,7 +235,8 @@ func (d *Discovery) preflightFor(host string) wire.Preflight {
 	}
 	return wire.Preflight{Server: wire.ServerInfo{Name: cfg.ServerName, Location: cfg.ServerLocation},
 		EngineVersion: cfg.EngineVersion, Generation: d.generation, Capabilities: wire.Capabilities{
-			UploadCheckpoint: true, ThroughputTargets: throughput, LatencyTargets: latency}}
+			UploadCheckpoint: true, MaxStageMs: cfg.MaxStageDuration.Milliseconds(),
+			ThroughputTargets: throughput, LatencyTargets: latency}}
 }
 
 // sameTarget also matches the relative self target ".".

@@ -1,6 +1,10 @@
 /** Control documents are small; bound decoded bytes even without Content-Length. */
 export const MAX_CONTROL_BYTES = 64 * 1024;
 const MAX_TARGETS = 32;
+/** A server that advertises no stage limit allows five minutes; none allows under a second or over a day. */
+export const DEFAULT_STAGE_LIMIT_MS = 300_000;
+export const MIN_STAGE_LIMIT_MS = 1_000;
+export const MAX_STAGE_LIMIT_MS = 86_400_000;
 
 export async function readJSONResponse(response: Response): Promise<unknown> {
   if (!response.body) throw new Error("empty control response");
@@ -144,6 +148,9 @@ export function parsePreflight(value: unknown) {
       ...(capabilities.uploadCheckpoint === undefined
         ? {}
         : { uploadCheckpoint: capabilities.uploadCheckpoint === true }),
+      ...(capabilities.maxStageMs === undefined
+        ? {}
+        : { maxStageMs: stageLimit(capabilities.maxStageMs) }),
       throughput: targets(capabilities.throughput).flatMap((value) => {
         const target = record(value);
         const transport = mechanism(target.transport, THROUGHPUT_TRANSPORTS);
@@ -161,6 +168,16 @@ export function parsePreflight(value: unknown) {
       }),
     },
   };
+}
+
+function stageLimit(value: unknown): number {
+  if (
+    !isCount(value) ||
+    value < MIN_STAGE_LIMIT_MS ||
+    value > MAX_STAGE_LIMIT_MS
+  )
+    throw new Error("invalid stage limit");
+  return value;
 }
 
 export function parseProbe(value: unknown): Probe {

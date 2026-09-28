@@ -6,6 +6,7 @@ import {
   planServerStreams,
   preparedPaths,
   roleNeedsValidation,
+  stageLimit,
   summarizeRoleValidation,
   uploadCapabilityFailure,
   WT_MAX_LANES,
@@ -242,4 +243,26 @@ test("missing upload checkpoints block prepared paths only while uploads run", (
   expect(preparedPaths(cfg, paths.discovery, validation)).toBeNull();
   paths.discovery.uploadCheckpoint = true;
   expect(preparedPaths(cfg, paths.discovery, validation)).not.toBeNull();
+});
+
+test("the stage limit is the smallest a discovered server admits, five minutes when it predates the field", () => {
+  const view = (name: string, maxStageMs?: number | null) => ({
+    server: { name },
+    discovery:
+      maxStageMs === null
+        ? null
+        : { ...testPreparedPaths().discovery, maxStageMs },
+  });
+  expect(stageLimit([])).toEqual({ ms: 86_400_000, server: null });
+  expect(stageLimit([view("Home", 7_200_000)])).toEqual({
+    ms: 7_200_000,
+    server: "Home",
+  });
+  expect(stageLimit([view("Home", 7_200_000), view("Old", undefined)])).toEqual(
+    { ms: 300_000, server: "Old" },
+  );
+  expect(stageLimit([view("Home", 7_200_000), view("Unknown", null)])).toEqual({
+    ms: 7_200_000,
+    server: "Home",
+  });
 });

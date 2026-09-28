@@ -34,10 +34,12 @@ export const fmtDuration = finite((ms, fractionDigits: number = 1) => {
   const seconds = Math.max(0, ms) / 1000;
   if (seconds < 59.95) return `${seconds.toFixed(fractionDigits)} s`;
   const whole = Math.round(seconds);
+  // Hours count whole minutes, so 1 h 59.5 min reads 2 h, never 1 h 60 min.
+  const minutes = Math.round(whole / 60);
   const [large, small, unit, rest] =
     whole < 3600
       ? [Math.floor(whole / 60), whole % 60, "min", "s"]
-      : [Math.floor(whole / 3600), Math.round((whole % 3600) / 60), "h", "min"];
+      : [Math.floor(minutes / 60), minutes % 60, "h", "min"];
   return `${large} ${unit}${small ? ` ${small} ${rest}` : ""}`;
 });
 

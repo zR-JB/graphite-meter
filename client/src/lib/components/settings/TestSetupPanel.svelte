@@ -182,15 +182,22 @@
     if (!accepted) announce(rejection);
     return accepted;
   }
+  // A stage stays within what every selected server admits.
+  const maxMs = (key: DurationKey) =>
+    key === "warmupMs"
+      ? DURATION_LIMITS.warmupMs[1]
+      : Math.min(DURATION_LIMITS[key][1], store.stageLimit.ms);
+  const limited = (key: DurationKey, ms: number) =>
+    Math.min(maxMs(key), clampDuration(key, ms));
   function nudge(key: DurationKey, delta: number) {
-    applyDuration(key, clampDuration(key, store.config.duration[key] + delta));
+    applyDuration(key, limited(key, store.config.duration[key] + delta));
   }
   function setSeconds(key: DurationKey, event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const step = STEP_MS[key];
     const raw = input.valueAsNumber;
     const value = Number.isFinite(raw)
-      ? clampDuration(key, Math.round((raw * 1000) / step) * step)
+      ? limited(key, Math.round((raw * 1000) / step) * step)
       : store.config.duration[key];
     const accepted = applyDuration(key, value);
     input.value = String(
@@ -303,7 +310,8 @@
 {/snippet}
 
 {#snippet stepper(key: DurationKey, label: string)}
-  {@const [min, max] = DURATION_LIMITS[key]}
+  {@const min = DURATION_LIMITS[key][0]}
+  {@const max = maxMs(key)}
   {@const ms = store.config.duration[key]}
   <span class="stepper" role="group" aria-label="{label} time">
     <button

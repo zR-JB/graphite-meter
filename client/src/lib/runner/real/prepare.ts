@@ -102,7 +102,8 @@ export async function discoverServer(
     const timing = performance
       .getEntriesByName(response.url, "resource")
       .at(-1) as PerformanceResourceTiming | undefined;
-    const { throughput, latency, uploadCheckpoint } = pf.capabilities;
+    const { throughput, latency, uploadCheckpoint, maxStageMs } =
+      pf.capabilities;
     const secure = location.protocol === "https:";
     signal.throwIfAborted();
     return {
@@ -115,6 +116,7 @@ export async function discoverServer(
         location.origin,
       ),
       uploadCheckpoint,
+      maxStageMs,
       generation: pf.generation,
       engineVersion: pf.engineVersion,
       server: pf.server,

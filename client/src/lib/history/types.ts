@@ -68,7 +68,13 @@ export function incoherence(
   config?: Pick<RunnerConfig, "stages" | "duration" | "adaptive">,
 ): string[] {
   const problems: string[] = [];
-  const { failures, intervals } = result.multiServer;
+  const { failures, intervals, omittedIntervals } = result.multiServer;
+  // Past 128 intervals the oldest give way; a stage that ran up to the first kept one cannot be checked against them.
+  const firstKept = intervals.length
+    ? STAGES.indexOf(intervals[0].stage)
+    : STAGES.length;
+  const truncated = (name: TransportRole) =>
+    omittedIntervals > 0 && STAGES.indexOf(name) <= firstKept;
   for (const failure of failures)
     if (!FAILURE_REASONS.includes(failure.reason))
       problems.push(`unknown failure reason ${failure.reason}`);
@@ -91,7 +97,7 @@ export function incoherence(
       );
     if (status === "not-run" && (lanes.some(Boolean) || spans.length))
       problems.push(`${name} is not-run but has evidence`);
-    if (name !== "latency" && status === "complete") {
+    if (name !== "latency" && status === "complete" && !truncated(name)) {
       const dirs =
         name === "bidirectional"
           ? (["down", "up"] as const)

@@ -229,7 +229,8 @@ export const JARGON = {
     "Warmup\nRuns before each stage to open its connections and ramp up\n" +
     "At least 10 round trips, at most 4 s; never counted",
   stageTime:
-    "Stage time\nPlanned length; early finish can end a stage sooner\n1 s to 5 min; 0 skips the stage",
+    "Stage time\nPlanned length; early finish can end a stage sooner\n" +
+    "From 1 s up to the servers' stage limit, 5 min unless their operator raises it",
   bidirectionalStage:
     "Bidirectional stage\nDownload and upload at the same time, after the other stages\n" +
     "The stage track can skip it; turn it back on here",

@@ -14,7 +14,10 @@ import {
 } from "./format";
 
 test("durations read in seconds below a minute, then minutes and hours", () => {
-  const values = [999, 25_000, 59_900, 60_000, 65_000, 3_599_000, 3_690_000];
+  const values = [
+    999, 25_000, 59_900, 60_000, 65_000, 3_599_000, 3_690_000, 7_170_000,
+    86_399_000,
+  ];
   expect(values.map((ms) => fmtDuration(ms))).toEqual([
     "1.0 s",
     "25.0 s",
@@ -23,6 +26,8 @@ test("durations read in seconds below a minute, then minutes and hours", () => {
     "1 min 5 s",
     "59 min 59 s",
     "1 h 2 min",
+    "2 h",
+    "24 h",
   ]);
 });
 

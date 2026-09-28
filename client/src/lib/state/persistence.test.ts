@@ -117,10 +117,17 @@ test("saved numbers keep their type and stay within bounds", () => {
   expect(config.duration).toEqual({
     warmupMs: 0,
     latencyMs: 1_000,
-    downloadMs: 300_000,
+    downloadMs: 86_400_000,
     uploadMs: DEFAULT_CONFIG.duration.uploadMs,
     bidirectionalMs: 2_500,
   });
+});
+
+test("a multi-hour stage survives a reload; the servers' limit applies at start", () => {
+  const config = loaded({
+    config: { duration: { downloadMs: 7_200_000 } },
+  }).config;
+  expect(config.duration.downloadMs).toBe(7_200_000);
 });
 
 test("a stage saved with 0 ms loads switched off at its default time", () => {

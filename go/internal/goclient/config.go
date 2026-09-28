@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -118,18 +117,30 @@ const MaxPingInterval = wire.IdleBound / 2
 
 type DurationBound struct{ Min, Max time.Duration }
 
-// The stage minimum leaves room above the 800 ms of evidence every headline needs.
+// The stage minimum leaves room above the 800 ms of evidence every headline needs; the maximum is the longest
+// any server may allow, and each selected server's own limit applies when the run starts.
 var (
 	WarmupBound = DurationBound{0, 4 * time.Second}
-	StageBound  = DurationBound{time.Second, 5 * time.Minute}
+	StageBound  = DurationBound{wire.MinStageLimit, wire.MaxStageLimit}
 )
 
 func (b DurationBound) Check(d time.Duration) error {
 	if d < b.Min || d > b.Max {
-		seconds := func(d time.Duration) string { return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) + " s" }
-		return fmt.Errorf("must be from %s to %s", seconds(b.Min), seconds(b.Max))
+		return fmt.Errorf("must be from %s to %s", shortDuration(b.Min), shortDuration(b.Max))
 	}
 	return nil
+}
+
+// shortDuration drops a duration's zero units: 24h, 5m, 1.5s.
+func shortDuration(d time.Duration) string {
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }
 
 func (c Config) Validate() error {
