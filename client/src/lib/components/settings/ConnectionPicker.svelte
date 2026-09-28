@@ -5,7 +5,12 @@
   import { summarizeRoleValidation } from "../../runner/paths";
   import type { ConnectionRole } from "../../runner/contract";
   import type { PathOption } from "../../presentation/paths";
-  import { JARGON, PATH_NOTE, READINESS } from "../../presentation/vocabulary";
+  import {
+    IN_USE,
+    JARGON,
+    PATH_NOTE,
+    READINESS,
+  } from "../../presentation/vocabulary";
   import { tooltip } from "../../actions/tooltip";
   import { reveal } from "../../presentation/motion.svelte";
 
@@ -44,17 +49,32 @@
     !simultaneous
       ? (connection.message ?? connection.summary)
       : roleSummary.verified === roleSummary.total
-        ? "Paths resolve independently on each server."
-        : `${roleSummary.verified} of ${roleSummary.total} servers ready. Paths resolve independently.`,
+        ? "Resolved per server"
+        : `${roleSummary.verified} of ${roleSummary.total} servers ready`,
+  );
+  // A failure's message names it, so it stands in for the status word.
+  const failure = $derived(
+    !simultaneous && validation === "failed" ? connection.message : undefined,
+  );
+  const status = $derived(
+    locked
+      ? IN_USE
+      : failure
+        ? { ...READINESS.failed, label: failure }
+        : READINESS[validation],
   );
   const title = $derived(
     role === "throughput" ? "Throughput path" : "Latency path",
   );
+  // A forced choice a selected server lacks fails that server, which the list above names.
   const offerAutomatic = $derived(
     selected !== "auto" &&
       !locked &&
       (validation === "failed" ||
-        !!options.find((option) => option.value === selected)?.disabled),
+        !!options.find((option) => option.value === selected)?.disabled ||
+        store.selectedServers.some(
+          (id) => store.servers.get(id)?.readiness === "failed",
+        )),
   );
   // Unavailable choices fold into one line; the selected one always shows.
   let unfolded = $state(false);
@@ -70,16 +90,17 @@
 </script>
 
 <div class="picker" role="group" aria-labelledby={labelId}>
-  <span
-    class="list-label"
-    id={labelId}
-    {@attach tooltip(() => JARGON[`${role}Path`])}>{title}</span
-  >
+  <div class="list-label">
+    <span id={labelId} {@attach tooltip(() => JARGON[`${role}Path`])}
+      >{title}</span
+    >
+  </div>
   <div class="kv choices">
     {#each shown as option (option.value)}
       <label
         transition:reveal
-        class:unavailable={option.disabled || locked}
+        class:unavailable={option.disabled ||
+          (locked && option.value !== selected)}
         {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >
         <input
@@ -119,13 +140,15 @@
       >
     {/if}
   </div>
-  {#if unlisted.length || offerAutomatic}<div class="validation">
+  <!-- Until the server list loads there is nothing to check or retry. -->
+  {#if store.serverCatalog && (unlisted.length || offerAutomatic)}<div
+      class="validation"
+    >
       {#if unlisted.length}
         <p>
-          <span class="status-dot inline" data-tone={READINESS[validation].tone}
-          ></span>
-          <strong>{locked ? "In use" : READINESS[validation].label}</strong>
-          {summary}
+          <span class="status-dot inline" data-tone={status.tone}></span>
+          <strong>{status.label}</strong>
+          {#if !failure}{summary}{/if}
         </p>
       {/if}
       {#if offerAutomatic}

@@ -86,6 +86,8 @@ export const READINESS: Record<Readiness, { label: string; tone: Tone }> = {
   "sign-in": { label: "Sign in", tone: "warn" },
   blocked: { label: BLOCKED, tone: "warn" },
 };
+/** A verified path while a run holds it, in Settings and Details alike. */
+export const IN_USE = { label: "In use", tone: "brand" } as const;
 export const READINESS_TIP: Record<Exclude<Readiness, "blocked">, string> = {
   verified:
     "Ready\nThe selected servers and paths passed their check\n" +
@@ -329,7 +331,7 @@ export const PATH_NOTE: Record<
   Record<string, string>
 > = {
   throughput: {
-    auto: "Best offered path; verifies the others",
+    auto: "HTTP/1.1, else HTTP/2, HTTP/3 or WebTransport",
     "protocol:http1": "Parallel connections, one stream each",
     "protocol:http2": "One connection, several streams",
     "protocol:http3": "One QUIC connection, several streams",
@@ -339,7 +341,7 @@ export const PATH_NOTE: Record<
   latency: {
     auto: "WebTransport datagrams, else WebSocket",
     "transport:websocket": "Reliable messages over one connection",
-    "transport:webtransport": "Datagrams in one HTTP/3 session",
+    "transport:webtransport": "Unreliable messages in one HTTP/3 session",
   },
 };
 

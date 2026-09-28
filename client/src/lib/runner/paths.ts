@@ -225,6 +225,15 @@ export const selectionOrigin = (selection: string): string | null =>
     ? null
     : selection.replace(/::(?:wt|wtdg)$/, "");
 
+/** A choice in words, for a server that does not offer it: an HTTP version, a transport or an origin. */
+export function selectionName(selection: string): string {
+  if (selection.startsWith("protocol:"))
+    return httpProtocolLabel(selection.slice("protocol:".length));
+  if (selection.startsWith("transport:"))
+    return selection === "transport:websocket" ? "WebSocket" : "WebTransport";
+  return selectionOrigin(selection) ?? selection;
+}
+
 /** A known browser policy restriction, only when it excludes every matching target. */
 export function blockedSelectionReason(
   discovery: TransportDiscovery,

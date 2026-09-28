@@ -7,6 +7,7 @@ import type {
 import type { IdleEvent } from "./real/latencyChannel";
 import {
   BrowserOriginBlockedError,
+  PathNotOfferedError,
   PreflightUnavailableError,
   type ConnectionPreparation,
   type discoverServer,
@@ -73,7 +74,11 @@ const superseded = () =>
 function failureMessage(cause: unknown, server: ServerEntry): string {
   const authentication = findCause(cause, ServerAuthenticationRequired);
   if (authentication) return authentication.message;
-  if (cause instanceof BrowserOriginBlockedError) return cause.message;
+  if (
+    cause instanceof BrowserOriginBlockedError ||
+    cause instanceof PathNotOfferedError
+  )
+    return cause.message;
   if (cause instanceof PreflightUnavailableError && isNetworkFailure(cause))
     return server.url.startsWith("https://") && location.protocol === "http:"
       ? "Server could not be reached. If it requires sign-in, open this interface over HTTPS."
