@@ -19,7 +19,13 @@ import type { MultiServerResult } from "../runner/measure";
 import { bidirectionalResultPresentation } from "./bidirectionalResult";
 import type { IconName } from "./icons";
 import { serverName } from "./serverAppearance";
-import { JARGON, MISSING, STAGE, reasonLabel } from "./vocabulary";
+import {
+  JARGON,
+  LATENCY_POPULATION,
+  MISSING,
+  STAGE,
+  reasonLabel,
+} from "./vocabulary";
 
 type SummaryStatus = "complete" | "partial" | "failed";
 type LiveStatus = "active" | "pending" | "stopped" | "not-run";
@@ -309,8 +315,11 @@ export function serverIssues(details: MultiServerResult, scope = "") {
       });
     const line = lines.get(key)!;
     const latency = failure.scope === "latency";
+    // A transfer's latency is named as the latency card names it; the Latency stage by its own name.
     line.stages.push(
-      `${STAGE[failure.stage].label}${latency ? " latency" : ""}`,
+      latency && failure.stage !== "latency"
+        ? LATENCY_POPULATION[failure.stage].short
+        : STAGE[failure.stage].label,
     );
     if (!latency) line.throughput.push(failure.stage);
   }
