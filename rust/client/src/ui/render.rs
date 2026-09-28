@@ -128,7 +128,7 @@ impl Ui {
         let status = format!(" {} ", safe_text_width(status, (width / 2).saturating_sub(4)));
         let title = " Graphite Meter ";
         let spacer = width.saturating_sub(title.width() + status.width());
-        let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
+        let badge = bold(self.theme.inverse);
         let version = format!("native client {}  ", crate::VERSION);
         let context = if self.live && self.snapshot.started() {
             self.run_servers()
@@ -147,8 +147,8 @@ impl Ui {
                 Span::styled(status, badge.bg(background)),
             ]),
             Line::from(vec![
-                Span::styled(version, Style::new().fg(self.theme.muted)),
-                Span::styled(context, Style::new().fg(self.theme.ink)),
+                Span::styled(version, self.theme.muted),
+                Span::styled(context, self.theme.ink),
             ]),
         ])
     }
@@ -166,7 +166,7 @@ impl Ui {
         let color = if is_error { self.theme.err } else { self.theme.muted };
         let mut lines = Vec::new();
         if !self.help {
-            lines.push(Line::styled(safe_text_width(notice, width), Style::new().fg(color)));
+            lines.push(Line::styled(safe_text_width(notice, width), color));
         }
         lines.push(self.hints(&hints, width));
         lines.extend(help.iter().map(|row| self.hints(row, width)));
@@ -185,7 +185,7 @@ impl Ui {
                     Span::raw(after),
                 ]),
                 Line::from(keys::hints(&EDIT).join(" · ")),
-                Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
+                Line::styled(safe_text(&self.notice, 200), self.theme.warn),
             ])
             .block(panel(edit.field.term.label, self.theme)),
             area,
@@ -241,17 +241,15 @@ impl Ui {
         .split(inner);
         let width = usize::from(inner.width);
         frame.render_widget(
-            Paragraph::new(safe_text_width(&format!("Origin: {}", auth.origin), width))
-                .style(Style::new().fg(self.theme.muted)),
+            Paragraph::new(safe_text_width(&format!("Origin: {}", auth.origin), width)).style(self.theme.muted),
             regions[0],
         );
         frame.render_widget(
-            Paragraph::new(safe_text_width(&format!("Match this code: {}", auth.code), width))
-                .style(Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD)),
+            Paragraph::new(safe_text_width(&format!("Match this code: {}", auth.code), width)).style(self.value()),
             regions[1],
         );
         frame.render_widget(
-            Paragraph::new("Browser URL · ↑/↓ scroll").style(Style::new().fg(self.theme.muted)),
+            Paragraph::new("Browser URL · ↑/↓ scroll").style(self.theme.muted),
             regions[2],
         );
         let url = safe_text(&auth.browser_url, MAX_TEXT);
@@ -265,16 +263,11 @@ impl Ui {
                     .as_secs_f64(),
                 remaining.as_secs_f64()
             ))
-            .style(Style::new().fg(self.theme.muted)),
+            .style(self.theme.muted),
             regions[3],
         );
         let offset = self.auth_scroll.clamp(lines.len(), usize::from(regions[4].height));
-        frame.render_widget(
-            Paragraph::new(lines)
-                .scroll(offset)
-                .style(Style::new().fg(self.theme.text)),
-            regions[4],
-        );
+        frame.render_widget(Paragraph::new(lines).scroll(offset).style(self.theme.text), regions[4]);
         frame.render_widget(Paragraph::new(self.hints(&keys::hints(&SIGN_IN), width)), regions[5]);
     }
 
@@ -289,9 +282,9 @@ impl Ui {
             }
             let (key, action) = hint.split_at(hint.find(' ').unwrap_or(hint.len()));
             spans.extend([
-                Span::styled(separator, Style::new().fg(self.theme.border)),
-                Span::styled(key.to_owned(), Style::new().fg(self.theme.text)),
-                Span::styled(action.to_owned(), Style::new().fg(self.theme.muted)),
+                Span::styled(separator, self.theme.border),
+                Span::styled(key.to_owned(), self.theme.text),
+                Span::styled(action.to_owned(), self.theme.muted),
             ]);
         }
         Line::from(spans)
@@ -451,7 +444,7 @@ impl Ui {
 
     /// Go's testFields: the run's servers and paths, then its stream and timing settings.
     fn test_fields(&self, width: usize) -> Vec<Line<'static>> {
-        let label = |name: &str| Span::styled(format!("{name:<11}"), Style::new().fg(self.theme.text));
+        let label = |name: &str| Span::styled(format!("{name:<11}"), self.theme.text);
         let missing = || MISSING.to_owned();
         if !self.snapshot.started() {
             let value = if self.active() {
@@ -461,7 +454,7 @@ impl Ui {
             };
             return vec![Line::from(vec![
                 label("Servers"),
-                Span::styled(value, Style::new().fg(self.theme.muted)),
+                Span::styled(value, self.theme.muted),
             ])];
         }
         let servers = self.run_servers();
@@ -566,7 +559,7 @@ impl Ui {
     /// The results panel's lines, each grid's stage labels in their stage's colour, and its title.
     fn results(&self, width: usize) -> (Vec<Line<'static>>, String) {
         let (grids, failures) = crate::report::results(&self.snapshot, self.latency_server(), width);
-        let muted = Style::new().fg(self.theme.muted);
+        let muted = self.theme.muted;
         let mut lines = Vec::new();
         for grid in &grids {
             for (index, line) in grid.iter().enumerate() {
@@ -576,7 +569,7 @@ impl Ui {
                     Line::styled(line, muted)
                 } else if let Some(stage) = crate::report::label_stage(label) {
                     Line::from(vec![
-                        Span::styled(label.to_owned(), Style::new().fg(self.theme.stage(stage))),
+                        Span::styled(label.to_owned(), self.theme.stage(stage)),
                         Span::raw(cells.to_owned()),
                     ])
                 } else {
@@ -584,7 +577,7 @@ impl Ui {
                 });
             }
         }
-        let err = Style::new().fg(self.theme.err);
+        let err = self.theme.err;
         lines.extend(
             failures
                 .iter()
@@ -625,10 +618,10 @@ impl Ui {
 
     /// Each planned stage's outcome, progress, or wait.
     fn stage_track(&self) -> Vec<Line<'static>> {
-        let muted = Style::new().fg(self.theme.muted);
+        let muted = self.theme.muted;
         let mut track = Vec::new();
         for stage in &self.requested.stages {
-            let hue = Style::new().fg(self.theme.stage(*stage));
+            let hue = self.theme.stage(*stage);
             let mut line = vec![Span::styled(format!("{:<14} ", stage.name()), hue)];
             if let Some(result) = self.snapshot.results.iter().find(|result| result.stage == *stage) {
                 line.extend(self.outcome(result));
@@ -684,7 +677,7 @@ impl Ui {
             .map(|line| Line::from(safe_text_width(&line, usize::from(area.width))))
             .collect();
         for result in self.snapshot.results.iter().rev().take(4) {
-            let hue = Style::new().fg(self.theme.stage(result.stage));
+            let hue = self.theme.stage(result.stage);
             let mut line = vec![Span::styled(result.stage.name(), hue), Span::raw(": ")];
             line.extend(self.outcome(result));
             lines.push(Line::from(line));
@@ -713,19 +706,18 @@ impl Ui {
             .collect::<Vec<_>>()
             .join(" / ")
         };
-        let muted = Style::new().fg(self.theme.muted);
+        let muted = self.theme.muted;
         match self.snapshot.stage_status(result) {
-            crate::model::StageStatus::Complete => vec![
-                Span::styled("✓ ", Style::new().fg(self.theme.ok)),
-                Span::styled(headline, self.value()),
-            ],
+            crate::model::StageStatus::Complete => {
+                vec![Span::styled("✓ ", self.theme.ok), Span::styled(headline, self.value())]
+            }
             status @ crate::model::StageStatus::Partial => vec![
-                Span::styled("! ", Style::new().fg(self.theme.warn)),
+                Span::styled("! ", self.theme.warn),
                 Span::styled(headline, self.value()),
                 Span::styled(format!(" {}", status.label()), muted),
             ],
             status => vec![
-                Span::styled("✗ ", Style::new().fg(self.theme.err).add_modifier(Modifier::BOLD)),
+                Span::styled("✗ ", bold(self.theme.err)),
                 Span::styled(status.label(), muted),
             ],
         }
@@ -817,12 +809,12 @@ impl Ui {
                 Dataset::default()
                     .marker(Marker::Braille)
                     .graph_type(GraphType::Line)
-                    .style(Style::new().fg(*color))
+                    .style(*color)
                     .data(points)
             })
             .collect::<Vec<_>>();
-        let axis = Style::new().fg(self.theme.border);
-        let muted = Style::new().fg(self.theme.muted);
+        let axis = self.theme.border;
+        let muted = self.theme.muted;
         let top = format!("{} {units}", graphite_meter_core::format::speed(ceiling));
         frame.render_widget(
             Chart::new(datasets)
@@ -852,7 +844,7 @@ impl Ui {
             if column >= marked {
                 let label = if *stage == Stage::Latency { "Idle" } else { stage.name() };
                 marks.push(Span::raw(" ".repeat(column - marked)));
-                marks.push(Span::styled(label, Style::new().fg(self.theme.stage(*stage))));
+                marks.push(Span::styled(label, self.theme.stage(*stage)));
                 marked = column + label.width();
             }
             at += self.requested.duration(*stage).as_secs_f64();
@@ -873,10 +865,7 @@ impl Ui {
             .map(|line| Line::from(safe_text(line, MAX_TEXT)))
             .collect();
         lines.push(Line::raw(""));
-        lines.push(Line::styled(
-            "Values",
-            Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD),
-        ));
+        lines.push(Line::styled("Values", bold(self.theme.ink)));
         for term in crate::vocabulary::VALUES {
             lines.extend(wrap_columns(
                 &format!("{} · {}", term.label, term.explanation),
@@ -919,10 +908,7 @@ impl Ui {
                         safe_text(&server.name, 120),
                         safe_text(&server.id, 120)
                     )),
-                    Line::styled(
-                        format!("    {}", safe_text(&server.origin, 160)),
-                        Style::new().fg(self.theme.muted),
-                    ),
+                    Line::styled(format!("    {}", safe_text(&server.origin, 160)), self.theme.muted),
                     Line::styled(
                         format!("    {}", safe_text(&detail, 160)),
                         Style::new().fg(if server.error.is_some() {
@@ -998,10 +984,6 @@ fn setting(duration: Duration) -> String {
     } else {
         format!("{} s", seconds(duration))
     }
-}
-
-fn bold(color: Color) -> Style {
-    Style::new().fg(color).add_modifier(Modifier::BOLD)
 }
 
 /// A chart line: its points and their colour.

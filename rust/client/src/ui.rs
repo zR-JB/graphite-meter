@@ -731,12 +731,12 @@ fn panel(title: &str, theme: Theme) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(theme.border))
-        .style(Style::new().fg(theme.text))
-        .title(Span::styled(
-            title,
-            Style::new().fg(theme.ink).add_modifier(Modifier::BOLD),
-        ))
+        .border_style(theme.border)
+        .style(theme.text)
+        .title(Span::styled(title, bold(theme.ink)))
+}
+fn bold(color: ratatui::style::Color) -> Style {
+    Style::new().fg(color).add_modifier(Modifier::BOLD)
 }
 fn popup(area: Rect, width: u16, height: u16) -> Rect {
     let width = width.min(84).min(area.width.saturating_sub(4));
