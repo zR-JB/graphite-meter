@@ -948,28 +948,11 @@ fn count(value: usize) -> String {
 mod tests {
     use super::*;
     use crate::model::{ServerContribution, ServerFailure, ServerSummary};
-    use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome};
+    use crate::ui::tests::{download_measurement, latency_result, probes};
 
     /// One server's idle and loaded latency and a download a late probe timeout made partial.
     fn partial_run() -> Snapshot {
-        let latency = |rtts: &[i64], timeouts: usize| {
-            let mut probes = LatencyAccumulator::default();
-            for rtt_nanos in rtts {
-                probes.record(ProbeOutcome::Reply {
-                    rtt_nanos: *rtt_nanos,
-                    handling_nanos: 0,
-                });
-            }
-            for _ in 0..timeouts {
-                probes.record(ProbeOutcome::Timeout);
-            }
-            vec![ServerLatencyResult {
-                elapsed: Some(Duration::from_secs(1)),
-                id: "a".into(),
-                summary: probes.snapshot(),
-                ending: None,
-            }]
-        };
+        let latency = |rtts: &[i64], timeouts| vec![latency_result("a", probes(rtts, timeouts))];
         Snapshot {
             phase: Phase::Partial,
             servers: vec![ServerSummary {
@@ -993,12 +976,8 @@ mod tests {
                     stage: Stage::Download,
                     elapsed: Duration::from_secs(1),
                     down: Some(MeasurementResult {
-                        direction: graphite_meter_core::measurement::Direction::Down,
-                        total_bytes: 1_500_000,
-                        mean_bytes_per_sec: Some(1_500_000.0),
                         peak_bytes_per_sec: Some(1_800_000.0),
-                        samples: 4,
-                        elapsed_nanos: Some(1_000_000_000),
+                        ..download_measurement()
                     }),
                     server_latencies: latency(&[5_000_000, 6_000_000, 7_000_000], 0),
                     server_results: vec![ServerContribution {

@@ -778,4 +778,4 @@ fn milliseconds(value: Option<f64>) -> String {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

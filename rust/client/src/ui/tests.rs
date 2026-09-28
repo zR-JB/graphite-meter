@@ -1,69 +1,124 @@
 use super::setup::Field;
 use super::*;
-use crate::model::Stage;
+use crate::model::{AuthPrompt, ServerLatencyResult, ServerSummary, Stage, StageResult};
+use graphite_meter_core::{
+    latency::{Distribution, LatencyAccumulator, LatencySummary, ProbeOutcome},
+    measurement::{Direction, MeasurementResult},
+};
+use ratatui::{Terminal, backend::TestBackend};
 
-#[test]
-fn finished_latency_result_remains_visible_after_live_probes_end() {
-    use crate::model::{ServerLatencyResult, StageResult};
-    use graphite_meter_core::latency::{Distribution, LatencySummary};
-    use ratatui::{Terminal, backend::TestBackend};
-
-    let rtt = 1_500_000;
-    let mut ui = Ui::new(
-        Config::default(),
-        Snapshot {
-            phase: Phase::Complete,
-            results: vec![StageResult {
-                stage: Stage::Latency,
-                elapsed: Duration::from_secs(1),
-                server_latencies: vec![ServerLatencyResult {
-                    elapsed: Some(Duration::from_secs(1)),
-                    id: "self".into(),
-                    summary: LatencySummary {
-                        distribution: Some(Distribution {
-                            min: rtt,
-                            max: rtt,
-                            mean: rtt,
-                            p50: rtt,
-                            p95: rtt,
-                        }),
-                        count: 4,
-                        ..LatencySummary::default()
-                    },
-                    ending: None,
-                }],
-                ..Default::default()
-            }],
-            participants: vec!["self".into()],
-            latency_focus: Some("self".into()),
-            plan: vec![Stage::Latency],
-            ..Snapshot::default()
-        },
-    );
-    ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+/// The screen `ui` draws at this size, one string per row.
+pub(super) fn rows(ui: &mut Ui, width: u16, height: u16) -> Vec<String> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
+    terminal
         .backend()
         .buffer()
         .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(rendered.contains("1.5 ms"));
+        .chunks(usize::from(width))
+        .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+        .collect()
+}
+
+fn screen(ui: &mut Ui, width: u16, height: u16) -> String {
+    rows(ui, width, height).concat()
+}
+
+fn press(ui: &mut Ui, commands: &mpsc::Sender<Command>, codes: &[KeyCode]) {
+    for code in codes {
+        ui.key(KeyEvent::new(*code, KeyModifiers::NONE), commands);
+    }
+}
+
+fn select(ui: &mut Ui, field: Field) {
+    let row = ui.fields().iter().position(|shown| *shown == field);
+    ui.rows.select(row);
+}
+
+/// 1.5 MB received in a second.
+pub(crate) fn download_measurement() -> MeasurementResult {
+    MeasurementResult {
+        direction: Direction::Down,
+        total_bytes: 1_500_000,
+        mean_bytes_per_sec: Some(1_500_000.0),
+        peak_bytes_per_sec: Some(1_500_000.0),
+        samples: 4,
+        elapsed_nanos: Some(1_000_000_000),
+    }
+}
+
+/// The summary of replies with these round trips, then of timed-out probes.
+pub(crate) fn probes(rtts: &[i64], timeouts: usize) -> LatencySummary {
+    let mut probes = LatencyAccumulator::default();
+    for &rtt_nanos in rtts {
+        probes.record(ProbeOutcome::Reply {
+            rtt_nanos,
+            handling_nanos: 0,
+        });
+    }
+    for _ in 0..timeouts {
+        probes.record(ProbeOutcome::Timeout);
+    }
+    probes.snapshot()
+}
+
+/// A server's latency over a second.
+pub(crate) fn latency_result(id: &str, summary: LatencySummary) -> ServerLatencyResult {
+    ServerLatencyResult {
+        elapsed: Some(Duration::from_secs(1)),
+        id: id.into(),
+        summary,
+        ending: None,
+    }
+}
+
+/// A finished idle latency stage to one server, whose every reply took `rtt` nanoseconds.
+pub(crate) fn latency_snapshot(rtt: u64) -> Snapshot {
+    let summary = LatencySummary {
+        distribution: Some(Distribution {
+            min: rtt,
+            max: rtt,
+            mean: rtt,
+            p50: rtt,
+            p95: rtt,
+        }),
+        count: 4,
+        ..LatencySummary::default()
+    };
+    Snapshot {
+        phase: Phase::Complete,
+        results: vec![StageResult {
+            stage: Stage::Latency,
+            elapsed: Duration::from_secs(1),
+            server_latencies: vec![latency_result("self", summary)],
+            ..Default::default()
+        }],
+        participants: vec!["self".into()],
+        latency_focus: Some("self".into()),
+        plan: vec![Stage::Latency],
+        ..Snapshot::default()
+    }
+}
+
+fn prompt(code: &str, browser_url: String) -> AuthPrompt {
+    AuthPrompt {
+        deadline: tokio::time::Instant::now() + Duration::from_secs(120),
+        origin: "https://meter.example".into(),
+        code: code.into(),
+        browser_url,
+    }
+}
+
+#[test]
+fn finished_latency_result_remains_visible_after_live_probes_end() {
+    let mut ui = Ui::new(Config::default(), latency_snapshot(1_500_000));
+    ui.live = true;
+    assert!(screen(&mut ui, 100, 30).contains("1.5 ms"));
 
     // A selected peer absent from this stage must not inherit another
     // peer's RTT merely because its summary is first in the result.
     ui.latency_pick = Some("other".into());
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(!rendered.contains("1.5 ms"));
+    assert!(!screen(&mut ui, 100, 30).contains("1.5 ms"));
 }
 
 #[test]
@@ -77,19 +132,18 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
         },
     );
     ui.live = true;
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Esc]);
     assert_eq!(ui.cancel, CancelState::Confirming);
     assert!(received.try_recv().is_err());
-    ui.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Tab]);
     assert_eq!(ui.cancel, CancelState::Idle);
     assert!(!ui.notice().0.is_empty());
     assert!(received.try_recv().is_err());
 
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Esc, KeyCode::Esc]);
     assert_eq!(ui.cancel, CancelState::Requested);
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Esc]);
     assert!(received.try_recv().is_err());
 
     ui.update(Snapshot {
@@ -102,7 +156,7 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
         phase: Phase::Preparing,
         ..Snapshot::default()
     });
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Esc]);
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
 }
 
@@ -110,11 +164,12 @@ fn active_run_requires_second_escape_but_setup_verification_cancels_immediately(
 fn reenabled_stage_runs_in_canonical_order() {
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let latency = ui.fields().iter().position(|field| *field == Field::LatencyStage);
-    ui.rows.select(latency);
-    for code in [KeyCode::Char(' '), KeyCode::Char(' '), KeyCode::Char('r')] {
-        ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
-    }
+    select(&mut ui, Field::LatencyStage);
+    press(
+        &mut ui,
+        &commands,
+        &[KeyCode::Char(' '), KeyCode::Char(' '), KeyCode::Char('r')],
+    );
     let Ok(Command::Run(config)) = received.try_recv() else {
         panic!("run was not requested");
     };
@@ -123,7 +178,6 @@ fn reenabled_stage_runs_in_canonical_order() {
 
 #[test]
 fn setup_keys_work_during_the_path_check() {
-    use crate::model::ServerSummary;
     use graphite_meter_core::discovery::ThroughputTransport;
     let (commands, mut received) = mpsc::channel(8);
     let checking = || Snapshot {
@@ -131,9 +185,8 @@ fn setup_keys_work_during_the_path_check() {
         ..Snapshot::default()
     };
     let mut ui = Ui::new(Config::default(), checking());
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
 
-    press(&mut ui, KeyCode::Char('s'));
+    press(&mut ui, &commands, &[KeyCode::Char('s')]);
     assert_eq!(ui.popup, Popup::None, "the chooser waits for the check");
     let server = |id: &str| ServerSummary {
         id: id.into(),
@@ -145,22 +198,21 @@ fn setup_keys_work_during_the_path_check() {
         ..Snapshot::default()
     });
     assert_eq!(ui.popup, Popup::Servers);
-    press(&mut ui, KeyCode::Esc);
+    press(&mut ui, &commands, &[KeyCode::Esc]);
 
     ui.update(checking());
-    let bidirectional = ui.fields().iter().position(|field| *field == Field::BidiStage);
-    ui.rows.select(bidirectional);
-    press(&mut ui, KeyCode::Char(' '));
+    select(&mut ui, Field::BidiStage);
+    press(&mut ui, &commands, &[KeyCode::Char(' ')]);
     assert!(ui.config.stages.contains(&Stage::Bidirectional));
-    press(&mut ui, KeyCode::Char('v'));
+    press(&mut ui, &commands, &[KeyCode::Char('v')]);
     assert!(matches!(received.try_recv(), Ok(Command::Verify(_))));
     ui.config.throughput_transport = Some(ThroughputTransport::FetchStream);
-    press(&mut ui, KeyCode::Char('a'));
+    press(&mut ui, &commands, &[KeyCode::Char('a')]);
     assert_eq!(ui.config.throughput_transport, None);
 
     ui.update(checking());
     ui.rows.select(Some(0));
-    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, &commands, &[KeyCode::Enter]);
     assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
     ui.update(checking());
     assert!(ui.live && ui.running(), "the check the run replaces is not setup");
@@ -176,7 +228,6 @@ fn setup_keys_work_during_the_path_check() {
 fn enter_edits_stage_and_warmup_durations_like_go() {
     let (commands, _received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
     ui.advanced = true;
     for (field, typed, expected) in [
         (Field::DownloadStage, "12", Ok(Duration::from_secs(12))),
@@ -188,16 +239,15 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
         (Field::Warmup, "800ms", Ok(Duration::from_millis(800))),
         (Field::Warmup, "5s", Err("Warmup must be from 0 s to 4 s")),
     ] {
-        let row = ui.fields().iter().position(|shown| *shown == field);
-        ui.rows.select(row);
-        press(&mut ui, KeyCode::Enter);
+        select(&mut ui, field);
+        press(&mut ui, &commands, &[KeyCode::Enter]);
         let opened = ui.edit.as_ref().map(|edit| edit.text());
         assert!(
             opened.as_ref().is_some_and(|text| text.ends_with('s')),
             "{typed}: {opened:?}"
         );
         ui.edit = Some(Edit::new(field, typed.into()));
-        press(&mut ui, KeyCode::Enter);
+        press(&mut ui, &commands, &[KeyCode::Enter]);
         let duration = match field {
             Field::Warmup => ui.config.warmup,
             _ => ui.config.download_duration,
@@ -210,13 +260,12 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
                     "{typed}: {}",
                     ui.notice
                 );
-                press(&mut ui, KeyCode::Esc);
+                press(&mut ui, &commands, &[KeyCode::Esc]);
             }
         }
     }
-    let download = ui.fields().iter().position(|shown| *shown == Field::DownloadStage);
-    ui.rows.select(download);
-    press(&mut ui, KeyCode::Char(' '));
+    select(&mut ui, Field::DownloadStage);
+    press(&mut ui, &commands, &[KeyCode::Char(' ')]);
     assert!(
         !ui.config.stages.contains(&Stage::Download),
         "space turns the stage off"
@@ -250,9 +299,7 @@ fn setup_rows_are_grouped_like_the_go_client() {
 
 #[test]
 fn setup_names_each_checked_server_state() {
-    use crate::model::ServerSummary;
     use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport};
-    use ratatui::{Terminal, backend::TestBackend};
     let ready = ServerSummary {
         id: "near".into(),
         name: "Near".into(),
@@ -276,31 +323,20 @@ fn setup_names_each_checked_server_state() {
             ..Snapshot::default()
         },
     );
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    let rendered = |terminal: &Terminal<TestBackend>| {
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Near · Ready"));
-    assert!(rendered(&terminal).contains("Checking selected servers"));
+    let checking = screen(&mut ui, 100, 30);
+    assert!(checking.contains("Near · Ready"));
+    assert!(checking.contains("Checking selected servers"));
     ui.update(Snapshot {
         servers: vec![ready, failed],
         ..Snapshot::default()
     });
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Far · Failed"));
-    assert!(!rendered(&terminal).contains("Checking selected servers"));
+    let checked = screen(&mut ui, 100, 30);
+    assert!(checked.contains("Far · Failed"));
+    assert!(!checked.contains("Checking selected servers"));
 }
 
 #[test]
 fn server_chooser_discards_on_escape_and_checks_again_on_enter() {
-    use crate::model::ServerSummary;
     let (commands, _received) = mpsc::channel(4);
     let server = |id: &str, checked: bool| ServerSummary {
         id: id.into(),
@@ -315,26 +351,28 @@ fn server_chooser_discards_on_escape_and_checks_again_on_enter() {
             ..Snapshot::default()
         },
     );
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
-    press(&mut ui, KeyCode::Char('s'));
+    press(&mut ui, &commands, &[KeyCode::Char('s')]);
     assert_eq!(ui.popup, Popup::Servers);
     assert_eq!(ui.config.servers, ["a", "b"], "the default selection starts checked");
-    for code in [KeyCode::Down, KeyCode::Down, KeyCode::Char(' '), KeyCode::Esc] {
-        press(&mut ui, code);
-    }
+    press(
+        &mut ui,
+        &commands,
+        &[KeyCode::Down, KeyCode::Down, KeyCode::Char(' '), KeyCode::Esc],
+    );
     assert_eq!(ui.popup, Popup::None);
     assert!(ui.config.servers.is_empty(), "esc applied the draft");
     assert!(ui.recheck.is_none());
-    for code in [KeyCode::Char('s'), KeyCode::Char(' '), KeyCode::Enter] {
-        press(&mut ui, code);
-    }
+    press(
+        &mut ui,
+        &commands,
+        &[KeyCode::Char('s'), KeyCode::Char(' '), KeyCode::Enter],
+    );
     assert_eq!(ui.config.servers, ["b"]);
     assert!(ui.recheck.is_some(), "the new selection is checked");
 }
 
 #[test]
 fn a_run_that_never_starts_keeps_the_last_results() {
-    use crate::model::StageResult;
     let (commands, mut received) = mpsc::channel(4);
     let finished = Snapshot {
         phase: Phase::Complete,
@@ -350,13 +388,12 @@ fn a_run_that_never_starts_keeps_the_last_results() {
     };
     let mut ui = Ui::new(Config::default(), finished);
     ui.live = true;
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
     let unstarted = |phase, error: Option<&str>| Snapshot {
         phase,
         error: error.map(Into::into),
         ..Snapshot::default()
     };
-    press(&mut ui, KeyCode::Char('r'));
+    press(&mut ui, &commands, &[KeyCode::Char('r')]);
     assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
     ui.update(unstarted(Phase::Preparing, None));
     let reason = "Test could not start: Server could not be reached";
@@ -364,8 +401,7 @@ fn a_run_that_never_starts_keeps_the_last_results() {
     assert!(ui.live && ui.snapshot.phase == Phase::Complete && ui.snapshot.results.len() == 1);
     assert_eq!(ui.notice(), (reason, true));
 
-    press(&mut ui, KeyCode::Esc);
-    press(&mut ui, KeyCode::Char('r'));
+    press(&mut ui, &commands, &[KeyCode::Esc, KeyCode::Char('r')]);
     assert!(matches!(received.try_recv(), Ok(Command::Run(_))));
     ui.update(unstarted(Phase::Preparing, None));
     ui.update(unstarted(Phase::Cancelled, None));
@@ -375,7 +411,6 @@ fn a_run_that_never_starts_keeps_the_last_results() {
 
 #[test]
 fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
-    use ratatui::{Terminal, backend::TestBackend};
     let (commands, _received) = mpsc::channel(4);
     let mut ui = Ui::new(
         Config::default(),
@@ -385,22 +420,11 @@ fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
         },
     );
     ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
-    let mut rendered = |ui: &mut Ui| {
-        terminal.draw(|frame| ui.draw(frame)).unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    ui.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Char('d')]);
     assert_eq!(ui.popup, Popup::Details);
-    assert!(rendered(&mut ui).contains("Waiting for the first server report"));
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
-    let checked = |id: &str| crate::model::ServerSummary {
+    assert!(screen(&mut ui, 100, 30).contains("Waiting for the first server report"));
+    press(&mut ui, &commands, &[KeyCode::Esc]);
+    let checked = |id: &str| ServerSummary {
         id: id.into(),
         name: id.into(),
         error: Some("refused".into()),
@@ -418,7 +442,7 @@ fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
             servers: servers.into_iter().map(checked).collect(),
             ..Snapshot::default()
         });
-        let screen = rendered(&mut ui);
+        let screen = screen(&mut ui, 100, 30);
         assert_eq!(screen.contains("l Latency server"), several);
         assert_eq!(screen.contains("l switches server"), several);
     }
@@ -426,9 +450,7 @@ fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
 
 #[test]
 fn page_keys_scroll_the_panels_that_overflow() {
-    use crate::model::{ServerSummary, StageResult};
     use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport};
-    use ratatui::{Terminal, backend::TestBackend};
     let (commands, _received) = mpsc::channel(4);
     let servers = (0..4)
         .map(|index| ServerSummary {
@@ -448,42 +470,20 @@ fn page_keys_scroll_the_panels_that_overflow() {
             ..Snapshot::default()
         },
     );
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    let mut rendered = |ui: &mut Ui| {
-        terminal.draw(|frame| ui.draw(frame)).unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
-    let screen = rendered(&mut ui);
-    assert!(screen.contains("PgDn more") && !screen.contains("TLS verification"));
-    press(&mut ui, KeyCode::End);
-    let screen = rendered(&mut ui);
-    assert!(screen.contains("TLS verification") && !screen.contains("Catalogue default selection"));
-    press(&mut ui, KeyCode::Home);
-    assert!(rendered(&mut ui).contains("Catalogue default selection"));
+    let top = screen(&mut ui, 80, 24);
+    assert!(top.contains("PgDn more") && !top.contains("TLS verification"));
+    press(&mut ui, &commands, &[KeyCode::End]);
+    let end = screen(&mut ui, 80, 24);
+    assert!(end.contains("TLS verification") && !end.contains("Catalogue default selection"));
+    press(&mut ui, &commands, &[KeyCode::Home]);
+    assert!(screen(&mut ui, 80, 24).contains("Catalogue default selection"));
 
-    let mut probes = graphite_meter_core::latency::LatencyAccumulator::default();
-    probes.record(graphite_meter_core::latency::ProbeOutcome::Reply {
-        rtt_nanos: 500_000,
-        handling_nanos: 0,
-    });
     let result = |stage: Stage| StageResult {
         stage,
         elapsed: Duration::from_secs(1),
         down: stage.downloads().then(download_measurement),
         up: stage.uploads().then(download_measurement),
-        server_latencies: vec![crate::model::ServerLatencyResult {
-            elapsed: Some(Duration::from_secs(1)),
-            id: "s0".into(),
-            summary: probes.snapshot(),
-            ending: None,
-        }],
+        server_latencies: vec![latency_result("s0", probes(&[500_000], 0))],
         ..Default::default()
     };
     let stages = [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional];
@@ -496,23 +496,12 @@ fn page_keys_scroll_the_panels_that_overflow() {
         ..Snapshot::default()
     });
     ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(40, 20)).unwrap();
-    let mut rendered = |ui: &mut Ui| {
-        terminal.draw(|frame| ui.draw(frame)).unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    let top = rendered(&mut ui);
+    let top = screen(&mut ui, 40, 20);
     assert!(top.contains("PgDn more"), "{top}");
-    press(&mut ui, KeyCode::Down);
-    assert_ne!(rendered(&mut ui), top, "the results scroll in the run view");
-    press(&mut ui, KeyCode::Home);
-    assert_eq!(rendered(&mut ui), top);
+    press(&mut ui, &commands, &[KeyCode::Down]);
+    assert_ne!(screen(&mut ui, 40, 20), top, "the results scroll in the run view");
+    press(&mut ui, &commands, &[KeyCode::Home]);
+    assert_eq!(screen(&mut ui, 40, 20), top);
 }
 
 #[test]
@@ -526,17 +515,14 @@ fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
         ..Config::default()
     };
     let mut ui = Ui::new(config.clone(), Snapshot::default());
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
     ui.advanced = true;
-    let reset = ui.fields().iter().position(|field| *field == Field::Reset);
-    ui.rows.select(reset);
-    press(&mut ui, KeyCode::Enter);
+    select(&mut ui, Field::Reset);
+    press(&mut ui, &commands, &[KeyCode::Enter]);
     assert_eq!(ui.config, config, "reset asks first");
-    press(&mut ui, KeyCode::Char('r'));
+    press(&mut ui, &commands, &[KeyCode::Char('r')]);
     assert_eq!(ui.config, config, "another key keeps the settings");
     assert_eq!(ui.notice, "Settings kept.");
-    press(&mut ui, KeyCode::Enter);
-    press(&mut ui, KeyCode::Enter);
+    press(&mut ui, &commands, &[KeyCode::Enter, KeyCode::Enter]);
     assert_eq!(
         ui.config,
         Config {
@@ -552,20 +538,15 @@ async fn path_settings_are_checked_again_once_changes_settle() {
     use graphite_meter_core::discovery::ThroughputTransport;
     let (commands, mut received) = mpsc::channel(4);
     let mut ui = Ui::new(Config::default(), Snapshot::default());
-    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
-    let select = |ui: &mut Ui, field| {
-        let row = ui.fields().iter().position(|shown| *shown == field);
-        ui.rows.select(row);
-    };
 
     select(&mut ui, Field::DownloadStage);
-    press(&mut ui, KeyCode::Right);
+    press(&mut ui, &commands, &[KeyCode::Right]);
     tokio::time::advance(RECHECK_DELAY).await;
     assert!(!ui.recheck(&commands), "a duration does not change the paths");
 
     select(&mut ui, Field::ThroughputTransport);
     for _ in 0..2 {
-        press(&mut ui, KeyCode::Right);
+        press(&mut ui, &commands, &[KeyCode::Right]);
         tokio::time::advance(RECHECK_DELAY / 2).await;
         assert!(!ui.recheck(&commands));
     }
@@ -582,7 +563,7 @@ async fn path_settings_are_checked_again_once_changes_settle() {
         ..Snapshot::default()
     });
     ui.live = true;
-    press(&mut ui, KeyCode::Esc);
+    press(&mut ui, &commands, &[KeyCode::Esc]);
     assert!(!ui.live);
     tokio::time::advance(RECHECK_DELAY).await;
     assert!(ui.recheck(&commands), "setup after a run checks the paths again");
@@ -591,70 +572,42 @@ async fn path_settings_are_checked_again_once_changes_settle() {
 
 #[tokio::test(start_paused = true)]
 async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reachable() {
-    use crate::model::AuthPrompt;
-    use ratatui::{Terminal, backend::TestBackend};
-
+    let browser_url = format!("https://meter.example/auth/cli?challenge={}TAIL", "x".repeat(300));
     let mut ui = Ui::new(
         Config::default(),
         Snapshot {
             phase: Phase::Preparing,
-            auth: Some(AuthPrompt {
-                deadline: tokio::time::Instant::now() + Duration::from_secs(120),
-                origin: "https://meter.example".into(),
-                code: "782411".into(),
-                browser_url: format!("https://meter.example/auth/cli?challenge={}TAIL", "x".repeat(300)),
-            }),
+            auth: Some(prompt("782411", browser_url.clone())),
             ..Snapshot::default()
         },
     );
     ui.edit = Some(Edit::new(Field::Url, "original".into()));
     ui.help = true;
     ui.popup = Popup::Servers;
-    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-    let rendered = |terminal: &Terminal<TestBackend>| {
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect::<String>()
-    };
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("Match this code: 782411"));
+    assert!(screen(&mut ui, 40, 12).contains("Match this code: 782411"));
     tokio::time::advance(Duration::from_secs(30)).await;
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("waited 30 s · expires in 90 s"));
-    assert!(rendered(&terminal).contains("Enter/Space/o open"));
-    assert!(!rendered(&terminal).contains("TAIL"));
+    let waited = screen(&mut ui, 40, 12);
+    assert!(waited.contains("waited 30 s · expires in 90 s"));
+    assert!(waited.contains("Enter/Space/o open"));
+    assert!(!waited.contains("TAIL"));
 
     let (commands, mut received) = mpsc::channel(4);
     ui.paste("ignored");
     assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
-    ui.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE), &commands);
-    assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
-    ui.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &commands);
-    assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
-    ui.key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &commands);
-    assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
-    for _ in 0..12 {
-        ui.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &commands);
+    for code in [KeyCode::Char('o'), KeyCode::Enter, KeyCode::Char(' ')] {
+        press(&mut ui, &commands, &[code]);
+        assert!(matches!(received.try_recv(), Ok(Command::OpenBrowser)));
     }
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    assert!(rendered(&terminal).contains("TAIL"));
-    assert!(rendered(&terminal).contains("Match this code: 782411"));
-    ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+    press(&mut ui, &commands, &[KeyCode::Down; 12]);
+    let scrolled = screen(&mut ui, 40, 12);
+    assert!(scrolled.contains("TAIL"));
+    assert!(scrolled.contains("Match this code: 782411"));
+    press(&mut ui, &commands, &[KeyCode::Esc]);
     assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
     assert_eq!(ui.edit.as_ref().unwrap().text(), "original");
 
-    let browser_url = ui.snapshot.auth.as_ref().unwrap().browser_url.clone();
     ui.update(Snapshot {
-        auth: Some(AuthPrompt {
-            deadline: tokio::time::Instant::now() + Duration::from_secs(120),
-            origin: "https://meter.example".into(),
-            code: "999999".into(),
-            browser_url,
-        }),
+        auth: Some(prompt("999999", browser_url)),
         ..Snapshot::default()
     });
     assert_eq!(ui.auth_scroll, 0);
@@ -662,13 +615,7 @@ async fn approval_takes_priority_over_editing_and_keeps_long_browser_urls_reacha
 
 #[test]
 fn escaping_sign_in_returns_to_setup_with_the_cancel_notice() {
-    use crate::model::AuthPrompt;
-    let prompt = AuthPrompt {
-        deadline: tokio::time::Instant::now() + Duration::from_secs(120),
-        origin: "https://meter.example".into(),
-        code: "782411".into(),
-        browser_url: "https://meter.example/auth/cli?challenge=x".into(),
-    };
+    let browser_url = "https://meter.example/auth/cli?challenge=x".to_owned();
     for (live, phase, ended) in [
         (false, Phase::Checking, Phase::Setup),
         (true, Phase::Preparing, Phase::Cancelled),
@@ -678,12 +625,12 @@ fn escaping_sign_in_returns_to_setup_with_the_cancel_notice() {
             Config::default(),
             Snapshot {
                 phase,
-                auth: Some(prompt.clone()),
+                auth: Some(prompt("782411", browser_url.clone())),
                 ..Snapshot::default()
             },
         );
         ui.live = live;
-        ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
+        press(&mut ui, &commands, &[KeyCode::Esc]);
         assert!(matches!(received.try_recv(), Ok(Command::Cancel)));
         for phase in [phase, ended] {
             ui.update(Snapshot {
@@ -705,9 +652,7 @@ fn terminal_text_cannot_emit_controls_or_direction_overrides() {
 }
 #[test]
 fn minimum_supported_terminal_keeps_live_measurement_visible() {
-    use crate::model::{Point, ServerLatency, StageResult};
-    use ratatui::{Terminal, backend::TestBackend};
-
+    use crate::model::{Point, ServerLatency};
     let snapshot = Snapshot {
         phase: Phase::Measuring,
         stage: Some(Stage::Upload),
@@ -732,15 +677,7 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
     };
     let mut ui = Ui::new(Config::default(), snapshot);
     ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
+    let rendered = screen(&mut ui, 40, 12);
     assert!(rendered.contains("Upload · 3.0 s"));
     assert!(rendered.contains("Upload 12.00 Mbit/s"));
     assert!(rendered.contains("Latency 25.0 ms"));
@@ -748,57 +685,19 @@ fn minimum_supported_terminal_keeps_live_measurement_visible() {
     assert!(rendered.contains("d Details"));
 
     ui.help = true;
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let expanded = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
+    let expanded = screen(&mut ui, 40, 12);
     assert!(expanded.contains("Tab/Shift-Tab"));
     assert!(expanded.contains("Ctrl-C stop"));
     assert_eq!(ui.popup, Popup::None);
     ui.help = false;
     ui.snapshot.phase = Phase::Complete;
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let completed = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(completed.contains("Enter Run again"));
-}
-
-fn download_measurement() -> graphite_meter_core::measurement::MeasurementResult {
-    use graphite_meter_core::measurement::*;
-    MeasurementResult {
-        direction: Direction::Down,
-        total_bytes: 1_500_000,
-        mean_bytes_per_sec: Some(1_500_000.0),
-        peak_bytes_per_sec: Some(1_500_000.0),
-        samples: 4,
-        elapsed_nanos: Some(1_000_000_000),
-    }
+    assert!(screen(&mut ui, 40, 12).contains("Enter Run again"));
 }
 
 #[test]
 fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
-    use crate::model::{Point, ServerLatency, ServerLatencyResult, StageResult};
-    use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome};
-    use ratatui::{Terminal, backend::TestBackend};
-    let mut idle = LatencyAccumulator::default();
-    idle.record(ProbeOutcome::Reply {
-        rtt_nanos: 500_000,
-        handling_nanos: 0,
-    });
-    let mut loaded = LatencyAccumulator::default();
-    loaded.record(ProbeOutcome::Reply {
-        rtt_nanos: 200_000,
-        handling_nanos: 0,
-    });
+    use crate::model::{Point, ServerLatency};
+    let (idle, loaded) = (probes(&[500_000], 0), probes(&[200_000], 0));
     let mut host = ServerLatency {
         id: "self".into(),
         latest_ms: Some(0.2),
@@ -811,32 +710,14 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
             StageResult {
                 stage: Stage::Latency,
                 elapsed: Duration::from_secs(60),
-                server_latencies: vec![
-                    ServerLatencyResult {
-                        elapsed: Some(Duration::from_secs(1)),
-                        id: "dropped".into(),
-                        summary: loaded.snapshot(),
-                        ending: None,
-                    },
-                    ServerLatencyResult {
-                        elapsed: Some(Duration::from_secs(1)),
-                        id: "self".into(),
-                        summary: idle.snapshot(),
-                        ending: None,
-                    },
-                ],
+                server_latencies: vec![latency_result("dropped", loaded), latency_result("self", idle)],
                 ..Default::default()
             },
             StageResult {
                 stage: Stage::Download,
                 elapsed: Duration::from_secs(1),
                 down: Some(download_measurement()),
-                server_latencies: vec![ServerLatencyResult {
-                    elapsed: Some(Duration::from_secs(1)),
-                    id: "self".into(),
-                    summary: loaded.snapshot(),
-                    ending: None,
-                }],
+                server_latencies: vec![latency_result("self", loaded)],
                 ..Default::default()
             },
         ],
@@ -868,15 +749,7 @@ fn stacked_run_keeps_charts_and_signed_loaded_latency_visible() {
     };
     let mut ui = Ui::new(config, snapshot);
     ui.live = true;
-    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
-    terminal.draw(|frame| ui.draw(frame)).unwrap();
-    let rendered = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
+    let rendered = screen(&mut ui, 80, 24);
     for text in ["Throughput", "Latency · ms", "−0.3 ms", "Probe timeouts", "120 s"] {
         assert!(rendered.contains(text), "missing {text}: {rendered}");
     }

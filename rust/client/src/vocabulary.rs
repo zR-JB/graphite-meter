@@ -211,42 +211,10 @@ pub fn latency_transport(value: Option<graphite_meter_core::discovery::LatencyTr
 
 #[cfg(test)]
 mod tests {
-    use crate::model::{Phase, ServerLatencyResult, Snapshot, Stage, StageResult};
-    use graphite_meter_core::latency::{Distribution, LatencySummary};
-    use std::time::Duration;
-
     /// Details explains every latency column under the name the report and Go print.
     #[test]
     fn values_name_the_report_latency_columns() {
-        let rtt = 1_500_000;
-        let snapshot = Snapshot {
-            phase: Phase::Complete,
-            results: vec![StageResult {
-                stage: Stage::Latency,
-                elapsed: Duration::from_secs(1),
-                server_latencies: vec![ServerLatencyResult {
-                    elapsed: Some(Duration::from_secs(1)),
-                    id: "self".into(),
-                    summary: LatencySummary {
-                        distribution: Some(Distribution {
-                            min: rtt,
-                            max: rtt,
-                            mean: rtt,
-                            p50: rtt,
-                            p95: rtt,
-                        }),
-                        count: 4,
-                        ..LatencySummary::default()
-                    },
-                    ending: None,
-                }],
-                ..Default::default()
-            }],
-            participants: vec!["self".into()],
-            latency_focus: Some("self".into()),
-            plan: vec![Stage::Latency],
-            ..Snapshot::default()
-        };
+        let snapshot = crate::ui::tests::latency_snapshot(1_500_000);
         let report = crate::report::render(&snapshot, crate::report::WIDTH, false).unwrap_or_default();
         let header = report
             .lines()

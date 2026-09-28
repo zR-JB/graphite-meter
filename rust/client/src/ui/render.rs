@@ -1139,12 +1139,12 @@ fn axis_ceiling(value: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::{download_measurement, latency_result, probes, rows};
     use super::*;
     use crate::model::ServerSummary;
     use graphite_meter_core::discovery::{
         LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport,
     };
-    use ratatui::{Terminal, backend::TestBackend};
 
     fn server(id: &str, name: &str, latency: LatencyTransport) -> ServerSummary {
         let origin = format!("https://{id}.example");
@@ -1183,18 +1183,6 @@ mod tests {
         lines
             .iter()
             .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect())
-            .collect()
-    }
-
-    fn rows(ui: &mut Ui, width: u16, height: u16) -> Vec<String> {
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| ui.draw(frame)).unwrap();
-        terminal
-            .backend()
-            .buffer()
-            .content()
-            .chunks(usize::from(width))
-            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
             .collect()
     }
 
@@ -1282,39 +1270,15 @@ mod tests {
 
     /// Both servers measured download and loaded latency.
     fn finished() -> Snapshot {
-        use crate::model::{ServerLatencyResult, StageResult};
-        use graphite_meter_core::{
-            latency::{LatencyAccumulator, ProbeOutcome},
-            measurement::{Direction, MeasurementResult},
-        };
-        let mut replies = LatencyAccumulator::default();
-        for _ in 0..4 {
-            replies.record(ProbeOutcome::Reply {
-                rtt_nanos: 2_000_000,
-                handling_nanos: 0,
-            });
-        }
-        let loaded = |id: &str| ServerLatencyResult {
-            elapsed: Some(Duration::from_secs(1)),
-            id: id.into(),
-            summary: replies.snapshot(),
-            ending: None,
-        };
+        let replies = probes(&[2_000_000; 4], 0);
         Snapshot {
             phase: Phase::Complete,
             stage: None,
-            results: vec![StageResult {
+            results: vec![crate::model::StageResult {
                 stage: Stage::Download,
                 elapsed: Duration::from_secs(1),
-                down: Some(MeasurementResult {
-                    direction: Direction::Down,
-                    total_bytes: 1_500_000,
-                    mean_bytes_per_sec: Some(1_500_000.0),
-                    peak_bytes_per_sec: Some(1_500_000.0),
-                    samples: 4,
-                    elapsed_nanos: Some(1_000_000_000),
-                }),
-                server_latencies: vec![loaded("a"), loaded("b")],
+                down: Some(download_measurement()),
+                server_latencies: vec![latency_result("a", replies), latency_result("b", replies)],
                 ..Default::default()
             }],
             plan: vec![Stage::Download],
