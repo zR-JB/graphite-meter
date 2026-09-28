@@ -16,7 +16,7 @@ from pathlib import Path, PurePosixPath
 
 from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
-    int_field, local_path, object_field, str_field,
+    int_field, local_path, object_field, str_field, write_checksums,
 )
 from .toolchains import host_platform, tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
@@ -61,13 +61,6 @@ def verify_release_file_set(dist: Path, checksummed: set[str]) -> None:
     if irregular := sorted(e.name for e in entries if e.is_symlink() or not e.is_file()):
         fail(f"release directory contains non-regular entries: {irregular}")
     require_same("release files", {*checksummed, "checksums.txt"}, names)
-
-
-def write_checksums(dist: Path) -> None:
-    """List every other file of `dist` in checksums.txt; the listing never includes itself."""
-    listing = "".join(f"{file_sha256(path)}  {path.name}\n" for path in sorted(dist.iterdir())
-                      if path.name != "checksums.txt")
-    (dist / "checksums.txt").write_text(listing, encoding="utf-8")
 
 
 def merge(source: Path, destination: Path) -> set[str]:

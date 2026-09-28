@@ -1,6 +1,6 @@
 """Build experimental Rust TUI archives: Go's archive layout with a _rust marker.
 
-    python3 -m scripts.package_rust VERSION --platform GOOS/GOARCH... --supplement RECORDS
+    python3 -m scripts.package_rust VERSION --os GOOS... --supplement RECORDS
 """
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from .ci.github_api import ControlPlaneError, confined_path, local_path
-from .ci.toolchains import host_platform, tui_targets
+from .ci.github_api import ControlPlaneError, confined_path, local_path, write_checksums
+from .ci.toolchains import host_platform, rust_channel, tui_targets
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -82,14 +82,24 @@ def build(version: str, platform: str, output: Path, supplement: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
-    parser.add_argument("--platform", nargs="+", required=True, help="GOOS/GOARCH as listed in scripts/tui-targets.txt")
+    parser.add_argument("--os", nargs="+", required=True, help="build each scripts/tui-targets.txt platform of these GOOS")
     parser.add_argument("--output", type=Path, default=REPO / "go/dist")
     parser.add_argument("--supplement", type=Path, required=True,
                         help="reviewed platform records of this build environment")
+    parser.add_argument("--checksums", action="store_true", help="then list every file of --output in checksums.txt")
     args = parser.parse_args()
+    targets = {platform: target for platform, target in tui_targets(REPO / "scripts/tui-targets.txt").items()
+               if platform.split("/")[0] in args.os}
+    if not targets:
+        parser.error(f"scripts/tui-targets.txt lists no platform of {args.os}")
     try:
-        for platform in args.platform:
+        channel = rust_channel(REPO)
+        subprocess.run(["rustup", "toolchain", "install", channel, "--profile", "minimal"], check=True)
+        subprocess.run(["rustup", "target", "add", "--toolchain", channel, *targets.values()], check=True)
+        for platform in targets:
             build(args.version, platform, args.output, args.supplement)
+        if args.checksums:
+            write_checksums(local_path(args.output, REPO))
     except (ControlPlaneError, OSError, ValueError, subprocess.CalledProcessError) as error:
         raise SystemExit(f"Rust package build failed: {error}") from error
 

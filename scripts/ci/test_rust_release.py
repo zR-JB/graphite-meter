@@ -14,12 +14,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from .fixtures import statement
-from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file
+from .github_api import ControlPlaneError as VerificationError, JsonObject, file_sha256 as sha256_file, write_checksums
 from .toolchains import tui_targets
 from .verify_release_assets import (
     TARGETS, expected_rust_artifacts, merge, read_archive, require_same, rust_builds, rust_files, stage_rust,
     tui_archive, verify_rust, verify_rust_artifacts, verify_rust_client_archive, verify_rust_source,
-    write_checksums,
 )
 
 # Each shipped platform's Rust target, as the builders read it.

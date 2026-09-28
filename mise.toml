@@ -523,6 +523,17 @@ engine=${CONTAINER_ENGINE:-$(command -v docker || command -v podman || echo dock
   --output "type=local,dest=${RELEASE_DIST:-go/dist}" .
 '''
 
+# The macOS job of a release request and CI's run this with the runner's Xcode 16.4, which the
+# platform record reviews; the build prints this build's facts when the record goes stale.
+[tasks.rust-darwin-package]
+description = "Package the experimental macOS Rust TUIs natively, with reviewed notices and checksums"
+usage = 'arg "[version]" default="development"'
+env = { DEVELOPER_DIR = "{{ get_env(name='DEVELOPER_DIR', default='/Applications/Xcode_16.4.app/Contents/Developer') }}" }
+run = '''
+python3 -m scripts.package_rust "$usage_version" --os darwin --output "${RELEASE_DIST:-go/dist}" \
+  --supplement legal/rust-platform-macos.json --checksums
+'''
+
 [tasks.rust-container-build]
 description = "Build the experimental Rust server image with Docker or Podman on an amd64 host"
 usage = 'arg "[tag]" default="graphite-meter:latest-rust"'

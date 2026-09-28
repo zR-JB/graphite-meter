@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
-from .github_api import ControlPlaneError, JsonObject, JsonValue
-from .verify_release_assets import TARGETS, TUI_FILES, tui_archives, write_checksums
+from .github_api import ControlPlaneError, JsonObject, JsonValue, write_checksums
+from .verify_release_assets import TARGETS, TUI_FILES, tui_archives
 
 AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
 INDEX_TYPE = "application/vnd.oci.image.index.v1+json"

@@ -375,17 +375,11 @@ jobs:
           version: 2026.9.14
           install_args: --locked python
           cache: false
-      - name: Install the pinned Rust toolchain for the macOS targets
-        working-directory: rust
-        run: rustup toolchain install && rustup target add $(awk '$1 ~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt)
-      # Release requests build these TUIs with the same runner, Xcode and platform record. When the
-      # record goes stale, the build fails and prints the facts of this build for a new review.
+      # Release requests run the same task on the same runner, Xcode and platform record.
       - name: Build the macOS TUIs as a release request does
         env:
-          DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
-        run: >-
-          python3 -m scripts.package_rust 0.0.0-dev --output "$RUNNER_TEMP/rust-darwin"
-          --supplement legal/rust-platform-macos.json --platform $(awk '$1 ~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
+          RELEASE_DIST: ${{ runner.temp }}/rust-darwin
+        run: mise run rust-darwin-package 0.0.0-dev
 
   gate:
     name: Gate

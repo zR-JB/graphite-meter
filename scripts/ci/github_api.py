@@ -133,3 +133,10 @@ def append_summary(text: str) -> None:
 def file_sha256(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def write_checksums(dist: Path) -> None:
+    """List every other file of `dist` in checksums.txt; the listing never includes itself."""
+    listing = "".join(f"{file_sha256(path)}  {path.name}\n" for path in sorted(dist.iterdir())
+                      if path.name != "checksums.txt")
+    (dist / "checksums.txt").write_text(listing, encoding="utf-8")

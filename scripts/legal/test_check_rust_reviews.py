@@ -60,13 +60,12 @@ class PlatformRecordTests(unittest.TestCase):
 
     def repo(self, darwin_records: list[dict] | None) -> Path:
         root = Path(tempfile.mkdtemp())
-        (root / '.github/workflows').mkdir(parents=True)
         (root / 'container').mkdir()
         (root / 'legal').mkdir()
         (root / 'rust').mkdir()
         (root / 'rust/rust-toolchain.toml').write_text('[toolchain]\nchannel = "1.98.1"\n')
-        (root / '.github/workflows/release-request.yml').write_text(
-            'python3 -m scripts.package_rust --supplement legal/macos.json\n')
+        (root / 'mise.toml').write_text(
+            "run = 'python3 -m scripts.package_rust --os darwin --supplement legal/macos.json'\n")
         (root / 'container/Dockerfile.rust').write_text(
             'RUN a --supplement legal/linux.json\nRUN b --supplement legal/linux.json\n')
         approved = {'rustc': RUSTC, 'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}
@@ -89,7 +88,7 @@ class PlatformRecordTests(unittest.TestCase):
 
     def test_a_missing_pending_or_stale_record_is_reported_against_its_builder(self) -> None:
         missing = ['legal/macos.json has no approved record for aarch64-apple-darwin on Rust 1.98.1, '
-                   'which .github/workflows/release-request.yml builds']
+                   'which mise.toml builds']
         self.assertEqual(unreviewed_platforms(self.repo(None), self.TARGETS), missing)
         pending = [{'target': 'aarch64-apple-darwin', 'rustc': RUSTC, 'reviewDecision': 'pending', 'reviewNotes': ''}]
         self.assertEqual(unreviewed_platforms(self.repo(pending), self.TARGETS), missing)

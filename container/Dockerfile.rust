@@ -33,11 +33,10 @@ FROM rust-arm64 AS tui-build
 ARG VERSION
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && cd rust && rustup target add $(awk '$1 !~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt)
+    && rm -rf /var/lib/apt/lists/*
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
-RUN python3 -m scripts.package_rust "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
-    --platform $(awk '$1 !~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
+RUN python3 -m scripts.package_rust "$VERSION" --os linux windows --output /src/dist \
+    --supplement legal/rust-platform-debian-bookworm.json
 
 FROM scratch AS tui-artifacts
 COPY --from=tui-build /src/dist/ /

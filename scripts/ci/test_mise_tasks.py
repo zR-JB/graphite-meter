@@ -13,7 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER", "GM_ENGINE_VERSION", "GM_RUST_ASSET_DIR",
-        "GM_RUST_LEGAL_DIR")
+        "GM_RUST_LEGAL_DIR", "DEVELOPER_DIR")
 # Records each tool's argv and the task environment variables the test inspects; the last call wins.
 SPY = """import json, os, sys
 with open(os.environ["GM_TASK_TRACE"], "a") as output:
@@ -77,6 +77,12 @@ class MiseTaskTests(unittest.TestCase):
             served = run("rust-server-run", "--listen", payload)
             self.assertEqual(served["args"][-3:], ["--", "--listen", payload])
             self.assertNotIn("GM_RUST_LEGAL_DIR", served["env"])
+            # Release requests and CI package the macOS TUIs with one task, on the reviewed Xcode.
+            darwin = run("rust-darwin-package", payload, RELEASE_DIST=str(root / "dist"))
+            self.assertEqual(darwin["args"], [
+                "-m", "scripts.package_rust", payload, "--os", "darwin", "--output", str(root / "dist"),
+                "--supplement", "legal/rust-platform-macos.json", "--checksums"])
+            self.assertEqual(darwin["env"], {"DEVELOPER_DIR": "/Applications/Xcode_16.4.app/Contents/Developer"})
             self.assertFalse(canary.exists())
 
             # The delayed-download gate runs exactly its one ignored test, fails when that matches

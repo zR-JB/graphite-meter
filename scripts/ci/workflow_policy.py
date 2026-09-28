@@ -48,15 +48,18 @@ ORDERED = {
         "SOURCE_SHA: ${{ steps.request.outputs.remote_sha }}\n",
         '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]', "uses: docker/build-push-action@",
         'python3 -m scripts.ci.verify_release_assets "$VERSION"',
-        # Only the expected Rust artifacts leave the exports, with a listing that cannot list itself.
-        "run: python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release checksums\n",
+        # Only the expected Rust artifacts leave the exports, with a listing that cannot list itself;
+        # the macOS job packages with the task CI runs.
+        "run: python3 -m scripts.ci.release stage-rust\n", 'run: mise run rust-darwin-package "$VERSION"\n',
     ),
-    # CI builds, stages and verifies the Rust exports as a release request and the release do.
+    # CI builds, stages and verifies the Rust exports as a release request and the release do, and
+    # packages the macOS TUIs with the release request's task.
     "workflows/ci.yml": (
         "run: mise run rust-check\n", "run: python3 -m scripts.legal.check_git_sources --verify\n",
         "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
         "--target tui-artifacts", "--target server-artifacts",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
+        "run: mise run rust-darwin-package 0.0.0-dev\n",
     ),
     "workflows/release.yml": (
         "github.event.workflow_run.conclusion == 'success'\n",

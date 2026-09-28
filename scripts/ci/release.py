@@ -283,7 +283,7 @@ def command_verify() -> None:
         verify_release_assets.verify_rust(parts, assets, release.version, *verify_release_assets.rust_builds(release.rust),
                                           release.sha, env("REPOSITORY"), lock_sha256)
     if assets.exists():
-        verify_release_assets.write_checksums(assets)
+        gh.write_checksums(assets)
     main, ci_run_id, codeql_id = require_publishable(env("REPOSITORY"), release)
     if main != env("PUBLISHER_SHA"):
         gh.fail("main moved during verification; start a fresh request")
@@ -495,14 +495,9 @@ def command_check_rust() -> None:
     print(f"Rust release artifacts verified: {sorted(path.name for path in staged.iterdir())}")
 
 
-def command_checksums() -> None:
-    verify_release_assets.write_checksums(gh.local_path(env("DIST"), os.getcwd()))
-
-
 COMMANDS = {
     "prepare": command_prepare, "verify": command_verify, "recheck": command_recheck,
     "publish": command_publish, "stage-rust": command_stage_rust, "check-rust": command_check_rust,
-    "checksums": command_checksums,
 }
 
 

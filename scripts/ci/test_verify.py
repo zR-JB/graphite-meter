@@ -32,7 +32,7 @@ from .verify_oci import (
     validate_index_descriptors,
     verify as verify_oci,
 )
-from .github_api import ControlPlaneError
+from .github_api import ControlPlaneError, write_checksums
 from .verify_release_assets import (
     archive_names,
     tui_archives,
@@ -42,7 +42,6 @@ from .verify_release_assets import (
     verify_release_file_set,
     verify_third_party_source_archive,
     verify as verify_release,
-    write_checksums,
 )
 
 SOURCE = "graphite-meter_1.2.3_third-party-source"

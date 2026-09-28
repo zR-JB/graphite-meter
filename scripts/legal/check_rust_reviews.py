@@ -55,9 +55,9 @@ def compiled(package: str, target: str) -> set[tuple[str, str]]:
     return {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
 
 
-# Release requests build the macOS TUIs natively; the builder image builds every other target.
+# The macOS TUIs are packaged natively by a mise task; the builder image builds every other target.
 BUILDERS = {
-    '.github/workflows/release-request.yml': lambda platform: platform.startswith('darwin/'),
+    'mise.toml': lambda platform: platform.startswith('darwin/'),
     'container/Dockerfile.rust': lambda platform: not platform.startswith('darwin/'),
 }
 
