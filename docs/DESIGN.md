@@ -104,6 +104,7 @@ emphasised values, 600 titles and controls.
 ## Space, grid and radii
 
 - A 4 px grid: `--space-1` to `--space-6` = 4, 8, 12, 16, 24, 32 px.
+- A hairline (`--hairline`) is one device pixel: 1 px, 0.5 px from 2x and a third of a pixel from 3x screens.
 - Rows are `--row-h` 42 px, controls `--control-h` 32 px, checks `--check` 18 px; coarse pointers grow targets to
   `--hit` 44 px.
 - Radii: `--r-well` 4 px (tags, check boxes, box plots), `--r-chrome` 8 px (controls, plates, the run button, chips),

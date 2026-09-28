@@ -324,6 +324,12 @@
     --hairline: 0.5px;
   }
 }
+/* Rings and borders stay one device pixel on 3x phones, where a border snaps but a half-pixel ring would blur. */
+@media (min-resolution: 3dppx) {
+  :root {
+    --hairline: calc(1px / 3);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   :root {
     --dur-sheet: 0ms;
