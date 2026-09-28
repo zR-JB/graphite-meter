@@ -1,5 +1,7 @@
 //! Shared endpoint state and an owned HTTP/1 connection loop.
 
+#[path = "budget.rs"]
+mod budget;
 #[path = "http_h2.rs"]
 mod http_h2;
 #[path = "http_h3.rs"]
@@ -70,13 +72,13 @@ pub struct HttpServer {
     admission: Admission,
     connections: Connections,
     stopping: tokio::sync::watch::Sender<bool>,
-    memory: Arc<http_quic::MemoryBudget>,
+    memory: Arc<budget::MemoryBudget>,
     handshake_bytes: AtomicUsize,
     endpoint_bytes: AtomicUsize,
     download_block: Bytes,
     download_meter: crate::meter::Meter,
     peers: crate::log::PeerLog,
-    _download_memory: http_quic::Lease,
+    _download_memory: budget::Lease,
     uploads: UploadStore,
     auth: Option<crate::auth::http::Service>,
     assets: crate::assets::Assets,
@@ -158,7 +160,7 @@ impl HttpServer {
             config.max_connections_per_client,
             config.trusted_proxies.clone(),
         );
-        let memory = http_quic::MemoryBudget::new(bytes);
+        let memory = budget::MemoryBudget::new(bytes);
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;

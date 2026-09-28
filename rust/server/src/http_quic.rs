@@ -1,11 +1,14 @@
 //! A QUIC connection owns its request futures; the HTTP/3 layer owns sessions and resets.
 
-use super::*;
+use super::{
+    budget::{Lease, MemoryBudget},
+    *,
+};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::failure::LaneEnding;
 use graphite_meter_http3::{self as http3, Code};
 use quinn::SharedBudget;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
@@ -362,94 +365,6 @@ pub(super) fn endpoint_bytes(
         .checked_add(receive.checked_mul(max_connections.checked_add(1)?)?)?
         .checked_add(INCOMING_TOTAL_BYTES as usize)?
         .checked_add(kernel_bytes)
-}
-
-#[derive(Debug)]
-pub(super) struct MemoryBudget {
-    pub(super) limit: usize,
-    used: AtomicUsize,
-    held_back: AtomicBool,
-}
-
-impl MemoryBudget {
-    pub(super) fn new(limit: usize) -> Arc<Self> {
-        Arc::new(Self {
-            limit,
-            used: AtomicUsize::new(0),
-            held_back: AtomicBool::new(false),
-        })
-    }
-
-    pub(super) fn lease(self: &Arc<Self>, bytes: usize) -> Option<Lease> {
-        self.try_charge(bytes).then(|| Lease {
-            budget: self.clone(),
-            bytes,
-        })
-    }
-
-    #[cfg(test)]
-    pub(super) fn available(&self) -> usize {
-        self.limit - self.used.load(Ordering::Relaxed)
-    }
-
-    fn under_pressure(&self) -> bool {
-        self.used.load(Ordering::Relaxed) >= self.limit / 4
-    }
-
-    pub(super) fn has_headroom(&self) -> bool {
-        let used = self.used.load(Ordering::Relaxed);
-        let headroom = used < self.limit / 4 * 3;
-        // Reported recovery waits for five eighths, so usage hovering at the threshold cannot flood the log.
-        let held_back = self.held_back.load(Ordering::Relaxed);
-        let changed = if held_back {
-            used < self.limit / 8 * 5
-        } else {
-            !headroom
-        };
-        if changed
-            && self
-                .held_back
-                .compare_exchange(held_back, !held_back, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-        {
-            crate::log!(
-                "[gm:memory] window growth {}: {used} of {} buffer bytes in use",
-                if held_back {
-                    "resumed"
-                } else {
-                    "held back by memory pressure"
-                },
-                self.limit
-            );
-        }
-        headroom
-    }
-}
-
-impl SharedBudget for MemoryBudget {
-    fn try_charge(&self, bytes: usize) -> bool {
-        self.used
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-                used.checked_add(bytes).filter(|&used| used <= self.limit)
-            })
-            .is_ok()
-    }
-
-    fn refund(&self, bytes: usize) {
-        self.used.fetch_sub(bytes, Ordering::Relaxed);
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct Lease {
-    budget: Arc<MemoryBudget>,
-    bytes: usize,
-}
-
-impl Drop for Lease {
-    fn drop(&mut self) {
-        self.budget.refund(self.bytes);
-    }
 }
 
 /// Noq draws a connection's reserved credit first and keeps this until the connection is gone, TLS state included.
