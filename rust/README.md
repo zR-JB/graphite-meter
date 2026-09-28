@@ -134,7 +134,8 @@ without IDNA decoding. OIDC issuer paths must be ASCII; percent-encode other
 characters. HTTP and WebSocket clients use the Go proxy environment rules with
 an ALL_PROXY fallback: loopback bypasses proxies, NO_PROXY supports ports,
 and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
-requests; HTTPS uses CONNECT. SOCKS proxies are rejected.
+requests; HTTPS uses CONNECT. As in Go, `socks5://` and `socks5h://` proxies
+both pass host names to the proxy and log in with the URL's user and password.
 
 OIDC verifies RS/PS 256–512, ES256/384 and EdDSA with ring. HS*, none and ES512
 are rejected; RSA keys must be 2048–8192 bits. As with go-oidc, ID tokens require

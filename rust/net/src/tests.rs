@@ -37,7 +37,7 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
 }
 
 #[test]
-fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_socks() {
+fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_unknown_schemes() {
     let proxy = Proxy::new("proxy.example:3128", "http://u%3Ar:p%40ss@[2001:db8::2]", "");
     let http = proxy.route(&origin("http://meter.example")).unwrap().as_ref().unwrap();
     assert_eq!(
@@ -50,8 +50,16 @@ fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_socks() {
         https.authorization.as_deref(),
         Some(format!("Basic {}", STANDARD.encode("u:r:p@ss")).as_str())
     );
-    let socks = Proxy::new("", "socks5://proxy.example:1080", "");
-    assert!(socks.route(&origin("https://meter.example")).unwrap().is_err());
+    let socks = Proxy::new("", "SOCKS5H://u%3Ar:p%40ss%FF@proxy.example", "");
+    let socks = socks.route(&origin("https://meter.example")).unwrap().as_ref().unwrap();
+    assert_eq!(socks.origin.authority(), "proxy.example:1080");
+    assert!(socks.authorization.is_none());
+    assert_eq!(
+        socks.socks.as_ref().unwrap().user,
+        Some((b"u:r".to_vec(), b"p@ss\xff".to_vec()))
+    );
+    let socks4 = Proxy::new("", "socks4://proxy.example:1080", "");
+    assert!(socks4.route(&origin("https://meter.example")).unwrap().is_err());
     assert!(Proxy::new("", "", "").route(&origin("https://meter.example")).is_none());
 }
 
@@ -152,6 +160,109 @@ async fn cleartext_proxy_uses_absolute_form_without_connect() {
     let head = peer.await.unwrap();
     assert!(head.starts_with("GET http://meter.test/probe HTTP/1.1\r\n"), "{head}");
     assert!(head.contains("proxy-authorization: Basic dXNlcjpzZWNyZXQ="), "{head}");
+}
+
+#[tokio::test]
+async fn socks5_logs_in_and_connects_by_name_then_speaks_origin_form() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let peer = tokio::spawn(async move {
+        let (mut client, _) = listener.accept().await.unwrap();
+        for (expected, reply) in [
+            (&b"\x05\x02\x00\x02"[..], &b"\x05\x02"[..]),
+            (&b"\x01\x04user\x04p@ss"[..], &b"\x01\x00"[..]),
+            (
+                &b"\x05\x01\x00\x03\x0ameter.test\x1f\x90"[..],
+                &b"\x05\x00\x00\x03\x05proxy\x04\x38"[..],
+            ),
+        ] {
+            let mut sent = vec![0; expected.len()];
+            client.read_exact(&mut sent).await.unwrap();
+            assert_eq!(sent, expected);
+            client.write_all(reply).await.unwrap();
+        }
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(client.read_u8().await.unwrap());
+        }
+        client
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        String::from_utf8(head).unwrap()
+    });
+    let proxy = Proxy::new(&format!("socks5://user:p%40ss@{address}"), "", "");
+    let connection = connect(&proxy, &origin("http://meter.test:8080"), None).await.unwrap();
+    assert!(!connection.absolute_form);
+    assert!(connection.proxy_authorization.is_none());
+    let (mut sender, driver) = hyper::client::conn::http1::handshake(TokioIo::new(connection.stream))
+        .await
+        .unwrap();
+    tokio::spawn(driver);
+    let request = http::Request::get("/probe")
+        .header(http::header::HOST, "meter.test:8080")
+        .body(String::new())
+        .unwrap();
+    assert!(sender.send_request(request).await.unwrap().status().is_success());
+    let head = peer.await.unwrap();
+    assert!(head.starts_with("GET /probe HTTP/1.1\r\n"), "{head}");
+    assert!(!head.contains("proxy-authorization"), "{head}");
+}
+
+/// Answers a credential-less SOCKS5 greeting with `method` and a CONNECT with `status`.
+async fn socks_peer(method: u8, status: u8) -> (SocketAddr, tokio::task::JoinHandle<Vec<u8>>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let (mut client, _) = listener.accept().await.unwrap();
+        let mut sent = vec![0; 3];
+        client.read_exact(&mut sent).await.unwrap();
+        client.write_all(&[5, method]).await.unwrap();
+        if method == 0 {
+            let mut request = vec![0; 5];
+            client.read_exact(&mut request).await.unwrap();
+            let rest = match request[3] {
+                1 => 3,
+                4 => 15,
+                _ => usize::from(request[4]),
+            };
+            request.resize(5 + rest + 2, 0);
+            client.read_exact(&mut request[5..]).await.unwrap();
+            sent.extend(request);
+            client.write_all(&[5, status, 0, 1, 0, 0, 0, 0, 0, 0]).await.unwrap();
+        }
+        sent
+    });
+    (address, task)
+}
+
+#[tokio::test]
+async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
+    let v6 = "2001:db8::1".parse::<std::net::Ipv6Addr>().unwrap().octets();
+    for (target, address) in [
+        ("http://192.0.2.1", vec![1, 192, 0, 2, 1, 0, 80]),
+        ("http://[::ffff:192.0.2.1]:81", vec![1, 192, 0, 2, 1, 0, 81]),
+        ("http://[2001:db8::1]", [&[4][..], &v6[..], &[0, 80][..]].concat()),
+    ] {
+        let (proxy, sent) = socks_peer(0, 0).await;
+        let proxy = Proxy::new(&format!("socks5h://{proxy}"), "", "");
+        connect(&proxy, &origin(target), None).await.unwrap();
+        assert_eq!(
+            sent.await.unwrap(),
+            [&[5, 1, 0, 5, 1, 0][..], &address[..]].concat(),
+            "{target}"
+        );
+    }
+    for (method, status, reason) in [
+        (0xff, 0, "no acceptable authentication methods"),
+        (2, 0, "unsupported authentication method 2"),
+        (0, 5, "unknown error connection refused"),
+    ] {
+        let (proxy, _) = socks_peer(method, status).await;
+        let proxy = Proxy::new(&format!("socks5://{proxy}"), "", "");
+        let error = connect(&proxy, &origin("http://meter.test"), None).await.err().unwrap();
+        assert_eq!(error.to_string(), format!("socks connect: {reason}"));
+    }
 }
 
 #[path = "../../test_identity.rs"]

@@ -36,6 +36,15 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
     let stream: Box<dyn Stream> = match proxy.route(target) {
         None => Box::new(tcp(&target.host, port).await?),
         Some(Err(unusable)) => return Err(io::Error::other(*unusable)),
+        Some(Ok(Upstream {
+            origin,
+            socks: Some(socks),
+            ..
+        })) => {
+            let mut tcp = tcp(&origin.host, origin.port_number()).await?;
+            socks.connect(&mut tcp, &target.host, port).await?;
+            Box::new(tcp)
+        }
         Some(Ok(upstream)) => {
             let tcp = tcp(&upstream.origin.host, upstream.origin.port_number()).await?;
             let stream: Box<dyn Stream> = if upstream.origin.scheme == "https" {
@@ -189,6 +198,102 @@ pub struct Proxy {
 struct Upstream {
     origin: Origin,
     authorization: Option<String>,
+    socks: Option<Socks>,
+}
+
+/// Go's SOCKS5 dialer, which net/http uses for socks5 and socks5h alike: it offers
+/// username/password only when the proxy URL has user info, and passes host names to the proxy.
+#[derive(Clone)]
+struct Socks {
+    user: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+impl Socks {
+    async fn connect(&self, stream: &mut TcpStream, host: &str, port: u16) -> io::Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let failed = |reason: String| io::Error::other(format!("socks connect: {reason}"));
+        let greeting: &[u8] = if self.user.is_some() { &[5, 2, 0, 2] } else { &[5, 1, 0] };
+        stream.write_all(greeting).await?;
+        let mut reply = [0; 2];
+        stream.read_exact(&mut reply).await?;
+        if reply[0] != 5 {
+            return Err(failed(format!("unexpected protocol version {}", reply[0])));
+        }
+        match (reply[1], &self.user) {
+            (0, _) => {}
+            (0xff, _) => return Err(failed("no acceptable authentication methods".into())),
+            (2, Some((user, password))) => {
+                if user.is_empty() || user.len() > 255 || password.len() > 255 {
+                    return Err(failed("invalid username/password".into()));
+                }
+                let mut login = vec![1, user.len() as u8];
+                login.extend_from_slice(user);
+                login.push(password.len() as u8);
+                login.extend_from_slice(password);
+                stream.write_all(&login).await?;
+                stream.read_exact(&mut reply).await?;
+                if reply[0] != 1 {
+                    return Err(failed("invalid username/password version".into()));
+                }
+                if reply[1] != 0 {
+                    return Err(failed("username/password authentication failed".into()));
+                }
+            }
+            (method, _) => return Err(failed(format!("unsupported authentication method {method}"))),
+        }
+        let mut request = vec![5, 1, 0];
+        // Like Go's To4, an IPv4-mapped address goes as IPv4.
+        match host.parse::<IpAddr>().map(|ip| ip.to_canonical()) {
+            Ok(IpAddr::V4(ip)) => {
+                request.push(1);
+                request.extend_from_slice(&ip.octets());
+            }
+            Ok(IpAddr::V6(ip)) => {
+                request.push(4);
+                request.extend_from_slice(&ip.octets());
+            }
+            Err(_) => {
+                let length = u8::try_from(host.len()).map_err(|_| failed("FQDN too long".into()))?;
+                request.extend_from_slice(&[3, length]);
+                request.extend_from_slice(host.as_bytes());
+            }
+        }
+        request.extend_from_slice(&port.to_be_bytes());
+        stream.write_all(&request).await?;
+        let mut head = [0; 4];
+        stream.read_exact(&mut head).await?;
+        if head[0] != 5 {
+            return Err(failed(format!("unexpected protocol version {}", head[0])));
+        }
+        if head[1] != 0 {
+            return Err(failed(format!("unknown error {}", socks_reply(head[1]))));
+        }
+        if head[2] != 0 {
+            return Err(failed("non-zero reserved field".into()));
+        }
+        let bound = match head[3] {
+            1 => 4,
+            4 => 16,
+            3 => usize::from(stream.read_u8().await?),
+            other => return Err(failed(format!("unknown address type {other}"))),
+        };
+        stream.read_exact(&mut vec![0; bound + 2]).await?;
+        Ok(())
+    }
+}
+
+fn socks_reply(code: u8) -> String {
+    match code {
+        1 => "general SOCKS server failure".into(),
+        2 => "connection not allowed by ruleset".into(),
+        3 => "network unreachable".into(),
+        4 => "host unreachable".into(),
+        5 => "connection refused".into(),
+        6 => "TTL expired".into(),
+        7 => "command not supported".into(),
+        8 => "address type not supported".into(),
+        code => format!("unknown code: {code}"),
+    }
 }
 
 #[derive(Clone)]
@@ -288,13 +393,28 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
         Some((credentials, host)) => (Some(credentials), host),
         None => (None, authority),
     };
-    if !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
-        return Err("only HTTP and HTTPS proxies are supported");
+    let socks = matches!(scheme.to_ascii_lowercase().as_str(), "socks5" | "socks5h");
+    if !socks && !matches!(scheme.to_ascii_lowercase().as_str(), "http" | "https") {
+        return Err("only HTTP, HTTPS and SOCKS5 proxies are supported");
     }
-    let origin = target_origin(&format!("{scheme}://{host}"))
+    let mut origin = target_origin(&format!("{}://{host}", if socks { "http" } else { scheme }))
         .ok()
         .flatten()
         .ok_or("invalid proxy URL")?;
+    if socks {
+        origin.scheme = "socks5".into();
+        origin.port.get_or_insert_with(|| "1080".into());
+        let user = credentials.map(|credentials| {
+            let (user, password) = credentials.split_once(':').unwrap_or((credentials, ""));
+            let decode = |part| percent_encoding::percent_decode_str(part).collect();
+            (decode(user), decode(password))
+        });
+        return Ok(Upstream {
+            origin,
+            authorization: None,
+            socks: Some(Socks { user }),
+        });
+    }
     let decode = |part: &str| {
         percent_encoding::percent_decode_str(part)
             .decode_utf8_lossy()
@@ -307,7 +427,11 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
             STANDARD.encode(format!("{}:{}", decode(user), decode(password)))
         )
     });
-    Ok(Upstream { origin, authorization })
+    Ok(Upstream {
+        origin,
+        authorization,
+        socks: None,
+    })
 }
 
 fn bypass(entry: &str) -> Option<Bypass> {
