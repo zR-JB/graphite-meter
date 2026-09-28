@@ -939,7 +939,7 @@ async fn start_transfer(
         }
         let started = if target.transport == ThroughputTransport::FetchStream {
             let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
-            Upload::start(upload_transport, up, stagger, stopped.clone()).await
+            Upload::start(upload_transport, up, stagger, operation_limit, stopped.clone()).await
         } else {
             Upload::start_webtransport(upload_transport, up, stopped.clone()).await
         };

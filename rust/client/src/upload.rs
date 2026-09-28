@@ -24,7 +24,6 @@ use std::{
 };
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
-const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const FEED_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LINE: usize = 64 * 1024;
@@ -58,14 +57,16 @@ pub struct Upload {
 }
 
 impl Upload {
-    /// Stagger first HTTP requests inside the stage-owned cancellation scope.
+    /// Stagger first HTTP requests inside the stage-owned cancellation scope; each request lasts
+    /// up to the stage's operation limit, as Go's lanes last the stage.
     pub async fn start(
         transport: Arc<Transport>,
         lanes: usize,
         stagger: Duration,
+        limit: Duration,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, cancel, false, stagger).await
+        Self::start_inner(transport, lanes, cancel, Some((stagger, limit))).await
     }
     pub async fn start_webtransport(
         transport: Arc<Transport>,
@@ -75,15 +76,16 @@ impl Upload {
         if lanes > MAX_WEBTRANSPORT_STREAMS {
             return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
-        Self::start_inner(transport, lanes, cancel, true, Duration::ZERO).await
+        Self::start_inner(transport, lanes, cancel, None).await
     }
+    /// `http` holds HTTP lanes' stagger and request limit; WebTransport lanes take neither.
     async fn start_inner(
         transport: Arc<Transport>,
         lanes: usize,
         mut cancel: watch::Receiver<bool>,
-        webtransport: bool,
-        stagger: Duration,
+        http: Option<(Duration, Duration)>,
     ) -> Result<Self, Error> {
+        let (webtransport, (stagger, limit)) = (http.is_none(), http.unwrap_or_default());
         if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
             return Err("invalid upload lane count or stagger".into());
         }
@@ -195,7 +197,7 @@ impl Upload {
                         if let Some(session) = session {
                             send_wt_reconnecting(&session, block, active, retry).await
                         } else {
-                            send_lane(&transport, &id, index, block, active, retry).await
+                            send_lane(&transport, &id, index, block, active, retry, limit).await
                         }
                     } => {
                         if let Err(error) = result {
@@ -362,6 +364,7 @@ async fn send_lane(
     block: Bytes,
     active: Arc<AtomicBool>,
     mut retry: TransferRetry,
+    limit: Duration,
 ) -> Result<(), Error> {
     let lane = index.to_string();
     loop {
@@ -390,7 +393,7 @@ async fn send_lane(
                 &[("id", id), ("lane", &lane)],
                 body,
                 MAX_TRANSFER_BYTES,
-                REQUEST_LIFETIME,
+                limit,
             )
             .await;
         // A lane the receiver ended as idle ends its attempt normally (upload.go:124-130).
@@ -594,6 +597,9 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stage's operation limit, the lifetime a stage gives its lanes' requests.
+    const OPERATION_LIMIT: Duration = Duration::from_secs(60);
     use crate::transport::TRANSFER_RETRY_BACKOFF;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
@@ -621,6 +627,7 @@ mod tests {
                 Bytes::from(vec![42; 64 * 1024]),
                 active,
                 TransferRetry::new(Retrying::default(), 0),
+                OPERATION_LIMIT,
             )
             .await
         });
@@ -716,7 +723,9 @@ mod tests {
         let block = Bytes::from(vec![42; 64 * 1024]);
         let active = Arc::new(AtomicBool::new(false));
         let retry = TransferRetry::new(Retrying::default(), 0);
-        let lane = tokio::spawn(async move { send_lane(&transport, "upload-session", 0, block, active, retry).await });
+        let lane = tokio::spawn(async move {
+            send_lane(&transport, "upload-session", 0, block, active, retry, OPERATION_LIMIT).await
+        });
         let requests = tokio::time::timeout(Duration::from_secs(5), async {
             let mut requests = Vec::new();
             for _ in 0..2 {
@@ -867,7 +876,7 @@ mod tests {
         let (_stop, cancel) = watch::channel(false);
         let upload = tokio::time::timeout(
             Duration::from_secs(5),
-            Upload::start(transport, 2, Duration::ZERO, cancel),
+            Upload::start(transport, 2, Duration::ZERO, OPERATION_LIMIT, cancel),
         )
         .await??;
         armed.store(true, Ordering::SeqCst);
@@ -886,13 +895,13 @@ mod tests {
     #[tokio::test]
     async fn a_busy_mint_is_tried_again() -> Result<(), Error> {
         let _ = crate::crypto::provider().install_default();
-        let mints = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let (transport, server) = receiver(1, Default::default(), mints.clone()).await?;
+        let requests = Requests::default();
+        let (transport, server) = receiver(1, Default::default(), requests.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(transport, 1, Duration::ZERO, cancel).await;
+        let upload = Upload::start(transport, 1, Duration::ZERO, OPERATION_LIMIT, cancel).await;
         server.abort();
         drop(upload?);
-        let mints = mints.lock().unwrap();
+        let mints = times(&requests, "/upload/session");
         assert!(
             mints.len() == 2 && mints[1] - mints[0] >= Duration::from_secs(1),
             "{mints:?}"
@@ -900,12 +909,47 @@ mod tests {
         Ok(())
     }
 
+    /// An upload request lasts the stage's operation limit, as Go's lanes last their stage
+    /// (upload.go:177-211), where a 120 s cap ended every lane at once.
+    #[tokio::test(start_paused = true)]
+    async fn an_upload_request_lasts_the_stage() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        // Paused time leaps to the next timer while a socket is awaited; this keeps leaps to 1 ms.
+        let heartbeat = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        });
+        let requests = Requests::default();
+        let (transport, server) = receiver(0, Default::default(), requests.clone()).await?;
+        let (_stop, cancel) = watch::channel(false);
+        let upload = Upload::start(transport, 1, Duration::ZERO, Duration::from_secs(300), cancel).await?;
+        tokio::time::sleep(Duration::from_secs(200)).await;
+        drop(upload);
+        server.abort();
+        heartbeat.abort();
+        assert_eq!(times(&requests, "/upload").len(), 1);
+        Ok(())
+    }
+
+    /// Each request's path and arrival.
+    type Requests = Arc<std::sync::Mutex<Vec<(String, Instant)>>>;
+
+    fn times(requests: &Requests, path: &str) -> Vec<Instant> {
+        let requests = requests.lock().unwrap();
+        requests
+            .iter()
+            .filter(|(seen, _)| seen == path)
+            .map(|(_, at)| *at)
+            .collect()
+    }
+
     /// A receiver over HTTP/2 that answers its first `busy` mints with 503 and Retry-After: 1, and
-    /// records each; once `armed` it stops reading the connections that carried upload lanes.
+    /// records each request; once `armed` it stops reading the connections that carried lanes.
     async fn receiver(
         busy: usize,
         armed: Arc<AtomicBool>,
-        mints: Arc<std::sync::Mutex<Vec<Instant>>>,
+        requests: Requests,
     ) -> Result<(Arc<Transport>, tokio::task::JoinHandle<()>), Error> {
         use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
         use hyper::{body::Frame, service::service_fn};
@@ -921,18 +965,18 @@ mod tests {
                     lanes: lanes.clone(),
                     armed: armed.clone(),
                 };
-                let mints = mints.clone();
+                let requests = requests.clone();
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                    let (lanes, mints) = (lanes.clone(), mints.clone());
+                    let (lanes, requests) = (lanes.clone(), requests.clone());
                     async move {
                         let json =
                             |body: &'static str| -> Payload { Full::new(Bytes::from_static(body.as_bytes())).boxed() };
+                        let path = request.uri().path();
+                        requests.lock().unwrap().push((path.to_owned(), Instant::now()));
                         let mut answer = http::Response::builder();
-                        let body = match request.uri().path() {
+                        let body = match path {
                             "/upload/session" => {
-                                let mut mints = mints.lock().unwrap();
-                                mints.push(Instant::now());
-                                if mints.len() <= busy {
+                                if times(&requests, path).len() <= busy {
                                     answer = answer.status(503).header(http::header::RETRY_AFTER, "1");
                                 }
                                 json(r#"{"uploadId":"fixture"}"#)
