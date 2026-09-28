@@ -2,7 +2,7 @@
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use graphite_meter_http3::{self as http3, Code, RecvHalf, SendHalf, WtCode};
+use graphite_meter_http3::{self as http3, RecvHalf, SendHalf};
 use http::{Request, Response, Uri};
 use tokio::{
     sync::{OwnedSemaphorePermit, Semaphore},
@@ -118,33 +118,15 @@ impl Connection {
     }
 }
 
-/// Transfers resume after a graceful close, a lost connection, a request refused after GOAWAY, or a
-/// stream the server cancelled, refused or ended with its session; protocol violations do not.
-pub(crate) fn retryable(error: &(dyn std::error::Error + 'static)) -> bool {
-    let lost = error
-        .downcast_ref::<quinn::ConnectionError>()
-        .map(|error| http3::Error::from(error.clone()));
-    match lost.as_ref().or_else(|| error.downcast_ref()) {
-        Some(http3::Error::Reset(code) | http3::Error::Stopped(code)) => [
-            Code::H3_NO_ERROR,
-            Code::H3_REQUEST_REJECTED,
-            Code::H3_REQUEST_CANCELLED,
-            Code::WT_SESSION_GONE,
-            WtCode(0).to_http(),
-        ]
-        .contains(code),
-        // The Go server stops with 0.
-        Some(http3::Error::Connection { local: false, code, .. }) => [
-            Code(0),
-            Code::H3_NO_ERROR,
-            Code::H3_REQUEST_REJECTED,
-            Code::H3_REQUEST_CANCELLED,
-        ]
-        .contains(code),
-        Some(http3::Error::Transport(quinn::ConnectionError::Reset | quinn::ConnectionError::TimedOut)) => true,
-        Some(http3::Error::Refused) => true,
-        _ => false,
-    }
+/// HTTP/3 or QUIC that this side found the peer breaking, which no retry mends. A stream or
+/// connection the peer ended, with whatever code, or a lost connection is retried, as in Go.
+pub(crate) fn violation(error: &(dyn std::error::Error + 'static)) -> bool {
+    let quic = match error.downcast_ref() {
+        Some(http3::Error::Protocol(_) | http3::Error::Connection { local: true, .. }) => return true,
+        Some(http3::Error::Transport(error)) => Some(error),
+        _ => error.downcast_ref::<quinn::ConnectionError>(),
+    };
+    matches!(quic, Some(quinn::ConnectionError::TransportError(_)))
 }
 
 /// Holds the sole driver task. Request streams retain this owner, so connection
@@ -288,6 +270,7 @@ impl Origin {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http3::{Code, WtCode};
     use rustls::pki_types::CertificateDer;
     #[test]
     fn request_authority_is_fixed_and_never_accepts_credentials() {
@@ -306,31 +289,32 @@ mod tests {
     }
 
     #[test]
-    fn transfer_retries_exclude_protocol_and_local_failures() {
-        let retryable: Vec<Error> = vec![
-            Box::new(http3::Error::Reset(WtCode(0).to_http())),
-            Box::new(http3::Error::Stopped(Code::WT_SESSION_GONE)),
-            Box::new(http3::Error::Reset(Code::H3_REQUEST_REJECTED)),
-            Box::new(http3::Error::Refused),
-            Box::new(quinn::ConnectionError::TimedOut),
-            Box::new(quinn::ConnectionError::Reset),
-        ];
-        for error in retryable {
-            assert!(super::retryable(error.as_ref()), "{error}");
-        }
-        let fatal: Vec<Error> = vec![
+    fn only_a_violation_found_here_ends_a_transfer() {
+        let closed = |local, code| http3::Error::Connection {
+            local,
+            code,
+            reason: Bytes::new(),
+        };
+        let retried: Vec<Error> = vec![
             Box::new(http3::Error::Reset(WtCode(42).to_http())),
-            Box::new(http3::Error::Protocol(Code::H3_MESSAGE_ERROR)),
-            Box::new(http3::Error::Connection {
-                local: false,
-                code: Code::H3_FRAME_ERROR,
-                reason: Bytes::new(),
-            }),
+            Box::new(http3::Error::Stopped(Code::WT_SESSION_GONE)),
+            Box::new(http3::Error::Reset(Code(0x102))),
+            Box::new(http3::Error::Refused),
+            Box::new(closed(false, Code(0x102))),
+            Box::new(closed(false, Code::H3_FRAME_ERROR)),
+            Box::new(quinn::ConnectionError::TimedOut),
             Box::new(quinn::ConnectionError::VersionMismatch),
             Box::new(quinn::ConnectionError::LocallyClosed),
         ];
-        for error in fatal {
-            assert!(!super::retryable(error.as_ref()), "{error}");
+        for error in retried {
+            assert!(!violation(error.as_ref()), "{error}");
+        }
+        let violations: Vec<Error> = vec![
+            Box::new(http3::Error::Protocol(Code::H3_MESSAGE_ERROR)),
+            Box::new(closed(true, Code::H3_FRAME_ERROR)),
+        ];
+        for error in violations {
+            assert!(violation(error.as_ref()), "{error}");
         }
     }
 

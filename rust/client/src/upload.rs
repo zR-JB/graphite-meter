@@ -389,14 +389,7 @@ async fn send_lane(
                 REQUEST_LIFETIME,
             )
             .await;
-        if let Err(error) = result {
-            let retryable = transport.retryable_transfer_error(&error);
-            retry
-                .retry(error, started, moved.load(Ordering::Relaxed), retryable)
-                .await?;
-        } else {
-            retry.progressed();
-        }
+        retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
     }
 }
 async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<(), Error> {
@@ -514,8 +507,7 @@ async fn send_wt_reconnecting(
         let started = Instant::now();
         let mut moved = false;
         let Err(error) = send_wt_lane(&session, block.clone(), &active, &mut moved).await;
-        let retryable = session.retryable_failure(&error);
-        retry.retry(error, started, moved, retryable).await?;
+        retry.ended(Err(error), started, moved).await?;
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {

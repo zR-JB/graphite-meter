@@ -2,12 +2,15 @@
 //! The connection owns its H3 driver; response bodies retain that owner.
 use crate::{
     Error,
+    failure::MeasurementFailure,
     net::Http,
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use graphite_meter_core::{discovery::Protocol, origin::canonical_origin, route::Route, wire::decode_json};
+use graphite_meter_core::{
+    discovery::Protocol, failure::FailureReason, origin::canonical_origin, route::Route, wire::decode_json,
+};
 use http::{Method, Request};
 use serde::de::DeserializeOwned;
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
@@ -80,9 +83,27 @@ impl TransferRetry {
         }
     }
 
-    pub(crate) fn progressed(&mut self) {
-        self.failing_since = None;
-        self.publish(None);
+    /// Go's persist after an attempt (transfer.go:84-107): an attempt that ended cleanly after
+    /// moving bytes goes on at once; one that moved none counts as stalled; an error retries unless
+    /// it is permanent (failure::retryable).
+    pub(crate) async fn ended(
+        &mut self,
+        result: Result<(), Error>,
+        started: Instant,
+        moved: bool,
+    ) -> Result<(), Error> {
+        let error = match result {
+            Ok(()) if moved => {
+                self.failing_since = None;
+                self.backoff = RetryBackoff::default();
+                self.publish(None);
+                return Ok(());
+            }
+            Ok(()) => Box::new(MeasurementFailure(FailureReason::Timeout)),
+            Err(error) => error,
+        };
+        let retryable = crate::failure::retryable(&error);
+        self.retry(error, started, moved, retryable).await
     }
 
     pub(crate) async fn retry(
@@ -141,29 +162,6 @@ impl Transport {
             insecure: self.insecure,
             h3: None,
         }
-    }
-
-    pub(crate) fn retryable_transfer_error(&self, error: &Error) -> bool {
-        if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>() {
-            return http.retryable();
-        }
-        if error.is::<tokio::time::error::Elapsed>() {
-            return true;
-        }
-        if !self.is_http3() {
-            let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error.as_ref());
-            while let Some(source) = cause {
-                if source
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
-                {
-                    return false;
-                }
-                cause = source.source();
-            }
-            return error.is::<hyper::Error>() || error.is::<std::io::Error>();
-        }
-        crate::quic::retryable(error.as_ref())
     }
 
     async fn h3_client(&self) -> Result<Option<Arc<Http3Client>>, Error> {

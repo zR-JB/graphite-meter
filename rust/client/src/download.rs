@@ -218,24 +218,14 @@ async fn receive_http_lane(
                 ready.send(()).await.map_err(|_| "download readiness receiver closed")?;
                 announced = true;
             }
-            let mut received = 0;
+            // A body that ends, at its length or short of it, ends the attempt (download.go:74).
             while let Some(chunk) = body.chunk().await? {
                 bytes.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-                received += chunk.len() as u64;
                 moved |= !chunk.is_empty();
-            }
-            if received != MAX_TRANSFER_BYTES {
-                return Err("download ended before its declared byte count".into());
             }
             Ok::<(), Error>(())
         };
-        match attempt.await {
-            Ok(()) => retry.progressed(),
-            Err(error) => {
-                let retryable = transport.retryable_transfer_error(&error);
-                retry.retry(error, started, moved, retryable).await?;
-            }
-        }
+        retry.ended(attempt.await, started, moved).await?;
     }
 }
 
@@ -253,12 +243,7 @@ async fn receive_webtransport(
         let started = Instant::now();
         let mut moved = false;
         let result = receive_webtransport_chunk(&session, &bytes, &ready, &mut announced, &mut moved).await;
-        let Err(error) = result else {
-            retry.progressed();
-            continue;
-        };
-        let retryable = session.retryable_failure(&error);
-        retry.retry(error, started, moved, retryable).await?;
+        retry.ended(result, started, moved).await?;
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {
@@ -362,5 +347,66 @@ mod tests {
         download.stop().await;
         server.await??;
         Ok(())
+    }
+
+    /// Go's TestLanePersistence (transfer_test.go:87-151): only a refusal ends a lane at once; a
+    /// refused connection and an empty answer are retried for 2 s, 500 ms apart.
+    #[tokio::test]
+    async fn http_lane_retries_all_but_a_refusal_like_go() -> Result<(), Error> {
+        use graphite_meter_core::failure::FailureReason::{ConnectionLost, ProtocolError, ServerBusy, Timeout};
+        let _ = crate::crypto::provider().install_default();
+        let mut cases = JoinSet::new();
+        for (answer, reason, requests) in [
+            (Some("429 Too Many Requests"), ServerBusy, 4),
+            (Some("410 Gone"), ProtocolError, 1),
+            (Some("200 OK"), Timeout, 5),
+            (None, ConnectionLost, 0),
+        ] {
+            cases.spawn(async move {
+                let listener = TcpListener::bind("127.0.0.1:0").await?;
+                let origin = format!("http://{}", listener.local_addr()?);
+                let served = Arc::new(AtomicU64::new(0));
+                // Without an answer the port closes, and every dial is refused.
+                let server = answer.map(|answer| tokio::spawn(serve(listener, answer, served.clone())));
+                let transport = Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?;
+                let (ready, _announced) = mpsc::channel(1);
+                let bytes = AtomicU64::new(0);
+                let retry = TransferRetry::new(Retrying::default(), 0);
+                let started = Instant::now();
+                let lane = receive_http_lane(&transport, 0, &bytes, &ready, Duration::from_secs(5), retry);
+                let error = timeout(Duration::from_secs(5), lane).await?.unwrap_err();
+                let lasted = started.elapsed();
+                if let Some(server) = server {
+                    server.abort();
+                }
+                assert_eq!(
+                    crate::failure::reason(error.as_ref(), false),
+                    reason,
+                    "{answer:?}: {error}"
+                );
+                assert_eq!(served.load(Ordering::SeqCst), requests, "{answer:?}");
+                assert_eq!(
+                    lasted >= Duration::from_secs(2),
+                    requests != 1,
+                    "{answer:?} after {lasted:?}"
+                );
+                Ok::<_, Error>(())
+            });
+        }
+        while let Some(case) = cases.join_next().await {
+            case??;
+        }
+        Ok(())
+    }
+
+    /// Answers each request with an empty `status` response on a connection of its own.
+    async fn serve(listener: TcpListener, status: &str, served: Arc<AtomicU64>) -> Result<(), Error> {
+        loop {
+            let (mut stream, _) = listener.accept().await?;
+            let _ = stream.read(&mut [0_u8; 4096]).await?;
+            let head = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            stream.write_all(head.as_bytes()).await?;
+            served.fetch_add(1, Ordering::SeqCst);
+        }
     }
 }

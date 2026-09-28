@@ -50,6 +50,15 @@ fn causes<'a>(
     })
 }
 
+/// A lane retries what Go's persist retries (transfer.go:65-68, 84-86): all but a sign-in and an
+/// answer other than busy, which laneRefusal makes a refusal (failure.go:48-54), and an HTTP/3 or
+/// QUIC violation this side found in what the peer sent.
+pub(crate) fn retryable(error: &Error) -> bool {
+    crate::net::authentication_required(error.as_ref()).is_none()
+        && error.downcast_ref::<HttpFailure>().is_none_or(HttpFailure::retryable)
+        && !crate::quic::violation(error.as_ref())
+}
+
 pub fn reason(error: &(dyn std::error::Error + 'static), preparing: bool) -> FailureReason {
     // A proxy setting the client cannot use lost no connection.
     if causes(error).any(|cause| cause.is::<graphite_meter_net::UnusableProxy>()) {

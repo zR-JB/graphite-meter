@@ -2,7 +2,7 @@
 use crate::{
     Error,
     net::Http,
-    quic::{self, Connection, Origin},
+    quic::{Connection, Origin},
 };
 use bytes::Bytes;
 use futures_util::FutureExt;
@@ -90,13 +90,6 @@ impl Session {
     /// Closed with its connection, or once the server ended the session.
     pub fn is_closed(&self) -> bool {
         self.connection.close_reason().is_some() || self.ended().is_some()
-    }
-    pub fn retryable_failure(&self, error: &Error) -> bool {
-        match (self.ended(), self.connection.close_reason()) {
-            (Some(Ok(_)), _) => true,
-            (_, Some(reason)) => quic::retryable(&reason),
-            _ => quic::retryable(error.as_ref()),
-        }
     }
     pub async fn send_datagram(&self, payload: &[u8]) -> Result<(), Error> {
         Ok(self.session.send_datagram_wait(payload).await?)
