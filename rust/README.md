@@ -130,9 +130,12 @@ and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
 requests; HTTPS uses CONNECT. SOCKS proxies are rejected.
 
 OIDC verifies RS/PS 256–512, ES256/384 and EdDSA with ring. HS*, none and ES512
-are rejected; RSA keys must be 2048–8192 bits. ID tokens require the configured
-issuer, one audience, expiry, issued-at and nonce. Present azp and at_hash claims
-must match. Unknown signing keys trigger one coordinated JWKS refresh.
+are rejected; RSA keys must be 2048–8192 bits. As with go-oidc, ID tokens require
+the configured issuer, an audience that includes the client ID, expiry and the
+nonce; issued-at is optional, azp is not read, and a present at_hash must match.
+Unlike go-oidc, tokens over 16 KiB, cty, crit or enc headers and a typ other than
+JWT or JOSE are rejected, and signed user information must name the issuer and
+the client. Unknown signing keys trigger one coordinated JWKS refresh.
 
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
