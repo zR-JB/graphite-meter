@@ -62,6 +62,17 @@ tar -tf "$tmp/rootfs.tar" | grep -Ex 'usr/share/(licenses/ca-certificates/COPYRI
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
 test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532
+# Relative GM_* paths resolve from /, and an image that names a CA bundle file
+# also trusts CA files added to /etc/ssl/certs, as Go's x509 does.
+case "$("$engine" inspect -f '{{.Config.WorkingDir}}' "$image")" in
+    '' | /) ;;
+    *) echo "the image must run from /" >&2; exit 1 ;;
+esac
+environment=$("$engine" inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$image")
+if grep -q '^SSL_CERT_FILE=' <<<"$environment" && ! grep -qx 'SSL_CERT_DIR=/etc/ssl/certs' <<<"$environment"; then
+    echo "an image that sets SSL_CERT_FILE must also set SSL_CERT_DIR=/etc/ssl/certs" >&2
+    exit 1
+fi
 
 curl -fsS "$base/" -o "$tmp/index.html"
 grep -qi '<script[^>]*type="module"' "$tmp/index.html"

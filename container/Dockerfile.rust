@@ -78,12 +78,17 @@ ARG TARGETARCH
 COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz \
     /graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz
 
-# The GNU build needs libc and libgcc; the standard Rust runtime includes CA roots.
+# The GNU build needs libc and libgcc; the base image carries the CA bundle.
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97 AS server
 COPY --from=server-build /graphite-meter /graphite-meter
 COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
 COPY --from=server-build /src/rust/target/server-notices/LEGAL.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
 COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
 EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
+# As in Go's image, relative GM_* paths resolve from /, and like Go's x509 the
+# server also trusts CA files added to /etc/ssl/certs beside the base image's
+# SSL_CERT_FILE bundle.
+ENV SSL_CERT_DIR=/etc/ssl/certs
+WORKDIR /
 USER 65532:65532
 ENTRYPOINT ["/graphite-meter"]
