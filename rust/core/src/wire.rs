@@ -6,6 +6,8 @@ use serde_json::{Map, Number, Value};
 use std::fmt;
 
 pub const MAX_UPLOAD_COUNTER: u64 = (1 << 53) - 1;
+pub const MAX_TRANSFER_BYTES: u64 = 64 << 30;
+pub const MAX_WEBTRANSPORT_STREAMS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
