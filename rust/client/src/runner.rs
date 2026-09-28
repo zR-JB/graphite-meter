@@ -187,7 +187,7 @@ async fn prepare_server(
     let client = http.for_server(entry, &preflight)?;
     let throughput_path = async {
         let mut throughput = transfers
-            .then(|| selection::throughput(config, entry, &preflight))
+            .then(|| selection::throughput(config, entry, &preflight, config.throughput_transport))
             .transpose()?;
         if config.stages.iter().any(|stage| stage.uploads()) && !preflight.capabilities.upload_checkpoint {
             return Err("selected server does not support authoritative upload checkpoints".into());
@@ -202,12 +202,7 @@ async fn prepare_server(
                 }
                 Err(error) if config.throughput_transport.is_none() => {
                     throughput = Some(
-                    selection::throughput_with_transport(
-                        config,
-                        entry,
-                        &preflight,
-                        ThroughputTransport::FetchStream,
-                    )
+                    selection::throughput(config, entry, &preflight, Some(ThroughputTransport::FetchStream))
                     .map_err(|fallback_error| -> Error {
                         format!(
                             "fetch-stream selection failed ({fallback_error}); advertised WebTransport is unavailable: {error}"
@@ -243,7 +238,7 @@ async fn prepare_server(
     };
     let latency_path = async {
         let Some(mut target) = needs_latency
-            .then(|| selection::latency(config, entry, &preflight))
+            .then(|| selection::latency(config, entry, &preflight, config.latency_transport))
             .transpose()?
         else {
             return Ok((None, Duration::ZERO));
@@ -254,7 +249,7 @@ async fn prepare_server(
                     && config.latency_transport.is_none()
                     && crate::net::authentication_required(error.as_ref()).is_none() =>
             {
-                target = selection::latency_with_transport(config, entry, &preflight, LatencyTransport::WebSocket)?;
+                target = selection::latency(config, entry, &preflight, Some(LatencyTransport::WebSocket))?;
                 crate::latency::verify(&client, &target, config.insecure).await?
             }
             rtt => rtt?,
