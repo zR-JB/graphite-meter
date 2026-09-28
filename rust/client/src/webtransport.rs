@@ -59,7 +59,7 @@ impl Session {
         timeout(deadline, async {
             let (connection, requests) = Connection::dial(&Origin::from_uri(request.uri())?, insecure).await?;
             let session = match layer::Session::connect(&requests, request).await {
-                Ok(Ok(session)) => session,
+                Ok(Ok((session, _))) => session,
                 Ok(Err(response)) => {
                     return Err(Box::new(ConnectRejected {
                         status: response.status(),

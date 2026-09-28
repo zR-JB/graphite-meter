@@ -73,7 +73,11 @@ async fn serve(incoming: noq::Incoming, mut stopping: watch::Receiver<bool>) -> 
 /// Echoes a request body, or answers `transport probe`; CONNECT opens a probe session.
 async fn respond(request: http::Request<()>, stream: RequestStream) -> Result<(), Error> {
     if request.method() == http::Method::CONNECT {
-        return probe(request.uri().path(), Arc::new(Session::accept(stream).await?)).await;
+        return probe(
+            request.uri().path(),
+            Arc::new(Session::accept(stream, http::HeaderMap::new()).await?),
+        )
+        .await;
     }
     let (mut send, mut recv) = stream.split();
     let mut body = Vec::new();

@@ -88,10 +88,15 @@ impl HttpServer {
             self.config.max_operation_duration
         };
         let deadline = Instant::now() + lifetime;
+        // Like every secure response under authentication, as Go's Enforce sets them before routing.
+        let mut headers = http::HeaderMap::new();
+        if self.auth.is_some() {
+            crate::auth::pages::harden(&mut headers, true);
+        }
         let session = tokio::select! {
             biased;
             _ = lease_ended(lease.clone()) => return Ok(()),
-            session = Session::accept(stream) => session?,
+            session = Session::accept(stream, headers) => session?,
         };
         let datagrams = query(&request, "datagrams").is_some_and(|value| datagram_mode(&value));
         let count = download_bytes(&request);

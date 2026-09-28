@@ -665,7 +665,7 @@ where
                 let mut send = stream.split().0;
                 send.send_response(http::Response::new(())).await.unwrap();
                 send.finish().await.unwrap();
-            } else if let Ok(session) = Session::accept(stream).await {
+            } else if let Ok(session) = Session::accept(stream, http::HeaderMap::new()).await {
                 scenario(session).await;
             }
         }
@@ -758,7 +758,7 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
         let _ = session.closed().await;
     });
     let (driver, requests) = client(&peers);
-    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     assert_eq!(session.id(), 0);
     assert!(session.max_datagram_size().is_some_and(|size| size > 1000));
     session.send_datagram_wait(b"PING,1").await?;
@@ -810,7 +810,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
         assert!(started.elapsed() < Duration::from_millis(900));
     });
     let (driver, requests) = client(&peers);
-    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     assert_eq!(session.closed().await?, (2, "lifetime".into()));
     session.close(0, "").await;
     settled(&peers.budget).await;
@@ -825,7 +825,7 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
         session.close(1, "unused").await;
     });
     let (driver, requests) = client(&peers);
-    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     session.close(7, "bye").await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
 
@@ -873,7 +873,7 @@ async fn shutdown_closes_every_session_before_the_connection() -> Result<(), Tes
         let _ = session.closed().await;
     });
     let (driver, requests) = client(&peers);
-    let session = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
     stop.notify_one();
     assert_eq!(session.closed().await?, (4, "shutdown".into()));
     drop(session);

@@ -499,21 +499,19 @@ impl Session {
         })
     }
 
-    /// Server: accepts an authorized WebTransport CONNECT. A peer that has not shown WebTransport,
-    /// HTTP datagrams and the datagram transport parameter within 5 s gets 400; a second session
-    /// on the connection gets H3_REQUEST_REJECTED, as from Go.
-    pub async fn accept(mut stream: RequestStream) -> Result<Self, Error> {
+    /// Server: accepts an authorized WebTransport CONNECT, answering with `headers` either way. A peer
+    /// that has not shown WebTransport, HTTP datagrams and the datagram transport parameter within
+    /// 5 s gets 400; a second session on the connection gets H3_REQUEST_REJECTED, as from Go.
+    pub async fn accept(mut stream: RequestStream, headers: http::HeaderMap) -> Result<Self, Error> {
         let shared = stream.shared_arc();
+        let mut response = http::Response::new(());
+        *response.headers_mut() = headers;
         let Some(dialect) = dialect(&shared).await else {
-            let response = http::Response::builder()
-                .status(http::StatusCode::BAD_REQUEST)
-                .body(())
-                .expect("static");
+            *response.status_mut() = http::StatusCode::BAD_REQUEST;
             stream.send.send_response(response).await?;
             stream.send.finish().await?;
             return Err(Error::Refused);
         };
-        let mut response = http::Response::new(());
         if dialect == Dialect::Draft02 {
             // Draft 02 requires it; Go omits it.
             response.headers_mut().insert(
@@ -526,11 +524,12 @@ impl Session {
         Self::register(stream, Code::H3_REQUEST_REJECTED)
     }
 
-    /// Client: opens a session, speaking the server's dialect. A refusal returns its response.
+    /// Client: opens a session, speaking the server's dialect, with the response that accepted it.
+    /// A refusal returns its response.
     pub async fn connect(
         requests: &SendRequest,
         request: http::Request<()>,
-    ) -> Result<Result<Self, http::Response<()>>, Error> {
+    ) -> Result<Result<(Self, http::Response<()>), http::Response<()>>, Error> {
         let shared = requests.shared();
         let dialect = dialect(shared)
             .await
@@ -556,7 +555,7 @@ impl Session {
         if !response.status().is_success() {
             return Ok(Err(response));
         }
-        Self::register(stream, Code::H3_REQUEST_CANCELLED).map(Ok)
+        Self::register(stream, Code::H3_REQUEST_CANCELLED).map(|session| Ok((session, response)))
     }
 
     /// The CONNECT stream's ID.

@@ -1092,6 +1092,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn authenticated_webtransport_sessions_answer_with_go_hardening_headers() {
+        use super::*;
+        let mut config = Config {
+            advertised_native: Some(Default::default()),
+            ..Config::default()
+        };
+        config.public.both.push("self".into());
+        config.auth.mode = crate::config::AuthMode::Password;
+        config.auth.public_url = "https://localhost".into();
+        config.auth.password_hash =
+            "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
+        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let sessions = server.auth.as_ref().unwrap().sessions();
+        let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
+        let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
+        let (tls, client_config) = tls();
+        let (address, stop, serving) = serve(&server, tls);
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let (quic, requests) = h3_client(&client, client_config, address).await;
+            let request = http::Request::get("https://localhost/wt/ping")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::ORIGIN, "")
+                .body(())
+                .unwrap();
+            let (session, response) = http3::webtransport::Session::connect(&requests, request)
+                .await
+                .unwrap()
+                .expect("an authorized session");
+            let headers = response.headers();
+            assert_eq!(headers[header::STRICT_TRANSPORT_SECURITY], "max-age=31536000");
+            assert_eq!(headers["referrer-policy"], "same-origin");
+            assert_eq!(headers["x-content-type-options"], "nosniff");
+            assert!(headers.contains_key("permissions-policy"));
+            session.close(0, "").await;
+            quic.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn peer_closes_end_connections_normally_and_protocol_errors_do_not() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());

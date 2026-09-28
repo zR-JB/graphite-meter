@@ -477,7 +477,7 @@ async fn download_rate(webtransport: bool, one_way: Duration) -> Result<f64, Tes
     let path = if webtransport { "wt/download" } else { "download" };
     let request = Request::get(format!("https://localhost/{path}?bytes=4294967296")).body(())?;
     let (mut lane, mut body, _session) = if webtransport {
-        let session = Session::connect(&requests, request)
+        let (session, _) = Session::connect(&requests, request)
             .await?
             .map_err(|refused| format!("{refused:?}"))?;
         (
@@ -532,7 +532,8 @@ async fn session(quic: quinn::Connection, path: &str) -> Result<Session, TestErr
     let request = Request::get(format!("https://localhost{path}")).body(())?;
     Ok(Session::connect(&requests, request)
         .await?
-        .map_err(|refused| format!("{refused:?}"))?)
+        .map_err(|refused| format!("{refused:?}"))?
+        .0)
 }
 
 #[tokio::test]
@@ -547,7 +548,7 @@ async fn cancelled_download_without_reliable_reset_preserves_http3_connection() 
         h3_body(&requests, request, Bytes::new()).await?;
         for _ in 0..2 {
             let request = Request::get("https://localhost/wt/download?bytes=4294967296").body(())?;
-            let session = Session::connect(&requests, request)
+            let (session, _) = Session::connect(&requests, request)
                 .await?
                 .map_err(|refused| format!("{refused:?}"))?;
             let mut lane = session.accept_uni().await.ok_or("missing download stream")?;

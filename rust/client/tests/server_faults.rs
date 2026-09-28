@@ -102,7 +102,7 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
                             requests.spawn(async move {
                                 let (_, stream) = request.resolve().await?;
                                 if matches!(peer, Peer::WebTransport) {
-                                    let session = http3::webtransport::Session::accept(stream).await?;
+                                    let session = http3::webtransport::Session::accept(stream, http::HeaderMap::new()).await?;
                                     let mut data = session.open_uni().await?;
                                     data.write_all(b"progress").await?;
                                     trigger.wait_for(|value| *value).await?;
