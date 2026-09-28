@@ -7,7 +7,7 @@ pub use load::load;
 
 use crate::admission::Limits;
 use graphite_meter_core::catalog::ServerCatalog;
-use std::{collections::BTreeSet, error::Error, time::Duration};
+use std::{collections::BTreeSet, error::Error, ops::Deref, time::Duration};
 
 pub type ConfigError = Box<dyn Error + Send + Sync>;
 
@@ -184,7 +184,27 @@ impl Default for Config {
         }
     }
 }
+
+/// A configuration `Config::validate` accepted. The runtime, its listeners and discovery take only this, so a
+/// configuration is validated once, where it is loaded.
+#[derive(Clone)]
+pub struct ValidatedConfig(Config);
+
+impl Deref for ValidatedConfig {
+    type Target = Config;
+
+    fn deref(&self) -> &Config {
+        &self.0
+    }
+}
+
 impl Config {
+    /// This configuration, once `validate` accepts it.
+    pub fn validated(self) -> Result<ValidatedConfig, ConfigError> {
+        self.validate()?;
+        Ok(ValidatedConfig(self))
+    }
+
     pub fn published_catalog(&self) -> ServerCatalog {
         let mut catalog = if self.server_catalog.servers.is_empty() {
             ServerCatalog::singleton()

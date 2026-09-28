@@ -21,7 +21,7 @@ async fn download_body_owns_capacity_and_options_does_not_consume_it() {
     let mut config = Config::default();
     config.limits.operations_per_client = 1;
     config.limits.sessions_per_client = 1;
-    let server = HttpServer::new(Arc::new(config)).unwrap();
+    let server = HttpServer::new(config.validated().unwrap()).unwrap();
     let peer: SocketAddr = "127.0.0.1:31000".parse().unwrap();
     let held = server.respond(request("/download?bytes=100"), peer);
     assert_eq!(held.status(), StatusCode::OK);
@@ -44,7 +44,7 @@ async fn download_body_owns_capacity_and_options_does_not_consume_it() {
 
 #[tokio::test]
 async fn download_length_preserves_go_parsing_and_head_headers() {
-    let server = HttpServer::new(Arc::new(Config::default())).unwrap();
+    let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
     let peer = "127.0.0.1:31000".parse().unwrap();
     for (query, expected) in [
         ("", 25 * 1024 * 1024),
@@ -71,7 +71,7 @@ async fn download_length_preserves_go_parsing_and_head_headers() {
 async fn real_http1_serves_discovery_and_streams_exact_download_then_joins_shutdown() {
     tokio::time::timeout(Duration::from_secs(10), async {
         let config = Config { server_name: "Local meter".into(), server_location: "Berlin".into(), ..Config::default() };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -147,7 +147,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
         };
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -196,7 +196,7 @@ async fn stalled_download_releases_capacity_at_request_deadline() {
 #[tokio::test]
 async fn oversized_http1_headers_are_rejected() {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -242,7 +242,7 @@ async fn real_upload_lifecycle_uses_receiver_totals_and_owner_refusals() {
             trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -332,7 +332,7 @@ async fn ambiguous_proxy_evidence_owns_no_upload() {
             trusted_proxies: vec!["127.0.0.0/8".parse().unwrap()],
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -370,7 +370,7 @@ async fn stalled_upload_read_releases_capacity_and_keeps_received_bytes() {
             max_operation_duration: Duration::from_millis(200),
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -477,7 +477,7 @@ async fn progress_claim_cancellation_owns_capacity_and_options_stays_unmetered()
     let mut config = Config::default();
     config.limits.operations_per_client = 2;
     config.limits.sessions_per_client = 1;
-    let server = HttpServer::new(Arc::new(config)).unwrap();
+    let server = HttpServer::new(config.validated().unwrap()).unwrap();
     let peer = "[2001:db8:1::1]:31000".parse().unwrap();
     let neighbor = "[2001:db8:1::2]:31000".parse().unwrap();
     let foreign = "[2001:db8:2::1]:31000".parse().unwrap();
@@ -539,11 +539,15 @@ async fn advance_http1_clock(duration: Duration) {
 #[tokio::test]
 async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() {
     let server = Arc::new(
-        HttpServer::new(Arc::new(Config {
-            max_connections: 1,
-            max_connections_per_client: 1,
-            ..Config::default()
-        }))
+        HttpServer::new(
+            Config {
+                max_connections: 1,
+                max_connections_per_client: 1,
+                ..Config::default()
+            }
+            .validated()
+            .unwrap(),
+        )
         .unwrap(),
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -585,10 +589,14 @@ async fn keepalive_idle_uses_fifteen_seconds_and_releases_connection_capacity() 
 #[tokio::test]
 async fn active_http1_progress_survives_an_idle_interval() {
     let server = Arc::new(
-        HttpServer::new(Arc::new(Config {
-            max_operation_duration: Duration::from_secs(180),
-            ..Config::default()
-        }))
+        HttpServer::new(
+            Config {
+                max_operation_duration: Duration::from_secs(180),
+                ..Config::default()
+            }
+            .validated()
+            .unwrap(),
+        )
         .unwrap(),
     );
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -619,7 +627,7 @@ async fn active_http1_progress_survives_an_idle_interval() {
 
 #[tokio::test]
 async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
-    let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+    let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
@@ -650,7 +658,7 @@ async fn prefetched_partial_pipeline_still_has_a_finite_idle_bound() {
 
 #[tokio::test]
 async fn upload_idle_returns_refusal_and_preserves_receiver_bytes() {
-    let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+    let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();

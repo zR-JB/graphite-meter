@@ -149,7 +149,7 @@ async fn application_response_restricts_resources_and_hashes_embedded_inline_ass
     };
 
     tokio::time::timeout(Duration::from_secs(5), async {
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();

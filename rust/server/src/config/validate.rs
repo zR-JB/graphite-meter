@@ -13,16 +13,10 @@ impl Config {
     }
 
     fn validate_limits(&self) -> Result<(), ConfigError> {
-        if self
-            .limits
-            .operations_per_client
-            .checked_add(self.limits.sessions_per_client)
-            .and_then(|streams| streams.checked_add(crate::http_server::QUIC_CONTROL_STREAMS))
-            .is_none_or(|streams| u32::try_from(streams).is_err())
-        {
+        if crate::budget::max_requests(&self.limits).is_none() {
             return Err("per-client stream budgets exceed the QUIC stream limit".into());
         }
-        crate::http_server::check_configured_budget(self)?;
+        crate::budget::check_configured(self)?;
         if self.trusted_proxies.iter().any(|prefix| prefix.prefix_len() == 0) {
             return Err("trusted proxy prefix must not cover every address".into());
         }

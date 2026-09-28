@@ -1,12 +1,12 @@
 //! Interactive password hashing without exposing a password in process arguments.
 
-use graphite_meter_server::{config::ConfigError, password};
+use graphite_meter_server::{ServerError, password};
 use std::io::{self, BufRead, IsTerminal, Write};
 use zeroize::Zeroizing;
 
 const MAX_INPUT_LINE: u64 = 1024 + 2; // Password bytes plus an optional CRLF.
 
-pub fn run() -> Result<(), ConfigError> {
+pub fn run() -> Result<(), ServerError> {
     let stdin = io::stdin();
     let terminal = stdin.is_terminal();
     let mut input = stdin.lock();
@@ -46,7 +46,7 @@ pub fn run() -> Result<(), ConfigError> {
     Ok(())
 }
 
-fn read_password(input: &mut impl BufRead) -> Result<Zeroizing<String>, ConfigError> {
+fn read_password(input: &mut impl BufRead) -> Result<Zeroizing<String>, ServerError> {
     let mut bytes = Zeroizing::new(Vec::new());
     io::Read::take(input, MAX_INPUT_LINE).read_until(b'\n', &mut bytes)?;
     let line = std::str::from_utf8(&bytes)?;

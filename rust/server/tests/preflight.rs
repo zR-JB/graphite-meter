@@ -16,7 +16,7 @@ fn native_and_public_discovery_match_shared_golden() {
     config.tls_cert = "test-cert.pem".into();
     config.tls_key = "test-key.pem".into();
     config.public.both.push("self".into());
-    let preflight = Preflight::new(Arc::new(config)).unwrap();
+    let preflight = Preflight::new(Arc::new(config.validated().unwrap())).unwrap();
     let document = preflight.build("speed.example").unwrap();
     let mut expected: serde_json::Value =
         serde_json::from_str(include_str!("../../../api/preflight.golden.json")).unwrap();
@@ -41,7 +41,7 @@ fn authentication_does_not_disable_configured_webtransport() {
     config.auth.mode = AuthMode::Password;
     config.auth.public_url = "https://meter.example".into();
     config.auth.password_hash = "test-hash".into();
-    let document = Preflight::new(Arc::new(config))
+    let document = Preflight::new(Arc::new(config.validated().unwrap()))
         .unwrap()
         .build("meter.example")
         .unwrap();
@@ -68,7 +68,7 @@ fn public_roles_merge_default_ports_and_csp_includes_socket_schemes() {
     config.public.both = vec!["self".into(), "https://meter.example".into()];
     config.public.throughput = vec!["https://METER.example:443".into()];
     config.public.latency = vec!["https://meter.example:443".into()];
-    let preflight = Preflight::new(Arc::new(config)).unwrap();
+    let preflight = Preflight::new(Arc::new(config.validated().unwrap())).unwrap();
     let document = preflight.build("meter.example").unwrap();
     assert_eq!(document.capabilities.throughput.len(), 2);
     assert_eq!(document.capabilities.latency.len(), 2);

@@ -106,10 +106,10 @@ async fn serve_h2(
     config: Config,
 ) -> (
     SocketAddr,
-    tokio::task::JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>,
+    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
     oneshot::Sender<()>,
 ) {
-    let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+    let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = oneshot::channel();
@@ -284,7 +284,7 @@ async fn quic_server(
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(Fixed(tls.key.clone())));
-    let server = Arc::new(HttpServer::new(Arc::new(config))?);
+    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let endpoint = server.quic_endpoint(Arc::new(server_tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
     let (stop, stopped) = oneshot::channel::<()>();

@@ -1,6 +1,9 @@
 //! Experimental Graphite Meter server.
 #![forbid(unsafe_code)]
 
+/// A failure while the server starts or runs, as opposed to a `config::ConfigError` in what it was given.
+pub type ServerError = Box<dyn std::error::Error + Send + Sync>;
+
 #[cfg(test)]
 #[path = "../../test_identity.rs"]
 mod test_identity;
@@ -11,6 +14,7 @@ mod test_link;
 pub mod admission;
 pub mod assets;
 pub mod auth;
+mod budget;
 pub mod catalog;
 pub mod client_address;
 pub mod config;

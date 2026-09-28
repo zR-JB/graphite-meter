@@ -24,7 +24,7 @@ struct Harness {
     client: SendRequest<Bytes>,
     driver: JoinHandle<Result<(), h2::Error>>,
     stop: oneshot::Sender<()>,
-    server: JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>,
+    server: JoinHandle<Result<(), graphite_meter_server::ServerError>>,
 }
 
 impl Harness {
@@ -55,7 +55,7 @@ impl Harness {
             .with_root_certificates(roots)
             .with_no_client_auth();
         client_tls.alpn_protocols = vec![b"h2".to_vec()];
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();

@@ -1,34 +1,25 @@
 //! A QUIC connection owns its request futures; the HTTP/3 layer owns sessions and resets.
 
-use super::{
-    budget::{ClientCredit, CreditClaim, Lease, MemoryBudget},
-    *,
+use super::*;
+use crate::{
+    budget::{
+        self, ClientCredit, CreditClaim, Lease, MemoryBudget, QUIC_CREDIT_BYTES, QUIC_INCOMING_BYTES,
+        QUIC_INCOMING_TOTAL_BYTES, QUIC_MIN_SEND_WINDOW, QUIC_RECEIVE_WINDOW,
+    },
+    quic_shard,
+    timeouts::QUIC_HANDSHAKE,
 };
-use crate::{quic_shard, timeouts::QUIC_HANDSHAKE};
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use graphite_meter_core::{failure::LaneEnding, wire::MAX_WEBTRANSPORT_STREAMS};
+use graphite_meter_core::failure::LaneEnding;
 use graphite_meter_http3::{self as http3, Code};
 use quinn::SharedBudget;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
 const MAX_SEND_WINDOW: u64 = 16 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 /// How often a connection's send window follows its demand.
 const SEND_WINDOW_TUNING: Duration = Duration::from_millis(250);
-const INCOMING_BYTES: u64 = 64 * 1024;
-const INCOMING_TOTAL_BYTES: u64 = 4 * 1024 * 1024;
-/// Go's h3ControlStreams: request streams past a client's admission shares, for its control requests.
-pub(crate) const CONTROL_STREAMS: usize = 4;
-/// Go's browserH3UniStreams, the lane cap and wtLaneCreditHeadroom: credit past the cap resets an excess lane.
-const UNI_STREAMS: u32 = (3 + MAX_WEBTRANSPORT_STREAMS + 4) as u32;
-const DATAGRAM_BUFFER_BYTES: usize = 64 * 1024;
-// Go's autotuning ceilings, and one maximal 64 KiB HTTP/3 frame of credit until an upload is admitted.
-const STREAM_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
-const RECEIVE_WINDOW: u32 = 48 * 1024 * 1024;
-const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
-pub(super) const CREDIT_BYTES: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 
 pub struct QuicEndpoint {
     endpoint: quinn::Endpoint,
@@ -61,10 +52,10 @@ impl HttpServer {
         &self,
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
-    ) -> Result<QuicEndpoint, ConfigError> {
+    ) -> Result<QuicEndpoint, ServerError> {
         let udp = bind_udp(address, false)?;
         let endpoint_config = quinn::EndpointConfig::default();
-        let bytes = endpoint_bytes(
+        let bytes = budget::endpoint_bytes(
             &endpoint_config,
             1,
             self.config.max_connections,
@@ -72,7 +63,7 @@ impl HttpServer {
             udp.socket.max_receive_segments().get(),
         )
         .ok_or("QUIC endpoint buffer size overflow")?;
-        check_buffer_budget(
+        budget::check(
             &self.config,
             self.memory.limit,
             self.handshake_bytes.load(Ordering::Relaxed),
@@ -109,7 +100,7 @@ impl HttpServer {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
         runtimes: &[tokio::runtime::Handle],
-    ) -> Result<Option<(Vec<QuicEndpoint>, quic_shard::Router)>, ConfigError> {
+    ) -> Result<Option<(Vec<QuicEndpoint>, quic_shard::Router)>, ServerError> {
         const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
         let bind = |runtime: &tokio::runtime::Handle, address| {
             let _entered = runtime.enter();
@@ -125,7 +116,7 @@ impl HttpServer {
         let handshake_bytes = self.handshake_bytes.load(Ordering::Relaxed);
         let shard_bytes = |shards, udp: &Udp| {
             let segments = udp.socket.max_receive_segments().get();
-            endpoint_bytes(
+            budget::endpoint_bytes(
                 &endpoint_config,
                 shards,
                 self.config.max_connections,
@@ -133,7 +124,7 @@ impl HttpServer {
                 segments,
             )
         };
-        let check = |total| check_buffer_budget(&self.config, self.memory.limit, handshake_bytes, Some(total));
+        let check = |total| budget::check(&self.config, self.memory.limit, handshake_bytes, Some(total));
         // The first socket stands for the others until they are bound; the check below counts each.
         let covered = |shards: usize| {
             shard_bytes(shards, &first)
@@ -158,7 +149,8 @@ impl HttpServer {
             .ok_or(OVERFLOW)?;
         check(total)?;
         let config = self.quic_config(tls, shards)?;
-        let (router, inboxes) = quic_shard::Router::new(shards, packet_bytes(&endpoint_config).ok_or(OVERFLOW)?);
+        let (router, inboxes) =
+            quic_shard::Router::new(shards, budget::packet_bytes(&endpoint_config).ok_or(OVERFLOW)?);
         let mut endpoints = Vec::with_capacity(shards);
         for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(bytes).zip(inboxes).enumerate() {
             let lease = Arc::new(
@@ -190,16 +182,16 @@ impl HttpServer {
     }
 
     /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
-    fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<quinn::ServerConfig, ConfigError> {
+    fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<quinn::ServerConfig, ServerError> {
         let mut tls = (*tls).clone();
         tls.alpn_protocols = vec![b"h3".to_vec()];
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         config
             .max_incoming(self.config.max_connections.div_ceil(shards))
-            .incoming_buffer_size(INCOMING_BYTES.div_ceil(shards as u64))
-            .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
-        let mut transport = transport(&self.config.limits)?;
+            .incoming_buffer_size(QUIC_INCOMING_BYTES.div_ceil(shards as u64))
+            .incoming_buffer_size_total(QUIC_INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
+        let mut transport = budget::quic_transport(&self.config.limits)?;
         transport.shared_budget(Some(self.memory.clone()));
         config.transport_config(Arc::new(transport));
         Ok(config)
@@ -209,7 +201,7 @@ impl HttpServer {
         self: Arc<Self>,
         quic: QuicEndpoint,
         shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<(), ServerError> {
         tokio::pin!(shutdown);
         let mut connections = JoinSet::new();
         let result = loop {
@@ -233,7 +225,7 @@ impl HttpServer {
                         incoming.refuse();
                         continue;
                     };
-                    let floor = connection_floor(self.handshake_bytes.load(Ordering::Relaxed));
+                    let floor = budget::connection_floor(self.handshake_bytes.load(Ordering::Relaxed));
                     let Some(floor) = self.memory.lease(floor) else {
                         incoming.refuse();
                         continue;
@@ -288,7 +280,7 @@ impl HttpServer {
         budget: Arc<ConnectionBudget>,
         peer: SocketAddr,
     ) -> Result<(), http3::Error> {
-        let max_requests = max_requests(&self.config.limits);
+        let max_requests = budget::max_requests(&self.config.limits).expect("validated stream budgets") as usize;
         let credit = ReceiveCredit::new(quic.clone(), budget.clone());
         let mut window = SendWindow::new();
         let mut http = http3::server::Connection::new(quic, Some(budget));
@@ -377,7 +369,7 @@ struct Udp {
     kernel_bytes: usize,
 }
 
-fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ConfigError> {
+fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ServerError> {
     let (socket, warning) = graphite_meter_core::socket::udp_socket_with(address, reuse_port)?;
     if let Some(warning) = warning {
         crate::log!("{warning}");
@@ -452,62 +444,6 @@ impl quinn::UdpSender for BudgetedSender {
     }
 }
 
-pub(super) fn max_requests(limits: &crate::admission::Limits) -> usize {
-    limits.operations_per_client + limits.sessions_per_client + CONTROL_STREAMS
-}
-
-fn transport(limits: &crate::admission::Limits) -> Result<quinn::TransportConfig, ConfigError> {
-    let mut transport = quinn::TransportConfig::default();
-    transport.max_concurrent_bidi_streams(u32::try_from(max_requests(limits))?.into());
-    transport.max_concurrent_uni_streams(UNI_STREAMS.into());
-    transport.stream_receive_window(STREAM_RECEIVE_WINDOW.into());
-    transport.receive_window(RECEIVE_WINDOW_FLOOR.into());
-    transport.send_window(MIN_SEND_WINDOW);
-    transport.datagram_receive_buffer_size(Some(DATAGRAM_BUFFER_BYTES));
-    transport.datagram_send_buffer_size(DATAGRAM_BUFFER_BYTES);
-    transport.max_idle_timeout(Some(IDLE_BOUND.try_into()?));
-    Ok(transport)
-}
-
-/// Held from accept until Noq drops the connection: the TLS handshake and the HTTP/3 layer's fixed state.
-pub(super) fn connection_floor(handshake_bytes: usize) -> usize {
-    handshake_bytes.saturating_add(http3::CONNECTION_BYTES)
-}
-
-/// Noq precharges its own floor when it creates a connection, so only validation counts it.
-pub(super) fn noq_floor(limits: &crate::admission::Limits) -> Result<usize, ConfigError> {
-    Ok(transport(limits)?.connection_floor_bytes())
-}
-
-/// The largest datagram an endpoint reads into one receive segment.
-fn packet_bytes(config: &quinn::EndpointConfig) -> Option<usize> {
-    usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()
-}
-
-/// One of `shards` endpoints: its receive batch, the pending incoming packets its part of the incoming limits
-/// admits, its forwarding queue and its kernel buffers.
-pub(super) fn endpoint_bytes(
-    config: &quinn::EndpointConfig,
-    shards: usize,
-    max_connections: usize,
-    kernel_bytes: usize,
-    receive_segments: usize,
-) -> Option<usize> {
-    let packet = packet_bytes(config)?;
-    let receive = packet.checked_mul(receive_segments)?;
-    let queue = if shards > 1 {
-        quic_shard::queue_bytes(packet)?
-    } else {
-        0
-    };
-    receive
-        .checked_mul(quinn::udp::BATCH_SIZE)?
-        .checked_add(receive.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
-        .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
-        .checked_add(queue)?
-        .checked_add(kernel_bytes)
-}
-
 /// Noq draws a connection's reserved credit first and keeps this until the connection is gone, TLS state included.
 #[derive(Debug)]
 struct ConnectionBudget {
@@ -532,8 +468,8 @@ impl ConnectionBudget {
         let mut held = self.held.lock().expect("connection budget poisoned");
         if held.credit.is_none()
             && self.memory.has_headroom()
-            && let Some(claim) = self.clients.claim(clients, CREDIT_BYTES)
-            && let Some(credit) = self.memory.lease(CREDIT_BYTES)
+            && let Some(claim) = self.clients.claim(clients, QUIC_CREDIT_BYTES)
+            && let Some(credit) = self.memory.lease(QUIC_CREDIT_BYTES)
         {
             held.undrawn += credit.bytes;
             held.credit = Some(credit);
@@ -595,7 +531,7 @@ impl ReceiveCredit {
     pub(super) fn fund(&self, clients: &[String]) -> bool {
         let reserved = self.0.budget.reserve(clients);
         if reserved {
-            self.0.quic.set_receive_window(RECEIVE_WINDOW.into());
+            self.0.quic.set_receive_window(QUIC_RECEIVE_WINDOW.into());
         }
         reserved
     }
@@ -620,7 +556,7 @@ struct SendWindow {
 impl SendWindow {
     fn new() -> Self {
         Self {
-            limit: MIN_SEND_WINDOW,
+            limit: QUIC_MIN_SEND_WINDOW,
             last: None,
             low_demand_since: None,
         }
@@ -647,7 +583,7 @@ impl SendWindow {
             // Two observed bandwidth-delay products let a new path grow without a full window on fast local
             // links, up to about quic-go's in-flight cap: a deeper window only fills the bottleneck queue.
             let target = desired_send_window(sent.saturating_sub(previous), path.rtt, now.duration_since(last));
-            if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
+            if target == QUIC_MIN_SEND_WINDOW && self.limit != QUIC_MIN_SEND_WINDOW {
                 let since = self.low_demand_since.get_or_insert(now);
                 if now.duration_since(*since) >= SEND_WINDOW_SHRINK_DELAY {
                     self.release(connection);
@@ -674,9 +610,9 @@ impl SendWindow {
     fn release(&mut self, connection: &quinn::Connection) {
         self.last = None;
         self.low_demand_since = None;
-        if self.limit != MIN_SEND_WINDOW {
-            self.limit = MIN_SEND_WINDOW;
-            connection.set_send_window(MIN_SEND_WINDOW);
+        if self.limit != QUIC_MIN_SEND_WINDOW {
+            self.limit = QUIC_MIN_SEND_WINDOW;
+            connection.set_send_window(QUIC_MIN_SEND_WINDOW);
         }
     }
 }
@@ -687,14 +623,18 @@ fn desired_send_window(sent: u64, rtt: Duration, elapsed: Duration) -> u64 {
         .saturating_mul(2)
         .checked_div(elapsed.as_nanos())
     else {
-        return MIN_SEND_WINDOW;
+        return QUIC_MIN_SEND_WINDOW;
     };
-    demand.clamp(u128::from(MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
+    demand.clamp(u128::from(QUIC_MIN_SEND_WINDOW), u128::from(MAX_SEND_WINDOW)) as u64
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SEND_WINDOW, MIN_SEND_WINDOW, SendWindow, desired_send_window};
+    use super::{MAX_SEND_WINDOW, QUIC_MIN_SEND_WINDOW, SendWindow, desired_send_window};
+    use crate::{
+        budget::{QUIC_RECEIVE_WINDOW_FLOOR, connection_floor, noq_floor},
+        config::Config,
+    };
     use std::{sync::Arc, time::Duration};
 
     fn tls() -> (Arc<rustls::ServerConfig>, quinn::ClientConfig) {
@@ -795,7 +735,7 @@ mod tests {
     ) -> (
         std::net::SocketAddr,
         tokio::sync::oneshot::Sender<()>,
-        tokio::task::JoinHandle<Result<(), super::ConfigError>>,
+        tokio::task::JoinHandle<Result<(), super::ServerError>>,
     ) {
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
@@ -839,11 +779,13 @@ mod tests {
     #[tokio::test]
     async fn endpoint_leaves_every_connection_floor_and_refunds_on_drop() {
         use super::*;
-        let config = Arc::new(Config {
+        let config = Config {
             max_connections: 4,
             max_connections_per_client: 4,
             ..Config::default()
-        });
+        }
+        .validated()
+        .unwrap();
         let floor = connection_floor(0);
         let floors = 4 * (floor + noq_floor(&config.limits).unwrap());
         let (tls, client_config) = tls();
@@ -960,7 +902,7 @@ mod tests {
         let sent = 8 * 1024 * 1024;
         assert_eq!(
             desired_send_window(sent, Duration::from_millis(1), elapsed),
-            MIN_SEND_WINDOW
+            QUIC_MIN_SEND_WINDOW
         );
         assert_eq!(
             desired_send_window(sent, Duration::from_millis(100), elapsed),
@@ -972,7 +914,7 @@ mod tests {
         );
         assert_eq!(
             desired_send_window(sent, Duration::from_millis(100), Duration::ZERO),
-            MIN_SEND_WINDOW
+            QUIC_MIN_SEND_WINDOW
         );
     }
 
@@ -1017,7 +959,7 @@ mod tests {
                     );
                 }
             }
-            assert_eq!(window.limit, MIN_SEND_WINDOW);
+            assert_eq!(window.limit, QUIC_MIN_SEND_WINDOW);
             request.write_all(b"live").await.unwrap();
             requests.read_exact(&mut ping).await.unwrap();
             assert_eq!(&ping, b"live");
@@ -1031,10 +973,10 @@ mod tests {
     async fn receive_credit_is_reserved_on_grant_and_never_accumulates() {
         use super::*;
         use futures_util::FutureExt;
-        let server = HttpServer::new(Arc::new(Config::default())).unwrap();
+        let server = HttpServer::new(Config::default().validated().unwrap()).unwrap();
         let (tls, mut client_config) = tls();
         let mut transport = quinn::TransportConfig::default();
-        transport.send_window(2 * u64::from(RECEIVE_WINDOW));
+        transport.send_window(2 * u64::from(QUIC_RECEIVE_WINDOW));
         client_config.transport_config(Arc::new(transport));
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
@@ -1079,23 +1021,23 @@ mod tests {
             let clients = crate::client_address::client_keys("127.0.0.1".parse().unwrap());
             let (peer, credit) = connect().await;
             let silent = settled(&server.memory, &[&peer]).await;
-            assert_eq!(fill(&peer).await, RECEIVE_WINDOW_FLOOR as usize);
+            assert_eq!(fill(&peer).await, QUIC_RECEIVE_WINDOW_FLOOR as usize);
             let idle = settled(&server.memory, &[&peer]).await;
             assert!(
-                silent - idle <= 3 * RECEIVE_WINDOW_FLOOR as usize,
+                silent - idle <= 3 * QUIC_RECEIVE_WINDOW_FLOOR as usize,
                 "unadmitted reassembly"
             );
             assert!(credit.fund(&clients), "no grant without pressure");
             assert_eq!(
                 idle - server.memory.available(),
-                CREDIT_BYTES,
+                QUIC_CREDIT_BYTES,
                 "grant charged when made"
             );
             round_trip(&peer, &credit).await;
-            assert_eq!(fill(&peer).await, CREDIT_BYTES);
+            assert_eq!(fill(&peer).await, QUIC_CREDIT_BYTES);
             let charged = idle - settled(&server.memory, &[&peer]).await;
-            eprintln!("{CREDIT_BYTES} bytes of credit filled: {charged} bytes charged");
-            assert!(charged < CREDIT_BYTES / 4 * 5, "credit charged again as it filled");
+            eprintln!("{QUIC_CREDIT_BYTES} bytes of credit filled: {charged} bytes charged");
+            assert!(charged < QUIC_CREDIT_BYTES / 4 * 5, "credit charged again as it filled");
 
             assert!(credit.fund(&clients));
             round_trip(&peer, &credit).await;
@@ -1107,7 +1049,7 @@ mod tests {
             let (fresh, fresh_credit) = connect().await;
             assert!(!fresh_credit.fund(&clients), "granted under pressure");
             round_trip(&fresh, &fresh_credit).await;
-            assert_eq!(fill(&fresh).await, RECEIVE_WINDOW_FLOOR as usize);
+            assert_eq!(fill(&fresh).await, QUIC_RECEIVE_WINDOW_FLOOR as usize);
             drop(pressure);
             peer.close(0_u32.into(), b"done");
             fresh.close(0_u32.into(), b"done");
@@ -1119,7 +1061,7 @@ mod tests {
     #[tokio::test]
     async fn cancelled_handshake_holds_its_floor_until_noq_drops_the_connection() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let ((identity, _), (_, distrusting)) = (tls(), tls());
         let (address, stop, serving) = serve(&server, identity);
         let floor = connection_floor(0);
@@ -1154,7 +1096,7 @@ mod tests {
     #[tokio::test]
     async fn probes_do_not_keep_leftover_credit_from_a_peer_that_blocks_goaway() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
         let mut transport = quinn::TransportConfig::default();
         transport.receive_window(4096_u32.into());
@@ -1210,7 +1152,7 @@ mod tests {
         config.auth.public_url = "https://localhost".into();
         config.auth.password_hash =
             "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let sessions = server.auth.as_ref().unwrap().sessions();
         let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
         let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
@@ -1233,7 +1175,7 @@ mod tests {
             assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
             while recv.data().await.unwrap().is_some() {}
             assert!(
-                server.memory.available() > idle - CREDIT_BYTES / 2,
+                server.memory.available() > idle - QUIC_CREDIT_BYTES / 2,
                 "granted without a permit"
             );
             quic.close(0_u32.into(), b"done");
@@ -1256,7 +1198,7 @@ mod tests {
         config.auth.public_url = "https://localhost".into();
         config.auth.password_hash =
             "$argon2id$v=19$m=19456,t=2,p=1$MDEyMzQ1Njc4OWFiY2RlZg$gy5SuVm5Z7Vw7keB9se9p87QGcomaseB/S2U1OhTsM0".into();
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let sessions = server.auth.as_ref().unwrap().sessions();
         let (_, session) = sessions.create("subject", "Name", "local", None).unwrap();
         let (token, _grant) = sessions.issue_cli_grant(&session).unwrap();
@@ -1291,7 +1233,7 @@ mod tests {
     #[tokio::test]
     async fn peer_closes_end_connections_normally_and_protocol_errors_do_not() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let quic = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = quic.local_addr().unwrap();
@@ -1330,7 +1272,7 @@ mod tests {
     #[tokio::test]
     async fn transfers_complete_from_their_floors_when_the_budget_is_exhausted() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
@@ -1378,7 +1320,7 @@ mod tests {
     async fn one_client_holds_at_most_its_share_of_receive_credit() {
         use super::*;
         // A client's share is its share of connection capacity: 8 GiB * 64 / 4096, 128 MiB, here.
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let (address, stop, serving) = serve(&server, tls);
         tokio::time::timeout(Duration::from_secs(20), async {
@@ -1401,7 +1343,7 @@ mod tests {
                 held.push((client, quic, requests));
             }
             // Two HTTP/3 windows fit 127.0.0.1's share and a third does not; 127.0.0.2's own share still funds one.
-            let funded: Vec<_> = charged.iter().map(|&bytes| bytes >= CREDIT_BYTES).collect();
+            let funded: Vec<_> = charged.iter().map(|&bytes| bytes >= QUIC_CREDIT_BYTES).collect();
             assert_eq!(funded, [true, true, false, true], "{charged:?}");
             for (_, quic, _) in held {
                 quic.close(0_u32.into(), b"done");
@@ -1416,7 +1358,7 @@ mod tests {
     #[tokio::test]
     async fn stalled_http3_replies_end_at_the_control_and_idle_bounds() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
         let mut transport = quinn::TransportConfig::default();
         // Too little stream credit for any reply's head; pings keep the stalled connection open.
@@ -1468,7 +1410,7 @@ mod tests {
     #[tokio::test]
     async fn a_source_that_already_holds_a_quic_connection_must_answer_retry() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, mut client_config) = tls();
         // A validation token from the first connection would prove the address without a Retry.
         client_config.token_store(Arc::new(quinn::NoneTokenStore));
@@ -1502,7 +1444,7 @@ mod tests {
     #[tokio::test]
     async fn silent_connections_from_few_sources_leave_budget_for_new_clients() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let endpoint = server.quic_endpoint(tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = endpoint.local_addr().unwrap();
@@ -1543,7 +1485,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn four_workers_run_four_shards_that_follow_rebound_clients() {
         use super::*;
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let (tls, client_config) = tls();
         let bound = crate::runtime::Quic::bind(&server, tls, "127.0.0.1:0".parse().unwrap()).unwrap();
         let address = bound.local_addr().unwrap();
@@ -1598,11 +1540,13 @@ mod tests {
     #[test]
     fn the_buffer_budget_caps_quic_shards() {
         use super::*;
-        let config = Arc::new(Config {
+        let config = Config {
             max_connections: 4,
             max_connections_per_client: 4,
             ..Config::default()
-        });
+        }
+        .validated()
+        .unwrap();
         let floors = 4 * (connection_floor(0) + noq_floor(&config.limits).unwrap()) + DOWNLOAD_BLOCK_BYTES;
         let (tls, _) = tls();
         let runtimes: Vec<_> = (0..4)
@@ -1650,8 +1594,7 @@ mod tests {
                 ..Config::default()
             };
             let floor = connection_floor(0) + noq_floor(&config.limits).unwrap();
-            let server =
-                HttpServer::with_memory(Arc::new(config), 8 * (http_h2::BUFFER_BYTES as usize + floor)).unwrap();
+            let server = HttpServer::with_memory(config.validated().unwrap(), 8 * (H2_FLOOR_BYTES + floor)).unwrap();
             let server = Arc::new(server);
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let link = crate::test_link::Link::tcp(listener.local_addr().unwrap(), Duration::ZERO)
@@ -1672,7 +1615,7 @@ mod tests {
             while server.memory.available() == available {
                 tokio::task::yield_now().await;
             }
-            assert_eq!(server.memory.available(), available - http_h2::BUFFER_BYTES as usize);
+            assert_eq!(server.memory.available(), available - H2_FLOOR_BYTES);
             drop(pending);
             link.inject(crate::test_link::Fault::Reset);
             while server.memory.available() != available {

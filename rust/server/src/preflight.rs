@@ -1,5 +1,5 @@
 //! Discovery is built once from resolved policy, independent of the listener adapter.
-use crate::config::{Config, ConfigError, NativeKind};
+use crate::config::{ConfigError, NativeKind, ValidatedConfig};
 use graphite_meter_core::{
     discovery::{
         Capabilities, LatencyTarget, LatencyTransport, Preflight as Document, Protocol, ServerInfo, ThroughputTarget,
@@ -10,13 +10,12 @@ use graphite_meter_core::{
 use std::sync::Arc;
 
 pub struct Preflight {
-    config: Arc<Config>,
+    config: Arc<ValidatedConfig>,
     generation: String,
 }
 
 impl Preflight {
-    pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
-        config.validate()?;
+    pub fn new(config: Arc<ValidatedConfig>) -> Result<Self, ConfigError> {
         let mut nonce = [0_u8; 16];
         getrandom::fill(&mut nonce).map_err(|_| "failed to generate discovery identity")?;
         let generation = nonce.iter().map(|byte| format!("{byte:02x}")).collect();

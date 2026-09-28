@@ -1,7 +1,7 @@
 //! Discovery responses and the page's connect sources, built once per request hostname as Go's hostDiscovery.
 use crate::{
     admission::Admission,
-    config::{AuthMode, Config, ConfigError, NativeKind},
+    config::{AuthMode, Config, ConfigError, NativeKind, ValidatedConfig},
     http::response::{json_response, text_body},
     preflight::{Preflight, connect_origins, discovery_host},
 };
@@ -17,7 +17,7 @@ use std::{
 const MAX_HOSTS: usize = 64;
 
 pub struct Discovery {
-    config: Arc<Config>,
+    config: Arc<ValidatedConfig>,
     preflight: Preflight,
     admission: Admission,
     /// Under authentication every page names the public host, as Go's authenticated page policy does.
@@ -33,7 +33,7 @@ struct HostResponses {
 }
 
 impl Discovery {
-    pub fn new(config: Arc<Config>, admission: Admission) -> Result<Self, ConfigError> {
+    pub fn new(config: Arc<ValidatedConfig>, admission: Admission) -> Result<Self, ConfigError> {
         let preflight = Preflight::new(config.clone())?;
         let page_host = if config.auth.mode == AuthMode::Off {
             None

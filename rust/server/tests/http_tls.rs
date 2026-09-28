@@ -89,7 +89,7 @@ async fn validated_tls13_serves_discovery_download_and_upload_after_rejected_tls
         let (tls, roots) = configs(&identity);
         let good = connector(roots.clone(), &rustls::version::TLS13);
         let old = connector(roots, &rustls::version::TLS12);
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -159,7 +159,7 @@ async fn tls_stalled_download_keeps_deadline_through_encrypted_writes() {
             max_operation_duration: Duration::from_millis(300),
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -206,7 +206,7 @@ async fn shutdown_joins_incomplete_tls_handshake_and_releases_connection() {
             max_connections_per_client: 1,
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let (stop, stopped) = oneshot::channel();
@@ -244,7 +244,7 @@ async fn h3_tcp_companion_serves_probe_and_control_routes_and_advertises_the_eff
         ] {
             let mut config = Config::default();
             config.native[NativeKind::H3 as usize].public_origin = origin.into();
-            let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+            let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = oneshot::channel();

@@ -3,7 +3,8 @@
 mod password_command;
 
 use graphite_meter_server::{
-    config::{self, Config, ConfigError},
+    ServerError,
+    config::{self, ValidatedConfig},
     runtime,
 };
 
@@ -35,7 +36,7 @@ async fn main() {
     }
 }
 
-fn legal() -> Result<(), ConfigError> {
+fn legal() -> Result<(), ServerError> {
     use std::io::Write;
     let report = graphite_meter_server::assets::legal_report()
         .ok_or("this development build has no reviewed Rust dependency notice bundle")?;
@@ -43,7 +44,7 @@ fn legal() -> Result<(), ConfigError> {
     Ok(())
 }
 
-async fn serve(config: Config) -> Result<(), ConfigError> {
+async fn serve(config: ValidatedConfig) -> Result<(), ServerError> {
     // Register handlers before binding sockets, so a signal during startup is
     // retained and causes shutdown as soon as startup completes.
     #[cfg(unix)]

@@ -27,7 +27,7 @@ struct Harness {
     connector: TlsConnector,
     h2_connector: TlsConnector,
     stop: Vec<oneshot::Sender<()>>,
-    tasks: Vec<tokio::task::JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>>,
+    tasks: Vec<tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>>,
 }
 impl Harness {
     async fn start() -> Self {
@@ -70,7 +70,7 @@ impl Harness {
             },
             ..Config::default()
         };
-        let server = Arc::new(HttpServer::new(Arc::new(config)).unwrap());
+        let server = Arc::new(HttpServer::new(config.validated().unwrap()).unwrap());
         let l1 = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let h1 = l1.local_addr().unwrap();
         let l2 = TcpListener::bind("127.0.0.1:0").await.unwrap();

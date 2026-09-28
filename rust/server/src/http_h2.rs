@@ -1,14 +1,13 @@
 //! Multiplexed HTTP/2 transport with owned, independently cancellable streams.
 use super::*;
-use crate::timeouts::H2_HANDSHAKE;
+use crate::{
+    budget::{ClientCredit, CreditClaim, H2_STATE_BYTES, MemoryBudget},
+    timeouts::H2_HANDSHAKE,
+};
 use futures_util::{Stream, stream::FuturesUnordered};
 use h2::{Reason, RecvStream, SendStream, server::SendResponse};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-// TLS records and deframer, h2 frame reads, write buffer, HPACK and default window.
-const TRANSPORT_BYTES: usize = 512 * 1024;
-const STATE_BYTES: usize = 1024 * 1024;
-pub(super) const BUFFER_BYTES: u32 = (TRANSPORT_BYTES + STATE_BYTES) as u32;
 const DEFAULT_WINDOW_BYTES: u32 = 65_535;
 /// Go's h2ReceiveWindowPerConnection, granted to a connection's first funded upload.
 const WINDOW_BYTES: u32 = 16 * 1024 * 1024;
@@ -31,8 +30,8 @@ impl HttpServer {
             .max_header_list_size(MAX_HEADER_BYTES as u32)
             .max_concurrent_streams(MAX_STREAMS)
             .max_send_buffer_size(FRAME_BYTES)
-            .data_frame_budget(STATE_BYTES)
-            .shared_budget(self.memory.clone(), STATE_BYTES);
+            .data_frame_budget(H2_STATE_BYTES)
+            .shared_budget(self.memory.clone(), H2_STATE_BYTES);
         let stream = WriteProgressIo::new(stream, IDLE_BOUND);
         let Ok(Ok(mut connection)) = tokio::time::timeout(H2_HANDSHAKE, builder.handshake::<_, Bytes>(stream)).await
         else {
@@ -206,10 +205,10 @@ async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usi
 }
 
 struct UploadWindow {
-    memory: Arc<budget::MemoryBudget>,
-    clients: Arc<budget::ClientCredit>,
+    memory: Arc<MemoryBudget>,
+    clients: Arc<ClientCredit>,
     /// Kept until the connection ends once its window was granted: the peer may fill it until then.
-    claim: Mutex<Option<budget::CreditClaim>>,
+    claim: Mutex<Option<CreditClaim>>,
     uploads: AtomicUsize,
     granted: AtomicBool,
     work: AdmittedWork,
@@ -476,10 +475,11 @@ mod write_stall_tests {
 #[cfg(test)]
 mod exchange_tests {
     use super::*;
+    use crate::config::Config;
 
     #[tokio::test(start_paused = true)]
     async fn stalled_replies_end_at_the_control_and_idle_bounds() {
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let facts = Connection {
             peer: "127.0.0.1:31000".parse().unwrap(),
             tls: true,
@@ -519,6 +519,7 @@ mod exchange_tests {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+    use crate::config::Config;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
 
     struct Served {
@@ -526,7 +527,7 @@ mod budget_tests {
         address: SocketAddr,
         connector: tokio_rustls::TlsConnector,
         stop: tokio::sync::oneshot::Sender<()>,
-        task: tokio::task::JoinHandle<Result<(), ConfigError>>,
+        task: tokio::task::JoinHandle<Result<(), ServerError>>,
     }
 
     impl Served {
@@ -549,7 +550,7 @@ mod budget_tests {
                 .with_root_certificates(roots)
                 .with_no_client_auth();
             client.alpn_protocols = vec![b"h2".to_vec()];
-            let server = Arc::new(HttpServer::with_memory(Arc::new(Config::default()), memory).unwrap());
+            let server = Arc::new(HttpServer::with_memory(Config::default().validated().unwrap(), memory).unwrap());
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
             let (stop, stopped) = tokio::sync::oneshot::channel();
@@ -648,7 +649,7 @@ mod budget_tests {
             if !matches!(response, Ok(Ok(ref reply)) if reply.status() == StatusCode::OK) {
                 refused += 1;
             }
-            assert!(idle - served.available() <= BUFFER_BYTES as usize);
+            assert!(idle - served.available() <= crate::budget::H2_FLOOR_BYTES);
         }
         assert!(refused > 0, "the flood never reached the connection's cap");
         let mut sibling = served.client(65_535).await;

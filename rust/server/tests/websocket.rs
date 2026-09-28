@@ -188,7 +188,7 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
     let mut config = Config::default();
     config.limits.operations_per_client = 1;
     config.limits.sessions_per_client = 1;
-    let server = Arc::new(HttpServer::new(Arc::new(config))?);
+    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();
@@ -258,7 +258,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     client_tls.alpn_protocols = vec![b"http/1.1".to_vec()];
-    let server = Arc::new(HttpServer::new(Arc::new(config))?);
+    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();
@@ -287,10 +287,14 @@ async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError>
     use graphite_meter_server::http_server::HttpServer;
     use std::sync::Arc;
     use tokio::net::{TcpListener, TcpStream};
-    let server = Arc::new(HttpServer::new(Arc::new(Config {
-        max_operation_duration: Duration::from_secs(180),
-        ..Config::default()
-    }))?);
+    let server = Arc::new(HttpServer::new(
+        Config {
+            max_operation_duration: Duration::from_secs(180),
+            ..Config::default()
+        }
+        .validated()
+        .unwrap(),
+    )?);
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let (stop, stopped) = oneshot::channel();

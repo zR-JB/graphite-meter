@@ -1,7 +1,8 @@
 //! Process-level ownership of listeners, QUIC shard threads, certificate renewal, and shutdown.
 
 use crate::{
-    config::{AuthMode, Config, ConfigError, NativeKind},
+    ServerError,
+    config::{AuthMode, NativeKind, ValidatedConfig},
     http_server::{HttpServer, QuicEndpoint},
     quic_shard,
     tls::Certificates,
@@ -16,7 +17,7 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::watch};
 
-type Service = Pin<Box<dyn Future<Output = Result<(), ConfigError>> + Send>>;
+type Service = Pin<Box<dyn Future<Output = Result<(), ServerError>> + Send>>;
 
 /// Verbose logs report transfer rates each second and admission, as Go's, each thirty.
 const TRANSFER_LOG_INTERVAL: Duration = Duration::from_secs(1);
@@ -25,10 +26,9 @@ const ADMISSION_LOG_INTERVAL: Duration = Duration::from_secs(30);
 /// Bind every configured socket before serving any request. A bind failure
 /// drops all previously opened sockets. Every running service is owned here;
 /// normal shutdown waits for their connection tasks and certificate reads.
-pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(), ConfigError> {
-    config.validate()?;
-    let config = Arc::new(config);
-    let server = Arc::new(HttpServer::new(config.clone())?);
+pub async fn run(config: ValidatedConfig, shutdown: impl Future<Output = ()>) -> Result<(), ServerError> {
+    let server = Arc::new(HttpServer::new(config)?);
+    let config = server.config.clone();
     server.initialize_auth().await?;
     let tls = if [NativeKind::H1Tls, NativeKind::H2, NativeKind::H3]
         .into_iter()
@@ -182,7 +182,7 @@ impl Quic {
         server: &HttpServer,
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
-    ) -> Result<Self, ConfigError> {
+    ) -> Result<Self, ServerError> {
         let workers = if cfg!(target_os = "linux") {
             tokio::runtime::Handle::current()
                 .metrics()

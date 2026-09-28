@@ -71,7 +71,7 @@ type Served = (
     client::SendRequest,
     tokio::task::JoinHandle<Result<(), graphite_meter_http3::Error>>,
     oneshot::Sender<()>,
-    tokio::task::JoinHandle<Result<(), graphite_meter_server::config::ConfigError>>,
+    tokio::task::JoinHandle<Result<(), graphite_meter_server::ServerError>>,
 );
 
 async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Served, TestError> {
@@ -83,7 +83,7 @@ async fn serve_quic(config: Config, client: quinn::TransportConfig) -> Result<Se
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .with_no_client_auth()
         .with_single_cert(vec![certificate.clone()], key)?;
-    let server = Arc::new(HttpServer::new(Arc::new(config))?);
+    let server = Arc::new(HttpServer::new(config.validated().unwrap())?);
     let endpoint = server.quic_endpoint(Arc::new(tls), "127.0.0.1:0".parse()?)?;
     let address = endpoint.local_addr()?;
     let (stop, stopped) = oneshot::channel();

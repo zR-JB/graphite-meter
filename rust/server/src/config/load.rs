@@ -1,5 +1,5 @@
 //! One settings table drives the environment, flags and usage, as Go's `config.settings()` does.
-use super::{AuthMode, Config, ConfigError, NativeKind};
+use super::{AuthMode, Config, ConfigError, NativeKind, ValidatedConfig};
 use graphite_meter_core::duration::parse_go_duration;
 use std::{collections::BTreeSet, ffi::OsString, io::Write, time::Duration};
 
@@ -102,7 +102,7 @@ pub fn load(
     env: impl Fn(&str) -> Option<OsString>,
     args: &[OsString],
     usage: &mut dyn Write,
-) -> Result<Option<Config>, ConfigError> {
+) -> Result<Option<ValidatedConfig>, ConfigError> {
     let mut config = Config::default();
     let from_env = load_env(&mut config, &env);
     let mut args = args.iter();
@@ -150,8 +150,7 @@ pub fn load(
         applied.map_err(|message| failed(usage, message))?;
     }
     from_env?;
-    config.validate()?;
-    Ok(Some(config))
+    Ok(Some(config.validated()?))
 }
 
 fn load_env(config: &mut Config, env: &impl Fn(&str) -> Option<OsString>) -> Result<(), ConfigError> {

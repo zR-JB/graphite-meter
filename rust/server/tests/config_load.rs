@@ -1,4 +1,4 @@
-use graphite_meter_server::config::{self, AuthMode, Config, NativeKind};
+use graphite_meter_server::config::{self, AuthMode, Config, NativeKind, ValidatedConfig};
 use std::{
     collections::BTreeMap,
     ffi::OsString,
@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-fn load(env: &[(&str, &str)], args: &[&str]) -> Result<Config, String> {
+fn load(env: &[(&str, &str)], args: &[&str]) -> Result<ValidatedConfig, String> {
     let env: BTreeMap<_, _> = env.iter().map(|(key, value)| (*key, OsString::from(value))).collect();
     let args: Vec<_> = args.iter().map(OsString::from).collect();
     config::load(|name| env.get(name).cloned(), &args, &mut std::io::sink())
@@ -99,11 +99,11 @@ fn parses_like_go_settings() {
             &[],
         )
         .unwrap();
-        assert!(c.advertised_native.unwrap().is_empty(), "{raw:?}");
+        assert!(c.advertised_native.as_ref().unwrap().is_empty(), "{raw:?}");
     }
     let c = load(&[("GM_ADVERTISED_NATIVE_ENDPOINTS", "http1-clear,http1-clear")], &[]).unwrap();
     assert_eq!(
-        c.advertised_native.unwrap().into_iter().collect::<Vec<_>>(),
+        c.advertised_native.clone().unwrap().into_iter().collect::<Vec<_>>(),
         [NativeKind::H1]
     );
 }
@@ -146,7 +146,7 @@ fn flags_complete_and_override_the_environment() {
         ],
     )
     .unwrap();
-    assert!(c.advertised_native.unwrap().is_empty());
+    assert!(c.advertised_native.as_ref().unwrap().is_empty());
     assert_eq!(c.public.both, ["https://a.example", "self"]);
 }
 

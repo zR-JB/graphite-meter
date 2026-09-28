@@ -1,14 +1,11 @@
 //! Shared endpoint state and an owned HTTP/1 connection loop.
 
-#[path = "budget.rs"]
-mod budget;
 #[path = "http_h2.rs"]
 mod http_h2;
 #[path = "http_h3.rs"]
 mod http_h3;
 #[path = "http_quic.rs"]
 mod http_quic;
-pub(crate) use http_quic::CONTROL_STREAMS as QUIC_CONTROL_STREAMS;
 #[path = "http_wt.rs"]
 mod http_wt;
 pub use http_quic::QuicEndpoint;
@@ -19,13 +16,15 @@ mod upload_http;
 use upload_http::ProgressBody;
 
 use crate::{
+    ServerError,
     admission::{Admission, Permit},
     auth::{
         AuthLease,
         policy::{Authorization, Connection, Listener},
     },
+    budget::{self, DOWNLOAD_BLOCK_BYTES, H2_FLOOR_BYTES, QUIC_CREDIT_BYTES},
     client_address,
-    config::{AuthMode, Config, ConfigError, NativeKind},
+    config::{AuthMode, ConfigError, NativeKind, ValidatedConfig},
     connections::Connections,
     cors::Access,
     discovery::Discovery,
@@ -65,7 +64,6 @@ use tokio::{
 };
 
 const MAX_HEADER_BYTES: usize = 32 * 1024;
-const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 /// As Go's `http.Server`, a failed accept retries after a delay that doubles from the first bound to the last.
 const ACCEPT_RETRY_FIRST: Duration = Duration::from_millis(5);
@@ -75,7 +73,7 @@ const ACCEPT_RETRY_LAST: Duration = Duration::from_secs(1);
 const H2_NOTSENT_LOWAT_BYTES: u32 = 64 * 1024;
 
 pub struct HttpServer {
-    config: Arc<Config>,
+    pub(crate) config: Arc<ValidatedConfig>,
     discovery: Discovery,
     admission: Admission,
     connections: Connections,
@@ -121,7 +119,7 @@ impl HttpServer {
         self.uploads.log_transfer(window);
     }
 
-    pub async fn initialize_auth(&self) -> Result<(), ConfigError> {
+    pub async fn initialize_auth(&self) -> Result<(), ServerError> {
         if let Some(auth) = &self.auth {
             auth.configure_logging(self.config.verbose);
             auth.initialize().await?;
@@ -135,7 +133,7 @@ impl HttpServer {
 
     pub fn cover_handshake(&self, handshake_bytes: usize) -> Result<(), ConfigError> {
         let endpoint = self.endpoint_bytes.load(Ordering::Relaxed);
-        check_buffer_budget(
+        budget::check(
             &self.config,
             self.memory.limit,
             handshake_bytes,
@@ -145,13 +143,13 @@ impl HttpServer {
         Ok(())
     }
 
-    pub fn new(config: Arc<Config>) -> Result<Self, ConfigError> {
+    pub fn new(config: ValidatedConfig) -> Result<Self, ServerError> {
         let bytes = config.max_buffer_bytes;
         Self::with_memory(config, bytes)
     }
 
-    fn with_memory(config: Arc<Config>, bytes: usize) -> Result<Self, ConfigError> {
-        config.validate()?;
+    fn with_memory(config: ValidatedConfig, bytes: usize) -> Result<Self, ServerError> {
+        let config = Arc::new(config);
         let auth = if config.auth.mode == AuthMode::Off {
             None
         } else {
@@ -174,7 +172,7 @@ impl HttpServer {
             bytes,
             config.max_connections,
             config.max_connections_per_client,
-            http_quic::CREDIT_BYTES,
+            QUIC_CREDIT_BYTES,
         );
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
@@ -212,7 +210,7 @@ impl HttpServer {
         listener: TcpListener,
         tls: Option<Arc<rustls::ServerConfig>>,
         shutdown: impl Future<Output = ()>,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<(), ServerError> {
         let (h2, ui) = (
             kind == NativeKind::H2,
             matches!(kind, NativeKind::H1 | NativeKind::H1Tls),
@@ -265,7 +263,7 @@ impl HttpServer {
                         let _ = socket2::SockRef::from(&socket).set_tcp_notsent_lowat(H2_NOTSENT_LOWAT_BYTES);
                     }
                     let memory = if h2 {
-                        let Some(lease) = self.memory.lease(http_h2::BUFFER_BYTES as usize) else { continue; };
+                        let Some(lease) = self.memory.lease(H2_FLOOR_BYTES) else { continue; };
                         Some(lease)
                     } else { None };
                     let server = self.clone();
@@ -1214,51 +1212,10 @@ fn admitted_clients(operations: &Operations) -> Option<Vec<String>> {
     })
 }
 
-pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {
-    let endpoint = if config.listener(NativeKind::H3).address.is_empty() {
-        None
-    } else {
-        Some(
-            http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), 1, config.max_connections, 0, 1)
-                .ok_or("QUIC endpoint buffer size overflow")?,
-        )
-    };
-    check_buffer_budget(config, config.max_buffer_bytes, 0, endpoint)
-}
-
-fn check_buffer_budget(
-    config: &Config,
-    limit: usize,
-    handshake_bytes: usize,
-    quic_endpoint_bytes: Option<usize>,
-) -> Result<(), ConfigError> {
-    let quic = match quic_endpoint_bytes {
-        Some(_) => http_quic::connection_floor(handshake_bytes).saturating_add(http_quic::noq_floor(&config.limits)?),
-        None => 0,
-    };
-    let h2 = if config.listener(NativeKind::H2).address.is_empty() {
-        0
-    } else {
-        http_h2::BUFFER_BYTES as usize
-    };
-    let (floor, endpoint_bytes) = (quic.max(h2), quic_endpoint_bytes.unwrap_or(0));
-    let minimum =
-        floor as u128 * config.max_connections as u128 + endpoint_bytes as u128 + DOWNLOAD_BLOCK_BYTES as u128;
-    if minimum > limit as u128 {
-        return Err(format!(
-            "GM_MAX_BUFFER_BYTES ({limit}) must be at least {minimum}: GM_MAX_CONNECTIONS ({}) connection floors \
-             of {floor} bytes, {endpoint_bytes} bytes of QUIC endpoint buffers and the {DOWNLOAD_BLOCK_BYTES}-byte \
-             download block",
-            config.max_connections
-        )
-        .into());
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     struct UnreadBody;
@@ -1281,7 +1238,7 @@ mod tests {
         let mut config = Config::default();
         config.limits.sessions_per_client = 1;
         config.limits.operations_per_client = 1;
-        let server = HttpServer::new(Arc::new(config)).unwrap();
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
         let id = server.uploads.mint().unwrap();
 
@@ -1351,7 +1308,7 @@ mod tests {
         let mut config = Config::default();
         config.limits.operations_per_client = 1;
         config.limits.sessions_per_client = 1;
-        let server = HttpServer::new(Arc::new(config)).unwrap();
+        let server = HttpServer::new(config.validated().unwrap()).unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
         let request = || Request::builder().uri("/download?bytes=1").body(()).unwrap();
         let mut response = server.respond(request(), peer);
@@ -1376,10 +1333,14 @@ mod tests {
 
     #[tokio::test]
     async fn last_frame_write_deadline_survives_body_drop() {
-        let server = HttpServer::new(Arc::new(Config {
-            max_operation_duration: Duration::from_millis(20),
-            ..Config::default()
-        }))
+        let server = HttpServer::new(
+            Config {
+                max_operation_duration: Duration::from_millis(20),
+                ..Config::default()
+            }
+            .validated()
+            .unwrap(),
+        )
         .unwrap();
         let peer = "127.0.0.1:31000".parse().unwrap();
         let request = Request::builder().uri("/download?bytes=2").body(()).unwrap();
@@ -1408,7 +1369,7 @@ mod tests {
 
     #[tokio::test(start_paused = true)]
     async fn http1_control_exchanges_end_fifteen_seconds_after_they_start() {
-        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let server = Arc::new(HttpServer::new(Config::default().validated().unwrap()).unwrap());
         let connection = Connection {
             peer: "127.0.0.1:31000".parse().unwrap(),
             tls: false,
