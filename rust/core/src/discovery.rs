@@ -169,12 +169,22 @@ impl Preflight {
         if self.capabilities.throughput.len() > 32 || self.capabilities.latency.len() > 32 {
             return Err(DiscoveryError::InvalidTargets);
         }
-        let throughput_origins = self.capabilities.throughput.iter().map(|target| &target.base_url);
-        let latency_origins = self.capabilities.latency.iter().map(|target| &target.base_url);
-        for origin in throughput_origins.chain(latency_origins) {
+        for origin in self.base_urls() {
             target_origin(origin).map_err(|_| DiscoveryError::InvalidOrigin)?;
         }
         Ok(())
+    }
+    pub fn base_urls(&self) -> impl Iterator<Item = &String> {
+        let throughput = self.capabilities.throughput.iter().map(|target| &target.base_url);
+        throughput.chain(self.capabilities.latency.iter().map(|target| &target.base_url))
+    }
+    pub fn resolve_self(&mut self, origin: &str) {
+        let targets = &mut self.capabilities;
+        let throughput = targets.throughput.iter_mut().map(|target| &mut target.base_url);
+        let latency = targets.latency.iter_mut().map(|target| &mut target.base_url);
+        for base_url in throughput.chain(latency).filter(|base_url| *base_url == ".") {
+            *base_url = origin.to_owned();
+        }
     }
 }
 
