@@ -206,6 +206,14 @@
   .panel-layer > :global(dialog.panel[open]) {
     display: flex;
   }
+  /* Docked, nothing clips the resize handle that straddles the edge; the body clips its own corners. */
+  .docked > :global(dialog.panel) {
+    overflow: visible;
+  }
+  .docked .panel-body {
+    border-radius: 0 0 calc(var(--r-surface) - var(--hairline))
+      calc(var(--r-surface) - var(--hairline));
+  }
   /* Docked, the sheet keeps its width and slides in with its column, from its own edge. */
   .docked > :global(dialog.panel) {
     --closed: translateX(calc(100% + var(--space-3)));
@@ -286,7 +294,7 @@
     position: absolute;
     inset-block: 0;
     z-index: 3;
-    width: 11px;
+    width: 12px;
     cursor: col-resize;
     touch-action: none;
   }

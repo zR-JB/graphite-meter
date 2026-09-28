@@ -83,13 +83,16 @@
       var(--text)
     );
     font: var(--w-strong) var(--type-md) / 1 var(--font-display);
-    transition:
-      transform var(--dur-hover) var(--ease-out),
-      filter var(--dur-hover) var(--ease-out);
+    transition: transform var(--dur-hover) var(--ease-out);
   }
+  /* Hover strengthens the skin itself; a filter would re-rasterize the label. */
   @media (hover: hover) {
-    .run-button:hover:not(.pending, [aria-disabled="true"]) {
-      filter: brightness(1.08);
+    .run-button:hover:not(.pending, [aria-disabled="true"]) .skin {
+      background: var(--brand-strong);
+    }
+    .run-button:hover:not(.pending, [aria-disabled="true"]) .skin.stop {
+      background: none;
+      box-shadow: inset 0 0 0 1px var(--field-edge);
     }
   }
   .run-button:active {
@@ -103,15 +106,14 @@
     background: var(--brand);
     box-shadow: inset 0 1px 0 var(--edge-highlight);
     opacity: calc(1 - var(--stop));
+    transition:
+      background-color var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out);
   }
   .skin.stop {
     background: none;
     box-shadow: inset 0 0 0 1px var(--border-strong);
     opacity: var(--stop);
-  }
-  .run-button.pending,
-  .run-button[aria-disabled="true"] {
-    filter: saturate(0.7);
   }
   .run-button[aria-disabled="true"] {
     opacity: 0.6;

@@ -181,7 +181,7 @@ hue, never by a boxed icon.
 | Primitive                | Height         | Radius             | Type            | States                                               |
 | ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
 | `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                         |
-| Choice row               | 42 (two lines) | 6                  | row + `small`   | hover `--hover-wash`; chosen by its mark             |
+| Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark             |
 | `.btn`                   | 32             | 8                  | control         | quiet: no ring, hover wash; disabled 0.5             |
 | Run button               | 40             | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
 | Stage chip               | 36 (32 narrow) | 8                  | 13 px, name 600 | on: filled bead; running: hue wash and progress line |

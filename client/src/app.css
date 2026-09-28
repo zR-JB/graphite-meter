@@ -158,6 +158,8 @@
   --r-chrome: 8px;
   --r-surface: 12px;
   --r-full: 999px;
+  /* A row's wash sits 2 px inside its plate, on a radius concentric with the plate's. */
+  --r-row: calc(var(--r-chrome) - var(--hairline) - 2px);
   /* One device pixel on dense screens; field edges stay 1px for their 3:1 floor. */
   --hairline: 1px;
 
@@ -854,12 +856,15 @@
     gap: var(--space-2) var(--space-3);
     min-width: 0;
     min-height: var(--row-h);
-    padding-block: 5px;
     margin-inline: calc(2px - var(--row-inset));
-    padding: 0 calc(var(--row-inset) - 2px);
-    border-radius: calc(var(--r-chrome) - 2px);
+    padding: 2px calc(var(--row-inset) - 2px);
+    border-radius: var(--r-row);
     text-align: start;
     transition: var(--transition-control);
+    --ring-offset: -2px;
+  }
+  .choices > button:focus-visible {
+    outline-offset: -2px;
   }
   @media (pointer: coarse) {
     .choices > :is(label, button) {
@@ -870,10 +875,7 @@
     display: flex;
   }
   @media (hover: hover) {
-    :is(.choices > :is(label, button), .link-row):hover:not(
-        :has(> :disabled),
-        :disabled
-      ) {
+    .choices > :is(label, button):hover:not(:has(> :disabled), :disabled) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
@@ -884,13 +886,31 @@
     color: var(--text-soft);
     font: var(--w-normal) var(--type-sm) / 1.35 var(--font-sans);
   }
+  /* An ordinary plate row whose wash and focus ring are an inset layer, like a choice's. */
   .link-row {
+    position: relative;
+    isolation: isolate;
     align-items: center;
-    margin-inline: calc(2px - var(--row-inset));
-    padding-inline: calc(var(--row-inset) - 2px);
-    border-radius: calc(var(--r-chrome) - 2px);
     color: var(--text);
-    transition: var(--transition-control);
+  }
+  .link-row::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 2px calc(2px - var(--row-inset));
+    border-radius: var(--r-row);
+    transition: background-color var(--dur-hover) var(--ease-out);
+  }
+  @media (hover: hover) {
+    .link-row:hover::before {
+      background-color: var(--hover-wash);
+    }
+  }
+  .link-row:focus-visible {
+    outline: none;
+  }
+  .link-row:focus-visible::before {
+    outline: var(--focus-ring);
   }
   .link-row :where(svg) {
     width: var(--icon);
@@ -985,6 +1005,9 @@
   .segmented > button:disabled {
     opacity: 0.5;
   }
+  .segmented > button:focus-visible {
+    outline-offset: -2px;
+  }
   .tile,
   .segmented > button {
     transition: var(--transition-control);
@@ -1006,8 +1029,11 @@
     :has(> input:checked)
   ) {
     background-color: var(--selected-wash);
-    box-shadow: var(--elev-tile);
     color: var(--brand-strong);
+  }
+  /* A pressed segment is raised like a key; a selected row stays flat in its plate. */
+  .segmented > button[aria-pressed="true"] {
+    box-shadow: var(--elev-tile);
   }
 
   .empty-state {
@@ -1174,6 +1200,10 @@
   /* Focus keeps the global ring, inset; the wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
+  }
+  /* A menu that is the floating surface itself rounds its items concentric with it. */
+  .float.menu > button {
+    border-radius: calc(var(--r-surface) - var(--hairline) - var(--space-1));
   }
   .menu
     > button:is(

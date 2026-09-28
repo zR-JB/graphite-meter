@@ -165,7 +165,9 @@
   }
   .fold {
     justify-content: start;
-    padding-inline-start: calc(var(--row-inset) + var(--check) + 8px);
+    padding-inline-start: calc(
+      var(--row-inset) - 2px + var(--check) + var(--space-3)
+    );
     color: var(--text-soft);
     font: var(--role-caption);
   }
