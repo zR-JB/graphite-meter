@@ -249,6 +249,56 @@ fn setup_rows_are_grouped_like_the_go_client() {
 }
 
 #[test]
+fn setup_names_each_checked_server_state() {
+    use crate::model::ServerSummary;
+    use graphite_meter_core::discovery::{LatencyTarget, LatencyTransport};
+    use ratatui::{Terminal, backend::TestBackend};
+    let ready = ServerSummary {
+        id: "near".into(),
+        name: "Near".into(),
+        latency: Some(LatencyTarget {
+            base_url: "https://near.example".into(),
+            transport: LatencyTransport::WebSocket,
+        }),
+        ..ServerSummary::default()
+    };
+    let failed = ServerSummary {
+        id: "far".into(),
+        name: "Far".into(),
+        error: Some("connection refused".into()),
+        ..ServerSummary::default()
+    };
+    let mut ui = Ui::new(
+        Config::default(),
+        Snapshot {
+            phase: Phase::Checking,
+            servers: vec![ready.clone()],
+            ..Snapshot::default()
+        },
+    );
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    let rendered = |terminal: &Terminal<TestBackend>| {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
+    };
+    terminal.draw(|frame| ui.draw(frame)).unwrap();
+    assert!(rendered(&terminal).contains("Near · Ready"));
+    assert!(rendered(&terminal).contains("Checking selected servers"));
+    ui.update(Snapshot {
+        servers: vec![ready, failed],
+        ..Snapshot::default()
+    });
+    terminal.draw(|frame| ui.draw(frame)).unwrap();
+    assert!(rendered(&terminal).contains("Far · Failed"));
+    assert!(!rendered(&terminal).contains("Checking selected servers"));
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {

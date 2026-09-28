@@ -423,7 +423,7 @@ impl Ui {
                     .filter(|server| server.has_check_result())
                     .take(MAX_SELECTED_SERVERS)
                     .collect::<Vec<_>>();
-                if checked.is_empty() {
+                if checked.is_empty() || self.snapshot.phase == Phase::Checking {
                     lines.push(
                         if self.snapshot.phase == Phase::Checking {
                             "Checking selected servers"
@@ -434,7 +434,8 @@ impl Ui {
                     );
                 }
                 for server in checked {
-                    lines.push(safe_text(&server.name, 120));
+                    let state = if server.error.is_some() { "Failed" } else { "Ready" };
+                    lines.push(format!("{} · {state}", safe_text(&server.name, 120)));
                     if let Some(label) = server.throughput_label() {
                         lines.push(format!("  Download {label}"));
                     }
