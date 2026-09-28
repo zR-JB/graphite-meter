@@ -98,6 +98,12 @@
   .run-button:active {
     transform: scale(0.985);
   }
+  /* On a phone it spans the run bar at a thumb's height. */
+  @container viz (max-width: 520px) {
+    .run-button {
+      height: var(--hit);
+    }
+  }
   .skin {
     position: absolute;
     inset: 0;
