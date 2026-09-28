@@ -18,6 +18,8 @@ use tokio_tungstenite::{
 };
 
 type TestError = Box<dyn Error + Send + Sync>;
+// RFC 6455 example nonce.
+const NONCE: &str = "dGhlIHNhbXBsZSBub25jZQ==";
 mod support;
 
 #[test]
@@ -28,7 +30,7 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
         .header(header::CONNECTION, "Upgrade")
         .header(header::UPGRADE, "websocket")
         .header(header::SEC_WEBSOCKET_VERSION, "13")
-        .header(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==") // RFC 6455 example nonce; gitleaks:allow
+        .header(header::SEC_WEBSOCKET_KEY, NONCE)
         .header(header::SEC_WEBSOCKET_EXTENSIONS, "permessage-deflate")
         .header(header::ORIGIN, "https://meter.example")
         .body(())
@@ -57,7 +59,7 @@ fn upgrade_validates_origin_and_key_without_negotiating_compression() {
     assert_eq!(handshake(&request, None).status(), StatusCode::SWITCHING_PROTOCOLS);
     request
         .headers_mut()
-        .append(header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==".parse().unwrap());
+        .append(header::SEC_WEBSOCKET_KEY, NONCE.parse().unwrap());
     assert_eq!(handshake(&request, None).status(), StatusCode::BAD_REQUEST);
 }
 
