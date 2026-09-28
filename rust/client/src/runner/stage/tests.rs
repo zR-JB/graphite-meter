@@ -90,6 +90,10 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             let _ = stream.write_all(response.as_bytes()).await;
                             return;
                         }
+                        if flag.load(Ordering::SeqCst) == 18 && request.starts_with(b"GET /preflight ") {
+                            let _ = stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                            return;
+                        }
                         if request.starts_with(b"GET /preflight ") || request.starts_with(b"GET /probe ") {
                             let body = if request.starts_with(b"GET /preflight ") {
                                 serde_json::json!({"generation":"fixture","capabilities":{"uploadCheckpoint":true,"throughput":[{"baseUrl":".","transport":"fetch-stream","protocol":"http1"}],"latency":[]}})
@@ -251,6 +255,16 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
         )),
         latency: None,
         idle_rtt: Duration::ZERO,
+    })
+}
+
+/// Paused time leaps to the next timer whenever the runtime waits on a socket; a millisecond timer
+/// keeps each leap to a millisecond, so loopback exchanges stay ahead of every stage deadline.
+fn heartbeat() -> JoinHandle<()> {
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
     })
 }
 
@@ -723,9 +737,10 @@ fn checkpoints_skip_two_misses_reset_on_success_and_keep_final_misses() {
     assert!(member.missed(Some(Box::new(revoked)), true).is_some());
 }
 
-#[tokio::test]
-async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() -> Result<(), Error> {
+#[tokio::test(start_paused = true)]
+async fn a_sole_server_rejoins_its_next_stage_on_the_transport_it_prepared() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
     let (origin, fault, peer) = download_peer().await?;
     let http = Http::new(true)?;
     let server = prepared_download("self", &origin, &http).await?;
@@ -753,14 +768,15 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
         }],
         ..Snapshot::default()
     });
+    // The upload is refused; from then on the server refuses a new path check but still transfers.
     let drive_fault = tokio::spawn(async move {
         loop {
+            if observed.borrow().results.len() >= 2 {
+                fault.store(18, Ordering::SeqCst);
+                return;
+            }
             if observed.borrow().stage == Some(Stage::Upload) {
                 fault.store(1, Ordering::SeqCst);
-            }
-            if observed.borrow().results.len() >= 2 {
-                fault.store(0, Ordering::SeqCst);
-                return;
             }
             if observed.changed().await.is_err() {
                 return;
@@ -770,20 +786,32 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
     let (_stop, cancelled) = watch::channel(false);
     super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
     drive_fault.await?;
+    peer.abort();
+    heartbeat.abort();
     let snapshot = snapshots.borrow();
     assert_eq!(snapshot.phase, Phase::Incomplete);
-    assert_eq!(snapshot.results.len(), 3);
-    assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Complete);
-    assert!(snapshot.results[0].down_bytes() > 0);
-    assert_eq!(snapshot.stage_status(&snapshot.results[1]), StageStatus::Failed);
-    assert_eq!(snapshot.stage_status(&snapshot.results[2]), StageStatus::Complete);
-    assert!(snapshot.results[2].down_bytes() > 0);
-    assert!(snapshot.failures[0].at >= snapshot.results[0].elapsed);
+    let statuses: Vec<_> = snapshot
+        .results
+        .iter()
+        .map(|result| snapshot.stage_status(result))
+        .collect();
     assert_eq!(
-        snapshot.failures[0].reason,
-        graphite_meter_core::failure::FailureReason::ServerBusy
+        statuses,
+        [StageStatus::Complete, StageStatus::Failed, StageStatus::Complete],
+        "{:?}",
+        snapshot.failures
     );
-    peer.abort();
+    assert!(snapshot.results[0].down_bytes() > 0);
+    assert!(snapshot.results[2].down_bytes() > 0);
+    assert_eq!(snapshot.participants, ["self"], "the sole server did not rejoin");
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.stage, failure.reason),
+        (Stage::Upload, graphite_meter_core::failure::FailureReason::ServerBusy)
+    );
+    assert!(failure.at >= snapshot.results[0].elapsed);
     Ok(())
 }
 

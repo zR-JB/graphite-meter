@@ -337,66 +337,20 @@ pub async fn run(
         snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
         snapshot.latency_focus = prepared.first().map(|server| server.entry.id.clone());
     });
-    let sole = (selected.unwrap_or(prepared.len()) == 1).then(|| prepared[0].entry.clone());
-    let mut retry_sole = false;
+    let sole = (selected.unwrap_or(prepared.len()) == 1).then(|| prepared[0].entry.id.clone());
     for stage in &config.stages {
         if *cancel.borrow() {
             break;
         }
-        if retry_sole {
-            snapshots.send_modify(|snapshot| {
-                snapshot.phase = Phase::Preparing;
-                snapshot.stage = Some(*stage);
-                snapshot.latest = Point::default();
+        // As Go's openStage: a sole server whose stage was skipped rejoins on the transport it prepared.
+        if let Some(sole) = &sole {
+            snapshots.send_if_modified(|snapshot| {
+                let rejoins = !snapshot.participants.contains(sole);
+                if rejoins {
+                    snapshot.participants.push(sole.clone());
+                }
+                rejoins
             });
-            let entry = sole.as_ref().expect("sole-server retry");
-            let transfer = stage.downloads() || stage.uploads();
-            let latency = *stage == Stage::Latency || config.loaded_latency;
-            let replacement = tokio::select! {
-                result = tokio::time::timeout(PREPARATION_TIMEOUT, prepare_server(&config, &http, entry, transfer, latency)) => result.map_err(Error::from).and_then(|result| result),
-                _ = cancel.wait_for(|value| *value) => break,
-            };
-            match replacement {
-                Ok(server) => {
-                    snapshots.send_modify(|snapshot| {
-                        if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
-                            summary.throughput.clone_from(&server.throughput);
-                            summary.latency.clone_from(&server.latency);
-                        }
-                    });
-                    prepared = vec![server];
-                    retry_sole = false;
-                }
-                Err(error) => {
-                    snapshots.send_modify(|snapshot| {
-                        snapshot.stage = Some(*stage);
-                        snapshot.failure(
-                            &entry.id,
-                            if transfer {
-                                crate::model::FailureScope::Throughput
-                            } else {
-                                crate::model::FailureScope::Latency
-                            },
-                            &error,
-                        );
-                        let ending = crate::model::Ending::Failed(crate::failure::reason(error.as_ref(), true));
-                        snapshot.results.push(crate::model::StageResult {
-                            stage: *stage,
-                            server_results: vec![crate::model::ServerContribution {
-                                id: entry.id.clone(),
-                                ..Default::default()
-                            }],
-                            server_latencies: vec![crate::model::ServerLatencyResult {
-                                id: entry.id.clone(),
-                                ending: Some(ending),
-                                ..Default::default()
-                            }],
-                            ..Default::default()
-                        });
-                    });
-                    continue;
-                }
-            }
         }
         let measured = measure(*stage, &config, &prepared, &snapshots, cancel.clone()).await;
         let failed = match measured {
@@ -406,7 +360,6 @@ pub async fn run(
                     && crate::net::authentication_required(error.as_ref()).is_none()
                     && snapshots.borrow().measured() =>
             {
-                retry_sole = true;
                 continue;
             }
             Err(error) => return Err(error),
