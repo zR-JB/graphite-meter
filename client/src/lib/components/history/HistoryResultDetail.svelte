@@ -193,7 +193,7 @@
   aria-labelledby={`result-${record.id}-title`}
   tabindex="-1"
 >
-  <header class="sheet-head detail-head">
+  <header class="sheet-head detail-head page-fill">
     <button
       class="btn btn-quiet back"
       type="button"
@@ -423,8 +423,6 @@
     overflow: visible;
     scrollbar-gutter: auto;
     padding-inline-end: calc(var(--panel-pad) - 12px);
-    background: var(--bg);
-    background-attachment: fixed;
   }
   .title {
     display: flex;

@@ -54,7 +54,7 @@ All colours are OKLCH `light-dark()` pairs, so a theme switch changes only `colo
 
 | Role     | Tokens                                                                           | Rule                                                                                                          |
 | -------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Page     | `--canvas`, `--canvas-deep`, `--grain`                                           | The shell paints grain, the running stage's light (`--amb`, from above) and a deeper floor over `--canvas`.   |
+| Page     | `--canvas`, `--canvas-deep`, `--grain`                                           | The shell paints a deeper floor over `--canvas`, dithered by grain; the running stage's light falls on it.    |
 | Floating | `--sheet`, `--surface-1`, `--surface-2`                                          | Sheets are `--sheet` (frosted); their grouped lists are `--surface-1` plates; controls use `--surface-2`.     |
 | Washes   | `--track`, `--hover-wash`, `--selected-wash`                                     | Translucent ink, so they read on any layer.                                                                   |
 | Text     | `--text`, `--text-muted`, `--text-soft`                                          | ≥ 4.5:1 on every layer in both themes. `--text-soft` is the floor for any text.                               |
@@ -71,8 +71,11 @@ hue uses `--tone-ink`.
 A tone gets its variants from one hue. Set `data-tone` (or use `.badge`, `.notice`, `.status-dot`), and then use
 `--tone` for the line, trace or dot, `--tone-wash` for fills, `--tone-line` for edges and `--tone-ink` for small text.
 
-**Dark and OLED.** The page is near-black, never black (`--canvas` L 0.17, `--canvas-deep` L 0.125), above the levels
+**Dark and OLED.** The page is near-black, never black (`--canvas` L 0.17, `--canvas-deep` L 0.15), above the levels
 where OLED pixels switch off and smear. Sheets and plates lift in lightness steps a dim panel still separates.
+**Smooth shading.** The grain is zero-mean: mid-grey noise blended with `overlay` dithers every gradient by about one
+8-bit level without moving the page off its token, so a 6-bit panel shows no steps. Marks are flat in their hue: no
+gloss, no knockout rings in the page colour, and 1 px lines sit on whole pixels.
 **Light.** A cool grey page, white plates, ink controls. **Gamut.** Base values fit sRGB; `@media (color-gamut: p3)`
 raises stage and status chroma only, so contrast holds on both. **Contrast modes.** `prefers-contrast: more`
 strengthens subtle edges and `--text-soft`; it and `prefers-reduced-transparency` make glass opaque.
@@ -135,7 +138,8 @@ hue, never by a boxed icon.
   `--ease-out` for anything the user triggered.
 - Live values and the running graph's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
-- The room's light (`--amb`) glides 1.1 s between stages. A docked sheet slides from its edge while its column
+- The room's light cross-fades 1.1 s between stages: one layer per stage in the stage column, never a repaint of the
+  page; History is read without it. A docked sheet slides from its edge while its column
   (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed stage time rolls (320 ms).
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 

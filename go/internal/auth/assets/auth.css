@@ -52,13 +52,15 @@
   --hit: 44px;
 
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));
+  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
+  --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
   --sheet: light-dark(
     oklch(0.985 0.003 258 / 0.88),
     oklch(0.195 0.009 258 / 0.88)
   );
+  --sheet-blur: blur(28px) saturate(1.4);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -92,7 +94,7 @@
 
   --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
   --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
 
   --elev-tile: inset 0 var(--hairline) 0 var(--edge-light);
   --elev-float:
@@ -123,6 +125,17 @@
     --text-soft: var(--text-muted);
   }
 }
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --sheet: var(--sheet-solid);
+    --sheet-blur: none;
+  }
+}
+@media (forced-colors: active) {
+  :root {
+    --grain: none;
+  }
+}
 :root[data-theme="dark"] {
   color-scheme: dark;
 }
@@ -145,6 +158,7 @@ body {
     var(--grain),
     radial-gradient(140% 90% at 50% 125%, var(--canvas-deep), transparent 70%),
     var(--canvas);
+  background-blend-mode: overlay, normal;
   color: var(--text);
   font: var(--role-row);
   font-variant-numeric: tabular-nums;
@@ -157,8 +171,8 @@ body {
   border: var(--hairline) solid var(--border-subtle);
   border-radius: var(--r-surface);
   background: var(--sheet);
-  -webkit-backdrop-filter: blur(28px) saturate(1.4);
-  backdrop-filter: blur(28px) saturate(1.4);
+  -webkit-backdrop-filter: var(--sheet-blur);
+  backdrop-filter: var(--sheet-blur);
   box-shadow: var(--elev-float);
 }
 .card > * {

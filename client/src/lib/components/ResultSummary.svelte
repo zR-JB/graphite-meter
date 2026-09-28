@@ -227,7 +227,8 @@
     align-items: center;
     gap: 6px;
     margin-left: auto;
-    color: var(--text-soft);
+    /* Muted, not soft: small text on a running card's wash keeps 4.5:1. */
+    color: var(--text-muted);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
   }
   .headline,

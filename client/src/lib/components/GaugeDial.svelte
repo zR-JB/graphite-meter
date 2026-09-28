@@ -176,37 +176,9 @@
     height={layout.height}
     viewBox={`0 0 ${layout.width} ${layout.height}`}
   >
-    <defs>
-      <radialGradient
-        id={shadeId}
-        gradientUnits="userSpaceOnUse"
-        cx={layout.center.x}
-        cy={layout.center.y}
-        r={layout.radius + layout.arcWidth / 2}
-        fr={layout.radius - layout.arcWidth / 2}
-      >
-        <stop offset="0" stop-color="var(--edge-highlight)" />
-        <stop
-          offset=".38"
-          stop-color="color-mix(in srgb, var(--edge-highlight) 40%, transparent)"
-        />
-        <stop
-          offset=".5"
-          stop-color="color-mix(in srgb, var(--edge-highlight) 80%, transparent)"
-        />
-        <stop
-          offset=".64"
-          stop-color="color-mix(in srgb, var(--shade) 3%, transparent)"
-        />
-        <stop
-          offset="1"
-          stop-color="color-mix(in srgb, var(--shade) 8%, transparent)"
-        />
-      </radialGradient>
-    </defs>
     <g fill="none" stroke-linecap="round">
       <path d={track} stroke="var(--border)" stroke-width={layout.arcWidth} />
-      <g stroke="var(--border-strong)" stroke-width="1" opacity=".7">
+      <g stroke="var(--border-strong)" stroke-width="1" stroke-opacity=".7">
         {#each layout.majorTicks as tick (tick.angle)}
           <path
             d={`M ${tick.from.x} ${tick.from.y} L ${tick.to.x} ${tick.to.y}`}
@@ -243,16 +215,16 @@
                 stroke-width={layout.arcWidth + 2}
               />
             </mask>
-            <g
+            <!-- Round caps add an arc width to every dash, so a partial arc's gap stays open. -->
+            <path
+              d={track}
               mask={`url(#${shadeId}-${result.phase})`}
+              stroke={`var(--phase-${result.phase})`}
               stroke-width={layout.arcWidth}
               stroke-dasharray={result.dashed
-                ? `${layout.arcWidth * 1.5} ${layout.arcWidth}`
+                ? `${layout.arcWidth * 0.5} ${layout.arcWidth * 2}`
                 : undefined}
-            >
-              <path d={track} stroke={`var(--phase-${result.phase})`} />
-              <path d={track} stroke={`url(#${shadeId})`} />
-            </g>
+            />
           {/each}
         </g>
         {#each results.toReversed() as result (result.phase)}
@@ -402,9 +374,11 @@
     height: 100%;
     overflow: hidden;
   }
+  /* One pixel of overlap, so the two halves never meet on an antialiased crack. */
   .half-clip.second {
     right: auto;
     left: 0;
+    width: calc(50% + 1px);
   }
   .rotor {
     position: absolute;
