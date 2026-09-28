@@ -41,6 +41,8 @@ impl HttpServer {
         let mut streams = FuturesUnordered::<StreamFuture>::new();
         let window = Arc::new(UploadWindow {
             memory: self.memory.clone(),
+            clients: self.client_credit.clone(),
+            claim: Mutex::default(),
             uploads: AtomicUsize::new(0),
             granted: AtomicBool::new(false),
             work: AdmittedWork::new(),
@@ -203,9 +205,32 @@ async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usi
 
 struct UploadWindow {
     memory: Arc<budget::MemoryBudget>,
+    clients: Arc<budget::ClientCredit>,
+    /// Kept until the connection ends once its window was granted: the peer may fill it until then.
+    claim: Mutex<Option<budget::CreditClaim>>,
     uploads: AtomicUsize,
     granted: AtomicBool,
     work: AdmittedWork,
+}
+
+impl UploadWindow {
+    /// Raises the connection window for its first funded upload, within the admitted client's share.
+    fn raise(&self, stream: &mut RecvStream, clients: &[String]) -> bool {
+        let mut claim = self.claim.lock().expect("upload window poisoned");
+        if claim.is_none() {
+            *claim = self
+                .clients
+                .claim(clients, (WINDOW_BYTES - DEFAULT_WINDOW_BYTES) as usize);
+        }
+        if claim.is_some() && stream.flow_control().set_target_connection_window_size(WINDOW_BYTES) {
+            self.granted.store(true, Ordering::Relaxed);
+            return true;
+        }
+        if !self.granted.load(Ordering::Relaxed) {
+            *claim = None;
+        }
+        false
+    }
 }
 
 struct H2Body {
@@ -221,17 +246,15 @@ impl Body for H2Body {
 
     fn poll_frame(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Result<Frame<Bytes>, h2::Error>>> {
         let this = &mut *self;
-        // Under pressure an admitted upload keeps reading at the current window.
-        if !this.funded && this.window.memory.has_headroom() && holds_permit(&this.operations) {
+        // Under pressure, or past its client's share, an admitted upload keeps reading at the current window.
+        if !this.funded
+            && this.window.memory.has_headroom()
+            && let Some(clients) = admitted_clients(&this.operations)
+        {
             let window = &this.window;
-            this.funded = window.uploads.fetch_add(1, Ordering::Relaxed) > 0
-                || this
-                    .stream
-                    .flow_control()
-                    .set_target_connection_window_size(WINDOW_BYTES);
-            if this.funded {
-                window.granted.store(true, Ordering::Relaxed);
-            } else {
+            this.funded =
+                window.uploads.fetch_add(1, Ordering::Relaxed) > 0 || window.raise(&mut this.stream, &clients);
+            if !this.funded {
                 window.uploads.fetch_sub(1, Ordering::Relaxed);
             }
         }
@@ -495,7 +518,6 @@ mod exchange_tests {
 mod budget_tests {
     use super::*;
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject};
-    use tokio::net::TcpStream;
 
     struct Served {
         server: Arc<HttpServer>,
@@ -549,11 +571,17 @@ mod budget_tests {
         }
 
         async fn client(&self, window: u32) -> h2::client::SendRequest<Bytes> {
+            self.client_from([127, 0, 0, 1], window).await
+        }
+
+        async fn client_from(&self, source: [u8; 4], window: u32) -> h2::client::SendRequest<Bytes> {
+            let socket = tokio::net::TcpSocket::new_v4().unwrap();
+            socket.bind(SocketAddr::from((source, 0))).unwrap();
             let stream = self
                 .connector
                 .connect(
                     ServerName::try_from("localhost").unwrap(),
-                    TcpStream::connect(self.address).await.unwrap(),
+                    socket.connect(self.address).await.unwrap(),
                 )
                 .await
                 .unwrap();
@@ -625,6 +653,42 @@ mod budget_tests {
         let (probe, _) = sibling.send_request(request(Method::GET, "/probe"), true).unwrap();
         assert_eq!(json(probe).await["protocolNegotiated"], "h2");
         drop((flood, sibling));
+        served.stop().await;
+    }
+
+    #[tokio::test]
+    async fn one_client_holds_at_most_its_share_of_receive_credit() {
+        // A client's share never falls below one HTTP/3 window: three HTTP/2 windows fit it, a fourth does not.
+        let served = Served::start(2 * 1024 * 1024 * 1024).await;
+        let window = (WINDOW_BYTES - DEFAULT_WINDOW_BYTES) as usize;
+        let mut held = Vec::new();
+        let mut funded = Vec::new();
+        for source in [1, 1, 1, 1, 2] {
+            let mut client = served.client_from([127, 0, 0, source], 65_535).await;
+            let (session, _) = client
+                .send_request(request(Method::POST, "/upload/session"), true)
+                .unwrap();
+            let id = json(session).await["uploadId"].as_str().unwrap().to_owned();
+            let before = served.available();
+            client = client.ready().await.unwrap();
+            let (reply, mut upload) = client
+                .send_request(request(Method::POST, &format!("/upload?id={id}")), false)
+                .unwrap();
+            upload.send_data(Bytes::from_static(b"x"), false).unwrap();
+            // Once the receiver has counted the byte, the admitted upload has asked for its window.
+            loop {
+                client = client.ready().await.unwrap();
+                let checkpoint = request(Method::POST, &format!("/upload/checkpoint?id={id}"));
+                let (checkpoint, _) = client.send_request(checkpoint, true).unwrap();
+                if json(checkpoint).await["bytes"] == 1 {
+                    break;
+                }
+            }
+            funded.push(before - served.available() >= window);
+            held.push((client, reply, upload));
+        }
+        assert_eq!(funded, [true, true, true, false, true]);
+        drop(held);
         served.stop().await;
     }
 

@@ -150,7 +150,7 @@ impl HttpServer {
         } else if route == Route::WtUpload {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
             refused = subscription.is_err();
-            awaiting_credit = !refused && !credit.fund();
+            awaiting_credit = !refused && !credit.fund(owner.client_keys());
             controls.push(Box::pin(progress(&session, subscription)));
             if datagrams {
                 datagram_lane = self.uploads.begin(&upload_id, &owner).ok();
@@ -172,7 +172,7 @@ impl HttpServer {
                 _ = lease_ended(lease.clone()) => { ending = LaneEnding::Revoked; break; },
                 _ = tick.tick() => {
                     if awaiting_credit {
-                        awaiting_credit = !credit.fund();
+                        awaiting_credit = !credit.fund(owner.client_keys());
                     }
                     let last = *activity.lock().expect("WT activity poisoned");
                     if Instant::now().duration_since(last) >= IDLE {

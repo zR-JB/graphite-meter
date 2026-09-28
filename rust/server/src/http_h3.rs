@@ -61,8 +61,10 @@ impl Body for RequestBody {
         if self.finished {
             return Poll::Ready(None);
         }
-        if !self.funded {
-            self.funded = holds_permit(&self.operations) && self.credit.fund();
+        if !self.funded
+            && let Some(clients) = admitted_clients(&self.operations)
+        {
+            self.funded = self.credit.fund(&clients);
         }
         let frame = ready!(self.stream.poll_data(cx))
             .transpose()

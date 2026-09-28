@@ -122,7 +122,16 @@ the peer never holds more credit than is reserved; streams get Go's 32 MiB.
 Transmit windows adapt between 2 MiB and 48 MiB. Neither window grows once three
 quarters of the budget is used, so pressure slows new transfers instead of
 closing running ones; one log line reports when growth is held back, and one
-when usage falls below five eighths again. Endpoint
+when usage falls below five eighths again.
+Unlike Go, which grants every connection its window, a client's HTTP/2 and
+HTTP/3 connections together hold raised receive windows only within its share
+of the budget: the fraction of connection capacity it may hold, 1/64 and so
+128 MiB by default, never less than one 48 MiB HTTP/3 window. As in admission, a
+client is its IPv4 address or IPv6 /64, whose /56 and /48 may hold twice and
+four times that, or under authentication its login or browser grant, whose
+principal may hold twice. Each connection's window counts against the admitted
+client that first raised it until the connection closes; past its share an
+upload reads at the current window, as under pressure. Endpoint
 reservations cover the configured UDP socket buffers, receive batches and
 pending incoming packets until the socket and its senders drop. Additional
 incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The

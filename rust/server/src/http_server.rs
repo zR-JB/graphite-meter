@@ -77,6 +77,7 @@ pub struct HttpServer {
     connections: Connections,
     stopping: tokio::sync::watch::Sender<bool>,
     memory: Arc<budget::MemoryBudget>,
+    client_credit: Arc<budget::ClientCredit>,
     handshake_bytes: AtomicUsize,
     endpoint_bytes: AtomicUsize,
     download_block: Bytes,
@@ -165,6 +166,12 @@ impl HttpServer {
             config.trusted_proxies.clone(),
         );
         let memory = budget::MemoryBudget::new(bytes);
+        let client_credit = budget::ClientCredit::new(
+            bytes,
+            config.max_connections,
+            config.max_connections_per_client,
+            http_quic::CREDIT_BYTES,
+        );
         let download_memory = memory
             .lease(DOWNLOAD_BLOCK_BYTES)
             .ok_or("server memory budget cannot cover the download block")?;
@@ -180,6 +187,7 @@ impl HttpServer {
             connections,
             stopping: tokio::sync::watch::channel(false).0,
             memory,
+            client_credit,
             handshake_bytes: AtomicUsize::new(0),
             endpoint_bytes: AtomicUsize::new(0),
             download_block: block.into(),
@@ -1227,6 +1235,15 @@ fn holds_permit(operations: &Operations) -> bool {
     operations
         .iter()
         .any(|operation| operation.lock().expect("operation poisoned").permit.is_some())
+}
+
+/// The client keys an admitted exchange holds its permit under, which also bound its receive credit.
+fn admitted_clients(operations: &Operations) -> Option<Vec<String>> {
+    let operations = operations.lock().expect("operations poisoned");
+    operations.iter().find_map(|operation| {
+        let operation = operation.lock().expect("operation poisoned");
+        operation.permit.as_ref().map(|permit| permit.clients().to_vec())
+    })
 }
 
 pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError> {

@@ -1,7 +1,7 @@
 //! A QUIC connection owns its request futures; the HTTP/3 layer owns sessions and resets.
 
 use super::{
-    budget::{Lease, MemoryBudget},
+    budget::{ClientCredit, CreditClaim, Lease, MemoryBudget},
     *,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
@@ -22,11 +22,12 @@ const UNI_STREAMS: u32 = 23;
 const STREAM_RECEIVE_WINDOW: u32 = 32 * 1024 * 1024;
 const RECEIVE_WINDOW: u32 = 48 * 1024 * 1024;
 const RECEIVE_WINDOW_FLOOR: u32 = 64 * 1024;
-const CREDIT_BYTES: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
+pub(super) const CREDIT_BYTES: usize = (RECEIVE_WINDOW - RECEIVE_WINDOW_FLOOR) as usize;
 
 pub struct QuicEndpoint {
     endpoint: quinn::Endpoint,
     config: quinn::ServerConfig,
+    clients: Arc<ClientCredit>,
 }
 
 impl QuicEndpoint {
@@ -37,6 +38,7 @@ impl QuicEndpoint {
     fn accept(&self, incoming: quinn::Incoming, floor: Lease) -> Option<(quinn::Connecting, Arc<ConnectionBudget>)> {
         let budget = Arc::new(ConnectionBudget {
             memory: floor.budget.clone(),
+            clients: self.clients.clone(),
             _floor: floor,
             held: Mutex::default(),
         });
@@ -92,7 +94,11 @@ impl HttpServer {
             Box::new(BudgetedSocket { socket, lease }),
             runtime,
         )?;
-        Ok(QuicEndpoint { endpoint, config })
+        Ok(QuicEndpoint {
+            endpoint,
+            config,
+            clients: self.client_credit.clone(),
+        })
     }
 
     fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
@@ -377,6 +383,7 @@ pub(super) fn endpoint_bytes(
 #[derive(Debug)]
 struct ConnectionBudget {
     memory: Arc<MemoryBudget>,
+    clients: Arc<ClientCredit>,
     _floor: Lease,
     held: Mutex<Held>,
 }
@@ -384,19 +391,24 @@ struct ConnectionBudget {
 #[derive(Debug, Default)]
 struct Held {
     credit: Option<Lease>,
+    /// The share of the client whose admitted upload first funded the window.
+    claim: Option<CreditClaim>,
     undrawn: usize,
     overdraft: usize,
 }
 
 impl ConnectionBudget {
-    fn reserve(&self) -> bool {
+    /// Reserves the window once, from the budget and from the admitted client's share of it.
+    fn reserve(&self, clients: &[String]) -> bool {
         let mut held = self.held.lock().expect("connection budget poisoned");
         if held.credit.is_none()
             && self.memory.has_headroom()
+            && let Some(claim) = self.clients.claim(clients, CREDIT_BYTES)
             && let Some(credit) = self.memory.lease(CREDIT_BYTES)
         {
             held.undrawn += credit.bytes;
             held.credit = Some(credit);
+            held.claim = Some(claim);
         }
         held.credit.is_some()
     }
@@ -450,8 +462,9 @@ impl ReceiveCredit {
         &self.0.work
     }
 
-    pub(super) fn fund(&self) -> bool {
-        let reserved = self.0.budget.reserve();
+    /// `clients` are the admitted upload's keys, whose share the window is charged to.
+    pub(super) fn fund(&self, clients: &[String]) -> bool {
+        let reserved = self.0.budget.reserve(clients);
         if reserved {
             self.0.quic.set_receive_window(RECEIVE_WINDOW.into());
         }
@@ -934,6 +947,7 @@ mod tests {
                     peer.accept_uni().await.unwrap().read_to_end(1).await.unwrap();
                 }
             };
+            let clients = crate::client_address::client_keys("127.0.0.1".parse().unwrap());
             let (peer, credit) = connect().await;
             let silent = settled(&server.memory, &[&peer]).await;
             assert_eq!(fill(&peer).await, RECEIVE_WINDOW_FLOOR as usize);
@@ -942,7 +956,7 @@ mod tests {
                 silent - idle <= 3 * RECEIVE_WINDOW_FLOOR as usize,
                 "unadmitted reassembly"
             );
-            assert!(credit.fund(), "no grant without pressure");
+            assert!(credit.fund(&clients), "no grant without pressure");
             assert_eq!(
                 idle - server.memory.available(),
                 CREDIT_BYTES,
@@ -954,15 +968,15 @@ mod tests {
             eprintln!("{CREDIT_BYTES} bytes of credit filled: {charged} bytes charged");
             assert!(charged < CREDIT_BYTES / 4 * 5, "credit charged again as it filled");
 
-            assert!(credit.fund());
+            assert!(credit.fund(&clients));
             round_trip(&peer, &credit).await;
             assert_eq!(fill(&peer).await, 0, "a new grant added credit the peer still held");
 
             let used = server.memory.limit - server.memory.available();
             let pressure = server.memory.lease(server.memory.limit / 8 * 7 - used).unwrap();
-            assert!(credit.fund(), "a reservation lost its window under pressure");
+            assert!(credit.fund(&clients), "a reservation lost its window under pressure");
             let (fresh, fresh_credit) = connect().await;
-            assert!(!fresh_credit.fund(), "granted under pressure");
+            assert!(!fresh_credit.fund(&clients), "granted under pressure");
             round_trip(&fresh, &fresh_credit).await;
             assert_eq!(fill(&fresh).await, RECEIVE_WINDOW_FLOOR as usize);
             drop(pressure);
@@ -1232,6 +1246,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn one_client_holds_at_most_its_share_of_receive_credit() {
+        use super::*;
+        // A client's share is its share of connection capacity: 8 GiB * 64 / 4096, 128 MiB, here.
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, client_config) = tls();
+        let (address, stop, serving) = serve(&server, tls);
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let mut held = Vec::new();
+            let mut charged = Vec::new();
+            for source in [1, 1, 1, 2] {
+                let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                let (quic, requests) = h3_client(&client, client_config.clone(), address).await;
+                let id = upload_id(&requests).await;
+                let before = settled(&server.memory, &[&quic]).await;
+                let request = http::Request::post(format!("https://localhost/upload?id={id}"))
+                    .body(())
+                    .unwrap();
+                let (mut send, mut recv) = requests.send_request(request).await.unwrap().split();
+                send.send_data(Bytes::from_static(b"funded")).await.unwrap();
+                send.finish().await.unwrap();
+                assert_eq!(recv.response().await.unwrap().status(), StatusCode::OK);
+                while recv.data().await.unwrap().is_some() {}
+                charged.push(before - settled(&server.memory, &[&quic]).await);
+                held.push((client, quic, requests));
+            }
+            // Two HTTP/3 windows fit 127.0.0.1's share and a third does not; 127.0.0.2's own share still funds one.
+            let funded: Vec<_> = charged.iter().map(|&bytes| bytes >= CREDIT_BYTES).collect();
+            assert_eq!(funded, [true, true, false, true], "{charged:?}");
+            for (_, quic, _) in held {
+                quic.close(0_u32.into(), b"done");
+            }
+        })
+        .await
+        .unwrap();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn stalled_http3_replies_end_at_the_control_and_idle_bounds() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
@@ -1415,6 +1468,7 @@ mod tests {
             let endpoint = QuicEndpoint {
                 endpoint: quinn::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
                 config,
+                clients: server.client_credit.clone(),
             };
             let quic_address = endpoint.local_addr().unwrap();
             let (stop_h3, stopped_h3) = tokio::sync::oneshot::channel();

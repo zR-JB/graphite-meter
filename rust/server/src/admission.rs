@@ -144,6 +144,13 @@ impl Admission {
     }
 }
 
+impl Permit {
+    /// The client keys the permit was admitted under.
+    pub fn clients(&self) -> &[String] {
+        &self.clients
+    }
+}
+
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = recover(&self.admission.0.counts, "operation");
