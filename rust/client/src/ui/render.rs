@@ -89,17 +89,10 @@ impl Ui {
             horizontal: 1,
             vertical: 1,
         });
-        let help: &[&str] = if self.help {
-            &[
-                "Tab/Shift-Tab focus · arrows change",
-                "Enter edit/run · Space stage",
-                "Esc close/stop · r run · v recheck",
-                "s servers · u available · a auto",
-                "d Details · l latency · o sign-in",
-                "q quit · Ctrl-C stop · ? keys",
-            ]
+        let help: Vec<_> = if self.help {
+            keys::full_help().collect()
         } else {
-            &[]
+            Vec::new()
         };
         let regions = Layout::vertical([
             Constraint::Length(2),
@@ -151,34 +144,10 @@ impl Ui {
             notice = self.field().explanation(&self.config);
         }
         let notice_color = if is_error { self.theme.err } else { self.theme.muted };
-        let mut hints: Vec<&str> = if self.cancel == CancelState::Confirming {
-            vec!["Esc confirm stop", "any key continue", "q quit"]
-        } else if self.live {
-            let mut hints = if self.active() {
-                vec!["Esc stop", "d Details"]
-            } else {
-                vec!["Enter Run again", "Esc setup", "d Details"]
-            };
-            if self.run_servers().len() > 1 {
-                hints.push("l Latency server");
-            }
-            hints.extend(["? keys", "q quit"]);
-            hints
-        } else if self.rows.selected() == Some(0) {
-            vec![
-                "Enter Start test",
-                "↓ settings",
-                "s servers",
-                "v Recheck paths",
-                "? keys",
-                "q quit",
-            ]
-        } else {
-            [self.field().hints(), &["r Start test", "? keys", "q quit"][..]].concat()
-        };
+        let mut hints = self.short_help();
         let covered = self.popup != Popup::None || self.edit.is_some() || self.snapshot.auth.is_some();
         if self.body_scroll.hidden > 0 && !covered && self.cancel != CancelState::Confirming {
-            hints.insert(1, "PgDn more");
+            hints.insert(1, MORE.1);
         }
         let width = usize::from(regions[2].width);
         let mut lines = if self.help {
@@ -190,10 +159,7 @@ impl Ui {
             )]
         };
         lines.push(self.hints(&hints, width));
-        lines.extend(
-            help.iter()
-                .map(|line| self.hints(&line.split(" · ").collect::<Vec<_>>(), width)),
-        );
+        lines.extend(help.iter().map(|row| self.hints(row, width)));
         frame.render_widget(Paragraph::new(lines), regions[2]);
         if self.popup == Popup::Details {
             self.draw_details(frame);
@@ -213,7 +179,7 @@ impl Ui {
                         Span::styled(cursor.to_string(), Style::new().add_modifier(Modifier::REVERSED)),
                         Span::raw(after),
                     ]),
-                    Line::from("Enter apply · Esc discard · ←/→ Home/End move"),
+                    Line::from(keys::hints(&EDIT).join(" · ")),
                     Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
                 ])
                 .block(panel(edit.field.term.label, self.theme)),
@@ -308,10 +274,7 @@ impl Ui {
                 .style(Style::new().fg(self.theme.text)),
             regions[4],
         );
-        frame.render_widget(
-            Paragraph::new(self.hints(&["Enter/Space/o open", "Esc cancel", "q quit"], width)),
-            regions[5],
-        );
+        frame.render_widget(Paragraph::new(self.hints(&keys::hints(&SIGN_IN), width)), regions[5]);
     }
 
     fn hints(&self, hints: &[&str], width: usize) -> Line<'static> {
@@ -492,7 +455,7 @@ impl Ui {
     }
 
     /// The run's servers as Go's run details list them: every selected server the check reached.
-    fn run_servers(&self) -> Vec<&crate::model::ServerSummary> {
+    pub(super) fn run_servers(&self) -> Vec<&crate::model::ServerSummary> {
         self.snapshot
             .servers
             .iter()

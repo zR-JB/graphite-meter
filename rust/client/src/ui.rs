@@ -1,4 +1,5 @@
 //! Terminal input owns no measurement IO and never blocks its producer.
+mod keys;
 mod render;
 mod setup;
 use crate::{
@@ -15,6 +16,7 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use graphite_meter_core::{catalog::MAX_SELECTED_SERVERS, text::terminal_character as safe_character};
+use keys::*;
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout, Margin, Rect},
@@ -66,6 +68,19 @@ enum Popup {
     None,
     Servers,
     Details,
+}
+
+/// Which keys apply, as Go's handleKey picks a handler: a sign-in, the editor, a stop to
+/// confirm, a popup, the reset prompt, or the run and setup views.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    Auth,
+    Edit,
+    Confirm,
+    Servers,
+    Details,
+    Reset,
+    Main,
 }
 
 /// A panel's scroll position, clamped at each draw to the lines the panel hides.
@@ -475,176 +490,152 @@ impl Ui {
             edit.insert(text);
         }
     }
+    /// Which keys apply now.
+    fn mode(&self) -> InputMode {
+        match self.popup {
+            _ if self.snapshot.auth.is_some() => InputMode::Auth,
+            _ if self.edit.is_some() => InputMode::Edit,
+            _ if self.cancel == CancelState::Confirming => InputMode::Confirm,
+            Popup::Servers => InputMode::Servers,
+            Popup::Details => InputMode::Details,
+            Popup::None if self.reset_prompt => InputMode::Reset,
+            Popup::None => InputMode::Main,
+        }
+    }
+    /// Go's handleKey; true quits.
     fn key(&mut self, key: KeyEvent, commands: &mpsc::Sender<Command>) -> bool {
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let code = key.code;
+        if code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return self.interrupt(commands);
         }
-        if self.snapshot.auth.is_some() {
-            match key.code {
-                KeyCode::Char('q') => return true,
-                KeyCode::Char('o') | KeyCode::Enter | KeyCode::Char(' ') => {
-                    self.send(Command::OpenBrowser, commands);
-                }
-                KeyCode::Esc => {
-                    if self.send(Command::Cancel, commands) {
-                        self.live = false;
-                        self.notice = "Sign-in canceled. Press v to request a new code.".into();
-                    }
-                }
-                code => self.auth_scroll.key(code, 4),
-            }
-            return false;
-        }
-        if let Some(edit) = &mut self.edit {
-            match key.code {
-                KeyCode::Esc => self.edit = None,
-                KeyCode::Enter => {
-                    let field = edit.field;
-                    let value = edit.text();
-                    let before = self.config.clone();
-                    match self.apply(field, value) {
-                        Ok(()) => {
-                            self.edit = None;
-                            self.notice.clear();
-                            self.recheck_if_changed(&before);
-                        }
-                        Err(error) => self.notice = error.to_string(),
-                    }
-                }
-                _ if !key.modifiers.contains(KeyModifiers::CONTROL) => edit.key(key.code),
-                _ => {}
-            }
-            return false;
-        }
-        if key.code == KeyCode::Char('q') {
-            return self.quit(commands);
-        }
-        if self.cancel == CancelState::Confirming {
-            self.cancel = CancelState::Idle;
-            if key.code == KeyCode::Esc {
-                if self.send(Command::Cancel, commands) {
+        match self.mode() {
+            InputMode::Auth => return self.auth_key(code, commands),
+            InputMode::Edit => self.edit_key(key),
+            _ if QUIT.matches(code) => return self.quit(commands),
+            InputMode::Confirm => {
+                self.cancel = CancelState::Idle;
+                if !CONFIRM_STOP.matches(code) {
+                    self.notice = "Test continues.".into();
+                } else if self.send(Command::Cancel, commands) {
                     self.cancel = CancelState::Requested;
                 }
-            } else {
-                self.notice = "Test continues.".into();
             }
-            return false;
+            _ if HELP.matches(code) => self.help = !self.help,
+            InputMode::Servers => self.servers_key(code),
+            InputMode::Details if CLOSE.matches(code) => self.popup = Popup::None,
+            InputMode::Details => self.details_scroll.key(code, 10),
+            // Enter or Space on the row confirms the reset; any other key keeps the settings.
+            InputMode::Reset
+                if pressed(code, &[ACTIVATE, TOGGLE]).is_none() || !matches!(self.field().kind, Kind::Reset) =>
+            {
+                self.reset_prompt = false;
+                self.notice = "Settings kept.".into();
+            }
+            InputMode::Reset | InputMode::Main => self.main_key(code, commands),
         }
-        if key.code == KeyCode::Char('?') {
-            self.help = !self.help;
-            return false;
+        false
+    }
+    fn auth_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) -> bool {
+        match pressed(code, &SIGN_IN) {
+            Some(QUIT) => return true,
+            Some(OPEN) => {
+                self.send(Command::OpenBrowser, commands);
+            }
+            Some(CANCEL) if self.send(Command::Cancel, commands) => {
+                self.live = false;
+                self.notice = "Sign-in canceled. Press v to request a new code.".into();
+            }
+            _ => self.auth_scroll.key(code, 4),
         }
-        if self.popup == Popup::Servers {
-            let length = self.snapshot.servers.len();
-            match key.code {
-                KeyCode::Esc => {
-                    self.config.servers = std::mem::take(&mut self.servers_before);
-                    self.popup = Popup::None;
-                    self.notice = "Server selection unchanged.".into();
+        false
+    }
+    fn edit_key(&mut self, key: KeyEvent) {
+        let Some(edit) = &mut self.edit else { return };
+        match pressed(key.code, &EDIT) {
+            Some(DISCARD) => self.edit = None,
+            Some(APPLY) => {
+                let (field, value, before) = (edit.field, edit.text(), self.config.clone());
+                match self.apply(field, value) {
+                    Ok(()) => {
+                        self.edit = None;
+                        self.notice.clear();
+                        self.recheck_if_changed(&before);
+                    }
+                    Err(error) => self.notice = error.to_string(),
                 }
-                KeyCode::Enter => {
-                    self.popup = Popup::None;
-                    self.notice = "Checking the selected servers…".into();
-                    self.recheck_soon();
-                }
-                KeyCode::Up | KeyCode::Char('k') => move_selection(&mut self.servers, length, -1),
-                KeyCode::Down | KeyCode::Char('j') => move_selection(&mut self.servers, length, 1),
-                KeyCode::Char(' ') => self.toggle_server(),
-                _ => {}
             }
-            return false;
+            _ if !key.modifiers.contains(KeyModifiers::CONTROL) => edit.key(key.code),
+            _ => {}
         }
-        if self.popup == Popup::Details {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('d') => self.popup = Popup::None,
-                code => self.details_scroll.key(code, 10),
+    }
+    /// The chooser edits the selection in place until Enter applies or Esc restores it.
+    fn servers_key(&mut self, code: KeyCode) {
+        match pressed(code, &[DISCARD, APPLY, SCROLL, TOGGLE]) {
+            Some(DISCARD) => {
+                self.config.servers = std::mem::take(&mut self.servers_before);
+                self.popup = Popup::None;
+                self.notice = "Server selection unchanged.".into();
             }
-            return false;
+            Some(APPLY) => {
+                self.popup = Popup::None;
+                self.notice = "Checking the selected servers…".into();
+                self.recheck_soon();
+            }
+            Some(SCROLL) => move_selection(self.snapshot.servers.len(), &mut self.servers, back(code)),
+            Some(TOGGLE) => self.toggle_server(),
+            _ => {}
         }
-        if self.reset_prompt
-            && !(matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && matches!(self.field().kind, Kind::Reset))
-        {
-            self.reset_prompt = false;
-            self.notice = "Settings kept.".into();
-            return false;
-        }
+    }
+    /// Go's handleRunKey and handleSetupKey; a changed path setting is checked again once edits settle.
+    fn main_key(&mut self, code: KeyCode, commands: &mpsc::Sender<Command>) {
         let before = self.config.clone();
-        let field_count = self.fields().len();
-        match key.code {
-            KeyCode::Char('d') if self.live && self.snapshot.auth.is_none() => {
-                self.popup = Popup::Details;
-                self.details_scroll.offset = 0;
-            }
-            KeyCode::Char('l') if self.snapshot.participants.len() > 1 => {
+        let view: &[Key] = match (self.live, self.active()) {
+            (true, true) => &[STOP, DETAILS],
+            (true, false) => &[RUN_AGAIN, SETUP, DETAILS],
+            (false, _) => &[
+                START, ACTIVATE, RECHECK, STOP, ROWS, SERVERS, AVAILABLE, AUTOMATIC, CHANGE, TOGGLE,
+            ],
+        };
+        match pressed(code, &[&[LATENCY, MORE], view].concat()) {
+            Some(LATENCY) if self.snapshot.participants.len() > 1 => {
                 let ids = &self.snapshot.participants;
                 let shown = ids.iter().position(|id| Some(id.as_str()) == self.latency_server());
                 let next = &ids[shown.map_or(0, |index| index + 1) % ids.len()];
                 self.latency_pick = (Some(next) != self.snapshot.latency_focus.as_ref()).then(|| next.clone());
             }
-            // A path check never holds back a run; the run replaces it.
-            KeyCode::Char('r') | KeyCode::Enter
-                if (!self.live || !self.active())
-                    && (key.code == KeyCode::Char('r') || self.live || self.rows.selected() == Some(0)) =>
-            {
-                match self.config.validate() {
-                    Ok(()) => {
-                        if self.send(Command::Run(self.config.clone()), commands) {
-                            self.previous = (self.live && self.snapshot.started()).then(|| self.snapshot.clone());
-                            (self.live, self.starting, self.open_chooser) = (true, true, false);
-                            self.body_scroll.offset = 0;
-                            self.popup = Popup::None;
-                            self.notice = "Checking paths before the test. Press esc to stop.".into();
-                        }
-                    }
-                    Err(error) => self.notice = error.to_string(),
-                }
+            // Go's scrolling keys: pages anywhere, lines too in the run view.
+            Some(MORE) if code == KeyCode::Home => self.body_scroll.offset = 0,
+            Some(MORE) if code == KeyCode::End => self.body_scroll.offset = u16::MAX,
+            Some(MORE) => self.body_scroll.key(code, 10),
+            Some(DETAILS) => {
+                self.popup = Popup::Details;
+                self.details_scroll.offset = 0;
             }
-            KeyCode::Char('v') if !self.live => {
-                self.send(Command::Verify(self.config.clone()), commands);
-            }
-            KeyCode::Esc if self.active() && self.live => {
-                if self.cancel != CancelState::Requested {
-                    self.cancel = CancelState::Confirming;
-                }
-            }
-            KeyCode::Esc if self.active() => {
+            Some(STOP) if self.live && self.cancel != CancelState::Requested => self.cancel = CancelState::Confirming,
+            Some(STOP) if self.live => {}
+            Some(STOP) if self.active() => {
                 self.send(Command::Cancel, commands);
             }
-            KeyCode::Esc => {
-                if self.live {
-                    // The run consumed the checked paths.
-                    self.recheck_soon();
-                    self.notice.clear();
-                    self.body_scroll.offset = 0;
-                }
+            Some(STOP) => self.rows.select(Some(0)),
+            Some(SETUP) => {
+                // The run consumed the checked paths.
+                self.recheck_soon();
+                self.notice.clear();
+                self.body_scroll.offset = 0;
                 self.live = false;
                 self.rows.select(Some(0));
             }
-            // Go's scrolling keys: pages anywhere, lines too in the run view.
-            KeyCode::PageUp | KeyCode::PageDown => self.body_scroll.key(key.code, 10),
-            KeyCode::Home => self.body_scroll.offset = 0,
-            KeyCode::End => self.body_scroll.offset = u16::MAX,
-            KeyCode::Up | KeyCode::Char('k') | KeyCode::Down | KeyCode::Char('j') if self.live => {
-                self.body_scroll.key(key.code, 10);
+            // A path check never holds back a run; the run replaces it.
+            Some(RUN_AGAIN | START) => self.start(commands),
+            Some(ACTIVATE) if self.rows.selected() == Some(0) => self.start(commands),
+            Some(ACTIVATE) => self.activate(),
+            Some(RECHECK) => {
+                self.send(Command::Verify(self.config.clone()), commands);
             }
-            KeyCode::Tab if !self.live => move_selection(&mut self.rows, field_count, 1),
-            KeyCode::BackTab if !self.live => move_selection(&mut self.rows, field_count, -1),
-            KeyCode::Char('s') if !self.live => self.open_servers(),
-            KeyCode::Char('u') if !self.live && !self.checking() => {
-                let checked = self.snapshot.servers.iter().filter(|server| server.has_check_result());
-                let available: Vec<_> = checked
-                    .clone()
-                    .filter(|server| server.checked() && server.error.is_none())
-                    .take(MAX_SELECTED_SERVERS)
-                    .map(|server| server.id.clone())
-                    .collect();
-                // As in Go, only when some but not all checked servers are ready.
-                if !available.is_empty() && available.len() < checked.count() {
-                    self.config.servers = available;
-                    self.notice = "Using the available servers.".into();
-                }
-            }
-            KeyCode::Char('a') if !self.live => {
+            Some(ROWS) => move_selection(self.fields().len(), &mut self.rows, back(code)),
+            Some(SERVERS) => self.open_servers(),
+            Some(AVAILABLE) if !self.checking() => self.use_available(),
+            Some(AUTOMATIC) => {
                 self.config.throughput_origin = None;
                 self.config.throughput_protocol = None;
                 self.config.throughput_transport = None;
@@ -652,19 +643,41 @@ impl Ui {
                 self.config.latency_transport = None;
                 self.notice = "Transport paths set to automatic.".into();
             }
-            KeyCode::Left if !self.live => self.change_field(-1),
-            KeyCode::Right if !self.live => self.change_field(1),
-            KeyCode::Up | KeyCode::Char('k') if !self.live => move_selection(&mut self.rows, field_count, -1),
-            KeyCode::Down | KeyCode::Char('j') if !self.live => move_selection(&mut self.rows, field_count, 1),
-            KeyCode::Enter if !self.live => self.activate(),
-            KeyCode::Char(' ') if !self.live => self.toggle(),
+            Some(CHANGE) => self.change_field(!back(code)),
+            Some(TOGGLE) => self.toggle(),
+            _ if self.live => self.body_scroll.key(code, 10),
             _ => {}
         }
         // The chooser's selection is a draft until Enter.
         if self.popup != Popup::Servers {
             self.recheck_if_changed(&before);
         }
-        false
+    }
+    /// A valid setup starts a run; the results it replaces stay until it starts.
+    fn start(&mut self, commands: &mpsc::Sender<Command>) {
+        if let Err(error) = self.config.validate() {
+            self.notice = error.to_string();
+        } else if self.send(Command::Run(self.config.clone()), commands) {
+            self.previous = (self.live && self.snapshot.started()).then(|| self.snapshot.clone());
+            (self.live, self.starting, self.open_chooser) = (true, true, false);
+            self.body_scroll.offset = 0;
+            self.popup = Popup::None;
+            self.notice = "Checking paths before the test. Press esc to stop.".into();
+        }
+    }
+    /// As in Go, only when some but not all checked servers are ready.
+    fn use_available(&mut self) {
+        let checked = self.snapshot.servers.iter().filter(|server| server.has_check_result());
+        let available: Vec<_> = checked
+            .clone()
+            .filter(|server| server.checked() && server.error.is_none())
+            .take(MAX_SELECTED_SERVERS)
+            .map(|server| server.id.clone())
+            .collect();
+        if !available.is_empty() && available.len() < checked.count() {
+            self.config.servers = available;
+            self.notice = "Using the available servers.".into();
+        }
     }
     /// Like the Go client, the chooser opens on a checked catalogue of several servers.
     fn open_servers(&mut self) {
@@ -714,12 +727,20 @@ impl Ui {
     }
 }
 
-fn move_selection(state: &mut ListState, length: usize, direction: isize) {
+/// The keys that move up, back or left.
+fn back(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Up | KeyCode::Char('k') | KeyCode::BackTab | KeyCode::Left
+    )
+}
+fn move_selection(length: usize, state: &mut ListState, back: bool) {
     if length == 0 {
         state.select(None);
         return;
     }
-    let next = (state.selected().unwrap_or(0) as isize + direction).rem_euclid(length as isize) as usize;
+    let next =
+        (state.selected().unwrap_or(0) as isize + if back { -1 } else { 1 }).rem_euclid(length as isize) as usize;
     state.select(Some(next));
 }
 fn panel(title: &str, theme: Theme) -> Block<'_> {

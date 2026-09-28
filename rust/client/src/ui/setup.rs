@@ -154,8 +154,7 @@ impl Ui {
         &self.fields()[self.rows.selected().unwrap_or(0)]
     }
     /// Left and Right: a duration moves by its unit, a choice steps, and other rows act as Enter.
-    pub(super) fn change_field(&mut self, direction: isize) {
-        let forward = direction > 0;
+    pub(super) fn change_field(&mut self, forward: bool) {
         let (duration, unit, bounds) = match self.field().kind {
             Kind::Stage(stage) => (stage_duration(&mut self.config, stage), Duration::from_secs(1), STAGE),
             Kind::Warmup => (&mut self.config.warmup, Duration::from_millis(100), WARMUP),
