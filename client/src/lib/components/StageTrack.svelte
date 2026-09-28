@@ -175,9 +175,10 @@
     white-space: nowrap;
     transition: var(--transition-control);
   }
+  /* The hover wash is a layer, so it adds to a running chip's hue instead of replacing it. */
   @media (hover: hover) {
     .chip:hover:not(:disabled) {
-      background: var(--hover-wash);
+      background-image: linear-gradient(var(--hover-wash) 0 0);
       color: var(--text);
     }
   }
@@ -259,7 +260,7 @@
   /* Progress is a hairline under the label, like a stage's rule. */
   .chip-bar {
     position: absolute;
-    inset: auto 10px 5px;
+    inset: auto var(--space-3) 5px 10px;
     height: 2px;
     overflow: hidden;
     border-radius: var(--r-full);

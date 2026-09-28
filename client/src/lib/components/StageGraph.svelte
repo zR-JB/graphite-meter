@@ -316,8 +316,9 @@
     white-space: nowrap;
     translate: 10px 0;
   }
+  /* Whole pixels, so the card's hairlines stay crisp wherever it flips. */
   .readout.flip {
-    translate: calc(-100% - 10px) 0;
+    translate: round(calc(-100% - 10px), 1px) 0;
   }
   .readout-time {
     color: var(--text-soft);
