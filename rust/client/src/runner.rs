@@ -21,7 +21,7 @@ use std::{sync::Arc, time::Duration};
 use tokio::{sync::watch, time::Instant};
 
 #[cfg(test)]
-mod prepare_tests;
+pub(crate) mod prepare_tests;
 
 const PREPARATION_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -329,15 +329,6 @@ fn lane_plan(config: &Config, stage: Stage, servers: &[PreparedServer]) -> Resul
 }
 
 pub async fn run(
-    config: Config,
-    http: Http,
-    snapshots: watch::Sender<Snapshot>,
-    cancel: watch::Receiver<bool>,
-) -> Result<(), Error> {
-    run_prepared(config, http, snapshots, cancel, None).await
-}
-
-pub async fn run_prepared(
     config: Config,
     http: Http,
     snapshots: watch::Sender<Snapshot>,

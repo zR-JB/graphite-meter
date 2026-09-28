@@ -164,7 +164,14 @@ async fn exercise(peer: Peer, reset: bool) -> Result<(), Error> {
             true,
         )
         .await?;
-        Download::start(Arc::new(transport), 1, Duration::from_secs(30), cancelled).await?
+        Download::start(
+            Arc::new(transport),
+            1,
+            Duration::from_secs(30),
+            Duration::ZERO,
+            cancelled,
+        )
+        .await?
     };
     tokio::time::timeout(Duration::from_secs(2), async {
         while download.bytes() == 0 {

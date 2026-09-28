@@ -185,29 +185,15 @@ impl Transport {
         })
     }
 
-    pub async fn webtransport(
-        &self,
-        route: Route,
-        query: &[(&str, &str)],
-    ) -> Result<crate::webtransport::Session, Error> {
-        crate::webtransport::Session::dial(
-            &self.http,
-            &self.url(route, query)?,
-            self.insecure,
-            Duration::from_secs(10),
-        )
-        .await
-    }
-
     pub async fn webtransport_slot(
         &self,
         route: Route,
         query: &[(&str, &str)],
     ) -> Result<crate::webtransport::SessionSlot, Error> {
-        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query)?, self.insecure).await
+        crate::webtransport::SessionSlot::dial(&self.http, self.url(route, query), self.insecure).await
     }
 
-    pub fn url(&self, route: Route, query: &[(&str, &str)]) -> Result<String, Error> {
+    fn url(&self, route: Route, query: &[(&str, &str)]) -> String {
         let mut url = format!("{}{}", self.origin, route.path());
         if !query.is_empty() {
             url.push('?');
@@ -217,7 +203,7 @@ impl Transport {
                     .finish(),
             );
         }
-        Ok(url)
+        url
     }
 
     pub async fn receive(
@@ -228,7 +214,7 @@ impl Transport {
         limit: u64,
         duration: Duration,
     ) -> Result<Body, Error> {
-        let target = self.url(route, query)?;
+        let target = self.url(route, query);
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;
@@ -279,7 +265,7 @@ impl Transport {
     where
         S: Stream<Item = Result<Bytes, Error>> + Send + 'static,
     {
-        let target = self.url(route, query)?;
+        let target = self.url(route, query);
         let deadline = Instant::now()
             .checked_add(duration)
             .ok_or("request duration is too large")?;

@@ -145,7 +145,7 @@ async fn run_case_with_http(url: &str, case: Case, http: Http) -> Result<(), Err
     let (cancel_tx, cancel) = watch::channel(false);
     tokio::time::timeout(
         Duration::from_secs(40),
-        runner::run(config, http, snapshots.clone(), cancel),
+        runner::run(config, http, snapshots.clone(), cancel, None),
     )
     .await??;
     drop(cancel_tx);

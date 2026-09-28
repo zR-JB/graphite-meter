@@ -4,7 +4,7 @@ use crate::{
     model::{ServerSummary, StageStatus},
     net::Http,
 };
-use graphite_meter_core::discovery::Protocol;
+use graphite_meter_core::discovery::{LatencyTransport, Protocol};
 use graphite_meter_core::{catalog::ServerEntry, discovery::ThroughputTarget};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering};
@@ -776,7 +776,7 @@ async fn sole_server_reprepares_after_a_failed_stage_and_keeps_prior_evidence() 
         }
     });
     let (_stop, cancelled) = watch::channel(false);
-    super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
     drive_fault.await?;
     let snapshot = snapshots.borrow();
     assert_eq!(snapshot.phase, Phase::Incomplete);
@@ -819,7 +819,7 @@ async fn a_selection_that_lost_a_server_in_preparation_gets_no_sole_retry() -> R
             .unwrap();
         mode.store(14, Ordering::SeqCst);
     };
-    let run = super::super::run_prepared(config, Http::new(true)?, snapshots.clone(), cancelled, None);
+    let run = super::super::run(config, Http::new(true)?, snapshots.clone(), cancelled, None);
     let (result, ()) = tokio::join!(run, refuse);
     peer.abort();
     assert!(
@@ -867,7 +867,7 @@ async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
         };
         let (snapshots, _) = watch::channel(Snapshot::default());
         let (_stop, cancelled) = watch::channel(false);
-        super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+        super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
         near_peer.abort();
         far_peer.abort();
         let snapshot = snapshots.borrow();
@@ -941,7 +941,7 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         ..Snapshot::default()
     });
     let (_stop, cancelled) = watch::channel(false);
-    super::super::run_prepared(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
     near_peer.abort();
     far_peer.abort();
     let snapshot = snapshots.borrow();
