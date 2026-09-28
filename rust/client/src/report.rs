@@ -209,15 +209,8 @@ impl<'a> Report<'a> {
     }
 
     fn directions(&self) -> Vec<(Stage, Direction)> {
-        self.plan
-            .iter()
-            .flat_map(|stage| {
-                [
-                    stage.downloads().then_some((*stage, Direction::Down)),
-                    stage.uploads().then_some((*stage, Direction::Up)),
-                ]
-            })
-            .flatten()
+        let plan = self.plan.iter();
+        plan.flat_map(|stage| Direction::of(*stage).map(|direction| (*stage, direction)))
             .collect()
     }
 
@@ -285,11 +278,8 @@ impl<'a> Report<'a> {
     fn rates(&self) -> String {
         let mut rows = Vec::new();
         for stage in self.plan.iter().filter(|stage| stage.downloads() || stage.uploads()) {
-            let rates: Vec<_> = self
-                .directions()
-                .into_iter()
-                .filter(|(direction_stage, _)| direction_stage == stage)
-                .filter_map(|(_, direction)| {
+            let rates: Vec<_> = Direction::of(*stage)
+                .filter_map(|direction| {
                     let measurement = self.measurement(*stage, direction)?;
                     let rate = measurement.mean_bytes_per_sec.map_or(MISSING.to_owned(), format::rate);
                     Some(format!("{} {rate}", direction.arrow()))
@@ -329,14 +319,8 @@ impl<'a> Report<'a> {
         let mut rows = Vec::new();
         let mut failures = Vec::new();
         for stage in self.plan {
-            for (direction_stage, direction) in self.directions() {
-                if direction_stage != *stage {
-                    continue;
-                }
-                let label = direction.label(*stage);
-                if let Some(line) = self.throughput_failure(*stage, direction, &label) {
-                    failures.push(line);
-                }
+            for direction in Direction::of(*stage) {
+                failures.extend(self.throughput_failure(*stage, direction, &direction.label(*stage)));
             }
             match self.population(*stage) {
                 Some(population) => {
@@ -604,11 +588,8 @@ impl<'a> Report<'a> {
     fn facts(&self) -> Vec<String> {
         let mut notes = Vec::new();
         for stage in self.plan {
-            for (direction_stage, direction) in self.directions() {
-                let Some(measurement) = self
-                    .measurement(*stage, direction)
-                    .filter(|_| direction_stage == *stage)
-                else {
+            for direction in Direction::of(*stage) {
+                let Some(measurement) = self.measurement(*stage, direction) else {
                     continue;
                 };
                 if measurement.mean_bytes_per_sec.is_some() || measurement.total_bytes > 0 {
@@ -642,6 +623,16 @@ enum Direction {
 }
 
 impl Direction {
+    /// The directions a stage transfers.
+    fn of(stage: Stage) -> impl Iterator<Item = Self> {
+        [
+            stage.downloads().then_some(Self::Down),
+            stage.uploads().then_some(Self::Up),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
     fn arrow(self) -> &'static str {
         match self {
             Self::Down => "↓",
