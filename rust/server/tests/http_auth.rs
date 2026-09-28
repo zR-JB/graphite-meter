@@ -4,7 +4,7 @@ use bytes::Bytes;
 use futures_util::StreamExt;
 use graphite_meter_server::{
     config::{AuthConfig, AuthMode, Config, NativeKind},
-    http_server::HttpServer,
+    http::HttpServer,
 };
 use http::Request;
 use rustls::{

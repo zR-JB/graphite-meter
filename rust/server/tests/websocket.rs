@@ -177,7 +177,7 @@ async fn blocked_reply_and_close_cannot_hold_session_forever() -> Result<(), Tes
 #[tokio::test]
 async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result<(), TestError> {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http_server::HttpServer;
+    use graphite_meter_server::http::HttpServer;
     use http::{Request, StatusCode};
     use std::sync::Arc;
     use tokio::{
@@ -236,7 +236,7 @@ async fn http_upgrade_retains_admission_and_shutdown_owns_the_socket() -> Result
 #[tokio::test]
 async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::{http_server::HttpServer, tls::Certificates};
+    use graphite_meter_server::{http::HttpServer, tls::Certificates};
     use rustls::{
         ClientConfig, RootCertStore,
         pki_types::{CertificateDer, ServerName, pem::PemObject},
@@ -284,7 +284,7 @@ async fn websocket_upgrade_works_over_validated_tls() -> Result<(), TestError> {
 #[tokio::test]
 async fn quiet_upgraded_websocket_ends_with_idle_code() -> Result<(), TestError> {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http_server::HttpServer;
+    use graphite_meter_server::http::HttpServer;
     use std::sync::Arc;
     use tokio::net::{TcpListener, TcpStream};
     let server = Arc::new(HttpServer::new(

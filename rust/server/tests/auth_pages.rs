@@ -140,7 +140,7 @@ fn oidc_csp_widens_only_form_action_to_validated_origin() {
 #[tokio::test]
 async fn application_response_restricts_resources_and_hashes_embedded_inline_assets() {
     use graphite_meter_server::config::{Config, NativeKind};
-    use graphite_meter_server::http_server::HttpServer;
+    use graphite_meter_server::http::HttpServer;
     use std::{sync::Arc, time::Duration};
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},

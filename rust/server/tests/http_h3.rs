@@ -3,7 +3,7 @@ mod support;
 
 use bytes::Bytes;
 use graphite_meter_http3::{RecvHalf, client};
-use graphite_meter_server::{config::Config, http_server::HttpServer};
+use graphite_meter_server::{config::Config, http::HttpServer};
 use http::Request;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use std::{error::Error, sync::Arc, time::Duration};

@@ -1,7 +1,7 @@
 //! A CONNECT task owns every application lane; dropping it cancels all session IO.
 //! The connection advertises no WT_INITIAL_* settings, so session flow control
 //! is not negotiated. QUIC flow control and the local lane limit remain active.
-use super::{http_quic::ReceiveCredit, *};
+use super::{quic::ReceiveCredit, *};
 use crate::timeouts::{PROGRESS_HEARTBEAT, WT_ANSWER, WT_REFUSAL_LINGER, WT_VERIFY_LINGER};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{

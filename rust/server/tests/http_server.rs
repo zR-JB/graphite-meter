@@ -1,5 +1,5 @@
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http_server::HttpServer;
+use graphite_meter_server::http::HttpServer;
 use http::{Method, Request, StatusCode, header};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{

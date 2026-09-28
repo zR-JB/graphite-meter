@@ -3,7 +3,7 @@
 use crate::{
     ServerError,
     config::{AuthMode, NativeKind, ValidatedConfig},
-    http_server::{HttpServer, QuicEndpoint},
+    http::{HttpServer, QuicEndpoint},
     quic_shard,
     tls::Certificates,
 };

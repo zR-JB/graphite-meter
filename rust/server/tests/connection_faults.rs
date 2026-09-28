@@ -3,7 +3,7 @@ mod support;
 use bytes::Bytes;
 use graphite_meter_http3::{self as http3, Code, WtCode, client, webtransport::Session};
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http_server::HttpServer;
+use graphite_meter_server::http::HttpServer;
 use http::{Request, Version};
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig,

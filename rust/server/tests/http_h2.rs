@@ -2,7 +2,7 @@ mod support;
 
 use bytes::Bytes;
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http_server::HttpServer;
+use graphite_meter_server::http::HttpServer;
 use h2::{RecvStream, client::SendRequest};
 use http::{Request, Response, Version};
 use rustls::{

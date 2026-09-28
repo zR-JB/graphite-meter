@@ -1,7 +1,7 @@
 mod support;
 
 use graphite_meter_server::config::{Config, NativeKind};
-use graphite_meter_server::http_server::HttpServer;
+use graphite_meter_server::http::HttpServer;
 use rustls::{
     ClientConfig, RootCertStore, ServerConfig, SupportedProtocolVersion,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, pem::PemObject},

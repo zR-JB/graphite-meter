@@ -1,5 +1,5 @@
 //! HTTP/3 adapts streams to the same authorized measurement dispatcher.
-use super::{http_quic::ReceiveCredit, *};
+use super::{quic::ReceiveCredit, *};
 use graphite_meter_http3::{self as http3, RecvHalf, RequestStream, SendHalf};
 
 const DATA_BYTES: usize = 16 * 1024;
