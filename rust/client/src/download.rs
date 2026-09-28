@@ -4,7 +4,7 @@ use crate::{
     failure::MeasurementFailure,
     net::Http,
     transport::{Retrying, TransferRetry, Transport},
-    webtransport::{ConnectRejected, Session, SessionSlot},
+    webtransport::{Session, SessionSlot},
 };
 use graphite_meter_core::{
     discovery::{ThroughputTarget, ThroughputTransport},
@@ -247,8 +247,7 @@ async fn receive_webtransport(
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {
-                let retryable = !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
-                retry.retry(error, started, false, retryable).await?;
+                retry.ended(Err(error), started, false).await?;
             }
         }
     }
@@ -353,18 +352,8 @@ mod tests {
     /// (download.go:74): here every answer declares 64 GiB and ends after 8 bytes.
     #[tokio::test]
     async fn http3_lane_asks_again_after_a_body_cut_short() -> Result<(), Error> {
-        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let _ = crate::crypto::provider().install_default();
-        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
-        let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
-            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
-            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
-        )?;
-        tls.alpn_protocols = vec![b"h3".to_vec()];
-        let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
-        let endpoint =
-            quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(tls)), "127.0.0.1:0".parse()?)?;
-        let origin = format!("https://{}", endpoint.local_addr()?);
+        let (endpoint, origin) = h3_endpoint()?;
         let server = tokio::spawn(async move {
             let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
             let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
@@ -392,6 +381,61 @@ mod tests {
         download.stop().await;
         server.abort();
         asked_again?
+    }
+
+    /// A WebTransport session is dialled again as Go's restore dials it (webtransport.go:169-183),
+    /// here once a busy answer's Retry-After has passed.
+    #[tokio::test]
+    async fn a_busy_webtransport_session_is_dialled_again() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = h3_endpoint()?;
+        let dials = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = dials.clone();
+        let server = tokio::spawn(async move {
+            let mut refused = Vec::new();
+            loop {
+                let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+                let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+                let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
+                seen.lock().unwrap().push(Instant::now());
+                if !refused.is_empty() {
+                    // The connection's driver writes the session's answer.
+                    let accept = graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new());
+                    let _ = tokio::join!(accept, async { while let Ok(Some(_)) = connection.next().await {} });
+                    return Ok::<_, Error>(());
+                }
+                let (mut send, _recv) = stream.split();
+                let busy = http::Response::builder()
+                    .status(503)
+                    .header(http::header::RETRY_AFTER, "1");
+                send.send_response(busy.body(())?).await?;
+                send.finish().await?;
+                refused.push(connection);
+            }
+        });
+        let target = format!("{origin}/wt/download?bytes=0");
+        let slot = SessionSlot::dial(&Http::new(true)?, target, true).await;
+        server.abort();
+        slot?.close().await;
+        let dials = dials.lock().unwrap();
+        assert!(dials[1] - dials[0] >= Duration::from_secs(1), "{dials:?}");
+        Ok(())
+    }
+
+    /// A local HTTP/3 endpoint whose certificate the client takes only when insecure.
+    fn h3_endpoint() -> Result<(quinn::Endpoint, String), Error> {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
+        let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
+            vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+            PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+        )?;
+        tls.alpn_protocols = vec![b"h3".to_vec()];
+        let tls = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
+        let endpoint =
+            quinn::Endpoint::server(quinn::ServerConfig::with_crypto(Arc::new(tls)), "127.0.0.1:0".parse()?)?;
+        let origin = format!("https://{}", endpoint.local_addr()?);
+        Ok((endpoint, origin))
     }
 
     /// Go's TestLanePersistence (transfer_test.go:87-151): only a refusal ends a lane at once; a

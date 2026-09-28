@@ -23,6 +23,9 @@ use tokio::{
 /// Go's redialWindow: how long a lane or a dial may fail before it is lost.
 pub(crate) const REDIAL_WINDOW: Duration = Duration::from_secs(2);
 pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
+/// Go's busyBackoff and busyBackoffCap: a busy answer's first wait, doubled up to the cap.
+const BUSY_BACKOFF: Duration = Duration::from_millis(300);
+const BUSY_BACKOFF_CAP: Duration = Duration::from_millis(1200);
 
 #[derive(Default)]
 pub(crate) struct RetryBackoff {
@@ -35,10 +38,8 @@ impl RetryBackoff {
             if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>()
                 && matches!(http.status, 429 | 503)
             {
-                self.busy = (self.busy * 2)
-                    .max(Duration::from_millis(300))
-                    .min(Duration::from_millis(1200));
-                return self.busy.max(http.retry_after).min(Duration::from_millis(1200));
+                self.busy = (self.busy * 2).clamp(BUSY_BACKOFF, BUSY_BACKOFF_CAP);
+                return self.busy.max(http.retry_after).min(BUSY_BACKOFF_CAP);
             }
             let Some(source) = error.source() else {
                 break;
@@ -132,21 +133,12 @@ impl TransferRetry {
             Ok(()) => Box::new(MeasurementFailure(FailureReason::Timeout)),
             Err(error) => error,
         };
-        let retryable = crate::failure::retryable(&error);
-        self.retry(error, started, moved, retryable).await
-    }
-
-    pub(crate) async fn retry(
-        &mut self,
-        error: Error,
-        started: Instant,
-        moved: bool,
-        retryable: bool,
-    ) -> Result<(), Error> {
         if moved {
             self.failing_since = None;
         }
-        if !retryable || !moved && self.failing_since.get_or_insert(started).elapsed() >= REDIAL_WINDOW {
+        if !crate::failure::retryable(&error)
+            || !moved && self.failing_since.get_or_insert(started).elapsed() >= REDIAL_WINDOW
+        {
             return Err(error);
         }
         let delay = self.backoff.delay(error.as_ref(), started);

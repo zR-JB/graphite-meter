@@ -3,7 +3,7 @@ use crate::{
     Error,
     failure::SharedFailure,
     transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, restore},
-    webtransport::{ConnectRejected, SessionSlot},
+    webtransport::SessionSlot,
 };
 use bytes::Bytes;
 use graphite_meter_core::{
@@ -102,10 +102,12 @@ impl Upload {
         } else {
             (Arc::new(transport.for_upload_lanes()), transport)
         };
+        // Go's mint is tried again for 2 s (upload.go:116-119).
+        let mint = || control.json(Method::POST, Route::UploadSession, &[]);
         let minted: Minted = tokio::select! {
             biased;
             _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
-            minted = control.json(Method::POST, Route::UploadSession, &[]) => minted?,
+            minted = restore("upload session", Instant::now() + REDIAL_WINDOW, mint) => minted?,
         };
         if minted.upload_id.is_empty()
             || minted.upload_id.len() > 8192
@@ -515,8 +517,7 @@ async fn send_wt_reconnecting(
         if session.is_closed() {
             let started = Instant::now();
             if let Err(error) = slot.reconnect(&session).await {
-                let retryable = !(error.is::<ConnectRejected>() || error.is::<crate::net::AuthRequired>());
-                retry.retry(error, started, false, retryable).await?;
+                retry.ended(Err(error), started, false).await?;
             }
         }
     }
@@ -774,30 +775,82 @@ mod tests {
     /// never queues behind their unsent bodies, here a peer that stops reading the lanes.
     #[tokio::test]
     async fn checkpoints_never_queue_behind_http2_upload_lanes() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let armed = Arc::new(AtomicBool::new(false));
+        let (transport, server) = receiver(0, armed.clone(), Default::default()).await?;
+        let (_stop, cancel) = watch::channel(false);
+        let upload = tokio::time::timeout(
+            Duration::from_secs(5),
+            Upload::start(transport, 2, Duration::ZERO, cancel),
+        )
+        .await??;
+        armed.store(true, Ordering::SeqCst);
+        let checkpoint = upload
+            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
+            .await;
+        drop(upload);
+        server.abort();
+        let snapshot = checkpoint?;
+        assert_eq!((snapshot.bytes, snapshot.nanos), (1, 1));
+        Ok(())
+    }
+
+    /// The mint is tried again as Go's restore tries it (upload.go:116-119), here once a busy
+    /// answer's Retry-After has passed.
+    #[tokio::test]
+    async fn a_busy_mint_is_tried_again() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let mints = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (transport, server) = receiver(1, Default::default(), mints.clone()).await?;
+        let (_stop, cancel) = watch::channel(false);
+        let upload = Upload::start(transport, 1, Duration::ZERO, cancel).await;
+        server.abort();
+        drop(upload?);
+        let mints = mints.lock().unwrap();
+        assert!(
+            mints.len() == 2 && mints[1] - mints[0] >= Duration::from_secs(1),
+            "{mints:?}"
+        );
+        Ok(())
+    }
+
+    /// A receiver over HTTP/2 that answers its first `busy` mints with 503 and Retry-After: 1, and
+    /// records each; once `armed` it stops reading the connections that carried upload lanes.
+    async fn receiver(
+        busy: usize,
+        armed: Arc<AtomicBool>,
+        mints: Arc<std::sync::Mutex<Vec<Instant>>>,
+    ) -> Result<(Arc<Transport>, tokio::task::JoinHandle<()>), Error> {
         use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
         use hyper::{body::Frame, service::service_fn};
         use hyper_util::rt::{TokioExecutor, TokioIo};
         type Payload = BoxBody<Bytes, Infallible>;
-        let _ = crate::crypto::provider().install_default();
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let origin = format!("http://{}", listener.local_addr()?);
-        let armed = Arc::new(AtomicBool::new(false));
-        let arm = armed.clone();
         let server = tokio::spawn(async move {
             while let Ok((socket, _)) = listener.accept().await {
                 let lanes = Arc::new(AtomicBool::new(false));
                 let io = Gate {
                     inner: socket,
                     lanes: lanes.clone(),
-                    armed: arm.clone(),
+                    armed: armed.clone(),
                 };
+                let mints = mints.clone();
                 let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
-                    let lanes = lanes.clone();
+                    let (lanes, mints) = (lanes.clone(), mints.clone());
                     async move {
                         let json =
                             |body: &'static str| -> Payload { Full::new(Bytes::from_static(body.as_bytes())).boxed() };
+                        let mut answer = http::Response::builder();
                         let body = match request.uri().path() {
-                            "/upload/session" => json(r#"{"uploadId":"fixture"}"#),
+                            "/upload/session" => {
+                                let mut mints = mints.lock().unwrap();
+                                mints.push(Instant::now());
+                                if mints.len() <= busy {
+                                    answer = answer.status(503).header(http::header::RETRY_AFTER, "1");
+                                }
+                                json(r#"{"uploadId":"fixture"}"#)
+                            }
                             "/upload/checkpoint" => json(r#"{"bytes":1,"nanos":1}"#),
                             "/upload/progress" => {
                                 let events = Bytes::from_static(
@@ -816,7 +869,7 @@ mod tests {
                             }
                             _ => json("{}"),
                         };
-                        Ok::<_, Infallible>(http::Response::new(body))
+                        Ok::<_, Infallible>(answer.body(body).expect("fixture answer"))
                     }
                 });
                 tokio::spawn(
@@ -825,30 +878,14 @@ mod tests {
                 );
             }
         });
-        let transport = Arc::new(
-            Transport::connect(
-                crate::net::Http::new(false)?,
-                &origin,
-                graphite_meter_core::discovery::Protocol::Http2,
-                false,
-            )
-            .await?,
-        );
-        let (_stop, cancel) = watch::channel(false);
-        let upload = tokio::time::timeout(
-            Duration::from_secs(5),
-            Upload::start(transport, 2, Duration::ZERO, cancel),
+        let transport = Transport::connect(
+            crate::net::Http::new(false)?,
+            &origin,
+            graphite_meter_core::discovery::Protocol::Http2,
+            false,
         )
-        .await??;
-        armed.store(true, Ordering::SeqCst);
-        let checkpoint = upload
-            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
-            .await;
-        drop(upload);
-        server.abort();
-        let snapshot = checkpoint?;
-        assert_eq!((snapshot.bytes, snapshot.nanos), (1, 1));
-        Ok(())
+        .await?;
+        Ok((Arc::new(transport), server))
     }
 
     #[tokio::test]

@@ -3,13 +3,17 @@ use crate::{
     Error,
     net::Http,
     quic::{Connection, Origin},
+    transport::{REDIAL_WINDOW, restore},
 };
 use bytes::Bytes;
 use futures_util::FutureExt;
 use graphite_meter_http3::webtransport::{self as layer, RecvStream, SendStream};
 use http::Request;
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::Mutex, time::timeout};
+use tokio::{
+    sync::Mutex,
+    time::{Instant, timeout},
+};
 
 pub struct Session {
     connection: Connection,
@@ -125,13 +129,22 @@ pub struct SessionSlot {
 
 impl SessionSlot {
     pub async fn dial(http: &Http, target: String, insecure: bool) -> Result<Self, Error> {
-        let session = Session::dial(http, &target, insecure, Duration::from_secs(10)).await?;
+        let session = Self::open(http, &target, insecure).await?;
         Ok(Self {
             current: Mutex::new(Arc::new(session)),
             http: http.clone(),
             target,
             insecure,
         })
+    }
+
+    /// Go's stage session dial and redial (webtransport.go:169-219), tried again for 2 s.
+    async fn open(http: &Http, target: &str, insecure: bool) -> Result<Session, Error> {
+        let deadline = Instant::now() + REDIAL_WINDOW;
+        restore("WebTransport session", deadline, || {
+            Session::dial(http, target, insecure, REDIAL_WINDOW)
+        })
+        .await
     }
 
     pub async fn current(&self) -> Arc<Session> {
@@ -146,8 +159,7 @@ impl SessionSlot {
         if !failed.is_closed() {
             return Err("WebTransport stream failed while its session remained open".into());
         }
-        let session = Session::dial(&self.http, &self.target, self.insecure, Duration::from_secs(10)).await?;
-        *current = Arc::new(session);
+        *current = Arc::new(Self::open(&self.http, &self.target, self.insecure).await?);
         Ok(current.clone())
     }
 

@@ -74,7 +74,7 @@ pub(crate) async fn run(
     if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
-    let Some(mut socket) = connect(http, &target.base_url, insecure, &mut cancel, target.transport).await? else {
+    let Some(mut socket) = redial(http, target, insecure, &mut cancel, Instant::now() + REDIAL_WINDOW).await? else {
         return Ok(());
     };
     let end = Instant::now()
@@ -103,24 +103,33 @@ pub(crate) async fn run(
         if !error.is::<Disconnected>() {
             return Err(error);
         }
-        // Go's redialPingBus (latency.go:124-132, 256): a window cut short by the stage end.
+        // A redial's window is cut short by the stage end (latency.go:256).
         let window = (Instant::now() + REDIAL_WINDOW).min(end);
-        let dial = cancel.clone();
-        let redial = restore("latency channel", window, || {
-            let mut cancel = dial.clone();
-            async move { connect_once(http, &target.base_url, insecure, &mut cancel, target.transport).await }
-        });
-        let redialled = tokio::select! {
-            biased;
-            _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
-            redialled = redial => redialled,
-        };
-        socket = match redialled {
+        socket = match redial(http, target, insecure, &mut cancel, window).await {
             Ok(Some(socket)) => socket,
             Ok(None) => return Ok(()),
             Err(_) if Instant::now() >= end => return Ok(()),
             Err(error) => return Err(error),
         };
+    }
+}
+
+/// Go's redialPingBus (latency.go:124-132): the channel dialled until `deadline`, paced as Go's
+/// restore paces it; `None` once the session is stopped.
+async fn redial(
+    http: &Http,
+    target: &LatencyTarget,
+    insecure: bool,
+    cancel: &mut watch::Receiver<Stop>,
+    deadline: Instant,
+) -> Result<Option<Bus>, Error> {
+    let dial = restore("latency channel", deadline, || {
+        connect(http, &target.base_url, insecure, target.transport)
+    });
+    tokio::select! {
+        biased;
+        _ = stopped(cancel, Stop::Drain) => Ok(None),
+        bus = dial => bus.map(Some),
     }
 }
 
@@ -186,11 +195,10 @@ impl Reader {
 /// probe does not establish that QUIC datagrams or WebSocket pings work.
 pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<Duration, Error> {
     let attempt = async {
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(http, &target.base_url, insecure, &mut cancel, target.transport)
+        // One dial, as Go's verifyLatency (latency.go:85-97).
+        let (mut writer, mut reader) = connect(http, &target.base_url, insecure, target.transport)
             .await?
-            .ok_or("latency verification cancelled")?;
-        let (mut writer, mut reader) = bus.split();
+            .split();
         let result = async {
             let reply_window = match target.transport {
                 LatencyTransport::WebTransport => Duration::from_millis(750),
@@ -239,65 +247,18 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
         .await
         .map_err(|_| -> Error { "latency channel did not reply within three seconds".into() })?
 }
-async fn connect(
-    http: &Http,
-    origin: &str,
-    insecure: bool,
-    cancel: &mut watch::Receiver<Stop>,
-    transport: LatencyTransport,
-) -> Result<Option<Bus>, Error> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut backoff = crate::transport::RetryBackoff::default();
-    loop {
-        let started = Instant::now();
-        let error = match connect_once(http, origin, insecure, cancel, transport).await {
-            Ok(bus) => return Ok(bus),
-            Err(error) => error,
-        };
-        if crate::failure::reason(error.as_ref(), false) != graphite_meter_core::failure::FailureReason::ServerBusy
-            || Instant::now() >= deadline
-        {
-            return Err(error);
-        }
-        let wake = (Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline);
-        tokio::select! {
-            biased;
-            _ = stopped(cancel, Stop::Drain) => return Ok(None),
-            () = tokio::time::sleep_until(wake) => {},
-        }
-        if Instant::now() >= deadline {
-            return Err(error);
-        }
-    }
-}
-
-async fn connect_once(
-    http: &Http,
-    origin: &str,
-    insecure: bool,
-    cancel: &mut watch::Receiver<Stop>,
-    transport: LatencyTransport,
-) -> Result<Option<Bus>, Error> {
-    match transport {
-        LatencyTransport::WebSocket => Ok(connect_ws(http, origin, insecure, cancel)
-            .await?
-            .map(|socket| Bus::WebSocket(Box::new(socket)))),
+async fn connect(http: &Http, origin: &str, insecure: bool, transport: LatencyTransport) -> Result<Bus, Error> {
+    Ok(match transport {
+        LatencyTransport::WebSocket => Bus::WebSocket(Box::new(connect_ws(http, origin, insecure).await?)),
         LatencyTransport::WebTransport => {
             let target = format!("{}/wt/ping", canonical_origin(origin)?);
-            tokio::select! {biased;
-                _ = stopped(cancel, Stop::Drain) => Ok(None),
-                session = crate::webtransport::Session::dial(http, &target, insecure, Duration::from_secs(10)) => Ok(Some(Bus::WebTransport(Arc::new(session?)))),
-            }
+            let session = crate::webtransport::Session::dial(http, &target, insecure, Duration::from_secs(10)).await?;
+            Bus::WebTransport(Arc::new(session))
         }
-    }
+    })
 }
 
-async fn connect_ws(
-    http: &Http,
-    origin: &str,
-    insecure: bool,
-    cancel: &mut watch::Receiver<Stop>,
-) -> Result<Option<Socket>, Error> {
+async fn connect_ws(http: &Http, origin: &str, insecure: bool) -> Result<Socket, Error> {
     let origin = canonical_origin(origin)?;
     let target = format!("{origin}/ws/ping");
     let websocket = if let Some(rest) = target.strip_prefix("https://") {
@@ -379,12 +340,7 @@ async fn connect_ws(
             .await,
         )
     };
-    let socket = tokio::select! {
-        biased;
-        _ = stopped(cancel, Stop::Drain) => return Ok(None),
-        result = tokio::time::timeout(Duration::from_secs(10), connection) => result??,
-    };
-    Ok(Some(socket))
+    tokio::time::timeout(Duration::from_secs(10), connection).await?
 }
 
 #[derive(Debug)]
@@ -584,12 +540,51 @@ mod tests {
             }
             Ok::<_, Error>((attempts, minimum))
         });
+        let target = LatencyTarget {
+            base_url: origin,
+            transport: LatencyTransport::WebSocket,
+        };
         let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(&http, &origin, false, &mut cancel, LatencyTransport::WebSocket).await?;
+        let bus = redial(&http, &target, false, &mut cancel, Instant::now() + REDIAL_WINDOW).await?;
         assert!(bus.is_some());
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
         assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
+        Ok(())
+    }
+
+    /// The first dial is tried again as Go's measureLatency tries it (latency.go:141), whatever
+    /// the failure: here the server refuses its first upgrade outright.
+    #[tokio::test]
+    async fn the_first_dial_is_tried_again_after_any_failure() -> Result<(), Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        let peer = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let _ = stream.read(&mut [0; 4096]).await?;
+            stream
+                .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .await?;
+            let (stream, _) = listener.accept().await?;
+            echo(tokio_tungstenite::accept_async(stream).await?, Duration::ZERO).await;
+            Ok::<_, Error>(())
+        });
+        let (observations, mut observed) = mpsc::channel(64);
+        let (_stop, cancel) = watch::channel(Stop::Running);
+        let timing = (Duration::from_millis(50), Duration::from_millis(300), 16);
+        let measured = run(&Http::new(false)?, &target, false, timing, observations, cancel).await;
+        peer.abort();
+        measured?;
+        let mut replies = 0;
+        while let Ok(observation) = observed.try_recv() {
+            replies += usize::from(matches!(observation, Observation::Sample { .. }));
+        }
+        assert!(replies > 0);
         Ok(())
     }
 
@@ -853,16 +848,8 @@ mod tests {
             .await;
             Ok::<_, Error>(())
         });
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(
-            &Http::new(false)?,
-            &origin,
-            false,
-            &mut cancel,
-            LatencyTransport::WebSocket,
-        )
-        .await?;
-        assert_eq!(outcomes(bus.ok_or("no latency channel")?, 500, 1600).await?, (3, 1));
+        let bus = connect(&Http::new(false)?, &origin, false, LatencyTransport::WebSocket).await?;
+        assert_eq!(outcomes(bus, 500, 1600).await?, (3, 1));
         peer.abort();
         Ok(())
     }
@@ -943,11 +930,8 @@ mod tests {
             echo(tokio_tungstenite::accept_async(stream).await?, Duration::ZERO).await;
             Ok::<_, Error>(())
         });
-        let (_stop, mut cancel) = watch::channel(Stop::Running);
         let pong = tokio::time::timeout(Duration::from_secs(5), async {
-            let mut socket = connect_ws(&Http::new(true)?, &origin, true, &mut cancel)
-                .await?
-                .ok_or("latency channel cancelled")?;
+            let mut socket = connect_ws(&Http::new(true)?, &origin, true).await?;
             socket.send(Message::Text(wire::encode_ping(7).into())).await?;
             match socket.next().await.ok_or("latency channel closed")?? {
                 Message::Text(text) => Ok::<_, Error>(wire::decode_pong(&text)?.id),
@@ -1003,11 +987,10 @@ mod tests {
                 "",
                 "",
             ));
-            let (_cancel, mut cancel) = watch::channel(Stop::Running);
             tokio::time::timeout(Duration::from_secs(5), async {
-                let result = connect_ws(&http, "http://meter.test", false, &mut cancel).await;
+                let result = connect_ws(&http, "http://meter.test", false).await;
                 if valid {
-                    let mut socket = result?.unwrap();
+                    let mut socket = result?;
                     assert_eq!(socket.next().await.unwrap()?, Message::Text("pong".into()));
                     socket.close(None).await?;
                 } else {

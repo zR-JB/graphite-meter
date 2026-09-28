@@ -269,35 +269,13 @@ async fn prepare_server(
     })
 }
 
+/// One dial within 3 s, as Go's verifyThroughputWebTransport (webtransport.go:139-148).
 async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, insecure: bool) -> Result<(), Error> {
     let origin = graphite_meter_core::origin::canonical_origin(&target.base_url)?;
     let url = format!("{origin}{}?bytes=0", Route::WtDownload.path());
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut backoff = crate::transport::RetryBackoff::default();
-    loop {
-        let started = Instant::now();
-        let error = match tokio::time::timeout_at(
-            deadline,
-            crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3)),
-        )
-        .await?
-        {
-            Ok(session) => {
-                session.close().await;
-                return Ok(());
-            }
-            Err(error) => error,
-        };
-        if crate::failure::reason(error.as_ref(), false) != graphite_meter_core::failure::FailureReason::ServerBusy
-            || Instant::now() >= deadline
-        {
-            return Err(error);
-        }
-        tokio::time::sleep_until((Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline)).await;
-        if Instant::now() >= deadline {
-            return Err(error);
-        }
-    }
+    let session = crate::webtransport::Session::dial(http, &url, insecure, Duration::from_secs(3)).await?;
+    session.close().await;
+    Ok(())
 }
 
 pub async fn run(

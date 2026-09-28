@@ -1271,7 +1271,9 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
     let _ = crate::crypto::provider().install_default();
     let (near, _, near_peer) = download_peer().await?;
     let (far, far_mode, far_peer) = download_peer().await?;
-    far_mode.store(6, Ordering::SeqCst);
+    // Far answers no probe, and loses its channel once near, never dialled, has left: as in Go,
+    // near tries for 2 s first (latency.go:141).
+    far_mode.store(8, Ordering::SeqCst);
     let refused = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
     let http = Http::new(true)?;
     let mut servers = vec![
@@ -1311,9 +1313,21 @@ async fn latency_stage_losses_drop_one_server_and_the_run_continues() -> Result<
         ..Snapshot::default()
     });
     let (_stop, cancelled) = watch::channel(false);
-    super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)).await?;
+    let mut observed = snapshots.subscribe();
+    let far_loses_later = async {
+        let near_lost = |snapshot: &Snapshot| snapshot.failures.iter().any(|failure| failure.server_id == "near");
+        let lost = observed.wait_for(near_lost).await.map(drop);
+        far_mode.store(6, Ordering::SeqCst);
+        lost
+    };
+    let (result, lost) = tokio::join!(
+        super::super::run(config, http, snapshots.clone(), cancelled, Some(prepared)),
+        far_loses_later
+    );
     near_peer.abort();
     far_peer.abort();
+    result?;
+    lost?;
     let snapshot = snapshots.borrow();
     assert_eq!(snapshot.phase, Phase::Incomplete);
     let [latency, download] = &snapshot.results[..] else {
@@ -1372,8 +1386,8 @@ async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> 
     Ok(())
 }
 
-// Real time: on a paused clock that auto-advances while real sockets are read, a probe's 250 ms deadline
-// can pass before its loopback pong arrives, and the stage would record a timeout instead.
+// Real time: on a paused clock that auto-advances while real sockets are read, the latency channel's 2 s dial
+// window can pass during its TLS setup, and a probe's 250 ms deadline before its loopback pong arrives.
 #[tokio::test]
 async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
