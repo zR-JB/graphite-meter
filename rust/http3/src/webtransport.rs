@@ -588,6 +588,7 @@ impl Session {
         let charges = stream::charges(&shared.budget).ok_or(Error::Refused)?;
         let (send, recv) = shared.quic.open_bi().await?;
         let mut stream = RequestStream::new(shared, send, recv, shared.role.field_limit(), charges);
+        stream.recv.method = parts.method;
         stream.send.send_request(head).await?;
         let response = stream.recv.response().await?;
         if !response.status().is_success() {

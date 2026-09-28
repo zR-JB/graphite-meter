@@ -48,7 +48,7 @@ impl RequestStream {
                 input: Bytes::new(),
                 shared: shared.clone(),
                 charge: recv_charge,
-                head: false,
+                method: http::Method::default(),
                 done: false,
             },
         }
@@ -90,8 +90,9 @@ pub struct RecvHalf {
     input: Bytes,
     shared: Arc<Shared>,
     charge: Charge,
-    /// A response to HEAD has no body.
-    pub(crate) head: bool,
+    /// The client's request method: a response to HEAD has no body, and a successful one to
+    /// CONNECT no length.
+    pub(crate) method: http::Method,
     /// FIN arrived, or the stream was stopped.
     done: bool,
 }
@@ -133,14 +134,19 @@ impl RecvHalf {
                     self.message = Message::new(self.shared.role.field_limit(), true);
                 }
                 Ok(response) => {
-                    // These never have content, whatever content-length says (RFC 9114 §4.1.2).
-                    let bodiless = self.head
-                        || matches!(
-                            response.message.status(),
-                            http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED
-                        );
-                    self.message
-                        .content_length(if bodiless { Some(0) } else { response.content_length });
+                    let status = response.message.status();
+                    // A client ignores content-length in a successful response to CONNECT (RFC 9110
+                    // §9.3.6), and these never have content, whatever it says (RFC 9114 §4.1.2).
+                    let length = if self.method == http::Method::CONNECT && status.is_success() {
+                        None
+                    } else if self.method == http::Method::HEAD
+                        || matches!(status, http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED)
+                    {
+                        Some(0)
+                    } else {
+                        response.content_length
+                    };
+                    self.message.content_length(length);
                     return Ok(response.message);
                 }
                 Err(invalid) => return Err(self.abort(invalid_code(invalid))),

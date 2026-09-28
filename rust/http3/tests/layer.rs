@@ -931,6 +931,31 @@ fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
     )
 }
 
+/// A client ignores content-length in a successful response to CONNECT (RFC 9110 §9.3.6), so the
+/// session's capsules follow one that says 0.
+#[tokio::test]
+async fn a_successful_connect_ignores_its_content_length() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    // A raw server whose SETTINGS allow WebTransport as Go's do.
+    let go_settings = settings(&[(0x08, 1), (0x33, 1), (0x2c7cf000, 1)]);
+    let _control = uni(&peers.server, &go_settings, false).await?;
+    let (driver, requests) = client(&peers);
+    let serving = async {
+        let (mut send, mut recv) = peers.server.accept_bi().await?;
+        first_frame(&mut recv).await?;
+        let head = frame(0x01, &section(&[(":status", "200"), ("content-length", "0")]));
+        send.write_all(&[head, close_capsule(7, "bye")].concat()).await?;
+        send.finish()?;
+        Ok::<_, TestError>((send, recv))
+    };
+    let (connected, served) = tokio::join!(Session::connect(&requests, connect_request()), serving);
+    let _streams = served?;
+    let (session, _) = connected?.expect("accepted");
+    assert_eq!(session.closed().await, Ok((7, "bye".into())));
+    drop(driver);
+    Ok(())
+}
+
 /// Whether STOP_SENDING has already arrived for a raw stream.
 async fn stopped_yet(send: &noq::SendStream) -> bool {
     for _ in 0..10 {

@@ -41,7 +41,7 @@ impl SendRequest {
         let charges = stream::charges(&self.0.budget).ok_or(Error::Refused)?;
         let (send, recv) = self.0.quic.open_bi().await?;
         let mut stream = RequestStream::new(&self.0, send, recv, Role::Client.field_limit(), charges);
-        stream.recv.head = parts.method == http::Method::HEAD;
+        stream.recv.method = parts.method;
         stream.send.send_request(head).await?;
         Ok(stream)
     }
