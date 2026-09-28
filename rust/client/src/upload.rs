@@ -9,7 +9,7 @@ use bytes::Bytes;
 use graphite_meter_core::{
     measurement::{ObservedUpload, ReceiverSnapshot},
     route::Route,
-    wire::{self, MAX_UPLOAD_COUNTER, UploadProgress},
+    wire::{self, MAX_TRANSFER_BYTES, MAX_UPLOAD_COUNTER, MAX_WEBTRANSPORT_STREAMS, UploadProgress},
 };
 use http::Method;
 use serde::Deserialize;
@@ -23,7 +23,6 @@ use std::{
 };
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
-const REQUEST_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LINE: usize = 64 * 1024;
@@ -75,7 +74,7 @@ impl Upload {
         lanes: usize,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        if lanes > 16 {
+        if lanes > MAX_WEBTRANSPORT_STREAMS {
             return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
         Self::start_inner(transport, lanes, cancel, true, Duration::ZERO).await
@@ -373,13 +372,13 @@ async fn send_lane(
         let started = Instant::now();
         let moved = Arc::new(AtomicBool::new(false));
         let body = futures_util::stream::unfold(
-            (block.clone(), REQUEST_BYTES, active.clone(), moved.clone()),
+            (block.clone(), MAX_TRANSFER_BYTES, active.clone(), moved.clone()),
             |(block, remaining, active, moved)| async move {
                 if remaining == 0 {
                     return None;
                 }
                 active.store(true, Ordering::Release);
-                if remaining < REQUEST_BYTES {
+                if remaining < MAX_TRANSFER_BYTES {
                     moved.store(true, Ordering::Relaxed);
                 }
                 let size = remaining.min(block.len() as u64) as usize;
@@ -394,7 +393,7 @@ async fn send_lane(
                 Route::Upload,
                 &[("id", id), ("lane", &lane)],
                 body,
-                REQUEST_BYTES,
+                MAX_TRANSFER_BYTES,
                 REQUEST_LIFETIME,
             )
             .await;
@@ -517,7 +516,7 @@ async fn send_wt_lane(
 ) -> Result<Infallible, Error> {
     loop {
         let mut stream = session.open_uni().await?;
-        let mut remaining = REQUEST_BYTES;
+        let mut remaining = MAX_TRANSFER_BYTES;
         while remaining > 0 {
             let size = remaining.min(block.len() as u64) as usize;
             stream.write_chunk(block.slice(..size)).await?;
