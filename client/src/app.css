@@ -895,6 +895,7 @@
     flex: 1 1 10rem;
     min-width: 0;
     overflow-wrap: anywhere;
+    text-wrap: pretty;
   }
   .kv dd .aside {
     margin-inline-start: var(--space-2);
