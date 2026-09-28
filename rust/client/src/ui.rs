@@ -575,7 +575,7 @@ fn popup(area: Rect, width: u16, height: u16) -> Rect {
         height,
     )
 }
-pub(crate) fn safe_text(value: &str, limit: usize) -> String {
+pub fn safe_text(value: &str, limit: usize) -> String {
     value
         .chars()
         .take(limit.min(MAX_TEXT))
