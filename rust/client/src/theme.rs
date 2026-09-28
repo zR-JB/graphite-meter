@@ -33,9 +33,12 @@ const QUERY: &[u8] = b"\x1b]11;?\x1b\\\x1b[c";
 #[cfg(unix)]
 const ANSWER_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// The terminal's answer to the TUI's query, so the report printed after it uses the same palette, as in Go.
+static ANSWER: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
 impl Theme {
     pub fn terminal() -> Self {
-        Self::background(None)
+        Self::background(ANSWER.get().copied())
     }
 
     /// The env decides first; otherwise the terminal's answer does. Call it in raw mode only.
@@ -57,6 +60,9 @@ impl Theme {
         };
         #[cfg(not(unix))]
         let answer = None; // Windows consoles would deliver the answer as key events.
+        if let Some(light) = answer {
+            let _ = ANSWER.set(light);
+        }
         Self::background(answer)
     }
 
@@ -294,6 +300,12 @@ fn rgb(color: &str) -> Option<[u8; 3]> {
 mod tests {
     use super::*;
     use std::{io::Write, time::Duration};
+
+    #[test]
+    fn the_report_after_the_tui_keeps_the_terminal_answer() {
+        let _ = ANSWER.set(true);
+        assert_eq!(Theme::terminal().ink, Theme::background(Some(true)).ink);
+    }
 
     #[test]
     fn backgrounds_read_light_or_dark_as_go_parses_them() {
