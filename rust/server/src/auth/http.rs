@@ -137,7 +137,7 @@ impl Service {
         {
             return Some(response(StatusCode::FORBIDDEN));
         }
-        let result = match (request.method(), path) {
+        let mut result = match (request.method(), path) {
             (&Method::GET, "/login") => self.login_page(request).await,
             (&Method::POST, "/auth/oidc/start") => self.oidc_start(authorized).await,
             (&Method::GET, "/auth/oidc/callback") => self.oidc_callback(authorized).await,
@@ -153,6 +153,26 @@ impl Service {
             (_, "/wt/session" | "/ws/session") => self.ticket(authorized),
             _ => error_response(StatusCode::NOT_FOUND),
         };
+        // As Go's http.Redirect, a GET's redirect also links its destination.
+        if result.status() == StatusCode::SEE_OTHER && request.method() == Method::GET {
+            let location = result.headers()[header::LOCATION].to_str().unwrap_or_default();
+            let mut link = String::with_capacity(location.len());
+            for character in location.chars() {
+                match character {
+                    '&' => link.push_str("&amp;"),
+                    '<' => link.push_str("&lt;"),
+                    '>' => link.push_str("&gt;"),
+                    '"' => link.push_str("&#34;"),
+                    '\'' => link.push_str("&#39;"),
+                    character => link.push(character),
+                }
+            }
+            *result.body_mut() = format!("<a href=\"{link}\">See Other</a>.\n\n").into();
+            result.headers_mut().insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            );
+        }
         Some(result)
     }
 
@@ -1074,6 +1094,10 @@ mod tests {
         )
         .await;
         assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        let location = response.headers()[header::LOCATION].to_str().unwrap();
+        assert_eq!(location, "/login?error=failed");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html; charset=utf-8");
+        assert_eq!(response.body(), "<a href=\"/login?error=failed\">See Other</a>.\n\n");
         let line = service.log.window(&mut [0; Counter::COUNT]).unwrap();
         assert!(line.contains("oidc-failure=1 group-denial=0 replay-expiry=1"), "{line}");
         assert!(!line.contains("private-"));
@@ -1207,6 +1231,7 @@ mod tests {
         )
         .await;
         assert_eq!(rejected.status(), StatusCode::SEE_OTHER);
+        assert!(rejected.body().is_empty() && !rejected.headers().contains_key(header::CONTENT_TYPE));
         let signed_in = call(
             &service,
             Method::POST,
