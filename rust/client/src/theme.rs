@@ -43,8 +43,18 @@ impl Theme {
         if plain() || preference().is_some() {
             return Self::terminal();
         }
+        // The answer arrives where crossterm reads keys: stdin, or the terminal device when it is redirected.
         #[cfg(unix)]
-        let answer = answer(std::io::stdin(), &mut std::io::stdout(), ANSWER_LIMIT).await;
+        let answer = {
+            use std::io::IsTerminal;
+            if std::io::stdin().is_terminal() {
+                answer(std::io::stdin(), &mut std::io::stdout(), ANSWER_LIMIT).await
+            } else if let Ok(terminal) = std::fs::File::open("/dev/tty") {
+                answer(&terminal, &mut std::io::stdout(), ANSWER_LIMIT).await
+            } else {
+                None
+            }
+        };
         #[cfg(not(unix))]
         let answer = None; // Windows consoles would deliver the answer as key events.
         Self::background(answer)

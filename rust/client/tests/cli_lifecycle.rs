@@ -262,6 +262,7 @@ keys = {'check-quit': [(b'Checking', b'q')],
         'run-abort': [(b'WebSocket', b'r'), (measuring, b'\x03\x03')],
         'confirmed-stop': [(b'WebSocket', b'r'), (measuring, b'\x1b'), (b'confirm', b'\x1b'), (b'Stopped', b'q')]}[mode]
 deadline = time.monotonic() + 8
+answered = False
 try:
     while time.monotonic() < deadline:
         if select.select([master], [], [], 0.2)[0]:
@@ -270,6 +271,10 @@ try:
             except OSError:
                 break
             output += data
+            # Answer the device-attributes query like a terminal, so the background query ends at once.
+            if not answered and b'\x1b[c' in output:
+                os.write(master, b'\x1b[?62c')
+                answered = True
             if step < len(keys) and keys[step][0] in output[mark:]:
                 os.write(master, keys[step][1])
                 step += 1
