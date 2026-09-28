@@ -34,6 +34,7 @@
     loadPersisted,
     savePersisted,
   } from "../state/persistence";
+  import { STAGES } from "../runner/schedule";
   import { authEnabled as pageAuthEnabled } from "../auth";
   const authEnabled = pageAuthEnabled();
   const status = handoff(
@@ -534,9 +535,19 @@
   id="console"
   {@attach observeWidth((width) => (consoleWidth = width))}
   data-phase={store.phase}
-  data-lit={store.isRunning ? store.phaseStage : undefined}
   style="--dock-left: {docks.left}px; --dock-right: {docks.right}px;"
 >
+  <!-- The room takes a little of the running stage's light, from above; History is read in plain light. -->
+  <div class="amb" aria-hidden="true">
+    {#each STAGES as stage (stage)}
+      <i
+        data-tone={stage}
+        class:lit={measurementOpen &&
+          store.isRunning &&
+          store.phaseStage === stage}
+      ></i>
+    {/each}
+  </div>
   <!-- Container queries move direct actions into More as the bar narrows. -->
   <header class="topbar" class:saving={store.savingResults}>
     <button
@@ -748,6 +759,8 @@
 <style>
   /* Dock columns stay 0 until a docked panel fills them via display: contents. */
   #console {
+    position: relative;
+    isolation: isolate;
     display: grid;
     grid-template-columns: var(--dock-left, 0px) minmax(0, 1fr) var(
         --dock-right,
@@ -761,34 +774,45 @@
       "leftdock stage   rightdock"
       "status   status  status";
     height: 100dvh;
-    /* The room takes a little of the running stage's light, from above. */
-    --amb: transparent;
+    /* The grain is zero-mean dither: it breaks gradients into noise without moving the page's level. */
     background:
       var(--grain),
-      radial-gradient(120% 70% at 20% -14%, var(--amb), transparent 62%),
       radial-gradient(
         140% 90% at 50% 125%,
         var(--canvas-deep),
         transparent 70%
       ),
       var(--canvas);
+    background-blend-mode: overlay, normal;
     color: var(--text);
     transition:
-      --amb 1100ms var(--ease-out),
       --dock-left var(--dur-sheet) var(--ease-out),
       --dock-right var(--dur-sheet) var(--ease-out);
   }
-  #console[data-lit="latency"] {
-    --amb: color-mix(in oklab, var(--phase-latency) 14%, transparent);
+  /* Each stage's light is its own layer, so a stage change cross-fades on the compositor. */
+  .amb {
+    position: relative;
+    z-index: -1;
+    grid-area: 1 / 2 / 3 / 3;
+    pointer-events: none;
   }
-  #console[data-lit="download"] {
-    --amb: color-mix(in oklab, var(--phase-download) 16%, transparent);
+  .amb > i {
+    --amb-mix: 14%;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      120% 70% at 20% -14%,
+      color-mix(in oklab, var(--tone) var(--amb-mix), transparent),
+      transparent 62%
+    );
+    opacity: 0;
+    transition: opacity 1100ms var(--ease-out);
   }
-  #console[data-lit="upload"] {
-    --amb: color-mix(in oklab, var(--phase-upload) 14%, transparent);
+  .amb > :is([data-tone="download"], [data-tone="bidirectional"]) {
+    --amb-mix: 16%;
   }
-  #console[data-lit="bidirectional"] {
-    --amb: color-mix(in oklab, var(--phase-bidirectional) 16%, transparent);
+  .amb > .lit {
+    opacity: 1;
   }
 
   .topbar {

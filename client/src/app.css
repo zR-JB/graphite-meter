@@ -90,21 +90,16 @@
     U+20B1-20B2, U+20B4-20B5, U+20B8-20BA, U+20BD, U+20BF;
 }
 
-/* The room's light glides between stages as a registered colour. */
-@property --amb {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: transparent;
-}
-/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping. */
+/* Docked sheets open and close by gliding their column, so the page makes room instead of jumping.
+   Only the shell reads them, so a glide never restyles what it contains. */
 @property --dock-left {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 @property --dock-right {
   syntax: "<length>";
-  inherits: true;
+  inherits: false;
   initial-value: 0px;
 }
 /* A stage's wash brightens while it runs and settles once measured. */
@@ -208,15 +203,17 @@
        for the terminal client (see DESIGN.md). */
   /* Dark fills stay above the levels where OLED pixels switch off and smear. */
   --canvas: light-dark(oklch(0.962 0.004 258), oklch(0.17 0.008 258));
-  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.125 0.008 258));
+  --canvas-deep: light-dark(oklch(0.93 0.006 258), oklch(0.15 0.008 258));
   --surface-1: light-dark(oklch(0.995 0.002 258), oklch(0.215 0.009 258));
   --surface-2: light-dark(oklch(0.975 0.003 258), oklch(0.25 0.01 258));
   --surface-inset: light-dark(oklch(0.948 0.005 258), oklch(0.15 0.008 258));
   /* What floats over the instrument: sheets, popovers and menus. */
+  --sheet-solid: light-dark(oklch(0.985 0.003 258), oklch(0.195 0.009 258));
   --sheet: light-dark(
     oklch(0.985 0.003 258 / 0.88),
     oklch(0.195 0.009 258 / 0.88)
   );
+  --sheet-blur: blur(28px) saturate(1.4);
 
   --border-subtle: light-dark(
     oklch(0.3 0.02 255 / 0.08),
@@ -267,11 +264,13 @@
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
 
   /* Material. Shadows are one ink whose depth differs per theme: a dark canvas
-     needs a denser shadow to read at all. The grain is a cached tile. */
+     needs a denser shadow to read at all. The grain is a cached tile of
+     mid-grey noise: blended with overlay it dithers gradients by about one
+     8-bit level without lifting or darkening the page. */
   --shade: light-dark(oklch(0.25 0.02 255), oklch(0.08 0.01 255));
   --edge-light: light-dark(oklch(1 0 0 / 0.8), oklch(1 0 0 / 0.075));
   --edge-highlight: rgb(255 255 255 / 0.22);
-  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 0 0 0 0 .035'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g' color-interpolation-filters='sRGB'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='.3 0 0 0 .35 .3 0 0 0 .35 .3 0 0 0 .35 0 0 0 0 1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
   --bg:
     var(--grain),
     radial-gradient(
@@ -307,7 +306,7 @@
 @media (color-gamut: p3) {
   :root {
     --phase-latency: light-dark(oklch(0.6 0.125 182), oklch(0.82 0.125 178));
-    --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.165 262));
+    --phase-download: light-dark(oklch(0.5 0.2 263), oklch(0.72 0.155 262));
     --phase-upload: light-dark(oklch(0.63 0.17 58), oklch(0.83 0.145 66));
     --phase-bidirectional: light-dark(
       oklch(0.47 0.19 352),
@@ -338,6 +337,14 @@
   :root {
     --glass: var(--surface-2);
     --glass-blur: none;
+    --sheet: var(--sheet-solid);
+    --sheet-blur: none;
+  }
+}
+/* Forced colours drop gradients but keep images; the grain would paint over the system canvas. */
+@media (forced-colors: active) {
+  :root {
+    --grain: none;
   }
 }
 
@@ -713,6 +720,13 @@
     color: var(--tone);
   }
 
+  /* A sticky head over the page repaints the page itself, so it never reads as a slab. */
+  .page-fill {
+    background: var(--grain), var(--canvas);
+    background-blend-mode: overlay;
+    background-attachment: fixed;
+  }
+
   .sheet {
     timeline-scope: --sheet;
   }
@@ -1058,6 +1072,7 @@
   }
   dialog.float.sheet {
     background: var(--bg);
+    background-blend-mode: overlay, normal;
   }
 
   .tooltip,

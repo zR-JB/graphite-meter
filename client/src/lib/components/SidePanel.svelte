@@ -198,8 +198,8 @@
     border: var(--hairline) solid var(--border-subtle);
     border-radius: var(--r-surface);
     background: var(--sheet);
-    -webkit-backdrop-filter: blur(28px) saturate(1.4);
-    backdrop-filter: blur(28px) saturate(1.4);
+    -webkit-backdrop-filter: var(--sheet-blur);
+    backdrop-filter: var(--sheet-blur);
     box-shadow: var(--elev-float);
     color: var(--text);
   }
@@ -215,6 +215,9 @@
     width: calc(var(--dock-w) - var(--space-3));
     height: auto;
     margin: 0 var(--space-3) var(--space-3) 0;
+    /* Docked, only the plain page lies behind it: a blur would cost every frame and change nothing. */
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
     transform: var(--closed);
     transition:
       transform var(--dur-sheet) var(--ease-out),
@@ -346,7 +349,7 @@
       position: sticky;
       z-index: 1;
       top: 0;
-      background: var(--canvas);
+      background: var(--sheet-solid);
     }
     .panel-layer:not(.docked) .panel-body {
       flex: none;

@@ -196,7 +196,7 @@
           <path class="line" class:second={index > 0} d={line} />
         {/each}
         {#each graph.heads as dot, index (index)}
-          <circle class="head" cx={dot.x} cy={dot.y} r="3" />
+          <circle class="head" cx={dot.x} cy={dot.y} r="3.5" />
         {/each}
         {#if hover}<line
             class="cursor"
@@ -274,6 +274,12 @@
     inset: 0;
     overflow: visible;
   }
+  /* Hairlines snap to device pixels instead of splitting across two rows. */
+  .axis,
+  .baseline,
+  .cursor {
+    shape-rendering: crispEdges;
+  }
   .axis {
     stroke: var(--border);
     stroke-width: 1;
@@ -290,8 +296,6 @@
   }
   .head {
     fill: var(--tone);
-    stroke: var(--canvas);
-    stroke-width: 2;
   }
   .baseline {
     stroke: color-mix(in oklab, var(--phase-latency) 55%, transparent);

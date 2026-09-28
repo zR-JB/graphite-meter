@@ -569,7 +569,7 @@
     <div class="workspace-body" class:has-detail={selectedId !== null}>
       <div class="history-list" bind:this={list}>
         <div class="history-table" style:--metric-columns={columns.length}>
-          <div class="column-head" role="group" aria-label="Sort by">
+          <div class="column-head page-fill" role="group" aria-label="Sort by">
             {#each ["date" as const, ...columns] as column (column)}
               <button
                 type="button"
@@ -855,8 +855,6 @@
     z-index: 1;
     margin: 0 calc(-1 * var(--panel-pad)) calc(-1 * var(--space-3));
     padding: var(--space-3) var(--panel-pad) 0;
-    background: var(--bg);
-    background-attachment: fixed;
   }
   .column-head button {
     position: relative;
