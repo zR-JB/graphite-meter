@@ -10,7 +10,11 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
     let proxy = Proxy::new(
         "http://proxy.example:3128",
         "http://proxy.example:3128",
-        "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 192.0.2.7, [2001:db8::1]:443, bad:port",
+        concat!(
+            "corp.example, .sub.example, *.wild.example, pinned.example:8443, 10.0.0.0/8, 192.0.2.7, ",
+            "[2001:db8::1]:443, bad:port, ::ffff:198.51.100.1, ::ffff:203.0.113.0/120, [2001:db8::2], ",
+            "[2001:db8::3]:",
+        ),
     );
     for (raw, bypassed) in [
         ("https://corp.example", true),
@@ -30,6 +34,15 @@ fn bypass_follows_go_no_proxy_rules_and_never_proxies_loopback() {
         ("https://127.0.0.2", true),
         ("https://[::1]", true),
         ("https://meter.example", false),
+        // Go matches an IPv4-mapped address as IPv4, a target's and an entry's alike.
+        ("http://[::ffff:127.0.0.1]", true),
+        ("https://[::ffff:192.0.2.7]", true),
+        ("http://[::ffff:10.1.2.3]", true),
+        ("https://198.51.100.1", true),
+        ("https://203.0.113.9", true),
+        // To Go, a bracketed entry without its port is a host name no target matches.
+        ("https://[2001:db8::2]", false),
+        ("https://[2001:db8::3]:8443", true),
     ] {
         assert_eq!(proxy.bypassed(&origin(raw)), bypassed, "{raw}");
     }
@@ -109,6 +122,15 @@ fn environment_proxies_follow_go_variables() {
         "HTTP_PROXY is not a usable proxy: a CGI request's Proxy header can set it"
     );
     assert_eq!(via(&cgi, &https).as_deref(), Some("http://proxy.example:3128"));
+    // Go refuses it before it looks at NO_PROXY or loopback.
+    let listed = from(&[
+        ("REQUEST_METHOD", "GET"),
+        ("HTTP_PROXY", "http://attacker.example"),
+        ("NO_PROXY", "meter.example"),
+    ]);
+    for target in [&http, &origin("http://127.0.0.1:8080")] {
+        assert!(listed.route(target).is_some_and(Result::is_err), "{}", target.key());
+    }
     let unusable = from(&[("https_proxy", "ftp://proxy.example")]);
     let refused = unusable.route(&https).unwrap().as_ref().err().unwrap();
     assert_eq!(

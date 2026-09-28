@@ -212,6 +212,8 @@ pub struct Proxy {
     http: Option<Result<Upstream, UnusableProxy>>,
     https: Option<Result<Upstream, UnusableProxy>>,
     bypass: Vec<Bypass>,
+    /// Running under CGI, where HTTP_PROXY fails every cleartext request.
+    cgi: bool,
     tls: Option<TlsConnector>,
 }
 
@@ -349,7 +351,8 @@ impl Proxy {
 
     /// Go's ProxyFromEnvironment: HTTP_PROXY, HTTPS_PROXY and NO_PROXY, each before its lowercase
     /// spelling, and never ALL_PROXY. Under CGI, where a request's Proxy header becomes
-    /// HTTP_PROXY, cleartext requests refuse it as Go's do; HTTPS_PROXY still applies.
+    /// HTTP_PROXY, every cleartext request refuses it as Go's do, before NO_PROXY or loopback
+    /// apply; HTTPS_PROXY still applies.
     pub fn from_variables(variable: impl Fn(&str) -> Option<String>) -> Self {
         let read = |names: [&'static str; 2]| {
             names.into_iter().find_map(|name| {
@@ -372,6 +375,7 @@ impl Proxy {
                 variable: name,
                 reason: "a CGI request's Proxy header can set it",
             }));
+            proxy.cgi = true;
         }
         proxy
     }
@@ -389,23 +393,24 @@ impl Proxy {
             http: upstream(http),
             https: upstream(https),
             bypass: no_proxy.split(',').filter_map(bypass).collect(),
+            cgi: false,
             tls: None,
         }
     }
 
     fn route(&self, target: &Origin) -> Option<&Result<Upstream, UnusableProxy>> {
-        let upstream = if target.scheme == "https" {
-            &self.https
-        } else {
-            &self.http
-        };
-        upstream.as_ref().filter(|_| !self.bypassed(target))
+        if target.scheme == "https" {
+            return self.https.as_ref().filter(|_| !self.bypassed(target));
+        }
+        // Go refuses a CGI request's HTTP_PROXY before it looks at NO_PROXY or loopback.
+        self.http.as_ref().filter(|_| self.cgi || !self.bypassed(target))
     }
 
     fn bypassed(&self, target: &Origin) -> bool {
         let host = target.host.to_ascii_lowercase();
         let port = target.port_number();
-        let ip = host.parse::<IpAddr>().ok();
+        // Go's net.IP matches an IPv4-mapped address as IPv4.
+        let ip = host.parse::<IpAddr>().ok().map(|ip| ip.to_canonical());
         host == "localhost"
             || ip.is_some_and(|ip| ip.is_loopback())
             || self.bypass.iter().any(|rule| match (rule, ip) {
@@ -481,27 +486,29 @@ fn upstream(raw: &str) -> Result<Upstream, &'static str> {
     })
 }
 
+/// One NO_PROXY entry as Go reads it; one Go keeps as a host name that no target matches is left out.
 fn bypass(entry: &str) -> Option<Bypass> {
     let entry = entry.trim().to_ascii_lowercase();
     if entry == "*" {
         return Some(Bypass::All);
     }
     if let Ok(network) = entry.parse() {
-        return Some(Bypass::Network(network));
+        return Some(Bypass::Network(unmapped(network)));
     }
-    if let Ok(address) = entry.parse() {
-        return Some(Bypass::Address(address, None));
+    if let Ok(address) = entry.parse::<IpAddr>() {
+        return Some(Bypass::Address(address.to_canonical(), None));
     }
     let (host, port) = match entry.strip_prefix('[') {
-        Some(bracketed) => bracketed.split_once(']')?,
+        // As Go's SplitHostPort has it, a bracketed host needs its port, which may be empty.
+        Some(bracketed) => bracketed.split_once("]:")?,
         None => entry.split_once(':').unwrap_or((&entry, "")),
     };
-    let port = match port.strip_prefix(':').unwrap_or(port) {
+    let port = match port {
         "" => None,
         port => Some(port.parse().ok()?),
     };
-    if let Ok(address) = host.parse() {
-        return Some(Bypass::Address(address, port));
+    if let Ok(address) = host.parse::<IpAddr>() {
+        return Some(Bypass::Address(address.to_canonical(), port));
     }
     let host = host.strip_prefix('*').unwrap_or(host);
     let suffix = if host.starts_with('.') {
@@ -514,6 +521,17 @@ fn bypass(entry: &str) -> Option<Bypass> {
         suffix,
         port,
     })
+}
+
+/// Go's net.IPNet holds an IPv4-mapped network as the IPv4 network it maps.
+fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
+    let ipnet::IpNet::V6(v6) = network else {
+        return network;
+    };
+    let mapped = v6.network().to_ipv4_mapped().zip(v6.prefix_len().checked_sub(96));
+    mapped
+        .and_then(|(v4, prefix)| ipnet::Ipv4Net::new(v4, prefix).ok())
+        .map_or(network, ipnet::IpNet::V4)
 }
 
 /// Verified TLS to an HTTPS proxy, built once when the first connection needs it.

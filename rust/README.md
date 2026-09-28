@@ -168,9 +168,10 @@ refusing the whole catalogue; selecting it names its fault. `-url` still takes
 ASCII hosts. OIDC issuer paths must be ASCII; percent-encode other
 characters. HTTP and WebSocket clients read `HTTP_PROXY`, `HTTPS_PROXY` and
 `NO_PROXY` as Go does, never `ALL_PROXY`: loopback bypasses proxies, NO_PROXY
-supports ports, a leading dot matches subdomains only, and under CGI cleartext
-requests refuse `HTTP_PROXY`. A value the client cannot use fails each request
-it would carry, naming the variable. Cleartext HTTP uses absolute-form
+supports ports, a leading dot matches subdomains only, an IPv4-mapped address
+matches as IPv4, and under CGI a set `HTTP_PROXY` fails every cleartext
+request, loopback and NO_PROXY hosts included. A value the client cannot use
+fails each request it would carry, naming the variable. Cleartext HTTP uses absolute-form
 requests; HTTPS uses CONNECT. As in Go, `socks5://` and `socks5h://` proxies
 both pass host names to the proxy and log in with the URL's user and password.
 
