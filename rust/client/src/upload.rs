@@ -90,10 +90,16 @@ impl Upload {
         struct Minted {
             upload_id: String,
         }
-        let control = if !webtransport && transport.is_http3() {
-            transport.isolated_connection().await?
+        // Lanes and control requests never share a connection, as Go gives upload lanes a
+        // transport of their own: HTTP/3 control takes a new QUIC connection, and HTTP/1.1 and
+        // HTTP/2 lanes take connections apart from control requests and download reads.
+        let (transport, control) = if webtransport {
+            (transport.clone(), transport)
+        } else if transport.is_http3() {
+            let control = transport.isolated_connection().await?;
+            (transport, control)
         } else {
-            transport.clone()
+            (Arc::new(transport.for_upload_lanes()), transport)
         };
         let minted: Minted = tokio::select! {
             biased;
@@ -729,6 +735,127 @@ mod tests {
         assert_eq!((snapshot.bytes, snapshot.nanos), (123, 456));
         assert!(state_sender.borrow().latest.is_none());
         assert!(retried - server.await?? >= CHECKPOINT_RETRY);
+        Ok(())
+    }
+
+    /// A connection that stops reading once armed, if it carried an upload lane.
+    struct Gate {
+        inner: tokio::net::TcpStream,
+        lanes: Arc<AtomicBool>,
+        armed: Arc<AtomicBool>,
+    }
+    impl tokio::io::AsyncRead for Gate {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+            buffer: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.armed.load(Ordering::SeqCst) && self.lanes.load(Ordering::SeqCst) {
+                return std::task::Poll::Pending;
+            }
+            std::pin::Pin::new(&mut self.inner).poll_read(context, buffer)
+        }
+    }
+    impl tokio::io::AsyncWrite for Gate {
+        fn poll_write(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+            data: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::pin::Pin::new(&mut self.inner).poll_write(context, data)
+        }
+        fn poll_flush(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.inner).poll_flush(context)
+        }
+        fn poll_shutdown(
+            mut self: std::pin::Pin<&mut Self>,
+            context: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::pin::Pin::new(&mut self.inner).poll_shutdown(context)
+        }
+    }
+
+    /// Upload lanes keep their own HTTP/2 connection, as Go's upload transport: a checkpoint
+    /// never queues behind their unsent bodies, here a peer that stops reading the lanes.
+    #[tokio::test]
+    async fn checkpoints_never_queue_behind_http2_upload_lanes() -> Result<(), Error> {
+        use http_body_util::{BodyExt, Full, StreamBody, combinators::BoxBody};
+        use hyper::{body::Frame, service::service_fn};
+        use hyper_util::rt::{TokioExecutor, TokioIo};
+        type Payload = BoxBody<Bytes, Infallible>;
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let armed = Arc::new(AtomicBool::new(false));
+        let arm = armed.clone();
+        let server = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let lanes = Arc::new(AtomicBool::new(false));
+                let io = Gate {
+                    inner: socket,
+                    lanes: lanes.clone(),
+                    armed: arm.clone(),
+                };
+                let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
+                    let lanes = lanes.clone();
+                    async move {
+                        let json =
+                            |body: &'static str| -> Payload { Full::new(Bytes::from_static(body.as_bytes())).boxed() };
+                        let body = match request.uri().path() {
+                            "/upload/session" => json(r#"{"uploadId":"fixture"}"#),
+                            "/upload/checkpoint" => json(r#"{"bytes":1,"nanos":1}"#),
+                            "/upload/progress" => {
+                                let events = Bytes::from_static(
+                                    b"{\"type\":\"ready\"}\n{\"type\":\"progress\",\"bytes\":1,\"nanos\":1}\n",
+                                );
+                                let chunks = futures_util::StreamExt::chain(
+                                    futures_util::stream::once(async move { Ok(Frame::data(events)) }),
+                                    futures_util::stream::pending(),
+                                );
+                                StreamBody::new(chunks).boxed()
+                            }
+                            "/upload" => {
+                                lanes.store(true, Ordering::SeqCst);
+                                std::future::pending::<()>().await;
+                                unreachable!()
+                            }
+                            _ => json("{}"),
+                        };
+                        Ok::<_, Infallible>(http::Response::new(body))
+                    }
+                });
+                tokio::spawn(
+                    hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                        .serve_connection(TokioIo::new(io), service),
+                );
+            }
+        });
+        let transport = Arc::new(
+            Transport::connect(
+                crate::net::Http::new(false)?,
+                &origin,
+                graphite_meter_core::discovery::Protocol::Http2,
+                false,
+            )
+            .await?,
+        );
+        let (_stop, cancel) = watch::channel(false);
+        let upload = tokio::time::timeout(
+            Duration::from_secs(5),
+            Upload::start(transport, 2, Duration::ZERO, cancel),
+        )
+        .await??;
+        armed.store(true, Ordering::SeqCst);
+        let checkpoint = upload
+            .checkpoint(graphite_meter_core::measurement::CHECKPOINT_BUDGET)
+            .await;
+        drop(upload);
+        server.abort();
+        let snapshot = checkpoint?;
+        assert_eq!((snapshot.bytes, snapshot.nanos), (1, 1));
         Ok(())
     }
 

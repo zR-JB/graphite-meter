@@ -132,6 +132,17 @@ impl Transport {
         ))
     }
 
+    /// This HTTP/1.1 or HTTP/2 target for upload lanes, over connections of their own.
+    pub(crate) fn for_upload_lanes(&self) -> Self {
+        Self {
+            http: self.http.for_upload_lanes(),
+            origin: self.origin.clone(),
+            protocol: self.protocol,
+            insecure: self.insecure,
+            h3: None,
+        }
+    }
+
     pub(crate) fn retryable_transfer_error(&self, error: &Error) -> bool {
         if let Some(http) = error.downcast_ref::<crate::failure::HttpFailure>() {
             return http.retryable();

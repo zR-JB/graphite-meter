@@ -58,7 +58,16 @@ struct Connections {
     pools: Mutex<HashMap<Key, Arc<Mutex<Pool>>>>,
     maintenance: OnceLock<tokio::task::JoinHandle<()>>,
 }
-type Key = (String, Protocol);
+type Key = (String, Protocol, Lanes);
+
+/// Upload lanes keep connections of their own, as Go's upload transport does, so control requests
+/// and download reads never queue behind unsent upload bodies.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Lanes {
+    #[default]
+    Shared,
+    Upload,
+}
 
 /// Held only to pick or return a connection, never across a dial or a request.
 struct Pool {
@@ -209,7 +218,7 @@ impl Connections {
         }
     }
 
-    async fn send(self: &Arc<Self>, mut request: Request<Body>, protocol: Protocol) -> Result<Response> {
+    async fn send(self: &Arc<Self>, mut request: Request<Body>, protocol: Protocol, lanes: Lanes) -> Result<Response> {
         self.maintenance.get_or_init(|| {
             let owner = Arc::downgrade(self);
             let start = tokio::time::Instant::now() + POOL_IDLE_TIMEOUT;
@@ -234,7 +243,7 @@ impl Connections {
             .pools
             .lock()
             .expect("connections poisoned")
-            .entry((origin.clone(), protocol))
+            .entry((origin.clone(), protocol, lanes))
             .or_default()
             .clone();
         let sender = tokio::time::timeout(CONTROL_TIMEOUT, self.sender(&origin, protocol, &pool)).await??;
@@ -278,6 +287,7 @@ impl Connections {
 #[derive(Clone)]
 pub struct Http {
     connections: Arc<Connections>,
+    lanes: Lanes,
     insecure: bool,
     grants: Arc<Mutex<HashMap<String, Grant>>>,
     scope: Option<Arc<GrantScope>>,
@@ -366,10 +376,18 @@ impl Http {
         }
         Ok(Self {
             connections: Arc::new(Connections::new(insecure, Proxy::from_env())?),
+            lanes: Lanes::Shared,
             insecure,
             grants: Arc::new(Mutex::new(HashMap::new())),
             scope: None,
         })
+    }
+    /// This client for upload lanes: the same credentials, over connections of their own.
+    pub(crate) fn for_upload_lanes(&self) -> Self {
+        Self {
+            lanes: Lanes::Upload,
+            ..self.clone()
+        }
     }
     pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
@@ -408,7 +426,7 @@ impl Http {
             return Err("HTTP/3 requires the native QUIC transport".into());
         }
         let target = request.uri().to_string();
-        let response = self.connections.send(request, protocol).await?;
+        let response = self.connections.send(request, protocol, self.lanes).await?;
         self.check_status(&target, response.status(), response.headers())?;
         Ok(response)
     }
@@ -587,12 +605,16 @@ impl Http {
         let request = Request::post(&pending.token_url)
             .header(CONTENT_TYPE, "application/json")
             .body(full(body))?;
-        let response =
-            match tokio::time::timeout(CONTROL_TIMEOUT, self.connections.send(request, Protocol::Negotiated)).await {
-                Ok(Ok(response)) => response,
-                Ok(Err(error)) => return Ok(Approval::Unreachable(error)),
-                Err(elapsed) => return Ok(Approval::Unreachable(elapsed.into())),
-            };
+        let response = match tokio::time::timeout(
+            CONTROL_TIMEOUT,
+            self.connections.send(request, Protocol::Negotiated, Lanes::Shared),
+        )
+        .await
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(error)) => return Ok(Approval::Unreachable(error)),
+            Err(elapsed) => return Ok(Approval::Unreachable(elapsed.into())),
+        };
         let status = response.status();
         let data = bounded_body(response).await;
         if status == StatusCode::ACCEPTED {
