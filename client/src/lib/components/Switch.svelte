@@ -26,7 +26,7 @@
   }
 </script>
 
-<label class="switch" class:disabled>
+<label class="switch link-row" class:disabled>
   <input
     class="sr-only"
     type="checkbox"
@@ -36,8 +36,8 @@
     onchange={handleChange}
   />
   <span class="track" aria-hidden="true"><span class="knob"></span></span>
-  {#if tooltipText}<span class="sr-only" id={describedBy}>{tooltipText}</span
-    >{/if}
+  <!-- Hidden, so the label alone names the switch; the tip is its description. -->
+  {#if tooltipText}<span hidden id={describedBy}>{tooltipText}</span>{/if}
   {#if label}<span
       class="label"
       {@attach tooltipText ? tooltip(() => tooltipText) : null}>{label}</span
@@ -45,7 +45,8 @@
 </label>
 
 <style>
-  /* Contains the hidden checkbox so focusing it cannot scroll the panel. */
+  /* A plate row with the link row's wash and ring; it contains the hidden
+     checkbox so focusing it cannot scroll the panel. */
   .switch {
     position: relative;
     display: flex;
@@ -54,8 +55,6 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
-    min-height: var(--control-h);
-    border-radius: var(--r-well);
     user-select: none;
   }
   @media (pointer: coarse) {
@@ -65,39 +64,52 @@
   }
   .switch.disabled {
     cursor: not-allowed;
-    opacity: 0.5;
   }
-  /* On fills the track with ink, like a checked box; off is an empty track. */
+  /* On fills the track with ink, like a checked box; off is an empty track with the box's edge. */
   .track {
     position: relative;
     flex: none;
     width: 38px;
     height: 22px;
+    border: var(--check-edge);
     border-radius: var(--r-full);
     background: var(--track);
-    box-shadow: inset 0 0 0 1px var(--border-subtle);
     transition: var(--transition-control);
   }
+  /* Centred on the track whatever its edge rounds to, 3 px from the end it rests at. */
   .knob {
     position: absolute;
-    top: 3px;
-    left: 3px;
+    top: 50%;
+    left: calc(50% - 16px);
     width: 16px;
     height: 16px;
     border-radius: var(--r-full);
     background: var(--surface-1);
     box-shadow: 0 1px 3px color-mix(in oklab, var(--shade) 40%, transparent);
+    translate: 0 -50%;
     transition:
       translate var(--dur-graph) var(--ease-out),
       background-color var(--dur-hover) var(--ease-out);
   }
   input:checked + .track {
+    border-color: var(--brand);
     background: var(--brand);
-    box-shadow: none;
   }
   input:checked + .track .knob {
-    translate: 16px 0;
+    translate: 16px -50%;
     background: var(--text-inverse);
+  }
+  /* Forced colours keep the edge but drop fills; system colours draw the knob and the on state. */
+  @media (forced-colors: active) {
+    .knob {
+      background: CanvasText;
+    }
+    input:checked + .track {
+      background: Highlight;
+    }
+    input:checked + .track .knob {
+      background: HighlightText;
+    }
   }
   .label {
     flex: 0 1 auto;

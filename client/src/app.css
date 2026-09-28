@@ -261,6 +261,8 @@
     oklch(0.48 0.014 255 / 0.7),
     oklch(0.7 0.014 255 / 0.62)
   );
+  /* An empty check box and an off switch share one edge. */
+  --check-edge: 1.5px solid var(--field-edge);
   --track: color-mix(in oklab, var(--text) 8%, transparent);
   --hover-wash: color-mix(in oklab, var(--text) 6%, transparent);
   --selected-wash: color-mix(in oklab, var(--text) 10%, transparent);
@@ -668,7 +670,10 @@
     background: var(--hover-wash) padding-box;
   }
   @media (hover: hover) {
-    :is(.btn-quiet, .head-actions .btn):hover:not(:disabled) {
+    :is(.btn-quiet, .head-actions .btn):hover:not(
+        :disabled,
+        [aria-disabled="true"]
+      ) {
       --btn-line: transparent;
       background: var(--hover-wash) padding-box;
     }
@@ -678,9 +683,6 @@
       --hit-pad: 6px;
     }
     .menu > button {
-      min-height: var(--hit);
-    }
-    .segmented {
       min-height: var(--hit);
     }
   }
@@ -715,6 +717,20 @@
     height: 0.5em;
     vertical-align: middle;
     box-shadow: none;
+  }
+  /* A stage or phase named in a row leads with a dot in its tone (data-tone). */
+  .stage-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+  .stage-name::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: var(--r-full);
+    background: var(--tone);
+    forced-color-adjust: none;
   }
 
   .notice {
@@ -864,6 +880,13 @@
   .kv:not(.choices) > * + * {
     border-top: var(--hairline) solid var(--border-subtle);
   }
+  /* A locked row dims as one, like a disabled button; a select's own fade would compound it. */
+  .kv:not(.choices) > label:has(:disabled) {
+    opacity: 0.5;
+  }
+  .kv:not(.choices) > label select:disabled {
+    opacity: 1;
+  }
   .kv dt {
     flex: 0 0 var(--kv-label);
     color: var(--text-soft);
@@ -938,14 +961,15 @@
     transition: background-color var(--dur-hover) var(--ease-out);
   }
   @media (hover: hover) {
-    .link-row:hover::before {
+    .link-row:hover:not(:has(:disabled))::before {
       background-color: var(--hover-wash);
     }
   }
-  .link-row:focus-visible {
+  /* The row or its own control (a switch's checkbox) may hold focus; the ring is the row's. */
+  .link-row:is(:focus-visible, :has(> :focus-visible)) {
     outline: none;
   }
-  .link-row:focus-visible::before {
+  .link-row:is(:focus-visible, :has(> :focus-visible))::before {
     outline: var(--focus-ring);
   }
   .link-row :where(svg) {
@@ -961,7 +985,7 @@
     place-content: center;
     width: var(--check);
     height: var(--check);
-    border: 1.5px solid var(--field-edge);
+    border: var(--check-edge);
     border-radius: var(--r-well);
     background: var(--surface-1);
     color: var(--brand-strong);
@@ -1003,7 +1027,7 @@
     gap: 6px;
     min-width: 0;
   }
-  .group > :is(h3, .group-head),
+  .group > :is(h3, .group-head, .hint),
   .list-label {
     padding-inline: var(--row-inset);
   }
@@ -1023,6 +1047,10 @@
     color: var(--text);
     font: var(--role-title);
   }
+  /* A head's line is 20 px with or without an action, so every plate sits as far below its head. */
+  :is(.group, .group-head) > h3 {
+    line-height: 20px;
+  }
   .list-label {
     color: var(--text-muted);
     font: var(--role-label);
@@ -1035,6 +1063,12 @@
     padding: 2px;
     border-radius: var(--r-chrome);
     background: var(--track);
+  }
+  /* After the base rule, which would otherwise keep it at control height. */
+  @media (pointer: coarse) {
+    .segmented {
+      min-height: var(--hit);
+    }
   }
   /* Segments share spare width but never shrink below their word. */
   .segmented > button {
@@ -1405,6 +1439,16 @@
   :root [data-tip]:is(:hover, :focus-visible) {
     color: var(--text);
     text-decoration-color: currentColor;
+  }
+}
+
+/* Forced colours drop the selected wash; the system's selection colours mark a pressed
+   segment, as set (no text backplate). Unlayered to outrank the selected state. */
+@media (forced-colors: active) {
+  .segmented > button[aria-pressed="true"] {
+    forced-color-adjust: none;
+    background-color: SelectedItem;
+    color: SelectedItemText;
   }
 }
 

@@ -18,7 +18,7 @@ const checked = (locator: Locator) =>
 test("reset settings confirms, preserves on cancel and restores defaults", async (page) => {
   await open(page);
   const settings = await openSettings(page);
-  await settings.getByRole("button", { name: "custom", exact: true }).click();
+  await settings.getByRole("button", { name: "Custom", exact: true }).click();
   const warmup = settings.getByRole("spinbutton", { name: "Warmup time" });
   await warmup.fill("1.2");
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
@@ -45,7 +45,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
       "aria-pressed",
       "true",
     );
-  await pressed("medium");
+  await pressed("Medium");
   await pressed("Bits");
   await pressed("Decimal");
   expect(await checked(wire)).toBe(true);

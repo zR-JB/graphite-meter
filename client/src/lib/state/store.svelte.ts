@@ -231,15 +231,15 @@ class AppStore {
       this.selectedServers.flatMap((id) => this.servers.get(id) ?? []),
     ),
   );
-  /** A planned stage longer than a selected server admits; the start names the server rather than dropping it. */
+  /** Planned stages longer than a selected server admits, all named; the start names the server rather than dropping it. */
   stageLimitError = $derived.by((): string => {
     const { ms, server } = this.stageLimit;
-    const stage = STAGES.find(
+    const stages = STAGES.filter(
       (key) =>
         planned(this.config, key) && this.config.duration[`${key}Ms`] > ms,
-    );
-    return stage && server
-      ? `${server} allows stages up to ${fmtDuration(ms, 0)}; shorten the ${STAGE[stage].label.toLowerCase()} stage.`
+    ).map((key) => STAGE[key].label);
+    return stages.length && server
+      ? `${server} allows stages up to ${fmtDuration(ms, 0)}; shorten the ${new Intl.ListFormat("en-GB").format(stages)} stage${stages.length > 1 ? "s" : ""}.`
       : "";
   });
   /** Why the stream settings cannot fit the verified selection; Settings shows it by the setting. */
