@@ -34,17 +34,24 @@ pub fn render(snapshot: &Snapshot, width: usize) -> Option<String> {
     Some(text.lines().map(str::trim_end).collect::<Vec<_>>().join("\n"))
 }
 
-pub fn results(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> (Vec<String>, Vec<String>) {
+pub fn results(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> (Vec<Vec<String>>, Vec<String>) {
     let report = Report::new(snapshot, shown, width);
     if !report.measured() {
         return Default::default();
     }
     let (latency, failures, _) = report.latency("Latency".to_owned());
-    let grids = [report.rates(), latency];
-    (
-        grids.iter().flat_map(|grid| grid.lines()).map(str::to_owned).collect(),
-        failures,
-    )
+    let grids = [report.rates(), latency]
+        .iter()
+        .filter(|grid| !grid.is_empty())
+        .map(|grid| grid.lines().map(str::to_owned).collect())
+        .collect();
+    (grids, failures)
+}
+
+pub fn label_stage(label: &str) -> Option<Stage> {
+    [Stage::Latency, Stage::Download, Stage::Upload, Stage::Bidirectional]
+        .into_iter()
+        .find(|stage| label == compact_stage(*stage) || label == compact_population(*stage))
 }
 
 pub fn details(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> String {

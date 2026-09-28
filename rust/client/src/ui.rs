@@ -566,9 +566,10 @@ fn panel(title: &str, theme: Theme) -> Block<'_> {
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(Style::new().fg(theme.border))
+        .style(Style::new().fg(theme.text))
         .title(Span::styled(
             title,
-            Style::new().fg(theme.brand_strong).add_modifier(Modifier::BOLD),
+            Style::new().fg(theme.ink).add_modifier(Modifier::BOLD),
         ))
 }
 fn popup(area: Rect, width: u16, height: u16) -> Rect {

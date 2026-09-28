@@ -17,8 +17,8 @@ impl Ui {
             horizontal: 1,
             vertical: 1,
         });
-        let help_lines = if self.help {
-            [
+        let help: &[&str] = if self.help {
+            &[
                 "Tab/Shift-Tab focus · arrows change",
                 "Enter edit/run · Space stage",
                 "Esc close/stop · r run · v recheck",
@@ -26,16 +26,13 @@ impl Ui {
                 "d Details · l latency · o sign-in",
                 "q quit · Ctrl-C stop · ? keys",
             ]
-            .into_iter()
-            .map(Line::from)
-            .collect::<Vec<_>>()
         } else {
-            Vec::new()
+            &[]
         };
         let regions = Layout::vertical([
             Constraint::Length(2),
             Constraint::Min(if self.help { 1 } else { 4 }),
-            Constraint::Length(if self.help { 1 + help_lines.len() as u16 } else { 2 }),
+            Constraint::Length(if self.help { 1 + help.len() as u16 } else { 2 }),
         ])
         .split(area);
         let status = crate::report::status(&self.snapshot);
@@ -43,30 +40,20 @@ impl Ui {
         let title = " Graphite Meter ";
         let status_pill = format!(" {status} ");
         let spacer = usize::from(regions[0].width).saturating_sub(title.width() + status_pill.width());
-        let status_background = match self.snapshot.phase {
-            Phase::Complete => self.theme.success,
-            Phase::Cancelled | Phase::Partial => self.theme.warning,
-            Phase::Failed | Phase::Incomplete => self.theme.error,
-            _ => self.theme.brand_strong,
+        let status_background = match (self.snapshot.phase, self.snapshot.stage) {
+            (Phase::Complete, _) => self.theme.ok,
+            (Phase::Partial | Phase::Incomplete | Phase::Cancelled, _) => self.theme.warn,
+            (Phase::Failed, _) => self.theme.err,
+            (Phase::Measuring, Some(stage)) => self.theme.stage(stage),
+            _ => self.theme.muted,
         };
+        let badge = Style::new().fg(self.theme.inverse).add_modifier(Modifier::BOLD);
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![
-                    Span::styled(
-                        title,
-                        Style::new()
-                            .fg(self.theme.inverse)
-                            .bg(self.theme.brand)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(title, badge.bg(self.theme.ink)),
                     Span::raw(" ".repeat(spacer)),
-                    Span::styled(
-                        status_pill,
-                        Style::new()
-                            .fg(self.theme.inverse)
-                            .bg(status_background)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(status_pill, badge.bg(status_background)),
                 ]),
                 Line::styled(
                     safe_text_width(
@@ -83,7 +70,7 @@ impl Ui {
                         },
                         usize::from(regions[0].width),
                     ),
-                    Style::new().fg(self.theme.muted),
+                    Style::new().fg(self.theme.ink),
                 ),
             ]),
             regions[0],
@@ -97,7 +84,7 @@ impl Ui {
         if !self.live && !is_error && self.notice.is_empty() && self.snapshot.phase == Phase::Setup {
             notice = self.fields()[self.rows.selected().unwrap_or(0)].explanation(&self.config);
         }
-        let notice_color = if is_error { self.theme.error } else { self.theme.muted };
+        let notice_color = if is_error { self.theme.err } else { self.theme.muted };
         let hints: Vec<&str> = if self.cancel == CancelState::Confirming {
             vec!["Esc confirm stop", "any key continue", "q quit"]
         } else if self.live {
@@ -152,29 +139,20 @@ impl Ui {
                 "q quit",
             ]
         };
-
-        let mut footer = String::new();
-        for hint in hints {
-            let next = if footer.is_empty() {
-                hint.to_owned()
-            } else {
-                format!("{footer} · {hint}")
-            };
-            if next.width() > usize::from(regions[2].width) {
-                break;
-            }
-            footer = next;
-        }
+        let width = usize::from(regions[2].width);
         let mut lines = if self.help {
             Vec::new()
         } else {
             vec![Line::styled(
-                safe_text_width(notice, usize::from(regions[2].width)),
+                safe_text_width(notice, width),
                 Style::new().fg(notice_color),
             )]
         };
-        lines.push(Line::styled(footer, Style::new().fg(self.theme.brand_strong)));
-        lines.extend(help_lines);
+        lines.push(self.hints(&hints, width));
+        lines.extend(
+            help.iter()
+                .map(|line| self.hints(&line.split(" · ").collect::<Vec<_>>(), width)),
+        );
         frame.render_widget(Paragraph::new(lines), regions[2]);
         if self.popup == Popup::Details {
             self.draw_details(frame);
@@ -195,7 +173,7 @@ impl Ui {
                         Span::raw(after),
                     ]),
                     Line::from("Enter apply · Esc discard · ←/→ Home/End move"),
-                    Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warning)),
+                    Line::styled(safe_text(&self.notice, 200), Style::new().fg(self.theme.warn)),
                 ])
                 .block(panel(edit.field.label(), self.theme)),
                 area,
@@ -232,7 +210,7 @@ impl Ui {
         );
         frame.render_widget(
             Paragraph::new(safe_text_width(&format!("Match this code: {}", auth.code), width))
-                .style(Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD)),
+                .style(Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD)),
             regions[1],
         );
         frame.render_widget(
@@ -264,9 +242,28 @@ impl Ui {
             regions[4],
         );
         frame.render_widget(
-            Paragraph::new("Enter/Space/o open · Esc cancel · q quit").style(Style::new().fg(self.theme.brand_strong)),
+            Paragraph::new(self.hints(&["Enter/Space/o open", "Esc cancel", "q quit"], width)),
             regions[5],
         );
+    }
+
+    fn hints(&self, hints: &[&str], width: usize) -> Line<'static> {
+        let mut spans = Vec::new();
+        let mut used = 0;
+        for hint in hints {
+            let separator = if spans.is_empty() { "" } else { " · " };
+            used += separator.width() + hint.width();
+            if used > width {
+                break;
+            }
+            let (key, action) = hint.split_at(hint.find(' ').unwrap_or(hint.len()));
+            spans.extend([
+                Span::styled(separator, Style::new().fg(self.theme.border)),
+                Span::styled(key.to_owned(), Style::new().fg(self.theme.text)),
+                Span::styled(action.to_owned(), Style::new().fg(self.theme.muted)),
+            ]);
+        }
+        Line::from(spans)
     }
 
     fn draw_setup(&mut self, frame: &mut Frame, area: Rect) {
@@ -290,7 +287,7 @@ impl Ui {
                         " Start test ",
                         Style::new()
                             .fg(self.theme.inverse)
-                            .bg(self.theme.brand)
+                            .bg(self.theme.ink)
                             .add_modifier(Modifier::BOLD),
                     )));
                 }
@@ -301,18 +298,13 @@ impl Ui {
                     )));
                 }
                 let value = field.value(&self.config);
+                let heading = Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD);
                 let mut lines = Vec::new();
                 if *field == Field::Servers {
-                    lines.push(Line::styled(
-                        "Connections",
-                        Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-                    ));
+                    lines.push(Line::styled("Connections", heading));
                 }
                 if *field == Field::LatencyStage {
-                    lines.push(Line::styled(
-                        "Stages",
-                        Style::new().fg(self.theme.brand_strong).add_modifier(Modifier::BOLD),
-                    ));
+                    lines.push(Line::styled("Stages", heading));
                 }
                 lines.push(Line::from(vec![
                     Span::raw(format!("{:<22} ", field.label())),
@@ -322,7 +314,7 @@ impl Ui {
                         } else {
                             safe_text(&value, 200)
                         },
-                        Style::new().fg(self.theme.brand_strong),
+                        Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD),
                     ),
                 ]));
                 ListItem::new(lines)
@@ -436,7 +428,7 @@ impl Ui {
             self.latency_server(),
             usize::from(area.width.saturating_sub(2)),
         );
-        let results_height = match results.len() + failures.len() {
+        let results_height = match results.iter().map(Vec::len).sum::<usize>() + failures.len() {
             0 => 0,
             lines => (lines + 2).min(usize::from(u16::MAX)) as u16,
         };
@@ -463,39 +455,45 @@ impl Ui {
             .split(area);
             (regions[0], regions[1], regions[2])
         };
+        let muted = Style::new().fg(self.theme.muted);
         let mut track = Vec::new();
         for stage in &self.requested.stages {
-            let result = self.snapshot.results.iter().find(|result| result.stage == *stage);
-            let value = if let Some(result) = result {
-                self.outcome(result)
+            let hue = Style::new().fg(self.theme.stage(*stage));
+            let mut line = vec![Span::styled(format!("{:<14} ", stage.name()), hue)];
+            if let Some(result) = self.snapshot.results.iter().find(|result| result.stage == *stage) {
+                line.extend(self.outcome(result));
             } else if self.active() && self.snapshot.stage == Some(*stage) {
                 match self.snapshot.phase {
-                    Phase::Preparing => "checking paths".into(),
-                    Phase::Warmup => "warmup".into(),
+                    Phase::Preparing => line.push(Span::styled("checking paths", muted)),
+                    Phase::Warmup => line.push(Span::styled("warmup", muted)),
                     _ => {
                         let elapsed = self.elapsed().as_secs_f64();
                         let duration = self.requested.duration(*stage).as_secs_f64();
                         let filled = (elapsed / duration * 8.0).clamp(0.0, 8.0) as usize;
-                        format!(
-                            "{}{} {elapsed:.1} s / {duration:.0} s",
-                            "█".repeat(filled),
-                            "░".repeat(8 - filled)
-                        )
+                        line.extend([
+                            Span::styled("█".repeat(filled), hue),
+                            Span::styled("░".repeat(8 - filled), muted),
+                            Span::styled(format!(" {elapsed:.1} s"), self.value()),
+                            Span::styled(format!(" / {duration:.0} s"), muted),
+                        ]);
                     }
                 }
             } else if !self.active() {
-                format!(
-                    "{} {}",
-                    crate::vocabulary::MISSING,
-                    crate::model::StageStatus::Skipped.label()
-                )
+                line.push(Span::styled(
+                    format!(
+                        "{} {}",
+                        crate::vocabulary::MISSING,
+                        crate::model::StageStatus::Skipped.label()
+                    ),
+                    muted,
+                ));
             } else {
-                format!("○ {} s", self.requested.duration(*stage).as_secs())
-            };
-            track.push(Line::from(safe_text_width(
-                &format!("{:<14} {value}", stage.name()),
-                usize::from(area.width.saturating_sub(2)),
-            )));
+                line.push(Span::styled(
+                    format!("○ {} s", self.requested.duration(*stage).as_secs()),
+                    muted,
+                ));
+            }
+            track.push(Line::from(line));
         }
         if track_area.height == 2 {
             let index = self
@@ -514,14 +512,29 @@ impl Ui {
             self.draw_timeline(frame, timeline_area);
         }
         if results_height > 0 {
-            let lines = results.iter().map(|line| Line::from(safe_text(line, MAX_TEXT)));
-            let failures = failures
-                .iter()
-                .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), Style::new().fg(self.theme.error)));
-            frame.render_widget(
-                Paragraph::new(lines.chain(failures).collect::<Vec<_>>()).block(panel("Results", self.theme)),
-                results_area,
+            let mut lines = Vec::new();
+            for grid in &results {
+                for (index, line) in grid.iter().enumerate() {
+                    let line = safe_text(line, MAX_TEXT);
+                    let (label, cells) = line.split_at(line.find("  ").unwrap_or(line.len()));
+                    lines.push(if index == 0 || label.is_empty() {
+                        Line::styled(line, muted)
+                    } else if let Some(stage) = crate::report::label_stage(label) {
+                        Line::from(vec![
+                            Span::styled(label.to_owned(), Style::new().fg(self.theme.stage(stage))),
+                            Span::raw(cells.to_owned()),
+                        ])
+                    } else {
+                        Line::from(line)
+                    });
+                }
+            }
+            lines.extend(
+                failures
+                    .iter()
+                    .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), Style::new().fg(self.theme.err))),
             );
+            frame.render_widget(Paragraph::new(lines).block(panel("Results", self.theme)), results_area);
         }
     }
 
@@ -544,21 +557,24 @@ impl Ui {
                 self.latency_name(self.focused_latency())
             ));
         }
+        let mut lines: Vec<_> = lines
+            .into_iter()
+            .map(|line| Line::from(safe_text_width(&line, usize::from(area.width))))
+            .collect();
         for result in self.snapshot.results.iter().rev().take(4) {
-            lines.push(format!("{}: {}", result.stage.name(), self.outcome(result)));
+            let hue = Style::new().fg(self.theme.stage(result.stage));
+            let mut line = vec![Span::styled(result.stage.name(), hue), Span::raw(": ")];
+            line.extend(self.outcome(result));
+            lines.push(Line::from(line));
         }
-        frame.render_widget(
-            Paragraph::new(
-                lines
-                    .into_iter()
-                    .map(|line| Line::from(safe_text_width(&line, usize::from(area.width))))
-                    .collect::<Vec<_>>(),
-            ),
-            area,
-        );
+        frame.render_widget(Paragraph::new(lines), area);
     }
 
-    fn outcome(&self, result: &crate::model::StageResult) -> String {
+    fn value(&self) -> Style {
+        Style::new().fg(self.theme.text).add_modifier(Modifier::BOLD)
+    }
+
+    fn outcome(&self, result: &crate::model::StageResult) -> Vec<Span<'static>> {
         let headline = if result.stage == Stage::Latency {
             milliseconds(
                 self.result_latency(result)
@@ -575,12 +591,21 @@ impl Ui {
             .collect::<Vec<_>>()
             .join(" / ")
         };
+        let muted = Style::new().fg(self.theme.muted);
         match self.snapshot.stage_status(result) {
-            crate::model::StageStatus::Complete => format!("✓ {headline}"),
-            status @ crate::model::StageStatus::Partial => {
-                format!("! {headline} {}", status.label())
-            }
-            status => format!("✗ {}", status.label()),
+            crate::model::StageStatus::Complete => vec![
+                Span::styled("✓ ", Style::new().fg(self.theme.ok)),
+                Span::styled(headline, self.value()),
+            ],
+            status @ crate::model::StageStatus::Partial => vec![
+                Span::styled("! ", Style::new().fg(self.theme.warn)),
+                Span::styled(headline, self.value()),
+                Span::styled(format!(" {}", status.label()), muted),
+            ],
+            status => vec![
+                Span::styled("✗ ", Style::new().fg(self.theme.err).add_modifier(Modifier::BOLD)),
+                Span::styled(status.label(), muted),
+            ],
         }
     }
 
@@ -627,29 +652,42 @@ impl Ui {
             .map(|stage| self.requested.duration(*stage).as_secs_f64())
             .sum::<f64>()
             .max(1.0);
-        let mut marks = String::new();
+        let mut marks = vec![Span::raw(" ".repeat(14))];
+        let mut marked = 0;
         let plot_width = usize::from(area.width.saturating_sub(16));
         let mut at = 0.0;
         for stage in &self.requested.stages {
             let column = (at / total * plot_width as f64) as usize;
-            if column >= marks.width() {
-                marks.push_str(&" ".repeat(column - marks.width()));
-                marks.push_str(if *stage == Stage::Latency { "Idle" } else { stage.name() });
+            if column >= marked {
+                let label = if *stage == Stage::Latency { "Idle" } else { stage.name() };
+                marks.push(Span::raw(" ".repeat(column - marked)));
+                marks.push(Span::styled(label, Style::new().fg(self.theme.stage(*stage))));
+                marked = column + label.width();
             }
             at += self.requested.duration(*stage).as_secs_f64();
         }
-        frame.render_widget(
-            Paragraph::new(safe_text_width(&format!("{:>14}{marks}", ""), usize::from(area.width)))
-                .style(Style::new().fg(self.theme.muted)),
-            regions[1],
-        );
+        frame.render_widget(Paragraph::new(Line::from(marks)), regions[1]);
+        let mut starts = Vec::new();
+        let mut offset = Duration::ZERO;
+        for result in &self.snapshot.results {
+            starts.push((offset, result.stage));
+            offset += result.elapsed;
+        }
+        starts.extend(self.snapshot.stage.map(|stage| (offset, stage)));
+        let hue = |elapsed: Duration| {
+            starts
+                .iter()
+                .rfind(|(start, _)| *start <= elapsed)
+                .map_or(self.theme.text, |(_, stage)| self.theme.stage(*stage))
+        };
         for (latency, region) in [(false, regions[2]), (true, regions[3])] {
             let mut series = Vec::<(Vec<(f64, f64)>, ratatui::style::Color)>::new();
-            for (upload, color) in [(false, self.theme.brand), (true, self.theme.brand_strong)] {
+            for upload in [false, true] {
                 if latency && upload {
                     continue;
                 }
                 let mut segment = Vec::new();
+                let mut color = self.theme.text;
                 for point in if latency {
                     self.focused_latency()
                         .map(|host| &host.history.points)
@@ -664,10 +702,14 @@ impl Ui {
                     } else {
                         point.down_bps
                     };
-                    if let Some(value) = value.filter(|value| value.is_finite() && *value >= 0.0) {
-                        segment.push((point.elapsed.as_secs_f64(), value));
-                    } else if !segment.is_empty() {
+                    let value = value.filter(|value| value.is_finite() && *value >= 0.0);
+                    let point_hue = hue(point.elapsed);
+                    if !segment.is_empty() && (value.is_none() || point_hue != color) {
                         series.push((std::mem::take(&mut segment), color));
+                    }
+                    if let Some(value) = value {
+                        color = point_hue;
+                        segment.push((point.elapsed.as_secs_f64(), value));
                     }
                 }
                 if !segment.is_empty() {
@@ -717,19 +759,25 @@ impl Ui {
                         .data(points)
                 })
                 .collect::<Vec<_>>();
+            let axis = Style::new().fg(self.theme.border);
+            let muted = Style::new().fg(self.theme.muted);
             frame.render_widget(
                 Chart::new(datasets)
                     .block(panel(if latency { "Latency · ms" } else { "Throughput" }, self.theme))
                     .x_axis(
                         Axis::default()
+                            .style(axis)
                             .bounds([0.0, total])
-                            .labels(["0 s".to_owned(), format!("{total:.0} s")]),
+                            .labels([Span::styled("0 s", muted), Span::styled(format!("{total:.0} s"), muted)]),
                     )
-                    .y_axis(Axis::default().bounds([0.0, ceiling]).labels([
-                        format!("{:>12}", "0"),
-                        format!(
-                            "{:>12}",
-                            format!("{} {units}", graphite_meter_core::format::speed(ceiling))
+                    .y_axis(Axis::default().style(axis).bounds([0.0, ceiling]).labels([
+                        Span::styled(format!("{:>12}", "0"), muted),
+                        Span::styled(
+                            format!(
+                                "{:>12}",
+                                format!("{} {units}", graphite_meter_core::format::speed(ceiling))
+                            ),
+                            muted,
                         ),
                     ])),
                 region,
@@ -746,7 +794,10 @@ impl Ui {
             .map(|line| Line::from(safe_text(line, MAX_TEXT)))
             .collect();
         lines.push(Line::raw(""));
-        lines.push(Line::styled("Values", Style::new().fg(self.theme.brand_strong)));
+        lines.push(Line::styled(
+            "Values",
+            Style::new().fg(self.theme.ink).add_modifier(Modifier::BOLD),
+        ));
         for term in crate::vocabulary::VALUES {
             lines.extend(wrap_columns(
                 &format!("{} · {}", term.label, term.explanation),
@@ -797,7 +848,7 @@ impl Ui {
                     Line::styled(
                         format!("    {}", safe_text(&detail, 160)),
                         Style::new().fg(if server.error.is_some() {
-                            self.theme.error
+                            self.theme.err
                         } else {
                             self.theme.muted
                         }),

@@ -1,19 +1,20 @@
-//! Graphite Meter's carbon palette, adapted to the terminal's color depth.
+//! Go's TUI palette (the web tokens), with the indexed and ANSI colors Go's color profiles convert each to.
 
+use crate::model::Stage;
 use ratatui::style::Color;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Theme {
+    pub ink: Color,
     pub text: Color,
     pub muted: Color,
     pub inverse: Color,
-    pub brand: Color,
-    pub brand_strong: Color,
     pub surface: Color,
     pub border: Color,
-    pub success: Color,
-    pub warning: Color,
-    pub error: Color,
+    pub ok: Color,
+    pub warn: Color,
+    pub err: Color,
+    stages: [Color; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -40,48 +41,62 @@ impl Theme {
         if light { Self::light(depth) } else { Self::dark(depth) }
     }
 
+    pub fn stage(&self, stage: Stage) -> Color {
+        self.stages[stage as usize]
+    }
+
     fn dark(depth: Depth) -> Self {
         Self {
-            text: tone(0xd9dce0, 253, Color::White, depth),
-            muted: tone(0x9ba2aa, 247, Color::Gray, depth),
-            inverse: tone(0x111315, 233, Color::Black, depth),
-            brand: tone(0x6db0b8, 73, Color::LightCyan, depth),
-            brand_strong: tone(0x93cdd4, 116, Color::LightCyan, depth),
-            surface: tone(0x23262b, 235, Color::Black, depth),
-            border: tone(0x3d4044, 238, Color::DarkGray, depth),
-            success: tone(0x79ad91, 108, Color::LightGreen, depth),
-            warning: tone(0xc4a568, 179, Color::LightYellow, depth),
-            error: tone(0xd89393, 174, Color::LightRed, depth),
+            ink: tone(0xe6e8ea, 254, Color::White, depth),
+            text: tone(0xeef0f3, 255, Color::White, depth),
+            muted: tone(0x8e9299, 246, Color::Gray, depth),
+            inverse: tone(0x0d1013, 233, Color::Black, depth),
+            surface: tone(0x303236, 236, Color::Black, depth),
+            border: tone(0x3e4348, 238, Color::DarkGray, depth),
+            ok: tone(0x88d1a2, 115, Color::LightGreen, depth),
+            warn: tone(0xe8cf83, 186, Color::LightYellow, depth),
+            err: tone(0xed8b88, 210, Color::LightRed, depth),
+            stages: [
+                tone(0x70dbc4, 80, Color::LightCyan, depth),
+                tone(0x71a3ff, 75, Color::LightBlue, depth),
+                tone(0xfeb66a, 215, Color::LightRed, depth),
+                tone(0xe472ac, 169, Color::LightRed, depth),
+            ],
         }
     }
 
     fn light(depth: Depth) -> Self {
         Self {
-            text: tone(0x26272a, 235, Color::Black, depth),
-            muted: tone(0x454a4d, 239, Color::DarkGray, depth),
-            inverse: tone(0xf6f5f1, 255, Color::White, depth),
-            brand: tone(0x2f717a, 23, Color::Cyan, depth),
-            brand_strong: tone(0x235257, 23, Color::Cyan, depth),
-            surface: tone(0xeaeae4, 254, Color::Gray, depth),
-            border: tone(0xc3c3bf, 251, Color::Gray, depth),
-            success: tone(0x285443, 22, Color::Green, depth),
-            warning: tone(0x6f5426, 58, Color::Yellow, depth),
-            error: tone(0xa04a4a, 95, Color::Red, depth),
+            ink: tone(0x20242a, 235, Color::Black, depth),
+            text: tone(0x171b20, 234, Color::Black, depth),
+            muted: tone(0x5f646a, 241, Color::DarkGray, depth),
+            inverse: tone(0xfdfdfd, 231, Color::White, depth),
+            surface: tone(0xe6e6e9, 254, Color::White, depth),
+            border: tone(0xcacbcf, 252, Color::White, depth),
+            ok: tone(0x2e734b, 29, Color::Green, depth),
+            warn: tone(0x85671f, 94, Color::Red, depth),
+            err: tone(0xab413e, 131, Color::Red, depth),
+            stages: [
+                tone(0x1d7a73, 30, Color::Cyan, depth),
+                tone(0x254ea3, 25, Color::Blue, depth),
+                tone(0xa35d1d, 130, Color::Red, depth),
+                tone(0x7f2456, 89, Color::Red, depth),
+            ],
         }
     }
 
     const fn monochrome() -> Self {
         Self {
+            ink: Color::Reset,
             text: Color::Reset,
             muted: Color::Reset,
             inverse: Color::Reset,
-            brand: Color::Reset,
-            brand_strong: Color::Reset,
             surface: Color::Reset,
             border: Color::Reset,
-            success: Color::Reset,
-            warning: Color::Reset,
-            error: Color::Reset,
+            ok: Color::Reset,
+            warn: Color::Reset,
+            err: Color::Reset,
+            stages: [Color::Reset; 4],
         }
     }
 }
