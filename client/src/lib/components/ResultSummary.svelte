@@ -19,6 +19,7 @@
     details,
     issues = [],
     scope = "",
+    running = false,
   }: {
     cards: SummaryCard[];
     /** Graphs share one rate and latency scale so their heights compare. */
@@ -34,6 +35,8 @@
       throughput: TransportRole[];
     }[];
     scope?: string;
+    /** A run is under way: on a phone only the running card stays open. */
+    running?: boolean;
   } = $props();
   // One shown server's reasons sit on the card they failed; only All servers needs an attributed list.
   const attributed = $derived((details?.selection.length ?? 1) > 1 && !scope);
@@ -62,7 +65,7 @@
 </script>
 
 <div class="result-summary">
-  <div class="result-cards" data-tip-group {@attach tipGroup}>
+  <div class="result-cards" class:running data-tip-group {@attach tipGroup}>
     {#each transfers as card (card.key)}
       {@const quiet = card.status === "pending" || card.status === "not-run"}
       {@const tone = STATUS_TONE[card.status as keyof typeof STATUS_TONE]}
@@ -212,6 +215,22 @@
   .card:is(.pending, .not-run) {
     --rule: 30%;
   }
+  /* A phone stacks the cards, so an empty line has nothing to align with. */
+  @container results (max-width: 520px) {
+    .result-cards {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: var(--space-3);
+    }
+    .card {
+      grid-template-rows: 20px;
+    }
+    /* The running card stays in view: one that waits, or is done while the run goes on, is its name and value. */
+    .line:empty,
+    .card:is(.pending, .not-run) > :is(.line, .graph-slot, .facts),
+    .running .card:not(.active) > :is(.line, .graph-slot, .facts) {
+      display: none;
+    }
+  }
   .card-head {
     display: flex;
     align-items: center;
@@ -304,7 +323,7 @@
   }
   .facts {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.5rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 5.25rem), 1fr));
     gap: var(--space-2) var(--space-3);
     padding-top: var(--space-2);
     border-top: var(--hairline) solid var(--border-subtle);
