@@ -25,7 +25,6 @@ pub mod password;
 pub mod ping;
 pub mod preflight;
 mod probe;
-pub mod route;
 pub mod runtime;
 pub mod tls;
 pub mod upload;

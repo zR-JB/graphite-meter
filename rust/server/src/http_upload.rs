@@ -69,17 +69,15 @@ impl HttpServer {
     }
 
     fn upload_operation(&self, owner: &Owner) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
-        self.admission
-            .acquire(Class::Request, owner.client_keys())
-            .map(|permit| {
-                Arc::new(Mutex::new(Operation {
-                    permit: Some(permit),
-                    deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
-                    body_complete: false,
-                    revocation: None,
-                    revoked: false,
-                }))
-            })
+        self.admission.acquire(false, owner.client_keys()).map(|permit| {
+            Arc::new(Mutex::new(Operation {
+                permit: Some(permit),
+                deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
+                body_complete: false,
+                revocation: None,
+                revoked: false,
+            }))
+        })
     }
 
     pub(super) async fn receive_upload<B>(

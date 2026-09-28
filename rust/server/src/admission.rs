@@ -24,12 +24,6 @@ impl Default for Limits {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Class {
-    Request,
-    Session,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     ClientFull,
     GlobalFull,
@@ -83,7 +77,7 @@ pub struct Admission(Arc<Inner>);
 #[must_use]
 pub struct Permit {
     admission: Admission,
-    class: Class,
+    session: bool,
     clients: Vec<String>,
 }
 
@@ -97,24 +91,25 @@ impl Admission {
 
     /// Call after resolving the request or session client keys. Unmetered routes
     /// and CORS preflight do not acquire a permit.
-    pub fn acquire(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
+    pub fn acquire(&self, session: bool, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = recover(&self.0.counts, "operation");
         let Counts {
             stats,
             requests_by_client,
             sessions_by_client,
         } = &mut *counts;
-        let (held, limit, refused) = match class {
-            Class::Request => (
-                requests_by_client,
-                self.0.limits.operations_per_client,
-                &mut stats.refused_client,
-            ),
-            Class::Session => (
+        let (held, limit, refused) = if session {
+            (
                 sessions_by_client,
                 self.0.limits.sessions_per_client,
                 &mut stats.sessions_refused_client,
-            ),
+            )
+        } else {
+            (
+                requests_by_client,
+                self.0.limits.operations_per_client,
+                &mut stats.refused_client,
+            )
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
         if crate::client_address::share_full(keys, limit, |key| held.get(key).copied().unwrap_or(0)) {
@@ -125,13 +120,13 @@ impl Admission {
             stats.refused_pool += 1;
             return Err(Refusal::GlobalFull);
         }
-        if class == Class::Session && stats.sessions >= self.0.limits.sessions {
+        if session && stats.sessions >= self.0.limits.sessions {
             stats.sessions_refused_budget += 1;
             return Err(Refusal::SessionsFull);
         }
         stats.active += 1;
         stats.peak = stats.peak.max(stats.active);
-        if class == Class::Session {
+        if session {
             stats.sessions += 1;
         }
         for client in keys {
@@ -139,7 +134,7 @@ impl Admission {
         }
         Ok(Permit {
             admission: self.clone(),
-            class,
+            session,
             clients: keys.to_vec(),
         })
     }
@@ -157,12 +152,11 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = recover(&self.admission.0.counts, "operation");
         counts.stats.active -= 1;
-        let clients = match self.class {
-            Class::Request => &mut counts.requests_by_client,
-            Class::Session => {
-                counts.stats.sessions -= 1;
-                &mut counts.sessions_by_client
-            }
+        let clients = if self.session {
+            counts.stats.sessions -= 1;
+            &mut counts.sessions_by_client
+        } else {
+            &mut counts.requests_by_client
         };
         for client in &self.clients {
             let count = clients.get_mut(client).expect("permit owns a client slot");
@@ -186,28 +180,19 @@ mod tests {
             sessions: 1,
             sessions_per_client: 1,
         });
-        let request = admission.acquire(Class::Request, &["a".into()]).unwrap();
-        let session = admission.acquire(Class::Session, &["a".into()]).unwrap();
-        assert_eq!(
-            admission.acquire(Class::Request, &["a".into()]).err(),
-            Some(Refusal::ClientFull)
-        );
-        assert_eq!(
-            admission.acquire(Class::Request, &["b".into()]).err(),
-            Some(Refusal::GlobalFull)
-        );
+        let request = admission.acquire(false, &["a".into()]).unwrap();
+        let session = admission.acquire(true, &["a".into()]).unwrap();
+        assert_eq!(admission.acquire(false, &["a".into()]).err(), Some(Refusal::ClientFull));
+        assert_eq!(admission.acquire(false, &["b".into()]).err(), Some(Refusal::GlobalFull));
         drop(request);
         assert_eq!(
-            admission.acquire(Class::Session, &["b".into()]).err(),
+            admission.acquire(true, &["b".into()]).err(),
             Some(Refusal::SessionsFull)
         );
-        assert_eq!(
-            admission.acquire(Class::Session, &["a".into()]).err(),
-            Some(Refusal::ClientFull)
-        );
+        assert_eq!(admission.acquire(true, &["a".into()]).err(), Some(Refusal::ClientFull));
         drop(session);
         assert_eq!(admission.load(), (0, 2));
-        assert!(admission.acquire(Class::Session, &["a".into()]).is_ok());
+        assert!(admission.acquire(true, &["a".into()]).is_ok());
         assert_eq!(
             admission.stats(),
             Stats {
@@ -228,7 +213,7 @@ mod tests {
             operations: 1,
             ..Limits::default()
         });
-        let permit = admission.acquire(Class::Request, &["a".into()]).unwrap();
+        let permit = admission.acquire(false, &["a".into()]).unwrap();
         let task = tokio::spawn(async move {
             let _permit = permit;
             std::future::pending::<()>().await;
@@ -237,6 +222,6 @@ mod tests {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         assert_eq!(admission.load().0, 0);
-        assert!(admission.acquire(Class::Request, &["a".into()]).is_ok());
+        assert!(admission.acquire(false, &["a".into()]).is_ok());
     }
 }

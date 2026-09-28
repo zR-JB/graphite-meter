@@ -5,7 +5,7 @@ use super::{http_quic::ReceiveCredit, *};
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::{
     failure::LaneEnding,
-    route::Route,
+    route::{self, Route},
     wire::{self, UploadProgress},
 };
 use graphite_meter_http3::{
@@ -73,7 +73,7 @@ impl HttpServer {
         } else {
             (request, None)
         };
-        let route = graphite_meter_core::route::lookup(request.uri().path()).filter(|&route| mounts(listener, route));
+        let route = route::lookup(request.uri().path()).filter(|&route| mounts(listener, route));
         let refusal = self
             .refuse_route(&request, route, lease.as_ref(), peer)
             .or_else(|| route.is_none().then(|| text_response(StatusCode::NOT_FOUND)));
@@ -81,7 +81,7 @@ impl HttpServer {
             return answer(stream, self.harden(response)).await;
         }
         let route = route.expect("a mounted WebTransport route");
-        let class = crate::route::spec(route).admission.expect("WT admission class");
+        let session = route.admission() == route::Admission::Session;
         let route = match route {
             Route::WtPing => SessionRoute::Ping,
             Route::WtDownload => SessionRoute::Download,
@@ -91,7 +91,7 @@ impl HttpServer {
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let _permit = match self.admission.acquire(class, owner.client_keys()) {
+        let _permit = match self.admission.acquire(session, owner.client_keys()) {
             Ok(permit) => permit,
             Err(error) => {
                 let mut response = text_response(StatusCode::from_u16(error.status()).expect("known status"));
@@ -102,7 +102,7 @@ impl HttpServer {
             }
         };
         let _admitted = credit.work().admit();
-        let lifetime = if class == Class::Session {
+        let lifetime = if session {
             self.config.max_session_duration
         } else {
             self.config.max_operation_duration
