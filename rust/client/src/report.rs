@@ -1,5 +1,7 @@
 use crate::{
-    model::{Ending, FailureScope, Phase, ServerLatencyResult, Snapshot, Stage, StageResult, StageStatus},
+    model::{
+        Ending, FailureScope, Phase, ServerFailure, ServerLatencyResult, Snapshot, Stage, StageResult, StageStatus,
+    },
     theme::Theme,
     vocabulary::MISSING,
 };
@@ -447,49 +449,64 @@ impl<'a> Report<'a> {
         lines.join("\n")
     }
 
+    /// Go's detailsView: the outcome, the facts in full, the rates and latency medians by server,
+    /// the issues and, in full once the run ends, its aggregation intervals.
     fn details(&self, full: bool) -> String {
-        let servers = self.servers();
-        let remaining = self.snapshot.participants.len();
-        let outcome = outcome(self.snapshot.phase);
+        let mut lines = vec![self.paint(Tone::Heading, &self.outcome_notice())];
+        let facts = if full { self.facts() } else { Vec::new() };
+        if !facts.is_empty() {
+            lines.extend(facts);
+            lines.push(String::new());
+        }
+        lines.push(self.server_rates());
+        lines.extend([String::new(), self.paint(Tone::Heading, "Latency median by server")]);
+        lines.push(self.server_medians());
+        if !self.snapshot.failures.is_empty() {
+            lines.extend([String::new(), self.paint(Tone::Heading, "Issues")]);
+            lines.extend(self.snapshot.failures.iter().map(|failure| self.issue(failure)));
+        }
+        if full && !self.snapshot.phase.live() && !self.snapshot.intervals.is_empty() {
+            lines.extend([String::new(), "Aggregation intervals".to_owned()]);
+            lines.extend(self.intervals());
+        }
+        let text = lines.join("\n");
+        text.lines()
+            .map(|line| fit(line, self.width))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Go's outcomeNotice: one server's status, or how many of the run's servers remain.
+    fn outcome_notice(&self) -> String {
+        let (remaining, outcome) = (self.snapshot.participants.len(), outcome(self.snapshot.phase));
         let live = self.snapshot.phase.live();
-        let notice = match servers.len() {
+        match self.servers().len() {
             1 => status(self.snapshot).to_owned(),
             selected if live && remaining < selected => format!("{remaining} of {selected} servers remaining"),
             selected if live => format!("All {selected} servers"),
             selected if remaining < selected => format!("{outcome} · {remaining} of {selected} servers"),
             selected => format!("{outcome} · all {selected} servers"),
-        };
-        let mut lines = vec![self.paint(Tone::Heading, &notice)];
-        if full {
-            let notes = self.facts();
-            if !notes.is_empty() {
-                lines.extend(notes);
-                lines.push(String::new());
-            }
         }
+    }
+
+    /// Each direction's mean rate for the run, then for each server; one that left is marked ✗.
+    fn server_rates(&self) -> String {
         let directions = self.directions();
-        let mut headers = vec!["Server".to_owned()];
-        headers.extend(directions.iter().map(|(stage, direction)| direction.label(*stage)));
-        let cell = |measurement: Option<&MeasurementResult>| {
+        let rate = |measurement: Option<&MeasurementResult>| {
             measurement
                 .and_then(|measurement| measurement.mean_bytes_per_sec)
                 .map_or_else(|| MISSING.to_owned(), format::rate)
         };
-        let mut rows = vec![
-            std::iter::once("All servers".to_owned())
-                .chain(
-                    directions
-                        .iter()
-                        .map(|(stage, direction)| cell(self.measurement(*stage, *direction))),
-                )
-                .collect::<Vec<_>>(),
-        ];
-        let mut medians = Vec::new();
-        for server in &servers {
-            let mut name = server.name.clone();
-            if !self.snapshot.participants.contains(&server.id) {
-                name.push_str(" ✗");
-            }
+        let mut headers = vec!["Server".to_owned()];
+        headers.extend(directions.iter().map(|(stage, direction)| direction.label(*stage)));
+        let mut all = vec!["All servers".to_owned()];
+        all.extend(
+            directions
+                .iter()
+                .map(|(stage, direction)| rate(self.measurement(*stage, *direction))),
+        );
+        let mut rows = vec![all];
+        for server in self.servers() {
             let own = |stage: Stage, direction: Direction| {
                 let contribution = self
                     .result(stage)?
@@ -501,91 +518,86 @@ impl<'a> Report<'a> {
                     Direction::Up => contribution.up.as_ref(),
                 }
             };
-            rows.push(
-                std::iter::once(name)
-                    .chain(
-                        directions
-                            .iter()
-                            .map(|(stage, direction)| cell(own(*stage, *direction))),
-                    )
-                    .collect(),
+            let mut row = vec![server.name.clone()];
+            if !self.snapshot.participants.contains(&server.id) {
+                row[0].push_str(" ✗");
+            }
+            row.extend(
+                directions
+                    .iter()
+                    .map(|(stage, direction)| rate(own(*stage, *direction))),
             );
-            let median = |stage: &Stage| {
-                self.result(*stage)
-                    .and_then(|result| result.server_latencies.iter().find(|host| host.id == server.id))
-                    .and_then(ServerLatencyResult::median)
-                    .map_or_else(|| MISSING.to_owned(), ms)
-            };
-            medians.push(
+            rows.push(row);
+        }
+        self.grid(&headers, &rows)
+    }
+
+    /// Each server's latency median in each planned stage.
+    fn server_medians(&self) -> String {
+        let mut headers = vec!["Server".to_owned()];
+        headers.extend(self.plan.iter().map(|stage| compact_population(*stage).to_owned()));
+        let rows: Vec<_> = self
+            .servers()
+            .into_iter()
+            .map(|server| {
+                let median = |stage: &Stage| {
+                    self.result(*stage)
+                        .and_then(|result| result.server_latencies.iter().find(|host| host.id == server.id))
+                        .and_then(ServerLatencyResult::median)
+                        .map_or_else(|| MISSING.to_owned(), ms)
+                };
                 std::iter::once(server.name.clone())
                     .chain(self.plan.iter().map(median))
-                    .collect::<Vec<_>>(),
-            );
-        }
-        lines.push(self.grid(&headers, &rows));
-        lines.extend([String::new(), self.paint(Tone::Heading, "Latency median by server")]);
-        let populations: Vec<_> = std::iter::once("Server".to_owned())
-            .chain(self.plan.iter().map(|stage| compact_population(*stage).to_owned()))
+                    .collect()
+            })
             .collect();
-        lines.push(self.grid(&populations, &medians));
-        if !self.snapshot.failures.is_empty() {
-            lines.extend([String::new(), self.paint(Tone::Heading, "Issues")]);
-            for failure in &self.snapshot.failures {
-                let scope = match failure.scope {
-                    FailureScope::Throughput => "throughput",
-                    FailureScope::Latency => "latency",
-                };
-                lines.push(format!(
-                    "{} · {} {scope} · at {} · {}",
-                    self.name(&failure.server_id),
-                    compact_stage(failure.stage),
-                    clock(failure.at),
-                    failure.reason.label()
-                ));
-            }
-        }
-        // Go's run details: one list for the run, timed from its start.
-        let intervals = &self.snapshot.intervals;
-        if full && !live && !intervals.is_empty() {
-            lines.extend([String::new(), "Aggregation intervals".to_owned()]);
-            for interval in intervals {
+        self.grid(&headers, &rows)
+    }
+
+    fn issue(&self, failure: &ServerFailure) -> String {
+        let scope = match failure.scope {
+            FailureScope::Throughput => "throughput",
+            FailureScope::Latency => "latency",
+        };
+        format!(
+            "{} · {} {scope} · at {} · {}",
+            self.name(&failure.server_id),
+            compact_stage(failure.stage),
+            clock(failure.at),
+            failure.reason.label()
+        )
+    }
+
+    /// Go's run details: one list of the run's aggregation intervals, timed from its start.
+    fn intervals(&self) -> Vec<String> {
+        let seconds = |nanos| Duration::from_nanos(nanos).as_secs_f64();
+        let mut lines: Vec<_> = self
+            .snapshot
+            .intervals
+            .iter()
+            .map(|interval| {
                 let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();
                 let state = if interval.complete && interval.window.is_some() {
                     "measured window"
                 } else {
                     "incomplete evidence"
                 };
-                let seconds = |nanos| Duration::from_nanos(nanos).as_secs_f64();
-                let parts = [
-                    format!(
-                        "{} {:.1}–{:.1} s",
-                        compact_stage(interval.stage.into()),
-                        seconds(interval.start_nanos),
-                        seconds(interval.end_nanos)
-                    ),
-                    names.join(", "),
-                    state.to_owned(),
-                ];
-                lines.push(
-                    parts
-                        .into_iter()
-                        .filter(|part| !part.is_empty())
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                );
-            }
-            let omitted = self.snapshot.omitted_intervals;
-            if omitted > 0 {
-                lines.push(format!(
-                    "{omitted} older intervals omitted; byte totals retain the full run"
-                ));
-            }
+                let (start, end) = (seconds(interval.start_nanos), seconds(interval.end_nanos));
+                let span = format!("{} {start:.1}–{end:.1} s", compact_stage(interval.stage.into()));
+                [span, names.join(", "), state.to_owned()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            })
+            .collect();
+        let omitted = self.snapshot.omitted_intervals;
+        if omitted > 0 {
+            lines.push(format!(
+                "{omitted} older intervals omitted; byte totals retain the full run"
+            ));
         }
-        let text = lines.join("\n");
-        text.lines()
-            .map(|line| fit(line, self.width))
-            .collect::<Vec<_>>()
-            .join("\n")
+        lines
     }
 
     fn facts(&self) -> Vec<String> {
