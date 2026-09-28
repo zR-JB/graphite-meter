@@ -560,8 +560,15 @@ fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bo
     match event {
         UploadProgress::Ready => state.send_modify(|state| state.ready = true),
         UploadProgress::Error { code, .. } => {
-            let refusal = graphite_meter_core::failure::UploadRefusal::from_name(&code);
-            return Err(Box::new(crate::failure::HttpFailure {
+            let refusal = UploadRefusal::from_name(&code);
+            // A withdrawn grant asks for sign-in, as Go's uploadRefusal (failure.go:69-70).
+            if refusal == Some(UploadRefusal::Revoked) {
+                return Err(Box::new(crate::net::AuthRequired {
+                    origin: String::new(),
+                    login_url: String::new(),
+                }));
+            }
+            return Err(Box::new(HttpFailure {
                 status: refusal.map_or(400, |refusal| refusal.status()),
                 retry_after: Duration::ZERO,
                 refusal,
@@ -658,6 +665,42 @@ mod tests {
         assert!(!lane.is_finished());
         lane.abort();
         let _ = lane.await;
+        Ok(())
+    }
+
+    /// A WebTransport receiver that withdraws the grant with a `revoked` record asks for sign-in,
+    /// as Go's uploadRefusal (failure.go:69-70), not a refusal that falls back to the HTTP feed.
+    #[tokio::test]
+    async fn a_revoked_record_asks_for_sign_in() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let (endpoint, origin) = crate::download::tests::h3_endpoint()?;
+        let server = tokio::spawn(async move {
+            let quic = endpoint.accept().await.ok_or("endpoint closed")?.await?;
+            let mut connection = graphite_meter_http3::server::Connection::new(quic, None);
+            let (_, stream) = connection.next().await?.ok_or("no CONNECT")?.resolve().await?;
+            let revoke = async {
+                let session =
+                    graphite_meter_http3::webtransport::Session::accept(stream, http::HeaderMap::new()).await?;
+                let mut records = session.open_uni().await?;
+                records
+                    .write_all(b"{\"type\":\"ready\"}\n{\"type\":\"error\",\"code\":\"revoked\"}\n")
+                    .await?;
+                std::future::pending::<Result<(), Error>>().await
+            };
+            let (revoked, ()) = tokio::join!(revoke, async { while let Ok(Some(_)) = connection.next().await {} });
+            revoked
+        });
+        let http = crate::net::Http::new(true)?;
+        let slot = SessionSlot::dial(&http, format!("{origin}/wt/upload?id=test-session"), true).await?;
+        // Nothing answers the HTTP feed the old refusal fell back to.
+        let closed = format!("http://{}", TcpListener::bind("127.0.0.1:0").await?.local_addr()?);
+        let protocol = graphite_meter_core::discovery::Protocol::Http1;
+        let control = Transport::connect(http, &closed, protocol, false).await?;
+        let (state, _) = watch::channel(State::default());
+        let fed = progress_feed(&control, "test-session", &state, Some(Arc::new(slot))).await;
+        server.abort();
+        let error = fed.err().ok_or("the feed completed")?;
+        assert!(crate::net::authentication_required(error.as_ref()).is_some(), "{error}");
         Ok(())
     }
 

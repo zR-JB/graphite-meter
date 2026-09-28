@@ -454,11 +454,17 @@ pub struct Discovery {
 #[derive(Debug)]
 pub struct AuthRequired {
     pub origin: String,
+    /// Empty when the server named no login page, as for a revoked lane: checking the servers
+    /// again finds it, as Go's client re-prepares.
     pub login_url: String,
 }
 impl fmt::Display for AuthRequired {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "authentication required at {}", self.login_url)
+        f.write_str("authentication required")?;
+        match self.login_url.as_str() {
+            "" => Ok(()),
+            url => write!(f, " at {url}"),
+        }
     }
 }
 impl std::error::Error for AuthRequired {}
@@ -615,11 +621,12 @@ impl Http {
                 }
                 None => &origin,
             };
-            let raw = headers
-                .get("graphite-meter-auth-url")
-                .and_then(|value| value.to_str().ok())
-                .ok_or("missing authentication URL")?;
-            let login_url = validated_login(issuer, raw)?;
+            // Both servers name no login page when they end a revoked lane (go/internal/endpoint/
+            // upload.go:65-66); Go's client asks for sign-in all the same (auth.go:32-40).
+            let login_url = match headers.get("graphite-meter-auth-url") {
+                Some(raw) => validated_login(issuer, raw.to_str()?)?,
+                None => String::new(),
+            };
             let mut grants = self.grants.lock().expect("client grants poisoned");
             grants.remove(issuer);
             return Err(Box::new(AuthRequired {

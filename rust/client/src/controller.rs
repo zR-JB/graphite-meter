@@ -374,7 +374,10 @@ async fn execute(
         if snapshots.borrow().measured() && matches!(work, Work::Run(_)) {
             return Err(error);
         }
-        let Some(required) = authentication_required(error.as_ref()).filter(|_| interactive) else {
+        // Without a login page the run ends, and the check that follows finds it (finished).
+        let Some(required) =
+            authentication_required(error.as_ref()).filter(|required| interactive && !required.login_url.is_empty())
+        else {
             return Err(error);
         };
         let origin = required.origin.clone();
@@ -542,6 +545,45 @@ mod tests {
         );
         assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
         controller.stop().await;
+    }
+
+    /// Sign-in asked without a login page, as both servers end a revoked upload lane
+    /// (go/internal/endpoint/upload.go:65-66), ends the run and checks the servers again, as Go's
+    /// client prepares again (run.go:275-278, 306-310); no empty login page is opened.
+    #[tokio::test]
+    async fn a_sign_in_without_a_login_page_checks_the_servers_again() -> Result<(), Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let config = Config {
+            url: format!("http://{}", listener.local_addr()?),
+            ..Config::default()
+        };
+        let server = tokio::spawn(async move {
+            for _ in 0..8 {
+                let (mut stream, _) = listener.accept().await?;
+                let mut request = [0_u8; 4096];
+                let count = stream.read(&mut request).await?;
+                let answer = if request[..count].starts_with(b"GET /servers ") {
+                    let body = r#"{"defaultSelection":["self"],"servers":[{"id":"self","url":".","name":"self"}]}"#;
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{body}", body.len())
+                } else {
+                    "HTTP/1.1 403 Forbidden\r\nGraphite-Meter-Auth: required\r\nContent-Length: 0\r\n\r\n".into()
+                };
+                stream.write_all(answer.as_bytes()).await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let (snapshots, _) = watch::channel(Snapshot::default());
+        let mut controller = Controller::new(&config, snapshots, true)?;
+        controller.launch(Work::Run(config))?;
+        let result = controller.operations.join_next().await.ok_or("no run")?;
+        controller.finished(result)?;
+        let phase = controller.snapshots.borrow().phase;
+        controller.stop().await;
+        server.abort();
+        assert_eq!(phase, Phase::Checking);
+        Ok(())
     }
 
     #[tokio::test]

@@ -293,7 +293,7 @@ fn record_webtransport(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::transport::TRANSFER_RETRY_BACKOFF;
     use graphite_meter_core::discovery::Protocol;
@@ -423,7 +423,7 @@ mod tests {
     }
 
     /// A local HTTP/3 endpoint whose certificate the client takes only when insecure.
-    fn h3_endpoint() -> Result<(quinn::Endpoint, String), Error> {
+    pub(crate) fn h3_endpoint() -> Result<(quinn::Endpoint, String), Error> {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
         let mut tls = rustls::ServerConfig::builder().with_no_client_auth().with_single_cert(
