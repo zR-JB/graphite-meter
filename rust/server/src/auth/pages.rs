@@ -13,8 +13,7 @@ pub const THEME_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets
 pub const PENDING_SCRIPT: &str = include_str!("../../../../go/internal/auth/assets/pending.js");
 
 const ICON: &str = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+CiAgPCEtLSBHcmFwaGl0ZSBNZXRlciwgImxhdHRpY2UgbmVlZGxlIjogdGhlIGhleGFnb24gaXMgZ3JhcGhpdGUncyBjYXJib24KICAgICAgIGxhdHRpY2UgYW5kIGEgcGVuY2lsJ3MgY3Jvc3Mtc2VjdGlvbjsgdGhlIG5lZWRsZSBtYWtlcyBpdCBhIG1ldGVyLgogICAgICAgQ29sb3JzIGFkYXB0IHRvIHRoZSBicm93c2VyIGNocm9tZSB2aWEgcHJlZmVycy1jb2xvci1zY2hlbWU7IHRoZQogICAgICAgbGlnaHQtc2NoZW1lIHZhbHVlcyBhcmUgdGhlIGRlZmF1bHRzLiBLZWVwIGluIHN5bmMgd2l0aCB0aGUgYnJhbmQgYW5kCiAgICAgICB0ZXh0IHRva2VucyBpbiBzcmMvYXBwLmNzcyBhbmQgdGhlIGdseXBoIGluIHRoZSBhcHAgdG9wYmFyLiAtLT4KICA8c3R5bGU+CiAgICAuaGV4IHsgc3Ryb2tlOiAjMmY3MTdhOyB9CiAgICAubmVlZGxlIHsgc3Ryb2tlOiAjMjYyNzJhOyB9CiAgICAuaHViIHsgZmlsbDogIzI2MjcyYTsgfQogICAgQG1lZGlhIChwcmVmZXJzLWNvbG9yLXNjaGVtZTogZGFyaykgewogICAgICAuaGV4IHsgc3Ryb2tlOiAjNmRiMGI4OyB9CiAgICAgIC5uZWVkbGUgeyBzdHJva2U6ICNkOWRjZTA7IH0KICAgICAgLmh1YiB7IGZpbGw6ICNkOWRjZTA7IH0KICAgIH0KICA8L3N0eWxlPgogIDxwYXRoIGNsYXNzPSJoZXgiIGQ9Ik0xMiAyLjYgMy45IDcuM3Y5LjRsOC4xIDQuNyA4LjEtNC43VjcuM1oiIGZpbGw9Im5vbmUiIHN0cm9rZS13aWR0aD0iMi40IiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+CiAgPHBhdGggY2xhc3M9Im5lZWRsZSIgZD0iTTEyIDEyIDE4LjYgOC4yIiBzdHJva2Utd2lkdGg9IjIuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGNpcmNsZSBjbGFzcz0iaHViIiBjeD0iMTIiIGN5PSIxMiIgcj0iMi40Ii8+Cjwvc3ZnPgo=";
-const HEX: &str = r#"<path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/>"#;
-const CHECK: &str = r#"<path d="m8.2 12.3 2.4 2.4 5.3-5.4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>"#;
+const BRAND: &str = r#"<p class="brand"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path class="hex" d="M12 2.6 3.9 7.3v9.4l8.1 4.7 8.1-4.7V7.3Z" fill="none" stroke-width="2"/><path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.1" fill="currentColor"/></svg>Graphite Meter</p>"#;
 
 pub struct LoginPage<'a> {
     pub csrf: &'a str,
@@ -103,9 +102,9 @@ impl LoginPage<'_> {
             "Sign in",
             "card",
             &format!(
-                r#"      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">{HEX}<path d="M12 12 18.6 8.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.1" fill="currentColor"/></svg>
-      <h1>Private Graphite Meter</h1>
-      <p>Sign in to use this measurement server.</p>
+                r#"      {BRAND}
+      <h1>Sign in</h1>
+      <p>This measurement server is private.</p>
       {}
       {}
       {}
@@ -187,7 +186,13 @@ pub fn capacity_page() -> String {
 }
 
 fn approval_card(card: &str) -> String {
-    page("", "Approve client", "card", &format!("      {card}\n"), true)
+    page(
+        "",
+        "Approve client",
+        "card",
+        &format!("      {BRAND}\n      {card}\n"),
+        true,
+    )
 }
 
 pub fn done_page(browser: bool) -> String {
@@ -197,7 +202,7 @@ pub fn done_page(browser: bool) -> String {
         "Client approved",
         "card completion",
         &format!(
-            r#"      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true">{HEX}{CHECK}</svg>
+            r#"      {BRAND}
       <p class="eyebrow">{client}</p>
       <h1>Client approved</h1>
       <p>Your client can now receive measurement access. You can close this tab and return to Graphite Meter.</p>
@@ -224,20 +229,13 @@ pub fn continue_page(challenge: &str, opening: bool) -> String {
             format!("/auth/cli?challenge={query}"),
         )
     };
-    let (mark, heading) = if opening {
-        (String::new(), "Continue sign-in")
-    } else {
-        (
-            format!(r#"<svg class="mark" viewBox="0 0 24 24" aria-hidden="true">{HEX}{CHECK}</svg>"#),
-            "Signed in",
-        )
-    };
+    let heading = if opening { "Continue sign-in" } else { "Signed in" };
     page(
         &format!("    <meta http-equiv=\"refresh\" content=\"0; url={refresh}\">\n"),
         "Signing in",
         "card completion",
         &format!(
-            r#"      {mark}
+            r#"      {BRAND}
       <h1>{heading}</h1>
       <p>Taking you to Graphite Meter…</p>
       <p><a href="{link}">Continue</a></p>
