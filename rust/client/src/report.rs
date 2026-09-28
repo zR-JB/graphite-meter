@@ -1,18 +1,35 @@
 use crate::{
     model::{Ending, FailureScope, Phase, ServerLatencyResult, Snapshot, Stage, StageResult, StageStatus},
+    theme::Theme,
     vocabulary::MISSING,
 };
 use graphite_meter_core::{failure::FailureReason, format, measurement::MeasurementResult};
+use ratatui::style::Color;
 use std::time::Duration;
 
 pub const WIDTH: usize = 100;
 const ADDED_NOTE: &str = "Added: loaded median minus idle median, same server.";
+const RESET: &str = "\x1b[0m";
 
-pub fn render(snapshot: &Snapshot, width: usize) -> Option<String> {
+/// The final report, terminal-safe; a terminal gets Go's colours.
+pub fn render(snapshot: &Snapshot, width: usize, terminal: bool) -> Option<String> {
+    compose(snapshot, width, palette(terminal))
+}
+
+/// Go prints the report through lipgloss's colour profile: a terminal gets the TUI palette unless
+/// TERM is dumb, and NO_COLOR keeps only bold, as the monochrome theme does.
+fn palette(terminal: bool) -> Option<Theme> {
+    let term = std::env::var("TERM").unwrap_or_default();
+    let dumb = term == "dumb" || term.is_empty() && !cfg!(windows);
+    (terminal && !dumb).then(Theme::terminal)
+}
+
+fn compose(snapshot: &Snapshot, width: usize, theme: Option<Theme>) -> Option<String> {
     if snapshot.participants.is_empty() && snapshot.results.is_empty() {
         return None;
     }
-    let report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width);
+    let mut report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width);
+    report.theme = theme;
     let heading = match snapshot.latency_focus.as_deref() {
         Some(focus) if report.servers().len() > 1 => format!("Latency to {}", report.name(focus)),
         _ => "Latency".to_owned(),
@@ -25,13 +42,18 @@ pub fn render(snapshot: &Snapshot, width: usize) -> Option<String> {
     if report.servers().len() > 1 {
         blocks.push(report.details(false));
     }
-    blocks.extend(snapshot.error.clone());
+    blocks.extend(snapshot.error.as_deref().map(|error| report.paint(Tone::Err, error)));
     let text = blocks
         .into_iter()
         .filter(|block| !block.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    Some(text.lines().map(str::trim_end).collect::<Vec<_>>().join("\n"))
+    Some(
+        text.lines()
+            .map(|line| safe(line.trim_end()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
 }
 
 pub fn results(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> (Vec<Vec<String>>, Vec<String>) {
@@ -73,6 +95,20 @@ struct Report<'a> {
     plan: &'a [Stage],
     shown: Option<&'a str>,
     width: usize,
+    theme: Option<Theme>,
+}
+
+/// Go's report styles.
+#[derive(Clone, Copy)]
+enum Tone {
+    Heading,
+    Text,
+    Muted,
+    Warn,
+    Err,
+    Stage(Stage),
+    Rate(Stage),
+    Outcome(Phase),
 }
 
 impl<'a> Report<'a> {
@@ -82,7 +118,32 @@ impl<'a> Report<'a> {
             plan: &snapshot.plan,
             shown,
             width,
+            theme: None,
         }
+    }
+
+    /// One line of text in Go's lipgloss style; the TUI's report stays plain.
+    fn paint(&self, tone: Tone, text: &str) -> String {
+        let Some(theme) = self.theme.filter(|_| !text.is_empty()) else {
+            return text.to_owned();
+        };
+        let (color, bold) = match tone {
+            Tone::Heading => (theme.ink, true),
+            Tone::Text => (theme.text, false),
+            Tone::Muted => (theme.muted, false),
+            Tone::Warn => (theme.warn, false),
+            Tone::Err => (theme.err, true),
+            Tone::Stage(stage) => (theme.stage(stage), false),
+            Tone::Rate(stage) => (theme.stage(stage), true),
+            Tone::Outcome(Phase::Complete) => (theme.ok, true),
+            Tone::Outcome(Phase::Partial | Phase::Incomplete | Phase::Cancelled) => (theme.warn, true),
+            Tone::Outcome(_) => (theme.err, true),
+        };
+        let codes: Vec<_> = bold.then(|| "1".to_owned()).into_iter().chain(sgr(color)).collect();
+        if codes.is_empty() {
+            return text.to_owned();
+        }
+        format!("\x1b[{}m{text}{RESET}", codes.join(";"))
     }
 
     fn servers(&self) -> Vec<&crate::model::ServerSummary> {
@@ -144,9 +205,10 @@ impl<'a> Report<'a> {
             facts.push(format::bytes(total));
         }
         format!(
-            "Graphite Meter  {}  {}",
-            outcome(self.snapshot.phase),
-            facts.join(" · ")
+            "{}  {}  {}",
+            self.paint(Tone::Heading, "Graphite Meter"),
+            self.paint(Tone::Outcome(self.snapshot.phase), outcome(self.snapshot.phase)),
+            self.paint(Tone::Muted, &facts.join(" · "))
         )
     }
 
@@ -176,34 +238,48 @@ impl<'a> Report<'a> {
             .directions()
             .into_iter()
             .map(|(stage, direction)| {
-                let label = format!("{} {}", direction.arrow(), stage.name());
+                let label = format!(
+                    "{} {}",
+                    self.paint(Tone::Stage(stage), direction.arrow()),
+                    self.paint(Tone::Text, stage.name())
+                );
                 let (value, mut facts) = match self.measurement(stage, direction) {
-                    None => (self.unmeasured(stage).to_owned(), Vec::new()),
+                    None => (self.paint(Tone::Muted, self.unmeasured(stage)), Vec::new()),
                     Some(measurement) => match measurement.mean_bytes_per_sec {
-                        None => (MISSING.to_owned(), Vec::new()),
-                        Some(mean) => (format::rate(mean), throughput_facts(measurement, true)),
+                        None => (self.paint(Tone::Muted, MISSING), Vec::new()),
+                        Some(mean) => (
+                            self.paint(Tone::Rate(stage), &format::rate(mean)),
+                            throughput_facts(measurement, true),
+                        ),
                     },
                 };
-                if self.status(stage) == StageStatus::Partial {
+                let partial = self.status(stage) == StageStatus::Partial;
+                if partial {
                     facts.insert(0, StageStatus::Partial.label().to_owned());
                 }
-                (label, value, facts)
+                (label, value, facts, partial)
             })
             .collect();
         let label_width = rows.iter().map(|row| width(&row.0)).max().unwrap_or(0);
         let value_width = rows.iter().map(|row| width(&row.1)).max().unwrap_or(0);
         let indent = label_width + value_width + 2;
         let mut lines = Vec::new();
-        for (label, value, facts) in rows {
+        for (label, value, facts, partial) in rows {
             let line = format!("{}  {}", pad(&label, label_width), pad(&value, value_width));
             for (index, part) in wrap_parts(&facts, self.width.saturating_sub(indent + 3).max(20))
                 .into_iter()
                 .enumerate()
             {
+                let status = StageStatus::Partial.label();
                 lines.push(match index {
                     0 if part.is_empty() => line.clone(),
-                    0 => format!("{line}   {part}"),
-                    _ => format!("{}   {part}", " ".repeat(indent)),
+                    0 if partial => format!(
+                        "{line}   {}{}",
+                        self.paint(Tone::Warn, status),
+                        self.paint(Tone::Muted, part.strip_prefix(status).unwrap_or(&part))
+                    ),
+                    0 => format!("{line}   {}", self.paint(Tone::Muted, &part)),
+                    _ => format!("{}   {}", " ".repeat(indent), self.paint(Tone::Muted, &part)),
                 });
             }
         }
@@ -237,7 +313,7 @@ impl<'a> Report<'a> {
             return String::new();
         }
         let scope = if self.servers().len() > 1 { "All servers" } else { "" };
-        grid(&["Throughput".to_owned(), scope.to_owned()], &rows, self.width)
+        self.grid(&["Throughput".to_owned(), scope.to_owned()], &rows)
     }
 
     fn population(&self, stage: Stage) -> Option<&ServerLatencyResult> {
@@ -268,19 +344,22 @@ impl<'a> Report<'a> {
                     if *stage == Stage::Latency {
                         cells[1].clear();
                     }
-                    rows.push([vec![compact_population(*stage).to_owned()], cells].concat());
+                    let label = self.paint(Tone::Stage(*stage), compact_population(*stage));
+                    rows.push([vec![label], cells].concat());
                     let label = population_label(*stage);
                     match population.ending {
                         Some(Ending::Stopped) if self.snapshot.phase == Phase::Cancelled => {
-                            failures.push(format!("{label} stopped."));
+                            failures.push(self.paint(Tone::Warn, &format!("{label} stopped.")));
                         }
-                        Some(Ending::Failed(reason)) => failures.push(format!("{label}: {}", reason.label())),
+                        Some(Ending::Failed(reason)) => {
+                            failures.push(self.paint(Tone::Err, &format!("{label}: {}", reason.label())));
+                        }
                         _ => {}
                     }
                 }
                 None if *stage == Stage::Latency && !self.snapshot.phase.live() => {
                     rows.push(vec![
-                        compact_population(*stage).to_owned(),
+                        self.paint(Tone::Stage(*stage), compact_population(*stage)),
                         self.unmeasured(*stage).to_owned(),
                     ]);
                 }
@@ -302,14 +381,14 @@ impl<'a> Report<'a> {
         if !added {
             headers.remove(2);
         }
-        (grid(&headers, &rows, self.width), failures, added)
+        (self.grid(&headers, &rows), failures, added)
     }
 
     fn throughput_failure(&self, stage: Stage, direction: Direction, label: &str) -> Option<String> {
         let result = self.result(stage)?;
         let measurement = self.measurement(stage, direction)?;
         if result.stopped {
-            return Some(format!("{label} stopped."));
+            return Some(self.paint(Tone::Warn, &format!("{label} stopped.")));
         }
         let stage_failures: Vec<_> = self
             .snapshot
@@ -327,7 +406,7 @@ impl<'a> Report<'a> {
             _ if measurement.mean_bytes_per_sec.is_none() => FailureReason::InsufficientEvidence,
             _ => return None,
         };
-        Some(format!("{label}: {}", reason.label()))
+        Some(self.paint(Tone::Err, &format!("{label}: {}", reason.label())))
     }
 
     fn notes(&self, added: bool) -> String {
@@ -364,6 +443,7 @@ impl<'a> Report<'a> {
         if added {
             lines.push(ADDED_NOTE.to_owned());
         }
+        let lines: Vec<_> = lines.iter().map(|line| self.paint(Tone::Muted, line)).collect();
         lines.join("\n")
     }
 
@@ -372,13 +452,14 @@ impl<'a> Report<'a> {
         let remaining = self.snapshot.participants.len();
         let outcome = outcome(self.snapshot.phase);
         let live = self.snapshot.phase.live();
-        let mut lines = vec![match servers.len() {
+        let notice = match servers.len() {
             1 => status(self.snapshot).to_owned(),
             selected if live && remaining < selected => format!("{remaining} of {selected} servers remaining"),
             selected if live => format!("All {selected} servers"),
             selected if remaining < selected => format!("{outcome} · {remaining} of {selected} servers"),
             selected => format!("{outcome} · all {selected} servers"),
-        }];
+        };
+        let mut lines = vec![self.paint(Tone::Heading, &notice)];
         if full {
             let notes = self.facts();
             if !notes.is_empty() {
@@ -441,14 +522,14 @@ impl<'a> Report<'a> {
                     .collect::<Vec<_>>(),
             );
         }
-        lines.push(grid(&headers, &rows, self.width));
-        lines.extend([String::new(), "Latency median by server".to_owned()]);
+        lines.push(self.grid(&headers, &rows));
+        lines.extend([String::new(), self.paint(Tone::Heading, "Latency median by server")]);
         let populations: Vec<_> = std::iter::once("Server".to_owned())
             .chain(self.plan.iter().map(|stage| compact_population(*stage).to_owned()))
             .collect();
-        lines.push(grid(&populations, &medians, self.width));
+        lines.push(self.grid(&populations, &medians));
         if !self.snapshot.failures.is_empty() {
-            lines.extend([String::new(), "Issues".to_owned()]);
+            lines.extend([String::new(), self.paint(Tone::Heading, "Issues")]);
             for failure in &self.snapshot.failures {
                 let scope = match failure.scope {
                     FailureScope::Throughput => "throughput",
@@ -686,39 +767,49 @@ fn note(label: &str, facts: &[String], width: usize) -> Vec<String> {
     lines
 }
 
-fn grid(headers: &[String], rows: &[Vec<String>], limit: usize) -> String {
-    let mut widths = vec![0; headers.len()];
-    for row in std::iter::once(headers).chain(rows.iter().map(Vec::as_slice)) {
-        for (index, cell) in row.iter().enumerate() {
-            widths[index] = widths[index].max(width(cell));
+impl Report<'_> {
+    /// Go's grid: muted headers over text cells, or each row's facts when the columns do not fit.
+    fn grid(&self, headers: &[String], rows: &[Vec<String>]) -> String {
+        let limit = self.width;
+        let mut widths = vec![0; headers.len()];
+        for row in std::iter::once(headers).chain(rows.iter().map(Vec::as_slice)) {
+            for (index, cell) in row.iter().enumerate() {
+                widths[index] = widths[index].max(width(cell));
+            }
         }
+        if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= limit {
+            return std::iter::once(headers)
+                .chain(rows.iter().map(Vec::as_slice))
+                .enumerate()
+                .map(|(index, row)| {
+                    let tone = if index == 0 { Tone::Muted } else { Tone::Text };
+                    let cells: Vec<_> = row
+                        .iter()
+                        .zip(&widths)
+                        .map(|(cell, width)| pad(&self.paint(tone, cell), *width))
+                        .collect();
+                    cells.join("  ").trim_end().to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+        }
+        let mut lines = vec![self.paint(Tone::Muted, &headers[0])];
+        for row in rows {
+            let facts: Vec<_> = row[1..]
+                .iter()
+                .zip(&headers[1..])
+                .filter(|(cell, _)| !cell.is_empty())
+                .map(|(cell, header)| format!("{header} {cell}").trim().to_owned())
+                .collect();
+            lines.push(self.paint(Tone::Text, &row[0]));
+            lines.extend(
+                wrap_parts(&facts, limit.saturating_sub(2))
+                    .into_iter()
+                    .map(|line| format!("  {}", self.paint(Tone::Muted, &line))),
+            );
+        }
+        lines.join("\n")
     }
-    if widths.iter().map(|width| width + 2).sum::<usize>().saturating_sub(2) <= limit {
-        return std::iter::once(headers)
-            .chain(rows.iter().map(Vec::as_slice))
-            .map(|row| {
-                let cells: Vec<_> = row.iter().zip(&widths).map(|(cell, width)| pad(cell, *width)).collect();
-                cells.join("  ").trim_end().to_owned()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-    }
-    let mut lines = vec![headers[0].clone()];
-    for row in rows {
-        let facts: Vec<_> = row[1..]
-            .iter()
-            .zip(&headers[1..])
-            .filter(|(cell, _)| !cell.is_empty())
-            .map(|(cell, header)| format!("{header} {cell}").trim().to_owned())
-            .collect();
-        lines.push(row[0].clone());
-        lines.extend(
-            wrap_parts(&facts, limit.saturating_sub(2))
-                .into_iter()
-                .map(|line| format!("  {line}")),
-        );
-    }
-    lines.join("\n")
 }
 
 pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
@@ -744,18 +835,97 @@ fn fit(line: &str, limit: usize) -> String {
     }
     let mut fitted = String::new();
     let mut used = 0;
-    for character in line.chars() {
+    let mut rest = line;
+    while let Some(character) = rest.chars().next() {
+        if let Some(length) = sgr_length(rest) {
+            fitted.push_str(&rest[..length]);
+            rest = &rest[length..];
+            continue;
+        }
         used += unicode_width::UnicodeWidthChar::width(character).unwrap_or(0);
         if used >= limit.max(1) {
             break;
         }
         fitted.push(character);
+        rest = &rest[character.len_utf8()..];
     }
-    fitted + "…"
+    fitted.push('…');
+    if fitted.contains('\x1b') {
+        fitted.push_str(RESET);
+    }
+    fitted
 }
 
+/// Display width; the SGR sequences `paint` adds take none.
 fn width(text: &str) -> usize {
-    unicode_width::UnicodeWidthStr::width(text)
+    unicode_width::UnicodeWidthStr::width(unpainted(text).as_str())
+}
+
+fn unpainted(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(character) = rest.chars().next() {
+        let length = sgr_length(rest).unwrap_or_else(|| {
+            plain.push(character);
+            character.len_utf8()
+        });
+        rest = &rest[length..];
+    }
+    plain
+}
+
+/// The length of the SGR sequence `text` starts with, as `paint` writes them.
+fn sgr_length(text: &str) -> Option<usize> {
+    let parameters = text.strip_prefix("\x1b[")?;
+    let end = parameters.find(|c: char| !c.is_ascii_digit() && c != ';')?;
+    parameters[end..].starts_with('m').then_some(end + 3)
+}
+
+/// The TUI's safe text for a report line, keeping only the SGR sequences `paint` adds.
+fn safe(line: &str) -> String {
+    let mut safe = String::with_capacity(line.len());
+    let mut rest = line;
+    while let Some(character) = rest.chars().next() {
+        let length = match sgr_length(rest) {
+            Some(length) => {
+                safe.push_str(&rest[..length]);
+                length
+            }
+            None => {
+                let terminal = graphite_meter_core::text::terminal_character(character);
+                safe.push(if terminal { character } else { '�' });
+                character.len_utf8()
+            }
+        };
+        rest = &rest[length..];
+    }
+    safe
+}
+
+/// A foreground colour's SGR parameters, as Go's colour profiles write each depth.
+fn sgr(color: Color) -> Option<String> {
+    let ansi = match color {
+        Color::Reset => return None,
+        Color::Rgb(red, green, blue) => return Some(format!("38;2;{red};{green};{blue}")),
+        Color::Indexed(index) => return Some(format!("38;5;{index}")),
+        Color::Black => 30,
+        Color::Red => 31,
+        Color::Green => 32,
+        Color::Yellow => 33,
+        Color::Blue => 34,
+        Color::Magenta => 35,
+        Color::Cyan => 36,
+        Color::Gray => 37,
+        Color::DarkGray => 90,
+        Color::LightRed => 91,
+        Color::LightGreen => 92,
+        Color::LightYellow => 93,
+        Color::LightBlue => 94,
+        Color::LightMagenta => 95,
+        Color::LightCyan => 96,
+        Color::White => 97,
+    };
+    Some(ansi.to_string())
 }
 
 fn pad(text: &str, to: usize) -> String {
@@ -780,4 +950,160 @@ fn count(value: usize) -> String {
         out.push(digit);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ServerContribution, ServerFailure, ServerSummary};
+    use graphite_meter_core::latency::{LatencyAccumulator, ProbeOutcome};
+
+    /// One server's idle and loaded latency and a download a late probe timeout made partial.
+    fn partial_run() -> Snapshot {
+        let latency = |rtts: &[i64], timeouts: usize| {
+            let mut probes = LatencyAccumulator::default();
+            for rtt_nanos in rtts {
+                probes.record(ProbeOutcome::Reply {
+                    rtt_nanos: *rtt_nanos,
+                    handling_nanos: 0,
+                });
+            }
+            for _ in 0..timeouts {
+                probes.record(ProbeOutcome::Timeout);
+            }
+            vec![ServerLatencyResult {
+                elapsed: Some(Duration::from_secs(1)),
+                id: "a".into(),
+                summary: probes.snapshot(),
+                ending: None,
+            }]
+        };
+        Snapshot {
+            phase: Phase::Partial,
+            servers: vec![ServerSummary {
+                id: "a".into(),
+                name: "Alpha".into(),
+                error: Some("checked".into()),
+                ..ServerSummary::default()
+            }],
+            participants: vec!["a".into()],
+            latency_focus: Some("a".into()),
+            plan: vec![Stage::Latency, Stage::Download],
+            duration: Duration::from_secs(5),
+            results: vec![
+                StageResult {
+                    stage: Stage::Latency,
+                    elapsed: Duration::from_secs(1),
+                    server_latencies: latency(&[1_000_000, 2_000_000, 3_000_000], 1),
+                    ..StageResult::default()
+                },
+                StageResult {
+                    stage: Stage::Download,
+                    elapsed: Duration::from_secs(1),
+                    down: Some(MeasurementResult {
+                        direction: graphite_meter_core::measurement::Direction::Down,
+                        total_bytes: 1_500_000,
+                        mean_bytes_per_sec: Some(1_500_000.0),
+                        peak_bytes_per_sec: Some(1_800_000.0),
+                        samples: 4,
+                        elapsed_nanos: Some(1_000_000_000),
+                    }),
+                    server_latencies: latency(&[5_000_000, 6_000_000, 7_000_000], 0),
+                    server_results: vec![ServerContribution {
+                        id: "a".into(),
+                        ..ServerContribution::default()
+                    }],
+                    ..StageResult::default()
+                },
+            ],
+            failures: vec![ServerFailure {
+                server_id: "a".into(),
+                stage: Stage::Download,
+                scope: FailureScope::Latency,
+                reason: FailureReason::Timeout,
+                at: Duration::from_secs(3),
+            }],
+            error: Some("Stopped delivering data".into()),
+            ..Snapshot::default()
+        }
+    }
+
+    #[test]
+    fn a_terminal_report_paints_go_styles_over_the_plain_text() {
+        let snapshot = partial_run();
+        let plain = compose(&snapshot, WIDTH, None).unwrap();
+        assert!(!plain.contains('\x1b'));
+        assert_eq!(render(&snapshot, WIDTH, false).as_ref(), Some(&plain));
+        let mut theme = Theme::terminal();
+        (theme.ink, theme.text, theme.muted) = (Color::Indexed(1), Color::Indexed(2), Color::Indexed(3));
+        (theme.warn, theme.err) = (Color::Indexed(4), Color::Rgb(5, 6, 7));
+        let painted = compose(&snapshot, WIDTH, Some(theme)).unwrap();
+        assert_eq!(unpainted(&painted), plain);
+        let report = Report {
+            theme: Some(theme),
+            ..Report::new(&snapshot, None, WIDTH)
+        };
+        let paint = |tone, text: &str| report.paint(tone, text);
+        let download = Stage::Download;
+        for line in [
+            "\x1b[1;38;5;1mGraphite Meter\x1b[0m  \x1b[1;38;5;4mPartial\x1b[0m  \x1b[38;5;3mAlpha · 5.0 s · 1.5 MB\x1b[0m"
+                .to_owned(),
+            format!(
+                "{} {}  {}   {}{}",
+                paint(Tone::Stage(download), "↓"),
+                paint(Tone::Text, "Download"),
+                paint(Tone::Rate(download), "12.00 Mbit/s"),
+                paint(Tone::Warn, "Partial"),
+                paint(Tone::Muted, " · peak 14.40 · 1.5 MB · 1.0 s")
+            ),
+            format!("{}      {}", paint(Tone::Muted, "Latency"), paint(Tone::Muted, "Median")),
+            format!(
+                "{}  {}",
+                paint(Tone::Text, &paint(Tone::Stage(download), "Loaded down")),
+                paint(Tone::Text, "6.0 ms")
+            ),
+            paint(Tone::Muted, ADDED_NOTE),
+            "\x1b[1;38;2;5;6;7mStopped delivering data\x1b[0m".to_owned(),
+        ] {
+            assert!(painted.lines().any(|painted| painted.contains(&line)), "{line:?} in {painted:?}");
+        }
+
+        // A multi-server run's details keep Go's headings; its issues stay plain.
+        let mut pair = partial_run();
+        pair.servers.push(ServerSummary {
+            id: "b".into(),
+            name: "Beta".into(),
+            error: Some("checked".into()),
+            ..ServerSummary::default()
+        });
+        let painted = compose(&pair, WIDTH, Some(theme)).unwrap();
+        assert_eq!(unpainted(&painted), compose(&pair, WIDTH, None).unwrap());
+        for line in [
+            paint(Tone::Heading, "Partial · 1 of 2 servers"),
+            paint(Tone::Heading, "Latency median by server"),
+            paint(Tone::Heading, "Issues"),
+            "Alpha · Download latency · at 3.0 s · Stopped delivering data".to_owned(),
+        ] {
+            assert!(
+                painted.lines().any(|painted| painted == line),
+                "{line:?} in {painted:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn painted_lines_measure_fit_and_sanitize_around_their_colours() {
+        let name = "\x1b[1;38;5;1mname\x1b[0m";
+        assert_eq!(width(name), 4);
+        assert_eq!(pad(name, 6), format!("{name}  "));
+        assert_eq!(fit("\x1b[38;5;3mabcdef\x1b[0m", 4), "\x1b[38;5;3mabc…\x1b[0m");
+        assert_eq!(fit("abcdef", 4), "abc…");
+        assert_eq!(
+            safe(&format!("{name}\x1b]52;c;secret\x07\u{202e}\x1b[2J")),
+            format!("{name}�]52;c;secret���[2J")
+        );
+        assert_eq!(sgr(Color::Reset), None);
+        assert_eq!(sgr(Color::LightRed).as_deref(), Some("91"));
+        assert_eq!(sgr(Color::Gray).as_deref(), Some("37"));
+    }
 }

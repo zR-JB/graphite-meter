@@ -80,8 +80,8 @@ async fn run(action: Action) -> Result<i32, Error> {
         .filter(|_| std::io::stdout().is_terminal())
         .map_or(report::WIDTH, |(columns, _)| usize::from(columns).max(40));
     if let Some(snapshot) = finished.as_ref().filter(|_| !exit.running) {
-        match report::render(snapshot, width) {
-            Some(report) => println!("{}", report.lines().map(safe).collect::<Vec<_>>().join("\n")),
+        match report::render(snapshot, width, std::io::stdout().is_terminal()) {
+            Some(report) => println!("{report}"),
             None if headless => eprintln!(
                 "graphite-meter-client: {}",
                 snapshot.error.as_deref().unwrap_or("Test stopped before it started.")

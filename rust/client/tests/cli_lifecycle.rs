@@ -20,6 +20,22 @@ async fn read_header(stream: &mut tokio::net::TcpStream) -> Result<(), Error> {
     Err("oversized request header".into())
 }
 
+/// The text without its SGR colour sequences.
+fn unpainted(text: &str) -> String {
+    let mut parts = text.split("\x1b[");
+    let mut plain = parts.next().unwrap_or_default().to_owned();
+    for part in parts {
+        match part.find(|c: char| !c.is_ascii_digit() && c != ';') {
+            Some(end) if part[end..].starts_with('m') => plain.push_str(&part[end + 1..]),
+            _ => {
+                plain.push_str("\x1b[");
+                plain.push_str(part);
+            }
+        }
+    }
+    plain
+}
+
 fn client(origin: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_graphite-meter-client"));
     command.args([
@@ -304,11 +320,13 @@ finally:
         let (_, printed) = text
             .rsplit_once("\x1b[?1049l")
             .ok_or("the alternate screen stayed open")?;
+        // The terminal gets the report in Go's colours.
         assert_eq!(
-            printed.contains("Graphite Meter  Stopped"),
+            unpainted(printed).contains("Graphite Meter  Stopped"),
             report,
             "{mode}: {printed:?}"
         );
+        assert_eq!(unpainted(printed) != printed, report, "{mode}: {printed:?}");
     }
     peer.abort();
     Ok(())
