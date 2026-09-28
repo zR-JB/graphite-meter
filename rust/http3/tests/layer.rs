@@ -545,15 +545,9 @@ async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), T
     let (_send, mut recv) = requests.send_request(get("/held")).await?.split();
     started.notified().await;
     stop.notify_one();
+    until_goaway(&requests).await?;
     // A request that ignores the GOAWAY gets H3_REQUEST_REJECTED.
-    let mut ignoring = loop {
-        tokio::task::yield_now().await;
-        match requests.send_request(get("/late")).await {
-            Err(Error::Refused) => break peers.client.open_bi().await?,
-            Ok(late) => drop(late),
-            Err(error) => return Err(error.into()),
-        }
-    };
+    let mut ignoring = peers.client.open_bi().await?;
     ignoring.0.write_all(&request_head(&[])).await?;
     assert_eq!(response_bytes(&mut ignoring.1).await, Err(Code::H3_REQUEST_REJECTED));
     release.notify_one();
@@ -564,7 +558,18 @@ async fn goaway_refuses_new_requests_and_closes_after_the_last() -> Result<(), T
     Ok(())
 }
 
-/// Runs `deadline` of tokio time at once; noq's timers see the jump too, well inside its idle timeout.
+async fn until_goaway(requests: &client::SendRequest) -> Result<(), Error> {
+    loop {
+        tokio::task::yield_now().await;
+        match requests.send_request(get("/late")).await {
+            Err(Error::Refused) => return Ok(()),
+            Ok(late) => drop(late),
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Runs `deadline` of tokio and noq time at once; with a close in flight, noq would reset the peer instead.
 async fn jump(deadline: Duration) {
     tokio::time::pause();
     tokio::time::advance(deadline).await;
@@ -591,17 +596,28 @@ async fn deadlines_close_idle_and_draining_connections_and_stale_heads() -> Resu
     assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
 
     let peers = self::peers(usize::MAX).await?;
-    let (serving, stop) = serve(&peers, |_, stream| async move {
-        std::future::pending::<()>().await;
-        drop(stream);
+    let held = Arc::new(Notify::new());
+    let holding = held.clone();
+    let (serving, stop) = serve(&peers, move |_, stream| {
+        let holding = holding.clone();
+        async move {
+            holding.notify_one();
+            std::future::pending::<()>().await;
+            drop(stream);
+        }
     });
     let (driver, requests) = client(&peers);
     let _held = requests.send_request(get("/held")).await?;
-    tokio::task::yield_now().await;
+    held.notified().await;
     stop.notify_one();
-    tokio::task::yield_now().await;
+    until_goaway(&requests).await?;
+    assert!(
+        peers.server.close_reason().is_none(),
+        "only the drain closes a connection with a held request"
+    );
     jump(Duration::from_secs(6)).await;
     assert_eq!((driver.await?, serving.await?), (Ok(()), Ok(())));
+    assert_eq!(closed_with(&peers.client).await, Code::H3_NO_ERROR);
     Ok(())
 }
 
