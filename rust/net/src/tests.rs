@@ -265,6 +265,21 @@ async fn socks5_sends_addresses_as_go_does_and_fails_closed() {
     }
 }
 
+/// As Go's dialer, a connection probes an idle peer after 30 s and then every 30 s, so one that
+/// died during a sleep or a network change closes instead of hanging the next request.
+#[tokio::test]
+async fn dialled_connections_probe_idle_peers_like_go() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let stream = tcp("127.0.0.1", listener.local_addr().unwrap().port()).await.unwrap();
+    let socket = socket2::SockRef::from(&stream);
+    assert!(socket.keepalive().unwrap());
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(socket.tcp_keepalive_time().unwrap(), Duration::from_secs(30));
+        assert_eq!(socket.tcp_keepalive_interval().unwrap(), Duration::from_secs(30));
+    }
+}
+
 #[path = "../../test_identity.rs"]
 mod test_identity;
 

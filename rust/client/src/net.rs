@@ -20,12 +20,15 @@ use hyper::{
     body::{Frame, Incoming},
     client::conn::{http1, http2},
 };
-use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use serde::de::DeserializeOwned;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::sync::watch;
@@ -41,6 +44,10 @@ const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(90);
 // Go's client windows; hyper's defaults cap a 100 ms path at a few hundred Mbit/s.
 const H2_STREAM_WINDOW: u32 = 32 << 20;
 const H2_CONNECTION_WINDOW: u32 = 64 << 20;
+/// An HTTP/2 connection that reads nothing for this long is pinged, at Go's TCP keep-alive
+/// period, and closed if the peer does not answer within hyper's default 20 s.
+const H2_KEEP_ALIVE: Duration = Duration::from_secs(30);
+const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn empty() -> Body {
     Empty::new().map_err(|never| match never {}).boxed_unsync()
@@ -57,6 +64,7 @@ struct Connections {
     tls: [TlsConnector; 3],
     pools: Mutex<HashMap<Key, Arc<Mutex<Pool>>>>,
     maintenance: OnceLock<tokio::task::JoinHandle<()>>,
+    ids: AtomicU64,
 }
 type Key = (String, Protocol, Lanes);
 
@@ -73,7 +81,7 @@ enum Lanes {
 struct Pool {
     used: tokio::time::Instant,
     h1: Vec<Http1>,
-    h2: Option<http2::SendRequest<Body>>,
+    h2: Option<Http2>,
     /// A dial that may yield HTTP/2: requests wait for it rather than open their own. Its sender
     /// drops when the dial ends, however it ends.
     dialing: Option<watch::Receiver<()>>,
@@ -100,16 +108,17 @@ enum Next {
 }
 
 impl Pool {
-    fn next(&mut self, multiplexed: bool) -> Next {
+    /// `idle` false leaves idle HTTP/1.1 connections to others, for a replay after one failed.
+    fn next(&mut self, multiplexed: bool, idle: bool) -> Next {
         self.used = tokio::time::Instant::now();
-        if let Some(sender) = &self.h2 {
-            if !sender.is_closed() {
-                return Next::Ready(Sender::H2(sender.clone()));
+        if let Some(shared) = &self.h2 {
+            if !shared.sender.is_closed() {
+                return Next::Ready(Sender::H2(shared.clone()));
             }
             self.h2 = None;
         }
         self.h1.retain(|connection| !connection.sender.is_closed());
-        if let Some(index) = self.h1.iter().position(|connection| connection.sender.is_ready()) {
+        if idle && let Some(index) = self.h1.iter().position(|connection| connection.sender.is_ready()) {
             return Next::Ready(Sender::H1(self.h1.swap_remove(index)));
         }
         if !multiplexed || self.http1_only {
@@ -123,6 +132,13 @@ impl Pool {
         let (reservation, dialing) = watch::channel(());
         self.dialing = Some(dialing);
         Next::Dial(Some(reservation))
+    }
+
+    /// Later requests dial anew rather than share this HTTP/2 connection; its open streams go on.
+    fn evict(&mut self, id: u64) {
+        if self.h2.as_ref().is_some_and(|shared| shared.id == id) {
+            self.h2 = None;
+        }
     }
 }
 
@@ -139,9 +155,54 @@ struct Http1 {
     absolute_form: bool,
     proxy_authorization: Option<HeaderValue>,
 }
+#[derive(Clone)]
+struct Http2 {
+    id: u64,
+    sender: http2::SendRequest<Body>,
+}
 enum Sender {
     H1(Http1),
-    H2(http2::SendRequest<Body>),
+    H2(Http2),
+}
+
+/// How one try at a response's headers failed.
+enum Attempt {
+    /// On a connection an earlier request used, before any response: it may have died while idle.
+    Reused(Error),
+    Failed(Error),
+}
+impl From<Attempt> for Error {
+    fn from(attempt: Attempt) -> Self {
+        match attempt {
+            Attempt::Reused(error) | Attempt::Failed(error) => error,
+        }
+    }
+}
+
+/// A copy of a bodyless request, which is safe to send again when its connection fails first.
+fn replayable(request: &Request<Body>) -> Option<Request<Body>> {
+    if !hyper::body::Body::is_end_stream(request.body()) {
+        return None;
+    }
+    let mut copy = Request::new(empty());
+    *copy.method_mut() = request.method().clone();
+    *copy.uri_mut() = request.uri().clone();
+    *copy.version_mut() = request.version();
+    *copy.headers_mut() = request.headers().clone();
+    Some(copy)
+}
+
+fn stream_reset(error: &hyper::Error) -> bool {
+    std::error::Error::source(error)
+        .and_then(|source| source.downcast_ref::<h2::Error>())
+        .is_some_and(h2::Error::is_reset)
+}
+
+async fn until<T>(deadline: Option<tokio::time::Instant>, work: impl Future<Output = T>) -> Result<T> {
+    match deadline {
+        Some(deadline) => Ok(tokio::time::timeout_at(deadline, work).await?),
+        None => Ok(work.await),
+    }
 }
 
 impl Connections {
@@ -154,18 +215,31 @@ impl Connections {
             tls: [tls(&[b"http/1.1"])?, tls(&[b"h2"])?, tls(&[b"h2", b"http/1.1"])?],
             pools: Mutex::new(HashMap::new()),
             maintenance: OnceLock::new(),
+            ids: AtomicU64::new(0),
         })
+    }
+
+    /// The same proxy and TLS settings with no connections yet.
+    fn renewed(&self) -> Self {
+        Self {
+            proxy: self.proxy.clone(),
+            tls: self.tls.clone(),
+            pools: Mutex::new(HashMap::new()),
+            maintenance: OnceLock::new(),
+            ids: AtomicU64::new(0),
+        }
     }
 
     /// A pooled connection, or a new one dialled outside the pool's lock, so no request waits
     /// behind another's dial unless that dial may bring the HTTP/2 connection it would share.
-    async fn sender(&self, origin: &str, protocol: Protocol, pool: &Mutex<Pool>) -> Result<Sender> {
+    /// The flag is true when the connection is not this request's own new dial.
+    async fn sender(&self, origin: &str, protocol: Protocol, pool: &Mutex<Pool>, idle: bool) -> Result<(Sender, bool)> {
         let multiplexed =
             protocol == Protocol::Http2 || protocol == Protocol::Negotiated && origin.starts_with("https:");
         loop {
-            let next = pool.lock().expect("connection pool poisoned").next(multiplexed);
+            let next = pool.lock().expect("connection pool poisoned").next(multiplexed, idle);
             match next {
-                Next::Ready(sender) => return Ok(sender),
+                Next::Ready(sender) => return Ok((sender, true)),
                 Next::Wait(mut dialing) => {
                     let _ = dialing.changed().await;
                 }
@@ -176,7 +250,7 @@ impl Connections {
                         Sender::H2(shared) => pool.h2 = Some(shared.clone()),
                         Sender::H1(_) => pool.http1_only |= reservation.is_some(),
                     }
-                    return Ok(sender);
+                    return Ok((sender, false));
                 }
             }
         }
@@ -201,12 +275,19 @@ impl Connections {
         let io = TokioIo::new(connection.stream);
         if h2 {
             let (sender, driver) = http2::Builder::new(TokioExecutor::new())
+                .timer(TokioTimer::new())
                 .initial_stream_window_size(H2_STREAM_WINDOW)
                 .initial_connection_window_size(H2_CONNECTION_WINDOW)
+                .keep_alive_interval(H2_KEEP_ALIVE)
+                .keep_alive_timeout(H2_KEEP_ALIVE_TIMEOUT)
+                .keep_alive_while_idle(true)
                 .handshake(io)
                 .await?;
             tokio::spawn(driver);
-            Ok(Sender::H2(sender))
+            Ok(Sender::H2(Http2 {
+                id: self.ids.fetch_add(1, Ordering::Relaxed),
+                sender,
+            }))
         } else {
             let (sender, driver) = http1::handshake(io).await?;
             tokio::spawn(driver);
@@ -218,7 +299,7 @@ impl Connections {
         }
     }
 
-    async fn send(self: &Arc<Self>, mut request: Request<Body>, protocol: Protocol, lanes: Lanes) -> Result<Response> {
+    fn maintain(self: &Arc<Self>) {
         self.maintenance.get_or_init(|| {
             let owner = Arc::downgrade(self);
             let start = tokio::time::Instant::now() + POOL_IDLE_TIMEOUT;
@@ -237,6 +318,19 @@ impl Connections {
                 }
             })
         });
+    }
+
+    /// The response headers by `deadline`, if any. A request without a body that fails on a
+    /// connection an earlier request used is sent once more over a new connection, as Go's
+    /// transport retries a dead reused connection.
+    async fn send(
+        self: &Arc<Self>,
+        request: Request<Body>,
+        protocol: Protocol,
+        lanes: Lanes,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Response> {
+        self.maintain();
         let (origin, _) = split_url(&request.uri().to_string())?;
         let origin = origin.key();
         let pool = self
@@ -246,17 +340,50 @@ impl Connections {
             .entry((origin.clone(), protocol, lanes))
             .or_default()
             .clone();
-        let sender = tokio::time::timeout(CONTROL_TIMEOUT, self.sender(&origin, protocol, &pool)).await??;
-        match sender {
-            Sender::H2(mut sender) => {
-                sender.ready().await?;
-                Ok(sender.send_request(request).await?)
+        let replay = replayable(&request);
+        match (
+            self.attempt(request, &origin, protocol, &pool, deadline, true).await,
+            replay,
+        ) {
+            (Err(Attempt::Reused(_)), Some(request)) => {
+                Ok(self.attempt(request, &origin, protocol, &pool, deadline, false).await?)
+            }
+            (result, _) => Ok(result?),
+        }
+    }
+
+    async fn attempt(
+        &self,
+        mut request: Request<Body>,
+        origin: &str,
+        protocol: Protocol,
+        pool: &Mutex<Pool>,
+        deadline: Option<tokio::time::Instant>,
+        idle: bool,
+    ) -> std::result::Result<Response, Attempt> {
+        let acquired = tokio::time::Instant::now() + CONTROL_TIMEOUT;
+        let acquired = deadline.map_or(acquired, |deadline| deadline.min(acquired));
+        let (sender, reused) = tokio::time::timeout_at(acquired, self.sender(origin, protocol, pool, idle))
+            .await
+            .map_err(|elapsed| Attempt::Failed(elapsed.into()))?
+            .map_err(Attempt::Failed)?;
+        let (response, h2) = match sender {
+            Sender::H2(mut shared) => {
+                let response = until(deadline, async {
+                    shared.sender.ready().await?;
+                    shared.sender.send_request(request).await
+                })
+                .await;
+                (response, Some(shared.id))
             }
             Sender::H1(mut connection) => {
-                let authority = request.uri().authority().ok_or("missing authority")?.clone();
-                request
-                    .headers_mut()
-                    .insert(HOST, HeaderValue::from_str(authority.as_str())?);
+                let authority = request
+                    .uri()
+                    .authority()
+                    .ok_or_else(|| Attempt::Failed("missing authority".into()))?
+                    .clone();
+                let host = HeaderValue::from_str(authority.as_str()).map_err(|error| Attempt::Failed(error.into()))?;
+                request.headers_mut().insert(HOST, host);
                 if connection.absolute_form {
                     if let Some(authorization) = &connection.proxy_authorization {
                         request
@@ -268,19 +395,35 @@ impl Connections {
                         .uri()
                         .path_and_query()
                         .map_or("/", |path| path.as_str())
-                        .parse()?;
+                        .parse()
+                        .map_err(|error: http::uri::InvalidUri| Attempt::Failed(error.into()))?;
                     *request.uri_mut() = path;
                 }
                 *request.version_mut() = Version::HTTP_11;
-                let response = connection.sender.send_request(request).await?;
-                let mut pool = pool.lock().expect("connection pool poisoned");
-                if pool.h1.len() < IDLE_PER_ORIGIN {
-                    pool.used = tokio::time::Instant::now();
-                    pool.h1.push(connection);
+                let response = until(deadline, connection.sender.send_request(request)).await;
+                if matches!(response, Ok(Ok(_))) {
+                    let mut pool = pool.lock().expect("connection pool poisoned");
+                    if pool.h1.len() < IDLE_PER_ORIGIN {
+                        pool.used = tokio::time::Instant::now();
+                        pool.h1.push(connection);
+                    }
                 }
-                Ok(response)
+                (response, None)
             }
+        };
+        let failure = match response {
+            Ok(Ok(response)) => return Ok(response),
+            // A stream the peer or h2 reset ends alone; its connection goes on.
+            Ok(Err(error)) if stream_reset(&error) => return Err(Attempt::Failed(error.into())),
+            Ok(Err(error)) if reused && !error.is_user() => Attempt::Reused(error.into()),
+            Ok(Err(error)) => Attempt::Failed(error.into()),
+            // A timed-out HTTP/1.1 connection closes as it drops.
+            Err(elapsed) => Attempt::Failed(elapsed),
+        };
+        if let Some(id) = h2 {
+            pool.lock().expect("connection pool poisoned").evict(id);
         }
+        Err(failure)
     }
 }
 
@@ -389,6 +532,15 @@ impl Http {
             ..self.clone()
         }
     }
+    /// The same credentials over a pool of its own. Each check and run takes one, as Go's client
+    /// takes new transports for them, so none reuses a connection an earlier one left idle, which
+    /// a sleep or a network change may have killed since.
+    pub fn fresh(&self) -> Self {
+        Self {
+            connections: Arc::new(self.connections.renewed()),
+            ..self.clone()
+        }
+    }
     pub async fn dial(&self, origin: &str, tls: Option<&TlsConnector>) -> Result<graphite_meter_net::Connection> {
         let target = target_origin(origin)?.ok_or("missing origin")?;
         Ok(connect(&self.connections.proxy, &target, tls).await?)
@@ -421,18 +573,29 @@ impl Http {
         }
         Ok(request)
     }
+    /// A streamed request, whose headers may wait on its body: the caller bounds it.
     pub async fn send(&self, request: Request<Body>, protocol: Protocol) -> Result<Response> {
+        self.send_by(request, protocol, None).await
+    }
+    async fn send_by(
+        &self,
+        request: Request<Body>,
+        protocol: Protocol,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Response> {
         if protocol == Protocol::Http3 {
             return Err("HTTP/3 requires the native QUIC transport".into());
         }
         let target = request.uri().to_string();
-        let response = self.connections.send(request, protocol, self.lanes).await?;
+        let response = self.connections.send(request, protocol, self.lanes, deadline).await?;
         self.check_status(&target, response.status(), response.headers())?;
         Ok(response)
     }
+    /// A bodyless request whose response headers arrive within the control timeout.
     pub async fn request(&self, method: Method, target: &str, protocol: Protocol) -> Result<Response> {
         let request = self.builder(method, target)?.body(empty())?;
-        tokio::time::timeout(CONTROL_TIMEOUT, self.send(request, protocol)).await?
+        let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
+        self.send_by(request, protocol, Some(deadline)).await
     }
     pub fn check_status(&self, target: &str, status: http::StatusCode, headers: &http::HeaderMap) -> Result<()> {
         if status == StatusCode::FORBIDDEN
@@ -605,15 +768,14 @@ impl Http {
         let request = Request::post(&pending.token_url)
             .header(CONTENT_TYPE, "application/json")
             .body(full(body))?;
-        let response = match tokio::time::timeout(
-            CONTROL_TIMEOUT,
-            self.connections.send(request, Protocol::Negotiated, Lanes::Shared),
-        )
-        .await
+        let deadline = tokio::time::Instant::now() + CONTROL_TIMEOUT;
+        let response = match self
+            .connections
+            .send(request, Protocol::Negotiated, Lanes::Shared, Some(deadline))
+            .await
         {
-            Ok(Ok(response)) => response,
-            Ok(Err(error)) => return Ok(Approval::Unreachable(error)),
-            Err(elapsed) => return Ok(Approval::Unreachable(elapsed.into())),
+            Ok(response) => response,
+            Err(error) => return Ok(Approval::Unreachable(error)),
         };
         let status = response.status();
         let data = bounded_body(response).await;

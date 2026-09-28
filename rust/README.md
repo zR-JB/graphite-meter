@@ -153,6 +153,16 @@ and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
 requests; HTTPS uses CONNECT. As in Go, `socks5://` and `socks5h://` proxies
 both pass host names to the proxy and log in with the URL's user and password.
 
+Each path check and run opens connections of its own, as Go's client takes new
+transports, and TCP connections probe an idle peer after 30 seconds as Go's
+dialer does; a run within 30 seconds of its check keeps that check's
+connections. Unlike Go, an HTTP/2 connection that reads nothing for 30 seconds
+is pinged and closed when the ping goes unanswered for 20 seconds, and one whose
+request gets no response headers within 10 seconds takes no further requests.
+A request without a body that fails on a reused connection before its response
+is sent once more over a new connection, also a POST, where Go replays only
+idempotent requests.
+
 OIDC verifies RS/PS 256–512, ES256/384 and EdDSA with ring. HS*, none and ES512
 are rejected; RSA keys must be 2048–8192 bits. As with go-oidc, ID tokens require
 the configured issuer, an audience that includes the client ID, expiry and the

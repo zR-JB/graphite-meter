@@ -197,7 +197,8 @@ impl Controller {
         self.cancel = Some(cancel);
         self.cancelling = false;
         self.cancel_deadline = None;
-        let http = self.http.clone();
+        // Grants carry over; connections belong to this check or run alone.
+        let http = self.http.fresh();
         let snapshots = self.snapshots.clone();
         let prepared = if matches!(work, Work::Run(_)) {
             self.prepared.take()
@@ -557,6 +558,78 @@ mod tests {
             controller.finished(result).unwrap();
             assert_eq!(controller.snapshots.borrow().error.as_deref(), Some(SIGN_IN_EXPIRED));
         }
+    }
+
+    /// Each check takes connections of its own: one an earlier check left idle, silent since as
+    /// after a sleep or a network change, is never reused.
+    #[tokio::test]
+    async fn each_check_takes_connections_of_its_own() -> Result<(), Error> {
+        use http_body_util::Full;
+        use hyper::{body::Bytes, service::service_fn};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let epoch = Arc::new(AtomicUsize::new(0));
+        let now = epoch.clone();
+        let server = tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                // A connection from an earlier epoch accepts requests but never answers them.
+                let (now, born) = (now.clone(), now.load(Ordering::SeqCst));
+                let service = service_fn(move |request: http::Request<hyper::body::Incoming>| {
+                    let silent = now.load(Ordering::SeqCst) != born;
+                    async move {
+                        if silent {
+                            std::future::pending::<()>().await;
+                        }
+                        let body = match request.uri().path() {
+                            "/servers" => serde_json::json!({
+                                "defaultSelection": ["self"],
+                                "servers": [{"id": "self", "url": ".", "name": "fixture"}]
+                            }),
+                            "/preflight" => serde_json::json!({
+                                "generation": "fixture",
+                                "capabilities": {
+                                    "throughput": [{"baseUrl": ".", "transport": "fetch-stream", "protocol": "http1"}],
+                                    "latency": []
+                                }
+                            }),
+                            _ => serde_json::json!({
+                                "clientIp": "127.0.0.1", "clientIpVersion": 4, "clientIpSource": "socket",
+                                "protocolNegotiated": "http/1.1"
+                            }),
+                        };
+                        Ok::<_, std::convert::Infallible>(http::Response::new(Full::new(Bytes::from(body.to_string()))))
+                    }
+                });
+                tokio::spawn(
+                    hyper::server::conn::http1::Builder::new()
+                        .serve_connection(hyper_util::rt::TokioIo::new(socket), service),
+                );
+            }
+        });
+        let config = Config {
+            url: origin,
+            stages: vec![crate::model::Stage::Download],
+            loaded_latency: false,
+            ..Config::default()
+        };
+        let mut controller = Controller::new(&config, watch::channel(Snapshot::default()).0, false)?;
+        let mut checks = Vec::new();
+        for _ in 0..2 {
+            controller.replace(Work::Verify(config.clone()))?;
+            checks.push(tokio::time::timeout(Duration::from_secs(5), controller.wait()).await);
+            epoch.fetch_add(1, Ordering::SeqCst);
+        }
+        server.abort();
+        for check in checks {
+            check.map_err(|_| "a check reused a connection an earlier check left idle")??;
+        }
+        assert_eq!(controller.snapshots.borrow().phase, Phase::Setup);
+        Ok(())
     }
 
     #[tokio::test]

@@ -158,6 +158,7 @@ async fn dial(host: &str, port: u16) -> io::Result<TcpStream> {
             Some(result) = attempts.join_next() => match result.map_err(io::Error::other)? {
                 Ok(stream) => {
                     stream.set_nodelay(true)?;
+                    keep_alive(&stream);
                     return Ok(stream);
                 }
                 Err(error) => last = error,
@@ -165,6 +166,27 @@ async fn dial(host: &str, port: u16) -> io::Result<TcpStream> {
             () = stagger, if pending.len() > 0 => {}
         }
     }
+}
+
+/// Go's dialer probes an idle peer after 30 s, then every 30 s; like Go, a socket that refuses
+/// the options still connects.
+fn keep_alive(stream: &TcpStream) {
+    const PERIOD: Duration = Duration::from_secs(30);
+    let probes = socket2::TcpKeepalive::new().with_time(PERIOD);
+    #[cfg(any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos",
+        target_os = "ios",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "windows",
+    ))]
+    let probes = probes.with_interval(PERIOD);
+    let _ = socket2::SockRef::from(stream).set_tcp_keepalive(&probes);
 }
 
 async fn tunnel(stream: Box<dyn Stream>, authority: &str, authorization: Option<&str>) -> io::Result<Box<dyn Stream>> {

@@ -504,6 +504,7 @@ dependencies = [
  "graphite-meter-core",
  "graphite-meter-http3",
  "graphite-meter-net",
+ "h2",
  "http",
  "http-body-util",
  "httpdate",
@@ -559,6 +560,7 @@ dependencies = [
  "percent-encoding",
  "rustls",
  "rustls-platform-verifier",
+ "socket2",
  "tokio",
  "tokio-rustls",
 ]

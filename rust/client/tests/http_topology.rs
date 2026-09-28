@@ -307,3 +307,186 @@ async fn pooled_connections_expire_without_another_request_and_preserve_active_b
     }
     Ok(())
 }
+
+/// Reads one request head.
+async fn head(stream: &mut tokio::net::TcpStream) -> Result<(), Error> {
+    use tokio::io::AsyncReadExt;
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(stream.read_u8().await?);
+    }
+    Ok(())
+}
+
+/// A bodyless request whose reused connection closes before answering goes once more over a new
+/// connection, as Go's transport retries a dead reused connection.
+#[tokio::test]
+async fn a_bodyless_request_is_replayed_once_when_its_reused_connection_closes() -> Result<(), Error> {
+    use tokio::io::AsyncWriteExt;
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let target = format!("http://{}/probe", listener.local_addr()?);
+    let server = tokio::spawn(async move {
+        const OK: &[u8] = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+        // The first connection answers once, then closes on the next request, as a peer whose
+        // idle timeout raced it does.
+        let (mut first, _) = listener.accept().await?;
+        head(&mut first).await?;
+        first.write_all(OK).await?;
+        head(&mut first).await?;
+        drop(first);
+        let (mut second, _) = listener.accept().await?;
+        head(&mut second).await?;
+        second.write_all(OK).await?;
+        Ok::<_, Error>(second)
+    });
+    let client = Http::new(false)?;
+    let answers = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        for _ in 0..2 {
+            let response = client.request(Method::GET, &target, Protocol::Http1).await?;
+            assert_eq!(bounded_body(response).await?, b"ok");
+        }
+        Ok::<_, Error>(())
+    })
+    .await;
+    server.abort();
+    answers??;
+    Ok(())
+}
+
+/// An HTTP/2 connection whose request timed out leaves the pool: the next request dials rather
+/// than queue on a connection that may be dead.
+#[tokio::test]
+async fn an_http2_connection_whose_request_timed_out_is_not_reused() -> Result<(), Error> {
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let target = format!("http://{}/probe", listener.local_addr()?);
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let count = accepted.clone();
+    let server = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            // The first connection answers its first request only.
+            let first = count.fetch_add(1, Ordering::SeqCst) == 0;
+            let answered = Arc::new(AtomicUsize::new(0));
+            let service = service_fn(move |_| {
+                let silent = first && answered.fetch_add(1, Ordering::SeqCst) > 0;
+                async move {
+                    if silent {
+                        std::future::pending::<()>().await;
+                    }
+                    Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+                }
+            });
+            tokio::spawn(
+                hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(socket), service),
+            );
+        }
+    });
+    let client = Http::new(false)?;
+    let response = client.request(Method::GET, &target, Protocol::Http2).await?;
+    assert_eq!(bounded_body(response).await?, b"ok");
+    tokio::time::pause();
+    let timed_out = client.request(Method::GET, &target, Protocol::Http2).await;
+    tokio::time::resume();
+    assert!(timed_out.is_err());
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.request(Method::GET, &target, Protocol::Http2),
+    )
+    .await;
+    server.abort();
+    let next = next.map_err(|_| "the timed-out connection was reused")??;
+    assert_eq!(bounded_body(next).await?, b"ok");
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+/// A connection that stops reading once `silent` is set.
+struct Silenceable {
+    inner: tokio::net::TcpStream,
+    silent: Arc<std::sync::atomic::AtomicBool>,
+}
+impl tokio::io::AsyncRead for Silenceable {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        buffer: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        if self.silent.load(Ordering::SeqCst) {
+            return std::task::Poll::Pending;
+        }
+        std::pin::Pin::new(&mut self.inner).poll_read(context, buffer)
+    }
+}
+impl tokio::io::AsyncWrite for Silenceable {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+        data: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        std::pin::Pin::new(&mut self.inner).poll_write(context, data)
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_flush(context)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        context: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(context)
+    }
+}
+
+/// An idle HTTP/2 connection whose peer went silent, as after a sleep or a network change, is
+/// pinged and closed, so the next request dials instead of waiting on it.
+#[tokio::test]
+async fn an_idle_http2_connection_whose_peer_went_silent_is_replaced() -> Result<(), Error> {
+    let _ = graphite_meter_client::crypto::provider().install_default();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let target = format!("http://{}/probe", listener.local_addr()?);
+    let silent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let accepted = Arc::new(AtomicUsize::new(0));
+    let (count, silence) = (accepted.clone(), silent.clone());
+    let server = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let first = count.fetch_add(1, Ordering::SeqCst) == 0;
+            let io = Silenceable {
+                inner: socket,
+                silent: if first { silence.clone() } else { Arc::default() },
+            };
+            let service = service_fn(|_| async {
+                Ok::<_, std::convert::Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+            });
+            tokio::spawn(
+                hyper::server::conn::http2::Builder::new(TokioExecutor::new())
+                    .serve_connection(TokioIo::new(io), service),
+            );
+        }
+    });
+    let client = Http::new(false)?;
+    let response = client.request(Method::GET, &target, Protocol::Http2).await?;
+    assert_eq!(bounded_body(response).await?, b"ok");
+    silent.store(true, Ordering::SeqCst);
+    tokio::time::pause();
+    for idle in [31, 21] {
+        tokio::time::advance(std::time::Duration::from_secs(idle)).await;
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+    }
+    tokio::time::resume();
+    let next = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client.request(Method::GET, &target, Protocol::Http2),
+    )
+    .await;
+    server.abort();
+    let next = next.map_err(|_| "the silent connection was reused")??;
+    assert_eq!(bounded_body(next).await?, b"ok");
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    Ok(())
+}
