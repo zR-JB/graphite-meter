@@ -127,7 +127,7 @@ pub(crate) async fn run(
             }
             tokio::select! {
                 biased;
-                () = cancelled(&mut cancel) => return Ok(()),
+                _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
                 () = tokio::time::sleep_until(reconnect_until) => {
                     if reconnect_until == end { return Ok(()); }
                     return Err(NotReplaced("latency channel", cause).into());
@@ -276,7 +276,7 @@ async fn connect(
         let wake = (Instant::now() + backoff.delay(error.as_ref(), started)).min(deadline);
         tokio::select! {
             biased;
-            () = cancelled(cancel) => return Ok(None),
+            _ = stopped(cancel, Stop::Drain) => return Ok(None),
             () = tokio::time::sleep_until(wake) => {},
         }
         if Instant::now() >= deadline {
@@ -299,7 +299,7 @@ async fn connect_once(
         LatencyTransport::WebTransport => {
             let target = format!("{}/wt/ping", canonical_origin(origin)?);
             tokio::select! {biased;
-                () = cancelled(cancel) => Ok(None),
+                _ = stopped(cancel, Stop::Drain) => Ok(None),
                 session = crate::webtransport::Session::dial(http, &target, insecure, Duration::from_secs(10)) => Ok(Some(Bus::WebTransport(Arc::new(session?)))),
             }
         }
@@ -395,7 +395,7 @@ async fn connect_ws(
     };
     let socket = tokio::select! {
         biased;
-        () = cancelled(cancel) => return Ok(None),
+        _ = stopped(cancel, Stop::Drain) => return Ok(None),
         result = tokio::time::timeout(Duration::from_secs(10), connection) => result??,
     };
     Ok(Some(socket))
@@ -531,19 +531,10 @@ fn emit(observations: &mpsc::Sender<Observation>, observation: Observation) -> R
         .map_err(|_| "latency observation consumer closed or fell behind".into())
 }
 async fn stopped(cancel: &mut watch::Receiver<Stop>, at_least: Stop) -> Stop {
-    loop {
-        let stop = *cancel.borrow_and_update();
-        if stop >= at_least {
-            return stop;
-        }
-        if cancel.changed().await.is_err() {
-            return Stop::Now;
-        }
-    }
-}
-
-async fn cancelled(cancel: &mut watch::Receiver<Stop>) {
-    stopped(cancel, Stop::Drain).await;
+    cancel
+        .wait_for(|stop| *stop >= at_least)
+        .await
+        .map_or(Stop::Now, |stop| *stop)
 }
 
 #[cfg(test)]
