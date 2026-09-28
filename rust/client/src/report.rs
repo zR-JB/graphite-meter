@@ -233,8 +233,8 @@ impl<'a> Report<'a> {
         if rows.is_empty() {
             return String::new();
         }
-        let combined = if self.servers().len() > 1 { "Combined" } else { "" };
-        grid(&["Throughput".to_owned(), combined.to_owned()], &rows, self.width)
+        let scope = if self.servers().len() > 1 { "All servers" } else { "" };
+        grid(&["Throughput".to_owned(), scope.to_owned()], &rows, self.width)
     }
 
     fn population(&self, stage: Stage) -> Option<&ServerLatencyResult> {
@@ -371,9 +371,9 @@ impl<'a> Report<'a> {
         let mut lines = vec![match servers.len() {
             1 => status(self.snapshot).to_owned(),
             selected if self.live() && remaining < selected => format!("{remaining} of {selected} servers remaining"),
-            selected if self.live() => format!("{selected} servers combined"),
+            selected if self.live() => format!("All {selected} servers"),
             selected if remaining < selected => format!("{outcome} · {remaining} of {selected} servers"),
-            selected => format!("{outcome} · {selected} servers combined"),
+            selected => format!("{outcome} · all {selected} servers"),
         }];
         if full {
             let notes = self.facts();
@@ -391,7 +391,7 @@ impl<'a> Report<'a> {
                 .map_or_else(|| MISSING.to_owned(), format::rate)
         };
         let mut rows = vec![
-            std::iter::once("Combined".to_owned())
+            std::iter::once("All servers".to_owned())
                 .chain(
                     directions
                         .iter()
