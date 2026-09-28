@@ -1,4 +1,5 @@
 //! Receiver-owned upload totals shared by HTTP and WebTransport lanes.
+use crate::client_address::Shares;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use graphite_meter_core::{failure::UploadRefusal, wire::UploadProgress};
 use hmac::{Hmac, KeyInit, Mac};
@@ -76,7 +77,7 @@ struct Store {
 struct UploadEntries {
     by_id: HashMap<String, Arc<Mutex<Aggregate>>>,
     // Counts retained aggregates, including finished ones, by admission budget.
-    by_client: HashMap<String, usize>,
+    by_client: Shares,
     tombstones: HashMap<String, Instant>,
 }
 struct Aggregate {
@@ -174,9 +175,7 @@ impl UploadStore {
             if !create || entries.tombstones.contains_key(id) || !self.valid(id) {
                 return Err(UploadRefusal::Invalid);
             }
-            if crate::client_address::share_full(owner.client_keys(), MAX_UPLOADS_PER_CLIENT, |key| {
-                entries.by_client.get(key).copied().unwrap_or_default()
-            }) {
+            if entries.by_client.full(owner.client_keys(), MAX_UPLOADS_PER_CLIENT) {
                 return Err(UploadRefusal::ClientFull);
             }
             if entries.by_id.len() >= MAX_LIVE_UPLOADS {
@@ -196,13 +195,7 @@ impl UploadStore {
                 };
                 let aggregate = entries.by_id.remove(&victim).expect("selected receiver exists");
                 let mut state = aggregate.lock().expect("upload aggregate lock");
-                for key in state.owner.client_keys() {
-                    let count = entries.by_client.get_mut(key).expect("indexed upload owner");
-                    *count -= 1;
-                    if *count == 0 {
-                        entries.by_client.remove(key);
-                    }
-                }
+                entries.by_client.release(state.owner.client_keys());
                 state.expired = true;
                 state.changed.notify_waiters();
                 entries.tombstones.insert(victim, Instant::now() + TOKEN_TTL);
@@ -219,9 +212,7 @@ impl UploadStore {
                 changed: Arc::new(tokio::sync::Notify::new()),
             }));
             entries.by_id.insert(id.to_owned(), aggregate.clone());
-            for key in owner.client_keys() {
-                *entries.by_client.entry(key.clone()).or_default() += 1;
-            }
+            entries.by_client.hold(owner.client_keys());
             aggregate
         };
         {
@@ -297,13 +288,7 @@ impl UploadStore {
         by_id.retain(|_, aggregate| {
             let mut state = aggregate.lock().expect("upload aggregate lock");
             if state.lanes == 0 && now.saturating_duration_since(state.touched) > UPLOAD_RETENTION {
-                for key in state.owner.client_keys() {
-                    let count = by_client.get_mut(key).expect("indexed upload owner");
-                    *count -= 1;
-                    if *count == 0 {
-                        by_client.remove(key);
-                    }
-                }
+                by_client.release(state.owner.client_keys());
                 state.expired = true;
                 state.changed.notify_waiters();
                 false

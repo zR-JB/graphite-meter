@@ -1,8 +1,6 @@
 //! Shared operation budgets. A permit lives until the operation has fully stopped.
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use crate::client_address::Shares;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Limits {
@@ -61,8 +59,8 @@ pub struct Stats {
 #[derive(Default)]
 struct Counts {
     stats: Stats,
-    requests_by_client: HashMap<String, usize>,
-    sessions_by_client: HashMap<String, usize>,
+    requests_by_client: Shares,
+    sessions_by_client: Shares,
 }
 
 struct Inner {
@@ -112,7 +110,7 @@ impl Admission {
             )
         };
         // Match Go's refusal precedence: client exhaustion wins over global exhaustion.
-        if crate::client_address::share_full(keys, limit, |key| held.get(key).copied().unwrap_or(0)) {
+        if held.full(keys, limit) {
             *refused += 1;
             return Err(Refusal::ClientFull);
         }
@@ -129,9 +127,7 @@ impl Admission {
         if session {
             stats.sessions += 1;
         }
-        for client in keys {
-            *held.entry(client.clone()).or_default() += 1;
-        }
+        held.hold(keys);
         Ok(Permit {
             admission: self.clone(),
             session,
@@ -152,18 +148,11 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut counts = recover(&self.admission.0.counts, "operation");
         counts.stats.active -= 1;
-        let clients = if self.session {
+        if self.session {
             counts.stats.sessions -= 1;
-            &mut counts.sessions_by_client
+            counts.sessions_by_client.release(&self.clients);
         } else {
-            &mut counts.requests_by_client
-        };
-        for client in &self.clients {
-            let count = clients.get_mut(client).expect("permit owns a client slot");
-            *count -= 1;
-            if *count == 0 {
-                clients.remove(client);
-            }
+            counts.requests_by_client.release(&self.clients);
         }
     }
 }

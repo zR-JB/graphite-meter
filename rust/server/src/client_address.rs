@@ -1,5 +1,8 @@
 //! Attribute proxy headers only through an explicitly trusted socket peer.
-use std::net::{IpAddr, SocketAddr};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+};
 
 use graphite_meter_core::discovery::ClientIpSource;
 use http::{HeaderMap, HeaderValue, header::AsHeaderName};
@@ -36,6 +39,31 @@ pub fn share_full(keys: &[String], limit: usize, held: impl Fn(&str) -> usize) -
     keys.iter()
         .enumerate()
         .any(|(index, key)| held(key) >= limit.saturating_mul(1 << index))
+}
+
+#[derive(Default)]
+pub struct Shares(HashMap<String, usize>);
+
+impl Shares {
+    pub fn full(&self, keys: &[String], limit: usize) -> bool {
+        share_full(keys, limit, |key| self.0.get(key).copied().unwrap_or_default())
+    }
+
+    pub fn hold(&mut self, keys: &[String]) {
+        for key in keys {
+            *self.0.entry(key.clone()).or_default() += 1;
+        }
+    }
+
+    pub fn release(&mut self, keys: &[String]) {
+        for key in keys {
+            let held = self.0.get_mut(key).expect("released keys were held");
+            *held -= 1;
+            if *held == 0 {
+                self.0.remove(key);
+            }
+        }
+    }
 }
 
 pub fn resolve(peer: SocketAddr, headers: &HeaderMap, trusted: &[IpNet]) -> ClientAddress {
