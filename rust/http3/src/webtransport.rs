@@ -53,6 +53,8 @@ pub(crate) struct Registry {
     /// Whether the connection carried a session, and served anything else.
     pub(crate) carried: bool,
     pub(crate) served: bool,
+    /// The connection ended, so no session starts.
+    ended: bool,
 }
 
 struct Active {
@@ -103,8 +105,14 @@ impl Registry {
         }
     }
 
+    /// The connection ended: so do the session's streams and datagrams, and no session follows.
+    pub(crate) fn end(&mut self) {
+        (self.active, self.ended) = (None, true);
+        self.pending.clear();
+    }
+
     fn register(&mut self, id: u64) -> Option<(mpsc::Receiver<RecvStream>, mpsc::Receiver<Bytes>)> {
-        if self.active.is_some() {
+        if self.active.is_some() || self.ended {
             return None;
         }
         let (streams, stream_receiver) = mpsc::channel(STREAM_QUEUE);
@@ -451,7 +459,7 @@ impl Connect {
     }
 
     /// The first ending stands.
-    fn end(&self, ending: Result<(u32, String), Error>) {
+    pub(crate) fn end(&self, ending: Result<(u32, String), Error>) {
         self.ended
             .send_if_modified(|ended| ended.is_none() && ended.replace(ending).is_none());
     }
@@ -593,11 +601,13 @@ impl Session {
         self.id
     }
 
-    /// The next stream the peer opened in this session; `None` once the session is gone.
+    /// The next stream the peer opened in this session; `None` once the session ended, also with
+    /// its connection, and [`Self::closed`] says how.
     pub async fn accept_uni(&self) -> Option<RecvStream> {
         self.streams.lock().await.recv().await
     }
 
+    /// The next datagram in this session; `None` once the session ended, as for [`Self::accept_uni`].
     pub async fn read_datagram(&self) -> Option<Bytes> {
         self.datagrams.lock().await.recv().await
     }
@@ -634,13 +644,14 @@ impl Session {
     }
 
     /// Resolves once the session ends: with the peer's CLOSE code and reason, code 0 when the peer
-    /// finished without one, or this side's close when it ended the session first.
+    /// finished without one, this side's close when it ended the session first, or the error its
+    /// connection ended with.
     pub async fn closed(&self) -> Result<(u32, String), Error> {
         let mut ended = self.ended.clone();
         match ended.wait_for(Option::is_some).await.map(|ended| ended.clone()) {
             Ok(Some(ending)) => ending,
-            // The driver dropped the stream with the connection.
-            _ => Err(self.shared.quic.close_reason().map_or(Error::Refused, Error::from)),
+            // The stream reached no driver: the connection had ended.
+            _ => Err(self.shared.close_error()),
         }
     }
 

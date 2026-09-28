@@ -858,6 +858,66 @@ async fn sessions_carry_streams_and_datagrams_both_ways() -> Result<(), TestErro
     Ok(())
 }
 
+/// Whether a session's streams and datagrams ended, and how it closed; each must end within 5 s.
+async fn session_end(session: &Session) -> (bool, bool, Result<(u32, String), Error>) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        (
+            session.accept_uni().await.is_none(),
+            session.read_datagram().await.is_none(),
+            session.closed().await,
+        )
+    })
+    .await
+    .expect("the session ends with its connection")
+}
+
+#[tokio::test]
+async fn sessions_end_with_their_connection() -> Result<(), TestError> {
+    // The server's connection goes away: each side's session ends with it, though the client
+    // still holds its stopped driver.
+    let peers = peers(usize::MAX).await?;
+    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
+    let (serving, _) = serve_sessions(&peers, move |session| {
+        let endings = endings.clone();
+        async move {
+            let _ = endings.send(session_end(&session).await);
+        }
+    });
+    let (mut driver, requests) = client::new(peers.client.clone());
+    let driving = tokio::spawn(async move { (driver.drive().await, driver) });
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    peers.server.close(Code::H3_NO_ERROR.into(), b"restart");
+    let (driven, _stopped) = driving.await?;
+    assert_eq!(driven, Ok(()));
+    let restart = Error::Connection {
+        local: false,
+        code: Code::H3_NO_ERROR,
+        reason: Bytes::from_static(b"restart"),
+    };
+    assert_eq!(session_end(&session).await, (true, true, Err(restart)));
+    let closed_here = Err(Error::Transport(noq::ConnectionError::LocallyClosed));
+    assert_eq!(ended.recv().await, Some((true, true, closed_here)));
+    assert_eq!(serving.await?, Ok(()));
+
+    // Dropping the driver ends its session too.
+    let peers = self::peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move {
+        let _ = session.closed().await;
+    });
+    let (driver, requests) = client(&peers);
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    driver.abort();
+    assert!(driver.await.is_err_and(|error| error.is_cancelled()));
+    let dropped = Error::Connection {
+        local: true,
+        code: Code::H3_NO_ERROR,
+        reason: Bytes::new(),
+    };
+    assert_eq!(session_end(&session).await, (true, true, Err(dropped)));
+    drop(serving);
+    Ok(())
+}
+
 fn close_capsule(code: u32, reason: &str) -> Vec<u8> {
     frame(
         0x00,

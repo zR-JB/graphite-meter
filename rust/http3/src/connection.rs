@@ -125,6 +125,18 @@ impl Shared {
             reason: Bytes::new(),
         }
     }
+
+    /// Why the connection ended, for what outlives it; this side's own close keeps its code.
+    pub(crate) fn close_error(&self) -> Error {
+        match (self.quic.close_reason(), self.state().closed) {
+            (Some(noq::ConnectionError::LocallyClosed), Some(code)) => Error::Connection {
+                local: true,
+                code,
+                reason: Bytes::new(),
+            },
+            (reason, _) => reason.map_or(Error::Refused, Error::from),
+        }
+    }
 }
 
 type Pending<T> = Pin<Box<dyn Future<Output = Result<T, noq::ConnectionError>> + Send>>;
@@ -302,6 +314,7 @@ impl Connection {
             return Poll::Ready(result);
         }
         self.closed = true;
+        self.end_sessions();
         Poll::Ready(match result {
             Err(Error::Transport(noq::ConnectionError::LocallyClosed)) => match self.shared.state().closed {
                 Some(Code::H3_NO_ERROR) | None => Ok(None),
@@ -314,6 +327,20 @@ impl Connection {
             Err(error) if error.graceful() => Ok(None),
             result => result,
         })
+    }
+
+    /// Every session ends with the connection: its streams and datagrams end, and `closed` says why.
+    fn end_sessions(&mut self) {
+        self.shared.state().sessions.end();
+        // A session handed over from now on finds no driver, and its CONNECT stream goes.
+        self.connects.close();
+        while let Ok(connect) = self.connects.try_recv() {
+            self.sessions.push(connect);
+        }
+        let error = self.shared.close_error();
+        for connect in self.sessions.drain(..) {
+            connect.end(Err(error.clone()));
+        }
     }
 
     fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Result<Option<RequestStream>, Error>> {
@@ -580,6 +607,7 @@ impl Connection {
 impl Drop for Connection {
     fn drop(&mut self) {
         self.shared.close(Code::H3_NO_ERROR);
+        self.end_sessions();
     }
 }
 
