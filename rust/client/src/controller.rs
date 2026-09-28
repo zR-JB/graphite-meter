@@ -33,7 +33,7 @@ impl Work {
 pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Option<Snapshot>, ui::Exit), Error> {
     let (snapshots, receiver) = watch::channel(Snapshot::default());
     let (commands, mut incoming) = mpsc::channel(8);
-    let mut controller = Controller::with_snapshots(&config, snapshots, true)?;
+    let mut controller = Controller::new(&config, snapshots, true)?;
     controller.launch(Work::Verify(config.clone()))?;
     let result = {
         let terminal = ui::run(config, receiver, commands, interrupts);
@@ -78,8 +78,9 @@ pub async fn run(config: Config, interrupts: mpsc::Receiver<()>) -> Result<(Opti
 }
 
 pub async fn run_once(config: Config, mut interrupts: mpsc::Receiver<()>) -> Result<Snapshot, Error> {
-    let mut controller = Controller::new(&config)?;
-    let mut events = controller.start(config, None)?;
+    let mut controller = Controller::new(&config, watch::channel(Snapshot::default()).0, false)?;
+    controller.launch(Work::Run(config))?;
+    let mut events = controller.snapshots.subscribe();
     let result = {
         let finished = controller.finish();
         tokio::pin!(finished);
@@ -107,7 +108,7 @@ pub async fn run_once(config: Config, mut interrupts: mpsc::Receiver<()>) -> Res
     }
 }
 
-pub struct Controller {
+struct Controller {
     snapshots: watch::Sender<Snapshot>,
     operations: JoinSet<Result<Option<runner::PreparedRun>, Error>>,
     prepared: Option<runner::PreparedRun>,
@@ -125,47 +126,7 @@ pub struct Controller {
     browser_deadline: Option<Instant>,
 }
 impl Controller {
-    pub fn new(config: &Config) -> Result<Self, Error> {
-        let (snapshots, _) = watch::channel(Snapshot::default());
-        Self::with_snapshots(config, snapshots, false)
-    }
-
-    pub fn events(&self) -> watch::Receiver<Snapshot> {
-        self.snapshots.subscribe()
-    }
-
-    pub async fn prepare(&mut self, config: Config) -> Result<runner::PreparedRun, Error> {
-        self.replace(Work::Verify(config))?;
-        self.wait().await?;
-        self.prepared.take().ok_or_else(|| {
-            self.snapshots
-                .borrow()
-                .error
-                .clone()
-                .unwrap_or_else(|| "preparation stopped".into())
-                .into()
-        })
-    }
-
-    pub fn authorize(&self, origin: &str, login_url: &str) -> Result<crate::net::PendingAuthorization, Error> {
-        self.http.begin_authorization(origin, login_url)
-    }
-
-    pub async fn poll_authorization(&self, pending: crate::net::PendingAuthorization) -> Result<(), Error> {
-        self.http.poll_authorization(pending).await
-    }
-
-    pub fn start(
-        &mut self,
-        config: Config,
-        prepared: Option<runner::PreparedRun>,
-    ) -> Result<watch::Receiver<Snapshot>, Error> {
-        self.prepared = prepared;
-        self.replace(Work::Run(config))?;
-        Ok(self.events())
-    }
-
-    pub async fn finish(&mut self) -> Result<Snapshot, Error> {
+    async fn finish(&mut self) -> Result<Snapshot, Error> {
         self.wait().await?;
         Ok(self.snapshots.borrow().clone())
     }
@@ -180,7 +141,7 @@ impl Controller {
         Ok(())
     }
 
-    fn with_snapshots(config: &Config, snapshots: watch::Sender<Snapshot>, interactive: bool) -> Result<Self, Error> {
+    fn new(config: &Config, snapshots: watch::Sender<Snapshot>, interactive: bool) -> Result<Self, Error> {
         Ok(Self {
             snapshots,
             operations: JoinSet::new(),
@@ -254,7 +215,7 @@ impl Controller {
             Ok(())
         }
     }
-    pub fn cancel(&mut self) {
+    fn cancel(&mut self) {
         self.pending = None;
         self.request_cancel();
     }
@@ -387,7 +348,7 @@ async fn execute(
             return Ok(None);
         }
         let result = match &work {
-            Work::Run(config) => runner::run_prepared(
+            Work::Run(config) => runner::run(
                 config.clone(),
                 http.clone(),
                 snapshots.clone(),
@@ -507,7 +468,7 @@ mod tests {
                 .into(),
                 ..Snapshot::default()
             });
-            let mut controller = Controller::with_snapshots(&Config::default(), snapshots.clone(), true).unwrap();
+            let mut controller = Controller::new(&Config::default(), snapshots.clone(), true).unwrap();
             controller.running = true;
             let (cancel, mut cancelled_signal) = watch::channel(false);
             controller.cancel = Some(cancel);
@@ -547,7 +508,7 @@ mod tests {
             ..Config::default()
         };
         let (snapshots, _) = watch::channel(Snapshot::default());
-        let mut controller = Controller::with_snapshots(&config, snapshots.clone(), true).unwrap();
+        let mut controller = Controller::new(&config, snapshots.clone(), true).unwrap();
         controller.running = true;
         controller.operations.spawn(async move {
             snapshots.send_modify(|snapshot| {
@@ -576,5 +537,81 @@ mod tests {
         );
         assert_eq!(controller.snapshots.borrow().phase, Phase::Checking);
         controller.stop().await;
+    }
+
+    #[tokio::test]
+    async fn controller_reuses_fresh_paths_and_reprepares_changed_settings() -> Result<(), Error> {
+        use crate::runner::prepare_tests::{FixtureMode, serve};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let catalogs = Arc::new(AtomicUsize::new(0));
+        let count = catalogs.clone();
+        let server_origin = origin.clone();
+        let server = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let origin = server_origin.clone();
+                let count = count.clone();
+                tokio::spawn(async move {
+                    let mut request = [0; 2048];
+                    loop {
+                        let Ok(size) = stream.peek(&mut request).await else {
+                            return;
+                        };
+                        if size == 0 {
+                            return;
+                        }
+                        if request[..size].contains(&b'\n') {
+                            if request[..size].starts_with(b"GET /servers ") {
+                                count.fetch_add(1, Ordering::SeqCst);
+                            }
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                    let _ = serve(stream, origin, FixtureMode::Negotiated).await;
+                });
+            }
+        });
+        let mut config = Config {
+            url: origin,
+            stages: vec![crate::model::Stage::Download],
+            loaded_latency: false,
+            warmup: Duration::ZERO,
+            download_duration: Duration::from_secs(1),
+            streams: 1,
+            ..Config::default()
+        };
+        let mut controller = Controller::new(&config, watch::channel(Snapshot::default()).0, false)?;
+        controller.replace(Work::Verify(config.clone()))?;
+        controller.wait().await?;
+        assert_eq!(catalogs.load(Ordering::SeqCst), 1);
+        config.download_duration = Duration::from_secs(2);
+        controller.replace(Work::Run(config.clone()))?;
+        assert_eq!(controller.finish().await?.phase, Phase::Failed);
+        assert_eq!(controller.snapshots.borrow().servers[0].name, "fixture");
+        assert_eq!(catalogs.load(Ordering::SeqCst), 1);
+        controller.replace(Work::Verify(config.clone()))?;
+        controller.wait().await?;
+        controller
+            .prepared
+            .as_mut()
+            .ok_or("paths were not verified")?
+            .verified_at -= Duration::from_secs(31);
+        controller.replace(Work::Run(config.clone()))?;
+        controller.finish().await?;
+        assert_eq!(catalogs.load(Ordering::SeqCst), 3);
+        controller.replace(Work::Verify(config.clone()))?;
+        controller.wait().await?;
+        config.throughput_protocol = Some(graphite_meter_core::discovery::Protocol::Http1);
+        controller.replace(Work::Run(config))?;
+        controller.finish().await?;
+        assert_eq!(catalogs.load(Ordering::SeqCst), 5);
+        server.abort();
+        Ok(())
     }
 }

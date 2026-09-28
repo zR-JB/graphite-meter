@@ -9,13 +9,13 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Clone, Copy)]
-enum FixtureMode {
+pub(crate) enum FixtureMode {
     Latency,
     Throughput,
     Negotiated,
 }
 
-async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
+pub(crate) async fn serve(mut stream: TcpStream, origin: String, mode: FixtureMode) -> Result<(), Error> {
     let mut request = [0_u8; 2048];
     let path = loop {
         let size = stream.peek(&mut request).await?;
@@ -361,71 +361,5 @@ async fn negotiated_fetch_protocol_uses_verified_http_version() -> Result<(), Er
         Protocol::Http1
     );
     fixture.abort();
-    Ok(())
-}
-
-#[tokio::test]
-async fn controller_reuses_fresh_paths_and_reprepares_changed_settings() -> Result<(), Error> {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    let _ = crate::crypto::provider().install_default();
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let origin = format!("http://{}", listener.local_addr()?);
-    let catalogs = Arc::new(AtomicUsize::new(0));
-    let count = catalogs.clone();
-    let server_origin = origin.clone();
-    let server = tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
-            let origin = server_origin.clone();
-            let count = count.clone();
-            tokio::spawn(async move {
-                let mut request = [0; 2048];
-                loop {
-                    let Ok(size) = stream.peek(&mut request).await else {
-                        return;
-                    };
-                    if size == 0 {
-                        return;
-                    }
-                    if request[..size].contains(&b'\n') {
-                        if request[..size].starts_with(b"GET /servers ") {
-                            count.fetch_add(1, Ordering::SeqCst);
-                        }
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-                let _ = serve(stream, origin, FixtureMode::Negotiated).await;
-            });
-        }
-    });
-    let mut config = Config {
-        url: origin,
-        stages: vec![Stage::Download],
-        loaded_latency: false,
-        warmup: Duration::ZERO,
-        download_duration: Duration::from_secs(1),
-        streams: 1,
-        ..Config::default()
-    };
-    let mut controller = crate::controller::Controller::new(&config)?;
-    let prepared = controller.prepare(config.clone()).await?;
-    assert_eq!(catalogs.load(Ordering::SeqCst), 1);
-    config.download_duration = Duration::from_secs(2);
-    let events = controller.start(config.clone(), Some(prepared))?;
-    let failed = controller.finish().await?;
-    assert_eq!(failed.phase, Phase::Failed);
-    assert_eq!(events.borrow().servers[0].name, "fixture");
-    assert_eq!(catalogs.load(Ordering::SeqCst), 1);
-    let mut prepared = controller.prepare(config.clone()).await?;
-    prepared.verified_at -= Duration::from_secs(31);
-    controller.start(config.clone(), Some(prepared))?;
-    controller.finish().await?;
-    assert_eq!(catalogs.load(Ordering::SeqCst), 3);
-    let prepared = controller.prepare(config.clone()).await?;
-    config.throughput_protocol = Some(Protocol::Http1);
-    controller.start(config, Some(prepared))?;
-    controller.finish().await?;
-    assert_eq!(catalogs.load(Ordering::SeqCst), 5);
-    server.abort();
     Ok(())
 }

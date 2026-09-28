@@ -20,7 +20,7 @@ use futures_util::{
     stream::{BoxStream, FuturesUnordered, SelectAll},
 };
 use graphite_meter_core::{
-    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    discovery::{Protocol, ThroughputTransport},
     failure::FailureReason,
     latency::LatencyAccumulator,
     measurement::{
@@ -325,18 +325,13 @@ impl<'a> StageRun<'a> {
             16
         };
         self.latency.spawn(async move {
-            let kind = match target.transport {
-                LatencyTransport::WebSocket => crate::latency::Kind::WebSocket,
-                LatencyTransport::WebTransport => crate::latency::Kind::WebTransport,
-            };
-            let result = crate::latency::run_kind(
+            let result = crate::latency::run(
                 &http,
-                &target.base_url,
+                &target,
                 insecure,
                 (interval, operation_limit, window),
                 observations,
                 stopped.clone(),
-                kind,
             )
             .await;
             LatencyCompletion {
@@ -910,7 +905,7 @@ async fn start_transfer(
     let mut lanes = Lanes::default();
     if stage.downloads() {
         lanes.down = Some(if target.transport == ThroughputTransport::FetchStream {
-            Download::start_staggered(
+            Download::start(
                 transport.clone(),
                 counts.download,
                 operation_limit,
@@ -933,7 +928,7 @@ async fn start_transfer(
     if stage.uploads() {
         let up = if target.transport == ThroughputTransport::FetchStream {
             let stagger = lane_stagger(config.warmup, server.idle_rtt, counts.upload);
-            Upload::start_staggered(upload_transport, counts.upload, stagger, stopped).await
+            Upload::start(upload_transport, counts.upload, stagger, stopped).await
         } else {
             Upload::start_webtransport(upload_transport, counts.upload, stopped).await
         };

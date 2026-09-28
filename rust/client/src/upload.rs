@@ -56,12 +56,8 @@ pub struct Upload {
 }
 
 impl Upload {
-    pub async fn start(transport: Arc<Transport>, lanes: usize, cancel: watch::Receiver<bool>) -> Result<Self, Error> {
-        Self::start_staggered(transport, lanes, Duration::ZERO, cancel).await
-    }
-
     /// Stagger first HTTP requests inside the stage-owned cancellation scope.
-    pub async fn start_staggered(
+    pub async fn start(
         transport: Arc<Transport>,
         lanes: usize,
         stagger: Duration,
@@ -227,9 +223,6 @@ impl Upload {
                 Err(error)
             }
         }
-    }
-    pub fn id(&self) -> &str {
-        &self.id
     }
     pub fn latest(&self) -> Option<ReceiverProgress> {
         self.state.borrow().latest

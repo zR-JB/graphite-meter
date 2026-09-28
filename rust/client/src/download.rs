@@ -34,17 +34,8 @@ pub struct Download {
 }
 
 impl Download {
-    pub async fn start(
-        transport: Arc<Transport>,
-        lanes: usize,
-        duration: Duration,
-        cancel: watch::Receiver<bool>,
-    ) -> Result<Self, Error> {
-        Self::start_staggered(transport, lanes, duration, Duration::ZERO, cancel).await
-    }
-
     /// Delay each successive lane before its first request; cancellation covers the delay.
-    pub async fn start_staggered(
+    pub async fn start(
         transport: Arc<Transport>,
         lanes: usize,
         duration: Duration,
@@ -359,7 +350,7 @@ mod tests {
         });
         let transport = Arc::new(Transport::connect(Http::new(false)?, &origin, Protocol::Http1, false).await?);
         let (_stop, cancelled) = watch::channel(false);
-        let mut download = Download::start(transport, 1, Duration::from_secs(5), cancelled).await?;
+        let mut download = Download::start(transport, 1, Duration::from_secs(5), Duration::ZERO, cancelled).await?;
         tokio::time::timeout(Duration::from_secs(5), async {
             while download.bytes() < 3072 {
                 download.health()?;

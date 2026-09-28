@@ -56,28 +56,21 @@ pub(crate) enum Stop {
     Now,
 }
 
-#[derive(Clone, Copy)]
-pub(crate) enum Kind {
-    WebSocket,
-    WebTransport,
-}
-
 /// The caller must validate this selected origin against its catalogue/preflight.
 /// A probe is skipped while the observation queue lacks room for its outcome, so none is dropped.
-pub(crate) async fn run_kind(
+pub(crate) async fn run(
     http: &Http,
-    origin: &str,
+    target: &LatencyTarget,
     insecure: bool,
     timing: (Duration, Duration, usize),
     observations: mpsc::Sender<Observation>,
     mut cancel: watch::Receiver<Stop>,
-    kind: Kind,
 ) -> Result<(), Error> {
     let (interval, duration, window) = timing;
     if duration.is_zero() || duration.as_nanos() > i64::MAX as u128 {
         return Err("latency interval and bounded duration must be positive".into());
     }
-    let Some(mut socket) = connect(http, origin, insecure, &mut cancel, kind).await? else {
+    let Some(mut socket) = connect(http, &target.base_url, insecure, &mut cancel, target.transport).await? else {
         return Ok(());
     };
     let end = Instant::now()
@@ -112,8 +105,11 @@ pub(crate) async fn run_kind(
             if Instant::now() >= end {
                 return Ok(());
             }
-            let attempt =
-                tokio::time::timeout_at(reconnect_until, connect(http, origin, insecure, &mut cancel, kind)).await;
+            let attempt = tokio::time::timeout_at(
+                reconnect_until,
+                connect(http, &target.base_url, insecure, &mut cancel, target.transport),
+            )
+            .await;
             match attempt {
                 Ok(Ok(Some(socket))) => break socket,
                 Ok(Ok(None)) => return Ok(()),
@@ -203,20 +199,16 @@ impl Reader {
 /// Check the actual latency channel before a run starts. A successful HTTP
 /// probe does not establish that QUIC datagrams or WebSocket pings work.
 pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) -> Result<Duration, Error> {
-    let kind = match target.transport {
-        LatencyTransport::WebSocket => Kind::WebSocket,
-        LatencyTransport::WebTransport => Kind::WebTransport,
-    };
     let attempt = async {
         let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(http, &target.base_url, insecure, &mut cancel, kind)
+        let bus = connect(http, &target.base_url, insecure, &mut cancel, target.transport)
             .await?
             .ok_or("latency verification cancelled")?;
         let (mut writer, mut reader) = bus.split();
         let result = async {
-            let reply_window = match kind {
-                Kind::WebTransport => Duration::from_millis(750),
-                Kind::WebSocket => Duration::from_secs(3),
+            let reply_window = match target.transport {
+                LatencyTransport::WebTransport => Duration::from_millis(750),
+                LatencyTransport::WebSocket => Duration::from_secs(3),
             };
             loop {
                 let sent = Instant::now();
@@ -248,7 +240,7 @@ pub(crate) async fn verify(http: &Http, target: &LatencyTarget, insecure: bool) 
                 .await;
                 match reply {
                     Ok(result) => return result,
-                    Err(_) if matches!(kind, Kind::WebTransport) => continue,
+                    Err(_) if target.transport == LatencyTransport::WebTransport => continue,
                     Err(error) => return Err(error.into()),
                 }
             }
@@ -266,13 +258,13 @@ async fn connect(
     origin: &str,
     insecure: bool,
     cancel: &mut watch::Receiver<Stop>,
-    kind: Kind,
+    transport: LatencyTransport,
 ) -> Result<Option<Bus>, Error> {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut backoff = crate::transport::RetryBackoff::default();
     loop {
         let started = Instant::now();
-        let error = match connect_once(http, origin, insecure, cancel, kind).await {
+        let error = match connect_once(http, origin, insecure, cancel, transport).await {
             Ok(bus) => return Ok(bus),
             Err(error) => error,
         };
@@ -298,13 +290,13 @@ async fn connect_once(
     origin: &str,
     insecure: bool,
     cancel: &mut watch::Receiver<Stop>,
-    kind: Kind,
+    transport: LatencyTransport,
 ) -> Result<Option<Bus>, Error> {
-    match kind {
-        Kind::WebSocket => Ok(connect_ws(http, origin, insecure, cancel)
+    match transport {
+        LatencyTransport::WebSocket => Ok(connect_ws(http, origin, insecure, cancel)
             .await?
             .map(|socket| Bus::WebSocket(Box::new(socket)))),
-        Kind::WebTransport => {
+        LatencyTransport::WebTransport => {
             let target = format!("{}/wt/ping", canonical_origin(origin)?);
             tokio::select! {biased;
                 () = cancelled(cancel) => Ok(None),
@@ -609,7 +601,7 @@ mod tests {
             Ok::<_, Error>((attempts, minimum))
         });
         let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(&http, &origin, false, &mut cancel, Kind::WebSocket).await?;
+        let bus = connect(&http, &origin, false, &mut cancel, LatencyTransport::WebSocket).await?;
         assert!(bus.is_some());
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
@@ -746,7 +738,14 @@ mod tests {
             Ok::<_, Error>(())
         });
         let (_stop, mut cancel) = watch::channel(Stop::Running);
-        let bus = connect(&Http::new(false)?, &origin, false, &mut cancel, Kind::WebSocket).await?;
+        let bus = connect(
+            &Http::new(false)?,
+            &origin,
+            false,
+            &mut cancel,
+            LatencyTransport::WebSocket,
+        )
+        .await?;
         assert_eq!(outcomes(bus.ok_or("no latency channel")?, 500, 1600).await?, (3, 1));
         peer.abort();
         Ok(())
