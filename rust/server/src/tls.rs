@@ -129,7 +129,7 @@ impl Certificates {
     }
 
     pub fn config(self: &Arc<Self>, protocols: Vec<Vec<u8>>) -> Result<Arc<ServerConfig>, ConfigError> {
-        let provider = Arc::new(crate::crypto::provider());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut config = ServerConfig::builder_with_provider(provider)
             .with_protocol_versions(&[&rustls::version::TLS13])?
             .with_no_client_auth()
@@ -184,7 +184,11 @@ fn read_identity(
             rustls::client::verify_server_name(&parsed, name)?;
         }
         let key = PrivateKeyDer::from_pem_file(key_path)?;
-        Ok(CertifiedKey::from_der(chain, key, &crate::crypto::provider())?)
+        Ok(CertifiedKey::from_der(
+            chain,
+            key,
+            &rustls::crypto::ring::default_provider(),
+        )?)
     };
     identity().map_err(|error| {
         format!(

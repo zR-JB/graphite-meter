@@ -17,7 +17,7 @@ fn cli_exchange_requires_approval_is_single_use_and_keeps_parent_identity() {
         .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
         .unwrap();
     assert_eq!(view.code, "24NPFPCT");
-    assert!(view.attached && view.browser_origin.is_none());
+    assert!(view.browser_origin.is_none());
     assert_eq!(
         store
             .begin_cli_approval(&session, &challenge, "192.0.2.1".parse().unwrap())
@@ -48,10 +48,9 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
     let (_, other) = store.create("subject", "Name", "local", None).unwrap();
     let verifier = "v".repeat(32);
     let challenge = challenge(&verifier);
-    let pending = store
+    store
         .begin_browser_approval(&challenge, AUDIENCE, None, "192.0.2.1".parse().unwrap())
         .unwrap();
-    assert!(!pending.attached);
     assert!(
         store
             .browser_approval_redirect(&challenge)
@@ -71,12 +70,9 @@ fn browser_reservation_attaches_once_preserves_redirect_and_separates_audiences(
         ),
         Err(ApprovalError::InvalidApproval)
     ));
-    assert!(
-        store
-            .begin_browser_approval(&challenge, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap())
-            .unwrap()
-            .attached
-    );
+    store
+        .begin_browser_approval(&challenge, AUDIENCE, Some(&session), "192.0.2.1".parse().unwrap())
+        .unwrap();
     assert!(matches!(
         store.begin_browser_approval(&challenge, AUDIENCE, Some(&other), "192.0.2.1".parse().unwrap()),
         Err(ApprovalError::InvalidApproval)

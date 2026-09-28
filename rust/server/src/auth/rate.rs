@@ -46,10 +46,6 @@ pub struct AttemptLimiter {
 }
 
 impl AttemptLimiter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub(super) fn with_log(log: Arc<SecurityLog>) -> Self {
         Self {
             state: Mutex::default(),

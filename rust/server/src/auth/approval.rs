@@ -40,7 +40,6 @@ pub enum ExchangeError {
 pub struct ApprovalView {
     pub code: String,
     pub browser_origin: Option<String>,
-    pub attached: bool,
 }
 
 pub enum Exchange {
@@ -70,7 +69,6 @@ impl Approval {
         ApprovalView {
             code: self.code.clone(),
             browser_origin: self.browser_origin.clone(),
-            attached: self.session.is_some(),
         }
     }
 }

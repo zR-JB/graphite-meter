@@ -126,7 +126,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
         .collect::<Result<Vec<_>, _>>()
         .unwrap();
     let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+    let tls = rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_no_client_auth()
@@ -151,7 +151,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
     for cert in certificates {
         roots.add(cert).unwrap();
     }
-    let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+    let client_tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_root_certificates(roots)

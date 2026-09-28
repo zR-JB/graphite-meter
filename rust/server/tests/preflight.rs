@@ -17,7 +17,7 @@ fn native_and_public_discovery_match_shared_golden() {
     config.tls_key = "test-key.pem".into();
     config.public.both.push("self".into());
     let preflight = Preflight::new(Arc::new(config)).unwrap();
-    let document = preflight.build("speed.example:7246").unwrap();
+    let document = preflight.build("speed.example").unwrap();
     let mut expected: serde_json::Value =
         serde_json::from_str(include_str!("../../../api/preflight.golden.json")).unwrap();
     expected["generation"] = document.generation.clone().into();

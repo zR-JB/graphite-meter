@@ -127,7 +127,7 @@ impl HttpServer {
                         continue;
                     }
                     let peer = incoming.remote_address();
-                    let Ok(permit) = self.connections.acquire_buffered(peer, true) else {
+                    let Ok(permit) = self.connections.acquire(peer, true) else {
                         incoming.refuse();
                         continue;
                     };
@@ -639,7 +639,7 @@ mod tests {
         use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
         let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
         let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
-        let provider = Arc::new(crate::crypto::provider());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
         let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .unwrap()
@@ -1314,7 +1314,7 @@ mod tests {
             let (certificate, key) = crate::test_identity::generate_identity("localhost").unwrap();
             let certificate = CertificateDer::from_pem_slice(certificate.as_bytes()).unwrap();
             let key = PrivateKeyDer::from_pem_slice(key.as_bytes()).unwrap();
-            let provider = Arc::new(crate::crypto::provider());
+            let provider = Arc::new(rustls::crypto::ring::default_provider());
             let mut tls = rustls::ServerConfig::builder_with_provider(provider.clone())
                 .with_protocol_versions(&[&rustls::version::TLS13])
                 .unwrap()

@@ -3,7 +3,6 @@ use crate::{
     admission::Admission,
     config::{Config, ConfigError, NativeKind},
     preflight::{Preflight, discovery_host},
-    probe::Probe,
 };
 use bytes::Bytes;
 use graphite_meter_core::origin::target_origin;
@@ -19,7 +18,7 @@ const MAX_HOSTS: usize = 64;
 pub struct Discovery {
     config: Arc<Config>,
     preflight: Preflight,
-    probe: Probe,
+    admission: Admission,
     configured: HashMap<String, Arc<HostResponses>>,
     hosts: Mutex<HashMap<String, Arc<HostResponses>>>,
 }
@@ -30,11 +29,7 @@ struct HostResponses {
 }
 
 impl Discovery {
-    pub fn new(
-        config: Arc<Config>,
-        admission: Option<Admission>,
-        bootstrap_port: Option<u16>,
-    ) -> Result<Self, ConfigError> {
+    pub fn new(config: Arc<Config>, admission: Admission) -> Result<Self, ConfigError> {
         let preflight = Preflight::new(config.clone())?;
         let public = &config.public;
         let origins = ["http://localhost", config.auth.public_url.as_str()]
@@ -59,8 +54,8 @@ impl Discovery {
             }
         }
         Ok(Self {
-            probe: Probe::new(config.clone(), bootstrap_port, admission),
             preflight,
+            admission,
             config,
             configured,
             hosts: Mutex::default(),
@@ -69,7 +64,13 @@ impl Discovery {
 
     pub fn respond(&self, request: &Request<()>, peer: SocketAddr) -> Result<Option<Response<Bytes>>, ConfigError> {
         let response = match request.uri().path() {
-            "/probe" => self.probe.respond(peer, request.version(), request.headers())?,
+            "/probe" => crate::probe::respond(
+                &self.admission,
+                &self.config.trusted_proxies,
+                peer,
+                request.version(),
+                request.headers(),
+            )?,
             "/preflight" => json_response(self.for_host(&request_host(request))?.preflight.clone())?,
             "/servers" => match &self.for_host(&request_host(request))?.catalog {
                 Some(catalog) => json_response(catalog.clone())?,
@@ -123,7 +124,7 @@ fn build(config: &Config, preflight: &Preflight, host: &str) -> Result<HostRespo
         crate::log!("[gm:discovery] server catalogue for host {host:?}: {error:?}");
     }
     Ok(HostResponses {
-        preflight: serde_json::to_vec(&preflight.build_for_host(host)?)?.into(),
+        preflight: serde_json::to_vec(&preflight.build(host)?)?.into(),
         catalog: refused.is_none().then(|| data.into()),
     })
 }

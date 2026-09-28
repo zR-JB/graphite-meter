@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use graphite_meter_server::auth::{SESSION_LIFETIME, SessionError, SessionStore};
+use graphite_meter_server::auth::{SessionError, SessionStore};
 use std::time::Duration;
 
 #[test]
@@ -19,7 +19,6 @@ fn credentials_are_random_and_metadata_is_stable() {
     assert_eq!(found.session().provider(), "local");
     assert_eq!(found.session().id(), lease.session().id());
     assert_eq!(found.session().expires(), lease.session().expires());
-    assert!(found.remaining() <= SESSION_LIFETIME);
     assert!(store.lookup("wrong").is_none());
 }
 
@@ -45,22 +44,6 @@ async fn rotation_revokes_only_supplied_login_and_notifies_existing_and_late_wai
     assert!(new.is_active() && sibling_lease.is_active());
     assert!(!lease.is_active());
     assert!(!store.revoke(&lease));
-}
-
-#[test]
-fn current_and_subject_logout_have_distinct_scope() {
-    let store = SessionStore::new();
-    let (_, first) = store.create("subject", "name", "local", None).unwrap();
-    let (_, sibling) = store.create("subject", "name", "local", None).unwrap();
-    let (_, other) = store.create("other", "name", "local", None).unwrap();
-    assert!(!SessionStore::new().revoke(&first));
-    assert!(store.revoke(&first));
-    assert!(!first.is_active());
-    assert!(sibling.is_active());
-    assert_eq!(store.revoke_subject("subject"), 1);
-    assert!(!sibling.is_active());
-    assert!(other.is_active());
-    assert_eq!(store.revoke_subject("subject"), 0);
 }
 
 #[tokio::test(start_paused = true)]

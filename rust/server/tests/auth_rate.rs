@@ -10,7 +10,7 @@ fn address(number: u32) -> IpAddr {
 
 #[tokio::test(start_paused = true)]
 async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     let client = address(1);
     for (budget, limit) in [
         (Budget::Password, 5),
@@ -45,7 +45,7 @@ async fn address_limits_are_separate_and_expire_exactly_at_sixty_seconds() {
 
 #[tokio::test(start_paused = true)]
 async fn global_refusals_do_not_spend_address_budget() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     for id in 1..=12 {
         for _ in 0..5 {
             assert!(limiter.allow(Budget::Password, address(id)));
@@ -68,7 +68,7 @@ async fn global_refusals_do_not_spend_address_budget() {
 
 #[tokio::test(start_paused = true)]
 async fn rolling_window_expires_individual_attempts() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     let client = address(1);
     assert!(limiter.allow(Budget::Password, client));
     tokio::time::advance(Duration::from_secs(30)).await;
@@ -82,7 +82,7 @@ async fn rolling_window_expires_individual_attempts() {
 
 #[tokio::test(start_paused = true)]
 async fn address_keys_unmap_ipv4_and_group_ipv6_by_64_bit_prefix() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     for _ in 0..5 {
         assert!(limiter.allow(Budget::Password, "192.0.2.1".parse().unwrap()));
     }
@@ -97,7 +97,7 @@ async fn address_keys_unmap_ipv4_and_group_ipv6_by_64_bit_prefix() {
 
 #[tokio::test(start_paused = true)]
 async fn each_address_map_is_bounded_and_reclaims_only_expired_keys() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     for budget in [Budget::OidcExchange, Budget::BrowserApproval] {
         for id in 1..=2048 {
             assert!(limiter.allow(budget, address(id)));
@@ -123,7 +123,7 @@ async fn each_address_map_is_bounded_and_reclaims_only_expired_keys() {
 
 #[tokio::test(start_paused = true)]
 async fn only_wrong_passwords_spend_the_ceiling_and_a_known_device_skips_shared_bounds() {
-    let limiter = AttemptLimiter::new();
+    let limiter = AttemptLimiter::default();
     for id in 1..=80 {
         assert!(limiter.allow(Budget::Password, address(id)));
     }

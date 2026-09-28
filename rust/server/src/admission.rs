@@ -95,13 +95,9 @@ impl Admission {
         }))
     }
 
-    /// Call after resolving the request or session client key. Unmetered routes
+    /// Call after resolving the request or session client keys. Unmetered routes
     /// and CORS preflight do not acquire a permit.
-    pub fn acquire(&self, class: Class, client: &str) -> Result<Permit, Refusal> {
-        self.acquire_keys(class, &[client.to_owned()])
-    }
-
-    pub fn acquire_keys(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
+    pub fn acquire(&self, class: Class, keys: &[String]) -> Result<Permit, Refusal> {
         let mut counts = recover(&self.0.counts, "operation");
         let Counts {
             stats,
@@ -190,19 +186,28 @@ mod tests {
             sessions: 1,
             sessions_per_client: 1,
         });
-        let request = admission.acquire(Class::Request, "a").unwrap();
-        let session = admission.acquire(Class::Session, "a").unwrap();
-        assert_eq!(admission.acquire(Class::Request, "a").err(), Some(Refusal::ClientFull));
-        assert_eq!(admission.acquire(Class::Request, "b").err(), Some(Refusal::GlobalFull));
+        let request = admission.acquire(Class::Request, &["a".into()]).unwrap();
+        let session = admission.acquire(Class::Session, &["a".into()]).unwrap();
+        assert_eq!(
+            admission.acquire(Class::Request, &["a".into()]).err(),
+            Some(Refusal::ClientFull)
+        );
+        assert_eq!(
+            admission.acquire(Class::Request, &["b".into()]).err(),
+            Some(Refusal::GlobalFull)
+        );
         drop(request);
         assert_eq!(
-            admission.acquire(Class::Session, "b").err(),
+            admission.acquire(Class::Session, &["b".into()]).err(),
             Some(Refusal::SessionsFull)
         );
-        assert_eq!(admission.acquire(Class::Session, "a").err(), Some(Refusal::ClientFull));
+        assert_eq!(
+            admission.acquire(Class::Session, &["a".into()]).err(),
+            Some(Refusal::ClientFull)
+        );
         drop(session);
         assert_eq!(admission.load(), (0, 2));
-        assert!(admission.acquire(Class::Session, "a").is_ok());
+        assert!(admission.acquire(Class::Session, &["a".into()]).is_ok());
         assert_eq!(
             admission.stats(),
             Stats {
@@ -223,7 +228,7 @@ mod tests {
             operations: 1,
             ..Limits::default()
         });
-        let permit = admission.acquire(Class::Request, "a").unwrap();
+        let permit = admission.acquire(Class::Request, &["a".into()]).unwrap();
         let task = tokio::spawn(async move {
             let _permit = permit;
             std::future::pending::<()>().await;
@@ -232,6 +237,6 @@ mod tests {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
         assert_eq!(admission.load().0, 0);
-        assert!(admission.acquire(Class::Request, "a").is_ok());
+        assert!(admission.acquire(Class::Request, &["a".into()]).is_ok());
     }
 }

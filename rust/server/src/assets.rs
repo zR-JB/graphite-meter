@@ -65,10 +65,6 @@ impl Assets {
         }
     }
 
-    pub fn available(&self) -> bool {
-        self.index.is_some()
-    }
-
     /// Base64 SHA-256 digest, without CSP quotes or the sha256- prefix.
     pub fn inline_script_hash(&self) -> Option<&str> {
         self.inline_script_hash.as_deref()
@@ -297,7 +293,7 @@ mod tests {
     #[test]
     fn shell_metadata_and_head_length_are_precomputed() {
         let assets = Assets::from_entries(FILES, true, true);
-        assert!(assets.available());
+        assert!(assets.index.is_some());
         let get = assets.serve(&Method::GET, "/", &HeaderMap::new());
         let body = std::str::from_utf8(get.body()).unwrap();
         assert!(body.contains("name=\"graphite-meter-auth\" content=\"enabled\""));

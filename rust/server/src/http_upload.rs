@@ -70,7 +70,7 @@ impl HttpServer {
 
     fn upload_operation(&self, owner: &Owner) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
         self.admission
-            .acquire_keys(Class::Request, owner.client_keys())
+            .acquire(Class::Request, owner.client_keys())
             .map(|permit| {
                 Arc::new(Mutex::new(Operation {
                     permit: Some(permit),

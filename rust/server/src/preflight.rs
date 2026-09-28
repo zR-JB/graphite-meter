@@ -23,17 +23,7 @@ impl Preflight {
         Ok(Self { config, generation })
     }
 
-    pub fn build(&self, authority: &str) -> Result<Document, ConfigError> {
-        let authority = (!authority.contains('@'))
-            .then(|| authority.parse::<http::uri::Authority>().ok())
-            .flatten();
-        let host = authority.as_ref().map_or("localhost", |authority| {
-            authority.host().trim_start_matches('[').trim_end_matches(']')
-        });
-        self.build_for_host(host)
-    }
-
-    pub fn build_for_host(&self, host: &str) -> Result<Document, ConfigError> {
+    pub fn build(&self, host: &str) -> Result<Document, ConfigError> {
         let host = discovery_host(host);
         let config = &self.config;
         let mut capabilities = Capabilities {
@@ -101,7 +91,7 @@ impl Preflight {
     }
 
     pub fn connect_origins(&self, host: &str) -> Result<Vec<String>, ConfigError> {
-        let document = self.build_for_host(host)?;
+        let document = self.build(host)?;
         let mut origins = Vec::new();
         let mut add = |origin: String| {
             if !origin.is_empty() && origin != "." && !origins.contains(&origin) {

@@ -468,7 +468,7 @@ struct ProviderHttp {
 }
 impl ProviderHttp {
     fn new() -> Result<Self, ConfigError> {
-        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(crate::crypto::provider()))
+        let tls = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
             .with_safe_default_protocol_versions()?
             .with_platform_verifier()?
             .with_no_client_auth();
