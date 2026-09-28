@@ -111,6 +111,7 @@
     <button
       type="button"
       class="chip chip--{s.state}"
+      class:btn={!s.locked}
       class:on={s.selected}
       data-tone={s.key}
       role="switch"
@@ -159,48 +160,45 @@
     display: flex;
     flex-wrap: wrap;
     justify-content: center;
-    gap: var(--space-1);
+    gap: var(--space-2);
   }
+  /* A chip that can change is a switch drawn as an ink control (.btn); locked by a run, it is the run's progress.
+     Its size is its own, so locking never moves the row. */
   .chip {
+    --hit-pad: 0px;
     position: relative;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: var(--space-2);
     height: 36px;
     padding: 0 var(--space-3) 0 10px;
-    overflow: hidden;
     border-radius: var(--r-chrome);
     color: var(--text-soft);
     font: var(--w-normal) var(--type-body) / 1 var(--font-sans);
     white-space: nowrap;
     transition: var(--transition-control);
   }
-  /* The hover wash is a layer, so it adds to a running chip's hue instead of replacing it. */
+  /* A finger's target reaches past the plate to a full hit height. */
+  @media (pointer: coarse) {
+    .chip::before {
+      position: absolute;
+      inset: calc((100% - var(--hit)) / 2) 0;
+      content: "";
+    }
+  }
+  /* The washes are layers, so they add to the plate instead of replacing it. */
   @media (hover: hover) {
     .chip:hover:not(:disabled) {
       background-image: linear-gradient(var(--hover-wash) 0 0);
       color: var(--text);
     }
   }
+  .chip:active:not(:disabled) {
+    background-image: linear-gradient(var(--selected-wash) 0 0);
+  }
   .chip.on {
     color: var(--text-muted);
-  }
-  @container viz (max-width: 520px) {
-    .stage-track {
-      gap: 0;
-    }
-    .chip {
-      gap: 6px;
-      height: 32px;
-      padding: 0 var(--space-2);
-      font-size: var(--type-sm);
-    }
-    .chip-bar {
-      inset-inline: var(--space-2);
-    }
-    .chip-check {
-      display: none;
-    }
   }
   .chip--active,
   .chip--warmup,
@@ -220,8 +218,7 @@
     width: 8px;
     height: 8px;
     border-radius: var(--r-full);
-    box-shadow: inset 0 0 0 1.5px
-      color-mix(in oklab, var(--tone) 70%, transparent);
+    box-shadow: inset 0 0 0 1.5px var(--tone);
     transition: background-color var(--dur-graph) var(--ease-out);
   }
   .on .bead {
@@ -317,6 +314,26 @@
     }
     to {
       translate: 240%;
+    }
+  }
+  /* A phone gives the chips one row of equal columns; the bead alone says a chip is off, the card that it is done. */
+  @container viz (max-width: 520px) {
+    .stage-track {
+      display: grid;
+      grid-auto-columns: 1fr;
+      grid-auto-flow: column;
+    }
+    .chip {
+      gap: 6px;
+      padding: 0 var(--space-1);
+      font-size: var(--type-sm);
+    }
+    .chip-bar {
+      inset-inline: var(--space-2);
+    }
+    .chip-check,
+    .chip-tag {
+      display: none;
     }
   }
 </style>
