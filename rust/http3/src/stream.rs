@@ -1,4 +1,4 @@
-//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a larger buffer.
+//! Request streams over noq: payloads pass uncopied, charged by length, so a sent one must not pin a much larger buffer.
 use crate::{
     charge::{Budget, Charge},
     code::Code,
@@ -73,12 +73,8 @@ impl RequestStream {
         self.recv.abort(code)
     }
 
-    pub(crate) fn shared(&self) -> &Shared {
+    pub(crate) fn shared(&self) -> &Arc<Shared> {
         &self.recv.shared
-    }
-
-    pub(crate) fn shared_arc(&self) -> Arc<Shared> {
-        self.recv.shared.clone()
     }
 }
 

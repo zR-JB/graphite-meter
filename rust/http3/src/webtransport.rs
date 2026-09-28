@@ -490,7 +490,7 @@ impl Session {
     /// Registers the connection's one session and hands its CONNECT stream to the driver; a second
     /// is refused with `refusal`.
     fn register(stream: RequestStream, refusal: Code) -> Result<Self, Error> {
-        let (shared, id) = (stream.shared_arc(), stream.id());
+        let (shared, id) = (stream.shared().clone(), stream.id());
         let registered = Charge::new(&shared.budget, SESSION_BYTES)
             .and_then(|charge| Some((charge, shared.state().sessions.register(id)?)));
         let Some((charge, (streams, datagrams))) = registered else {
@@ -534,7 +534,7 @@ impl Session {
     /// that has not shown WebTransport, HTTP datagrams and the datagram transport parameter within
     /// 5 s gets 400; a second session on the connection gets H3_REQUEST_REJECTED, as from Go.
     pub async fn accept(mut stream: RequestStream, headers: http::HeaderMap) -> Result<Self, Error> {
-        let shared = stream.shared_arc();
+        let shared = stream.shared().clone();
         let mut response = http::Response::new(());
         *response.headers_mut() = headers;
         let Some(dialect) = dialect(&shared).await else {
