@@ -59,7 +59,9 @@ a Debian point release changes neither them nor their dependencies. The port rem
 blocked from merging until a human decides its design.
 
 `mise run rust-server-run` builds the browser UI and runs the experimental server
-using `GM_*` configuration or server flags. HTTP/1, HTTPS/WSS, HTTP/2, and
+using `GM_*` configuration or server flags after `--`; `rust-server-build` builds a
+release binary with the production UI. Neither embeds reviewed notices, so both work
+on any host; the builder image produces the reviewed release binaries. HTTP/1, HTTPS/WSS, HTTP/2, and
 HTTP/3/WebTransport listeners share authentication and measurement state.
 Password, OIDC, and hybrid authentication are implemented. OIDC has been checked
 against a local signed-token provider and a temporary HTTPS Keycloak realm,

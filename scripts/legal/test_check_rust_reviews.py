@@ -80,6 +80,13 @@ class PlatformRecordTests(unittest.TestCase):
                     'reviewNotes': 'reviewed'}]
         self.assertEqual(unreviewed_platforms(self.repo(records), self.TARGETS), [])
 
+    def test_a_record_file_no_builder_reads_is_reported(self) -> None:
+        records = [{'target': 'aarch64-apple-darwin', 'rustc': RUSTC, 'reviewDecision': 'approved',
+                    'reviewNotes': 'reviewed'}]
+        root = self.repo(records)
+        (root / 'legal/rust-platform-host.json').write_text('[]')
+        self.assertEqual(unreviewed_platforms(root, self.TARGETS), ['legal/rust-platform-host.json is read by no builder'])
+
     def test_a_missing_pending_or_stale_record_is_reported_against_its_builder(self) -> None:
         missing = ['legal/macos.json has no approved record for aarch64-apple-darwin on Rust 1.98.1, '
                    'which .github/workflows/release-request.yml builds']

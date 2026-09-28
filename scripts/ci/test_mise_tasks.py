@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER")
+KEYS = ("VERSION", "GM_CLIENT_REVISION", "GM_BENCH_FILTER", "GM_ENGINE_VERSION", "GM_RUST_ASSET_DIR",
+        "GM_RUST_LEGAL_DIR")
 # Records each tool's argv and the task environment variables the test inspects; the last call wins.
 SPY = """import json, os, sys
 with open(os.environ["GM_TASK_TRACE"], "a") as output:
@@ -67,6 +68,15 @@ class MiseTaskTests(unittest.TestCase):
             built = run("client-build-prod", VERSION=payload, GM_CLIENT_REVISION=payload)
             self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
             run("goclient-build", VERSION=payload, status=2)
+            # Development servers embed the browser UI and no reviewed notices, so they build anywhere.
+            server = run("rust-server-build", VERSION=payload)
+            self.assertEqual(server["args"], ["build", "--release", "--locked", "-p", "graphite-meter-server"])
+            assets = server["env"].pop("GM_RUST_ASSET_DIR")
+            self.assertEqual(server["env"], {"VERSION": payload, "GM_ENGINE_VERSION": f"{payload}-rust"})
+            self.assertEqual(Path(assets).resolve(), (root / "client/dist").resolve())
+            served = run("rust-server-run", "--listen", payload)
+            self.assertEqual(served["args"][-3:], ["--", "--listen", payload])
+            self.assertNotIn("GM_RUST_LEGAL_DIR", served["env"])
             self.assertFalse(canary.exists())
 
             # The delayed-download gate runs exactly its one ignored test, fails when that matches

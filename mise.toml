@@ -425,14 +425,21 @@ description = "Format the experimental Rust workspace"
 dir = "rust"
 run = "cargo fmt --all"
 
+# Development builds embed the browser UI but no reviewed notices, so they build on any host.
 [tasks.rust-server-build]
-description = "Build the experimental Rust server"
-run = "python3 scripts/run-rust-server.py --profile release --version \"${VERSION:-development}\" --build-only"
+description = "Build the experimental Rust server with the production browser UI, without reviewed notices"
+run = [
+  { task = "client-build-prod" },
+  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" GM_ENGINE_VERSION="${VERSION:-development}-rust" cargo build --release --locked -p graphite-meter-server',
+]
 
 [tasks.rust-server-run]
-description = "Run the experimental Rust server with GM_* configuration"
+description = "Run the experimental Rust server with GM_* configuration; arguments after -- go to the server"
 raw = true
-run = "python3 scripts/run-rust-server.py --profile dev"
+run = [
+  { task = "client-build-dev" },
+  'cd rust && GM_RUST_ASSET_DIR="$PWD/../client/dist" GM_ENGINE_VERSION=development-rust cargo run --locked -p graphite-meter-server --',
+]
 
 [tasks.rust-client-run]
 description = "Run the experimental Rust TUI against a server"

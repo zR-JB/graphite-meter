@@ -10,7 +10,8 @@ none. The file keeps the layout the legal tools write, so hand edits cannot drif
 rewrites it in that layout. The static Linux binaries may compile at most BUDGET crates.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
-reads, so a release request cannot reach a target nobody reviewed.
+reads, so a release request cannot reach a target nobody reviewed, and a builder must read every
+legal/rust-platform-*.json file.
 """
 from __future__ import annotations
 
@@ -61,11 +62,13 @@ BUILDERS = {
 
 
 def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
-    """Shipped targets whose builder's --supplement file holds no approved record for this toolchain."""
+    """Shipped targets whose builder's --supplement file holds no approved record for this toolchain,
+    and platform record files that no builder reads."""
     channel = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
-    problems = []
+    problems, read = [], set()
     for builder, builds in BUILDERS.items():
         supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))
+        read |= supplements
         if len(supplements) != 1:
             problems.append(f'{builder} must read exactly one --supplement file')
             continue
@@ -78,7 +81,8 @@ def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
             platform, target = line.split()
             if builds(platform) and target not in approved:
                 problems.append(f'{name} has no approved record for {target} on Rust {channel}, which {builder} builds')
-    return problems
+    return problems + [f'{name} is read by no builder' for path in sorted((repo / 'legal').glob('rust-platform-*.json'))
+                       if (name := path.relative_to(repo).as_posix()) not in read]
 
 
 def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:
