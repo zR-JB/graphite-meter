@@ -1372,15 +1372,18 @@ async fn a_stop_during_readiness_sends_the_upload_delete() -> Result<(), Error> 
     Ok(())
 }
 
-#[tokio::test(start_paused = true)]
+// Real time: on a paused clock that auto-advances while real sockets are read, a probe's 250 ms deadline
+// can pass before its loopback pong arrives, and the stage would record a timeout instead.
+#[tokio::test]
 async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
     let _ = crate::crypto::provider().install_default();
-    let heartbeat = heartbeat();
     for (stage, scope) in [
         (Stage::Download, FailureScope::Throughput),
         (Stage::Latency, FailureScope::Latency),
     ] {
-        let (origin, _, peer) = download_peer().await?;
+        let (origin, mode, peer) = download_peer().await?;
+        // The peer reads pings without answering, so the latency stage has no sample when it stops.
+        mode.store(8, Ordering::SeqCst);
         let http = Http::new(true)?;
         let mut server = prepared_download("peer", &origin, &http).await?;
         server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
@@ -1404,7 +1407,8 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
                 .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
                 .await
                 .unwrap();
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            // Well inside the first probe's 250 ms deadline, so no probe can time out first.
+            tokio::time::sleep(Duration::from_millis(50)).await;
             stop.send_replace(true);
         };
         let servers = std::slice::from_ref(&server);
@@ -1430,6 +1434,5 @@ async fn a_stop_records_the_evidence_its_stage_lacked() -> Result<(), Error> {
             )
         );
     }
-    heartbeat.abort();
     Ok(())
 }
