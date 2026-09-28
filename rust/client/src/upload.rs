@@ -97,7 +97,7 @@ impl Upload {
         };
         let minted: Minted = tokio::select! {
             biased;
-            () = cancelled(&mut cancel) => return Err("upload cancelled before startup".into()),
+            _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
             minted = control.json(Method::POST, Route::UploadSession, &[]) => minted?,
         };
         if minted.upload_id.is_empty()
@@ -128,7 +128,7 @@ impl Upload {
             let query = [("id", owner.id.as_str())];
             let session = tokio::select! {
                 biased;
-                () = cancelled(&mut cancel) => Err("WebTransport upload cancelled during setup".into()),
+                _ = cancel.wait_for(|cancelled| *cancelled) => Err("WebTransport upload cancelled during setup".into()),
                 session = owner.transport.webtransport_slot(Route::WtUpload, &query) => session,
             };
             match session {
@@ -148,7 +148,7 @@ impl Upload {
             owner.progress.spawn(async move {
                 tokio::select! {
                     biased;
-                    () = cancelled(&mut stop) => {},
+                    _ = stop.wait_for(|stopped| *stopped) => {},
                     result = progress_feed(&transport, &id, &state, session) => {
                         if let Err(error) = result {
                             fail(&state, error);
@@ -174,10 +174,10 @@ impl Upload {
             owner.lanes.spawn(async move {
                 tokio::select! {
                     biased;
-                    () = cancelled(&mut stop) => {},
-                    () = cancelled(&mut all_stop) => {},
-                    () = cancelled(&mut cancelled_stage) => {},
-                    () = failed(&mut health) => {},
+                    _ = stop.wait_for(|stopped| *stopped) => {},
+                    _ = all_stop.wait_for(|stopped| *stopped) => {},
+                    _ = cancelled_stage.wait_for(|cancelled| *cancelled) => {},
+                    _ = health.wait_for(|state| state.error.is_some() || state.complete) => {},
                     result = async {
                         if index > 0 && !stagger.is_zero() {
                             tokio::time::sleep(stagger * index as u32).await;
@@ -206,7 +206,7 @@ impl Upload {
                 }
                 tokio::select! {
                     biased;
-                    () = cancelled(&mut cancel) => return Err("upload cancelled during startup".into()),
+                    _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled during startup".into()),
                     changed = owner.state.changed() => changed.map_err(|_| "upload workers ended before receiver became ready")?,
                 }
             }
@@ -482,23 +482,6 @@ fn fail(state: &watch::Sender<State>, error: Error) {
             state.error = Some(Arc::new(error));
         }
     });
-}
-async fn cancelled(cancel: &mut watch::Receiver<bool>) {
-    while !*cancel.borrow_and_update() {
-        if cancel.changed().await.is_err() {
-            break;
-        }
-    }
-}
-async fn failed(state: &mut watch::Receiver<State>) {
-    loop {
-        if state.borrow().error.is_some() || state.borrow().complete {
-            return;
-        }
-        if state.changed().await.is_err() {
-            return;
-        }
-    }
 }
 
 async fn send_wt_lane(

@@ -339,7 +339,7 @@ async fn execute(
             .map(|()| None),
             Work::Verify(config) => tokio::select! {
                 biased;
-                _ = cancelled(&mut cancel) => return Ok(None),
+                _ = cancel.wait_for(|cancelled| *cancelled) => return Ok(None),
                 result = runner::prepare_run(config, &http, &snapshots) => result.map(|prepared| {
                     snapshots.send_modify(|snapshot| snapshot.phase = Phase::Setup);
                     Some(prepared)
@@ -376,20 +376,10 @@ async fn execute(
         });
         tokio::select! {
             biased;
-            _ = cancelled(&mut cancel) => return Ok(None),
+            _ = cancel.wait_for(|cancelled| *cancelled) => return Ok(None),
             result = http.poll_authorization(pending) => result?,
         }
         snapshots.send_modify(|snapshot| snapshot.auth = None);
-    }
-}
-async fn cancelled(cancel: &mut watch::Receiver<bool>) {
-    loop {
-        if *cancel.borrow_and_update() {
-            return;
-        }
-        if cancel.changed().await.is_err() {
-            return;
-        }
     }
 }
 async fn deadline(at: Option<Instant>) {
@@ -439,7 +429,7 @@ mod tests {
             controller.cancel = Some(cancel);
             let (joined, completed) = tokio::sync::oneshot::channel();
             controller.operations.spawn(async move {
-                cancelled(&mut cancelled_signal).await;
+                let _ = cancelled_signal.wait_for(|cancelled| *cancelled).await;
                 snapshots.send_modify(|snapshot| snapshot.latest.up_bps = Some(42.0));
                 let _ = joined.send(());
                 Ok(None)
