@@ -140,7 +140,8 @@ hue, never by a boxed icon.
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - The room's light cross-fades 1.1 s between stages: one layer per stage in the stage column, never a repaint of the
   page; History is read without it. A docked sheet slides from its edge while its column
-  (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed stage time rolls (320 ms).
+  (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed time rolls like a counter (`Roll`,
+  320 ms): up as it grows, down as it shrinks.
 - A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
@@ -170,8 +171,10 @@ hue, never by a boxed icon.
 - **Sheet** (`SidePanel`, `.sheet`): the title, quiet head actions, grouped plates. **Choice list** (`.choices`): rows
   with a name and a second line saying what the choice does (`PATH_NOTE`) or why it is unavailable; the ring or check
   alone marks the choice. Unavailable choices fold into one row.
-- **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time, with the
-  time and name under it; Custom adds a − value + stepper per stage and for warmup.
+- **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time but never
+  narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
+  and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
+  time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`); the servers' stage limit bounds it.
 - **Switch**: an empty track when off, an ink track with an inverse knob when on. **Check**: 18 px, ink when checked.
 - **History**: rows show the time with the server and recency, then per column a value over a note: added latency
   under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the

@@ -1,11 +1,7 @@
 <script lang="ts">
   import { catalogSelection } from "../../presentation/serverAppearance";
   import { store } from "../../state/store.svelte";
-  import {
-    clampDuration,
-    DURATION_LIMITS,
-    DURATION_PRESETS,
-  } from "../../state/defaults";
+  import { DURATION_LIMITS, DURATION_PRESETS } from "../../state/defaults";
   import type { PingCadence, RunnerConfig } from "../../runner/contract";
   import { getApplicationController } from "../../runner/controllerContext";
   const controller = getApplicationController();
@@ -21,6 +17,8 @@
   import ServerSelection from "../ServerSelection.svelte";
   import ConnectionPicker from "./ConnectionPicker.svelte";
   import DurationStrip from "./DurationStrip.svelte";
+  import TimeStepper from "./TimeStepper.svelte";
+  import Roll from "../Roll.svelte";
   import {
     BLOCKED,
     JARGON,
@@ -163,14 +161,6 @@
   const rejection = $derived(
     store.startError || "This change cannot apply to the current run.",
   );
-  // Stage times move in half seconds; warmup, a fraction of a second, in tenths.
-  const STEP_MS: Record<DurationKey, number> = {
-    warmupMs: 100,
-    latencyMs: 500,
-    downloadMs: 500,
-    uploadMs: 500,
-    bidirectionalMs: 500,
-  };
   function applyDuration(key: DurationKey, value: number): boolean {
     const current = store.config.duration[key];
     const accepted =
@@ -187,22 +177,14 @@
     key === "warmupMs"
       ? DURATION_LIMITS.warmupMs[1]
       : Math.min(DURATION_LIMITS[key][1], store.stageLimit.ms);
-  const limited = (key: DurationKey, ms: number) =>
-    Math.min(maxMs(key), clampDuration(key, ms));
-  function nudge(key: DurationKey, delta: number) {
-    applyDuration(key, limited(key, store.config.duration[key] + delta));
-  }
-  function setSeconds(key: DurationKey, event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const step = STEP_MS[key];
-    const raw = input.valueAsNumber;
-    const value = Number.isFinite(raw)
-      ? limited(key, Math.round((raw * 1000) / step) * step)
-      : store.config.duration[key];
-    const accepted = applyDuration(key, value);
-    input.value = String(
-      (accepted ? value : store.config.duration[key]) / 1000,
-    );
+  // Warmup moves in tenths; a stage's step grows with it, so the buttons reach an hour as readily as a second.
+  function stepMs(key: DurationKey, ms: number, direction: 1 | -1) {
+    if (key === "warmupMs") return 100;
+    const from = direction < 0 ? ms - 1 : ms;
+    if (from < 10_000) return 500;
+    if (from < 60_000) return 1_000;
+    if (from < 600_000) return 10_000;
+    return from < 3_600_000 ? 60_000 : 300_000;
   }
   function setBidirectional(enabled: boolean) {
     controller.configureRun({
@@ -310,36 +292,15 @@
 {/snippet}
 
 {#snippet stepper(key: DurationKey, label: string)}
-  {@const min = DURATION_LIMITS[key][0]}
-  {@const max = maxMs(key)}
-  {@const ms = store.config.duration[key]}
-  <span class="stepper" role="group" aria-label="{label} time">
-    <button
-      type="button"
-      class="btn btn-icon btn-quiet"
-      aria-label="Shorter {label}"
-      disabled={store.preparing || ms <= min}
-      onclick={() => nudge(key, -STEP_MS[key])}>−</button
-    >
-    <input
-      type="number"
-      min={min / 1000}
-      max={max / 1000}
-      step={STEP_MS[key] / 1000}
-      disabled={store.preparing}
-      value={ms / 1000}
-      aria-label="{label} in seconds"
-      onchange={(event) => setSeconds(key, event)}
-    />
-    <span class="unit">s</span>
-    <button
-      type="button"
-      class="btn btn-icon btn-quiet"
-      aria-label="Longer {label}"
-      disabled={store.preparing || ms >= max}
-      onclick={() => nudge(key, STEP_MS[key])}>+</button
-    >
-  </span>
+  <TimeStepper
+    {label}
+    ms={store.config.duration[key]}
+    min={DURATION_LIMITS[key][0]}
+    max={maxMs(key)}
+    step={(ms, direction) => stepMs(key, ms, direction)}
+    disabled={store.preparing}
+    onChange={(ms) => applyDuration(key, ms)}
+  />
 {/snippet}
 
 {#snippet toggle(
@@ -385,7 +346,12 @@
   <section class="group">
     <div class="group-head">
       <h3><span {@attach tooltip(() => JARGON.stageTime)}>Duration</span></h3>
-      <span class="aside">{fmtDuration(store.totalEtaMs, 0)} in total</span>
+      <span class="aside"
+        ><Roll
+          text={fmtDuration(store.totalEtaMs, 0)}
+          rank={store.totalEtaMs}
+        /> in total</span
+      >
     </div>
     <div class="kv">
       <div class="presets">
@@ -449,6 +415,9 @@
         store.preparing,
       )}
     </div>
+    {#if store.stageLimitError}<p class="notice" data-tone="warn" role="status">
+        {store.stageLimitError}
+      </p>{/if}
     {@render rejectedHint("duration")}
     {#if running}
       <p class="hint">Changes apply to the current and unstarted stages.</p>
@@ -666,6 +635,11 @@
     display: grid;
     gap: var(--space-5);
   }
+  .group-head > .aside {
+    color: var(--text-soft);
+    font: var(--role-label);
+    font-variant-numeric: tabular-nums;
+  }
   .presets {
     padding-block: var(--space-3) 0;
   }
@@ -699,30 +673,6 @@
   }
   .stage-row .value {
     font-variant-numeric: tabular-nums;
-  }
-  /* − time + : the field keeps its value editable, the buttons step it. */
-  .stepper {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border-radius: var(--r-chrome);
-    background: var(--track);
-  }
-  .stepper .btn {
-    --control-h: 28px;
-    width: 28px;
-    font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
-  }
-  .kv .stepper input {
-    width: 3.5rem;
-    height: 28px;
-    padding: 0;
-    border: 0;
-    background: none;
-    box-shadow: none;
-    font-variant-numeric: tabular-nums;
-    text-align: end;
   }
   .unit {
     margin-inline: 2px 4px;
