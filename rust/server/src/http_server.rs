@@ -240,7 +240,7 @@ impl HttpServer {
                         }
                     };
                     accept_delay = Duration::ZERO;
-                    let Ok(permit) = self.connections.acquire(peer, h2) else {
+                    let Ok(permit) = self.connections.acquire(peer, false) else {
                         continue;
                     };
                     // Small control replies must not wait for Nagle buffering.

@@ -24,7 +24,7 @@ pub enum Refusal {
 struct Counts {
     stats: Stats,
     clients: Shares,
-    buffered: Shares,
+    quic: Shares,
 }
 struct Inner {
     global_max: usize,
@@ -40,7 +40,7 @@ pub struct Connections(Arc<Inner>);
 pub struct Permit {
     owner: Connections,
     keys: Vec<String>,
-    buffered: bool,
+    quic: bool,
 }
 
 impl Connections {
@@ -53,7 +53,8 @@ impl Connections {
         }))
     }
 
-    pub fn acquire(&self, peer: SocketAddr, buffered: bool) -> Result<Permit, Refusal> {
+    /// A QUIC connection also takes Go's per-client QUIC share, at most 8.
+    pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Result<Permit, Refusal> {
         let addr = peer.ip().to_canonical();
         let keys = if self.0.trusted.iter().any(|prefix| prefix.contains(&addr)) {
             Vec::new()
@@ -70,19 +71,19 @@ impl Connections {
             return Err(Refusal::GlobalFull);
         }
         // Checked last and left out of the counters, like Go's QUIC share.
-        if buffered && counts.buffered.full(&keys, self.0.client_max.min(8)) {
+        if quic && counts.quic.full(&keys, self.0.client_max.min(8)) {
             return Err(Refusal::ClientFull);
         }
         counts.stats.active += 1;
         counts.stats.peak = counts.stats.peak.max(counts.stats.active);
         counts.clients.hold(&keys);
-        if buffered {
-            counts.buffered.hold(&keys);
+        if quic {
+            counts.quic.hold(&keys);
         }
         Ok(Permit {
             owner: self.clone(),
             keys,
-            buffered,
+            quic,
         })
     }
 
@@ -96,14 +97,25 @@ impl Drop for Permit {
         let mut counts = crate::admission::recover(&self.owner.0.counts, "connection");
         counts.stats.active -= 1;
         counts.clients.release(&self.keys);
-        if self.buffered {
-            counts.buffered.release(&self.keys);
+        if self.quic {
+            counts.quic.release(&self.keys);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_quic_connections_take_the_per_client_quic_share() {
+        let connections = super::Connections::new(64, 64, vec![]);
+        let peer = "192.0.2.1:1".parse().unwrap();
+        let quic: Vec<_> = (0..8).map(|_| connections.acquire(peer, true).unwrap()).collect();
+        assert_eq!(connections.acquire(peer, true).err(), Some(super::Refusal::ClientFull));
+        // Like Go, TCP connections from the same address count only toward the client's total.
+        let tcp: Vec<_> = (0..16).map(|_| connections.acquire(peer, false).unwrap()).collect();
+        assert_eq!(connections.stats().active, quic.len() + tcp.len());
+    }
+
     #[test]
     fn poisoned_counts_keep_admitting() {
         let connections = super::Connections::new(4, 4, vec![]);
