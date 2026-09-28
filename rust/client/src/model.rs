@@ -270,8 +270,10 @@ impl Snapshot {
         } else if stage.downloads() && unavailable(&result.down)
             || stage.uploads() && unavailable(&result.up)
             || stage == Stage::Latency
-                && self
-                    .focus_latency(result)
+                && result
+                    .server_latencies
+                    .iter()
+                    .find(|host| Some(&host.id) == self.latency_focus.as_ref())
                     .is_none_or(|host| host.median().is_none() || !self.participants.contains(&host.id))
         {
             StageStatus::Failed
@@ -284,14 +286,6 @@ impl Snapshot {
 
     pub fn measured(&self) -> bool {
         self.results.iter().any(|result| result.elapsed > Duration::ZERO)
-    }
-
-    pub fn focus_latency<'a>(&self, result: &'a StageResult) -> Option<&'a ServerLatencyResult> {
-        let focus = self.latency_focus.as_deref();
-        result
-            .server_latencies
-            .iter()
-            .find(|host| Some(host.id.as_str()) == focus)
     }
 
     pub(crate) fn leave(&mut self, id: &str) {
