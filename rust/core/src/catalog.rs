@@ -171,12 +171,8 @@ impl ServerCatalog {
 impl ServerEntry {
     pub fn validate_discovery(&self, preflight: &Preflight) -> Result<(), DiscoveryError> {
         preflight.validate()?;
-        let throughput_origins = preflight.capabilities.throughput.iter().map(|target| &target.base_url);
-        let latency_origins = preflight.capabilities.latency.iter().map(|target| &target.base_url);
-        for origin in throughput_origins.chain(latency_origins) {
-            if !self.allows_origin(origin) {
-                return Err(DiscoveryError::UnapprovedOrigin);
-            }
+        if !preflight.base_urls().all(|origin| self.allows_origin(origin)) {
+            return Err(DiscoveryError::UnapprovedOrigin);
         }
         Ok(())
     }
