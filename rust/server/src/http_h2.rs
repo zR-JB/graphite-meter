@@ -198,18 +198,8 @@ async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usi
         .map_err(io::Error::other)
 }
 
-impl h2::SharedBudget for http_quic::MemoryBudget {
-    fn try_charge(&self, bytes: usize) -> bool {
-        quinn::SharedBudget::try_charge(self, bytes)
-    }
-
-    fn refund(&self, bytes: usize) {
-        quinn::SharedBudget::refund(self, bytes);
-    }
-}
-
 struct UploadWindow {
-    memory: Arc<http_quic::MemoryBudget>,
+    memory: Arc<budget::MemoryBudget>,
     uploads: AtomicUsize,
     granted: AtomicBool,
     work: AdmittedWork,
