@@ -131,7 +131,7 @@ impl Ui {
         let badge = bold(self.theme.inverse);
         let version = format!("native client {}  ", crate::VERSION);
         let context = if self.live && self.snapshot.started() {
-            self.run_servers()
+            run_servers(&self.snapshot)
                 .iter()
                 .map(|server| server.name.as_str())
                 .collect::<Vec<_>>()
@@ -423,23 +423,7 @@ impl Ui {
             .find(|host| Some(host.id.as_str()) == self.latency_server())
     }
     fn latency_name<'a>(&'a self, focus: Option<&'a crate::model::ServerLatency>) -> &'a str {
-        focus.map_or("unavailable", |host| self.server_name(&host.id))
-    }
-    fn server_name<'a>(&'a self, id: &'a str) -> &'a str {
-        self.snapshot
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .map_or(id, |server| server.name.as_str())
-    }
-
-    /// The run's servers as Go's run details list them: every selected server the check reached.
-    pub(super) fn run_servers(&self) -> Vec<&crate::model::ServerSummary> {
-        self.snapshot
-            .servers
-            .iter()
-            .filter(|server| server.has_check_result())
-            .collect()
+        focus.map_or("unavailable", |host| server_name(&self.snapshot, &host.id))
     }
 
     /// Go's testFields: the run's servers and paths, then its stream and timing settings.
@@ -457,7 +441,7 @@ impl Ui {
                 Span::styled(value, self.theme.muted),
             ])];
         }
-        let servers = self.run_servers();
+        let servers = run_servers(&self.snapshot);
         let mut throughputs = Vec::new();
         for path in servers.iter().filter_map(|server| server.throughput_label()) {
             if !throughputs.contains(&path) {
@@ -584,9 +568,9 @@ impl Ui {
                 .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), err)),
         );
         let mut title = "Results".to_owned();
-        if let Some(id) = self.latency_server().filter(|_| self.run_servers().len() > 1) {
+        if let Some(id) = self.latency_server().filter(|_| run_servers(&self.snapshot).len() > 1) {
             title.push_str(" · latency to ");
-            title.push_str(&safe_text(self.server_name(id), 120));
+            title.push_str(&safe_text(server_name(&self.snapshot, id), 120));
         }
         (lines, title)
     }
@@ -755,7 +739,7 @@ impl Ui {
                     rate(self.shown_up),
                     milliseconds(focus.and_then(|host| host.latest_ms)),
                     self.latency_name(focus),
-                    if self.run_servers().len() > 1 {
+                    if run_servers(&self.snapshot).len() > 1 {
                         " · l switches server"
                     } else {
                         ""

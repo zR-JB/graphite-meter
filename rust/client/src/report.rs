@@ -33,7 +33,7 @@ fn compose(snapshot: &Snapshot, width: usize, theme: Option<Theme>) -> Option<St
     let mut report = Report::new(snapshot, snapshot.latency_focus.as_deref(), width);
     report.theme = theme;
     let heading = match snapshot.latency_focus.as_deref() {
-        Some(focus) if report.servers().len() > 1 => format!("Latency to {}", report.name(focus)),
+        Some(focus) if run_servers(snapshot).len() > 1 => format!("Latency to {}", server_name(snapshot, focus)),
         _ => "Latency".to_owned(),
     };
     let (latency, failures, added) = report.latency(heading);
@@ -41,7 +41,7 @@ fn compose(snapshot: &Snapshot, width: usize, theme: Option<Theme>) -> Option<St
     if report.measured() {
         blocks.extend([report.throughput(), latency, failures.join("\n"), report.notes(added)]);
     }
-    if report.servers().len() > 1 {
+    if run_servers(snapshot).len() > 1 {
         blocks.push(report.details(false));
     }
     blocks.extend(snapshot.error.as_deref().map(|error| report.paint(Tone::Err, error)));
@@ -80,6 +80,21 @@ pub fn label_stage(label: &str) -> Option<Stage> {
 
 pub fn details(snapshot: &Snapshot, shown: Option<&str>, width: usize) -> String {
     Report::new(snapshot, shown, width).details(true)
+}
+
+/// The run's servers as Go's run details list them: every selected server the check reached.
+pub(crate) fn run_servers(snapshot: &Snapshot) -> Vec<&crate::model::ServerSummary> {
+    snapshot
+        .servers
+        .iter()
+        .filter(|server| server.has_check_result())
+        .collect()
+}
+
+/// A server's catalogue name, or its ID when the catalogue lacks it.
+pub(crate) fn server_name<'a>(snapshot: &'a Snapshot, id: &'a str) -> &'a str {
+    let server = snapshot.servers.iter().find(|server| server.id == id);
+    server.map_or(id, |server| server.name.as_str())
 }
 
 pub fn status(snapshot: &Snapshot) -> &'static str {
@@ -148,22 +163,6 @@ impl<'a> Report<'a> {
         format!("\x1b[{}m{text}{RESET}", codes.join(";"))
     }
 
-    fn servers(&self) -> Vec<&crate::model::ServerSummary> {
-        self.snapshot
-            .servers
-            .iter()
-            .filter(|server| server.has_check_result())
-            .collect()
-    }
-
-    fn name<'b>(&'b self, id: &'b str) -> &'b str {
-        self.snapshot
-            .servers
-            .iter()
-            .find(|server| server.id == id)
-            .map_or(id, |server| server.name.as_str())
-    }
-
     fn result(&self, stage: Stage) -> Option<&StageResult> {
         self.snapshot.results.iter().rfind(|result| result.stage == stage)
     }
@@ -189,7 +188,7 @@ impl<'a> Report<'a> {
     }
 
     fn header(&self) -> String {
-        let servers = self.servers();
+        let servers = run_servers(self.snapshot);
         let mut facts = Vec::new();
         match servers.as_slice() {
             [] => {}
@@ -314,7 +313,11 @@ impl<'a> Report<'a> {
         if rows.is_empty() {
             return String::new();
         }
-        let scope = if self.servers().len() > 1 { "All servers" } else { "" };
+        let scope = if run_servers(self.snapshot).len() > 1 {
+            "All servers"
+        } else {
+            ""
+        };
         self.grid(&["Throughput".to_owned(), scope.to_owned()], &rows)
     }
 
@@ -480,7 +483,7 @@ impl<'a> Report<'a> {
     fn outcome_notice(&self) -> String {
         let (remaining, outcome) = (self.snapshot.participants.len(), outcome(self.snapshot.phase));
         let live = self.snapshot.phase.live();
-        match self.servers().len() {
+        match run_servers(self.snapshot).len() {
             1 => status(self.snapshot).to_owned(),
             selected if live && remaining < selected => format!("{remaining} of {selected} servers remaining"),
             selected if live => format!("All {selected} servers"),
@@ -506,7 +509,7 @@ impl<'a> Report<'a> {
                 .map(|(stage, direction)| rate(self.measurement(*stage, *direction))),
         );
         let mut rows = vec![all];
-        for server in self.servers() {
+        for server in run_servers(self.snapshot) {
             let own = |stage: Stage, direction: Direction| {
                 let contribution = self
                     .result(stage)?
@@ -536,8 +539,7 @@ impl<'a> Report<'a> {
     fn server_medians(&self) -> String {
         let mut headers = vec!["Server".to_owned()];
         headers.extend(self.plan.iter().map(|stage| compact_population(*stage).to_owned()));
-        let rows: Vec<_> = self
-            .servers()
+        let rows: Vec<_> = run_servers(self.snapshot)
             .into_iter()
             .map(|server| {
                 let median = |stage: &Stage| {
@@ -561,7 +563,7 @@ impl<'a> Report<'a> {
         };
         format!(
             "{} · {} {scope} · at {} · {}",
-            self.name(&failure.server_id),
+            server_name(self.snapshot, &failure.server_id),
             compact_stage(failure.stage),
             clock(failure.at),
             failure.reason.label()
@@ -576,7 +578,11 @@ impl<'a> Report<'a> {
             .intervals
             .iter()
             .map(|interval| {
-                let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();
+                let names: Vec<_> = interval
+                    .participants
+                    .iter()
+                    .map(|id| server_name(self.snapshot, id))
+                    .collect();
                 let state = if interval.complete && interval.window.is_some() {
                     "measured window"
                 } else {

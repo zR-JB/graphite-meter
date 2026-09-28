@@ -1,6 +1,6 @@
 //! Go's keymap: each binding's keys, the hint footers show for it and its help grid entry, so
 //! dispatch, the footers and the help grid cannot disagree.
-use super::{InputMode, Ui};
+use super::{InputMode, Ui, run_servers};
 use crossterm::event::KeyCode::{
     self, BackTab, Char, Down, End, Enter, Esc, Home, Left, PageDown, PageUp, Right, Tab, Up,
 };
@@ -85,7 +85,7 @@ impl Ui {
             InputMode::Confirm => hints(&[CONFIRM_STOP, CONTINUE, QUIT]),
             _ if self.live => {
                 let run: &[Key] = if self.active() { &[STOP] } else { &[RUN_AGAIN, SETUP] };
-                let latency = (self.run_servers().len() > 1).then_some(LATENCY);
+                let latency = (run_servers(&self.snapshot).len() > 1).then_some(LATENCY);
                 hints(&[run, &[DETAILS], latency.as_slice(), &[HELP, QUIT]].concat())
             }
             _ if self.rows.selected() == Some(0) => hints(&[BEGIN, ROWS, SERVERS, RECHECK, HELP, QUIT]),

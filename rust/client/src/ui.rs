@@ -6,7 +6,7 @@ use crate::{
     Error,
     config::Config,
     model::{Phase, Snapshot},
-    report::terminal_char,
+    report::{run_servers, server_name, terminal_char},
     theme::Theme,
     vocabulary::MISSING,
 };
@@ -291,8 +291,7 @@ impl Ui {
             .get(self.snapshot.failures.len()..)
             .and_then(<[_]>::last);
         if let Some(failure) = failed.filter(|_| !self.quitting) {
-            let server = snapshot.servers.iter().find(|server| server.id == failure.server_id);
-            let name = server.map_or(failure.server_id.as_str(), |server| server.name.as_str());
+            let name = server_name(&snapshot, &failure.server_id);
             self.notice = format!("{name}: {}", failure.reason.label());
         }
         self.awaiting = false;
