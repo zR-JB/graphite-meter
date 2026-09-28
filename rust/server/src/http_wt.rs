@@ -23,13 +23,6 @@ type Failure = Box<dyn std::error::Error + Send + Sync>;
 type Lane<'a> = Pin<Box<dyn Future<Output = Result<(), Failure>> + Send + 'a>>;
 type Activity = Arc<Mutex<Instant>>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SessionRoute {
-    Ping,
-    Download,
-    Upload,
-}
-
 fn touch(activity: &Activity) {
     *activity.lock().expect("WT activity poisoned") = Instant::now();
 }
@@ -94,11 +87,6 @@ impl HttpServer {
         } else {
             self.config.max_operation_duration
         };
-        let route = match route {
-            Route::WtPing => SessionRoute::Ping,
-            Route::WtDownload => SessionRoute::Download,
-            _ => SessionRoute::Upload,
-        };
         let deadline = Instant::now() + lifetime;
         let session = tokio::select! {
             biased;
@@ -107,7 +95,7 @@ impl HttpServer {
         };
         let datagrams = query(&request, "datagrams").is_some_and(|value| datagram_mode(&value));
         let count = download_bytes(&request);
-        let verify = route == SessionRoute::Download && count == 0;
+        let verify = route == Route::WtDownload && count == 0;
         let activity = Arc::new(Mutex::new(Instant::now()));
         let mut lanes: FuturesUnordered<Lane> = FuturesUnordered::new();
         let mut controls: FuturesUnordered<Lane> = FuturesUnordered::new();
@@ -115,7 +103,7 @@ impl HttpServer {
         let mut datagram_lane = None;
         let mut refused = false;
         let mut awaiting_credit = false;
-        if route == SessionRoute::Download && !verify {
+        if route == Route::WtDownload && !verify {
             if datagrams {
                 let (session, block, meter) = (&session, self.download_block.clone(), &self.download_meter);
                 lanes.push(Box::pin(async move {
@@ -154,7 +142,7 @@ impl HttpServer {
                     )));
                 }
             }
-        } else if route == SessionRoute::Upload {
+        } else if route == Route::WtUpload {
             let subscription = self.uploads.subscribe(&upload_id, &owner);
             refused = subscription.is_err();
             awaiting_credit = !refused && !credit.fund();
@@ -193,7 +181,7 @@ impl HttpServer {
                 Some(_) = lanes.next(), if !lanes.is_empty() => {
                     // A download ends with its last lane; later client
                     // streams may replace finished upload lanes.
-                    if route == SessionRoute::Download && lanes.is_empty() {
+                    if route == Route::WtDownload && lanes.is_empty() {
                         break;
                     }
                 }
@@ -205,14 +193,14 @@ impl HttpServer {
                 payload = session.read_datagram() => {
                     let Some(payload) = payload else { break };
                     match route {
-                        SessionRoute::Ping => {
+                        Route::WtPing => {
                             touch(&activity);
                             if let Some(reply) = crate::ping::reply(&payload) {
                                 let _ = session.send_datagram(reply.as_bytes());
                             }
                         }
-                        SessionRoute::Download if datagrams => touch(&activity),
-                        SessionRoute::Upload => {
+                        Route::WtDownload if datagrams => touch(&activity),
+                        Route::WtUpload => {
                             if let Some(lane) = &mut datagram_lane {
                                 lane.record(payload.len());
                                 touch(&activity);
@@ -224,7 +212,7 @@ impl HttpServer {
                 incoming = session.accept_uni() => {
                     // A dropped stream is refused as a cancelled lane.
                     let Some(incoming) = incoming else { break };
-                    if route != SessionRoute::Upload || lanes.len() >= wire::MAX_WEBTRANSPORT_STREAMS {
+                    if route != Route::WtUpload || lanes.len() >= wire::MAX_WEBTRANSPORT_STREAMS {
                         continue;
                     }
                     match self.uploads.begin(&upload_id, &owner) {
