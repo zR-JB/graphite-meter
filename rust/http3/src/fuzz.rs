@@ -196,14 +196,6 @@ fn instructions(data: &[u8]) -> (Result<(), Code>, Result<(), Code>) {
 
 /// QPACK decoding stays within the field limit, and re-encoding decoded lines decodes to the same lines.
 pub fn qpack(data: &[u8]) {
-    let lines = |section: &[u8]| {
-        let mut lines = Vec::new();
-        qpack::decode(section, |name, value| {
-            lines.push((name.to_vec(), value.to_vec()));
-            Ok(())
-        })
-        .map(|()| lines)
-    };
     if let Ok(decoded) = lines(data) {
         let mut encoded = Vec::new();
         qpack::encode(
@@ -221,6 +213,166 @@ pub fn qpack(data: &[u8]) {
         }
         let _ = fields::check_trailers(data, limit);
     }
+}
+
+type Lines = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// A field section's lines.
+fn lines(section: &[u8]) -> Result<Lines, qpack::Invalid> {
+    let mut lines = Vec::new();
+    qpack::decode(section, |name, value| {
+        lines.push((name.to_vec(), value.to_vec()));
+        Ok(())
+    })
+    .map(|()| lines)
+}
+
+/// Heads encoded from arbitrary methods, URIs, statuses and header maps hold exactly their field
+/// lines, in order and within the size limit, and those our decoders take come back as they were.
+pub fn fields(data: &[u8]) {
+    let mut pieces = data.split(|&byte| byte == b'\n');
+    let (Some([flags, limit @ ..]), Some(first), Some(authority), Some(path)) =
+        (pieces.next(), pieces.next(), pieces.next(), pieces.next())
+    else {
+        return;
+    };
+    let limit = (flags & 1 == 1).then(|| {
+        limit
+            .iter()
+            .take(2)
+            .fold(0, |value, &byte| value << 8 | u64::from(byte))
+    });
+    let mut headers = http::HeaderMap::new();
+    while let (Some(name), Some(value)) = (pieces.next(), pieces.next()) {
+        if let (Ok(name), Ok(value)) = (http::HeaderName::from_bytes(name), http::HeaderValue::from_bytes(value)) {
+            headers.append(name, value);
+        }
+    }
+    // HTTP/1.1's connection-specific fields stay behind (RFC 9114 §4.2).
+    let kept: http::HeaderMap = headers
+        .iter()
+        .filter(|(name, _)| {
+            !matches!(
+                name.as_str(),
+                "connection" | "keep-alive" | "proxy-connection" | "transfer-encoding" | "upgrade"
+            )
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    let regular = kept
+        .iter()
+        .map(|(name, value)| (name.as_str().as_bytes(), value.as_bytes()));
+    let content_length = kept
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|length| length.to_str().ok()?.parse().ok());
+    if flags & 2 == 0 {
+        let (Ok(method), Ok(path)) = (http::Method::from_bytes(first), http::uri::PathAndQuery::try_from(path)) else {
+            return;
+        };
+        let uri = match http::uri::Authority::try_from(authority) {
+            Ok(authority) if flags & 16 == 0 => http::Uri::builder()
+                .scheme(if flags & 32 == 0 { "https" } else { "http" })
+                .authority(authority)
+                .path_and_query(path),
+            // An origin-form URI has no scheme or authority to send.
+            _ => http::Uri::builder().path_and_query(path),
+        };
+        let Ok(uri) = uri.build() else {
+            return;
+        };
+        let protocols = [None, Some("webtransport"), Some("webtransport-h3"), Some("websocket")];
+        let protocol = protocols[usize::from((flags >> 2) & 3)];
+        let (mut parts, ()) = http::Request::new(()).into_parts();
+        (parts.method, parts.uri, parts.headers) = (method, uri, headers);
+        let encoded = fields::encode_request(&parts, protocol, limit);
+        let (Some(scheme), Some(authority), Some(path)) = (
+            parts.uri.scheme_str(),
+            parts.uri.authority(),
+            parts.uri.path_and_query(),
+        ) else {
+            assert_eq!(encoded, Err(qpack::Invalid::Malformed));
+            return;
+        };
+        let pseudo = [
+            (":method", parts.method.as_str()),
+            (":scheme", scheme),
+            (":authority", authority.as_str()),
+            (":path", path.as_str()),
+        ];
+        let lines: Vec<_> = pseudo
+            .iter()
+            .chain(protocol.map(|protocol| (":protocol", protocol)).iter())
+            .map(|(name, value)| (name.as_bytes(), value.as_bytes()))
+            .chain(regular)
+            .collect();
+        let Some((section, size)) = encoded_within(encoded, &lines, limit) else {
+            return;
+        };
+        match fields::decode_request(&section, size) {
+            Ok(head) => {
+                assert_eq!((head.size, head.content_length), (size, content_length));
+                let message = &head.message;
+                assert_eq!(
+                    (message.method(), message.uri(), message.headers()),
+                    (&parts.method, &parts.uri, &kept)
+                );
+            }
+            Err(invalid) => assert!(
+                matches!(invalid, qpack::Invalid::Malformed | qpack::Invalid::Unsupported),
+                "{invalid:?}"
+            ),
+        }
+    } else {
+        let Ok(status) = http::StatusCode::from_bytes(first) else {
+            return;
+        };
+        let (mut parts, ()) = http::Response::new(()).into_parts();
+        (parts.status, parts.headers) = (status, headers);
+        let lines: Vec<_> = [(&b":status"[..], status.as_str().as_bytes())]
+            .into_iter()
+            .chain(regular)
+            .collect();
+        let Some((section, size)) = encoded_within(fields::encode_response(&parts, limit), &lines, limit) else {
+            return;
+        };
+        match fields::decode_response(&section, size) {
+            Ok(head) => assert_eq!(
+                (
+                    head.size,
+                    head.content_length,
+                    head.message.status(),
+                    head.message.headers()
+                ),
+                (size, content_length, status, &kept)
+            ),
+            Err(invalid) => assert_eq!(invalid, qpack::Invalid::Malformed),
+        }
+    }
+}
+
+/// A head over its limit is refused; one within holds exactly `lines`, returned with its size.
+fn encoded_within(
+    encoded: Result<Vec<u8>, qpack::Invalid>,
+    lines: &[(&[u8], &[u8])],
+    limit: Option<u64>,
+) -> Option<(Vec<u8>, u64)> {
+    let size = lines
+        .iter()
+        .map(|(name, value)| (name.len() + value.len() + 32) as u64)
+        .sum();
+    if limit.is_some_and(|limit| size > limit) {
+        assert_eq!(encoded, Err(qpack::Invalid::TooLarge));
+        return None;
+    }
+    let section = encoded.expect("a head within its limit encodes");
+    let decoded = self::lines(&section).expect("our encoding decodes");
+    assert!(
+        decoded
+            .iter()
+            .map(|(name, value)| (&name[..], &value[..]))
+            .eq(lines.iter().copied())
+    );
+    Some((section, size))
 }
 
 /// Huffman encoding round-trips, and a valid encoding is the unique encoding of what it decodes to.

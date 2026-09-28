@@ -80,4 +80,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "fields"
+path = "fuzz_targets/fields.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
