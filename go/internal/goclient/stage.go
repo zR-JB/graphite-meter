@@ -437,13 +437,22 @@ func (s *stageRun) reset() {
 	}
 }
 
-func (s *stageRun) dropsServer(id string, err error, final bool) bool {
+// dropsServer drops a server whose grant was refused, or that missed three checkpoints in a row while another moved.
+func (s *stageRun) dropsServer(server *stageServer, err error, final bool, at time.Time) bool {
+	id := server.id()
 	if err == nil {
 		s.misses[id] = 0
 		return false
 	}
 	s.misses[id]++
-	return IsAuthRequired(err) || s.misses[id] >= 3 && !final
+	return IsAuthRequired(err) || s.misses[id] >= 3 && !final && s.moving(Up, server, at)
+}
+
+// moving reports whether another server moved dir a moment ago, so a silent one's problem is its own.
+func (s *stageRun) moving(dir Direction, silent *stageServer, at time.Time) bool {
+	return slices.ContainsFunc(s.servers, func(other *stageServer) bool {
+		return other != silent && !other.removed && at.Sub(s.lastMovement[other.id()].of(dir)) < stallQuiet
+	})
 }
 
 func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
@@ -460,17 +469,25 @@ func (s *stageRun) observe(sample sampledBoundary) (bool, error) {
 			continue
 		}
 		id := server.id()
-		if err := sample.misses[id]; s.dropsServer(id, err, final) {
+		for _, dir := range s.plan.Directions {
+			if c.aggregate.servers[id].bytes.of(dir) > before[id].of(dir) {
+				s.lastMovement[id].set(dir, collected)
+			}
+		}
+	}
+	// Silence every server shares is the link's: nobody leaves for it before the stage end.
+	for _, server := range s.servers {
+		if server.removed {
+			continue
+		}
+		id := server.id()
+		if err := sample.misses[id]; s.dropsServer(server, err, final, collected) {
 			s.fail(server, string(Up), err, time.Now())
 			removed = true
 			continue
 		}
-		moved := c.aggregate.servers[id].bytes
 		for _, dir := range s.plan.Directions {
-			switch {
-			case moved.of(dir) > before[id].of(dir):
-				s.lastMovement[id].set(dir, collected)
-			case collected.Sub(s.lastMovement[id].of(dir)) >= redialWindow:
+			if collected.Sub(s.lastMovement[id].of(dir)) >= redialWindow && (final || s.moving(dir, server, collected)) {
 				err := fmt.Errorf("%s %w for %v", dir, errStalled, redialWindow)
 				s.fail(server, string(dir), err, time.Now())
 				removed = true

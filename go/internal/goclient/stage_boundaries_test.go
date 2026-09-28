@@ -297,8 +297,9 @@ func TestTransferZeroProgressUsesEvidenceAndLivenessRules(t *testing.T) {
 						!strings.Contains(details.Failures[0].Err.Error(), "stopped delivering bytes") {
 						t.Fatalf("stalled participant survived: err=%v details=%+v", err, details)
 					}
-					if time.Since(started) >= duration {
-						t.Fatal("liveness failure waited for the stage deadline")
+					// No other server moved, so the silence was the link's: it left only at the stage end.
+					if time.Since(started) < duration {
+						t.Fatal("a silent sole server ended its stage early")
 					}
 				} else if err != nil {
 					t.Fatal(err)
