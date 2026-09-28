@@ -42,3 +42,19 @@ rust:
   - 'client/**'
   - 'legal/**'
   - 'container/Dockerfile.rust'
+
+# Inputs that can change what a macOS TUI links or imports, or how its notices are checked.
+darwin:
+  - '.github/workflows/ci.yml'
+  - '.github/ci-paths.yml'
+  - 'mise.toml'
+  - 'mise.lock'
+  - 'scripts/legal/**'
+  - 'scripts/package-rust.py'
+  - 'scripts/tui-targets.txt'
+  - 'legal/rust-*.json'
+  - 'rust/Cargo.lock'
+  - 'rust/Cargo.toml'
+  - 'rust/*/Cargo.toml'
+  - 'rust/*/build.rs'
+  - 'rust/rust-toolchain.toml'
