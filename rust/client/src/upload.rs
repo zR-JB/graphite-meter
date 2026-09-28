@@ -2,7 +2,7 @@
 use crate::{
     Error,
     failure::SharedFailure,
-    transport::{Retrying, TransferRetry, Transport},
+    transport::{REDIAL_WINDOW, Retrying, TRANSFER_RETRY_BACKOFF, TransferRetry, Transport, restore},
     webtransport::{ConnectRejected, SessionSlot},
 };
 use bytes::Bytes;
@@ -24,6 +24,7 @@ use std::{
 use tokio::{sync::watch, task::JoinSet, time::Instant};
 
 const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
+const FEED_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_LINE: usize = 64 * 1024;
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
@@ -392,81 +393,84 @@ async fn send_lane(
         retry.ended(result, started, moved.load(Ordering::Relaxed)).await?;
     }
 }
+/// Go's followUploadFeed and attach (upload.go:309-340, 365-378): a feed that fails is reopened
+/// within 2 s, after 500 ms if it failed at once.
 async fn progress_loop(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<(), Error> {
-    let mut recovery = None;
+    let mut deadline = Instant::now() + REDIAL_WINDOW;
     loop {
-        let result = read_progress(transport, id, state, &mut recovery).await;
-        match result {
+        let mut feed = restore("upload progress", deadline, || Feed::open(transport, id, state)).await?;
+        let opened = Instant::now();
+        match feed.follow(state).await {
             Ok(()) => return Ok(()),
-            Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
-            Err(error) => {
-                let deadline = *recovery.get_or_insert_with(|| Instant::now() + Duration::from_secs(2));
-                if Instant::now() >= deadline {
-                    return Err(crate::failure::NotReplaced("upload progress", Some(error)).into());
-                }
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+            Err(error) if crate::failure::permanent(error.as_ref()) => return Err(error),
+            Err(_) => deadline = Instant::now() + REDIAL_WINDOW,
+        }
+        if opened.elapsed() < TRANSFER_RETRY_BACKOFF {
+            tokio::time::sleep(TRANSFER_RETRY_BACKOFF).await;
         }
     }
 }
-async fn read_progress(
-    transport: &Transport,
-    id: &str,
-    state: &watch::Sender<State>,
-    recovery: &mut Option<Instant>,
-) -> Result<(), Error> {
-    let ready_deadline = recovery.unwrap_or_else(|| Instant::now() + CONTROL_TIMEOUT);
-    let mut body = tokio::time::timeout_at(
-        ready_deadline,
-        transport.receive(
-            Method::GET,
-            Route::UploadProgress,
-            &[("id", id)],
-            u64::MAX,
-            Duration::from_secs(24 * 60 * 60),
-        ),
-    )
-    .await??;
-    let mut line = Vec::new();
-    let mut ready = false;
-    loop {
-        let deadline = if ready {
-            Instant::now() + CONTROL_TIMEOUT
-        } else {
-            ready_deadline
+
+/// The receiver's progress over HTTP, a record a line of at most 64 KiB.
+struct Feed {
+    body: crate::transport::Body,
+    line: Vec<u8>,
+    chunk: Bytes,
+}
+
+impl Feed {
+    /// Go's openUploadFeed (upload.go:380-400): open once the receiver answers `ready`.
+    async fn open(transport: &Transport, id: &str, state: &watch::Sender<State>) -> Result<Self, Error> {
+        let body = transport
+            .receive(
+                Method::GET,
+                Route::UploadProgress,
+                &[("id", id)],
+                u64::MAX,
+                FEED_LIFETIME,
+            )
+            .await?;
+        let mut feed = Self {
+            body,
+            line: Vec::new(),
+            chunk: Bytes::new(),
         };
-        let Some(chunk) = tokio::time::timeout_at(deadline, body.chunk()).await?? else {
-            break;
-        };
-        for part in chunk.split_inclusive(|byte| *byte == b'\n') {
-            if part.len() > MAX_LINE - line.len() {
-                return Err("upload progress line exceeds 64 KiB".into());
-            }
-            line.extend_from_slice(part);
-            if !line.ends_with(b"\n") {
-                continue;
-            }
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            if line.is_empty() {
-                continue;
-            }
-            let event = wire::decode_upload_progress(&line);
-            line.clear();
-            let Ok(event) = event else {
-                continue;
-            };
-            if apply_event(event, state, &mut ready)? {
-                return Ok(());
-            }
-            if ready {
-                *recovery = None;
+        loop {
+            let event = feed.next().await?;
+            let ready = matches!(event, UploadProgress::Ready);
+            if apply_event(event, state)? || ready {
+                return Ok(feed);
             }
         }
     }
-    Err("upload progress ended without complete".into())
+
+    /// Go's read (upload.go:342-356): records until `complete`.
+    async fn follow(&mut self, state: &watch::Sender<State>) -> Result<(), Error> {
+        while !state.borrow().complete && !apply_event(self.next().await?, state)? {}
+        Ok(())
+    }
+
+    /// The next record that decodes; the receiver sends at least one a second.
+    async fn next(&mut self) -> Result<UploadProgress, Error> {
+        loop {
+            if self.chunk.is_empty() {
+                self.chunk = tokio::time::timeout(CONTROL_TIMEOUT, self.body.chunk())
+                    .await??
+                    .ok_or("upload progress ended without complete")?;
+            }
+            let end = self.chunk.iter().position(|&byte| byte == b'\n');
+            let count = end.map_or(self.chunk.len(), |end| end + 1);
+            if count > MAX_LINE - self.line.len() {
+                return Err("upload progress line exceeds 64 KiB".into());
+            }
+            self.line.extend_from_slice(&self.chunk.split_to(count));
+            if end.is_some()
+                && let Ok(event) = wire::decode_upload_progress(&std::mem::take(&mut self.line))
+            {
+                return Ok(event);
+            }
+        }
+    }
 }
 fn fail(state: &watch::Sender<State>, error: Error) {
     state.send_modify(|state| {
@@ -527,10 +531,9 @@ async fn progress_feed(
     if let Some(session) = session {
         let read = async {
             let mut stream = session.current().await.upload_progress().await?;
-            let mut ready = false;
             loop {
                 let event = tokio::time::timeout(CONTROL_TIMEOUT, stream.next()).await??;
-                if apply_event(event, state, &mut ready)? {
+                if apply_event(event, state)? {
                     return Ok::<_, Error>(());
                 }
             }
@@ -544,12 +547,9 @@ async fn progress_feed(
     }
     progress_loop(transport, id, state).await
 }
-fn apply_event(event: UploadProgress, state: &watch::Sender<State>, ready: &mut bool) -> Result<bool, Error> {
+fn apply_event(event: UploadProgress, state: &watch::Sender<State>) -> Result<bool, Error> {
     match event {
-        UploadProgress::Ready => {
-            *ready = true;
-            state.send_modify(|state| state.ready = true);
-        }
+        UploadProgress::Ready => state.send_modify(|state| state.ready = true),
         UploadProgress::Error { code, .. } => {
             let refusal = graphite_meter_core::failure::UploadRefusal::from_name(&code);
             return Err(Box::new(crate::failure::HttpFailure {
@@ -888,6 +888,45 @@ mod tests {
         assert!(observed.complete);
         let latest = observed.latest.unwrap();
         assert_eq!((latest.bytes, latest.nanos), (12, 30));
+        Ok(())
+    }
+
+    /// A feed that cannot open is tried again for 2 s at Go's pace (upload.go:365-378,
+    /// transfer.go:95-104): 500 ms after each refusal, where 100 ms made some twenty requests.
+    #[tokio::test]
+    async fn a_failing_progress_feed_reopens_at_gos_pace() -> Result<(), Error> {
+        let _ = crate::crypto::provider().install_default();
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        let opens = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = opens.clone();
+        let server = tokio::spawn(async move {
+            for _ in 0..32 {
+                let (mut stream, _) = listener.accept().await?;
+                seen.lock().unwrap().push(Instant::now());
+                let _ = stream.read(&mut [0_u8; 4096]).await?;
+                stream
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let transport = Transport::connect(
+            crate::net::Http::new(false)?,
+            &origin,
+            graphite_meter_core::discovery::Protocol::Http1,
+            false,
+        )
+        .await?;
+        let (state, _) = watch::channel(State::default());
+        let lost = progress_loop(&transport, "test-session", &state).await;
+        server.abort();
+        let opens = opens.lock().unwrap();
+        assert!(lost.is_err_and(|error| error.to_string().contains("not replaced")));
+        assert!((3..=5).contains(&opens.len()), "{} opens", opens.len());
+        for pair in opens.windows(2) {
+            assert!(pair[1] - pair[0] >= TRANSFER_RETRY_BACKOFF);
+        }
         Ok(())
     }
 }

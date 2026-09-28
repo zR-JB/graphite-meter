@@ -1,6 +1,10 @@
 //! An owned WebSocket session measures raw RTT on Tokio's monotonic clock.
 //! Native CLI grants authenticate the handshake directly: they cannot mint browser tickets.
-use crate::{Error, failure::NotReplaced, net::Http};
+use crate::{
+    Error,
+    net::Http,
+    transport::{REDIAL_WINDOW, restore},
+};
 use futures_util::{SinkExt, StreamExt};
 use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport},
@@ -99,41 +103,23 @@ pub(crate) async fn run(
         if !error.is::<Disconnected>() {
             return Err(error);
         }
-        let reconnect_until = (Instant::now() + Duration::from_secs(2)).min(end);
-        let mut cause = None;
-        socket = loop {
-            if Instant::now() >= end {
-                return Ok(());
-            }
-            let attempt = tokio::time::timeout_at(
-                reconnect_until,
-                connect(http, &target.base_url, insecure, &mut cancel, target.transport),
-            )
-            .await;
-            match attempt {
-                Ok(Ok(Some(socket))) => break socket,
-                Ok(Ok(None)) => return Ok(()),
-                Ok(Err(error)) if error.is::<crate::net::AuthRequired>() => return Err(error),
-                Ok(Err(error)) => cause = Some(error),
-                Err(elapsed) => {
-                    cause.get_or_insert_with(|| elapsed.into());
-                }
-            }
-            if Instant::now() >= end {
-                return Ok(());
-            }
-            if Instant::now() >= reconnect_until {
-                return Err(NotReplaced("latency channel", cause).into());
-            }
-            tokio::select! {
-                biased;
-                _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
-                () = tokio::time::sleep_until(reconnect_until) => {
-                    if reconnect_until == end { return Ok(()); }
-                    return Err(NotReplaced("latency channel", cause).into());
-                },
-                () = tokio::time::sleep(Duration::from_millis(100)) => {},
-            }
+        // Go's redialPingBus (latency.go:124-132, 256): a window cut short by the stage end.
+        let window = (Instant::now() + REDIAL_WINDOW).min(end);
+        let dial = cancel.clone();
+        let redial = restore("latency channel", window, || {
+            let mut cancel = dial.clone();
+            async move { connect_once(http, &target.base_url, insecure, &mut cancel, target.transport).await }
+        });
+        let redialled = tokio::select! {
+            biased;
+            _ = stopped(&mut cancel, Stop::Drain) => return Ok(()),
+            redialled = redial => redialled,
+        };
+        socket = match redialled {
+            Ok(Some(socket)) => socket,
+            Ok(None) => return Ok(()),
+            Err(_) if Instant::now() >= end => return Ok(()),
+            Err(error) => return Err(error),
         };
     }
 }
@@ -604,6 +590,47 @@ mod tests {
         let (attempts, minimum) = peer.await??;
         assert!(attempts[1] - attempts[0] + Duration::from_millis(20) >= minimum);
         assert!(attempts[2] - attempts[1] >= Duration::from_secs(1));
+        Ok(())
+    }
+
+    /// A lost channel redials for 2 s at Go's pace (latency.go:124-132, transfer.go:95-104):
+    /// 500 ms after each refusal, where 100 ms made some twenty dials.
+    #[tokio::test]
+    async fn a_lost_channel_redials_at_gos_pace() -> Result<(), Error> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let _ = crate::crypto::provider().install_default();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let target = LatencyTarget {
+            base_url: format!("http://{}", listener.local_addr()?),
+            transport: LatencyTransport::WebSocket,
+        };
+        let redials = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = redials.clone();
+        // The first channel closes at once; the redials find upgrades refused.
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            tokio_tungstenite::accept_async(stream).await?.close(None).await?;
+            for _ in 0..32 {
+                let (mut stream, _) = listener.accept().await?;
+                seen.lock().unwrap().push(Instant::now());
+                let _ = stream.read(&mut [0; 4096]).await?;
+                stream
+                    .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await?;
+            }
+            Ok::<_, Error>(())
+        });
+        let (observations, _observed) = mpsc::channel(64);
+        let (_stop, cancel) = watch::channel(Stop::Running);
+        let timing = (Duration::from_millis(50), Duration::from_secs(10), 16);
+        let lost = run(&Http::new(false)?, &target, false, timing, observations, cancel).await;
+        peer.abort();
+        let redials = redials.lock().unwrap();
+        assert!(lost.is_err_and(|error| error.to_string().contains("not replaced")));
+        assert!((3..=5).contains(&redials.len()), "{} redials", redials.len());
+        for pair in redials.windows(2) {
+            assert!(pair[1] - pair[0] >= crate::transport::TRANSFER_RETRY_BACKOFF);
+        }
         Ok(())
     }
 

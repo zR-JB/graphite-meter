@@ -2,7 +2,7 @@
 //! The connection owns its H3 driver; response bodies retain that owner.
 use crate::{
     Error,
-    failure::MeasurementFailure,
+    failure::{MeasurementFailure, NotReplaced},
     net::Http,
     quic::{Http3Client, Http3Stream, RequestLimits},
 };
@@ -20,7 +20,8 @@ use tokio::{
     time::{Instant, timeout_at},
 };
 
-pub(crate) const TRANSFER_PROGRESS_TIMEOUT: Duration = Duration::from_secs(2);
+/// Go's redialWindow: how long a lane or a dial may fail before it is lost.
+pub(crate) const REDIAL_WINDOW: Duration = Duration::from_secs(2);
 pub(crate) const TRANSFER_RETRY_BACKOFF: Duration = Duration::from_millis(500);
 
 #[derive(Default)]
@@ -50,6 +51,34 @@ impl RetryBackoff {
         } else {
             Duration::ZERO
         }
+    }
+}
+
+/// Go's restore (transfer.go:36-59): `attempt` again, each try bounded by `deadline`, until it
+/// succeeds or fails permanently, paced as a lane's retries; past the deadline the error names
+/// what was lost and the last cause.
+pub(crate) async fn restore<T, F: Future<Output = Result<T, Error>>>(
+    what: &'static str,
+    deadline: Instant,
+    mut attempt: impl FnMut() -> F,
+) -> Result<T, Error> {
+    let mut backoff = RetryBackoff::default();
+    let mut cause = None;
+    loop {
+        let started = Instant::now();
+        let error = match timeout_at(deadline, attempt()).await {
+            Ok(Ok(value)) => return Ok(value),
+            Ok(Err(error)) if crate::failure::permanent(error.as_ref()) => return Err(error),
+            Ok(Err(error)) => error,
+            // A try the deadline cut short keeps the cause before it.
+            Err(elapsed) => return Err(NotReplaced(what, cause.unwrap_or_else(|| elapsed.into())).into()),
+        };
+        let wake = Instant::now() + backoff.delay(error.as_ref(), started);
+        tokio::time::sleep_until(wake.min(deadline)).await;
+        if wake >= deadline {
+            return Err(NotReplaced(what, error).into());
+        }
+        cause = Some(error);
     }
 }
 
@@ -117,7 +146,7 @@ impl TransferRetry {
         if moved {
             self.failing_since = None;
         }
-        if !retryable || !moved && self.failing_since.get_or_insert(started).elapsed() >= TRANSFER_PROGRESS_TIMEOUT {
+        if !retryable || !moved && self.failing_since.get_or_insert(started).elapsed() >= REDIAL_WINDOW {
             return Err(error);
         }
         let delay = self.backoff.delay(error.as_ref(), started);

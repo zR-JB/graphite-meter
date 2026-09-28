@@ -10,7 +10,7 @@ use crate::{
         Ending, FailureScope, Phase, Point, ServerContribution, ServerLatency, ServerLatencyResult, Snapshot, Stage,
         StageResult,
     },
-    transport::{TRANSFER_PROGRESS_TIMEOUT, Transport},
+    transport::{REDIAL_WINDOW, Transport},
     upload::Upload,
 };
 use futures_util::{
@@ -716,7 +716,7 @@ impl<'a> StageRun<'a> {
                 let moved = &mut member.moved[*direction as usize];
                 if accounting.bytes(&member.id, *direction) > before {
                     *moved = collected;
-                } else if collected.saturating_duration_since(*moved) >= TRANSFER_PROGRESS_TIMEOUT {
+                } else if collected.saturating_duration_since(*moved) >= REDIAL_WINDOW {
                     let stalled: Error = Box::new(MeasurementFailure(FailureReason::Timeout));
                     departures.push((member.id.clone(), stalled));
                     break;
