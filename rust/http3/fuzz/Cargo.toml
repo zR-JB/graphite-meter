@@ -73,4 +73,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "response_stream"
+path = "fuzz_targets/response_stream.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

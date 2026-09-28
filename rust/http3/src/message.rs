@@ -1,7 +1,9 @@
 //! A request stream's frames (RFC 9114 §4.1): HEADERS, DATA, optional trailers, then FIN.
 use crate::{
     code::{Code, WtCode},
+    fields,
     frame::{self, Piece},
+    qpack::Invalid,
 };
 use bytes::Bytes;
 
@@ -47,6 +49,33 @@ impl Message {
     /// Holds the body to the head's content-length.
     pub(crate) fn content_length(&mut self, length: Option<u64>) {
         self.owed = length;
+    }
+
+    /// Takes a response head: `None` for an interim one, after which the message starts over, else
+    /// the final response, whose content its request's method and its status bound.
+    pub(crate) fn response(
+        &mut self,
+        section: &[u8],
+        method: &http::Method,
+    ) -> Result<Option<http::Response<()>>, Code> {
+        let head = fields::decode_response(section, self.limit).map_err(Invalid::code)?;
+        let status = head.message.status();
+        if status.is_informational() {
+            *self = Self::new(self.limit, true);
+            return Ok(None);
+        }
+        // A client ignores content-length in a successful response to CONNECT (RFC 9110 §9.3.6),
+        // and these never have content, whatever it says (RFC 9114 §4.1.2).
+        self.owed = if *method == http::Method::CONNECT && status.is_success() {
+            None
+        } else if *method == http::Method::HEAD
+            || matches!(status, http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED)
+        {
+            Some(0)
+        } else {
+            head.content_length
+        };
+        Ok(Some(head.message))
     }
 
     /// Errors carry the code the stream, or for frame violations the connection, ends with.

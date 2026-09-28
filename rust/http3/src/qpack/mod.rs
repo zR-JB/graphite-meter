@@ -17,6 +17,17 @@ pub(crate) enum Invalid {
     Unsupported,
 }
 
+impl Invalid {
+    /// The code a stream that cannot answer with a status ends with.
+    pub(crate) fn code(self) -> Code {
+        match self {
+            Self::Qpack => Code::QPACK_DECOMPRESSION_FAILED,
+            Self::TooLarge => Code::H3_EXCESSIVE_LOAD,
+            Self::Malformed | Self::Unsupported => Code::H3_MESSAGE_ERROR,
+        }
+    }
+}
+
 /// Calls `field` for each line of an encoded field section, in order.
 pub(crate) fn decode(
     section: &[u8],

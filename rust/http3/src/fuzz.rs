@@ -286,33 +286,69 @@ pub fn request_stream(data: &[u8]) {
     let [limit, length, data @ ..] = data else {
         return;
     };
-    let limit = u64::from(*limit) * 4;
     let length = (*length != 0xff).then_some(u64::from(*length));
+    message_stream(data, u64::from(*limit) * 4, Side::Request(length));
+}
+
+/// A response to GET, HEAD or CONNECT read in arbitrary chunks agrees with a whole-input reference
+/// model, PUSH_PROMISE, interim responses and responses without content included.
+pub fn response_stream(data: &[u8]) {
+    let [limit, method, data @ ..] = data else {
+        return;
+    };
+    let methods = [http::Method::GET, http::Method::HEAD, http::Method::CONNECT];
+    message_stream(
+        data,
+        u64::from(*limit) * 4,
+        Side::Response(&methods[usize::from(*method % 3)]),
+    );
+}
+
+/// A request, whose content-length the input picks, or a response to a request with this method.
+#[derive(Clone, Copy)]
+enum Side<'a> {
+    Request(Option<u64>),
+    Response(&'a http::Method),
+}
+
+fn message_stream(data: &[u8], limit: u64, side: Side) {
     let read = |chunk: &dyn Fn(usize) -> usize| {
-        let mut message = Message::new(limit, false);
+        let mut message = Message::new(limit, matches!(side, Side::Response(_)));
         let mut events = Vec::new();
         let mut result = Ok(());
         'chunks: for mut input in chunks(data, chunk) {
             loop {
-                match message.next(&mut input) {
-                    Ok(Some(event)) => {
-                        if matches!(event, Event::Head(_)) {
-                            message.content_length(length);
-                        }
-                        push(&mut events, event);
-                    }
+                let event = match message.next(&mut input) {
+                    Ok(Some(event)) => event,
                     Ok(None) => break,
                     Err(code) => {
                         result = Err(code);
                         break 'chunks;
                     }
+                };
+                let head = match &event {
+                    Event::Head(section) => Some(section.clone()),
+                    _ => None,
+                };
+                push(&mut events, event);
+                let headed = match (head, side) {
+                    (None, _) => Ok(()),
+                    (Some(_), Side::Request(length)) => {
+                        message.content_length(length);
+                        Ok(())
+                    }
+                    (Some(section), Side::Response(method)) => message.response(&section, method).map(drop),
+                };
+                if let Err(code) = headed {
+                    result = Err(code);
+                    break 'chunks;
                 }
             }
         }
         let result = result.and_then(|()| message.finish());
         (events, result)
     };
-    let (model_events, model_result) = model(data, limit, length);
+    let (model_events, model_result) = model(data, limit, side);
     let whole = |_| data.len();
     let split = |index: usize| (index * 7 + data.len()) % 11 + 1;
     for chunking in [&whole as &dyn Fn(usize) -> usize, &split] {
@@ -350,8 +386,10 @@ fn push(events: &mut Events, event: Event) {
     }
 }
 
-/// RFC 9114 §4.1 over the whole stream at once, independent of the incremental reader.
-fn model(mut data: &[u8], limit: u64, length: Option<u64>) -> (Events, Result<(), Code>) {
+/// RFC 9114 §4.1 over the whole stream at once, independent of the incremental reader. A response
+/// may not carry PUSH_PROMISE, as we allow no push, an interim head starts it over, and its
+/// request's method and its status bound its content (RFC 9110 §6.4.1, §9.3.6, RFC 9114 §4.1.2).
+fn model(mut data: &[u8], limit: u64, side: Side) -> (Events, Result<(), Code>) {
     let (mut events, mut phase, mut owed) = (Vec::new(), 0, None);
     loop {
         let Some((kind, a)) = varint::decode(data) else {
@@ -371,6 +409,7 @@ fn model(mut data: &[u8], limit: u64, length: Option<u64>) -> (Events, Result<()
             (0x01, 0 | 1) if length_field > limit => return (events, Err(Code::H3_EXCESSIVE_LOAD)),
             (0x01, 0 | 1) | (0x00, 1) => {}
             (0x41, 0) => return (events, Err(WtCode(0).to_http())),
+            (0x05, _) if matches!(side, Side::Response(_)) => return (events, Err(Code::H3_ID_ERROR)),
             (0x00..=0x09 | 0x0d, _) => return (events, Err(Code::H3_FRAME_UNEXPECTED)),
             _ => {}
         }
@@ -388,18 +427,35 @@ fn model(mut data: &[u8], limit: u64, length: Option<u64>) -> (Events, Result<()
         if (payload.len() as u64) < length_field {
             return (events, Err(Code::H3_FRAME_ERROR));
         }
-        if kind == 0x01 {
-            let section = Bytes::copy_from_slice(payload);
-            push(
-                &mut events,
-                if phase == 0 {
-                    Event::Head(section)
-                } else {
-                    Event::Trailers(section)
-                },
-            );
-            (phase, owed) = (phase + 1, if phase == 0 { length } else { owed });
+        if kind != 0x01 {
+            continue;
         }
+        if phase > 0 {
+            push(&mut events, Event::Trailers(Bytes::copy_from_slice(payload)));
+            phase = 2;
+            continue;
+        }
+        push(&mut events, Event::Head(Bytes::copy_from_slice(payload)));
+        (phase, owed) = match side {
+            Side::Request(length) => (1, length),
+            Side::Response(method) => {
+                let head = match fields::decode_response(payload, limit) {
+                    Ok(head) => head,
+                    Err(qpack::Invalid::Qpack) => return (events, Err(Code::QPACK_DECOMPRESSION_FAILED)),
+                    Err(qpack::Invalid::TooLarge) => return (events, Err(Code::H3_EXCESSIVE_LOAD)),
+                    Err(qpack::Invalid::Malformed | qpack::Invalid::Unsupported) => {
+                        return (events, Err(Code::H3_MESSAGE_ERROR));
+                    }
+                };
+                match head.message.status().as_u16() {
+                    100..=199 => (0, None),
+                    200..=299 if *method == http::Method::CONNECT => (1, None),
+                    204 | 304 => (1, Some(0)),
+                    _ if *method == http::Method::HEAD => (1, Some(0)),
+                    _ => (1, head.content_length),
+                }
+            }
+        };
     }
 }
 

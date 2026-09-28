@@ -6,7 +6,6 @@ use crate::{
     error::Error,
     fields, frame,
     message::{Event, Message},
-    qpack::Invalid,
 };
 use bytes::Bytes;
 use std::{
@@ -111,7 +110,7 @@ impl RecvHalf {
                 Some(Event::Data(data)) => return Poll::Ready(Ok(Some(data))),
                 Some(Event::Trailers(section)) => {
                     if let Err(invalid) = fields::check_trailers(&section, self.shared.role.field_limit()) {
-                        return Poll::Ready(Err(self.abort(invalid_code(invalid))));
+                        return Poll::Ready(Err(self.abort(invalid.code())));
                     }
                 }
                 Some(Event::Head(_)) => return Poll::Ready(Err(self.abort(Code::H3_FRAME_UNEXPECTED))),
@@ -129,27 +128,10 @@ impl RecvHalf {
     pub async fn response(&mut self) -> Result<http::Response<()>, Error> {
         loop {
             let section = poll_fn(|cx| self.poll_head(cx)).await?;
-            match fields::decode_response(&section, self.shared.role.field_limit()) {
-                Ok(response) if response.message.status().is_informational() => {
-                    self.message = Message::new(self.shared.role.field_limit(), true);
-                }
-                Ok(response) => {
-                    let status = response.message.status();
-                    // A client ignores content-length in a successful response to CONNECT (RFC 9110
-                    // §9.3.6), and these never have content, whatever it says (RFC 9114 §4.1.2).
-                    let length = if self.method == http::Method::CONNECT && status.is_success() {
-                        None
-                    } else if self.method == http::Method::HEAD
-                        || matches!(status, http::StatusCode::NO_CONTENT | http::StatusCode::NOT_MODIFIED)
-                    {
-                        Some(0)
-                    } else {
-                        response.content_length
-                    };
-                    self.message.content_length(length);
-                    return Ok(response.message);
-                }
-                Err(invalid) => return Err(self.abort(invalid_code(invalid))),
+            match self.message.response(&section, &self.method) {
+                Ok(Some(response)) => return Ok(response),
+                Ok(None) => {}
+                Err(code) => return Err(self.abort(code)),
             }
         }
     }
@@ -229,14 +211,6 @@ impl Drop for RecvHalf {
             Role::Client => Code::H3_REQUEST_CANCELLED,
         });
         self.shared.release();
-    }
-}
-
-fn invalid_code(invalid: Invalid) -> Code {
-    match invalid {
-        Invalid::Qpack => Code::QPACK_DECOMPRESSION_FAILED,
-        Invalid::TooLarge => Code::H3_EXCESSIVE_LOAD,
-        Invalid::Malformed | Invalid::Unsupported => Code::H3_MESSAGE_ERROR,
     }
 }
 
