@@ -407,15 +407,14 @@ impl Ui {
             .find(|host| Some(host.id.as_str()) == self.latency_server())
     }
     fn latency_name<'a>(&'a self, focus: Option<&'a crate::model::ServerLatency>) -> &'a str {
-        focus
-            .map(|host| {
-                self.snapshot
-                    .servers
-                    .iter()
-                    .find(|server| server.id == host.id)
-                    .map_or(host.id.as_str(), |server| server.name.as_str())
-            })
-            .unwrap_or("unavailable")
+        focus.map_or("unavailable", |host| self.server_name(&host.id))
+    }
+    fn server_name<'a>(&'a self, id: &'a str) -> &'a str {
+        self.snapshot
+            .servers
+            .iter()
+            .find(|server| server.id == id)
+            .map_or(id, |server| server.name.as_str())
     }
 
     /// The run's servers as Go's run details list them: every selected server the check reached.
@@ -622,7 +621,12 @@ impl Ui {
                     .iter()
                     .map(|failure| Line::styled(safe_text(failure, MAX_TEXT), Style::new().fg(self.theme.err))),
             );
-            frame.render_widget(Paragraph::new(lines).block(panel("Results", self.theme)), results_area);
+            let mut title = "Results".to_owned();
+            if let Some(id) = self.latency_server().filter(|_| self.run_servers().len() > 1) {
+                title.push_str(" · latency to ");
+                title.push_str(&safe_text(self.server_name(id), 120));
+            }
+            frame.render_widget(Paragraph::new(lines).block(panel(&title, self.theme)), results_area);
         }
     }
 
@@ -1174,5 +1178,77 @@ mod tests {
         let short = rows(&mut ui, 120, 20);
         assert!(!short.iter().any(|row| row.contains("Servers    ")), "{short:#?}");
         assert!(short.iter().any(|row| row.contains("│Bidirectional ")), "{short:#?}");
+    }
+
+    /// Both servers measured download and loaded latency.
+    fn finished() -> Snapshot {
+        use crate::model::{ServerLatencyResult, StageResult};
+        use graphite_meter_core::{
+            latency::{LatencyAccumulator, ProbeOutcome},
+            measurement::{Direction, MeasurementResult},
+        };
+        let mut replies = LatencyAccumulator::default();
+        for _ in 0..4 {
+            replies.record(ProbeOutcome::Reply {
+                rtt_nanos: 2_000_000,
+                handling_nanos: 0,
+            });
+        }
+        let loaded = |id: &str| ServerLatencyResult {
+            elapsed: Some(Duration::from_secs(1)),
+            id: id.into(),
+            summary: replies.snapshot(),
+            ending: None,
+        };
+        Snapshot {
+            phase: Phase::Complete,
+            stage: None,
+            results: vec![StageResult {
+                stage: Stage::Download,
+                elapsed: Duration::from_secs(1),
+                down: Some(MeasurementResult {
+                    direction: Direction::Down,
+                    total_bytes: 1_500_000,
+                    mean_bytes_per_sec: Some(1_500_000.0),
+                    peak_bytes_per_sec: Some(1_500_000.0),
+                    samples: 4,
+                    elapsed_nanos: Some(1_000_000_000),
+                }),
+                server_latencies: vec![loaded("a"), loaded("b")],
+                ..Default::default()
+            }],
+            plan: vec![Stage::Download],
+            ..measuring()
+        }
+    }
+
+    #[test]
+    fn results_title_names_the_latency_server_after_multi_server_runs() {
+        let config = Config {
+            stages: vec![Stage::Download],
+            ..Config::default()
+        };
+        let mut ui = Ui::new(config, finished());
+        ui.live = true;
+        let title = |ui: &mut Ui| {
+            rows(ui, 100, 30)
+                .into_iter()
+                .find(|row| row.contains("╭Results"))
+                .unwrap_or_default()
+        };
+        assert!(
+            title(&mut ui).contains("╭Results · latency to Alpha─"),
+            "{}",
+            title(&mut ui)
+        );
+        ui.latency_pick = Some("b".into());
+        assert!(
+            title(&mut ui).contains("╭Results · latency to Beta─"),
+            "{}",
+            title(&mut ui)
+        );
+        ui.latency_pick = None;
+        ui.snapshot.servers.truncate(1);
+        assert!(title(&mut ui).contains("╭Results──"), "{}", title(&mut ui));
     }
 }
