@@ -27,14 +27,20 @@ function timerWorker(): Worker | null {
 /** Runs `run` after `ms`; the returned function cancels it. */
 export function after(ms: number, run: () => void): () => void {
   const host = timerWorker();
-  if (!host) {
-    const timer = setTimeout(run, ms);
-    return () => clearTimeout(timer);
-  }
   const id = ++next;
-  due.set(id, run);
-  host.postMessage({ id, ms });
-  return () => {
-    if (due.delete(id)) host.postMessage({ id, ms: null });
+  const cancel = () => {
+    clearTimeout(backstop);
+    if (due.delete(id)) host?.postMessage({ id, ms: null });
   };
+  const fire = () => {
+    cancel();
+    run();
+  };
+  // A page timer backs the worker up: a worker whose script never loaded (the server went away) never answers.
+  const backstop = setTimeout(fire, ms);
+  if (host) {
+    due.set(id, fire);
+    host.postMessage({ id, ms });
+  }
+  return cancel;
 }
