@@ -3,7 +3,7 @@
 
 Offline: every git package in rust/Cargo.lock is pinned by full-SHA rev to a
 (fork, rev) entry in legal/rust-forks.json, and every entry is in use.
-With --verify (network, release time): each rev is on its fork branch, the base
+With --verify (network; CI's Rust job runs it): each rev is on its fork branch, the base
 is the commit of the upstream tag and an ancestor of rev, the change set matches
 diffSha256 and touches only reviewed package paths and workspace manifests, and the
 commit subjects match the recorded list.

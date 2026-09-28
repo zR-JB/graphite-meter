@@ -150,6 +150,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      "release checksums"),
     (W + "ci.yml", "          python3 -m scripts.ci.release check-rust\n", "", "release check-rust"),
     (W + "ci.yml", "run: mise run rust-check-targets\n", "run: mise run rust-check\n", "rust-check-targets"),
+    (W + "ci.yml", "check_git_sources --verify\n", "check_git_sources\n", "check_git_sources --verify"),
     (W + "ci.yml", "run: mise run rust-delayed-downloads\n",
      "run: cargo test --workspace --test connection_faults quic_downloads -- --ignored\n", "rust-delayed-downloads"),
     (W + "ci.yml", "--target server-artifacts", "--target server", "target server-artifacts"),

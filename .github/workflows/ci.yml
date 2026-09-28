@@ -221,6 +221,8 @@ jobs:
         with: {rust: 'true', cargo-deny: 'true', cargo-nextest: 'true'}
       - name: Check experimental Rust implementation and dependency policy
         run: mise run rust-check
+      - name: Verify the Cargo fork pins against their branches, upstream tags and reviewed change sets
+        run: python3 -m scripts.legal.check_git_sources --verify
       # ring compiles C for each target: mingw-w64 for Windows, the host GCC for x86_64 musl.
       - name: Install the pinned builder's Windows cross toolchain packages
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-win32 mingw-w64-x86-64-dev
