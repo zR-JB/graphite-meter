@@ -125,7 +125,8 @@ emphasised values, 600 titles and controls.
 | Floating | Side sheets, dialogs, popovers, menus, tooltips, readouts                           | `--sheet` or glass with blur, a `--border-subtle` hairline, `--elev-float` or `--elev-tooltip`. Grouped lists inside are `--surface-1` plates without shadow.                              |
 
 Hairlines mark structure only: a plate's edge, row separators inside plates, a head once content scrolls under it,
-the axis under a graph and the facts' top edge in a card. Spacing separates everything else.
+the axis under a graph, the latency card's gridlines and the facts' top edge in a card. Spacing separates everything
+else.
 
 ## Icons
 
@@ -164,10 +165,14 @@ hue, never by a boxed icon.
   over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
   into the stage, the rate, and the latency replies measured then. A vertical swipe scrolls past; a drag's readout
   leaves with the finger.
-- **Latency card** (`LatencyProfileView`): the idle median as the headline with Jitter, Range, Stability and Timeouts;
-  then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
-  tick, latest reply while live) and the added latency in its hue. Loaded rows carry the idle baseline and a span
-  from it to their median. Rows share the card's height; narrow cards put the idle facts in one line above.
+- **Latency card** (`LatencyProfileView`): as tall as its content and centred beside the dial, its wash reaching its
+  bottom edge so the area it marks reads whole. The idle median as the headline with Jitter, Range, Stability and
+  Timeouts; then a table, one 40 px row per population on one scale: name, median, jitter, timeouts (the share of
+  resolved probes that got no reply, which is not packet loss), box plot (P10–P90 box, min–max whisker, median tick,
+  latest reply as a dot while live) and the added latency in its hue. The ms axis sits under the last row and its
+  ticks run up through the rows as gridlines behind the plots; the idle median is one line from its tick through the
+  loaded rows, and each loaded row's added-latency span starts from it. Narrow cards put the idle facts above and
+  drop jitter, never timeouts; a phone gives each population its figures, then its plot.
 - **Run bar**: the stage chips and the run button on one line. A chip is a switch before a run (filled bead on,
   ring off), shows progress as a line and a wash while its stage runs, and a check once complete. The run button is
   the one ink button, sentence case, with the estimate as a quiet suffix; Stop steps back to an outline.

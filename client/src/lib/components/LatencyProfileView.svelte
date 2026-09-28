@@ -11,11 +11,12 @@
   import { fmtGaugeTick } from "./gaugeScale";
   import {
     entries,
+    formatTimeouts,
     probeAccountingDetails,
     hasProbeAccountingNotice,
     probeOutcomes,
     serverHandling,
-    timeoutLabel,
+    timeoutsTip,
     metricLabel,
     metricMeaning,
     metricValue,
@@ -204,9 +205,9 @@
       lane.p95 == null ? null : `P95 ${fmtMs(lane.p95)} milliseconds`,
       lane.jitter == null ? null : `jitter ${fmtMs(lane.jitter)} milliseconds`,
       plus == null ? null : `added over idle ${fmtAddedMs(plus)} milliseconds`,
-      live && lane.timeoutRatio != null && lane.timeoutRatio > 0
-        ? timeoutLabel(lane.timeoutRatio)
-        : null,
+      lane.timeoutRatio == null
+        ? null
+        : `${formatTimeouts(lane.timeoutRatio)} probe timeouts`,
       lane.accountingComplete === false ? "Partial accounting" : null,
       probeAccountingDetails(lane) || null,
     ].filter((value): value is string => value !== null);
@@ -243,8 +244,9 @@
   const at = (lane: LatencyProfileViewLane, metric: (typeof GLIDED)[number]) =>
     glides.get(`${lane.key}:${metric}`)?.current ??
     pos(lane[metric] ?? null, scale);
-  const spanTransform = (from: number, to: number) =>
-    `translateX(${from}%) scaleX(${Math.max(0, to - from) / 100})`;
+  // Marks sit on the track by their edges, never a transform, so outlines and radii stay on whole pixels.
+  const span = (from: number, to: number) =>
+    `left:${from}%;width:${Math.max(0, to - from)}%`;
 </script>
 
 <section class="latency-card" data-tone="latency" aria-label={label}>
@@ -286,11 +288,7 @@
           {/if}
           <div>
             <dt>Timeouts</dt>
-            <dd>
-              {idle.timeoutRatio == null
-                ? MISSING
-                : `${(idle.timeoutRatio * 100).toFixed(idle.timeoutRatio > 0 && idle.timeoutRatio < 0.01 ? 2 : 1)}%`}
-            </dd>
+            <dd>{formatTimeouts(idle.timeoutRatio)}</dd>
           </div>
         </dl>
       </div>
@@ -303,12 +301,11 @@
       style:--edge={`${EDGE}px`}
       style:--lanes={lanes.length}
       role="group"
-      aria-label="Median, jitter and spread by stage"
+      aria-label="Median, jitter, timeouts and spread by stage"
     >
       <div class="lane-head" aria-hidden="true">
-        <span></span><span>Median</span><span>Jitter</span><span></span><span
-          >Added</span
-        >
+        <span></span><span>Median</span><span>Jitter</span><span>Timeouts</span
+        ><span></span><span>Added</span>
       </div>
       {#each lanes as lane (lane.key)}
         {@const metrics = entries(lane)}
@@ -349,6 +346,12 @@
             )}>{formatLatency(lane.center)}</strong
           >
           <em class="lane-jitter">{formatLatency(lane.jitter)}</em>
+          <em
+            class="lane-timeouts"
+            tabindex="-1"
+            {@attach tooltip(() => timeoutsTip(lane))}
+            >{formatTimeouts(lane.timeoutRatio)}</em
+          >
           <div
             class="track"
             role="slider"
@@ -375,58 +378,29 @@
             onkeydown={(event) => onTrackKey(event, lane)}
           >
             <span class="profile-artwork" aria-hidden="true">
-              {#if lane.key !== "latency" && idle?.center != null}
-                <span
-                  class="position"
-                  style:transform={`translateX(${at(idle, "center")}%)`}
-                  ><i class="baseline"></i></span
-                >
+              {#if idle?.center != null && lanes.length > 1}
+                <i class="baseline" style:left={`${at(idle, "center")}%`}></i>
                 {#if lane.center != null && lane.center > idle.center}
-                  <span
+                  <i
                     class="added-span"
-                    style:transform={spanTransform(
-                      at(idle, "center"),
-                      at(lane, "center"),
-                    )}
-                  ></span>
+                    style={span(at(idle, "center"), at(lane, "center"))}
+                  ></i>
                 {/if}
               {/if}
               {#if lane.min != null && lane.max != null}
-                <span
-                  class="range"
-                  style:transform={spanTransform(
-                    at(lane, "min"),
-                    at(lane, "max"),
-                  )}
-                ></span>
+                <i class="range" style={span(at(lane, "min"), at(lane, "max"))}
+                ></i>
               {/if}
               {#if lane.p10 != null && lane.p90 != null}
-                <span
-                  class="band"
-                  style:transform={spanTransform(
-                    at(lane, "p10"),
-                    at(lane, "p90"),
-                  )}
-                ></span>
+                <i class="band" style={span(at(lane, "p10"), at(lane, "p90"))}
+                ></i>
               {/if}
               {#if lane.center != null}
-                <span
-                  class="position"
-                  style:transform={`translateX(${at(lane, "center")}%)`}
-                  ><i class="center-marker"></i></span
-                >
+                <i class="center-marker" style:left={`${at(lane, "center")}%`}
+                ></i>
               {/if}
               {#if live && lane.current != null}
-                <span
-                  class="position"
-                  style:transform={`translateX(${at(lane, "current")}%)`}
-                  ><i class="current-marker"></i></span
-                >
-              {/if}
-              {#if live && lane.timeoutRatio != null && lane.timeoutRatio > 0}
-                <i
-                  class="timeout-marker"
-                  style={`width:${Math.min(34, Math.max(8, lane.timeoutRatio * 100))}%`}
+                <i class="current-marker" style:left={`${at(lane, "current")}%`}
                 ></i>
               {/if}
             </span>
@@ -469,20 +443,19 @@
 </section>
 
 <style>
-  /* Latency is the stage's light on the page like every card: a rule in its hue and a wash. */
+  /* Latency is the stage's light on the page like every card: a rule in its hue and a wash.
+     The card is as tall as its table, so the wash fades only partway and still marks where it ends. */
   .latency-card {
     --wash: 7%;
     display: grid;
-    grid-template-rows: auto minmax(min-content, 1fr);
     gap: var(--space-3);
     min-width: 0;
-    height: 100%;
     padding: var(--space-3) var(--space-4) var(--space-3);
     border-top: 2px solid var(--tone);
     background: linear-gradient(
       180deg,
       color-mix(in oklab, var(--tone) var(--wash), transparent),
-      transparent 60%
+      color-mix(in oklab, var(--tone) calc(var(--wash) / 3), transparent)
     );
     container: latency / inline-size;
   }
@@ -515,9 +488,7 @@
   .body {
     display: grid;
     grid-template-columns: minmax(176px, 0.62fr) minmax(0, 2fr);
-    grid-template-rows: minmax(min-content, 1fr);
     gap: var(--space-5);
-    min-height: 0;
   }
   .idle {
     display: grid;
@@ -572,20 +543,19 @@
     white-space: nowrap;
   }
 
-  /* One row per population on one scale: name, median, jitter, spread, and what the load added. */
+  /* One row per population on one scale: name, median, jitter, timeouts, spread, and what the load added.
+     Rows abut, so the scale's gridlines and the idle median run through them as single lines;
+     the block stays whole and centred beside a taller idle column. */
   .lanes {
     display: grid;
+    align-self: center;
     grid-template-columns:
-      [name] max-content [median] max-content [jitter] max-content
-      [track] minmax(120px, 1fr) [added] minmax(64px, max-content);
-    /* Rows share the card's height, so a tall screen gives each plot room instead of a gap. */
-    grid-template-rows:
-      auto repeat(var(--lanes), minmax(28px, var(--profile-row, 34px)))
-      auto;
-    align-content: space-evenly;
-    min-height: 0;
-    column-gap: var(--space-4);
+      repeat(4, max-content) [track] minmax(120px, 1fr)
+      minmax(64px, max-content);
+    grid-template-rows: auto repeat(var(--lanes), 40px) auto;
+    column-gap: var(--space-3);
     min-width: 0;
+    isolation: isolate;
   }
   .lane-head,
   .lane {
@@ -595,16 +565,10 @@
     align-items: center;
   }
   .lane-head {
+    padding-bottom: var(--space-1);
     color: var(--text-soft);
     font: var(--w-normal) var(--type-xs) / 1 var(--font-sans);
-  }
-  .lane-head > span:nth-child(2),
-  .lane-head > span:nth-child(3),
-  .lane-head > span:last-child {
     text-align: end;
-  }
-  .lane {
-    min-height: var(--profile-row, 34px);
   }
   .lane-name {
     display: flex;
@@ -625,7 +589,8 @@
     text-align: end;
     white-space: nowrap;
   }
-  .lane-jitter {
+  .lane-jitter,
+  .lane-timeouts {
     color: var(--text-muted);
     font: var(--w-normal) var(--type-sm) / 1 var(--font-sans);
     font-style: normal;
@@ -677,11 +642,11 @@
   .ticks span:last-child {
     translate: -100%;
   }
+  /* A track fills its row, so the pointer reads anywhere on it and its lines meet the next row's. */
   .track {
     position: relative;
-    height: var(--profile-track-height, 26px);
+    align-self: stretch;
     cursor: crosshair;
-    isolation: isolate;
     touch-action: pan-y pinch-zoom;
   }
   .track[aria-disabled="true"] {
@@ -694,47 +659,41 @@
     overflow-clip-margin: var(--edge);
     pointer-events: none;
   }
-  .range,
-  .band,
-  .added-span,
-  .position,
-  .baseline,
-  .center-marker,
-  .current-marker,
-  .timeout-marker {
+  .profile-artwork > i,
+  .profile-artwork::before,
+  .profile-artwork::after {
     position: absolute;
   }
-  /* Static, full-width artwork moves on compositor transforms. Fixed-size
-     marks have a full-width position wrapper so percentages use the track. */
-  .range,
-  .band,
-  .added-span,
-  .position {
-    left: 0;
-    width: 100%;
-    transform-origin: left center;
-    pointer-events: none;
-  }
-  .position {
+  /* The axis ticks run up through the rows as gridlines, behind the plots: 0 and the top at the edges. */
+  .profile-artwork::before,
+  .profile-artwork::after {
+    content: "";
+    z-index: -1;
     inset-block: 0;
+    border-left: var(--hairline) solid var(--border-subtle);
   }
+  .profile-artwork::before {
+    inset-inline: 0;
+    border-right: var(--hairline) solid var(--border-subtle);
+  }
+  .profile-artwork::after {
+    left: 50%;
+  }
+  /* The idle median drops from its own tick through every loaded row. */
   .baseline {
-    left: 0;
-    top: -6px;
-    bottom: -6px;
+    inset-block: 0;
     width: 1px;
-    translate: -50%;
+    margin-left: -0.5px;
     background: color-mix(in oklab, var(--phase-latency) 60%, transparent);
+  }
+  .lane[data-tone="latency"] .baseline {
+    top: 50%;
   }
   /* What the load added: from the idle median to this population's. */
   .added-span {
-    top: calc(50% - 0.75px);
-    height: 1.5px;
-    background: linear-gradient(
-      90deg,
-      transparent,
-      color-mix(in oklab, var(--tone) 70%, transparent)
-    );
+    top: calc(50% - 1px);
+    height: 2px;
+    background: color-mix(in oklab, var(--tone) 50%, transparent);
   }
   .range {
     top: calc(50% - 0.5px);
@@ -749,58 +708,42 @@
     box-shadow: inset 0 0 0 1px
       color-mix(in oklab, var(--tone) 34%, transparent);
   }
-  .center-marker,
-  .current-marker {
-    left: 0;
-    translate: -50%;
-  }
   .center-marker {
     top: calc(50% - 10px);
-    width: 2.5px;
+    width: 2px;
     height: 20px;
-    border-radius: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
     background: var(--tone);
   }
   .current-marker {
     top: calc(50% - 4px);
     width: 8px;
     height: 8px;
-    border: 2px solid var(--canvas);
+    margin-left: -4px;
     border-radius: var(--r-full);
     background: var(--tone);
-  }
-  .timeout-marker {
-    top: calc(50% - 6px);
-    right: 0;
-    height: 12px;
-    min-width: 8px;
-    border-radius: var(--r-well);
-    background: repeating-linear-gradient(
-      -45deg,
-      var(--err) 0 4px,
-      color-mix(in srgb, var(--err) 44%, transparent) 4px 8px
-    );
-    opacity: 0.82;
   }
   .guide {
     position: absolute;
     z-index: 4;
-    top: -4px;
-    bottom: -4px;
+    inset-block: 0;
     width: 1px;
-    translate: -50%;
+    margin-left: -0.5px;
     background: color-mix(in srgb, var(--text) 54%, transparent);
     pointer-events: none;
   }
+  /* Centred by auto margins, not a translate, so its text stays on whole pixels. */
   .hover-card {
     z-index: 10;
-    top: 50%;
+    inset-block: 0;
     display: grid;
     gap: 2px;
+    height: fit-content;
     min-width: 156px;
     max-width: min(238px, 76vw);
+    margin-block: auto;
     padding-block: var(--space-1);
-    translate: 0 -50%;
   }
   .hover-head {
     display: flex;
@@ -821,11 +764,10 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  /* Narrow: the idle facts go above the rows, then jitter leaves the row for the hover. */
+  /* Narrower cards put the idle facts above the rows. */
   @container latency (max-width: 720px) {
     .body {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto minmax(min-content, 1fr);
       gap: var(--space-3);
     }
     .idle {
@@ -856,53 +798,42 @@
       margin-top: var(--space-2);
     }
   }
-  /* A phone gives each population two lines: its numbers, then its plot at full width. */
-  @container latency (max-width: 420px) {
+  /* Narrow: jitter leaves the row for the hover; the timeouts stay. */
+  @container latency (max-width: 560px) {
     .lanes {
-      grid-template-columns: minmax(0, 1fr) max-content max-content;
+      grid-template-columns:
+        repeat(3, max-content) [track] minmax(80px, 1fr)
+        max-content;
+    }
+    .lane-jitter,
+    .lane-head > :nth-child(3) {
+      display: none;
+    }
+  }
+  /* A phone gives each population two lines: its numbers, then its plot at full width. */
+  @container latency (max-width: 440px) {
+    .lanes {
+      grid-template-columns: minmax(0, 1fr) repeat(3, max-content);
       grid-template-rows: none;
-      column-gap: var(--space-3);
     }
     .lane {
-      grid-template-rows: auto auto;
       row-gap: 2px;
-      padding-block: var(--space-1);
+      padding-top: var(--space-2);
     }
+    /* On the smallest phones a name wraps before it runs into the figures. */
     .lane-name {
-      grid-column: 1;
-      grid-row: 1;
+      white-space: normal;
     }
-    .lane-median {
-      grid-column: 2;
-      grid-row: 1;
-    }
-    .lane-added {
-      grid-column: 3;
-      grid-row: 1;
-    }
-    .lane-head,
-    .lane-jitter {
+    .lane-head > :nth-child(5) {
       display: none;
     }
     .track {
       grid-column: 1 / -1;
       grid-row: 2;
+      height: 28px;
     }
     .ticks {
       grid-column: 1 / -1;
-    }
-  }
-  @container latency (min-width: 421px) and (max-width: 520px) {
-    .lanes {
-      grid-template-columns:
-        [name] max-content [median] max-content [jitter] 0
-        [track] minmax(80px, 1fr) [added] max-content;
-      column-gap: var(--space-3);
-    }
-    .lane-jitter,
-    .lane-head > span:nth-child(3) {
-      visibility: hidden;
-      overflow: hidden;
     }
   }
 </style>

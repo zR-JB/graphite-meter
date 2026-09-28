@@ -50,15 +50,10 @@
 </div>
 
 <style>
+  /* The card is as tall as its table, so a failure notice follows it instead of covering the rows. */
   .live-profile {
-    position: relative;
     display: grid;
+    gap: var(--space-2);
     min-width: 0;
-    --profile-track-height: clamp(22px, 3.4svh, 34px);
-    --profile-row: clamp(32px, 6.5svh, 64px);
-  }
-  .notice {
-    position: absolute;
-    inset: auto var(--space-4) var(--space-3);
   }
 </style>
