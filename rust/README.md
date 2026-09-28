@@ -95,8 +95,9 @@ seconds. Unadmitted requests never extend that period; those in flight get five
 seconds, even if the peer withholds flow control, while admitted work that raced
 the GOAWAY runs to its own limits.
 Once a quarter of either connection capacity or the budget is used, unvalidated
-QUIC handshakes require Retry. A connection whose floor does not fit is refused
-while established connections continue.
+QUIC handshakes require Retry; as in Go, so does one from a source whose IPv4
+address or IPv6 /64, /56 or /48 already holds a QUIC connection. A connection
+whose floor does not fit is refused while established connections continue.
 
 Noq's floor holds the state of every stream the peer may open, 64 KiB for local
 streams and 64 KiB for each of its five buffer pools. Beyond it, Noq charges its

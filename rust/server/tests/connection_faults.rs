@@ -326,12 +326,12 @@ fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestE
 }
 
 #[tokio::test]
-async fn quic_retry_only_under_load() -> Result<(), TestError> {
+async fn quic_retry_under_load_or_for_a_connected_source() -> Result<(), TestError> {
     let tls = Tls::new();
     let (address, server, stop) = quic_server(
         &tls,
         Config {
-            max_connections: 8,
+            max_connections: 12,
             max_connections_per_client: 8,
             ..Config::default()
         },
@@ -339,10 +339,12 @@ async fn quic_retry_only_under_load() -> Result<(), TestError> {
     .await?;
     let client = quic_client(&tls, true)?;
     let mut held = Vec::new();
-    for load in 0..3 {
-        let link = test_link::Link::udp(address, Duration::ZERO).await?;
+    // Below a quarter of the limit only a source that already holds a QUIC connection answers Retry, as in Go;
+    // from it, every unvalidated source does.
+    for (load, source, retry) in [(0, 2, false), (1, 3, false), (2, 2, true), (3, 4, true)] {
+        let link = test_link::Link::udp_from([127, 0, 0, source].into(), address, Duration::ZERO).await?;
         let connection = client.connect(link.address, "localhost")?.await?;
-        assert_eq!(link.retries() > 0, load >= 2, "Retry only from a quarter of the limit");
+        assert_eq!(link.retries() > 0, retry, "load {load} from 127.0.0.{source}");
         held.push((link, connection));
     }
     stop.send(()).ok();

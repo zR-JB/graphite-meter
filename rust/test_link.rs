@@ -77,8 +77,13 @@ impl Link {
     }
 
     pub async fn udp(target: SocketAddr, one_way: Duration) -> io::Result<Self> {
+        Self::udp_from(std::net::Ipv4Addr::LOCALHOST.into(), target, one_way).await
+    }
+
+    /// Relays from `source`, which the target sees as the client's address.
+    pub async fn udp_from(source: std::net::IpAddr, target: SocketAddr, one_way: Duration) -> io::Result<Self> {
         let front = UdpSocket::bind("127.0.0.1:0").await?;
-        let back = UdpSocket::bind("127.0.0.1:0").await?;
+        let back = UdpSocket::bind(SocketAddr::new(source, 0)).await?;
         back.connect(target).await?;
         for socket in [&front, &back] {
             let socket = socket2::SockRef::from(socket);

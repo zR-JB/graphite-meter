@@ -49,6 +49,11 @@ impl Shares {
         share_full(keys, limit, |key| self.0.get(key).copied().unwrap_or_default())
     }
 
+    /// Released keys are removed, so any entry holds something.
+    pub fn holds_any(&self, keys: &[String]) -> bool {
+        keys.iter().any(|key| self.0.contains_key(key))
+    }
+
     pub fn hold(&mut self, keys: &[String]) {
         for key in keys {
             *self.0.entry(key.clone()).or_default() += 1;

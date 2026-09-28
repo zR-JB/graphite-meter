@@ -53,14 +53,28 @@ impl Connections {
         }))
     }
 
-    /// A QUIC connection also takes Go's per-client QUIC share, at most 8.
-    pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Result<Permit, Refusal> {
+    /// Trusted proxies are exempt, as in Go.
+    fn keys(&self, peer: SocketAddr) -> Vec<String> {
         let addr = peer.ip().to_canonical();
-        let keys = if self.0.trusted.iter().any(|prefix| prefix.contains(&addr)) {
+        if self.0.trusted.iter().any(|prefix| prefix.contains(&addr)) {
             Vec::new()
         } else {
             crate::client_address::client_keys(addr)
-        };
+        }
+    }
+
+    /// Whether any of the peer's keys holds a QUIC connection: Go then has an unvalidated source answer Retry,
+    /// so spoofed Initials cannot fill a victim's QUIC share.
+    pub fn holds_quic(&self, peer: SocketAddr) -> bool {
+        let keys = self.keys(peer);
+        crate::admission::recover(&self.0.counts, "connection")
+            .quic
+            .holds_any(&keys)
+    }
+
+    /// A QUIC connection also takes Go's per-client QUIC share, at most 8.
+    pub fn acquire(&self, peer: SocketAddr, quic: bool) -> Result<Permit, Refusal> {
+        let keys = self.keys(peer);
         let mut counts = crate::admission::recover(&self.0.counts, "connection");
         if counts.clients.full(&keys, self.0.client_max) {
             counts.stats.rejected_client = counts.stats.rejected_client.saturating_add(1);
@@ -114,6 +128,25 @@ mod tests {
         // Like Go, TCP connections from the same address count only toward the client's total.
         let tcp: Vec<_> = (0..16).map(|_| connections.acquire(peer, false).unwrap()).collect();
         assert_eq!(connections.stats().active, quic.len() + tcp.len());
+    }
+
+    #[test]
+    fn a_quic_connection_marks_every_prefix_of_its_source_but_never_a_trusted_proxy() {
+        let connections = super::Connections::new(64, 64, vec!["192.0.2.0/24".parse().unwrap()]);
+        let peer = "[2001:db8:1:2::1]:1".parse().unwrap();
+        let _tcp = connections.acquire(peer, false).unwrap();
+        assert!(!connections.holds_quic(peer), "a TCP connection holds no QUIC share");
+        let quic = connections.acquire(peer, true).unwrap();
+        // As in Go, any of the /64, /56 and /48 keys holding a QUIC connection counts.
+        for sibling in ["[2001:db8:1:2::2]:1", "[2001:db8:1:ff::1]:1", "[2001:db8:1:ff00::1]:1"] {
+            assert!(connections.holds_quic(sibling.parse().unwrap()), "{sibling}");
+        }
+        assert!(!connections.holds_quic("[2001:db8:2::1]:1".parse().unwrap()));
+        drop(quic);
+        assert!(!connections.holds_quic(peer));
+        let proxy = "192.0.2.1:1".parse().unwrap();
+        let _proxied = connections.acquire(proxy, true).unwrap();
+        assert!(!connections.holds_quic(proxy));
     }
 
     #[test]

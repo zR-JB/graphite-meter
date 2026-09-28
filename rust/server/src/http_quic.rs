@@ -123,15 +123,17 @@ impl HttpServer {
                 Some(_) = connections.join_next() => {}
                 incoming = quic.endpoint.accept() => {
                     let Some(incoming) = incoming else { break Ok(()); };
-                    // Retry spends a round trip to protect admission under load.
+                    let peer = incoming.remote_address();
+                    // Retry spends a round trip to protect admission under load, and, as in Go, a source's QUIC
+                    // share from Initials that may be spoofed: only its first connection skips it.
                     if !incoming.remote_address_validated()
                         && (self.connections.stats().active >= self.config.max_connections / 4
-                            || self.memory.under_pressure())
+                            || self.memory.under_pressure()
+                            || self.connections.holds_quic(peer))
                     {
                         let _ = incoming.retry();
                         continue;
                     }
-                    let peer = incoming.remote_address();
                     let Ok(permit) = self.connections.acquire(peer, true) else {
                         incoming.refuse();
                         continue;
@@ -1221,6 +1223,40 @@ mod tests {
             }
             assert!(peers.iter().all(|peer| peer.close_reason().is_none()));
             drop(filler);
+        })
+        .await
+        .unwrap();
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_source_that_already_holds_a_quic_connection_must_answer_retry() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, mut client_config) = tls();
+        // A validation token from the first connection would prove the address without a Retry.
+        client_config.token_store(Arc::new(quinn::NoneTokenStore));
+        let (address, stop, serving) = serve(&server, tls);
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        client.set_default_client_config(client_config);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            // Both links relay from 127.0.0.1, so the second Initial comes from a source holding the first connection.
+            let first = crate::test_link::Link::udp(address, Duration::ZERO).await.unwrap();
+            let held = client.connect(first.address, "localhost").unwrap().await.unwrap();
+            assert_eq!(
+                first.retries(),
+                0,
+                "a source's first connection needs no Retry below load"
+            );
+            let second = crate::test_link::Link::udp(address, Duration::ZERO).await.unwrap();
+            let again = client.connect(second.address, "localhost").unwrap().await.unwrap();
+            assert!(
+                second.retries() > 0,
+                "an unvalidated Initial from a source holding a QUIC connection skipped Retry"
+            );
+            held.close(0_u32.into(), b"done");
+            again.close(0_u32.into(), b"done");
         })
         .await
         .unwrap();
