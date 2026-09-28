@@ -4,6 +4,7 @@ use super::{
     budget::{ClientCredit, CreditClaim, Lease, MemoryBudget},
     *,
 };
+use crate::quic_shard;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use graphite_meter_core::failure::LaneEnding;
 use graphite_meter_http3::{self as http3, Code};
@@ -56,23 +57,14 @@ impl HttpServer {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
     ) -> Result<QuicEndpoint, ConfigError> {
-        let (socket, warning) = graphite_meter_core::socket::udp_socket(address)?;
-        if let Some(warning) = warning {
-            crate::log!("{warning}");
-        }
-        let socket_buffers = socket2::SockRef::from(&socket);
-        let kernel_bytes = socket_buffers
-            .recv_buffer_size()?
-            .checked_add(socket_buffers.send_buffer_size()?)
-            .ok_or("UDP socket buffer size overflow")?;
-        let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
-        let socket = runtime.wrap_udp_socket(socket)?;
+        let udp = bind_udp(address, false)?;
         let endpoint_config = quinn::EndpointConfig::default();
         let bytes = endpoint_bytes(
             &endpoint_config,
+            1,
             self.config.max_connections,
-            kernel_bytes,
-            socket.max_receive_segments().get(),
+            udp.kernel_bytes,
+            udp.socket.max_receive_segments().get(),
         )
         .ok_or("QUIC endpoint buffer size overflow")?;
         check_buffer_budget(
@@ -87,12 +79,15 @@ impl HttpServer {
                 .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
         );
         self.endpoint_bytes.store(bytes, Ordering::Relaxed);
-        let config = self.quic_config(tls)?;
+        let config = self.quic_config(tls, 1)?;
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(config.clone()),
-            Box::new(BudgetedSocket { socket, lease }),
-            runtime,
+            Box::new(BudgetedSocket {
+                socket: udp.socket,
+                lease,
+            }),
+            udp.runtime,
         )?;
         Ok(QuicEndpoint {
             endpoint,
@@ -101,15 +96,104 @@ impl HttpServer {
         })
     }
 
-    fn quic_config(&self, tls: Arc<rustls::ServerConfig>) -> Result<quinn::ServerConfig, ConfigError> {
+    /// Endpoints on `address` for as many of these runtimes as the buffer budget covers, all bound with
+    /// `SO_REUSEPORT`, each socket and endpoint built in its own runtime; `None` when fewer than two fit.
+    /// They share one token key, reset key and every server-wide limit.
+    pub(crate) fn quic_shards(
+        &self,
+        tls: Arc<rustls::ServerConfig>,
+        address: SocketAddr,
+        runtimes: &[tokio::runtime::Handle],
+    ) -> Result<Option<(Vec<QuicEndpoint>, quic_shard::Router)>, ConfigError> {
+        const OVERFLOW: &str = "QUIC endpoint buffer size overflow";
+        let bind = |runtime: &tokio::runtime::Handle, address| {
+            let _entered = runtime.enter();
+            bind_udp(address, true)
+        };
+        let Some(runtime) = runtimes.first() else {
+            return Ok(None);
+        };
+        let first = bind(runtime, address)?;
+        // The others join the first socket's port, which the OS picks for port 0.
+        let address = first.socket.local_addr()?;
+        let endpoint_config = quinn::EndpointConfig::default();
+        let handshake_bytes = self.handshake_bytes.load(Ordering::Relaxed);
+        let shard_bytes = |shards, udp: &Udp| {
+            let segments = udp.socket.max_receive_segments().get();
+            endpoint_bytes(
+                &endpoint_config,
+                shards,
+                self.config.max_connections,
+                udp.kernel_bytes,
+                segments,
+            )
+        };
+        let check = |total| check_buffer_budget(&self.config, self.memory.limit, handshake_bytes, Some(total));
+        // The first socket stands for the others until they are bound; the check below counts each.
+        let covered = |shards: usize| {
+            shard_bytes(shards, &first)
+                .and_then(|bytes| bytes.checked_mul(shards))
+                .is_some_and(|total| check(total).is_ok())
+        };
+        let Some(shards) = (2..=runtimes.len()).rev().find(|&shards| covered(shards)) else {
+            return Ok(None);
+        };
+        let mut sockets = vec![first];
+        for runtime in &runtimes[1..shards] {
+            sockets.push(bind(runtime, address)?);
+        }
+        let bytes = sockets
+            .iter()
+            .map(|udp| shard_bytes(shards, udp))
+            .collect::<Option<Vec<_>>>()
+            .ok_or(OVERFLOW)?;
+        let total = bytes
+            .iter()
+            .try_fold(0_usize, |total, &bytes| total.checked_add(bytes))
+            .ok_or(OVERFLOW)?;
+        check(total)?;
+        let config = self.quic_config(tls, shards)?;
+        let (router, inboxes) = quic_shard::Router::new(shards, packet_bytes(&endpoint_config).ok_or(OVERFLOW)?);
+        let mut endpoints = Vec::with_capacity(shards);
+        for (shard, ((udp, bytes), inbox)) in sockets.into_iter().zip(bytes).zip(inboxes).enumerate() {
+            let lease = Arc::new(
+                self.memory
+                    .lease(bytes)
+                    .ok_or("server memory budget cannot cover QUIC endpoint buffers")?,
+            );
+            let socket = quic_shard::ShardSocket::new(udp.socket, shard, router.clone(), inbox);
+            let mut shard_config = endpoint_config.clone();
+            shard_config.cid_generator(quic_shard::cid_generator(u8::try_from(shard)?));
+            let _entered = runtimes[shard].enter();
+            let endpoint = quinn::Endpoint::new_with_abstract_socket(
+                shard_config,
+                Some(config.clone()),
+                Box::new(BudgetedSocket {
+                    socket: Box::new(socket),
+                    lease,
+                }),
+                udp.runtime,
+            )?;
+            endpoints.push(QuicEndpoint {
+                endpoint,
+                config: config.clone(),
+                clients: self.client_credit.clone(),
+            });
+        }
+        self.endpoint_bytes.store(total, Ordering::Relaxed);
+        Ok(Some((endpoints, router)))
+    }
+
+    /// One of `shards` endpoints admits its part of the server-wide incoming limits, rounded up.
+    fn quic_config(&self, tls: Arc<rustls::ServerConfig>, shards: usize) -> Result<quinn::ServerConfig, ConfigError> {
         let mut tls = (*tls).clone();
         tls.alpn_protocols = vec![b"h3".to_vec()];
         let crypto = quinn::crypto::rustls::QuicServerConfig::try_from(tls)?;
         let mut config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
         config
-            .max_incoming(self.config.max_connections)
-            .incoming_buffer_size(INCOMING_BYTES)
-            .incoming_buffer_size_total(INCOMING_TOTAL_BYTES);
+            .max_incoming(self.config.max_connections.div_ceil(shards))
+            .incoming_buffer_size(INCOMING_BYTES.div_ceil(shards as u64))
+            .incoming_buffer_size_total(INCOMING_TOTAL_BYTES.div_ceil(shards as u64));
         let mut transport = transport(&self.config.limits)?;
         transport.shared_budget(Some(self.memory.clone()));
         config.transport_config(Arc::new(transport));
@@ -281,6 +365,32 @@ fn ended_normally(error: &http3::Error) -> bool {
     }
 }
 
+/// A UDP socket bound in the current runtime, and the kernel buffer bytes it holds.
+struct Udp {
+    socket: Box<dyn quinn::AsyncUdpSocket>,
+    runtime: Arc<dyn quinn::Runtime>,
+    kernel_bytes: usize,
+}
+
+fn bind_udp(address: SocketAddr, reuse_port: bool) -> Result<Udp, ConfigError> {
+    let (socket, warning) = graphite_meter_core::socket::udp_socket_with(address, reuse_port)?;
+    if let Some(warning) = warning {
+        crate::log!("{warning}");
+    }
+    let socket_buffers = socket2::SockRef::from(&socket);
+    let kernel_bytes = socket_buffers
+        .recv_buffer_size()?
+        .checked_add(socket_buffers.send_buffer_size()?)
+        .ok_or("UDP socket buffer size overflow")?;
+    let runtime = quinn::default_runtime().ok_or("no async runtime for QUIC")?;
+    let socket = runtime.wrap_udp_socket(socket)?;
+    Ok(Udp {
+        socket,
+        runtime,
+        kernel_bytes,
+    })
+}
+
 #[derive(Debug)]
 struct BudgetedSocket {
     socket: Box<dyn quinn::AsyncUdpSocket>,
@@ -364,18 +474,32 @@ pub(super) fn noq_floor(limits: &crate::admission::Limits) -> Result<usize, Conf
     Ok(transport(limits)?.connection_floor_bytes())
 }
 
+/// The largest datagram an endpoint reads into one receive segment.
+fn packet_bytes(config: &quinn::EndpointConfig) -> Option<usize> {
+    usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()
+}
+
+/// One of `shards` endpoints: its receive batch, the pending incoming packets its part of the incoming limits
+/// admits, its forwarding queue and its kernel buffers.
 pub(super) fn endpoint_bytes(
     config: &quinn::EndpointConfig,
+    shards: usize,
     max_connections: usize,
     kernel_bytes: usize,
     receive_segments: usize,
 ) -> Option<usize> {
-    let packet = usize::try_from(config.get_max_udp_payload_size().min(64 * 1024)).ok()?;
+    let packet = packet_bytes(config)?;
     let receive = packet.checked_mul(receive_segments)?;
+    let queue = if shards > 1 {
+        quic_shard::queue_bytes(packet)?
+    } else {
+        0
+    };
     receive
         .checked_mul(quinn::udp::BATCH_SIZE)?
-        .checked_add(receive.checked_mul(max_connections.checked_add(1)?)?)?
-        .checked_add(INCOMING_TOTAL_BYTES as usize)?
+        .checked_add(receive.checked_mul(max_connections.div_ceil(shards).checked_add(1)?)?)?
+        .checked_add((INCOMING_TOTAL_BYTES as usize).div_ceil(shards))?
+        .checked_add(queue)?
         .checked_add(kernel_bytes)
 }
 
@@ -1410,6 +1534,93 @@ mod tests {
         serving.await.unwrap().unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn four_workers_run_four_shards_that_follow_rebound_clients() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, client_config) = tls();
+        let bound = crate::runtime::Quic::bind(&server, tls, "127.0.0.1:0".parse().unwrap()).unwrap();
+        let address = bound.local_addr().unwrap();
+        let crate::runtime::Quic::Shards { shards, router } = &bound else {
+            panic!("four runtime workers served HTTP/3 from one endpoint");
+        };
+        assert_eq!(shards.len(), 4);
+        let router = router.clone();
+        let (stop, stopped) = tokio::sync::watch::channel(false);
+        let serving = tokio::spawn(futures_util::future::try_join_all(bound.serve(&server, &stopped)));
+        tokio::time::timeout(Duration::from_secs(30), async {
+            // Distinct sources stand for distinct clients, whose 4-tuples the kernel spreads over the shards.
+            let transfers = (2..10).map(|source| {
+                let config = client_config.clone();
+                async move {
+                    let client = quinn::Endpoint::client(SocketAddr::from(([127, 0, 0, source], 0))).unwrap();
+                    let (quic, requests) = h3_client(&client, config, address).await;
+                    let received = download(&requests, 1 << 20).await.unwrap();
+                    quic.close(0_u32.into(), b"done");
+                    received
+                }
+            });
+            assert_eq!(futures_util::future::join_all(transfers).await, [1 << 20; 8]);
+
+            let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+            let (quic, requests) = h3_client(&client, client_config, address).await;
+            assert_eq!(download(&requests, 13).await.unwrap(), 13);
+            // A new port lands on another shard three times in four, whose socket must forward to the connection's.
+            let mut crossed = 0;
+            for rebind in 1.. {
+                let forwarded = router.forwarded();
+                client
+                    .rebind(std::net::UdpSocket::bind("127.0.0.1:0").unwrap())
+                    .unwrap();
+                let received = download(&requests, 64 * 1024).await.unwrap();
+                assert_eq!(received, 64 * 1024, "after rebind {rebind}");
+                crossed += usize::from(router.forwarded() > forwarded);
+                if rebind >= 4 && crossed > 0 {
+                    break;
+                }
+                assert!(rebind < 32, "{rebind} rebinds never left the connection's shard");
+            }
+            quic.close(0_u32.into(), b"done");
+        })
+        .await
+        .unwrap();
+        stop.send_replace(true);
+        serving.await.unwrap().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_buffer_budget_caps_quic_shards() {
+        use super::*;
+        let config = Arc::new(Config {
+            max_connections: 4,
+            max_connections_per_client: 4,
+            ..Config::default()
+        });
+        let floors = 4 * (connection_floor(0) + noq_floor(&config.limits).unwrap()) + DOWNLOAD_BLOCK_BYTES;
+        let (tls, _) = tls();
+        let runtimes: Vec<_> = (0..4)
+            .map(|_| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            })
+            .collect();
+        let handles: Vec<_> = runtimes.iter().map(|runtime| runtime.handle().clone()).collect();
+        let shards = |memory, runtimes: &[tokio::runtime::Handle]| {
+            let server = HttpServer::with_memory(config.clone(), memory).unwrap();
+            let shards = server.quic_shards(tls.clone(), "127.0.0.1:0".parse().unwrap(), runtimes);
+            let count = shards.unwrap().map_or(0, |(endpoints, _)| endpoints.len());
+            (count, server.endpoint_bytes.load(Ordering::Relaxed))
+        };
+        let (two, bytes) = shards(1 << 40, &handles[..2]);
+        assert_eq!(two, 2);
+        assert_eq!(shards(floors + bytes, &handles), (2, bytes), "two of four shards fit");
+        assert_eq!(shards(floors + bytes - 1, &handles).0, 0, "fewer than two shards fit");
+    }
+
     #[tokio::test]
     async fn mixed_transport_exhaustion_preserves_existing_connections() {
         use super::*;
@@ -1464,7 +1675,7 @@ mod tests {
             }
             link.inject(crate::test_link::Fault::None);
             tls.alpn_protocols = vec![b"h3".to_vec()];
-            let config = server.quic_config(Arc::new(tls)).unwrap();
+            let config = server.quic_config(Arc::new(tls), 1).unwrap();
             let endpoint = QuicEndpoint {
                 endpoint: quinn::Endpoint::server(config.clone(), "127.0.0.1:0".parse().unwrap()).unwrap(),
                 config,

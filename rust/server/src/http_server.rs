@@ -1251,7 +1251,7 @@ pub(crate) fn check_configured_budget(config: &Config) -> Result<(), ConfigError
         None
     } else {
         Some(
-            http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), config.max_connections, 0, 1)
+            http_quic::endpoint_bytes(&quinn::EndpointConfig::default(), 1, config.max_connections, 0, 1)
                 .ok_or("QUIC endpoint buffer size overflow")?,
         )
     };

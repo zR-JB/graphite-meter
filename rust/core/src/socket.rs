@@ -13,6 +13,13 @@ static WARNED: AtomicBool = AtomicBool::new(false);
 /// buffers stay short returns its warning, unless
 /// `QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING` is true.
 pub fn udp_socket(address: SocketAddr) -> io::Result<(UdpSocket, Option<String>)> {
+    udp_socket_with(address, false)
+}
+
+/// [`udp_socket`]; `reuse_port` sets `SO_REUSEPORT` before binding, so that this
+/// process's sockets can share the address. Only Linux balances unicast datagrams
+/// among them, so other targets refuse it.
+pub fn udp_socket_with(address: SocketAddr, reuse_port: bool) -> io::Result<(UdpSocket, Option<String>)> {
     let socket = socket2::Socket::new(
         socket2::Domain::for_address(address),
         socket2::Type::DGRAM,
@@ -33,6 +40,15 @@ pub fn udp_socket(address: SocketAddr) -> io::Result<(UdpSocket, Option<String>)
         .map(|shortfall| {
             format!("{shortfall}. See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.")
         });
+    if reuse_port {
+        #[cfg(target_os = "linux")]
+        socket.set_reuse_port(true)?;
+        #[cfg(not(target_os = "linux"))]
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "SO_REUSEPORT balances UDP only on Linux",
+        ));
+    }
     socket.bind(&address.into())?;
     Ok((socket.into(), warning))
 }
@@ -133,5 +149,15 @@ mod tests {
         }
         assert!(!short || warning.is_some() || WARNED.load(Ordering::Relaxed));
         assert!(udp_socket("127.0.0.1:0".parse().unwrap()).unwrap().1.is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reuse_port_sockets_share_an_address_that_others_cannot_take() {
+        let (first, _) = udp_socket_with("127.0.0.1:0".parse().unwrap(), true).unwrap();
+        let address = first.local_addr().unwrap();
+        let (second, _) = udp_socket_with(address, true).unwrap();
+        assert_eq!(second.local_addr().unwrap(), address);
+        assert!(udp_socket(address).is_err());
     }
 }

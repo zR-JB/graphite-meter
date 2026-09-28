@@ -1,12 +1,13 @@
-//! Process-level ownership of listeners, certificate renewal, and shutdown.
+//! Process-level ownership of listeners, QUIC shard threads, certificate renewal, and shutdown.
 
 use crate::{
     config::{AuthMode, Config, ConfigError, NativeKind},
-    http_server::HttpServer,
+    http_server::{HttpServer, QuicEndpoint},
+    quic_shard,
     tls::Certificates,
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use std::{future::Future, pin::Pin, sync::Arc, time::SystemTime};
+use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::{net::TcpListener, sync::watch};
 
 type Service = Pin<Box<dyn Future<Output = Result<(), ConfigError>> + Send>>;
@@ -47,7 +48,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             // The bootstrap companion and QUIC endpoint share the actual port,
             // including when the caller asks the OS to allocate one with :0.
             let identity = identity.clone().expect("TLS identity");
-            quic = Some(server.quic_endpoint(identity, listener.local_addr()?)?);
+            quic = Some(Quic::bind(&server, identity, listener.local_addr()?)?);
         }
         listeners.push((kind, listener, identity));
     }
@@ -83,11 +84,7 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
             crate::config::ENGINE_VERSION,
             quic.local_addr()?,
         );
-        let server = server.clone();
-        let stopped = stopped.clone();
-        services.push(Box::pin(
-            async move { server.serve_quic(quic, cancelled(stopped)).await },
-        ));
+        services.extend(quic.serve(&server, &stopped));
     }
     if let Some(tls) = tls {
         let stopped = stopped.clone();
@@ -154,6 +151,126 @@ pub async fn run(config: Config, shutdown: impl Future<Output = ()>) -> Result<(
 
 async fn cancelled(mut stopped: watch::Receiver<bool>) {
     let _ = stopped.wait_for(|value| *value).await;
+}
+
+/// HTTP/3 on the caller's runtime, or on one shard per runtime worker.
+pub(crate) enum Quic {
+    Endpoint(QuicEndpoint),
+    /// Each shard serves its endpoint from a current-thread runtime on a thread of its own.
+    Shards {
+        shards: Vec<(ShardRuntime, QuicEndpoint)>,
+        /// Tests count the datagrams it forwarded.
+        #[cfg(all(test, target_os = "linux"))]
+        router: quic_shard::Router,
+    },
+}
+
+impl Quic {
+    /// One shard per worker of the caller's runtime, as many as the buffer budget covers. Only Linux spreads
+    /// unicast datagrams over `SO_REUSEPORT` sockets, so other targets keep one endpoint on this runtime.
+    pub(crate) fn bind(
+        server: &HttpServer,
+        tls: Arc<rustls::ServerConfig>,
+        address: SocketAddr,
+    ) -> Result<Self, ConfigError> {
+        let workers = if cfg!(target_os = "linux") {
+            tokio::runtime::Handle::current()
+                .metrics()
+                .num_workers()
+                .min(quic_shard::MAX_SHARDS)
+        } else {
+            1
+        };
+        let fewer = |shards: usize| {
+            crate::log!(
+                "[gm:memory] the buffer budget covers QUIC endpoints for {shards} of {workers} runtime workers"
+            );
+        };
+        if workers > 1 {
+            let runtimes = (0..workers)
+                .map(|_| ShardRuntime::new())
+                .collect::<std::io::Result<Vec<_>>>()?;
+            let handles: Vec<_> = runtimes.iter().map(ShardRuntime::handle).collect();
+            if let Some((endpoints, _router)) = server.quic_shards(tls.clone(), address, &handles)? {
+                if endpoints.len() < workers {
+                    fewer(endpoints.len());
+                }
+                return Ok(Self::Shards {
+                    shards: runtimes.into_iter().zip(endpoints).collect(),
+                    #[cfg(all(test, target_os = "linux"))]
+                    router: _router,
+                });
+            }
+            fewer(1);
+        }
+        Ok(Self::Endpoint(server.quic_endpoint(tls, address)?))
+    }
+
+    pub(crate) fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        match self {
+            Self::Endpoint(quic) => quic.local_addr(),
+            Self::Shards { shards, .. } => shards[0].1.local_addr(),
+        }
+    }
+
+    /// Serves until `stopped`. Each shard's thread is a service that ends with the thread.
+    pub(crate) fn serve(self, server: &Arc<HttpServer>, stopped: &watch::Receiver<bool>) -> Vec<Service> {
+        let shards = match self {
+            Self::Endpoint(quic) => {
+                let (server, stopped) = (server.clone(), stopped.clone());
+                return vec![Box::pin(
+                    async move { server.serve_quic(quic, cancelled(stopped)).await },
+                )];
+            }
+            Self::Shards { shards, .. } => shards,
+        };
+        let shard = |(index, (runtime, quic)): (usize, (ShardRuntime, QuicEndpoint))| -> Service {
+            let (server, stopped) = (server.clone(), stopped.clone());
+            let (done, finished) = tokio::sync::oneshot::channel();
+            let name = format!("gm-quic-{index}");
+            let spawned = std::thread::Builder::new().name(name.clone()).spawn(move || {
+                let runtime = runtime.into_inner();
+                let result = runtime.block_on(server.serve_quic(quic, cancelled(stopped)));
+                // The shard's tasks and sockets are gone before its service ends.
+                drop(runtime);
+                let _ = done.send(result);
+            });
+            Box::pin(async move {
+                spawned?;
+                finished
+                    .await
+                    .unwrap_or_else(|_| Err(format!("{name} panicked").into()))
+            })
+        };
+        shards.into_iter().enumerate().map(shard).collect()
+    }
+}
+
+/// A shard's current-thread runtime. Until a thread takes it, dropping it shuts it down without blocking.
+pub(crate) struct ShardRuntime(Option<tokio::runtime::Runtime>);
+
+impl ShardRuntime {
+    fn new() -> std::io::Result<Self> {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        Ok(Self(Some(runtime)))
+    }
+
+    fn handle(&self) -> tokio::runtime::Handle {
+        self.0.as_ref().expect("shard runtime").handle().clone()
+    }
+
+    /// For the shard's own thread, where dropping the runtime may block.
+    fn into_inner(mut self) -> tokio::runtime::Runtime {
+        self.0.take().expect("shard runtime")
+    }
+}
+
+impl Drop for ShardRuntime {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 async fn bind(address: &str) -> std::io::Result<TcpListener> {

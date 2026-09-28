@@ -24,6 +24,7 @@ pub mod password;
 pub mod ping;
 pub mod preflight;
 mod probe;
+mod quic_shard;
 pub mod runtime;
 pub mod tls;
 pub mod upload;

@@ -132,10 +132,21 @@ four times that, or under authentication its login or browser grant, whose
 principal may hold twice. Each connection's window counts against the admitted
 client that first raised it until the connection closes; past its share an
 upload reads at the current window, as under pressure. Endpoint
-reservations cover the configured UDP socket buffers, receive batches and
-pending incoming packets until the socket and its senders drop. Additional
-incoming packets are capped at 64 KiB per handshake and 4 MiB per endpoint. The
-shared 256 KiB download block is charged once.
+reservations cover the configured UDP socket buffers, receive batches, pending
+incoming packets and shard forwarding queues until the socket and its senders
+drop. Additional incoming packets are capped at 64 KiB per handshake and 4 MiB
+in all; several endpoints each take an equal part of both. The shared 256 KiB
+download block is charged once.
+
+On Linux, HTTP/3 runs one endpoint per worker of the server's runtime
+(`TOKIO_WORKER_THREADS`), as many as the buffer budget covers; a log line reports
+fewer. Each has its own thread, current-thread runtime and UDP socket on the
+shared port, which `SO_REUSEPORT` spreads by 4-tuple, so a connection stays on
+one thread. Connection IDs begin with their endpoint's index, and an endpoint
+forwards short-header packets that name another to it, so a client whose address
+changes keeps its connection; handshakes are never forwarded. Admission, Retry,
+connection limits and receive-credit shares stay server-wide. Other targets and
+current-thread runtimes keep one endpoint.
 
 This accounting does not establish a resident-memory bound. Payload backing
 allocations, header decoding and metadata, TLS state, and allocator overhead still
