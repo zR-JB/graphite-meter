@@ -410,16 +410,7 @@ impl Http {
             .control(Method::GET, &format!("{origin}/preflight"), Protocol::Negotiated)
             .await?;
         let mut preflight = Preflight::decode(&bytes)?;
-        for target in &mut preflight.capabilities.throughput {
-            if target.base_url == "." {
-                target.base_url.clone_from(&origin);
-            }
-        }
-        for target in &mut preflight.capabilities.latency {
-            if target.base_url == "." {
-                target.base_url.clone_from(&origin);
-            }
-        }
+        preflight.resolve_self(&origin);
         entry.validate_discovery(&preflight)?;
         Ok(preflight)
     }
@@ -450,18 +441,8 @@ impl Http {
         let issuer = canonical_origin(&entry.url)?;
         let issuer_host = target_origin(&issuer)?.ok_or("missing grant origin")?.host;
         let mut targets = HashSet::from([issuer.clone()]);
-        for raw in preflight
-            .capabilities
-            .throughput
-            .iter()
-            .map(|target| &target.base_url)
-            .chain(preflight.capabilities.latency.iter().map(|target| &target.base_url))
-        {
-            let origin = if raw == "." {
-                issuer.clone()
-            } else {
-                canonical_origin(raw)?
-            };
+        for raw in preflight.base_urls() {
+            let origin = canonical_origin(raw)?;
             let parsed = target_origin(&origin)?.ok_or("missing target origin")?;
             if parsed.scheme == "https" && parsed.host.eq_ignore_ascii_case(&issuer_host) {
                 targets.insert(origin);
