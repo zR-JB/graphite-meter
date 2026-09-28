@@ -41,14 +41,18 @@ const STALL_QUIET: Duration = Duration::from_millis(500);
 struct Lanes {
     down: Option<Download>,
     up: Option<Upload>,
+    /// The receiver starting in place of `up` after the server forgot its id.
+    replacing: JoinSet<Result<Upload, Error>>,
 }
 
 impl Lanes {
-    async fn close(self, confirm: bool) -> Result<(), Error> {
+    async fn close(mut self, confirm: bool) -> Result<(), Error> {
         if let Some(down) = self.down {
             down.stop().await;
         }
-        if let Some(up) = self.up {
+        // A replacement still starting ends on the member's stop.
+        let replaced = self.replacing.join_next().await.and_then(|joined| joined.ok()?.ok());
+        if let Some(up) = self.up.or(replaced) {
             up.finish(confirm).await?;
         }
         Ok(())
@@ -83,12 +87,27 @@ impl Member {
         }
     }
 
+    /// As Go's measureUpload (upload.go:23-31), a receiver that no longer knows its upload id is
+    /// replaced once per server and run; its new id resumes the aggregate's evidence.
     fn health(&mut self) -> Result<(), Error> {
-        if let Some(down) = &mut self.lanes.down {
+        let lanes = &mut self.lanes;
+        if let Some(down) = &mut lanes.down {
             down.health()?;
         }
-        if let Some(up) = &self.lanes.up {
-            up.health()?;
+        if let Some(replaced) = lanes.replacing.try_join_next() {
+            lanes.up = Some(replaced??);
+        }
+        let Some(up) = &lanes.up else {
+            return Ok(());
+        };
+        let Err(error) = up.health() else {
+            return Ok(());
+        };
+        if !up.replaces(&error) {
+            return Err(error);
+        }
+        if let Some(up) = lanes.up.take() {
+            lanes.replacing.spawn(up.replace());
         }
         Ok(())
     }
@@ -937,21 +956,30 @@ async fn start_transfer(
         if !stage.uploads() {
             return Ok(None);
         }
+        let (replaced, stopped) = (server.replaced_upload.clone(), stopped.clone());
         let started = if target.transport == ThroughputTransport::FetchStream {
             let stagger = lane_stagger(config.warmup, server.idle_rtt, up);
-            Upload::start(upload_transport, up, stagger, operation_limit, stopped.clone()).await
+            Upload::start(upload_transport, up, stagger, operation_limit, replaced, stopped).await
         } else {
-            Upload::start_webtransport(upload_transport, up, stopped.clone()).await
+            Upload::start_webtransport(upload_transport, up, replaced, stopped).await
         };
         started.map(Some)
     };
     let (down, up, error) = match tokio::join!(download, upload) {
-        (Ok(down), Ok(up)) => return Ok(Lanes { down, up }),
-        (Err(error), up) => (None, up.ok().flatten(), error),
-        (down, Err(error)) => (down.ok().flatten(), None, error),
+        (Ok(down), Ok(up)) => (down, up, None),
+        (Err(error), up) => (None, up.ok().flatten(), Some(error)),
+        (down, Err(error)) => (down.ok().flatten(), None, Some(error)),
+    };
+    let lanes = Lanes {
+        down,
+        up,
+        ..Lanes::default()
+    };
+    let Some(error) = error else {
+        return Ok(lanes);
     };
     // A bidirectional member may have one live direction when the other cannot start.
-    let _ = Lanes { down, up }.close(false).await;
+    let _ = lanes.close(false).await;
     Err(error)
 }
 

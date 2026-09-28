@@ -44,8 +44,7 @@ struct State {
 
 /// Drop cancels every owned task; finish(false) only sends its DELETE, finish(true) also awaits `complete`.
 pub struct Upload {
-    transport: Arc<Transport>,
-    control: Arc<Transport>,
+    plan: Plan,
     id: String,
     state: watch::Receiver<State>,
     stop_lanes: watch::Sender<bool>,
@@ -56,48 +55,65 @@ pub struct Upload {
     retrying: Retrying,
 }
 
+/// What a receiver starts from, so that its replacement starts the same lanes on the same connections.
+#[derive(Clone)]
+struct Plan {
+    transport: Arc<Transport>,
+    control: Arc<Transport>,
+    lanes: usize,
+    /// HTTP lanes' stagger and request limit; WebTransport lanes take neither.
+    http: Option<(Duration, Duration)>,
+    cancel: watch::Receiver<bool>,
+    /// Go's replacedUpload (upload.go:23-31): one replacement receiver per server and run.
+    replaced: Arc<AtomicBool>,
+}
+
+impl Plan {
+    /// Takes the server's one replacement when its receiver refused the upload id as `invalid`.
+    fn replaces(&self, error: &Error) -> bool {
+        crate::failure::refused(error.as_ref(), UploadRefusal::Invalid) && !self.replaced.swap(true, Ordering::Relaxed)
+    }
+}
+
 impl Upload {
     /// Stagger first HTTP requests inside the stage-owned cancellation scope; each request lasts
-    /// up to the stage's operation limit, as Go's lanes last the stage.
+    /// up to the stage's operation limit, as Go's lanes last the stage. `replaced` records the
+    /// server's one replacement receiver in its run.
     pub async fn start(
         transport: Arc<Transport>,
         lanes: usize,
         stagger: Duration,
         limit: Duration,
+        replaced: Arc<AtomicBool>,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        Self::start_inner(transport, lanes, cancel, Some((stagger, limit))).await
+        Self::start_inner(transport, lanes, Some((stagger, limit)), replaced, cancel).await
     }
     pub async fn start_webtransport(
         transport: Arc<Transport>,
         lanes: usize,
+        replaced: Arc<AtomicBool>,
         cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
         if lanes > MAX_WEBTRANSPORT_STREAMS {
             return Err("WebTransport upload supports at most sixteen streams per session".into());
         }
-        Self::start_inner(transport, lanes, cancel, None).await
+        Self::start_inner(transport, lanes, None, replaced, cancel).await
     }
-    /// `http` holds HTTP lanes' stagger and request limit; WebTransport lanes take neither.
     async fn start_inner(
         transport: Arc<Transport>,
         lanes: usize,
-        mut cancel: watch::Receiver<bool>,
         http: Option<(Duration, Duration)>,
+        replaced: Arc<AtomicBool>,
+        cancel: watch::Receiver<bool>,
     ) -> Result<Self, Error> {
-        let (webtransport, (stagger, limit)) = (http.is_none(), http.unwrap_or_default());
-        if !(1..=128).contains(&lanes) || stagger > Duration::from_millis(75) {
+        if !(1..=128).contains(&lanes) || http.is_some_and(|(stagger, _)| stagger > Duration::from_millis(75)) {
             return Err("invalid upload lane count or stagger".into());
-        }
-        #[derive(Deserialize)]
-        #[serde(rename_all = "camelCase")]
-        struct Minted {
-            upload_id: String,
         }
         // Lanes and control requests never share a connection, as Go gives upload lanes a
         // transport of their own: HTTP/3 control takes a new QUIC connection, and HTTP/1.1 and
         // HTTP/2 lanes take connections apart from control requests and download reads.
-        let (transport, control) = if webtransport {
+        let (transport, control) = if http.is_none() {
             (transport.clone(), transport)
         } else if transport.is_http3() {
             let control = transport.isolated_connection().await?;
@@ -105,8 +121,41 @@ impl Upload {
         } else {
             (Arc::new(transport.for_upload_lanes()), transport)
         };
+        let plan = Plan {
+            transport,
+            control,
+            lanes,
+            http,
+            cancel,
+            replaced,
+        };
+        match Self::begin(plan.clone()).await {
+            Err(error) if plan.replaces(&error) => Self::begin(plan).await,
+            started => started,
+        }
+    }
+    /// Whether this receiver's failure takes the server's one replacement (upload.go:23-31).
+    pub(crate) fn replaces(&self, error: &Error) -> bool {
+        self.plan.replaces(error)
+    }
+    /// Ends this receiver and starts another on the same connections; its new id resumes the
+    /// aggregate's evidence, as Go's replacement does.
+    pub(crate) async fn replace(self) -> Result<Self, Error> {
+        let plan = self.plan.clone();
+        let _ = self.finish(false).await;
+        Self::begin(plan).await
+    }
+    /// Mints a receiver and starts its progress feed and lanes; ready once the receiver counts.
+    async fn begin(plan: Plan) -> Result<Self, Error> {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct Minted {
+            upload_id: String,
+        }
+        let mut cancel = plan.cancel.clone();
+        let (stagger, limit) = plan.http.unwrap_or_default();
         // Go's mint is tried again for 2 s (upload.go:116-119).
-        let mint = || control.json(Method::POST, Route::UploadSession, &[]);
+        let mint = || plan.control.json(Method::POST, Route::UploadSession, &[]);
         let minted: Minted = tokio::select! {
             biased;
             _ = cancel.wait_for(|cancelled| *cancelled) => return Err("upload cancelled before startup".into()),
@@ -125,8 +174,7 @@ impl Upload {
         let (stop_lanes, lane_stop) = watch::channel(false);
         let (stop_all, all_stop) = watch::channel(false);
         let mut owner = Self {
-            transport,
-            control,
+            plan,
             id: minted.upload_id,
             state,
             stop_lanes,
@@ -136,12 +184,12 @@ impl Upload {
             session: None,
             retrying: Retrying::default(),
         };
-        if webtransport {
+        if owner.plan.http.is_none() {
             let query = [("id", owner.id.as_str())];
             let session = tokio::select! {
                 biased;
                 _ = cancel.wait_for(|cancelled| *cancelled) => Err("WebTransport upload cancelled during setup".into()),
-                session = owner.transport.webtransport_slot(Route::WtUpload, &query) => session,
+                session = owner.plan.transport.webtransport_slot(Route::WtUpload, &query) => session,
             };
             match session {
                 Ok(session) => owner.session = Some(Arc::new(session)),
@@ -152,7 +200,7 @@ impl Upload {
             }
         }
         {
-            let transport = owner.control.clone();
+            let transport = owner.plan.control.clone();
             let id = owner.id.clone();
             let state = state_tx.clone();
             let mut stop = all_stop.clone();
@@ -169,11 +217,11 @@ impl Upload {
                 }
             });
         }
-        let mut started = Vec::with_capacity(lanes);
-        for index in 0..lanes {
+        let mut started = Vec::with_capacity(owner.plan.lanes);
+        for index in 0..owner.plan.lanes {
             let active = Arc::new(AtomicBool::new(false));
             started.push(active.clone());
-            let transport = owner.transport.clone();
+            let transport = owner.plan.transport.clone();
             let id = owner.id.clone();
             let state = state_tx.clone();
             let mut health = owner.state.clone();
@@ -269,7 +317,8 @@ impl Upload {
             self.health()?;
             let response = tokio::time::timeout_at(
                 deadline,
-                self.control
+                self.plan
+                    .control
                     .json::<Count>(Method::POST, Route::UploadCheckpoint, &[("id", &self.id)]),
             )
             .await;
@@ -314,6 +363,7 @@ impl Upload {
                 result?;
             }
             let mut response = self
+                .plan
                 .control
                 .receive(
                     Method::DELETE,
@@ -552,7 +602,7 @@ async fn progress_feed(
         };
         match read.await {
             Ok(()) => return Ok(()),
-            Err(error) if error.is::<crate::net::AuthRequired>() => return Err(error),
+            Err(error) if crate::failure::permanent(error.as_ref()) => return Err(error),
             Err(_) => {}
         }
         // Reattach only the receiver's control feed. Payload lanes remain WT.
@@ -793,8 +843,14 @@ mod tests {
         let (stop_lanes, _) = watch::channel(false);
         let (stop_all, _) = watch::channel(false);
         let upload = Upload {
-            transport: transport.clone(),
-            control: transport,
+            plan: Plan {
+                transport: transport.clone(),
+                control: transport,
+                lanes: 1,
+                http: None,
+                cancel: watch::channel(false).1,
+                replaced: Arc::default(),
+            },
             id: "test-session".into(),
             state,
             stop_lanes,
@@ -876,7 +932,7 @@ mod tests {
         let (_stop, cancel) = watch::channel(false);
         let upload = tokio::time::timeout(
             Duration::from_secs(5),
-            Upload::start(transport, 2, Duration::ZERO, OPERATION_LIMIT, cancel),
+            Upload::start(transport, 2, Duration::ZERO, OPERATION_LIMIT, Arc::default(), cancel),
         )
         .await??;
         armed.store(true, Ordering::SeqCst);
@@ -898,7 +954,7 @@ mod tests {
         let requests = Requests::default();
         let (transport, server) = receiver(1, Default::default(), requests.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(transport, 1, Duration::ZERO, OPERATION_LIMIT, cancel).await;
+        let upload = Upload::start(transport, 1, Duration::ZERO, OPERATION_LIMIT, Arc::default(), cancel).await;
         server.abort();
         drop(upload?);
         let mints = times(&requests, "/upload/session");
@@ -923,7 +979,15 @@ mod tests {
         let requests = Requests::default();
         let (transport, server) = receiver(0, Default::default(), requests.clone()).await?;
         let (_stop, cancel) = watch::channel(false);
-        let upload = Upload::start(transport, 1, Duration::ZERO, Duration::from_secs(300), cancel).await?;
+        let upload = Upload::start(
+            transport,
+            1,
+            Duration::ZERO,
+            Duration::from_secs(300),
+            Arc::default(),
+            cancel,
+        )
+        .await?;
         tokio::time::sleep(Duration::from_secs(200)).await;
         drop(upload);
         server.abort();

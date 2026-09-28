@@ -14,7 +14,10 @@ use graphite_meter_core::{
     discovery::{LatencyTarget, LatencyTransport, Probe, Protocol, ThroughputTarget, ThroughputTransport},
 };
 use http::Method;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 use tokio::{sync::watch, time::Instant};
 
 #[cfg(test)]
@@ -29,6 +32,8 @@ struct PreparedServer {
     http: Option<Arc<Transport>>,
     latency: Option<LatencyTarget>,
     idle_rtt: Duration,
+    /// Go's replacedUpload (upload.go:23-31): the run's one replacement upload receiver here.
+    replaced_upload: Arc<AtomicBool>,
 }
 
 pub struct PreparedRun {
@@ -266,6 +271,7 @@ async fn prepare_server(
         http: transport,
         latency,
         idle_rtt,
+        replaced_upload: Arc::default(),
     })
 }
 

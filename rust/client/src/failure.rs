@@ -51,18 +51,21 @@ fn causes<'a>(
     })
 }
 
+/// Whether the server's answer behind the error refused the upload id with `refusal`.
+pub(crate) fn refused(error: &(dyn std::error::Error + 'static), refusal: UploadRefusal) -> bool {
+    causes(error).any(|cause| {
+        cause
+            .downcast_ref::<HttpFailure>()
+            .is_some_and(|http| http.refusal == Some(refusal))
+    })
+}
+
 /// Go's permanent (transfer.go:65-68): a sign-in, or a refusal no retry answers, which
 /// uploadRefusal makes of `invalid` and `ownerMismatch` (failure.go:56-60).
 pub(crate) fn permanent(error: &(dyn std::error::Error + 'static)) -> bool {
-    causes(error).any(|cause| {
-        cause.is::<crate::net::AuthRequired>()
-            || cause.downcast_ref::<HttpFailure>().is_some_and(|http| {
-                matches!(
-                    http.refusal,
-                    Some(UploadRefusal::Invalid | UploadRefusal::OwnerMismatch)
-                )
-            })
-    })
+    causes(error).any(|cause| cause.is::<crate::net::AuthRequired>())
+        || refused(error, UploadRefusal::Invalid)
+        || refused(error, UploadRefusal::OwnerMismatch)
 }
 
 /// A lane retries what Go's persist retries (transfer.go:84-86): all but a permanent error, its

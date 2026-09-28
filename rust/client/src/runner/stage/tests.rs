@@ -41,6 +41,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
     // The receiver's count as its progress feed reports it.
     let progress = Arc::new(AtomicU64::new(1));
     let finalized = Arc::new(AtomicBool::new(false));
+    let mints = Arc::new(AtomicU64::new(0));
     // Tokio's clock, so a receiver on paused time counts the stage's time.
     let receiver_clock = Instant::now();
     let login_url = format!("{origin}/login");
@@ -57,6 +58,7 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                     let checkpoints = checkpoints.clone();
                     let progress = progress.clone();
                     let finalized = finalized.clone();
+                    let mints = mints.clone();
                     let login_url = login_url.clone();
                     clients.spawn(async move {
                         let Ok(mut stream) = acceptor.accept(stream).await else { return; };
@@ -112,10 +114,12 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                         }
                         if request.starts_with(b"POST /upload/session") {
                             finalized.store(false, Ordering::SeqCst);
-                            let body = br#"{"uploadId":"test-session"}"#;
+                            // Mode 20 forgets the upload id until the next mint, mode 21 for good.
+                            let _ = flag.compare_exchange(20, 0, Ordering::SeqCst, Ordering::SeqCst);
+                            let body = format!(r#"{{"uploadId":"test-session-{}"}}"#, mints.fetch_add(1, Ordering::SeqCst));
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
                             let _ = stream.write_all(header.as_bytes()).await;
-                            let _ = stream.write_all(body).await;
+                            let _ = stream.write_all(body.as_bytes()).await;
                             return;
                         }
                         if request.starts_with(b"GET /upload/progress") {
@@ -143,16 +147,21 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             let mut refused = false;
                             // Paced like the downloads, so paused time can pass while lanes upload.
                             while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {
-                                if !refused && flag.load(Ordering::SeqCst) == 15 {
+                                let refusal = match flag.load(Ordering::SeqCst) {
+                                    15 => "403 Forbidden\r\nX-Graphite-Upload-Refusal: ownerMismatch",
+                                    20 | 21 => "400 Bad Request\r\nX-Graphite-Upload-Refusal: invalid",
+                                    _ => "",
+                                };
+                                if !refused && !refusal.is_empty() {
                                     refused = true;
-                                    let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nX-Graphite-Upload-Refusal: ownerMismatch\r\nContent-Length: 0\r\n\r\n").await;
+                                    let _ = stream.write_all(format!("HTTP/1.1 {refusal}\r\nContent-Length: 0\r\n\r\n").as_bytes()).await;
                                 }
                                 tokio::time::sleep(Duration::from_millis(5)).await;
                             }
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15 | 17 | 19 | 20 | 21) {
                             if mode == 17 {
                                 tokio::time::sleep(Duration::from_millis(100)).await;
                             }
@@ -290,6 +299,7 @@ async fn prepared_download(id: &str, origin: &str, http: &Http) -> Result<Prepar
         )),
         latency: None,
         idle_rtt: Duration::ZERO,
+        replaced_upload: Arc::default(),
     })
 }
 
@@ -835,6 +845,77 @@ async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Resu
         )
     );
     assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
+    Ok(())
+}
+
+/// A 3 s upload stage whose receiver forgets its upload id 1 s into the window, in fixture mode
+/// `forget`: 20 until the next mint, 21 for good. Each side of the loss holds evidence enough.
+async fn forgetful_receiver(forget: u8) -> Result<(Result<Vec<String>, Error>, Snapshot), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (origin, mode, peer) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![prepared_download("peer", &origin, &http).await?];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_secs(3),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    let forget_id = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        mode.store(forget, Ordering::SeqCst);
+    };
+    let mut ledger = RunLedger::new();
+    let (result, ()) = tokio::join!(
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled, &mut ledger),
+        forget_id
+    );
+    peer.abort();
+    heartbeat.abort();
+    let snapshot = observed.borrow().clone();
+    Ok((result, snapshot))
+}
+
+/// As Go's measureUpload (upload.go:23-31), a receiver that forgot its upload id, as a restarted
+/// server does, is replaced; the new id resumes the aggregate's evidence.
+#[tokio::test(start_paused = true)]
+async fn a_receiver_that_forgets_its_upload_is_replaced() -> Result<(), Error> {
+    let (result, snapshot) = forgetful_receiver(20).await?;
+    assert!(snapshot.failures.is_empty(), "{:?}", snapshot.failures);
+    assert!(result?.is_empty());
+    let resumed = graphite_meter_core::measurement::IntervalReason::EvidenceResumed;
+    let intervals = &snapshot.intervals;
+    assert!(
+        intervals.iter().any(|interval| interval.reason == resumed),
+        "{intervals:?}"
+    );
+    assert!(snapshot.results[0].up_bps().is_some());
+    Ok(())
+}
+
+/// One replacement per server and run: forgotten again, the server leaves on the refusal.
+#[tokio::test(start_paused = true)]
+async fn a_receiver_forgotten_twice_takes_its_server_out() -> Result<(), Error> {
+    let (result, snapshot) = forgetful_receiver(21).await?;
+    assert!(result.is_err());
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.scope, failure.reason),
+        (
+            FailureScope::Throughput,
+            graphite_meter_core::failure::FailureReason::ProtocolError
+        )
+    );
     Ok(())
 }
 
