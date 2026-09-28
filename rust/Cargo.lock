@@ -528,6 +528,7 @@ name = "graphite-meter-core"
 version = "0.8.6"
 dependencies = [
  "base64",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

@@ -15,3 +15,8 @@ sha2 = "0.11.0"
 socket2 = "0.6.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# quic-go's forced UDP buffer sizes; crossterm and the server already link rustix.
+# Its socket options need the timespec module, which "time" enables.
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.5", default-features = false, features = ["net", "std", "time"] }

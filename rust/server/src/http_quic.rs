@@ -54,7 +54,10 @@ impl HttpServer {
         tls: Arc<rustls::ServerConfig>,
         address: SocketAddr,
     ) -> Result<QuicEndpoint, ConfigError> {
-        let socket = graphite_meter_core::socket::udp_socket(address)?;
+        let (socket, warning) = graphite_meter_core::socket::udp_socket(address)?;
+        if let Some(warning) = warning {
+            crate::log!("{warning}");
+        }
         let socket_buffers = socket2::SockRef::from(&socket);
         let kernel_bytes = socket_buffers
             .recv_buffer_size()?
@@ -766,7 +769,11 @@ mod tests {
         let receiver = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let runtime = quinn::default_runtime().unwrap();
         let socket = runtime
-            .wrap_udp_socket(graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap()).unwrap())
+            .wrap_udp_socket(
+                graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse().unwrap())
+                    .unwrap()
+                    .0,
+            )
             .unwrap();
         let memory = MemoryBudget::new(64 * 1024);
         let socket = BudgetedSocket {

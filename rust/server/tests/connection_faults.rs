@@ -318,7 +318,7 @@ fn quic_client(tls: &Tls, reliable_reset: bool) -> Result<quinn::Endpoint, TestE
     let endpoint = quinn::Endpoint::new(
         endpoint_config,
         None,
-        graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?,
+        graphite_meter_core::socket::udp_socket("127.0.0.1:0".parse()?)?.0,
         quinn::default_runtime().unwrap(),
     )?;
     endpoint.set_default_client_config(quic_client_config(tls)?);

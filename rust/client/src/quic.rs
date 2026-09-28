@@ -68,10 +68,14 @@ impl Connection {
         let mut last_error: Option<Error> = None;
         for address in graphite_meter_net::resolve(&origin.host, origin.port).await? {
             let bind: SocketAddr = if address.is_ipv6() { "[::]:0" } else { "0.0.0.0:0" }.parse()?;
+            let (socket, warning) = graphite_meter_core::socket::udp_socket(bind)?;
+            if let Some(warning) = warning {
+                eprintln!("{warning}");
+            }
             let endpoint = Endpoint(quinn::Endpoint::new(
                 quinn::EndpointConfig::default(),
                 None,
-                graphite_meter_core::socket::udp_socket(bind)?,
+                socket,
                 quinn::default_runtime().ok_or("no async runtime for QUIC")?,
             )?);
             let connecting = endpoint.0.connect_with(config.clone(), address, &origin.host)?;
