@@ -58,7 +58,7 @@ All colours are OKLCH `light-dark()` pairs, so a theme switch changes only `colo
 | Floating | `--sheet`, `--surface-1`, `--surface-2`                                          | Sheets are `--sheet` (frosted); their grouped lists are `--surface-1` plates; controls use `--surface-2`.     |
 | Washes   | `--track`, `--hover-wash`, `--selected-wash`                                     | Translucent ink, so they read on any layer.                                                                   |
 | Text     | `--text`, `--text-muted`, `--text-soft`                                          | ≥ 4.5:1 on every layer in both themes. `--text-soft` is the floor for any text.                               |
-| Edges    | `--border-subtle`, `--border`, `--border-strong`, `--field-edge`                 | Hairlines for structure; a field's identifying edge uses `--field-edge` (3:1).                                |
+| Edges    | `--border-subtle`, `--border`, `--border-strong`, `--field-edge`, `--check-edge` | Hairlines for structure; a field's identifying edge uses `--field-edge` (3:1).                                |
 | Ink      | `--brand`, `--brand-strong`, `--brand-soft`                                      | Graphite: near-white in dark, near-black in light. The run button, checked marks, switches, selection, focus. |
 | Stages   | `--phase-latency`, `--phase-download`, `--phase-upload`, `--phase-bidirectional` | Teal, blue, amber, magenta: four families a quarter turn apart.                                               |
 | Status   | `--ok`, `--warn`, `--err`, each with `-soft`                                     | Only for states (failed, reachable, stale), never for how good a value is.                                    |
@@ -192,8 +192,11 @@ hue, never by a boxed icon.
 - **Duration** (`DurationStrip`): presets over a bar of the enabled stages, each segment as wide as its time but never
   narrower than its words, with the time and name under it; Custom adds a − time + stepper (`TimeStepper`) per stage
   and for warmup. Steps grow with the time (0.5 s, 1 s, 10 s, 1 min, 5 min) and land on their grid; a click edits the
-  time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`); the servers' stage limit bounds it.
-- **Switch**: an empty track when off, an ink track with an inverse knob when on. **Check**: 18 px, ink when checked.
+  time as text (`90`, `2h`, `1 h 30 min`, `1:30:00`), which rounds to the time shown, and Escape drops the edit. The
+  field takes the keyboard like a spin button; − and + serve pointers and stay put at a limit. The servers' stage
+  limit bounds every time, and its notice names each stage over it.
+- **Switch**: a plate row with the link row's wash and ring; off is an empty track with the check box's edge
+  (`--check-edge`), on an ink track with an inverse knob. **Check**: 18 px, ink when checked.
 - **History**: rows show the time with the server and recency, then per column a value over a note: added latency
   under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the
   latency card, then each server's facts. From 821 px it sits beside the list, and the hairline between them is a
@@ -214,7 +217,7 @@ hue, never by a boxed icon.
 | Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
 | Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, filled bead; off: edge; running: hue wash |
 | `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |
-| Switch                   | 22 × 38        | full               | row label       | on: ink track                                        |
+| Switch                   | 22 × 38        | full               | row label       | off: check edge; on: ink track                       |
 | Check, radio             | 18             | 4, full            | —               | ink fill or ring                                     |
 | `.inspect-card`, tooltip | content        | 8                  | 12 px / 1.4     | glass, `--elev-tooltip`                              |
 | Sheet, dialog            | content        | 12                 | panel title     | `--sheet`, frosted, `--elev-float`                   |

@@ -3,6 +3,7 @@
   import { fmtStageTime, parseDuration } from "../../format";
 
   interface Props {
+    /** What the time belongs to, as it reads mid-sentence: "Latency stage", "warmup". */
     label: string;
     ms: number;
     min: number;
@@ -35,13 +36,22 @@
     onChange(clamp(next));
   }
   // Typed times read as seconds unless they name a unit: 90, 2.5, 2h, 1 h 30 min, 1:30:00.
+  // They round to the time the stepper shows, and the limits apply last so a server's is never passed.
   function commit(event: Event) {
     const input = event.currentTarget as HTMLInputElement;
     const typed = parseDuration(input.value);
-    const next = typed === null ? ms : clamp(typed);
-    if (next === ms || !onChange(next)) input.value = text;
+    const next =
+      typed === null ? ms : clamp(parseDuration(fmtStageTime(typed))!);
+    input.value = fmtStageTime(next === ms || onChange(next) ? next : ms);
   }
   function onKey(event: KeyboardEvent) {
+    const input = event.currentTarget as HTMLInputElement;
+    // Escape drops a typed time; the sheet closes on the next one. A capture
+    // listener sits on the field itself, so this runs before the sheet's own.
+    if (event.key === "Escape" && input.value !== text) {
+      input.value = text;
+      event.preventDefault();
+    }
     const direction = { ArrowUp: 1, ArrowDown: -1 }[event.key] as
       1 | -1 | undefined;
     if (!direction) return;
@@ -50,12 +60,15 @@
   }
 </script>
 
-<span class="stepper" role="group" aria-label="{label} time">
+<!-- The field takes the keyboard, as a spin button does; − and + serve pointers and stay put at a limit. -->
+<span class="stepper">
   <button
     type="button"
     class="btn btn-icon btn-quiet"
-    aria-label="Shorter {label}"
-    disabled={disabled || ms <= min}
+    tabindex="-1"
+    aria-label="Shorten {label}"
+    aria-disabled={ms <= min}
+    {disabled}
     onclick={() => nudge(-1)}>−</button
   >
   <span class="field">
@@ -66,21 +79,24 @@
       spellcheck="false"
       value={text}
       {disabled}
-      aria-label="{label} time"
+      aria-label="{label[0].toUpperCase()}{label.slice(1)} time"
       aria-valuemin={min / 1000}
       aria-valuemax={max / 1000}
       aria-valuenow={ms / 1000}
       aria-valuetext={text}
+      aria-invalid={ms > max}
       onchange={commit}
-      onkeydown={onKey}
+      onkeydowncapture={onKey}
     />
     <span class="shown" aria-hidden="true"><Roll {text} rank={ms} /></span>
   </span>
   <button
     type="button"
     class="btn btn-icon btn-quiet"
-    aria-label="Longer {label}"
-    disabled={disabled || ms >= max}
+    tabindex="-1"
+    aria-label="Lengthen {label}"
+    aria-disabled={ms >= max}
+    {disabled}
     onclick={() => nudge(1)}>+</button
   >
 </span>
@@ -96,9 +112,16 @@
     border-radius: var(--r-chrome);
     background: var(--track);
   }
+  /* The stepper grows as a whole for touch, so its buttons add no hit border;
+     they sit in the track like segments, with concentric corners and an inset ring. */
   .stepper .btn {
+    --hit-pad: 0px;
     width: var(--control-h);
+    border-radius: calc(var(--r-chrome) - 2px);
     font: var(--w-normal) var(--type-lg) / 1 var(--font-sans);
+  }
+  .stepper .btn:focus-visible {
+    outline-offset: -2px;
   }
   .field {
     display: grid;
@@ -109,26 +132,22 @@
     align-self: center;
     text-align: center;
   }
-  /* The input sits on top to take clicks and typing; its own text shows only while it is edited. */
-  /* The shown time sizes the field; the input only fills it. */
+  /* The shown time sizes the field; the input only fills it, on top to take clicks and typing.
+     While edited it is an ordinary focused field; otherwise only the rolled time shows. */
   .field input {
     z-index: 1;
     width: 0;
     min-width: 100%;
     height: var(--control-h);
     padding: 0 var(--space-1);
-    border: 0;
     border-radius: calc(var(--r-chrome) - 2px);
-    background: none;
-    box-shadow: none;
-    color: transparent;
     caret-color: var(--text);
     text-align: center;
   }
-  .field input:focus-visible {
-    background: var(--surface-1);
-    box-shadow: inset 0 0 0 var(--hairline) var(--field-edge);
-    color: var(--text);
+  .field input:not(:focus-visible) {
+    border-color: transparent;
+    background: none;
+    color: transparent;
   }
   .field input:disabled {
     cursor: not-allowed;
