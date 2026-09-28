@@ -47,10 +47,7 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
         Some(Ok(upstream)) => {
             let tcp = tcp(&upstream.origin.host, upstream.origin.port_number()).await?;
             let stream: Box<dyn Stream> = if upstream.origin.scheme == "https" {
-                let tls = match &proxy.tls {
-                    Some(tls) => tls.clone(),
-                    None => proxy_tls().await?,
-                };
+                let tls = proxy_tls().await?;
                 Box::new(tls.connect(server_name(&upstream.origin.host)?, tcp).await?)
             } else {
                 Box::new(tcp)
@@ -214,7 +211,6 @@ pub struct Proxy {
     bypass: Vec<Bypass>,
     /// Running under CGI, where HTTP_PROXY fails every cleartext request.
     cgi: bool,
-    tls: Option<TlsConnector>,
 }
 
 /// A proxy variable this client cannot use; each request it would carry fails with it.
@@ -394,7 +390,6 @@ impl Proxy {
             https: upstream(https),
             bypass: no_proxy.split(',').filter_map(bypass).collect(),
             cgi: false,
-            tls: None,
         }
     }
 
@@ -535,9 +530,10 @@ fn unmapped(network: ipnet::IpNet) -> ipnet::IpNet {
 }
 
 /// Verified TLS to an HTTPS proxy, built once when the first connection needs it.
+static PROXY_TLS: tokio::sync::OnceCell<TlsConnector> = tokio::sync::OnceCell::const_new();
+
 async fn proxy_tls() -> io::Result<TlsConnector> {
-    static TLS: tokio::sync::OnceCell<TlsConnector> = tokio::sync::OnceCell::const_new();
-    let tls = TLS
+    let tls = PROXY_TLS
         .get_or_try_init(|| async {
             let config =
                 rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))

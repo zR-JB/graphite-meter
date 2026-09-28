@@ -485,6 +485,8 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
         .with_root_certificates(roots)
         .with_no_client_auth();
     let tls = TlsConnector::from(Arc::new(client));
+    // The HTTPS proxy's connector, which trusts this proxy's certificate; no other test needs it.
+    assert!(PROXY_TLS.set(tls.clone()).is_ok(), "an HTTPS proxy connector was built");
     for secure_proxy in [false, true] {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -521,8 +523,7 @@ async fn https_targets_verify_tls_inside_http_and_https_proxy_tunnels() {
                 .unwrap();
         });
         let scheme = if secure_proxy { "https" } else { "http" };
-        let mut proxy = Proxy::new("", &format!("{scheme}://user:secret@localhost:{port}"), "");
-        proxy.tls = Some(tls.clone());
+        let proxy = Proxy::new("", &format!("{scheme}://user:secret@localhost:{port}"), "");
         tokio::time::timeout(Duration::from_secs(5), async {
             let connection = connect(&proxy, &origin("https://localhost."), Some(&tls))
                 .await
