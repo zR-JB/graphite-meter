@@ -284,6 +284,13 @@ def check_repository(root: Path = ROOT) -> None:
             fail(f"{name} base images must be digest-pinned: {unpinned}")
         if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
             fail(f"{name} must not select a BuildKit frontend with # syntax=")
+        # Debian serves one version per package; exact versions install only from a fixed snapshot.
+        snapshot = re.search(r"https://snapshot\.debian\.org/archive/%s/\d{8}T\d{6}Z\\n", dockerfile)
+        if "apt-get update" in dockerfile and (not snapshot or dockerfile.index("apt-get update") < snapshot.start()):
+            fail(f"{name} must point apt at one snapshot.debian.org timestamp before apt-get update")
+        if unpinned := [package for packages in re.findall(r"apt-get install ([^&]*)", dockerfile)
+                        for package in packages.split() if package[0] not in "-\\" and "=" not in package]:
+            fail(f"{name} must install exact apt package versions: {unpinned}")
     check_actions(root)
     check_workflows(root)
     check_ci(root)
