@@ -329,8 +329,8 @@ async fn connect_ws(
         }
         request.headers_mut().insert(http::header::AUTHORIZATION, authorization);
     }
-    let mut tls = crate::tls::config(insecure)?;
-    tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+    // TLS 1.2 and 1.3 as for throughput and in Go; only QUIC requires 1.3.
+    let tls = crate::tls::tcp_config(insecure, &[b"http/1.1"])?;
     let tls = origin
         .starts_with("https://")
         .then(|| tokio_rustls::TlsConnector::from(Arc::new(tls)));
@@ -892,6 +892,44 @@ mod tests {
         }
         assert_eq!(unresolved, 4);
         peer.abort();
+        Ok(())
+    }
+
+    /// Latency over WSS takes the TLS 1.2 that throughput takes, as Go's WebSocket client does.
+    #[tokio::test]
+    async fn secure_websocket_latency_accepts_tls12_like_throughput() -> Result<(), Error> {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
+        let _ = crate::crypto::provider().install_default();
+        let (certificate, key) = crate::test_identity::generate_identity("localhost")?;
+        let tls = rustls::ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from_pem_slice(certificate.as_bytes())?],
+                PrivateKeyDer::from_pem_slice(key.as_bytes())?,
+            )?;
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(tls));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("https://{}", listener.local_addr()?);
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await?;
+            let stream = acceptor.accept(stream).await?;
+            echo(tokio_tungstenite::accept_async(stream).await?, Duration::ZERO).await;
+            Ok::<_, Error>(())
+        });
+        let (_stop, mut cancel) = watch::channel(Stop::Running);
+        let pong = tokio::time::timeout(Duration::from_secs(5), async {
+            let mut socket = connect_ws(&Http::new(true)?, &origin, true, &mut cancel)
+                .await?
+                .ok_or("latency channel cancelled")?;
+            socket.send(Message::Text(wire::encode_ping(7).into())).await?;
+            match socket.next().await.ok_or("latency channel closed")?? {
+                Message::Text(text) => Ok::<_, Error>(wire::decode_pong(&text)?.id),
+                other => Err(format!("unexpected {other:?}").into()),
+            }
+        })
+        .await;
+        peer.abort();
+        assert_eq!(pong??, 7);
         Ok(())
     }
 
