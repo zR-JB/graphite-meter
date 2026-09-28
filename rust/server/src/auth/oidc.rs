@@ -29,6 +29,10 @@ use tokio_rustls::TlsConnector;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_TRANSACTIONS: usize = 16384;
+/// Go bounds a callback's provider calls at 15 s.
+const CALLBACK_DEADLINE: Duration = Duration::from_secs(15);
+/// Concurrent token exchanges; a callback past them waits within its deadline.
+const MAX_EXCHANGES: usize = 8;
 
 #[derive(Deserialize)]
 struct Metadata {
@@ -143,7 +147,7 @@ impl Oidc {
             http: ProviderHttp::new()?,
             provider: OnceLock::new(),
             transactions: Mutex::new(HashMap::new()),
-            exchanges: Semaphore::new(8),
+            exchanges: Semaphore::new(MAX_EXCHANGES),
         })
     }
     pub fn name(&self) -> &str {
@@ -267,21 +271,26 @@ impl Oidc {
     }
 
     pub async fn complete(&self, tx: &Transaction, code: &str) -> Result<Identity, Reason> {
-        let _permit = self.exchanges.try_acquire().map_err(|_| Reason::TokenExchange)?;
+        let deadline = Instant::now() + CALLBACK_DEADLINE;
+        let _permit = within(deadline, Reason::TokenExchange, self.exchanges.acquire()).await?;
         let provider = &tx.provider;
-        let tokens = self
-            .exchange(provider, code, &tx.verifier)
-            .await
-            .map_err(|_| Reason::TokenExchange)?;
+        let tokens = within(
+            deadline,
+            Reason::TokenExchange,
+            self.exchange(provider, code, &tx.verifier),
+        )
+        .await?;
         let id_token = tokens
             .id_token
             .as_ref()
             .and_then(serde_json::Value::as_str)
             .ok_or(Reason::MissingIdToken)?;
-        let verified = provider
-            .verify(&self.http, id_token)
-            .await
-            .map_err(|_| Reason::IdTokenVerification)?;
+        let verified = within(
+            deadline,
+            Reason::IdTokenVerification,
+            provider.verify(&self.http, id_token),
+        )
+        .await?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| Reason::IdTokenVerification)?
@@ -301,10 +310,12 @@ impl Oidc {
             Reject::AccessTokenHash => Reason::AccessTokenHash,
             _ => Reason::IdTokenVerification,
         })?;
-        let info = self
-            .user_info(provider, &tokens.access_token)
-            .await
-            .map_err(|_| Reason::UserInfoOrSubject)?;
+        let info = within(
+            deadline,
+            Reason::UserInfoOrSubject,
+            self.user_info(provider, &tokens.access_token),
+        )
+        .await?;
         if info.get("sub").and_then(serde_json::Value::as_str) != Some(&claims.subject) {
             return Err(Reason::UserInfoOrSubject);
         }
@@ -430,6 +441,19 @@ struct UserInfo {
     groups: Vec<String>,
     name: Option<String>,
     preferred_username: Option<String>,
+}
+
+/// A step that fails or outlasts the callback's deadline refuses it with `reason`, as Go's context does.
+async fn within<T, E>(
+    deadline: Instant,
+    reason: Reason,
+    step: impl Future<Output = Result<T, E>>,
+) -> Result<T, Reason> {
+    tokio::time::timeout_at(deadline, step)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .ok_or(reason)
 }
 
 fn valid_url(url: &str) -> Result<(), ConfigError> {

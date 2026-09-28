@@ -284,6 +284,10 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
 
 impl ProviderDouble {
     async fn login(&self, claims: Claims) -> Result<Identity, Reason> {
+        let tx = self.begin(claims).await?;
+        self.oidc.complete(&tx, "valid-code").await
+    }
+    async fn begin(&self, claims: Claims) -> Result<Transaction, Reason> {
         self.oidc.retry_discovery().await;
         let started = self
             .oidc
@@ -301,7 +305,7 @@ impl ProviderDouble {
             .take(&fields["state"], &started.browser, Some(&self.issuer))
             .map_err(|(reason, _)| reason)?;
         assert_eq!(tx.challenge, "challenge");
-        self.oidc.complete(&tx, "valid-code").await
+        Ok(tx)
     }
     async fn stop(self) {
         self.stop.send(()).unwrap();
@@ -333,6 +337,46 @@ async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
             assert!(result.is_err(), "scenario {scenario} authenticated");
         }
     }
+    provider.stop().await;
+}
+
+#[tokio::test]
+async fn callbacks_past_the_concurrent_exchanges_wait_within_gos_deadline() {
+    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    let busy = provider
+        .oidc
+        .exchanges
+        .acquire_many(MAX_EXCHANGES as u32)
+        .await
+        .unwrap();
+    let tx = provider.begin(Claims::default()).await.unwrap();
+    let mut callback = Box::pin(provider.oidc.complete(&tx, "valid-code"));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), &mut callback)
+            .await
+            .is_err(),
+        "a callback past the concurrent exchanges was refused"
+    );
+    drop(busy);
+    assert_eq!(callback.await.unwrap().subject, "oidc:operator");
+
+    let busy = provider
+        .oidc
+        .exchanges
+        .acquire_many(MAX_EXCHANGES as u32)
+        .await
+        .unwrap();
+    let tx = provider.begin(Claims::default()).await.unwrap();
+    tokio::time::pause();
+    let waited = Instant::now();
+    assert!(matches!(
+        provider.oidc.complete(&tx, "valid-code").await,
+        Err(Reason::TokenExchange)
+    ));
+    // Tokio's timer rounds up to its next millisecond.
+    assert!((CALLBACK_DEADLINE..=CALLBACK_DEADLINE + Duration::from_millis(1)).contains(&waited.elapsed()));
+    tokio::time::resume();
+    drop(busy);
     provider.stop().await;
 }
 
