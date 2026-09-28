@@ -111,6 +111,25 @@ test("Escape closes the docked panel holding focus and never stops a running tes
   await expect(phase(page, "aborted")).toHaveCount(1);
 });
 
+test("a docked panel's edge steps 16 px from the keyboard, within its limits", async (page) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  await open(page);
+  const settings = await openSettings(page);
+  const handle = settings.getByRole("slider", {
+    name: /^Resize Settings panel/,
+  });
+  await handle.evaluate((el: HTMLElement) => el.focus());
+  for (const [key, width] of [
+    ["ArrowRight", "436"],
+    ["Home", "360"],
+    ["End", "720"],
+    ["Enter", "420"],
+  ] as const) {
+    await page.raw.press(key);
+    await expect(handle).toHaveAttribute("aria-valuenow", width);
+  }
+});
+
 test("Space and R run the test from page load; a focused control keeps Space", async (page) => {
   await open(page, undefined, {
     config: { duration: { ...baseConfig.duration, downloadMs: 20_000 } },

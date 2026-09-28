@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import type { IconName } from "../presentation/icons";
   import { onMount, tick, untrack } from "svelte";
+  import { resize } from "../actions/resize";
   import { tooltip } from "../actions/tooltip";
   import { wallNow } from "../presentation/motion.svelte";
   import { canFocus, hasFocus, activeModal } from "../actions/focus";
@@ -35,7 +36,10 @@
     type HistorySort,
   } from "../history/sort";
   import { HISTORY_LIMIT, type HistoryRecord } from "../history/types";
-  import type { HistoryColumn } from "../state/persistence";
+  import {
+    DEFAULT_HISTORY_SPLIT,
+    type HistoryColumn,
+  } from "../state/persistence";
   import { store } from "../state/store.svelte";
   import { bidirectionalResultPresentation } from "../presentation/bidirectionalResult";
   import {
@@ -75,6 +79,19 @@
   let workspace = $state<HTMLElement>();
   let list = $state<HTMLElement>();
   let detailRegion = $state<HTMLElement>();
+  // Beside a result the list keeps its share of the width; these mirror the CSS clamp for the handle.
+  const MIN_LIST_WIDTH = 360;
+  const MIN_DETAIL_WIDTH = 460;
+  let bodyWidth = $state(0);
+  const maxListWidth = $derived(bodyWidth - MIN_DETAIL_WIDTH);
+  const listWidth = $derived(
+    Math.round(
+      Math.max(
+        MIN_LIST_WIDTH,
+        Math.min(maxListWidth, store.historySplit * bodyWidth),
+      ),
+    ),
+  );
   let previousSelectedId: string | null = null;
   let confirm = $state<
     { kind: "delete"; id: string } | { kind: "clear" } | null
@@ -566,7 +583,12 @@
       {/if}
     </div>
   {:else}
-    <div class="workspace-body" class:has-detail={selectedId !== null}>
+    <div
+      class="workspace-body"
+      class:has-detail={selectedId !== null}
+      style:--split={store.historySplit}
+      bind:clientWidth={bodyWidth}
+    >
       <div class="history-list" bind:this={list}>
         <div class="history-table" style:--metric-columns={columns.length}>
           <div class="column-head page-fill" role="group" aria-label="Sort by">
@@ -698,6 +720,27 @@
           </div>
         {/if}
       </div>
+      {#if selectedId !== null}
+        <div
+          class="resize-handle"
+          role="slider"
+          aria-orientation="horizontal"
+          aria-label="Resize results list (arrow keys; Enter to reset)"
+          aria-valuemin={MIN_LIST_WIDTH}
+          aria-valuemax={maxListWidth}
+          aria-valuenow={listWidth}
+          aria-valuetext={`${listWidth} pixels wide`}
+          tabindex="0"
+          {@attach resize({
+            side: "left",
+            width: () => listWidth,
+            min: MIN_LIST_WIDTH,
+            max: () => maxListWidth,
+            set: (px) => store.prefer({ historySplit: px / bodyWidth }),
+            reset: () => store.prefer({ historySplit: DEFAULT_HISTORY_SPLIT }),
+          })}
+        ></div>
+      {/if}
 
       {#snippet unavailable(malformed: boolean)}
         <div class="detail-pane empty-state" role="status">
@@ -794,6 +837,7 @@
     justify-content: space-between;
   }
   .workspace-body {
+    position: relative;
     display: grid;
     flex: 1 1 auto;
     grid-template: minmax(0, 1fr) / minmax(0, 1fr);
@@ -816,9 +860,21 @@
   .has-detail .history-list {
     visibility: hidden;
   }
+  /* On the hairline, reaching into the detail's margin so the list keeps its scrollbar. */
+  .resize-handle {
+    display: none;
+    grid-area: 1 / 2;
+    left: calc(var(--hairline) - 2px);
+  }
+  .resize-handle::after {
+    left: 2px;
+  }
   @container history (min-width: 821px) {
+    /* The list keeps its share of the width; at any width both panes keep their minimum. */
     .has-detail {
-      grid-template-columns: minmax(360px, 2fr) minmax(460px, 3fr);
+      grid-template-columns:
+        clamp(360px, calc(var(--split) * 100%), calc(100% - 460px))
+        minmax(0, 1fr);
     }
     .has-detail .history-list {
       visibility: visible;
@@ -826,6 +882,9 @@
     .detail-pane {
       grid-area: 1 / 2;
       border-left: var(--hairline) solid var(--border);
+    }
+    .resize-handle {
+      display: block;
     }
   }
   .history-list {
