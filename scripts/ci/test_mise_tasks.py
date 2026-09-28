@@ -34,11 +34,13 @@ class MiseTaskTests(unittest.TestCase):
             source = re.sub(r"(?ms)^\[(?:tools|tool_config)\]\n.*?(?=^\[|\Z)", "", source)
             (root / "mise.toml").write_text(source)
             for name in ("client/dist", "go/internal/static", "bin", "config", "state", "data",
-                         "cache", "scripts"):
+                         "cache", "scripts", "rust"):
                 (root / name).mkdir(parents=True)
             shutil.copy2(ROOT / "scripts/build-version.sh", root / "scripts")
-            for name in ("bun", "go", "python3"):
-                (root / "bin" / name).write_text(f"#!{sys.executable}\n{SPY % (KEYS,)}")
+            for name in ("bun", "go", "python3", "cargo"):
+                # Each tool also prints FAKE_OUTPUT, as a test would on its standard error.
+                (root / "bin" / name).write_text(
+                    f"#!{sys.executable}\n{SPY % (KEYS,)}print(os.environ.get('FAKE_OUTPUT', ''), file=sys.stderr)\n")
                 (root / "bin" / name).chmod(0o755)
             trace, canary = root / "trace.jsonl", root / "injected"
             env = {key: value for key, value in os.environ.items()
@@ -66,6 +68,15 @@ class MiseTaskTests(unittest.TestCase):
             self.assertEqual(built["env"], {"VERSION": payload, "GM_CLIENT_REVISION": payload})
             run("goclient-build", VERSION=payload, status=2)
             self.assertFalse(canary.exists())
+
+            # The delayed-download gate runs exactly its one ignored test, fails when that matches
+            # nothing, and fails when the test passes without measuring.
+            gate = run("rust-delayed-downloads")["args"]
+            for option in ("--run-ignored only", "--no-tests=fail",
+                           "-E test(=quic_downloads_exceed_the_old_window_limit)"):
+                self.assertIn(option, " ".join(gate))
+            run("rust-delayed-downloads", status=1,
+                FAKE_OUTPUT="inconclusive: webtransport=true, loopback below 671 Mbit/s")
 
 
 if __name__ == "__main__":

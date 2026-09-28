@@ -50,7 +50,7 @@ ORDERED = {
     ),
     # CI builds, stages and verifies the Rust exports as a release request and the release do.
     "workflows/ci.yml": (
-        "run: mise run rust-check\n", "run: mise run rust-check-targets\n",
+        "run: mise run rust-check\n", "run: mise run rust-check-targets\n", "run: mise run rust-delayed-downloads\n",
         "--target tui-artifacts", "--target server-artifacts",
         "python3 -m scripts.ci.release stage-rust\n", "python3 -m scripts.ci.release check-rust\n",
     ),

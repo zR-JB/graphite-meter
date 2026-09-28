@@ -243,9 +243,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {persist-credentials: false}
-      - name: Set up Go, Python and Rust interoperability tools
+      - name: Set up Go, Python, Rust and cargo-nextest interoperability tools
         uses: ./.github/actions/setup-project
-        with: {go: 'true', rust: 'true'}
+        with: {go: 'true', rust: 'true', cargo-nextest: 'true'}
       - name: Rust server with unchanged Go clients
         run: python3 rust/tests/server_interop.py
       - name: Rust client with unchanged Go server
@@ -253,8 +253,7 @@ jobs:
       - name: Unchanged and current-only Go reliable-reset interoperability
         run: python3 rust/tests/interop.py
       - name: Delayed HTTP/3 and WebTransport downloads
-        working-directory: rust
-        run: cargo test --locked --profile ci --workspace --test connection_faults quic_downloads_exceed_the_old_window_limit -- --ignored --nocapture
+        run: mise run rust-delayed-downloads
       - name: Keep only dependency builds in a new cache
         working-directory: rust
         run: cargo clean -p graphite-meter-server -p graphite-meter-client -p graphite-meter-core -p graphite-meter-net -p graphite-meter-http3

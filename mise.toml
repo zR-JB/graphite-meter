@@ -458,6 +458,22 @@ run = [
   "cargo nextest run --workspace --all-targets --locked",
 ]
 
+[tasks.rust-delayed-downloads]
+shell = "bash -e -o pipefail -c"
+description = "Gate delayed-link HTTP/3 and WebTransport download throughput; a run that measures nothing fails"
+dir = "rust"
+run = '''
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+cargo nextest run --locked --cargo-profile ci --workspace --test connection_faults --run-ignored only \
+  --no-tests=fail --no-capture -E 'test(=quic_downloads_exceed_the_old_window_limit)' 2>&1 | tee "$log"
+# The test passes without measuring when loopback cannot reach its baseline; that proves nothing.
+if grep -q '^inconclusive:' "$log"; then
+  echo "delayed downloads were not measured: loopback was below the baseline" >&2
+  exit 1
+fi
+'''
+
 [tasks.rust-check-targets]
 description = "Check the Windows and musl TUIs, the HTTP/3 codec without I/O, and build the fuzz targets (needs mingw-w64)"
 dir = "rust"
