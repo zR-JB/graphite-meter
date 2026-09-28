@@ -205,9 +205,11 @@ fn cadence(value: &str) -> Result<Duration, &'static str> {
     let name = value.trim();
     match CADENCES.iter().find(|(key, ..)| key.eq_ignore_ascii_case(name)) {
         Some((.., interval)) => Ok(*interval),
-        // A negative cadence reads as 1 ns, which validation refuses as Go does.
+        // Zero means reply-driven here but is a fixed cadence in Go, so a zero or negative duration reads as
+        // 1 ns, which validation refuses as Go does.
         None => Ok(duration(name)
             .map_err(|_| "use reply-driven, fast, medium, slow, or a duration such as 400ms")?
+            .filter(|interval| !interval.is_zero())
             .unwrap_or(Duration::from_nanos(1))),
     }
 }

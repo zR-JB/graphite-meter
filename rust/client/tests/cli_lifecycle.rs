@@ -396,6 +396,12 @@ async fn invalid_settings_are_refused_in_go_order_and_words() -> Result<(), Erro
             &["-loaded-ping", "40ms", "-streams", "15"],
             "latency cadence must be reply-driven or at least 80ms",
         ),
+        // Zero is a fixed cadence in Go, not reply-driven.
+        (&["-ping", "0"], "latency cadence must be reply-driven or at least 80ms"),
+        (
+            &["--loaded-ping=0s"],
+            "latency cadence must be reply-driven or at least 80ms",
+        ),
         (
             &["-streams", "15", "-auto-streams", "0"],
             "forced streams must be from 1 to 14 per server and direction, or 0 for automatic",
