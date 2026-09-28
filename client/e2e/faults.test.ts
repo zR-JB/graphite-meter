@@ -95,7 +95,7 @@ const faults: Fault[] = [
 async function editDownload(page: Page, value: number) {
   await page.evaluate((value) => {
     const input = document.querySelector<HTMLInputElement>(
-      'input[aria-label="Download in seconds"]',
+      'input[aria-label="Download time"]',
     )!;
     input.value = String(value / 1000);
     input.dispatchEvent(new Event("change", { bubbles: true }));

@@ -19,7 +19,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await open(page);
   const settings = await openSettings(page);
   await settings.getByRole("button", { name: "custom", exact: true }).click();
-  const warmup = settings.getByRole("textbox", { name: "Warmup in seconds" });
+  const warmup = settings.getByRole("spinbutton", { name: "Warmup time" });
   await warmup.fill("1.2");
   await settings.getByRole("button", { name: "Bytes", exact: true }).click();
   const wireLabel = "Show estimated wire rate";
@@ -35,7 +35,7 @@ test("reset settings confirms, preserves on cancel and restores defaults", async
   await keep.click();
   await expect(dialog).toHaveCount(0);
   await expect(reset).toBeFocused();
-  await expect(warmup).toHaveValue("1.2");
+  await expect(warmup).toHaveValue("1.2 s");
 
   await reset.click();
   await dialog.getByRole("button", { name: "Reset settings" }).click();
