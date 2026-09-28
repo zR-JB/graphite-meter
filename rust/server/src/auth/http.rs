@@ -208,9 +208,7 @@ impl Service {
             .render(),
         );
         if let Some(provider) = provider {
-            result
-                .headers_mut()
-                .extend(pages::security_headers(Some(&provider.origin)).expect("validated provider origin"));
+            result.headers_mut().extend(provider.page_headers.clone());
         }
         set_cookie(
             &mut result,
@@ -305,9 +303,7 @@ impl Service {
         match oidc.start(address, stored.to_owned(), prior).await {
             Ok(started) => {
                 let mut result = redirect(&started.url);
-                result.headers_mut().extend(
-                    pages::security_headers(Some(&started.provider.origin)).expect("validated provider origin"),
-                );
+                result.headers_mut().extend(started.provider.page_headers.clone());
                 result.headers_mut().append(
                     header::SET_COOKIE,
                     HeaderValue::from_str(&format!(
@@ -1019,6 +1015,51 @@ mod tests {
         while let Some(result) = logins.join_next().await {
             result.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn sign_in_pages_render_when_the_provider_names_no_usable_authorization_origin() {
+        let mut service = Service::new(
+            &AuthConfig {
+                mode: AuthMode::Oidc,
+                public_url: "https://meter.example".into(),
+                oidc_issuer: "https://identity.example".into(),
+                oidc_client_id: "meter".into(),
+                oidc_client_secret: "secret".into(),
+                oidc_allowed_groups: vec!["operators".into()],
+                ..AuthConfig::default()
+            },
+            vec![],
+            None,
+        )
+        .unwrap();
+        // No browser can post a sign-in form to port 0, so no page may name it in its form-action.
+        service.oidc = Some(super::super::oidc::tests::discovered(
+            "https://identity.example:0/authorize",
+            true,
+        ));
+        let page = call(&service, Method::GET, "/login", &[], String::new()).await;
+        assert_eq!(page.status(), StatusCode::OK);
+        let policy = page.headers()["content-security-policy"].to_str().unwrap();
+        assert!(policy.contains("form-action 'self';"), "{policy}");
+        let nonce = set_cookie_value(&page, "__Host-gm_login");
+        let started = call(
+            &service,
+            Method::POST,
+            "/auth/oidc/start",
+            &[
+                ("cookie", &format!("__Host-gm_login={nonce}")),
+                ("origin", "https://meter.example"),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ],
+            encoded(&[("csrf", &nonce)]),
+        )
+        .await;
+        assert_eq!(
+            started.headers()[header::LOCATION],
+            "/login?error=provider",
+            "a sign-in started with no usable provider"
+        );
     }
 
     #[tokio::test]

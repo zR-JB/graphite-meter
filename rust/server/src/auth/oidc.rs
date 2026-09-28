@@ -9,7 +9,7 @@ use crate::config::{AuthConfig, ConfigError};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use graphite_meter_core::origin::split_url;
 use graphite_meter_net::{Proxy, connect};
-use http::{HeaderValue, Request, Response, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Request, Response, StatusCode, header};
 use hyper::body::Body as _;
 use hyper_util::rt::TokioIo;
 use rustls_platform_verifier::BuilderVerifierExt;
@@ -55,7 +55,8 @@ pub(super) struct Provider {
     algorithms: Vec<Alg>,
     keys: AsyncMutex<Arc<Jwks>>,
     issuer_parameter: bool,
-    pub origin: String,
+    /// Sign-in page headers whose form-action admits the authorization origin.
+    pub page_headers: HeaderMap,
 }
 impl Provider {
     fn new(metadata: Metadata, issuer: &str) -> Result<Self, ConfigError> {
@@ -70,8 +71,12 @@ impl Provider {
         ] {
             valid_url(endpoint)?;
         }
+        // Checked here rather than on every sign-in page: a browser can post only to a canonical origin.
+        let origin = split_url(&metadata.authorization_endpoint)?.0.key();
+        let page_headers = super::pages::security_headers(Some(&origin))
+            .map_err(|_| format!("OIDC authorization endpoint origin {origin:?} is not a canonical HTTPS origin"))?;
         Ok(Self {
-            origin: split_url(&metadata.authorization_endpoint)?.0.key(),
+            page_headers,
             algorithms: metadata
                 .id_token_signing_alg_values_supported
                 .as_deref()
@@ -542,6 +547,13 @@ pub(super) mod tests {
     }
 
     fn ready_with(issuer_parameter: bool) -> Oidc {
+        let oidc = discovered("https://identity.example/authorize", issuer_parameter);
+        assert!(oidc.ready().is_some());
+        oidc
+    }
+
+    /// A client that discovered metadata naming `authorization_endpoint`, ready if discovery accepted it.
+    pub(in crate::auth) fn discovered(authorization_endpoint: &str, issuer_parameter: bool) -> Oidc {
         let oidc = Oidc::new(
             &AuthConfig {
                 mode: AuthMode::Oidc,
@@ -557,7 +569,7 @@ pub(super) mod tests {
         .unwrap();
         let metadata = serde_json::from_value(serde_json::json!({
             "issuer": "https://identity.example",
-            "authorization_endpoint": "https://identity.example/authorize",
+            "authorization_endpoint": authorization_endpoint,
             "token_endpoint": "https://identity.example/token",
             "userinfo_endpoint": "https://identity.example/userinfo",
             "jwks_uri": "https://identity.example/jwks",
@@ -565,8 +577,9 @@ pub(super) mod tests {
             "authorization_response_iss_parameter_supported": issuer_parameter
         }))
         .unwrap();
-        let provider = Provider::new(metadata, "https://identity.example").unwrap();
-        assert!(oidc.provider.set(Arc::new(provider)).is_ok());
+        if let Ok(provider) = Provider::new(metadata, "https://identity.example") {
+            assert!(oidc.provider.set(Arc::new(provider)).is_ok());
+        }
         oidc
     }
 

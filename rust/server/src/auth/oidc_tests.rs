@@ -36,6 +36,7 @@ struct Twist {
     header: Option<Value>,
     signed_userinfo: Option<Value>,
     name: Option<String>,
+    authorization_endpoint: Option<String>,
 }
 
 struct Keys {
@@ -220,7 +221,7 @@ async fn provider_double(host: &str, algorithms: &[&str], proxy: Proxy) -> Provi
                     let twist = twist.lock().unwrap();
                     match path {
                         "/.well-known/openid-configuration" if twist.unavailable => ("application/json", "{}".into()),
-                        "/.well-known/openid-configuration" => ("application/json", json!({"issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"), "token_endpoint": format!("{issuer}/token"), "userinfo_endpoint": format!("{issuer}/userinfo"), "jwks_uri": format!("{issuer}/jwks"), "response_types_supported": ["code"], "subject_types_supported": ["public"], "id_token_signing_alg_values_supported": algorithms, "authorization_response_iss_parameter_supported": true}).to_string()),
+                        "/.well-known/openid-configuration" => ("application/json", json!({"issuer": issuer, "authorization_endpoint": twist.authorization_endpoint.clone().unwrap_or_else(|| format!("{issuer}/authorize")), "token_endpoint": format!("{issuer}/token"), "userinfo_endpoint": format!("{issuer}/userinfo"), "jwks_uri": format!("{issuer}/jwks"), "response_types_supported": ["code"], "subject_types_supported": ["public"], "id_token_signing_alg_values_supported": algorithms, "authorization_response_iss_parameter_supported": true}).to_string()),
                         "/jwks" => {
                             jwks.fetch_add(1, Ordering::SeqCst);
                             ("application/json", keys.jwks(twist.rotated).to_string())
@@ -538,6 +539,20 @@ async fn unadvertised_signing_algorithms_are_refused() {
         assert!(provider.login(Claims::default()).await.is_err());
         provider.stop().await;
     }
+}
+
+#[tokio::test]
+async fn an_authorization_endpoint_off_a_canonical_origin_fails_discovery() {
+    let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
+    // Sign-in pages name the authorization origin in their form-action; port 0 is no origin a browser can post to.
+    provider.twist.lock().unwrap().authorization_endpoint = Some("https://idp.example:0/authorize".into());
+    let error = provider.oidc.discover().await.unwrap_err();
+    assert!(error.to_string().contains("authorization endpoint"), "{error}");
+    assert!(provider.oidc.ready().is_none());
+    provider.twist.lock().unwrap().authorization_endpoint = None;
+    provider.oidc.discover().await.unwrap();
+    assert!(provider.oidc.ready().is_some());
+    provider.stop().await;
 }
 
 #[tokio::test]
