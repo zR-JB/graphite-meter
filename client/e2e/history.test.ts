@@ -278,9 +278,9 @@ test("unsupported and malformed rows are skipped, kept and clearable", async (pa
 
   const management = page.getByRole("button", { name: "History actions" });
   await management.click();
-  await page.getByRole("menuitem", { name: /Clear all saved results/ }).click();
+  await page.getByRole("menuitem", { name: "Clear history" }).click();
   await page
-    .getByRole("alertdialog", { name: "Clear result history?" })
+    .getByRole("alertdialog", { name: "Clear history?" })
     .getByRole("button", { name: "Clear history" })
     .click();
   await expect(

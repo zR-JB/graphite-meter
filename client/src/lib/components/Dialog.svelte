@@ -98,8 +98,10 @@
 </dialog>
 
 <style>
+  /* The width owns the gutter; the UA's own max-width would leave 19 px. */
   dialog.float {
     width: min(var(--dialog-width, 360px), calc(100vw - 2 * var(--space-4)));
+    max-width: none;
     max-height: var(--dialog-height, calc(100svh - 2 * var(--space-4)));
     overflow: hidden;
     overscroll-behavior: contain;

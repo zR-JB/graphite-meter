@@ -55,7 +55,7 @@
       <button
         class="btn btn-icon btn-quiet"
         type="button"
-        aria-label="Close"
+        aria-label="Close About & legal"
         {@attach tooltip(() => "Close (Esc)")}
         onclick={onClose}><Icon name="close" /></button
       >

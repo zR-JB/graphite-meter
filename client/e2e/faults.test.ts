@@ -125,7 +125,9 @@ for (const fault of faults)
       const startedAt = Date.now();
       await runButton(page, "Start test").click();
       if (fault.editDownloadMs)
-        await page.getByRole("button", { name: "Open settings" }).click();
+        await page
+          .getByRole("button", { name: "Settings", exact: true })
+          .click();
       await expect(phase(page, fault.during)).toHaveCount(1, {
         timeout: 15_000,
       });
