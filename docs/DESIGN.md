@@ -110,7 +110,9 @@ emphasised values, 600 titles and controls.
   `--r-surface` 12 px (sheets, dialogs, popovers), `--r-full` for dots and switches.
 - **Panels** are 420 px by default (360–720, resizable). They dock from 1200 px, two side by side from 1520 px, and
   below that the last one opened stays. Docked, a sheet floats 12 px inside its column; below 1200 px it is a
-  flyout of the same width, and on a portrait phone a bottom sheet.
+  flyout of the same width, and on a portrait phone a bottom sheet. A docked sheet's inner edge is a handle
+  (`.resize-handle`): drag it or step it 16 px with the arrows (48 with Shift), Home and End reach its limits, Enter
+  or a double-click resets it, and a 2 px ink line lights the edge on hover or focus.
 - **One text edge per sheet.** Plates sit on `--panel-pad` (16 px); text sits `--row-inset` (12 px) inside a plate,
   and every free line starts on that same edge.
 
@@ -178,7 +180,9 @@ hue, never by a boxed icon.
 - **Switch**: an empty track when off, an ink track with an inverse knob when on. **Check**: 18 px, ink when checked.
 - **History**: rows show the time with the server and recency, then per column a value over a note: added latency
   under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the
-  latency card, then each server's facts.
+  latency card, then each server's facts. From 821 px it sits beside the list, and the hairline between them is a
+  handle like a docked sheet's edge: the list keeps its share of the width (40 % by default), never under 360 px,
+  and the detail never under 460 px.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
 - **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens after a short pause on its word
   (0.4 s, jargon 0.2 s, at once when moving from one tip to the next), on keyboard focus, on a click or tap on jargon

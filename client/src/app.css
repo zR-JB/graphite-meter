@@ -797,6 +797,31 @@
     }
   }
 
+  /* A slider straddling an edge (actions/resize.ts); its ink line lights the edge on hover or focus. */
+  .resize-handle {
+    position: absolute;
+    inset-block: 0;
+    z-index: 3;
+    width: 12px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    left: 50%;
+    width: 2px;
+    translate: -50%;
+    transition: background-color var(--dur-hover) var(--ease-out);
+  }
+  .resize-handle:is(:hover, :focus-visible)::after {
+    background: var(--brand);
+  }
+  .resize-handle:focus-visible {
+    outline: none;
+  }
+
   /* A plate whose direct children are rows; a control sets its row's height. */
   .kv {
     display: grid;

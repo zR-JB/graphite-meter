@@ -58,6 +58,7 @@ import {
   resolveResultHistoryPreference,
   systemThemeDefault,
   DEFAULT_DOCK_WIDTH,
+  DEFAULT_HISTORY_SPLIT,
   STORAGE_KEY,
   type ThemePref,
   type ResultHistoryPreference,
@@ -137,7 +138,8 @@ type DisplayPreference =
   | "keyShortcuts"
   | "resultHistoryPreference"
   | "historyColumns"
-  | "dockWidth";
+  | "dockWidth"
+  | "historySplit";
 
 class AppStore {
   serverCatalog = $state<ServerCatalog | null>(null);
@@ -378,6 +380,7 @@ class AppStore {
   dockWidth = $state<{ left: number; right: number }>({
     ...DEFAULT_DOCK_WIDTH,
   });
+  historySplit = $state(DEFAULT_HISTORY_SPLIT);
 
   constructor() {
     Object.assign(this, loadPersisted());
@@ -785,6 +788,7 @@ export function mountStoreEffects(store: AppStore): () => void {
         resultHistoryPreference: store.resultHistoryPreference,
         historyColumns: [...store.historyColumns],
         dockWidth: $state.snapshot(store.dockWidth),
+        historySplit: store.historySplit,
       };
       clearTimeout(timer);
       // Not motion: settings save once edits pause.

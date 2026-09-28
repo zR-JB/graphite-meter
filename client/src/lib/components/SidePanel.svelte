@@ -3,6 +3,7 @@
   import Dialog from "./Dialog.svelte";
   import { MIN_DOCK_WIDTH, MAX_DOCK_WIDTH } from "./dockWidths";
   import type { Snippet } from "svelte";
+  import { resize } from "../actions/resize";
   import { sheetDrag } from "../actions/sheetDrag";
   import { tooltip } from "../actions/tooltip";
   import { activeModal } from "../actions/focus";
@@ -34,76 +35,9 @@
     children,
   }: Props = $props();
 
-  let panelEl: HTMLElement | undefined;
   const flyoutWidth = $derived(
     Math.max(MIN_DOCK_WIDTH, Math.min(MAX_DOCK_WIDTH, preferredWidth)),
   );
-
-  function setWidth(px: number) {
-    onResize?.(Math.max(MIN_DOCK_WIDTH, Math.min(dockMaxWidth, px)));
-  }
-
-  function resizeHandle(handle: HTMLElement) {
-    if (!open) return;
-    let finish: (() => void) | undefined;
-    const start = (event: PointerEvent) => {
-      if (!event.isPrimary || event.button !== 0 || !panelEl) return;
-      finish?.();
-      event.preventDefault();
-      const startX = event.clientX;
-      const startWidth = panelEl.getBoundingClientRect().width;
-      const { cursor, userSelect } = document.body.style;
-      handle.setPointerCapture(event.pointerId);
-      document.body.style.userSelect = "none";
-      document.body.style.cursor = "col-resize";
-      const move = (next: PointerEvent) => {
-        if (next.pointerId === event.pointerId) {
-          const delta = next.clientX - startX;
-          setWidth(startWidth + (side === "left" ? delta : -delta));
-        }
-      };
-      const end = (next: PointerEvent) => {
-        if (next.pointerId === event.pointerId) finish?.();
-      };
-      finish = () => {
-        finish = undefined;
-        handle.removeEventListener("pointermove", move);
-        handle.removeEventListener("pointerup", end);
-        handle.removeEventListener("pointercancel", end);
-        handle.removeEventListener("lostpointercapture", end);
-        if (handle.hasPointerCapture(event.pointerId))
-          handle.releasePointerCapture(event.pointerId);
-        document.body.style.cursor = cursor;
-        document.body.style.userSelect = userSelect;
-      };
-      handle.addEventListener("pointermove", move);
-      handle.addEventListener("pointerup", end);
-      handle.addEventListener("pointercancel", end);
-      handle.addEventListener("lostpointercapture", end);
-    };
-    handle.addEventListener("pointerdown", start);
-    return () => {
-      finish?.();
-      handle.removeEventListener("pointerdown", start);
-    };
-  }
-
-  function onHandleKey(e: KeyboardEvent) {
-    const width = panelEl?.offsetWidth ?? MIN_DOCK_WIDTH;
-    const step = e.shiftKey ? 48 : 16;
-    const next: Record<string, number> = {
-      ArrowRight: width + step,
-      ArrowUp: width + step,
-      ArrowLeft: width - step,
-      ArrowDown: width - step,
-      Home: MIN_DOCK_WIDTH,
-      End: dockMaxWidth,
-    };
-    if (e.key === "Enter" || e.key === " ") onResetWidth?.();
-    else if (e.key in next) setWidth(next[e.key]);
-    else return;
-    e.preventDefault();
-  }
 </script>
 
 <div
@@ -127,7 +61,6 @@
     class="panel sheet {side}"
     label={title}
     attach={(node) => {
-      panelEl = node;
       // Escape closes the panel holding focus; a modal on top or an open popover keeps it.
       const escape = (event: KeyboardEvent) => {
         if (event.key !== "Escape" || event.defaultPrevented || activeModal())
@@ -176,9 +109,15 @@
         aria-valuenow={dockWidth}
         aria-valuetext={`${dockWidth} pixels wide`}
         tabindex="0"
-        {@attach resizeHandle}
-        onkeydown={onHandleKey}
-        ondblclick={() => onResetWidth?.()}
+        {@attach open &&
+          resize({
+            side,
+            width: () => dockWidth ?? MIN_DOCK_WIDTH,
+            min: MIN_DOCK_WIDTH,
+            max: () => dockMaxWidth,
+            set: (px) => onResize?.(px),
+            reset: () => onResetWidth?.(),
+          })}
       ></div>
     {/if}
   </Dialog>
@@ -290,34 +229,11 @@
     visibility: visible;
   }
 
-  .resize-handle {
-    position: absolute;
-    inset-block: 0;
-    z-index: 3;
-    width: 12px;
-    cursor: col-resize;
-    touch-action: none;
-  }
   .resize-handle[data-side="left"] {
     right: -6px;
   }
   .resize-handle[data-side="right"] {
     left: -6px;
-  }
-  .resize-handle::after {
-    content: "";
-    position: absolute;
-    inset-block: 0;
-    left: 50%;
-    width: 2px;
-    translate: -50%;
-    transition: background-color var(--dur-hover) var(--ease-out);
-  }
-  .resize-handle:is(:hover, :focus-visible)::after {
-    background: var(--brand);
-  }
-  .resize-handle:focus-visible {
-    outline: none;
   }
 
   .sheet-handle {

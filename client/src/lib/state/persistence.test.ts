@@ -60,6 +60,15 @@ test("history columns default, validate, deduplicate, and preserve order", () =>
   );
 });
 
+test("the History split loads as a share of the width, else its default", () => {
+  for (const historySplit of [0, 0.55, 1])
+    expect(loaded({ historySplit }).historySplit).toBe(historySplit);
+  for (const historySplit of [-0.1, 1.5, "0.5", null])
+    expect(loaded({ historySplit }).historySplit).toBe(
+      defaultPersisted().historySplit,
+    );
+});
+
 test("partial stored shape: missing fields fall back to defaults", () => {
   const result = loaded({ theme: "light" });
   expect(result.theme).toBe("light");
