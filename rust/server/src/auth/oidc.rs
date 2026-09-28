@@ -344,23 +344,16 @@ impl Oidc {
         .into_iter()
         .flatten()
         .find(|name| !name.is_empty())
-        .unwrap_or("OIDC user");
-        let mut display_name = String::with_capacity(256);
-        for character in name
-            .chars()
-            .filter(|character| graphite_meter_core::text::display_character(*character))
-        {
-            if display_name.len() + character.len_utf8() > 256 {
-                break;
-            }
-            display_name.push(character);
-        }
-        if display_name.is_empty() {
-            display_name.push_str("OIDC user");
-        }
+        .unwrap_or(subject);
+        // As Go's safeDisplayName.
+        let cleaned = graphite_meter_core::text::clean(name, 64);
+        let name = match cleaned.trim() {
+            "" => "OIDC user",
+            name => name,
+        };
         Ok(Identity {
             subject: format!("oidc:{subject}"),
-            name: display_name,
+            name: name.to_owned(),
         })
     }
     async fn exchange(&self, provider: &Provider, code: &str, verifier: &str) -> Result<Tokens, ConfigError> {

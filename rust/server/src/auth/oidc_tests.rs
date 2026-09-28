@@ -316,8 +316,13 @@ impl ProviderDouble {
 #[tokio::test]
 async fn signed_provider_exchange_checks_nonce_subject_group_and_pkce() {
     let provider = provider_double("localhost", &["RS256"], Proxy::default()).await;
-    let display_name = format!(" {}", "é".repeat(127));
-    provider.twist.lock().unwrap().name = Some(format!("\u{009b}{display_name}\u{202e}🙂{}", "x".repeat(256 * 1024)));
+    // Go's CleanText blanks the control, keeps 63 characters and an ellipsis, then trims.
+    let display_name = format!("{}…", "é".repeat(61));
+    provider.twist.lock().unwrap().name = Some(format!(
+        "\u{009b} {}\u{202e}🙂{}",
+        "é".repeat(127),
+        "x".repeat(256 * 1024)
+    ));
     for scenario in 0..4 {
         let result = provider
             .login(Claims {
@@ -461,7 +466,7 @@ async fn forged_or_misbound_tokens_are_refused_and_rotation_refetches_keys_once(
     };
     let identity = provider.login(Claims::default()).await.unwrap();
     assert_eq!(identity.subject, "oidc:operator");
-    assert_eq!(identity.name, "München العربية 👩\u{200d}💻");
+    assert_eq!(identity.name, "München  العربية  👩\u{200d}💻");
     let before = provider.jwks_requests.load(Ordering::SeqCst);
     assert_eq!(before, 2);
     *provider.twist.lock().unwrap() = Twist {

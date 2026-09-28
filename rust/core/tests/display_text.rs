@@ -1,6 +1,7 @@
 use graphite_meter_core::{
     catalog::{CatalogError, ServerCatalog},
     discovery::{DiscoveryError, Preflight},
+    text,
 };
 use serde_json::{Value, json};
 
@@ -54,5 +55,26 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn clean_text_matches_go_vectors() {
+    // go/internal/wire/text_test.go; a Rust string cannot hold its invalid UTF-8 vector.
+    for (input, limit, cleaned) in [
+        ("Frankfurt · DE", 64, "Frankfurt · DE"),
+        ("osc\x1b]52;c;cHduZWQ=\x07", 64, "osc ]52;c;cHduZWQ= "),
+        ("c1\u{009b}2J", 64, "c1 2J"),
+        ("del\x7f", 64, "del "),
+        ("two\nlines", 64, "two lines"),
+        ("evil\u{202e}gnp.exe", 64, "evil gnp.exe"),
+        ("iso\u{2066}late\u{2069}", 64, "iso late "),
+        ("arabic\u{061c}mark", 64, "arabic mark"),
+        ("123456789", 5, "1234…"),
+        ("12345", 5, "12345"),
+        ("é", 0, "…"),
+        ("", 0, ""),
+    ] {
+        assert_eq!(text::clean(input, limit), cleaned, "{input:?}");
     }
 }
