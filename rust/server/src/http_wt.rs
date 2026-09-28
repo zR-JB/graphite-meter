@@ -14,7 +14,6 @@ use graphite_meter_http3::{
 };
 use tokio::time::Instant;
 
-const MAX_LANES: usize = 16;
 // A ready datagram send need not yield. Bound each burst so sibling sessions
 // still get executor time without paying a scheduler round-trip per packet.
 const DATAGRAM_YIELD_BATCH: usize = 16;
@@ -151,7 +150,7 @@ impl HttpServer {
                     .and_then(|v| v.parse::<i64>().ok())
                     .filter(|n| *n > 0)
                     .unwrap_or(1)
-                    .min(MAX_LANES as i64);
+                    .min(wire::MAX_WEBTRANSPORT_STREAMS as i64);
                 for _ in 0..count_lanes {
                     lanes.push(Box::pin(download_lane(
                         &session,
@@ -232,7 +231,7 @@ impl HttpServer {
                 incoming = session.accept_uni() => {
                     // A dropped stream is refused as a cancelled lane.
                     let Some(incoming) = incoming else { break };
-                    if route != SessionRoute::Upload || lanes.len() >= MAX_LANES {
+                    if route != SessionRoute::Upload || lanes.len() >= wire::MAX_WEBTRANSPORT_STREAMS {
                         continue;
                     }
                     match self.uploads.begin(&upload_id, &owner) {

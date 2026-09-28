@@ -30,7 +30,10 @@ use crate::{
     upload::UploadStore,
 };
 use bytes::Bytes;
-use graphite_meter_core::route::{self, Kind, Route};
+use graphite_meter_core::{
+    route::{self, Kind, Route},
+    wire::MAX_TRANSFER_BYTES,
+};
 use http::{Method, Request, Response, StatusCode, header};
 use hyper::{
     body::{Body, Frame, SizeHint},
@@ -67,7 +70,6 @@ const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
-const MAX_DOWNLOAD_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 pub struct HttpServer {
     config: Arc<Config>,
@@ -962,7 +964,7 @@ fn download_bytes<B>(request: &Request<B>) -> u64 {
     query(request, "bytes")
         .and_then(|value| value.parse::<i64>().ok())
         .filter(|value| *value >= 0)
-        .map_or(DEFAULT_DOWNLOAD_BYTES, |value| (value as u64).min(MAX_DOWNLOAD_BYTES))
+        .map_or(DEFAULT_DOWNLOAD_BYTES, |value| (value as u64).min(MAX_TRANSFER_BYTES))
 }
 
 fn text_response(status: StatusCode) -> Response<ResponseBody> {
