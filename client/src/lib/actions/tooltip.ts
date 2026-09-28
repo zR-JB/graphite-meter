@@ -1,16 +1,23 @@
 // Anchored tooltips for jargon, controls and chart points; the words live in vocabulary.ts.
 import { fromAction, type Attachment } from "svelte/attachments";
 import { nextFrame } from "../presentation/motion.svelte";
-import { restDetector, warmUp } from "./intent";
+import { claim, isWarm, release, warmUp } from "./intent";
 const ACTIONABLE_SELECTOR =
   "button, a, label, summary, [role='switch'], [role='tab']";
 let uid = 0;
-const TERM_REST_MS = 300;
-const REST_MS = 600;
-const LONG_PRESS_MS = 500;
+// A pause on the word opens its tip; jargon answers sooner, the next tip at once.
+const OPEN_MS = 400;
+const TERM_OPEN_MS = 200;
+const CLOSE_MS = 150;
+const LONG_PRESS_MS = 450;
+// A finger that drifts further is scrolling, not pressing.
+const SLOP_PX = 10;
+const GAP_PX = 8;
+const anchored =
+  typeof CSS !== "undefined" && CSS.supports("position-area", "block-start");
 /** A plain label or control; the getter updates the text in place, so an open tip stays open. */
 export const tooltip = (text: () => string) => fromAction(tooltipAction, text);
-/** Jargon: a quiet mark, a short rest, and a click or tap opens it outright. */
+/** Jargon: a quiet mark, a short pause, and a click or tap opens it outright. */
 export const term = (text: () => string) =>
   fromAction(
     (node: HTMLElement, initial: string) => tooltipAction(node, initial, true),
@@ -67,16 +74,20 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   const id = `gm-tt-${++uid}`;
   let bubble: HTMLDivElement | null = null;
   let prevDescribedBy: string | null = null;
-  let touchOpen = false;
+  let openTimer = 0;
+  let closeTimer = 0;
+  let pressTimer = 0;
+  // Where a finger landed, until it lifts, drifts away or the page takes it to scroll.
+  let press: { x: number; y: number } | null = null;
   // A long press showed the tip; the click it ends in is not a tap on the control.
   let pressed = false;
-  const rest = restDetector(() => {
-    show();
-    if (bubble && lastPointer === "touch") touchOpen = pressed = true;
-  });
-  let lastPointer = "";
-  // A click answers the pointer; its tip waits until it leaves and comes back.
+  // A touch showed the tip; the next tap closes it.
+  let touchOpen = false;
+  // A click answers the pointer; a control's tip waits until it leaves and comes back.
   let clicked = false;
+  // Keyboard focus showed the tip; it stays with its word while the page scrolls.
+  let keyboard = false;
+  let lastPointer = "";
   const anchorNames = node.style.getPropertyValue("anchor-name");
   node.style.setProperty(
     "anchor-name",
@@ -85,6 +96,8 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   // A term inside a control explains while that control has keyboard focus.
   const host = node.closest<HTMLElement>(ACTIONABLE_SELECTOR) ?? node;
   const inert = host === node && !node.matches(ACTIONABLE_SELECTOR);
+  // Jargon and explained facts answer a click or tap; a control does its job and explains on a pause or long press.
+  const asks = inert || marked;
   if (!node.matches(ACTIONABLE_SELECTOR))
     node.dataset.tip = marked ? "term" : "";
   const focusable =
@@ -113,6 +126,15 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
       }),
     );
   }
+  // Without anchor positioning the bubble sits above the word if it fits, else below, inside the viewport.
+  function place(target: HTMLElement) {
+    const at = node.getBoundingClientRect();
+    const { offsetWidth: width, offsetHeight: height } = target;
+    const above = at.top - height - GAP_PX >= GAP_PX;
+    const left = at.left + at.width / 2 - width / 2;
+    target.style.top = `${above ? at.top - height - GAP_PX : at.bottom + GAP_PX}px`;
+    target.style.left = `${Math.max(GAP_PX, Math.min(left, innerWidth - width - GAP_PX))}px`;
+  }
   // The arrow points at the term wherever the bubble had to sit; measured about the centre, so the entry scale cancels.
   function aim(target: HTMLElement) {
     target.style.removeProperty("--arrow-x");
@@ -126,8 +148,14 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
       `${Math.min(Math.max(x, 12), width - 12)}px`,
     );
   }
-  function show() {
+  function show(touch = false, byKeyboard = false) {
+    clearTimeout(openTimer);
+    clearTimeout(closeTimer);
     if (bubble || !text || !node.isConnected) return;
+    keyboard = byKeyboard;
+    // Moving between tips swaps them without the entry scale.
+    const instant = isWarm();
+    claim(hide);
     bubble = document.createElement("div");
     bubble.className = "tooltip";
     bubble.id = id;
@@ -135,15 +163,23 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     bubble.setAttribute("role", "tooltip");
     bubble.style.setProperty("position-anchor", `--${id}`);
     write(bubble);
+    if (instant) bubble.dataset.show = "true";
     document.body.appendChild(bubble);
     bubble.showPopover();
+    if (!anchored) place(bubble);
     aim(bubble);
     prevDescribedBy = node.getAttribute("aria-describedby");
     node.setAttribute(
       "aria-describedby",
       prevDescribedBy ? `${prevDescribedBy} ${id}` : id,
     );
-    nextFrame(() => bubble?.setAttribute("data-show", "true"));
+    // A tip a finger opened takes the tap that closes it, so the tap never lands on what lies beneath.
+    if (touch) {
+      touchOpen = true;
+      bubble.style.pointerEvents = "auto";
+      bubble.addEventListener("click", hide);
+    }
+    if (!instant) nextFrame(() => bubble?.setAttribute("data-show", "true"));
     for (const [target, type, listener, capture] of dismissListeners)
       target.addEventListener(type, listener as EventListener, capture);
   }
@@ -160,14 +196,26 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
   function onVisibilityDismiss() {
     if (document.visibilityState !== "visible") hide();
   }
+  // A pointer's tip closes as the page scrolls; a focused word keeps its tip beside it.
+  function onScroll() {
+    if (!keyboard) hide();
+    else if (bubble && !anchored) {
+      place(bubble);
+      aim(bubble);
+    }
+  }
   function hide() {
-    rest.cancel();
+    clearTimeout(openTimer);
+    clearTimeout(closeTimer);
+    endPress();
     touchOpen = false;
+    release(hide);
     if (!bubble) return;
     warmUp();
     const leaving = bubble;
     leaving.removeAttribute("role");
     leaving.setAttribute("aria-hidden", "true");
+    leaving.style.pointerEvents = "none";
     leaving.dataset.show = "false";
     void Promise.allSettled(
       leaving.getAnimations().map((animation) => animation.finished),
@@ -186,15 +234,23 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     event.preventDefault();
     event.stopPropagation();
   }
-  function onPointerMove(event: PointerEvent) {
-    lastPointer = event.pointerType;
-    if (event.pointerType === "mouse" && !bubble && !clicked)
-      rest.move(event, marked ? TERM_REST_MS : REST_MS);
+  // Mouse and pen hover; a finger never does.
+  const hovers = (event: PointerEvent) => event.pointerType !== "touch";
+  function onEnter(event: PointerEvent) {
+    if (!hovers(event)) return;
+    clearTimeout(closeTimer);
+    if (bubble || clicked) return;
+    const wait = isWarm() ? 0 : marked ? TERM_OPEN_MS : OPEN_MS;
+    if (!wait) return show();
+    // Not motion: hover intent is a pause on the word, however the hand drifts.
+    openTimer = window.setTimeout(() => show(), wait);
   }
-  function onPointerLeave(event: PointerEvent) {
-    if (event.pointerType !== "mouse") return;
+  function onLeave(event: PointerEvent) {
+    if (!hovers(event)) return;
+    clearTimeout(openTimer);
     clicked = false;
-    hide();
+    // Not motion: a slip off a small word keeps its tip a moment.
+    if (bubble && !touchOpen) closeTimer = window.setTimeout(hide, CLOSE_MS);
   }
   // Keyboard focus only (main.ts drops data-pointer on a key), a microtask later, once a closing popover has restored focus.
   function onFocus(event: FocusEvent) {
@@ -204,39 +260,51 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
         target.matches(":focus-visible") &&
         !("pointer" in document.documentElement.dataset)
       )
-        show();
+        show(false, true);
     });
   }
-  // A tap on a marked term asks (never pressing its label); anything else needs a long press, so a tap still runs its control.
-  function onPointerUp(event: PointerEvent) {
-    if (event.pointerType !== "touch") return;
-    rest.cancel();
-    if (pressed) return;
-    if (touchOpen) hide();
-    else if (marked) {
-      show();
-      touchOpen = !!bubble;
-    }
+  function endPress() {
+    clearTimeout(pressTimer);
+    press = null;
   }
   function onPointerDown(event: PointerEvent) {
     lastPointer = event.pointerType;
     pressed = false;
     if (event.pointerType === "touch") {
-      if (!touchOpen) rest.move(event, LONG_PRESS_MS);
+      press = { x: event.clientX, y: event.clientY };
+      if (!touchOpen && !asks)
+        // Not motion: a long press asks a control for its tip.
+        pressTimer = window.setTimeout(() => {
+          show(true);
+          pressed = !!bubble;
+        }, LONG_PRESS_MS);
       return;
     }
-    // A click on a term asks outright; a click on a control answers the pointer instead.
-    const open = !bubble && (inert || marked);
+    clearTimeout(openTimer);
     clicked = true;
-    hide();
-    if (open) show();
+    if (asks) show();
+    else hide();
+  }
+  function onPointerMove(event: PointerEvent) {
+    if (
+      press &&
+      Math.hypot(event.clientX - press.x, event.clientY - press.y) > SLOP_PX
+    )
+      endPress();
+  }
+  // A tap on jargon or a fact toggles its tip; a tap on a control only runs it.
+  function onPointerUp(event: PointerEvent) {
+    if (event.pointerType !== "touch" || !press) return;
+    endPress();
+    if (pressed) return;
+    if (touchOpen) hide();
+    else if (asks) show(true);
   }
   function onClick(event: MouseEvent) {
-    if (pressed || marked) {
-      pressed = false;
-      event.preventDefault();
-      event.stopPropagation();
-    } else if (!touchOpen) hide();
+    if (!pressed && !marked) return;
+    pressed = false;
+    event.preventDefault();
+    event.stopPropagation();
   }
   function onContextMenu(event: Event) {
     if (lastPointer === "touch") event.preventDefault();
@@ -247,18 +315,19 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
     [document, "toggle", onPopoverToggle, true],
     [document, "pointerdown", onDocumentPointerDown, true],
     [document, "keydown", onEscape, true],
+    [document, "scroll", onScroll, true],
   ] as const;
   const listeners = [
     [node, "pointerdown", onPointerDown],
-    [node, "pointerenter", onPointerMove],
+    [node, "pointerenter", onEnter],
+    [node, "pointerleave", onLeave],
     [node, "pointermove", onPointerMove],
-    [node, "pointerleave", onPointerLeave],
-    [node, "pointercancel", rest.cancel],
+    [node, "pointerup", onPointerUp],
+    [node, "pointercancel", endPress],
     [node, "contextmenu", onContextMenu],
+    [node, "click", onClick],
     [host, "focusin", onFocus],
     [host, "focusout", hide],
-    [node, "pointerup", onPointerUp],
-    [node, "click", onClick],
   ] as const;
   for (const [target, type, listener] of listeners)
     target.addEventListener(type, listener as EventListener);
@@ -269,6 +338,7 @@ function tooltipAction(node: HTMLElement, initial: string, marked = false) {
       if (!text) hide();
       else {
         write(bubble);
+        if (!anchored) place(bubble);
         aim(bubble);
       }
     },

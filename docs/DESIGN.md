@@ -156,8 +156,9 @@ hue, never by a boxed icon.
   Peak, Stability, Down + up, Transferred, wrapping to the card's width. A saved result has no graph row.
 - **Stage graph** (`StageGraph`): the rate from zero to the shared ceiling (`store.scales.chartBytesPerSec`), a dashed
   second lane for bidirectional upload, and a 20 px latency track below: one dot per reply bucket, height being time
-  over the idle median (dashed baseline). The pointer, a press or arrow keys show a readout at once: time into the
-  stage, the rate, and the latency replies measured then.
+  over the idle median (dashed baseline). A mouse, a tap, a sideways drag or arrow keys show a readout at once: time
+  into the stage, the rate, and the latency replies measured then. A vertical swipe scrolls past; a drag's readout
+  leaves with the finger.
 - **Latency card** (`LatencyProfileView`): the idle median as the headline with Jitter, Range, Stability and Timeouts;
   then one row per population on one scale: name, median, jitter, box plot (P10–P90 box, min–max whiskers, median
   tick, latest reply while live) and the added latency in its hue. Loaded rows carry the idle baseline and a span
@@ -175,8 +176,11 @@ hue, never by a boxed icon.
   under each rate in its hue, jitter under idle, the stage under loaded. The detail repeats the stage cards and the
   latency card, then each server's facts.
 - **Facts** (`dl.kv`): label/value pairs; a qualifier that belongs to a value is an `.aside`, never joined with a dot.
-- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens on hover intent, keyboard focus or long
-  press, never after a click on a control.
+- **Tooltip and readout** share one glass shell (`.inspect-card`). A tip opens after a short pause on its word
+  (0.4 s, jargon 0.2 s, at once when moving from one tip to the next), on keyboard focus, on a click or tap on jargon
+  or an explained fact, or on a long press on a control; never after a click on a control. It stays while the pointer
+  is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a tap elsewhere closes a
+  pointer's tip; a tap on the tip closes it without reaching what lies beneath.
 
 | Primitive                | Height         | Radius             | Type            | States                                               |
 | ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
