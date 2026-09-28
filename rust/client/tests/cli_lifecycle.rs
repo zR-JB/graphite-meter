@@ -208,6 +208,36 @@ async fn an_empty_trust_store_fails_only_tls_connections() -> Result<(), Error> 
     Ok(())
 }
 
+/// As Go's ProxyFromEnvironment, the client reads HTTP_PROXY, HTTPS_PROXY and NO_PROXY, never
+/// ALL_PROXY.
+#[tokio::test]
+async fn all_proxy_is_not_read() -> Result<(), Error> {
+    let proxy = TcpListener::bind("127.0.0.1:0").await?;
+    let mut command = client("http://meter.invalid");
+    for name in [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "all_proxy",
+        "REQUEST_METHOD",
+    ] {
+        command.env_remove(name);
+    }
+    command.env("ALL_PROXY", format!("http://{}", proxy.local_addr()?));
+    let output = tokio::select! {
+        accepted = proxy.accept() => {
+            accepted?;
+            return Err("the client connected to the ALL_PROXY proxy".into());
+        }
+        output = tokio::time::timeout(Duration::from_secs(20), command.output()) => output??,
+    };
+    assert_eq!(output.status.code(), Some(1));
+    Ok(())
+}
+
 #[tokio::test]
 async fn sign_in_refused_after_measuring_ends_incomplete() -> Result<(), Error> {
     let (origin, peer) = latency_peer(true).await?;

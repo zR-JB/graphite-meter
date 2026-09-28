@@ -147,9 +147,11 @@ labels, host punctuation other than hyphens and underscores, IPv4 shorthand,
 leading-zero IPv4 octets, and trailing-dot IPv4 addresses are rejected. Domain
 trailing dots remain supported. Punycode labels are passed to DNS as ASCII,
 without IDNA decoding. OIDC issuer paths must be ASCII; percent-encode other
-characters. HTTP and WebSocket clients use the Go proxy environment rules with
-an ALL_PROXY fallback: loopback bypasses proxies, NO_PROXY supports ports,
-and a leading dot matches subdomains only. Cleartext HTTP uses absolute-form
+characters. HTTP and WebSocket clients read `HTTP_PROXY`, `HTTPS_PROXY` and
+`NO_PROXY` as Go does, never `ALL_PROXY`: loopback bypasses proxies, NO_PROXY
+supports ports, a leading dot matches subdomains only, and under CGI cleartext
+requests refuse `HTTP_PROXY`. A value the client cannot use fails each request
+it would carry, naming the variable. Cleartext HTTP uses absolute-form
 requests; HTTPS uses CONNECT. As in Go, `socks5://` and `socks5h://` proxies
 both pass host names to the proxy and log in with the URL's user and password.
 

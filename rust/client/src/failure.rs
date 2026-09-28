@@ -51,6 +51,10 @@ fn causes<'a>(
 }
 
 pub fn reason(error: &(dyn std::error::Error + 'static), preparing: bool) -> FailureReason {
+    // A proxy setting the client cannot use lost no connection.
+    if causes(error).any(|cause| cause.is::<graphite_meter_net::UnusableProxy>()) {
+        return FailureReason::PreparationFailed;
+    }
     for error in causes(error) {
         if let Some(failure) = error.downcast_ref::<MeasurementFailure>() {
             return failure.0;
@@ -94,6 +98,9 @@ pub fn text(error: &(dyn std::error::Error + 'static)) -> String {
     for cause in causes(error) {
         if cause.is::<graphite_meter_net::Unreachable>() {
             return "Server could not be reached".into();
+        }
+        if let Some(proxy) = cause.downcast_ref::<graphite_meter_net::UnusableProxy>() {
+            return clean(&proxy.to_string(), 320);
         }
         if let Some(rustls::Error::InvalidCertificate(certificate)) = cause.downcast_ref() {
             use rustls::CertificateError::{Expired, ExpiredContext, NotValidYet, NotValidYetContext, UnknownIssuer};

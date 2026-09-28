@@ -34,7 +34,7 @@ pub async fn connect(proxy: &Proxy, target: &Origin, tls: Option<&TlsConnector>)
     let mut proxy_authorization = None;
     let stream: Box<dyn Stream> = match proxy.route(target) {
         None => Box::new(tcp(&target.host, port).await?),
-        Some(Err(unusable)) => return Err(io::Error::other(*unusable)),
+        Some(Err(unusable)) => return Err(io::Error::new(io::ErrorKind::InvalidInput, unusable.clone())),
         Some(Ok(Upstream {
             origin,
             socks: Some(socks),
@@ -209,11 +209,24 @@ async fn tunnel(stream: Box<dyn Stream>, authority: &str, authorization: Option<
 
 #[derive(Clone, Default)]
 pub struct Proxy {
-    http: Option<Result<Upstream, &'static str>>,
-    https: Option<Result<Upstream, &'static str>>,
+    http: Option<Result<Upstream, UnusableProxy>>,
+    https: Option<Result<Upstream, UnusableProxy>>,
     bypass: Vec<Bypass>,
     tls: Option<TlsConnector>,
 }
+
+/// A proxy variable this client cannot use; each request it would carry fails with it.
+#[derive(Clone, Debug)]
+pub struct UnusableProxy {
+    variable: &'static str,
+    reason: &'static str,
+}
+impl std::fmt::Display for UnusableProxy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{} is not a usable proxy: {}", self.variable, self.reason)
+    }
+}
+impl std::error::Error for UnusableProxy {}
 
 #[derive(Clone)]
 struct Upstream {
@@ -331,36 +344,56 @@ enum Bypass {
 
 impl Proxy {
     pub fn from_env() -> Self {
-        let read = |names: [&str; 2]| {
-            names
-                .iter()
-                .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
-                .unwrap_or_default()
+        Self::from_variables(|name| std::env::var(name).ok())
+    }
+
+    /// Go's ProxyFromEnvironment: HTTP_PROXY, HTTPS_PROXY and NO_PROXY, each before its lowercase
+    /// spelling, and never ALL_PROXY. Under CGI, where a request's Proxy header becomes
+    /// HTTP_PROXY, cleartext requests refuse it as Go's do; HTTPS_PROXY still applies.
+    pub fn from_variables(variable: impl Fn(&str) -> Option<String>) -> Self {
+        let read = |names: [&'static str; 2]| {
+            names.into_iter().find_map(|name| {
+                variable(name)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| (name, value))
+            })
         };
-        if std::env::var_os("REQUEST_METHOD").is_some() {
-            return Self::default();
+        let (http, https) = (read(["HTTP_PROXY", "http_proxy"]), read(["HTTPS_PROXY", "https_proxy"]));
+        let no_proxy = read(["NO_PROXY", "no_proxy"]).map(|(_, value)| value);
+        let mut proxy = Self::named(
+            http.as_ref().map(|(name, value)| (*name, value.as_str())),
+            https.as_ref().map(|(name, value)| (*name, value.as_str())),
+            no_proxy.as_deref().unwrap_or_default(),
+        );
+        if let Some((name, _)) = http
+            && variable("REQUEST_METHOD").is_some_and(|method| !method.is_empty())
+        {
+            proxy.http = Some(Err(UnusableProxy {
+                variable: name,
+                reason: "a CGI request's Proxy header can set it",
+            }));
         }
-        let all = read(["ALL_PROXY", "all_proxy"]);
-        let or_all = |value: String| if value.is_empty() { all.clone() } else { value };
-        Self::new(
-            &or_all(read(["HTTP_PROXY", "http_proxy"])),
-            &or_all(read(["HTTPS_PROXY", "https_proxy"])),
-            &read(["NO_PROXY", "no_proxy"]),
-        )
+        proxy
     }
 
     pub fn new(http: &str, https: &str, no_proxy: &str) -> Self {
-        let upstream = |raw: &str| (!raw.trim().is_empty()).then(|| upstream(raw.trim()));
-        let (http, https) = (upstream(http), upstream(https));
+        Self::named(Some(("HTTP_PROXY", http)), Some(("HTTPS_PROXY", https)), no_proxy)
+    }
+
+    fn named(http: Option<(&'static str, &str)>, https: Option<(&'static str, &str)>, no_proxy: &str) -> Self {
+        let upstream = |named: Option<(&'static str, &str)>| {
+            let (variable, raw) = named.filter(|(_, raw)| !raw.trim().is_empty())?;
+            Some(upstream(raw.trim()).map_err(|reason| UnusableProxy { variable, reason }))
+        };
         Self {
-            http,
-            https,
+            http: upstream(http),
+            https: upstream(https),
             bypass: no_proxy.split(',').filter_map(bypass).collect(),
             tls: None,
         }
     }
 
-    fn route(&self, target: &Origin) -> Option<&Result<Upstream, &'static str>> {
+    fn route(&self, target: &Origin) -> Option<&Result<Upstream, UnusableProxy>> {
         let upstream = if target.scheme == "https" {
             &self.https
         } else {

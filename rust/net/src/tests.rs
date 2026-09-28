@@ -63,6 +63,60 @@ fn upstreams_default_to_http_carry_decoded_credentials_and_refuse_unknown_scheme
     assert!(Proxy::new("", "", "").route(&origin("https://meter.example")).is_none());
 }
 
+/// Go's ProxyFromEnvironment: uppercase before lowercase, empty values skipped, no ALL_PROXY, and
+/// under CGI no HTTP_PROXY for cleartext requests while HTTPS_PROXY still applies.
+#[test]
+fn environment_proxies_follow_go_variables() {
+    fn from(pairs: &'static [(&'static str, &'static str)]) -> Proxy {
+        Proxy::from_variables(|name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        })
+    }
+    let (http, https) = (origin("http://meter.example"), origin("https://meter.example"));
+    let via = |proxy: &Proxy, target: &Origin| proxy.route(target).map(|route| route.as_ref().unwrap().origin.key());
+    let everything = from(&[
+        ("ALL_PROXY", "http://all.example:3128"),
+        ("all_proxy", "http://all.example:3128"),
+    ]);
+    assert_eq!((via(&everything, &http), via(&everything, &https)), (None, None));
+    let spelled = from(&[
+        ("HTTP_PROXY", "http://upper.example:3128"),
+        ("http_proxy", "http://lower.example:3128"),
+        ("HTTPS_PROXY", ""),
+        ("https_proxy", "lower.example:3129"),
+        ("no_proxy", "meter.example"),
+    ]);
+    assert_eq!(via(&spelled, &http), None);
+    let spelled = from(&[
+        ("HTTP_PROXY", "http://upper.example:3128"),
+        ("http_proxy", "http://lower.example:3128"),
+        ("HTTPS_PROXY", ""),
+        ("https_proxy", "lower.example:3129"),
+    ]);
+    assert_eq!(via(&spelled, &http).as_deref(), Some("http://upper.example:3128"));
+    assert_eq!(via(&spelled, &https).as_deref(), Some("http://lower.example:3129"));
+    let cgi = from(&[
+        ("REQUEST_METHOD", "GET"),
+        ("HTTP_PROXY", "http://attacker.example"),
+        ("HTTPS_PROXY", "http://proxy.example:3128"),
+    ]);
+    let refused = cgi.route(&http).unwrap().as_ref().err().unwrap();
+    assert_eq!(
+        refused.to_string(),
+        "HTTP_PROXY is not a usable proxy: a CGI request's Proxy header can set it"
+    );
+    assert_eq!(via(&cgi, &https).as_deref(), Some("http://proxy.example:3128"));
+    let unusable = from(&[("https_proxy", "ftp://proxy.example")]);
+    let refused = unusable.route(&https).unwrap().as_ref().err().unwrap();
+    assert_eq!(
+        refused.to_string(),
+        "https_proxy is not a usable proxy: only HTTP, HTTPS and SOCKS5 proxies are supported"
+    );
+}
+
 async fn proxy(status: &'static str, service: SocketAddr) -> (SocketAddr, tokio::task::JoinHandle<String>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
