@@ -1,5 +1,5 @@
 //! Native client flags. Parsing has no network or terminal side effects.
-use crate::{Error, config::Config, model::Stage};
+use crate::{Error, config::Config, model::Stage, vocabulary::CADENCES};
 use graphite_meter_core::{
     discovery::{LatencyTransport, Protocol, ThroughputTransport},
     duration::parse_go_duration,
@@ -124,12 +124,10 @@ fn boolean(value: &str) -> Result<bool, Error> {
 }
 
 fn cadence(value: &str) -> Result<Duration, Error> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "reply-driven" => Ok(Duration::ZERO),
-        "fast" => Ok(Duration::from_millis(80)),
-        "medium" => Ok(Duration::from_millis(250)),
-        "slow" => Ok(Duration::from_millis(600)),
-        _ => duration(value),
+    let name = value.trim().to_ascii_lowercase();
+    match CADENCES.iter().find(|(key, ..)| *key == name) {
+        Some((.., interval)) => Ok(*interval),
+        None => duration(value),
     }
 }
 

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 #[derive(Clone, Copy)]
 pub struct Term {
     pub label: &'static str,
@@ -5,6 +7,13 @@ pub struct Term {
 }
 
 pub const MISSING: &str = "—";
+
+pub const CADENCES: [(&str, &str, Duration); 4] = [
+    ("reply-driven", "Reply-driven", Duration::ZERO),
+    ("fast", "Fast (80 ms)", Duration::from_millis(80)),
+    ("medium", "Medium (250 ms)", Duration::from_millis(250)),
+    ("slow", "Slow (600 ms)", Duration::from_millis(600)),
+];
 
 pub const START: Term = Term {
     label: "Start test",
