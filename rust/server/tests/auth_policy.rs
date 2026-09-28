@@ -281,6 +281,15 @@ fn webtransport_uses_no_cookie_and_burns_tickets_even_with_bearer() {
         Err(Refusal::AuthenticationRequired)
     ));
     assert!(store.consume_ticket(&ticket.token, target, PUBLIC).is_none());
+
+    // An authenticated CONNECT from a foreign origin is forbidden, as in Go, not sent to sign in.
+    *req.uri_mut() = "/wt/ping".parse().unwrap();
+    req.headers_mut().insert(header::ORIGIN, CLIENT.parse().unwrap());
+    bearer(&mut req, &cli);
+    assert!(matches!(
+        evaluate(&policy, &req, peer(), true, listener),
+        Err(Refusal::Forbidden)
+    ));
 }
 
 #[test]

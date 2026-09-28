@@ -213,7 +213,7 @@ impl Policy {
             let redeemed = ticket.as_deref().and_then(|token| self.consume_ticket(request, token));
             let lease = bearer.or(redeemed).ok_or(Refusal::AuthenticationRequired)?;
             if !self.valid_origin(request, &lease) {
-                return Err(Refusal::AuthenticationRequired);
+                return Err(Refusal::Forbidden);
             }
             return Ok(Authorization::Authenticated(lease));
         }
