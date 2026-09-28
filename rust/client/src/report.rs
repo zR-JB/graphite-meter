@@ -619,7 +619,7 @@ fn latency_cells(population: &ServerLatencyResult, idle: Option<u64>) -> Vec<Str
     if let Some(distribution) = summary.distribution {
         cells[2] = ms(distribution.p95);
     }
-    if let Some(jitter) = summary.jitter.filter(|_| summary.jitter_pairs > 0) {
+    if let Some(jitter) = summary.jitter {
         cells[3] = ms(jitter);
     }
     if let Some(ratio) = summary.timeout_ratio() {
