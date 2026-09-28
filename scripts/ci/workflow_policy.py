@@ -19,7 +19,7 @@ STEP = re.compile(r"(?m)^(?=\s*- )")
 JOB = re.compile(r"(?m)^  (?=[a-z-]+:$)")
 RELEASE_SECRETS = {"GHCR_TOKEN", "RELEASE_APP_PRIVATE_KEY"}
 # The macOS TUIs are packaged by these scripts and every module they import or run with -m.
-DARWIN_SCRIPTS = ("scripts/package-rust.py",)
+DARWIN_SCRIPTS = ("scripts/package_rust.py",)
 
 TRIGGERS = {
     "advisories.yml": {"schedule", "workflow_dispatch"},

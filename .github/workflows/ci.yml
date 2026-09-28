@@ -384,7 +384,7 @@ jobs:
         env:
           DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
         run: >-
-          python3 scripts/package-rust.py 0.0.0-dev --output "$RUNNER_TEMP/rust-darwin"
+          python3 -m scripts.package_rust 0.0.0-dev --output "$RUNNER_TEMP/rust-darwin"
           --supplement legal/rust-platform-macos.json --platform $(awk '$1 ~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
 
   gate:

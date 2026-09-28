@@ -57,6 +57,20 @@ class RustArtifactTests(unittest.TestCase):
                 artifacts(messages, 'application', 'application')
 
 
+class RustPackageTests(unittest.TestCase):
+    def test_packaging_takes_listed_platforms_and_writes_only_inside_its_roots(self) -> None:
+        from scripts.package_rust import build
+
+        supplement = ROOT / 'legal/rust-platform-macos.json'
+        with patch('subprocess.run', side_effect=AssertionError('built')), tempfile.TemporaryDirectory() as scratch:
+            with self.assertRaisesRegex(ValueError, 'no TUI target for plan9/amd64'):
+                build('1.2.3', 'plan9/amd64', Path(scratch), supplement)
+            with self.assertRaisesRegex(ControlPlaneError, 'is outside'):
+                build('1.2.3', 'linux/amd64', Path('/'), supplement)
+            with self.assertRaisesRegex(ValueError, 'invalid release version'):
+                build('1.2.3;id', 'linux/amd64', Path(scratch), supplement)
+
+
 class RustLegalReportTests(unittest.TestCase):
     def test_the_report_opens_as_go_tui_report_of_the_same_version_and_keeps_its_notices(self) -> None:
         project = Project.read(ROOT)

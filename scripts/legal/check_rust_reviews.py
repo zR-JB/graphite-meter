@@ -23,6 +23,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from ..ci.toolchains import rust_channel
 from .model import marshal
 
 REPO = Path(__file__).resolve().parents[2]
@@ -64,7 +65,7 @@ BUILDERS = {
 def unreviewed_platforms(repo: Path, targets: str) -> list[str]:
     """Shipped targets whose builder's --supplement file holds no approved record for this toolchain,
     and platform record files that no builder reads."""
-    channel = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
+    channel = rust_channel(repo)
     problems, read = [], set()
     for builder, builds in BUILDERS.items():
         supplements = set(re.findall(r'--supplement (legal/\S+\.json)', (repo / builder).read_text()))

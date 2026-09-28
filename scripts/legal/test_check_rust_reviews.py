@@ -66,7 +66,7 @@ class PlatformRecordTests(unittest.TestCase):
         (root / 'rust').mkdir()
         (root / 'rust/rust-toolchain.toml').write_text('[toolchain]\nchannel = "1.98.1"\n')
         (root / '.github/workflows/release-request.yml').write_text(
-            'python3 scripts/package-rust.py --supplement legal/macos.json\n')
+            'python3 -m scripts.package_rust --supplement legal/macos.json\n')
         (root / 'container/Dockerfile.rust').write_text(
             'RUN a --supplement legal/linux.json\nRUN b --supplement legal/linux.json\n')
         approved = {'rustc': RUSTC, 'reviewDecision': 'approved', 'reviewNotes': 'reviewed'}

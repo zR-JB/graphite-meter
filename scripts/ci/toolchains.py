@@ -9,6 +9,8 @@ import subprocess
 import tomllib
 from pathlib import Path
 
+from .github_api import fail
+
 ROOT = Path(__file__).resolve().parents[2]
 TOOL_KEYS = {
     "bun": "bun", "python": "python", "go": "go",
@@ -32,6 +34,21 @@ PIN_PATTERNS = {
         "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-bookworm@sha256:[0-9a-f]{64}",
     },
 }
+
+
+def rust_channel(root: Path = ROOT) -> str:
+    """The Rust release that rust/rust-toolchain.toml pins for every Rust build."""
+    return tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+
+
+def tui_targets(path: Path) -> dict[str, str]:
+    """Each shipped GOOS/GOARCH platform and its Rust target, as scripts/tui-targets.txt lists them."""
+    platforms: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if (match := re.fullmatch(r"([a-z0-9]+/[a-z0-9]+) ([a-z0-9_]+(?:-[a-z0-9_]+){2,3})", line)) is None:
+            fail(f"invalid TUI target: {line!r}")
+        platforms[match[1]] = match[2]
+    return platforms
 
 
 def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
@@ -63,8 +80,8 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
     for name, runtime in (("bun", "bun"), ("golang", "go"), ("python", "python")):
         if pins["images"][name].split(":")[1].split("@")[0].split("-")[0] != pins["runtime"][runtime]:
             raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
-    channel = tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
-    if pins["images"]["rust"].split(":")[1].split("-")[0] != channel:
+    pins["rust"] = {"channel": rust_channel(root)}
+    if pins["images"]["rust"].split(":")[1].split("-")[0] != pins["rust"]["channel"]:
         raise ValueError("mise.toml images.rust must use the rust/rust-toolchain.toml channel")
     return pins
 

@@ -159,8 +159,7 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
      r"rust misses \['.dockerignore'\]"),
     ("container/Dockerfile.rust", None, "COPY docs/ docs/\n", r"rust misses \['docs/x'\]"),
     (".github/ci-paths.yml", "  - 'scripts/ci/github_api.py'\n", "", r"darwin misses \['scripts/ci/github_api.py'\]"),
-    ("scripts/legal/rust_platform.py", None, "from ..ci import toolchains\n",
-     r"darwin misses \['scripts/ci/toolchains.py'\]"),
+    ("scripts/legal/rust_platform.py", None, "from ..ci import trust\n", r"darwin misses \['scripts/ci/trust.py'\]"),
 )
 
 

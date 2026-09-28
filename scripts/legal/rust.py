@@ -15,12 +15,12 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import zlib
 from dataclasses import replace
 from pathlib import Path
 
 from ..ci.github_api import ControlPlaneError, local_path
+from ..ci.toolchains import rust_channel
 from .artifacts import add_bytes, add_tree, legal_header, notices, release_source
 from .discovery import discover_browser
 from .model import Component, LegalError, Project, Provenance, Review, array, marshal, obj, read_json, sha256, strings, text
@@ -31,8 +31,7 @@ PACKAGES = ('graphite-meter-client', 'graphite-meter-server')
 
 
 def cargo(repo: Path, *args: str) -> list[str]:
-    toolchain = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
-    return ['cargo', f'+{toolchain}', *args]
+    return ['cargo', f'+{rust_channel(repo)}', *args]
 
 
 def capture(repo: Path, package: str, target: str, profile: str, link_map: Path,
@@ -227,7 +226,7 @@ def main() -> None:
     metadata, messages = capture(repo, args.package, args.target, args.profile, link_map)
     components, inventory, failures = discover(repo, metadata, messages, args.package, reviews, provenance)
     # rustup selects exactly the pinned workspace toolchain.
-    channel = tomllib.loads((repo / 'rust/rust-toolchain.toml').read_text())['toolchain']['channel']
+    channel = rust_channel(repo)
     toolchain = subprocess.check_output(['rustc', f'+{channel}', '-vV'], text=True)
     manifest = {'schemaVersion': 1, 'package': args.package, 'target': args.target,
                 'profile': args.profile, 'rustc': toolchain,

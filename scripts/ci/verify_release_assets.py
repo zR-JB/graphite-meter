@@ -19,6 +19,7 @@ from .github_api import (
     TLS_NAME, ControlPlaneError, decode_json, expect_array, expect_object, fail, file_sha256,
     int_field, local_path, object_field, str_field,
 )
+from .toolchains import tui_targets
 from .verify_oci import BLOB_LIMIT, source_commit
 
 CHECKSUM_LINE = re.compile(r"([0-9a-fA-F]{64})[ \t]+[* ]?(.+)")
@@ -80,15 +81,6 @@ def merge(source: Path, destination: Path) -> set[str]:
             fail(f"{name} arrives in more than one artifact")
         shutil.copyfile(source / name, destination / name)
     return names
-
-
-def tui_targets(targets: Path) -> dict[str, str]:
-    platforms: dict[str, str] = {}
-    for line in targets.read_text(encoding="utf-8").splitlines():
-        if (match := re.fullmatch(r"([a-z0-9]+/[a-z0-9]+) ([a-z0-9_]+(?:-[a-z0-9_]+){2,3})", line)) is None:
-            fail(f"invalid TUI target: {line!r}")
-        platforms[match[1]] = match[2]
-    return platforms
 
 
 def tui_archive(version: str, platform: str, marker: str = "") -> tuple[str, str, str]:

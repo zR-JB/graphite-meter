@@ -36,7 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && cd rust && rustup target add $(awk '$1 !~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt)
 ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
-RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
+RUN python3 -m scripts.package_rust "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
     --platform $(awk '$1 !~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
 
 FROM scratch AS tui-artifacts

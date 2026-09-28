@@ -142,7 +142,7 @@ runs:
       if: inputs.rust == 'true'
       shell: bash
       run: |
-        version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("rust/rust-toolchain.toml").read_text())["toolchain"]["channel"])')
+        version=$(python3 -m scripts.ci.toolchains get rust.channel)
         rustup toolchain install "$version" --profile minimal --component rustfmt --component clippy
 
     - name: Cache Cargo downloads and dependency builds
