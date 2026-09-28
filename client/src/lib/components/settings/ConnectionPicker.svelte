@@ -7,6 +7,7 @@
   import type { PathOption } from "../../presentation/paths";
   import { JARGON, PATH_NOTE, READINESS } from "../../presentation/vocabulary";
   import { tooltip } from "../../actions/tooltip";
+  import { reveal } from "../../presentation/motion.svelte";
 
   interface Props {
     role: ConnectionRole;
@@ -77,6 +78,7 @@
   <div class="kv choices">
     {#each shown as option (option.value)}
       <label
+        transition:reveal
         class:unavailable={option.disabled || locked}
         {@attach tooltip(() => `${option.label}\n${option.detail}`)}
       >

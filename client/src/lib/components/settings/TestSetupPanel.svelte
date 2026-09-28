@@ -15,6 +15,7 @@
     normalizeStreamCount,
   } from "../../runner/paths";
   import { term, tooltip } from "../../actions/tooltip";
+  import { reveal } from "../../presentation/motion.svelte";
   import Icon from "../Icon.svelte";
   import Switch from "../Switch.svelte";
   import ServerSelection from "../ServerSelection.svelte";
@@ -408,7 +409,7 @@
       {#if durationMode === "custom"}
         {#each STAGE_FIELDS as [key, label, tone] (key)}
           {#if key !== "bidirectionalMs" || store.config.stages.bidirectional}
-            <div class="stage-row">
+            <div class="stage-row" transition:reveal|global>
               <span class="stage-name" data-tone={tone}>{label}</span>
               {@render stepper(key, label)}
             </div>
@@ -495,7 +496,7 @@
         setVizAuto,
       )}
       {#if !vizAuto}
-        <label>
+        <label transition:reveal>
           <span {@attach tooltip(() => JARGON.gaugeMax)}>Maximum</span>
           <span class="field-unit">
             <input

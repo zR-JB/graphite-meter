@@ -930,7 +930,9 @@
     background: var(--surface-1);
     color: var(--brand-strong);
     cursor: inherit;
-    transition: var(--transition-control);
+    transition:
+      var(--transition-control),
+      border-width var(--dur-slide) var(--ease-out);
   }
   input.check[type="radio"] {
     border-radius: var(--r-full);
@@ -940,16 +942,24 @@
     background: var(--brand);
     color: var(--text-inverse);
   }
-  input.check[type="checkbox"]:checked::after {
+  /* The check is drawn in as the box fills, and out as it empties. */
+  input.check[type="checkbox"]::after {
     content: "";
     width: 9px;
     height: 5px;
     border-left: 2px solid currentColor;
     border-bottom: 2px solid currentColor;
     transform: translateY(-1px) rotate(-45deg);
+    scale: 0;
+    transition: scale var(--dur-slide) var(--ease-out);
   }
+  input.check[type="checkbox"]:checked::after {
+    scale: 1;
+  }
+  /* A chosen radio's ring closes in on its centre instead of snapping. */
   input.check[type="radio"]:checked {
-    border: 5.5px solid var(--brand);
+    border-width: 5.5px;
+    border-color: var(--brand);
   }
 
   .group {
