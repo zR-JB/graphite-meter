@@ -150,7 +150,7 @@ impl Service {
             (&Method::POST, "/auth/browser/approve") => self.approve(authorized, true),
             (&Method::POST, "/auth/cli/token") => self.exchange(request, false),
             (&Method::POST, "/auth/browser/token") => self.exchange(request, true),
-            (_, "/wt/session" | "/ws/session") => self.ticket(authorized),
+            (&Method::POST, "/wt/session" | "/ws/session") => self.ticket(authorized),
             _ => error_response(StatusCode::NOT_FOUND),
         };
         // As Go's http.Redirect, a GET's redirect also links its destination.

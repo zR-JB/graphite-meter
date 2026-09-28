@@ -522,9 +522,10 @@ impl HttpServer {
                 return Ok(self.harden(response));
             }
             let path = authorized.request().uri().path();
-            if path == "/login" || path.starts_with("/auth/") || matches!(path, "/ws/session" | "/wt/session") {
+            // As in Go, a ticket route reaches the controller only where it is mounted, past the method check.
+            let ticket = matches!(route, Some(Route::WsSession | Route::WtSession));
+            if path == "/login" || path.starts_with("/auth/") || ticket {
                 let logout = path == "/auth/logout" && authorized.request().method() == Method::POST;
-                let ticket = matches!(path, "/ws/session" | "/wt/session");
                 // Even public auth endpoints collect only 4096 bytes within 15s.
                 let execute = async {
                     let authorized = authorized.try_map_body(collect_auth_body).await?;

@@ -422,3 +422,69 @@ async fn native_listeners_authorize_routes_they_do_not_mount_before_404() {
     driver.abort();
     h.stop().await;
 }
+
+#[tokio::test]
+async fn socket_tickets_are_minted_only_where_mounted_and_only_for_post() {
+    let h = Harness::start().await;
+    let (session, csrf) = h.login().await;
+    let targets = [
+        ("/ws/session", "https://localhost/ws/ping"),
+        ("/wt/session", "https://localhost:8443/wt/ping"),
+    ];
+    // The UI listener mounts both, for POST alone.
+    for (route, target) in targets {
+        let (refused, _) = h
+            .request(
+                "GET",
+                &format!("{route}?target={target}"),
+                &credentials(&session, &csrf),
+                "",
+            )
+            .await;
+        assert!(refused.starts_with("HTTP/1.1 405"), "{route}: {refused}");
+    }
+    let stream = h
+        .h2_connector
+        .connect(
+            ServerName::try_from("localhost").unwrap(),
+            TcpStream::connect(h.h2).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    let (mut client, connection) = h2::client::handshake(stream).await.unwrap();
+    let driver = tokio::spawn(connection);
+    // As in Go, the native HTTP/2 listener mounts only the WebTransport ticket; WebSockets live on the UI listeners.
+    for (method, (route, target), expected) in [
+        ("GET", targets[0], 404),
+        ("HEAD", targets[0], 404),
+        ("POST", targets[0], 404),
+        ("GET", targets[1], 405),
+        ("POST", targets[1], 200),
+    ] {
+        let request = Request::builder()
+            .method(method)
+            .uri(format!("https://localhost{route}?target={target}"))
+            .header("cookie", format!("__Host-gm_session={session}"))
+            .header("origin", "https://localhost")
+            .header("x-csrf-token", &csrf)
+            .body(())
+            .unwrap();
+        client = client.ready().await.unwrap();
+        let (response, _) = client.send_request(request, true).unwrap();
+        let response = response.await.unwrap();
+        assert_eq!(response.status(), expected, "{method} {route}");
+        let mut body = response.into_body();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = body.data().await {
+            let chunk = chunk.unwrap();
+            body.flow_control().release_capacity(chunk.len()).unwrap();
+            bytes.extend_from_slice(&chunk);
+        }
+        let minted =
+            serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|ticket| ticket["token"].is_string());
+        assert_eq!(minted, expected == 200, "{method} {route}");
+    }
+    drop(client);
+    driver.abort();
+    h.stop().await;
+}
