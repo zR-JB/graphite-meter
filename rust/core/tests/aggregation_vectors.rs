@@ -1,12 +1,9 @@
 use graphite_meter_core::measurement::*;
 use serde_json::Value;
 
+/// Rates compare exactly, as Go's vector test compares them.
 fn close(name: &Value, field: &str, actual: Option<f64>, expected: &Value) {
-    let equal = match (actual, expected.as_f64()) {
-        (Some(actual), Some(expected)) => (actual - expected).abs() < 1e-6,
-        (actual, _) => actual.is_none() && expected.is_null(),
-    };
-    assert!(equal, "{name}: {field} {actual:?} != {expected}");
+    assert_eq!(actual, expected.as_f64(), "{name}: {field} {actual:?} != {expected}");
 }
 
 fn reported(name: &Value, field: &str, result: MeasurementResult, expected: &Value) {
@@ -88,6 +85,38 @@ fn shared_aggregation_contract() {
             close(name, "window", actual.down_bytes_per_sec, &window["downBytesPerSec"]);
             close(name, "window", actual.up_bytes_per_sec, &window["upBytesPerSec"]);
         }
+    }
+}
+
+#[test]
+fn rates_divide_by_seconds_as_go_durations_count_them() {
+    // Go's float64(bytes) / time.Duration(1_500_000_007).Seconds(); bytes / (nanos / 1e9) rounds one ulp up.
+    let expected = f64::from_bits(0x41c3_de43_53c7_1c71);
+    let (bytes, nanos) = (1_000_000_000, 1_500_000_007);
+    let receiver = |bytes, nanos| {
+        let snapshot = ReceiverSnapshot {
+            id: "r".into(),
+            bytes,
+            nanos,
+        };
+        [("a".to_owned(), snapshot)].into()
+    };
+    for (stage, direction) in [(Stage::Download, Direction::Down), (Stage::Upload, Direction::Up)] {
+        let mut engine = AggregateMeasurements::default();
+        engine.begin_stage(stage, vec!["a".into()], 0);
+        for (at_nanos, count) in [(0, 0), (nanos, bytes)] {
+            engine.observe(Boundary {
+                at_nanos,
+                down: [("a".to_owned(), count)].into(),
+                up: receiver(count, at_nanos + 1),
+                ..Boundary::default()
+            });
+        }
+        assert_eq!(
+            engine.result(direction).mean_bytes_per_sec,
+            Some(expected),
+            "{direction:?}"
+        );
     }
 }
 

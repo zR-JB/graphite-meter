@@ -515,7 +515,7 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
                 return Err(Gap::Invalid);
             };
             let bytes = end.checked_sub(start).ok_or(Gap::Invalid)?;
-            let rate = bytes as f64 / (elapsed as f64 / 1e9);
+            let rate = bytes as f64 / seconds(elapsed);
             window.down.push(ComponentWindow {
                 server_id: id.clone(),
                 bytes,
@@ -536,7 +536,7 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
                 continue;
             }
             let (bytes, duration) = (end.bytes - start.bytes, end.nanos - start.nanos);
-            let rate = bytes as f64 / (duration as f64 / 1e9);
+            let rate = bytes as f64 / seconds(duration);
             window.up.push(ComponentWindow {
                 server_id: id.clone(),
                 bytes,
@@ -550,4 +550,9 @@ fn window(first: &Boundary, last: &Boundary, interval: &AggregationInterval) -> 
         return Err(Gap::Stale);
     }
     Ok(window)
+}
+
+/// Go's Duration.Seconds: whole seconds plus the remaining nanoseconds, so rates round as Go's do.
+fn seconds(nanos: u64) -> f64 {
+    std::time::Duration::from_nanos(nanos).as_secs_f64()
 }
