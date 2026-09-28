@@ -1,0 +1,380 @@
+[
+  {
+    "target": "x86_64-apple-darwin",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+    "nativeCompiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "systemLibraries": [
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+      "/usr/lib/libSystem.B.dylib",
+      "/usr/lib/libiconv.2.dylib"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Reviewed the platform facts that the macos-15 runner with Xcode 16.4 printed for x86_64-apple-darwin in CI run 36452507559: the ld64 map links no native object or archive from outside Cargo except the rustup rust-std-1.98.1-x86_64-apple-darwin libcompiler_builtins rlib. No Xcode, SDK or compiler-rt archive is linked; Apple clang only drives the link. The rlib and notice fingerprints were recomputed from the rustup 1.98.1 components and match the runner byte for byte. The executable imports only libSystem.B, libiconv.2, CoreFoundation and Security, which every macOS installation provides and loads at run time. The TUI archive does not contain them, so they are System Libraries under GPLv3/AGPLv3 section 1, and using the LGPL libiconv dynamically places no obligation on an archive that does not ship it. Apple's SDK is used only on Apple hardware (GitHub's macOS runners), as its licence requires. What ships is the Rust standard library and compiler-builtins under MIT and Apache-2.0; compiler-builtins' LLVM-derived code is Apache-2.0 WITH LLVM-exception, which waives attribution for embedded object code, and the aggregate keeps its texts anyway. Other Xcode versions, runner images or targets require review.",
+    "description": "Rust 1.98.1 standard-library notices for the x86_64-apple-darwin TUI, built natively with Xcode 16.4. It links the Rust standard library statically and loads the macOS system libraries libSystem, libiconv, CoreFoundation and Security from the operating system; none of them ships with it.",
+    "inputs": [
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/COPYRIGHT-library.html",
+        "sha256": "68129500b616d5838629e68f55ff3aed5e096dacf60ce9eb41bbe599a563afa6",
+        "noticeName": "rust-standard-library/COPYRIGHT-library.html"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/Apache-2.0.txt",
+        "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+        "noticeName": "rust-standard-library/Apache-2.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/BSD-2-Clause.txt",
+        "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+        "noticeName": "rust-standard-library/BSD-2-Clause.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/CC-BY-SA-4.0.txt",
+        "sha256": "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2",
+        "noticeName": "rust-standard-library/CC-BY-SA-4.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GCC-exception-3.1.txt",
+        "sha256": "a3966c9410ef94a1efbfa9ec04e9c1994026a70623fbf0885ce36737bfba3b54",
+        "noticeName": "rust-standard-library/GCC-exception-3.1.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-2.0-only.txt",
+        "sha256": "54b212ba1f97f6948fa5486239ab505dd820b02e50cbfd296b4062c8609a70af",
+        "noticeName": "rust-standard-library/GPL-2.0-only.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-3.0-or-later.txt",
+        "sha256": "05315fce6c35f79b8a35454828995fa26336f235895ac64557abc028f4ffcea2",
+        "noticeName": "rust-standard-library/GPL-3.0-or-later.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/ISC.txt",
+        "sha256": "0ff61769b238634e042ab759dddfd104a8e69d091e3600ae3410e401a6164381",
+        "noticeName": "rust-standard-library/ISC.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/LLVM-exception.txt",
+        "sha256": "e34c58338bd89d43e709e226610d8f32b3e3c47f4ad9a99a8dc1d4ac7842488e",
+        "noticeName": "rust-standard-library/LLVM-exception.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/MIT.txt",
+        "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0",
+        "noticeName": "rust-standard-library/MIT.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/NCSA.txt",
+        "sha256": "39cb0234065c92b9e6cee3830cbb52b1aa289aa8fe9ba2e66730fec5cf05c630",
+        "noticeName": "rust-standard-library/NCSA.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/OFL-1.1.txt",
+        "sha256": "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd",
+        "noticeName": "rust-standard-library/OFL-1.1.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/Unicode-3.0.txt",
+        "sha256": "f5062c9a188d81dfe66b56db4182dcf9e4b17c0d9b0d311a8e20b3a1b075c443",
+        "noticeName": "rust-standard-library/Unicode-3.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libaddr2line-9684bb964f1dcfeb.rlib",
+        "sha256": "6a84fe848c5314e53198222b4bc93789201791fe0cf73e7d8f326d320856446e"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libadler2-ce82b8457b0d62cf.rlib",
+        "sha256": "57bffa7a6e2b1f9dc1b02416fdb286ca6e9e8612cc18039dfff5485379f33a23"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/liballoc-9dfb932996702d52.rlib",
+        "sha256": "efb17fd5e72d340c0832f372aea9e8457d2c853e098ff467dc7e83865ed05cdc"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libcfg_if-08411893b961a173.rlib",
+        "sha256": "397e4d3c95c33035e1bbd7e5906b86aeb62e8154380163bcbb3ec5db9cb18ff3"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libcompiler_builtins-61f62886d21d43fa.rlib",
+        "sha256": "d3811e93f6b64b5754097412a5a34f7f7353549906f0a13c8db81a3978fe968d"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libcore-68779ac4ab5af248.rlib",
+        "sha256": "79bb9bb9ac66beba68bf43a97f2caed852b0cc1d6a0633569d006505734a5448"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libgetopts-2de2bec0f71e4743.rlib",
+        "sha256": "f750290e941f8b82d88c4ec15c889689fbdf4094950805736b3df3a9d3eaf022"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libgimli-460a23ff6bbeabe2.rlib",
+        "sha256": "c8243de353a7afa19973d3351e86e321c9d59258db4f03fa6bfc9c624c199b2c"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libhashbrown-95aa8454464c7fe4.rlib",
+        "sha256": "13512c9f471d84a0820bb4793b2a5b33cb8bdd9e36bb4705a198ce7d48cada3a"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/liblibc-2411db95a292c07d.rlib",
+        "sha256": "d644ef41d4279e580f3ba0b57225e7e7c657baefda0b12eb66d16bbeff1c5d0c"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libmemchr-3db2833c7ffc1474.rlib",
+        "sha256": "01c2d1d3309023d5abf5a8b892ba75b65d40187fe3a2651e666e19f8b82d32b5"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libminiz_oxide-28a8783e1d60f65c.rlib",
+        "sha256": "72dce335874aae03f8894733b23e91ce66cffd56d7728e284b40a05e2e618037"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libobject-06e34eeb4eb73dc0.rlib",
+        "sha256": "cb7c0760bb6aa9bda75b3bf823032f51d8a3e307d7bcc3dc468118186a434ac8"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libpanic_abort-6c90ce3461bec009.rlib",
+        "sha256": "625b22e3ee45f56eb51dabb38cd3a999485d0a9eb2c0721e4a2dccda0e4de749"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libpanic_unwind-bb2d4a9c83662d5d.rlib",
+        "sha256": "d3efffdfcb2269416c0c70d92423c489cc1cb50745951a35f9994473b33e0e61"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libproc_macro-8a64226070378cbf.rlib",
+        "sha256": "912153113464c2f536d1513bd4a011bb37d0723e02e23a40a03e1811ebdfdbf9"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libprofiler_builtins-72682143f589d718.rlib",
+        "sha256": "c3a739140b57c2b84ecfe7b6e8ef615953bbb57e6ff3010a2d1530532703f222"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/librustc_demangle-41c7380fef7dd4f3.rlib",
+        "sha256": "c9e25609001b9ea25200bfffc42f22842946d8a16061063793da04d301a1e0ae"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/librustc_literal_escaper-1f79a6ddb2b54b35.rlib",
+        "sha256": "aa19b15579bfb70b59da898660216c0de15c3f1d55505d8bb83bc546819eaf7c"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/librustc_std_workspace_alloc-6e5920faa921c164.rlib",
+        "sha256": "f35ffc2ce056bbf386021fa31846b5aeb4885ef72468e005ca8bb0a444a8e6dc"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/librustc_std_workspace_core-bd6a8ef50e9e69c9.rlib",
+        "sha256": "15b5c1a97c4ef1766f5b46b05e12fdfe478f54fa766e56b0c31951eeb946ee86"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/librustc_std_workspace_std-941d577b1f711476.rlib",
+        "sha256": "4590bcd2298e9e6e988e7a8f85339d81835410ad9c572243b3b4361644475c04"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libstd-62092c68b9eb1b56.rlib",
+        "sha256": "dad51408889e9846dfecf0f124ba58a13d1c600f5fe5964ea3aa338296eb88e4"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libstd_detect-512ada365c7d3af2.rlib",
+        "sha256": "e7d56bd1733a3a3e6cc2ce5b49b09e6647b79d175ba37c6813f970ea2814cfc2"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libsysroot-0baff65aabad7ea6.rlib",
+        "sha256": "cb632b3ea460636ba6f711a0164bed4e02126cf945a6768bb39a1224c617d48e"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libtest-ea0d7115e9b93e40.rlib",
+        "sha256": "882343c1f0cb58a75cef17dc3d961c015330ca0482e6d380acc6c21697ff2e00"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/x86_64-apple-darwin/lib/libunwind-696ddcf0cce35199.rlib",
+        "sha256": "07b9011c2a936eef89c7bbfdb37a71fb1ee5ff8a8e124f877050ee621e61f0c7"
+      }
+    ]
+  },
+  {
+    "target": "aarch64-apple-darwin",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)\nbinary: rustc\ncommit-hash: 48a229ceaefd4985c50990b14116b6d856af0985\ncommit-date: 2026-09-01\nhost: aarch64-apple-darwin\nrelease: 1.98.1\nLLVM version: 22.1.8\n",
+    "nativeCompiler": "Apple clang version 17.0.0 (clang-1700.0.13.5)",
+    "systemLibraries": [
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/System/Library/Frameworks/Security.framework/Versions/A/Security",
+      "/usr/lib/libSystem.B.dylib",
+      "/usr/lib/libiconv.2.dylib"
+    ],
+    "reviewDecision": "approved",
+    "reviewNotes": "Reviewed the platform facts that the macos-15 runner with Xcode 16.4 printed for aarch64-apple-darwin in CI run 36452507559: the ld64 map links no native object or archive from outside Cargo except the rustup rust-std-1.98.1-aarch64-apple-darwin libcompiler_builtins rlib. No Xcode, SDK or compiler-rt archive is linked; Apple clang only drives the link. The rlib and notice fingerprints were recomputed from the rustup 1.98.1 components and match the runner byte for byte. The executable imports only libSystem.B, libiconv.2, CoreFoundation and Security, which every macOS installation provides and loads at run time. The TUI archive does not contain them, so they are System Libraries under GPLv3/AGPLv3 section 1, and using the LGPL libiconv dynamically places no obligation on an archive that does not ship it. Apple's SDK is used only on Apple hardware (GitHub's macOS runners), as its licence requires. What ships is the Rust standard library and compiler-builtins under MIT and Apache-2.0; compiler-builtins' LLVM-derived code is Apache-2.0 WITH LLVM-exception, which waives attribution for embedded object code, and the aggregate keeps its texts anyway. Other Xcode versions, runner images or targets require review.",
+    "description": "Rust 1.98.1 standard-library notices for the aarch64-apple-darwin TUI, built natively with Xcode 16.4. It links the Rust standard library statically and loads the macOS system libraries libSystem, libiconv, CoreFoundation and Security from the operating system; none of them ships with it.",
+    "inputs": [
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/COPYRIGHT-library.html",
+        "sha256": "68129500b616d5838629e68f55ff3aed5e096dacf60ce9eb41bbe599a563afa6",
+        "noticeName": "rust-standard-library/COPYRIGHT-library.html"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/Apache-2.0.txt",
+        "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff",
+        "noticeName": "rust-standard-library/Apache-2.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/BSD-2-Clause.txt",
+        "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df",
+        "noticeName": "rust-standard-library/BSD-2-Clause.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/CC-BY-SA-4.0.txt",
+        "sha256": "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2",
+        "noticeName": "rust-standard-library/CC-BY-SA-4.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GCC-exception-3.1.txt",
+        "sha256": "a3966c9410ef94a1efbfa9ec04e9c1994026a70623fbf0885ce36737bfba3b54",
+        "noticeName": "rust-standard-library/GCC-exception-3.1.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-2.0-only.txt",
+        "sha256": "54b212ba1f97f6948fa5486239ab505dd820b02e50cbfd296b4062c8609a70af",
+        "noticeName": "rust-standard-library/GPL-2.0-only.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/GPL-3.0-or-later.txt",
+        "sha256": "05315fce6c35f79b8a35454828995fa26336f235895ac64557abc028f4ffcea2",
+        "noticeName": "rust-standard-library/GPL-3.0-or-later.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/ISC.txt",
+        "sha256": "0ff61769b238634e042ab759dddfd104a8e69d091e3600ae3410e401a6164381",
+        "noticeName": "rust-standard-library/ISC.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/LLVM-exception.txt",
+        "sha256": "e34c58338bd89d43e709e226610d8f32b3e3c47f4ad9a99a8dc1d4ac7842488e",
+        "noticeName": "rust-standard-library/LLVM-exception.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/MIT.txt",
+        "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0",
+        "noticeName": "rust-standard-library/MIT.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/NCSA.txt",
+        "sha256": "39cb0234065c92b9e6cee3830cbb52b1aa289aa8fe9ba2e66730fec5cf05c630",
+        "noticeName": "rust-standard-library/NCSA.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/OFL-1.1.txt",
+        "sha256": "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd",
+        "noticeName": "rust-standard-library/OFL-1.1.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/share/doc/rust/licenses/Unicode-3.0.txt",
+        "sha256": "f5062c9a188d81dfe66b56db4182dcf9e4b17c0d9b0d311a8e20b3a1b075c443",
+        "noticeName": "rust-standard-library/Unicode-3.0.txt"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libaddr2line-79bed969f69e54c6.rlib",
+        "sha256": "6dbbd1d894508fb647e65c8b5010eca8f5529e41383fa0732238143dfc18a93c"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libadler2-0bb5203eaf32e446.rlib",
+        "sha256": "0660d8a956723aced4b56cb5a2647e40773a848e996bdfeb3c6b62d5a5d049e3"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/liballoc-3daa19367295a846.rlib",
+        "sha256": "6f4509e01156444621aed1b68b5ff48c95e5607c694a2f41f0253caccbb450d3"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libcfg_if-17d31a5f5c373bf9.rlib",
+        "sha256": "52e246cf4c1e2f2890a952c4f097bfe1fb98ee4ee10ebd33546c85d5f589aefa"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libcompiler_builtins-51dc6f60309b0c2f.rlib",
+        "sha256": "8e07ba800b56538a0a7ead28347c09bf59621dd8fb8f0d91a0f753de2754f595"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libcore-4a1205c3dacb37e1.rlib",
+        "sha256": "66fcb84e1d046f173000db089827bb03eea75609b632b6fe8f877302596852c9"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libgetopts-0da3068421b19f83.rlib",
+        "sha256": "42cf7d24b02347423136049841f08603fd19b465524767f7aca1f286c2e77408"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libgimli-757741385d9265ec.rlib",
+        "sha256": "bd365ab0b35964c0fc22cde743961d08e757aca590527458b8f9b1cd35221586"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libhashbrown-e7a46a0b87cff2e7.rlib",
+        "sha256": "fb6c7028dbba3149d1cb5a9d3f049b0e3879619df7bc6752656d6356656aa712"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/liblibc-dd3054cc665f826f.rlib",
+        "sha256": "2aa69ff5c7820e65c5b041e06819cb42db83e482332a7635b677f1f8df386b52"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libmemchr-80762f8d0fa6ca39.rlib",
+        "sha256": "b36e1fe65ac7be447dad78cc81f6540ed8d41b7ca6ead0129034014b50f7847a"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libminiz_oxide-816d0fb2e9cd4f45.rlib",
+        "sha256": "33e78207d02a41fb99c4d3c0e481ee233d24675069f59f43b64275a8c1a2fdf3"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libobject-b14cfe590d6e1067.rlib",
+        "sha256": "68c6d530c48df3c24c28e71d08d1e5a47c049439199823d6d419615a78ff6aa2"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libpanic_abort-15d0fd7df55de83d.rlib",
+        "sha256": "bd134fe1f1be4b5176214386764ae8679c65a3fa2e276dd427b78fef390e83dc"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libpanic_unwind-869827fb9cf0d68e.rlib",
+        "sha256": "2996b3ecd8a19a6761214e02f7c6a9164f065e8a60a78c8fa494786b740cd30b"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libproc_macro-af799fdc497a9fad.rlib",
+        "sha256": "1c1a94e7093e02c8e8437ec432424765ed839ae5096de92cc8294181ff1e7dcd"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libprofiler_builtins-972c00d4cc78cddc.rlib",
+        "sha256": "a85c5d9c2a4597d6f65c234fa936b30ed490bd9293ae932123c07195241c199e"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/librustc_demangle-8b283a422a84bedc.rlib",
+        "sha256": "093aead47ad3bffedcdae5841607336a8b17f7f131083e13a12d9d2161119515"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/librustc_literal_escaper-78238be959776074.rlib",
+        "sha256": "1f26d3853d4c447f9f32bf9b97a044ae267dfcda74a00c27fed9ba5d7c58c1cf"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_alloc-21146b8e88a1242e.rlib",
+        "sha256": "7c045b29fd96f221f0ad7dacfa94565a4c1525ec52a0a4d6208f51039b71ba0d"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_core-c8f303c496e8a8f4.rlib",
+        "sha256": "27edd0a14ef4e5d823d58a00cd85ed8597057ae060d1d7ea6139219d7598d4cf"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/librustc_std_workspace_std-aecd8334fda288d0.rlib",
+        "sha256": "6d5fb36b752228f8c00670e6b9908f239e3a37721275a16b44278991aa9720ae"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libstd-3f21d70fba8f3088.rlib",
+        "sha256": "52a9e34583f133cfd144e046de74d9447840fb15a01773cbe47aff2bdbc78c36"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libstd_detect-fdc68db09217c677.rlib",
+        "sha256": "597e7cc3675e4c7c7eacadf972023d9c9a1053c71b80f5bd91137f8bfc148b19"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libsysroot-c504f35aa074ff27.rlib",
+        "sha256": "a68855942559e88c5e87e648b1e2cad4bec5bc7fa5711f57b064174d348e8bbf"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libtest-a810ff0ae3d57288.rlib",
+        "sha256": "18f929a9c6e4b67588656de607348a5d6e0c5ed07c064d90aa69164437eb41b8"
+      },
+      {
+        "path": "$RUST_SYSROOT/lib/rustlib/aarch64-apple-darwin/lib/libunwind-58e461b855dc6118.rlib",
+        "sha256": "9cea1837d1f8a53be7d2c91c2b2fa736d9d45a0867d460ba0b6b239dc89ba277"
+      }
+    ]
+  }
+]
