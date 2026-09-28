@@ -175,6 +175,7 @@ impl Preflight {
                 .chars()
                 .chain(self.server.location.chars())
                 .chain(self.engine_version.chars())
+                .chain(self.generation.chars())
                 .all(crate::text::display_character)
             || self.generation.is_empty()
             || self.generation.len() > 256

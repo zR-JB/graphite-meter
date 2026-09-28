@@ -38,7 +38,7 @@ fn catalog_and_preflight_reject_controlled_labels_without_rejecting_unicode() {
                 assert_eq!(serde_json::to_value(parsed).unwrap()["servers"][0][field], label);
             }
         }
-        for pointer in ["/server/name", "/server/location", "/engineVersion"] {
+        for pointer in ["/server/name", "/server/location", "/engineVersion", "/generation"] {
             let mut value = preflight.clone();
             *value.pointer_mut(pointer).unwrap() = json!(label);
             let parsed = Preflight::decode(&serde_json::to_vec(&value).unwrap());
