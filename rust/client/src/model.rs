@@ -288,6 +288,11 @@ impl Snapshot {
         self.results.iter().any(|result| result.elapsed > Duration::ZERO)
     }
 
+    /// A server joined the run or a stage ended, as Go's run details report.
+    pub fn started(&self) -> bool {
+        !self.participants.is_empty() || !self.results.is_empty()
+    }
+
     pub(crate) fn leave(&mut self, id: &str) {
         self.participants.retain(|participant| participant != id);
         self.refocus();

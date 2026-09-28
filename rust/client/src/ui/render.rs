@@ -418,6 +418,83 @@ impl Ui {
             .unwrap_or("unavailable")
     }
 
+    /// The run's servers as Go's run details list them: every selected server the check reached.
+    fn run_servers(&self) -> Vec<&crate::model::ServerSummary> {
+        self.snapshot
+            .servers
+            .iter()
+            .filter(|server| server.has_check_result())
+            .collect()
+    }
+
+    /// Go's testFields: the run's servers and paths, then its stream and timing settings.
+    fn test_fields(&self, width: usize) -> Vec<Line<'static>> {
+        let label = |name: &str| Span::styled(format!("{name:<11}"), Style::new().fg(self.theme.text));
+        let missing = || crate::vocabulary::MISSING.to_owned();
+        if !self.snapshot.started() {
+            let value = if self.active() {
+                "Checking paths…".into()
+            } else {
+                missing()
+            };
+            return vec![Line::from(vec![
+                label("Servers"),
+                Span::styled(value, Style::new().fg(self.theme.muted)),
+            ])];
+        }
+        let servers = self.run_servers();
+        let mut throughputs = Vec::new();
+        for path in servers.iter().filter_map(|server| server.throughput_label()) {
+            if !throughputs.contains(&path) {
+                throughputs.push(path);
+            }
+        }
+        let latency = servers
+            .iter()
+            .find(|server| Some(server.id.as_str()) == self.latency_server())
+            .and_then(|server| server.latency_label());
+        let mut names = servers
+            .iter()
+            .map(|server| server.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let target = servers.iter().rev().find_map(|server| server.throughput.as_ref());
+        let mut streams = streams_label(&self.requested, target);
+        if servers.len() > 1 {
+            names.push_str(" (all servers)");
+            streams = format!("per server · {streams}");
+        }
+        let timing = format!(
+            "warmup {} · latency cadence {} · loaded cadence {}",
+            setting(self.requested.warmup),
+            cadence_label(self.requested.ping_interval),
+            cadence_label(self.requested.loaded_ping_interval)
+        );
+        let throughput = if throughputs.is_empty() {
+            missing()
+        } else {
+            throughputs.join(" / ")
+        };
+        let mut lines = Vec::new();
+        for (name, value) in [
+            ("Servers", names),
+            ("Throughput", throughput),
+            ("Latency", latency.unwrap_or_else(missing)),
+            ("Streams", streams),
+            ("Timing", timing),
+        ] {
+            let parts: Vec<_> = value.split(" · ").map(str::to_owned).collect();
+            let wrapped = crate::report::wrap_parts(&parts, width.saturating_sub(11).max(12));
+            for (index, line) in wrapped.into_iter().enumerate() {
+                lines.push(Line::from(vec![
+                    label(if index == 0 { name } else { "" }),
+                    Span::styled(safe_text(&line, MAX_TEXT), self.value()),
+                ]));
+            }
+        }
+        lines
+    }
+
     fn draw_live(&self, frame: &mut Frame, area: Rect) {
         if area.height < 14 {
             self.draw_live_compact(frame, area);
@@ -441,10 +518,11 @@ impl Ui {
         };
         let chart_height = area.height.saturating_sub(results_height + track_height);
         let show_chart = chart_height >= 9;
-        let (track_area, timeline_area, results_area) = if frame.area().width >= 100 {
+        let wide = frame.area().width >= 100;
+        let (track_area, timeline_area, results_area) = if wide {
             let regions = Layout::vertical([Constraint::Min(9), Constraint::Length(results_height)]).split(area);
             let columns =
-                Layout::horizontal([Constraint::Percentage(32), Constraint::Percentage(68)]).split(regions[0]);
+                Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(regions[0]);
             (columns[0], columns[1], regions[1])
         } else {
             let regions = Layout::vertical([
@@ -506,7 +584,17 @@ impl Ui {
                 track_area,
             );
         } else {
-            frame.render_widget(Paragraph::new(track).block(panel("Test", self.theme)), track_area);
+            // Go's wide Test panel puts the run's fields above the stage track; a short panel keeps the track.
+            let mut lines = Vec::new();
+            if wide {
+                lines = self.test_fields(usize::from(track_area.width.saturating_sub(2)));
+                lines.push(Line::default());
+                if lines.len() + track.len() > usize::from(track_area.height.saturating_sub(2)) {
+                    lines.clear();
+                }
+            }
+            lines.extend(track);
+            frame.render_widget(Paragraph::new(lines).block(panel("Test", self.theme)), track_area);
         }
         if timeline_area.height >= 9 {
             self.draw_timeline(frame, timeline_area);
@@ -897,6 +985,42 @@ fn wrap_columns(value: &str, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
+/// Go's streamsLabel for the lanes `Config::lanes` opens on the path.
+fn streams_label(config: &Config, target: Option<&graphite_meter_core::discovery::ThroughputTarget>) -> String {
+    use graphite_meter_core::discovery::{Protocol, ThroughputTransport};
+    if config.streams > 0 {
+        return format!("Forced · {} per direction", config.streams);
+    }
+    match target.map(|target| (target.transport, target.protocol, config.lanes(target))) {
+        Some((ThroughputTransport::WebTransport, ..)) => "Automatic · 1 continuous stream per direction".into(),
+        Some((_, Protocol::Http2 | Protocol::Http3, (down, up))) => {
+            format!("Automatic · {down} download / {up} upload")
+        }
+        Some((_, Protocol::Http1, (down, _))) => format!("Automatic · up to {down} per direction"),
+        _ => "Automatic".into(),
+    }
+}
+
+/// Go's cadenceLabel.
+fn cadence_label(interval: Duration) -> String {
+    match crate::vocabulary::CADENCES
+        .iter()
+        .find(|(.., preset)| *preset == interval)
+    {
+        Some((_, label, _)) => (*label).into(),
+        None => format!("Custom ({})", setting(interval)),
+    }
+}
+
+/// Go's fmtSetting.
+fn setting(duration: Duration) -> String {
+    if duration < Duration::from_secs(1) {
+        format!("{} ms", duration.as_millis())
+    } else {
+        format!("{} s", seconds(duration))
+    }
+}
+
 fn axis_ceiling(value: f64) -> f64 {
     if value <= 0.0 {
         return 0.1;
@@ -907,4 +1031,148 @@ fn axis_ceiling(value: f64) -> f64 {
         .find(|step| step * power >= value)
         .unwrap()
         * power
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ServerSummary;
+    use graphite_meter_core::discovery::{
+        LatencyTarget, LatencyTransport, Protocol, ThroughputTarget, ThroughputTransport,
+    };
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn server(id: &str, name: &str, latency: LatencyTransport) -> ServerSummary {
+        let origin = format!("https://{id}.example");
+        ServerSummary {
+            id: id.into(),
+            name: name.into(),
+            origin: origin.clone(),
+            throughput: Some(ThroughputTarget {
+                base_url: origin.clone(),
+                transport: ThroughputTransport::FetchStream,
+                protocol: Protocol::Http2,
+            }),
+            latency: Some(LatencyTarget {
+                base_url: origin,
+                transport: latency,
+            }),
+            error: None,
+        }
+    }
+
+    fn measuring() -> Snapshot {
+        Snapshot {
+            phase: Phase::Measuring,
+            stage: Some(Stage::Download),
+            servers: vec![
+                server("a", "Alpha", LatencyTransport::WebSocket),
+                server("b", "Beta", LatencyTransport::WebTransport),
+            ],
+            participants: vec!["a".into(), "b".into()],
+            latency_focus: Some("a".into()),
+            ..Snapshot::default()
+        }
+    }
+
+    fn text(lines: &[Line]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.spans.iter().map(|span| span.content.as_ref()).collect())
+            .collect()
+    }
+
+    fn rows(ui: &mut Ui, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| ui.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(usize::from(width))
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn run_view_lists_servers_paths_streams_and_timing_like_go() {
+        let mut ui = Ui::new(Config::default(), measuring());
+        ui.live = true;
+        assert_eq!(
+            text(&ui.test_fields(200)),
+            [
+                "Servers    Alpha, Beta (all servers)",
+                "Throughput Fetch streams · HTTP/2 · TLS",
+                "Latency    WebSocket · HTTP/1.1 · TLS",
+                "Streams    per server · Automatic · 1 download / 4 upload",
+                "Timing     warmup 800 ms · latency cadence Reply-driven · loaded cadence Medium (250 ms)",
+            ]
+        );
+        // The latency path follows the shown server, and a narrow panel wraps at Go's parts.
+        ui.latency_pick = Some("b".into());
+        assert_eq!(
+            text(&ui.test_fields(40)),
+            [
+                "Servers    Alpha, Beta (all servers)",
+                "Throughput Fetch streams · HTTP/2 · TLS",
+                "Latency    WebTransport datagrams",
+                "           HTTP/3 · TLS",
+                "Streams    per server · Automatic",
+                "           1 download / 4 upload",
+                "Timing     warmup 800 ms",
+                "           latency cadence Reply-driven",
+                "           loaded cadence Medium (250 ms)",
+            ]
+        );
+        ui.latency_pick = None;
+        ui.snapshot.servers.truncate(1);
+        (ui.requested.streams, ui.requested.warmup) = (3, Duration::from_millis(1500));
+        ui.requested.ping_interval = Duration::from_secs(1);
+        assert_eq!(
+            text(&ui.test_fields(200)),
+            [
+                "Servers    Alpha",
+                "Throughput Fetch streams · HTTP/2 · TLS",
+                "Latency    WebSocket · HTTP/1.1 · TLS",
+                "Streams    Forced · 3 per direction",
+                "Timing     warmup 1.5 s · latency cadence Custom (1 s) · loaded cadence Medium (250 ms)",
+            ]
+        );
+
+        ui.update(Snapshot {
+            phase: Phase::Preparing,
+            participants: Vec::new(),
+            ..measuring()
+        });
+        assert_eq!(text(&ui.test_fields(200)), ["Servers    Checking paths…"]);
+        ui.snapshot.phase = Phase::Failed;
+        assert_eq!(text(&ui.test_fields(200)), ["Servers    —"]);
+    }
+
+    #[test]
+    fn wide_test_panel_puts_the_fields_above_the_stage_track() {
+        let mut ui = Ui::new(Config::default(), measuring());
+        ui.live = true;
+        let wide = rows(&mut ui, 140, 40);
+        let servers = wide
+            .iter()
+            .position(|row| row.contains("│Servers    Alpha, Beta (all servers)"));
+        let track = wide.iter().position(|row| row.contains("│Download "));
+        assert!(
+            servers.is_some_and(|servers| track.is_some_and(|track| servers < track)),
+            "{wide:#?}"
+        );
+        assert!(
+            wide.iter().any(|row| row.contains("│Timing     warmup 800 ms")),
+            "{wide:#?}"
+        );
+        let narrow = rows(&mut ui, 90, 40);
+        assert!(!narrow.iter().any(|row| row.contains("Servers    ")), "{narrow:#?}");
+        assert!(narrow.iter().any(|row| row.contains("Download ")), "{narrow:#?}");
+        // A panel too short for both keeps the whole stage track.
+        ui.requested.stages.push(Stage::Bidirectional);
+        let short = rows(&mut ui, 120, 20);
+        assert!(!short.iter().any(|row| row.contains("Servers    ")), "{short:#?}");
+        assert!(short.iter().any(|row| row.contains("│Bidirectional ")), "{short:#?}");
+    }
 }

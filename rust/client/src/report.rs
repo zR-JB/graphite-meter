@@ -721,7 +721,7 @@ fn grid(headers: &[String], rows: &[Vec<String>], limit: usize) -> String {
     lines.join("\n")
 }
 
-fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
+pub(crate) fn wrap_parts(parts: &[String], limit: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = String::new();
     for part in parts {
