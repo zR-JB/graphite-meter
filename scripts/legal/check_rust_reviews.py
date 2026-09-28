@@ -1,11 +1,13 @@
-"""Keep legal/rust-reviewed-components.json to the crates the shipped Rust binaries compile.
+"""Keep legal/rust-reviewed-components.json to exactly the crates the shipped Rust binaries compile.
 
     python3 -m scripts.legal.check_rust_reviews [--prune] [--format]
 
 Each shipped package and target is resolved as its release build is (cargo tree over normal and
-build edges, with that target's features), and every review must name one of those crates by
-exact name, version and source. --prune drops the reviews that name none. The file keeps the
-layout the legal tools write, so hand edits cannot drift; --format rewrites it in that layout.
+build edges, with that target's features), so crates only a release build compiles, such as the
+Windows TUI's, count as well. Every such crate needs an approved review of its exact name,
+version and source, and every review must name one of them; --prune drops the reviews that name
+none. The file keeps the layout the legal tools write, so hand edits cannot drift; --format
+rewrites it in that layout. The static Linux binaries may compile at most BUDGET crates.
 
 Every shipped target also needs an approved platform record in the --supplement file its builder
 reads, so a release request cannot reach a target nobody reviewed.
@@ -25,6 +27,9 @@ from .model import marshal
 REPO = Path(__file__).resolve().parents[2]
 REVIEWS = REPO / 'legal/rust-reviewed-components.json'
 Crate = tuple[str, str, str]
+# Crates each static Linux binary compiles, its own and build-time crates included.
+BUDGET = {('graphite-meter-server', 'x86_64-unknown-linux-musl'): 141,
+          ('graphite-meter-client', 'x86_64-unknown-linux-musl'): 170}
 
 
 def shipped(targets: str) -> list[tuple[str, str]]:
@@ -38,15 +43,14 @@ def shipped(targets: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def compiled(package: str, target: str, sources: dict[tuple[str, str], set[str]]) -> set[Crate]:
+def compiled(package: str, target: str) -> set[tuple[str, str]]:
+    """The name and version of every crate a release build of `package` for `target` compiles."""
     tree = subprocess.run(
         ['cargo', 'tree', '--locked', '--edges', 'normal,build', '--target', target,
          '--prefix', 'none', '--format', '{p}', '--package', package],
         cwd=REPO / 'rust', check=True, stdout=subprocess.PIPE, text=True,
     ).stdout
-    crates = {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
-    # Workspace members carry no lock source and need no review.
-    return {(name, version, source) for name, version in crates for source in sources.get((name, version), ())}
+    return {(name, version.removeprefix('v')) for name, version, *_ in map(str.split, tree.splitlines())}
 
 
 # Release requests build the macOS TUIs natively; the builder image builds every other target.
@@ -82,6 +86,18 @@ def unused(reviews: list[dict], used: set[Crate]) -> list[dict]:
             if (review['name'], review['reviewedVersion'], review['upstream']) not in used]
 
 
+def unreviewed(reviews: list[dict], used: set[Crate]) -> list[Crate]:
+    """The compiled crates that no approved review names exactly."""
+    return sorted(used - {(review['name'], review['reviewedVersion'], review['upstream'])
+                          for review in reviews if review.get('reviewDecision') == 'approved'})
+
+
+def over_budget(trees: dict[tuple[str, str], set[tuple[str, str]]]) -> list[str]:
+    return [f'{package} compiles {len(trees.get((package, target), ()))} crates for {target}, budget {limit}'
+            for (package, target), limit in BUDGET.items()
+            if not 0 < len(trees.get((package, target), ())) <= limit]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--prune', action='store_true', help='remove the reviews no shipped binary compiles')
@@ -99,19 +115,25 @@ def main() -> None:
     targets = (REPO / 'scripts/tui-targets.txt').read_text()
     if problems := unreviewed_platforms(REPO, targets):
         sys.exit('Rust platform records are missing:\n' + '\n'.join(f'  {problem}' for problem in problems))
-    used: set[Crate] = set()
-    for package, target in shipped(targets):
-        used |= compiled(package, target, sources)
-    stale = unused(reviews, used)
-    if stale and args.prune:
-        REVIEWS.write_bytes(marshal([review for review in reviews if review not in stale]))
-        print(f'pruned {len(stale)} of {len(reviews)} Rust legal reviews')
-    elif stale:
-        sys.exit('legal/rust-reviewed-components.json reviews crates no shipped Rust binary compiles '
-                 '(run with --prune):\n' + '\n'.join(
-                     f"  {review['name']} {review['reviewedVersion']} {review['upstream']}" for review in stale))
-    else:
-        print(f'{len(reviews)} Rust legal reviews, each for a crate a shipped binary compiles')
+    trees = {pair: compiled(*pair) for pair in shipped(targets)}
+    # Workspace members carry no lock source and need no review.
+    used = {(name, version, source) for crates in trees.values() for name, version in crates
+            for source in sources.get((name, version), ())}
+    problems = [f'no approved review names {name} {version} {source}, which a shipped binary compiles'
+                for name, version, source in unreviewed(reviews, used)] + over_budget(trees)
+    if stale := unused(reviews, used):
+        if args.prune:
+            REVIEWS.write_bytes(marshal([review for review in reviews if review not in stale]))
+            print(f'pruned {len(stale)} of {len(reviews)} Rust legal reviews')
+        else:
+            problems += [f"{review['name']} {review['reviewedVersion']} {review['upstream']} is reviewed but no "
+                         'shipped binary compiles it (run with --prune)' for review in stale]
+    if problems:
+        sys.exit('legal/rust-reviewed-components.json does not match the shipped Rust binaries:\n'
+                 + '\n'.join(f'  {problem}' for problem in problems))
+    budget = ', '.join(f'{package} {len(trees[package, target])}/{limit}' for (package, target), limit in BUDGET.items())
+    print(f'{len(used)} Rust legal reviews, one for each crate a shipped binary compiles; '
+          f'Linux crate budget: {budget}')
 
 
 if __name__ == '__main__':

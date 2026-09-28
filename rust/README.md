@@ -222,8 +222,8 @@ python3 rust/tests/browser_transports.py --server rust/target/debug/graphite-met
 
 Ring is the TLS/QUIC crypto provider. `rust-check` enforces dependency policy with
 `cargo deny --locked check` (cargo-deny pinned in `mise.toml`); a daily workflow rechecks advisories.
-It also limits the Linux production graph to 135 server crates and
-164 client crates, including each binary’s root crate.
+It also limits the crates each static Linux binary compiles, build-time crates and the
+binary’s own included, to 141 for the server and 170 for the TUI.
 The first-party Rust crates forbid unsafe code. This does not make the full
 dependency graph free of unsafe code or native cryptography: ring contains
 C/assembly. Isolated probes of rustls-graviola 0.4.0 and rustls-rustcrypto
@@ -270,10 +270,11 @@ not evidence of Safari browser parity.
 The workspace uses exact revisions of the [Noq](https://github.com/zR-JB/noq)
 and [h2](https://github.com/zR-JB/h2) forks.
 [Fork provenance](../legal/rust-forks.json) records upstream bases, reviewed
-revisions and each commit's purpose. `rust-check` validates locked sources offline and
-rejects Rust legal reviews of crates no shipped binary compiles
-(`python3 -m scripts.legal.check_rust_reviews --prune` drops them) or in another layout
-than the legal tools write (`--format` rewrites them);
+revisions and each commit's purpose. `rust-check` validates locked sources offline,
+requires an approved Rust legal review of every crate a shipped binary compiles for any
+shipped target, also those only release builds compile, and rejects reviews of crates no
+shipped binary compiles (`python3 -m scripts.legal.check_rust_reviews --prune` drops them)
+or in another layout than the legal tools write (`--format` rewrites them);
 `python3 -m scripts.legal.check_git_sources --verify` checks fork branches, upstream tags
 and diffs. [Fork upkeep](../legal/README.md#pinned-fork-upkeep) covers updates.
 The workspace's `http3` crate, shared by the server and the client, keeps a
