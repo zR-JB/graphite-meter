@@ -339,6 +339,8 @@ pub(crate) struct Connect {
     /// Once the session ended: when the wait for the peer's FIN gives up.
     deadline: Option<Instant>,
     peer_finished: bool,
+    /// The peer's CLOSE arrived, so only its FIN may follow.
+    peer_closed: bool,
     /// This side ended the session, so a sessions-only connection lingers for its CLOSE.
     closed_here: bool,
 }
@@ -401,12 +403,19 @@ impl Connect {
         self.deadline
     }
 
-    /// Reads capsules to the peer's FIN; its CLOSE, or a FIN without one, ends the session.
+    /// Reads capsules to the peer's FIN; its CLOSE, or a FIN without one, ends the session. Data
+    /// after its CLOSE is H3_MESSAGE_ERROR, as the drafts require.
     fn poll_read(&mut self, cx: &mut Context<'_>) -> Result<(), Error> {
         while !self.peer_finished {
+            if self.peer_closed && !self.input.is_empty() {
+                return Err(self.abort(Code::H3_MESSAGE_ERROR));
+            }
             match self.capsules.read(&mut self.input) {
                 Err(code) => return Err(self.abort(code)),
-                Ok(Some(Capsule::Close { code, reason })) => self.end(Ok((code, reason))),
+                Ok(Some(Capsule::Close { code, reason })) => {
+                    self.peer_closed = true;
+                    self.end(Ok((code, reason)));
+                }
                 Ok(Some(Capsule::Drain)) => {}
                 Ok(None) => match self.recv.poll_data(cx) {
                     Poll::Pending => break,
@@ -492,6 +501,7 @@ impl Session {
             ended,
             deadline: None,
             peer_finished: false,
+            peer_closed: false,
             closed_here: false,
         };
         // Without a driver the connection is gone, and so is the stream.

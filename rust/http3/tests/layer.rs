@@ -891,6 +891,33 @@ async fn closing_sends_close_then_fin_and_waits_for_the_peer() -> Result<(), Tes
 }
 
 #[tokio::test]
+async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (endings, mut ended) = tokio::sync::mpsc::unbounded_channel();
+    let (serving, _) = serve_sessions(&peers, move |session| {
+        let endings = endings.clone();
+        async move {
+            let _ = endings.send(session.closed().await);
+        }
+    });
+    let _control = uni(&peers.client, &settings(&DRAFT02), false).await?;
+    // A plain request first, so the connection outlives the session and the stream's end shows.
+    let (mut send, mut recv) = peers.client.open_bi().await?;
+    send.write_all(&request_head(&[])).await?;
+    send.finish()?;
+    assert!(response_bytes(&mut recv).await.is_ok());
+    let (mut connect, _response) = raw_connect(&peers.client, "/wt").await?;
+    // Only FIN may follow a CLOSE; a DRAIN may not.
+    let drain = frame(0x00, &[varint(0x78ae), varint(0)].concat());
+    connect.write_all(&[close_capsule(7, "bye"), drain].concat()).await?;
+    assert_eq!(ended.recv().await, Some(Ok((7, "bye".into()))));
+    assert_eq!(stopped(&connect).await, Some(Code::H3_MESSAGE_ERROR));
+    settled(&peers.budget).await;
+    drop(serving);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
     // No stream credit: the 200 head never leaves, yet the close ends within its drain.
     let peers = peers_with(usize::MAX, Some(0), true).await?;
