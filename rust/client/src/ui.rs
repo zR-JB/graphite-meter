@@ -303,7 +303,7 @@ impl Ui {
         if self.live
             && !self.quitting
             && matches!(snapshot.phase, Phase::Failed | Phase::Cancelled)
-            && !started(&snapshot)
+            && !snapshot.started()
         {
             if snapshot.phase == Phase::Cancelled {
                 self.notice = "Test stopped before it started.".into();
@@ -584,7 +584,7 @@ impl Ui {
                 match self.config.validate() {
                     Ok(()) => {
                         if self.send(Command::Run(self.config.clone()), commands) {
-                            self.previous = (self.live && started(&self.snapshot)).then(|| self.snapshot.clone());
+                            self.previous = (self.live && self.snapshot.started()).then(|| self.snapshot.clone());
                             (self.live, self.starting, self.open_chooser) = (true, true, false);
                             self.body_scroll = 0;
                             self.popup = Popup::None;
@@ -709,9 +709,6 @@ impl Ui {
     }
 }
 
-fn started(snapshot: &Snapshot) -> bool {
-    !snapshot.participants.is_empty() || !snapshot.results.is_empty()
-}
 fn move_selection(state: &mut ListState, length: usize, direction: isize) {
     if length == 0 {
         state.select(None);

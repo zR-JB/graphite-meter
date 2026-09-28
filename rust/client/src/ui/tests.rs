@@ -400,10 +400,22 @@ fn details_open_for_the_whole_run_and_l_is_offered_for_several_servers() {
     assert_eq!(ui.popup, Popup::Details);
     assert!(rendered(&mut ui).contains("Waiting for the first server report"));
     ui.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), &commands);
-    for (participants, several) in [(vec!["a".into()], false), (vec!["a".into(), "b".into()], true)] {
+    let checked = |id: &str| crate::model::ServerSummary {
+        id: id.into(),
+        name: id.into(),
+        error: Some("refused".into()),
+        ..Default::default()
+    };
+    // As in Go, a server that left the run still counts among its servers.
+    for (servers, participants, several) in [
+        (vec!["a"], vec!["a"], false),
+        (vec!["a", "b"], vec!["a", "b"], true),
+        (vec!["a", "b"], vec!["a"], true),
+    ] {
         ui.update(Snapshot {
             phase: Phase::Measuring,
-            participants,
+            participants: participants.into_iter().map(Into::into).collect(),
+            servers: servers.into_iter().map(checked).collect(),
             ..Snapshot::default()
         });
         let screen = rendered(&mut ui);

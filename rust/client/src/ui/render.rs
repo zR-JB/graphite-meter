@@ -159,7 +159,7 @@ impl Ui {
             } else {
                 vec!["Enter Run again", "Esc setup", "d Details"]
             };
-            if self.snapshot.participants.len() > 1 {
+            if self.run_servers().len() > 1 {
                 hints.push("l Latency server");
             }
             hints.extend(["? keys", "q quit"]);
@@ -824,7 +824,7 @@ impl Ui {
                     rate(self.shown_up),
                     milliseconds(focus.and_then(|host| host.latest_ms)),
                     self.latency_name(focus),
-                    if self.snapshot.participants.len() > 1 {
+                    if self.run_servers().len() > 1 {
                         " · l switches server"
                     } else {
                         ""
@@ -976,7 +976,7 @@ impl Ui {
     fn draw_details(&mut self, frame: &mut Frame) {
         let area = popup(frame.area(), 84, frame.area().height.saturating_sub(2));
         let width = usize::from(area.width.saturating_sub(2));
-        let details = if started(&self.snapshot) {
+        let details = if self.snapshot.started() {
             crate::report::details(&self.snapshot, self.latency_server(), width)
         } else {
             "Waiting for the first server report…".into()
