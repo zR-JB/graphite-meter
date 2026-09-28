@@ -36,26 +36,27 @@ pub(super) enum Field {
     Insecure,
     Reset,
 }
+/// Go's groups: start, connection, stages, then the advanced rows.
 const FIELDS: [Field; 21] = [
     Field::Start,
+    Field::Url,
     Field::Servers,
-    Field::Protocol,
     Field::ThroughputTransport,
+    Field::Protocol,
     Field::LatencyTransport,
     Field::LatencyStage,
     Field::DownloadStage,
     Field::UploadStage,
     Field::BidiStage,
-    Field::Warmup,
+    Field::LoadedLatency,
     Field::Advanced,
-    Field::Url,
-    Field::ThroughputOrigin,
-    Field::LatencyOrigin,
-    Field::Streams,
-    Field::AutoStreams,
+    Field::Warmup,
     Field::PingInterval,
     Field::LoadedPingInterval,
-    Field::LoadedLatency,
+    Field::Streams,
+    Field::AutoStreams,
+    Field::ThroughputOrigin,
+    Field::LatencyOrigin,
     Field::Insecure,
     Field::Reset,
 ];
@@ -66,7 +67,7 @@ const RESET: crate::vocabulary::Term = crate::vocabulary::Term {
 
 impl Ui {
     pub(super) fn fields(&self) -> &'static [Field] {
-        &FIELDS[..if self.advanced { FIELDS.len() } else { 11 }]
+        &FIELDS[..if self.advanced { FIELDS.len() } else { 12 }]
     }
     pub(super) fn change_field(&mut self, direction: isize) {
         let field = self.fields()[self.rows.selected().unwrap_or(0)];

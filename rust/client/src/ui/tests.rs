@@ -224,6 +224,31 @@ fn enter_edits_stage_and_warmup_durations_like_go() {
 }
 
 #[test]
+fn setup_rows_are_grouped_like_the_go_client() {
+    use Field::*;
+    let mut ui = Ui::new(Config::default(), Snapshot::default());
+    assert!(
+        ui.fields()
+            == [
+                Start,
+                Url,
+                Servers,
+                ThroughputTransport,
+                Protocol,
+                LatencyTransport,
+                LatencyStage,
+                DownloadStage,
+                UploadStage,
+                BidiStage,
+                LoadedLatency,
+                Advanced,
+            ]
+    );
+    ui.advanced = true;
+    assert!(ui.fields()[12..].starts_with(&[Warmup]) && ui.fields().ends_with(&[Insecure, Reset]));
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {
