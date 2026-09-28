@@ -323,10 +323,14 @@ fn auth_pages_are_canonical_and_foreign_preflights_never_allow_cookies() {
         .insert(header::ACCESS_CONTROL_REQUEST_HEADERS, "Content-Type".parse().unwrap());
     refused(&policy, &req, Refusal::Forbidden);
     *req.uri_mut() = "/auth/browser/token".parse().unwrap();
-    assert!(matches!(
-        evaluate(&policy, &req, peer(), true, ui),
-        Ok(Authorization::Preflight(_))
-    ));
+    let Ok(Authorization::Preflight(headers)) = evaluate(&policy, &req, peer(), true, ui) else {
+        panic!("expected browser token preflight");
+    };
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_ORIGIN], CLIENT);
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_METHODS], "POST");
+    assert_eq!(headers[header::ACCESS_CONTROL_ALLOW_HEADERS], "Content-Type");
+    assert_eq!(headers[header::ACCESS_CONTROL_MAX_AGE], "7200");
+    assert!(!headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS));
 }
 
 fn evaluate(

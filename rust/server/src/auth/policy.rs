@@ -325,6 +325,7 @@ impl Policy {
             header::ACCESS_CONTROL_ALLOW_HEADERS,
             HeaderValue::from_static("Content-Type"),
         );
+        response.insert(header::ACCESS_CONTROL_MAX_AGE, HeaderValue::from_static("7200"));
         Ok(response)
     }
 
