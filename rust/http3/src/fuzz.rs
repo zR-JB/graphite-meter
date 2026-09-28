@@ -1,6 +1,6 @@
 //! Fuzz target bodies for the libFuzzer targets in `fuzz/`.
 use crate::{
-    Code, WtCode, capsule, fields, frame,
+    Code, WtCode, capsule, control, fields, frame,
     message::{Event, Message},
     qpack, settings, varint,
 };
@@ -53,6 +53,89 @@ pub fn settings(data: &[u8]) {
     if let Ok(peer) = whole {
         assert_eq!(peer.webtransport(false), None);
         let _ = peer.webtransport(true);
+    }
+}
+
+/// A peer's control stream read in arbitrary chunks agrees with a whole-input model of its
+/// sequencing, for either role: SETTINGS first, the frames a peer may send, and the values of
+/// GOAWAY, MAX_PUSH_ID and CANCEL_PUSH.
+pub fn control(data: &[u8]) {
+    let Some((&seed, data)) = data.split_first() else {
+        return;
+    };
+    let client = seed & 1 == 1;
+    let read = |chunk: &dyn Fn(usize) -> usize| {
+        let mut reader = control::Reader::default();
+        let mut events = Vec::new();
+        for mut input in chunks(data, chunk) {
+            let read = reader.read(client, &mut input, |event| {
+                events.push(event);
+                Ok(())
+            });
+            if let Err(code) = read {
+                return (events, Err(code));
+            }
+            assert!(input.is_empty());
+        }
+        (events, Ok(()))
+    };
+    let model = control_model(data, client);
+    assert_eq!(read(&|_| data.len()), model);
+    assert_eq!(read(&|index| (index * usize::from(seed >> 1)) % 11 + 1), model);
+}
+
+/// RFC 9114 §6.2.1 and §7.2 over a whole control stream, independent of the incremental reader;
+/// where the stream stops short, what came before stands.
+fn control_model(mut data: &[u8], client: bool) -> (Vec<control::Event>, Result<(), Code>) {
+    let (mut events, mut first, mut goaway) = (Vec::new(), true, None);
+    loop {
+        let Some(((kind, a), (length, b))) = varint::decode(data).and_then(|(kind, a)| {
+            let length = varint::decode(&data[a..])?;
+            Some(((kind, a), length))
+        }) else {
+            return (events, Ok(()));
+        };
+        data = &data[a + b..];
+        let refusal = match (kind, std::mem::replace(&mut first, false)) {
+            (0x04, true) if length > 8 * 1024 => Some(Code::H3_EXCESSIVE_LOAD),
+            (0x04, true) => None,
+            (_, true) => Some(Code::H3_MISSING_SETTINGS),
+            (0x0d, false) if client => Some(Code::H3_FRAME_UNEXPECTED),
+            (0x03 | 0x07 | 0x0d, false) if !(1..=8).contains(&length) => Some(Code::H3_FRAME_ERROR),
+            (0x00..=0x02 | 0x04..=0x06 | 0x08 | 0x09, false) => Some(Code::H3_FRAME_UNEXPECTED),
+            _ => None,
+        };
+        if let Some(code) = refusal {
+            return (events, Err(code));
+        }
+        let available = usize::try_from(length).map_or(data.len(), |length| length.min(data.len()));
+        let (payload, rest) = data.split_at(available);
+        data = rest;
+        let whole = payload.len() as u64 == length;
+        match kind {
+            0x04 => match settings::Reader::new(length).and_then(|mut reader| reader.read(&mut &payload[..])) {
+                Err(code) => return (events, Err(code)),
+                Ok(Some(peer)) => events.push(control::Event::Settings(peer)),
+                Ok(None) => {}
+            },
+            0x03 | 0x07 | 0x0d if whole => {
+                let value = match varint::decode(payload) {
+                    Some((value, size)) if size == payload.len() => value,
+                    _ => return (events, Err(Code::H3_FRAME_ERROR)),
+                };
+                if kind == 0x07 && client {
+                    if !value.is_multiple_of(4) || goaway.is_some_and(|previous| value > previous) {
+                        return (events, Err(Code::H3_ID_ERROR));
+                    }
+                    goaway = Some(value);
+                    events.push(control::Event::Goaway(value));
+                }
+            }
+            _ => {}
+        }
+        if !whole {
+            return (events, Ok(()));
+        }
     }
 }
 

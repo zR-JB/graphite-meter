@@ -10,6 +10,7 @@ pub mod client;
 mod code;
 #[cfg(feature = "io")]
 mod connection;
+mod control;
 #[cfg(feature = "io")]
 mod error;
 mod fields;

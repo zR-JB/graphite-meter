@@ -4,8 +4,9 @@ use crate::{
     capsule,
     charge::{Budget, Charge},
     code::Code,
+    control,
     error::Error,
-    frame::{self, Piece},
+    frame,
     settings::{self, Peer},
     stream::{self, RequestStream},
     varint,
@@ -153,7 +154,7 @@ async fn datagrams(shared: Arc<Shared>) -> Result<(), Error> {
 /// The layer's fixed state per connection, for the application's connection floor: the driver,
 /// what its streams share, the peer's control and QPACK streams, and four boxed stream futures.
 pub const CONNECTION_BYTES: usize =
-    size_of::<Connection>() + size_of::<Shared>() + 3 * size_of::<Uni>() + size_of::<PeerControl>() + 4 * 256;
+    size_of::<Connection>() + size_of::<Shared>() + 3 * size_of::<Uni>() + size_of::<control::Reader>() + 4 * 256;
 
 fn accept_uni(quic: &noq::Connection) -> Pending<noq::RecvStream> {
     let quic = quic.clone();
@@ -210,23 +211,13 @@ enum Kind {
         header: frame::StreamType,
         deadline: Instant,
     },
-    Control(Box<PeerControl>),
+    Control(Box<control::Reader>),
     Encoder,
     Decoder {
         continuing: bool,
     },
     /// Classified; the driver hands it to the session registry.
     Session(u64),
-}
-
-#[derive(Default)]
-struct PeerControl {
-    frames: frame::Reader,
-    settings: Option<settings::Reader>,
-    started: bool,
-    kind: u64,
-    value: [u8; 8],
-    used: usize,
 }
 
 impl Connection {
@@ -518,7 +509,15 @@ impl Connection {
                         continue;
                     }
                 }
-                Kind::Control(control) => control.read(shared, &mut uni.input)?,
+                Kind::Control(control) => {
+                    control.read(shared.role == Role::Client, &mut uni.input, |event| match event {
+                        control::Event::Settings(peer) => settled(shared, peer),
+                        control::Event::Goaway(id) => {
+                            shared.state().goaway = Some(id);
+                            Ok(())
+                        }
+                    })?
+                }
                 Kind::Encoder => {
                     // Only Set Dynamic Table Capacity 0 fits the capacity our SETTINGS allow.
                     if uni.input.iter().any(|&byte| byte != 0x20) {
@@ -608,67 +607,6 @@ impl Drop for Connection {
     fn drop(&mut self) {
         self.shared.close(Code::H3_NO_ERROR);
         self.end_sessions();
-    }
-}
-
-impl PeerControl {
-    fn read(&mut self, shared: &Shared, input: &mut Bytes) -> Result<(), Code> {
-        while let Some(piece) = self.frames.next(input) {
-            match piece {
-                Piece::Header { kind, length } if !self.started => {
-                    if kind != frame::SETTINGS {
-                        return Err(Code::H3_MISSING_SETTINGS);
-                    }
-                    self.started = true;
-                    let mut settings = settings::Reader::new(length)?;
-                    match settings.read(&mut Bytes::new())? {
-                        Some(peer) => settled(shared, peer)?,
-                        None => self.settings = Some(settings),
-                    }
-                }
-                Piece::Header { kind, length } => {
-                    self.kind = kind;
-                    self.used = 0;
-                    match kind {
-                        frame::MAX_PUSH_ID if shared.role == Role::Client => return Err(Code::H3_FRAME_UNEXPECTED),
-                        frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH if !(1..=8).contains(&length) => {
-                            return Err(Code::H3_FRAME_ERROR);
-                        }
-                        frame::SETTINGS | frame::DATA | frame::HEADERS | frame::PUSH_PROMISE => {
-                            return Err(Code::H3_FRAME_UNEXPECTED);
-                        }
-                        kind if frame::is_http2(kind) => return Err(Code::H3_FRAME_UNEXPECTED),
-                        _ => {}
-                    }
-                }
-                Piece::Payload(mut payload) => {
-                    if let Some(settings) = &mut self.settings {
-                        if let Some(peer) = settings.read(&mut payload)? {
-                            self.settings = None;
-                            settled(shared, peer)?;
-                        }
-                    } else if matches!(self.kind, frame::GOAWAY | frame::MAX_PUSH_ID | frame::CANCEL_PUSH) {
-                        self.value[self.used..self.used + payload.len()].copy_from_slice(&payload);
-                        self.used += payload.len();
-                        if self.frames.remaining() == 0 {
-                            let value = match varint::decode(&self.value[..self.used]) {
-                                Some((value, size)) if size == self.used => value,
-                                _ => return Err(Code::H3_FRAME_ERROR),
-                            };
-                            // A server's GOAWAY names request streams; a client's names push IDs, and we never push.
-                            if self.kind == frame::GOAWAY && shared.role == Role::Client {
-                                let mut state = shared.state();
-                                if !value.is_multiple_of(4) || state.goaway.is_some_and(|previous| value > previous) {
-                                    return Err(Code::H3_ID_ERROR);
-                                }
-                                state.goaway = Some(value);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 
