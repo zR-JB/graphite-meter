@@ -458,7 +458,10 @@ impl<'a> StageRun<'a> {
         if self.transfer.is_none() {
             return Ok(());
         }
+        // As Go's final(): a transfer lost up to the final boundary leaves with its cause.
+        self.check_health()?;
         let (mut boundary, misses) = self.collect(FINAL_CHECKPOINT_BUDGET, None).await.expect("no stage end");
+        self.check_health()?;
         boundary.final_boundary = true;
         self.observe_boundary(boundary, misses)?;
         let retrying = self

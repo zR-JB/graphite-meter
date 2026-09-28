@@ -39,7 +39,8 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
     let first_request = Arc::new(AtomicBool::new(false));
     let checkpoints = Arc::new(AtomicU64::new(0));
     let finalized = Arc::new(AtomicBool::new(false));
-    let receiver_clock = std::time::Instant::now();
+    // Tokio's clock, so a receiver on paused time counts the stage's time.
+    let receiver_clock = Instant::now();
     let login_url = format!("{origin}/login");
     let server = tokio::spawn(async move {
         let mut clients = JoinSet::new();
@@ -135,11 +136,19 @@ async fn download_peer_with_gate(gate: Option<Arc<Barrier>>) -> Result<(String, 
                             return;
                         }
                         if request.starts_with(b"POST /upload?") {
-                            while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {}
+                            let mut refused = false;
+                            // Paced like the downloads, so paused time can pass while lanes upload.
+                            while stream.read(&mut [0_u8; 65536]).await.is_ok_and(|count| count > 0) {
+                                if !refused && flag.load(Ordering::SeqCst) == 15 {
+                                    refused = true;
+                                    let _ = stream.write_all(b"HTTP/1.1 403 Forbidden\r\nX-Graphite-Upload-Refusal: ownerMismatch\r\nContent-Length: 0\r\n\r\n").await;
+                                }
+                                tokio::time::sleep(Duration::from_millis(5)).await;
+                            }
                             return;
                         }
                         let mode = flag.load(Ordering::SeqCst);
-                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7) {
+                        if request.starts_with(b"POST /upload/checkpoint") && matches!(mode, 0 | 5 | 7 | 15) {
                             let bytes = if mode == 7 { checkpoints.load(Ordering::SeqCst) } else { checkpoints.fetch_add(1 << 16, Ordering::SeqCst) };
                             let body = format!(r#"{{"bytes":{bytes},"nanos":{}}}"#, receiver_clock.elapsed().as_nanos() + 1);
                             let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", body.len());
@@ -705,6 +714,59 @@ async fn a_lane_still_retrying_at_the_final_boundary_removes_its_quiet_server() 
     let (first, last) = (&stage.intervals[0], stage.intervals.back().unwrap());
     assert!(last.end_nanos - first.end_nanos >= 500_000_000, "{:?}", stage.intervals);
     assert_eq!(last.participants, ["far"]);
+    Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lane_refused_just_before_the_stage_end_takes_its_server_out() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let heartbeat = heartbeat();
+    let (near, near_mode, near_task) = download_peer().await?;
+    let (far, _, far_task) = download_peer().await?;
+    let http = Http::new(true)?;
+    let servers = vec![
+        prepared_download("near", &near, &http).await?,
+        prepared_download("far", &far, &http).await?,
+    ];
+    let config = Config {
+        warmup: Duration::ZERO,
+        upload_duration: Duration::from_millis(1500),
+        streams: 1,
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, mut observed) = watch::channel(Snapshot::default());
+    let (_stop, cancelled) = watch::channel(false);
+    // No sample falls between the refusal and the stage end.
+    let refuse_near = async {
+        observed
+            .wait_for(|snapshot| snapshot.phase == Phase::Measuring)
+            .await
+            .unwrap();
+        tokio::time::sleep(config.upload_duration - Duration::from_millis(100)).await;
+        near_mode.store(15, Ordering::SeqCst);
+    };
+    let (result, ()) = tokio::join!(
+        measure(Stage::Upload, &config, &servers, &snapshots, cancelled),
+        refuse_near
+    );
+    near_task.abort();
+    far_task.abort();
+    heartbeat.abort();
+    assert_eq!(result?, ["near"]);
+    let snapshot = observed.borrow();
+    let [failure] = &snapshot.failures[..] else {
+        panic!("{:?}", snapshot.failures);
+    };
+    assert_eq!(
+        (failure.server_id.as_str(), failure.scope, failure.reason),
+        (
+            "near",
+            FailureScope::Throughput,
+            graphite_meter_core::failure::FailureReason::ProtocolError
+        )
+    );
+    assert_eq!(snapshot.stage_status(&snapshot.results[0]), StageStatus::Partial);
     Ok(())
 }
 
