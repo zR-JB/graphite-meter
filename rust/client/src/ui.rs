@@ -14,7 +14,7 @@ use crossterm::{
     execute,
 };
 use futures_util::StreamExt;
-use graphite_meter_core::text::terminal_character as safe_character;
+use graphite_meter_core::{catalog::MAX_SELECTED_SERVERS, text::terminal_character as safe_character};
 use ratatui::{
     DefaultTerminal, Frame,
     layout::{Constraint, Layout, Margin, Rect},
@@ -223,7 +223,7 @@ impl Ui {
             self.notice.clear();
         }
         snapshot.servers.truncate(MAX_SERVERS);
-        snapshot.server_latencies.truncate(4);
+        snapshot.server_latencies.truncate(MAX_SELECTED_SERVERS);
         snapshot.results.truncate(16);
         let live = |snapshot: &Snapshot| matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring);
         if live(&self.snapshot) && !live(&snapshot) && !self.quitting {
@@ -510,7 +510,7 @@ impl Ui {
                     .servers
                     .iter()
                     .filter(|server| server.checked() && server.error.is_none())
-                    .take(4)
+                    .take(MAX_SELECTED_SERVERS)
                     .map(|server| server.id.clone())
                     .collect();
                 if !self.config.servers.is_empty() {
@@ -545,7 +545,7 @@ impl Ui {
         };
         if let Some(index) = self.config.servers.iter().position(|id| id == &server.id) {
             self.config.servers.remove(index);
-        } else if self.config.servers.len() < 4 {
+        } else if self.config.servers.len() < MAX_SELECTED_SERVERS {
             self.config.servers.push(server.id.clone());
         } else {
             self.notice = "Select at most four servers.".into();
