@@ -29,9 +29,9 @@ const MAX_LINE: usize = 64 * 1024;
 const CHECKPOINT_RETRY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Copy, Debug)]
-pub struct ReceiverProgress {
-    pub bytes: u64,
-    pub nanos: u64,
+struct ReceiverProgress {
+    bytes: u64,
+    nanos: u64,
 }
 #[derive(Clone, Default)]
 struct State {
@@ -224,11 +224,8 @@ impl Upload {
             }
         }
     }
-    pub fn latest(&self) -> Option<ReceiverProgress> {
-        self.state.borrow().latest
-    }
     pub fn observed(&self) -> Option<ObservedUpload> {
-        self.latest().map(|value| ObservedUpload {
+        self.state.borrow().latest.map(|value| ObservedUpload {
             id: self.id.clone(),
             maximum: value.bytes,
         })
@@ -293,7 +290,7 @@ impl Upload {
             });
         }
     }
-    pub async fn finish(mut self, confirm: bool) -> Result<Option<ReceiverProgress>, Error> {
+    pub async fn finish(mut self, confirm: bool) -> Result<(), Error> {
         let bound = if confirm {
             CONTROL_TIMEOUT
         } else {
@@ -315,18 +312,14 @@ impl Upload {
                 )
                 .await?;
             while response.chunk().await?.is_some() {}
-            loop {
-                let state = self.state.borrow().clone();
-                if let Some(error) = state.error {
-                    return Err::<_, Error>(SharedFailure(error).into());
-                }
-                if state.complete || !confirm {
-                    return Ok(state.latest);
-                }
-                self.state
-                    .changed()
-                    .await
-                    .map_err(|_| "upload progress ended without complete")?;
+            let state = self
+                .state
+                .wait_for(|state| state.error.is_some() || state.complete || !confirm)
+                .await
+                .map_err(|_| "upload progress ended without complete")?;
+            match &state.error {
+                Some(error) => Err::<_, Error>(SharedFailure(error.clone()).into()),
+                None => Ok(()),
             }
         })
         .await;
