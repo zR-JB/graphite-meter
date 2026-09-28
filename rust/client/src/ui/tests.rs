@@ -299,6 +299,40 @@ fn setup_names_each_checked_server_state() {
 }
 
 #[test]
+fn server_chooser_discards_on_escape_and_checks_again_on_enter() {
+    use crate::model::ServerSummary;
+    let (commands, _received) = mpsc::channel(4);
+    let server = |id: &str, checked: bool| ServerSummary {
+        id: id.into(),
+        name: id.into(),
+        error: checked.then(|| "refused".into()),
+        ..ServerSummary::default()
+    };
+    let mut ui = Ui::new(
+        Config::default(),
+        Snapshot {
+            servers: vec![server("a", true), server("b", true), server("c", false)],
+            ..Snapshot::default()
+        },
+    );
+    let press = |ui: &mut Ui, code| ui.key(KeyEvent::new(code, KeyModifiers::NONE), &commands);
+    press(&mut ui, KeyCode::Char('s'));
+    assert_eq!(ui.popup, Popup::Servers);
+    assert_eq!(ui.config.servers, ["a", "b"], "the default selection starts checked");
+    for code in [KeyCode::Down, KeyCode::Down, KeyCode::Char(' '), KeyCode::Esc] {
+        press(&mut ui, code);
+    }
+    assert_eq!(ui.popup, Popup::None);
+    assert!(ui.config.servers.is_empty(), "esc applied the draft");
+    assert!(ui.recheck.is_none());
+    for code in [KeyCode::Char('s'), KeyCode::Char(' '), KeyCode::Enter] {
+        press(&mut ui, code);
+    }
+    assert_eq!(ui.config.servers, ["b"]);
+    assert!(ui.recheck.is_some(), "the new selection is checked");
+}
+
+#[test]
 fn reset_asks_first_and_keeps_the_catalogue_and_servers() {
     let (commands, _received) = mpsc::channel(4);
     let config = Config {

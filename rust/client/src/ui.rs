@@ -187,6 +187,7 @@ struct Ui {
     /// A requested run that has not started: the check it replaces is not a return to setup.
     starting: bool,
     open_chooser: bool,
+    servers_before: Vec<String>,
     popup: Popup,
     details_scroll: u16,
     auth_scroll: u16,
@@ -222,6 +223,7 @@ impl Ui {
             live: false,
             starting: false,
             open_chooser: false,
+            servers_before: Vec::new(),
             popup: Popup::None,
             details_scroll: 0,
             auth_scroll: 0,
@@ -273,6 +275,9 @@ impl Ui {
             self.cancel = CancelState::Idle;
         }
         if snapshot.auth.is_some() || self.popup == Popup::Details && snapshot.results.is_empty() {
+            if self.popup == Popup::Servers {
+                self.config.servers = std::mem::take(&mut self.servers_before);
+            }
             self.popup = Popup::None;
             self.details_scroll = 0;
         }
@@ -483,7 +488,16 @@ impl Ui {
         if self.popup == Popup::Servers {
             let length = self.snapshot.servers.len();
             match key.code {
-                KeyCode::Esc | KeyCode::Enter => self.popup = Popup::None,
+                KeyCode::Esc => {
+                    self.config.servers = std::mem::take(&mut self.servers_before);
+                    self.popup = Popup::None;
+                    self.notice = "Server selection unchanged.".into();
+                }
+                KeyCode::Enter => {
+                    self.popup = Popup::None;
+                    self.notice = "Checking the selected servers…".into();
+                    self.recheck_soon();
+                }
                 KeyCode::Up | KeyCode::Char('k') => move_selection(&mut self.servers, length, -1),
                 KeyCode::Down | KeyCode::Char('j') => move_selection(&mut self.servers, length, 1),
                 KeyCode::Char(' ') => self.toggle_server(),
@@ -600,7 +614,10 @@ impl Ui {
             KeyCode::Char(' ') if !self.live => self.toggle(),
             _ => {}
         }
-        self.recheck_if_changed(&before);
+        // The chooser's selection is a draft until Enter.
+        if self.popup != Popup::Servers {
+            self.recheck_if_changed(&before);
+        }
         false
     }
     /// Like the Go client, the chooser opens on a checked catalogue of several servers.
@@ -615,6 +632,20 @@ impl Ui {
         } else if self.snapshot.servers.len() == 1 {
             self.notice = "This catalogue offers one server.".into();
         } else {
+            // The chooser edits the selection in place; Esc restores this one.
+            self.servers_before = self.config.servers.clone();
+            if self.config.servers.is_empty() {
+                // The checked servers are the catalogue's default selection.
+                self.config.servers = self
+                    .snapshot
+                    .servers
+                    .iter()
+                    .filter(|server| server.has_check_result())
+                    .take(MAX_SELECTED_SERVERS)
+                    .map(|server| server.id.clone())
+                    .collect();
+            }
+            self.servers.select(Some(0));
             self.popup = Popup::Servers;
             self.notice = "Space selects up to four servers; Enter applies.".into();
         }
