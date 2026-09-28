@@ -4,6 +4,8 @@ import {
   fmtAddedMs,
   fmtBytes,
   fmtDuration,
+  fmtStageTime,
+  parseDuration,
   fmtMs,
   fmtSpeed,
   formatRate,
@@ -29,6 +31,42 @@ test("durations read in seconds below a minute, then minutes and hours", () => {
     "2 h",
     "24 h",
   ]);
+});
+
+test("stage times read as the steppers show them, and every shown time reads back", () => {
+  const times = [
+    500, 2_500, 4_000, 45_000, 59_900, 90_000, 5_400_000, 7_200_000,
+  ];
+  const shown = times.map((ms) => fmtStageTime(ms));
+  expect(shown).toEqual([
+    "0.5 s",
+    "2.5 s",
+    "4 s",
+    "45 s",
+    "59.9 s",
+    "1 min 30 s",
+    "1 h 30 min",
+    "2 h",
+  ]);
+  expect(shown.map(parseDuration)).toEqual(times);
+});
+
+test("typed stage times are seconds unless they name a unit or read as a clock", () => {
+  const typed = {
+    "90": 90_000,
+    " 2.5 ": 2_500,
+    "2h": 7_200_000,
+    "2 hours": 7_200_000,
+    "1h30m": 5_400_000,
+    "3m 20s": 200_000,
+    "500ms": 500,
+    "1:30": 90_000,
+    "1:30:00": 5_400_000,
+  };
+  for (const [text, ms] of Object.entries(typed))
+    expect(parseDuration(text)).toBe(ms);
+  for (const text of ["", "abc", "2x", "1:75", "h", "1 fortnight"])
+    expect(parseDuration(text)).toBeNull();
 });
 
 test("byte counts step on powers of 1000 or 1024 with one decimal", () => {

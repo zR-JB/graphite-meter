@@ -43,6 +43,44 @@ export const fmtDuration = finite((ms, fractionDigits: number = 1) => {
   return `${large} ${unit}${small ? ` ${small} ${rest}` : ""}`;
 });
 
+/** A stage's planned time as the steppers and the duration strip show it: 2.5 s, 45 s, 1 min 30 s, 2 h. */
+export const fmtStageTime = finite((ms) =>
+  ms < 59_950
+    ? `${Number((Math.max(0, ms) / 1000).toFixed(1))} s`
+    : fmtDuration(ms),
+);
+
+const UNIT_MS: Record<string, number> = {
+  ms: 1,
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+};
+const UNIT = /^(ms|s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?)$/;
+
+/** A typed stage time: seconds by default ("90", "2.5"), units ("2h", "1 h 30 min", "90s") or a clock ("1:30:00"). */
+export function parseDuration(text: string): number | null {
+  const input = text.trim().toLowerCase();
+  if (/^\d+(:\d{1,2}){1,2}$/.test(input)) {
+    const parts = input.split(":").map(Number);
+    if (parts.slice(1).some((part) => part >= 60)) return null;
+    return parts.reduce((total, part) => total * 60 + part, 0) * 1_000;
+  }
+  const tokens = [...input.matchAll(/(\d+(?:\.\d+)?)\s*([a-z]*)/g)];
+  const bare = (value: string) => value.replace(/\s+/g, "");
+  if (
+    !tokens.length ||
+    bare(tokens.map(([token]) => token).join("")) !== bare(input)
+  )
+    return null;
+  let total = 0;
+  for (const [, amount, unit] of tokens) {
+    if (unit && !UNIT.test(unit)) return null;
+    total += Number(amount) * UNIT_MS[unit === "ms" ? "ms" : (unit[0] ?? "s")];
+  }
+  return Number.isFinite(total) ? Math.round(total) : null;
+}
+
 export const fmtBytes = finite((bytes, base: "base10" | "base2") => {
   const step = base === "base10" ? 1000 : 1024;
   const units =
