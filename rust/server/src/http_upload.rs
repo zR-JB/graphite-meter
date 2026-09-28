@@ -35,9 +35,9 @@ impl HttpServer {
                 if !matches!(*request.method(), Method::GET | Method::DELETE) {
                     return method_not_allowed("GET, DELETE");
                 }
-                let operation = match self.upload_operation(owner) {
-                    Ok(operation) => operation,
-                    Err(error) => return admission_refusal(error),
+                let operation = match self.admit(Route::UploadProgress, owner) {
+                    Ok(permit) => self.operation(Some(permit), false),
+                    Err(refusal) => return *refusal,
                 };
                 let mut response = if request.method() == Method::DELETE {
                     match self.uploads.finish(&id, owner) {
@@ -74,18 +74,6 @@ impl HttpServer {
         }
     }
 
-    fn upload_operation(&self, owner: &Owner) -> Result<Arc<Mutex<Operation>>, crate::admission::Refusal> {
-        self.admission.acquire(false, owner.client_keys()).map(|permit| {
-            Arc::new(Mutex::new(Operation {
-                permit: Some(permit),
-                deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
-                body_complete: false,
-                revocation: None,
-                revoked: false,
-            }))
-        })
-    }
-
     pub(super) async fn receive_upload<B>(
         &self,
         request: Request<B>,
@@ -96,9 +84,9 @@ impl HttpServer {
         B: Body<Data = Bytes> + Unpin,
         B::Error: std::error::Error + Send + Sync + 'static,
     {
-        let operation = match self.upload_operation(owner) {
-            Ok(operation) => operation,
-            Err(error) => return Ok(admission_refusal(error)),
+        let operation = match self.admit(Route::Upload, owner) {
+            Ok(permit) => self.operation(Some(permit), false),
+            Err(refusal) => return Ok(*refusal),
         };
         // Register before awaiting the body: socket IO must enforce this deadline
         // even while the response future has not produced its first byte.
@@ -168,14 +156,6 @@ fn json_response(value: &impl Serialize) -> Response<ResponseBody> {
             serde_json::to_vec(value).expect("serializable upload document").into(),
         ))
         .expect("static JSON response")
-}
-
-fn admission_refusal(error: crate::admission::Refusal) -> Response<ResponseBody> {
-    let mut response = text_response(StatusCode::from_u16(error.status()).expect("known refusal"));
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-    response
 }
 
 type NextProgress = Pin<Box<dyn Future<Output = (UploadSubscription, Option<UploadProgress>)> + Send>>;

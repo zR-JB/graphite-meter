@@ -648,12 +648,7 @@ impl HttpServer {
                 // responses must be readable from the browser's approved origin,
                 // including when the native listener uses a different port.
                 if ticket && let (Some(lease), Some(origin)) = (&lease, &origin) {
-                    if lease.is_bearer() {
-                        Access::Bearer(origin)
-                    } else {
-                        Access::Cookie(origin)
-                    }
-                    .apply_measurement(response.headers_mut());
+                    lease.access(origin).apply_measurement(response.headers_mut());
                 }
                 // A successful logout deliberately revokes the current lease;
                 // its cookie-clearing response must still reach the browser.
@@ -717,12 +712,7 @@ impl HttpServer {
             result = dispatch => result?,
         };
         if measurement && let (Some(lease), Some(origin)) = (&lease, &origin) {
-            if lease.is_bearer() {
-                Access::Bearer(origin)
-            } else {
-                Access::Cookie(origin)
-            }
-            .apply_measurement(response.headers_mut());
+            lease.access(origin).apply_measurement(response.headers_mut());
         } else if measurement && self.auth.is_none() {
             Access::Public.apply_measurement(response.headers_mut());
         }
@@ -755,15 +745,7 @@ impl HttpServer {
             response
                 .body_mut()
                 .operation
-                .get_or_insert_with(|| {
-                    Arc::new(Mutex::new(Operation {
-                        permit: None,
-                        deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
-                        body_complete: complete,
-                        revocation: None,
-                        revoked: false,
-                    }))
-                })
+                .get_or_insert_with(|| self.operation(None, complete))
                 .lock()
                 .expect("operation poisoned")
                 .revocation = Some(Box::pin(async move { lease.ended().await }));
@@ -861,16 +843,31 @@ impl HttpServer {
         response
     }
 
+    fn admit(&self, route: Route, owner: &Owner) -> Result<Permit, Box<Response<ResponseBody>>> {
+        let session = route.admission() == route::Admission::Session;
+        self.admission.acquire(session, owner.client_keys()).map_err(|refusal| {
+            let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
+            Box::new(response)
+        })
+    }
+
+    fn operation(&self, permit: Option<Permit>, body_complete: bool) -> Arc<Mutex<Operation>> {
+        Arc::new(Mutex::new(Operation {
+            permit,
+            deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
+            body_complete,
+            revocation: None,
+            revoked: false,
+        }))
+    }
+
     fn download(&self, request: &Request<()>, owner: &Owner) -> Response<ResponseBody> {
-        let permit = match self.admission.acquire(false, owner.client_keys()) {
+        let permit = match self.admit(Route::Download, owner) {
             Ok(permit) => permit,
-            Err(refusal) => {
-                let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
-                return response;
-            }
+            Err(refusal) => return *refusal,
         };
         let count = download_bytes(request);
         let mut body = ResponseBody {
@@ -880,13 +877,7 @@ impl HttpServer {
             transfer: (count != 0 && request.method() == Method::GET)
                 .then(|| self.download_meter.open())
                 .flatten(),
-            operation: Some(Arc::new(Mutex::new(Operation {
-                permit: Some(permit),
-                deadline: Box::pin(tokio::time::sleep(self.config.max_operation_duration)),
-                revocation: None,
-                revoked: false,
-                body_complete: count == 0 || request.method() == Method::HEAD,
-            }))),
+            operation: Some(self.operation(Some(permit), count == 0 || request.method() == Method::HEAD)),
         };
         if request.method() == Method::HEAD {
             body.remaining = 0;

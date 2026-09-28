@@ -42,15 +42,9 @@ impl HttpServer {
         lease: Option<AuthLease>,
         pending: &Mutex<Option<Upgrade>>,
     ) -> Response<ResponseBody> {
-        let permit = match self.admission.acquire(false, owner.client_keys()) {
+        let permit = match self.admit(Route::Ping, owner) {
             Ok(permit) => permit,
-            Err(refusal) => {
-                let mut response = text_response(StatusCode::from_u16(refusal.status()).expect("known status"));
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
-                return response;
-            }
+            Err(refusal) => return *refusal,
         };
         let approved_origin = lease.as_ref().and_then(|lease| {
             lease.browser_origin().or_else(|| {

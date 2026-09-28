@@ -80,31 +80,24 @@ impl HttpServer {
             return answer(stream, self.harden(response)).await;
         }
         let route = route.expect("a mounted WebTransport route");
-        let session = route.admission() == route::Admission::Session;
-        let route = match route {
-            Route::WtPing => SessionRoute::Ping,
-            Route::WtDownload => SessionRoute::Download,
-            _ => SessionRoute::Upload,
-        };
         let owner = lease
             .as_ref()
             .map(AuthLease::owner)
             .unwrap_or_else(|| self.upload_owner(&request, peer));
-        let _permit = match self.admission.acquire(session, owner.client_keys()) {
+        let _permit = match self.admit(route, &owner) {
             Ok(permit) => permit,
-            Err(error) => {
-                let mut response = text_response(StatusCode::from_u16(error.status()).expect("known status"));
-                response
-                    .headers_mut()
-                    .insert(header::RETRY_AFTER, http::HeaderValue::from_static("1"));
-                return answer(stream, self.harden(response)).await;
-            }
+            Err(refusal) => return answer(stream, self.harden(*refusal)).await,
         };
         let _admitted = credit.work().admit();
-        let lifetime = if session {
+        let lifetime = if route.admission() == route::Admission::Session {
             self.config.max_session_duration
         } else {
             self.config.max_operation_duration
+        };
+        let route = match route {
+            Route::WtPing => SessionRoute::Ping,
+            Route::WtDownload => SessionRoute::Download,
+            _ => SessionRoute::Upload,
         };
         let deadline = Instant::now() + lifetime;
         let session = tokio::select! {
