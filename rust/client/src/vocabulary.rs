@@ -20,7 +20,7 @@ pub const URL: Term = Term {
 };
 pub const SERVERS: Term = Term {
     label: "Test servers",
-    explanation: "Select up to four servers to measure together.",
+    explanation: "Measure up to four servers together; the first one's latency is the result.",
 };
 pub const THROUGHPUT_ORIGIN: Term = Term {
     label: "Throughput origin",

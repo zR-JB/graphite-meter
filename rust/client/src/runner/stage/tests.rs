@@ -845,7 +845,8 @@ async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
             prepared_download("near", &near, &http).await?,
             prepared_download("far", &far, &http).await?,
         ];
-        for server in &mut servers {
+        for (server, rtt) in servers.iter_mut().zip([4, 1]) {
+            server.idle_rtt = Duration::from_millis(rtt);
             server.latency = Some(graphite_meter_core::discovery::LatencyTarget {
                 base_url: server.entry.url.clone(),
                 transport: LatencyTransport::WebSocket,
@@ -870,7 +871,11 @@ async fn the_latency_result_follows_the_focus_server() -> Result<(), Error> {
         near_peer.abort();
         far_peer.abort();
         let snapshot = snapshots.borrow();
-        assert_eq!(snapshot.latency_focus.as_deref(), Some("near"));
+        assert_eq!(
+            snapshot.latency_focus.as_deref(),
+            Some("near"),
+            "the first selected server leads, not the lowest path-check RTT"
+        );
         assert_eq!(
             snapshot.phase, outcome,
             "silent focus {silent_focus}: {:?}",

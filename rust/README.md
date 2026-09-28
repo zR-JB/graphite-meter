@@ -6,7 +6,8 @@ download, upload, and bidirectional stages. With multiple servers, a failed
 transfer server leaves later stages while surviving servers continue. A sole
 server is prepared again for the next stage; prior results retain their failure
 and partial evidence. Latency observations and results remain separate for each server;
-press `l` to change the displayed server. Full parity validation is unfinished.
+the run's latency is the first selected server's, and `l` changes the displayed server.
+Full parity validation is unfinished.
 An adaptive HTTP/3 send window reduced Rust peak memory versus a fixed-window
 Rust build. A separate Go/Rust HTTP/3 batch still showed higher Rust CPU and
 peak memory. A matched WebTransport stream-download run showed lower Rust server

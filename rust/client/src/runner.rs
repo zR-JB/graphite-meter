@@ -316,14 +316,6 @@ async fn verify_throughput_webtransport(http: &Http, target: &ThroughputTarget, 
     }
 }
 
-fn latency_focus(servers: &[PreparedServer]) -> Option<String> {
-    let focus = servers.iter().reduce(|best, server| {
-        let lower = !server.idle_rtt.is_zero() && (best.idle_rtt.is_zero() || server.idle_rtt < best.idle_rtt);
-        if lower { server } else { best }
-    });
-    focus.map(|server| server.entry.id.clone())
-}
-
 fn lane_plan(config: &Config, stage: Stage, servers: &[PreparedServer]) -> Result<StageLanePlan, Error> {
     let participants: Vec<_> = servers
         .iter()
@@ -382,7 +374,7 @@ pub async fn run_prepared(
     };
     snapshots.send_modify(|snapshot| {
         snapshot.participants = prepared.iter().map(|server| server.entry.id.clone()).collect();
-        snapshot.latency_focus = latency_focus(&prepared);
+        snapshot.latency_focus = prepared.first().map(|server| server.entry.id.clone());
     });
     let sole = (selected.unwrap_or(prepared.len()) == 1).then(|| prepared[0].entry.clone());
     let mut retry_sole = false;

@@ -15,15 +15,7 @@ pub fn servers<'a>(catalog: &'a ServerCatalog, config: &Config) -> Result<Vec<&'
         &config.servers
     };
     catalog.validate_selection(ids)?;
-    ids.iter()
-        .map(|id| {
-            catalog
-                .servers
-                .iter()
-                .find(|entry| entry.id == *id)
-                .ok_or_else(|| "selected server is absent from catalogue".into())
-        })
-        .collect()
+    Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
 
 pub fn throughput(config: &Config, entry: &ServerEntry, preflight: &Preflight) -> Result<ThroughputTarget, Error> {
