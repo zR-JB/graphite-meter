@@ -116,6 +116,8 @@ struct Controller {
     cancel: Option<watch::Sender<bool>>,
     pending: Option<Work>,
     running: bool,
+    /// A run replaced the path check that is ending: that check's end is the run's preparation.
+    replaced_check: bool,
     finished: Option<Snapshot>,
     cancelling: bool,
     cancel_deadline: Option<Instant>,
@@ -150,6 +152,7 @@ impl Controller {
             cancel: None,
             pending: None,
             running: false,
+            replaced_check: false,
             finished: None,
             cancelling: false,
             cancel_deadline: None,
@@ -214,6 +217,7 @@ impl Controller {
                 // As in Go, the run starts at once: stopping the replaced check is its
                 // preparation, and stopping the run before launch reads as stopped.
                 self.running = true;
+                self.replaced_check = true;
                 self.started = Instant::now();
                 self.snapshots.send_replace(Snapshot {
                     phase: Phase::Preparing,
@@ -246,9 +250,11 @@ impl Controller {
         self.cancel = None;
         self.cancel_deadline = None;
         let running = self.running;
+        // Unless it was stopped before launch, the run that replaced the check goes on.
+        let preparing = std::mem::take(&mut self.replaced_check) && self.pending.is_some();
         if self.cancelling {
             self.snapshots.send_modify(|snapshot| {
-                if snapshot.phase.busy() {
+                if snapshot.phase.busy() && !preparing {
                     snapshot.phase = if running { Phase::Cancelled } else { Phase::Setup };
                     snapshot.error = None;
                 }
@@ -289,7 +295,7 @@ impl Controller {
             }
         }
         self.cancelling = false;
-        if running {
+        if running && !preparing {
             let duration = self.started.elapsed();
             self.snapshots.send_modify(|snapshot| snapshot.duration = duration);
             self.finished = Some(self.snapshots.borrow().clone());
@@ -477,6 +483,25 @@ mod tests {
         });
         controller.replace(Work::Run(Config::default())).unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Preparing);
+        // The check ending is the run's preparation, not a stopped run.
+        let check = controller.operations.join_next().await.unwrap();
+        controller.finished(check).unwrap();
+        assert!(controller.finished.is_none());
+        assert_eq!(controller.operations.len(), 1, "the run launched");
+        controller.stop().await;
+
+        let (snapshots, _) = watch::channel(Snapshot {
+            phase: Phase::Checking,
+            ..Snapshot::default()
+        });
+        let mut controller = Controller::new(&Config::default(), snapshots, true).unwrap();
+        let (cancel, mut cancelled) = watch::channel(false);
+        controller.cancel = Some(cancel);
+        controller.operations.spawn(async move {
+            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+            Ok(None)
+        });
+        controller.replace(Work::Run(Config::default())).unwrap();
         controller.cancel();
         controller.wait().await.unwrap();
         assert_eq!(controller.snapshots.borrow().phase, Phase::Cancelled);
