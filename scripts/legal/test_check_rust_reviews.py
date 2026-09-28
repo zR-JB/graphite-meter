@@ -12,11 +12,11 @@ def review(name: str, version: str, upstream: str = REGISTRY) -> dict:
 
 
 class ReviewScopeTests(unittest.TestCase):
-    def test_the_tui_ships_every_target_and_the_server_only_linux_on_glibc(self) -> None:
+    def test_the_tui_ships_every_target_and_the_server_only_linux(self) -> None:
         targets = 'linux/amd64 x86_64-unknown-linux-musl\ndarwin/arm64 aarch64-apple-darwin\n'
         self.assertEqual(shipped(targets), [
             ('graphite-meter-client', 'x86_64-unknown-linux-musl'),
-            ('graphite-meter-server', 'x86_64-unknown-linux-gnu'),
+            ('graphite-meter-server', 'x86_64-unknown-linux-musl'),
             ('graphite-meter-client', 'aarch64-apple-darwin'),
         ])
 

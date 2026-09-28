@@ -59,7 +59,7 @@ class ToolchainBoundaryTests(unittest.TestCase):
     def test_rust_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()
         path = root / "container/Dockerfile.rust"
-        image = load_pins(root)["images"]["distroless_cc"]
+        image = load_pins(root)["images"]["rust"]
         path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
         with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
             check(root)

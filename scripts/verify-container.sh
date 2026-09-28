@@ -58,7 +58,19 @@ usr/share/licenses/graphite-meter/COPYRIGHT Graphite Meter
 usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt THIRD-PARTY SOFTWARE NOTICES
 usr/share/licenses/graphite-meter/SOURCE.txt https://github.com/zR-JB/graphite-meter
 EOF
-tar -tf "$tmp/rootfs.tar" | grep -Ex 'usr/share/(licenses/ca-certificates/COPYRIGHT|doc/ca-certificates/copyright)' >/dev/null
+# The Go and Rust images hold the same files: one static binary, the CA roots and the notices;
+# no libc, shell or package. The engine adds only its runtime files.
+tar -tvf "$tmp/rootfs.tar" | awk '$1 !~ /^d/ { print $6 }' \
+    | grep -Evx '\.dockerenv|(dev|proc|sys|run)/.*|etc/(hostname|hosts|resolv\.conf|mtab)' | sort >"$tmp/files"
+diff -u - "$tmp/files" <<'FILES'
+etc/ssl/certs/ca-certificates.crt
+graphite-meter
+usr/share/licenses/ca-certificates/COPYRIGHT
+usr/share/licenses/graphite-meter/COPYRIGHT
+usr/share/licenses/graphite-meter/LICENSE
+usr/share/licenses/graphite-meter/SOURCE.txt
+usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
+FILES
 licenses='{{ index .Config.Labels "org.opencontainers.image.licenses" }}'
 test "$("$engine" inspect -f "$licenses" "$image")" = AGPL-3.0-or-later
 test "$("$engine" inspect -f '{{.Config.User}}' "$image")" = 65532:65532
@@ -97,4 +109,15 @@ for path in /settings/ /assets/missing.js; do
     test "$(curl -sS -o "$tmp/missing" -w '%{http_code}' "$base$path")" = 404
     refute '<!doctype html|<html|<div id="app"' "$tmp/missing"
 done
+# Report sizes the same way for both images, so they compare like for like.
+disk=$("$engine" image inspect -f '{{.Size}}' "$image")
+compressed=$("$engine" save "$image" | gzip -6 | wc -c)
+binary=$(tar -xOf "$tmp/rootfs.tar" graphite-meter | wc -c)
+sizes=$(awk -v d="$disk" -v c="$compressed" -v b="$binary" \
+    'BEGIN { printf "%.2f MB | %.2f MB | %.2f MB", d / 1e6, c / 1e6, b / 1e6 }')
+echo "image sizes (on disk | gzip | server binary): $sizes"
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+    printf '### Container image\n\n| Image | On disk | gzip | Server binary |\n|---|---|---|---|\n| `%s` | %s |\n' \
+        "$image" "$sizes" >>"$GITHUB_STEP_SUMMARY"
+fi
 echo "container verification passed: $image"

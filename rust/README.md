@@ -38,7 +38,7 @@ The TUI can connect to either implementation's server.
 
 `mise run rust-client-package VERSION` builds the experimental Linux and Windows
 TUI archives in the pinned builder image, with reviewed dependency notices and
-matching source; Linux TUIs are static musl executables like Go's. Release requests can
+matching source; the Linux TUIs and the server image's binary are static musl executables, like Go's. Release requests can
 opt into Rust TUI archives for every platform the Go TUI ships, named like Go's
 with a `_rust` marker, and into a linux/amd64 + linux/arm64 server image tagged
 `VERSION-rust`; stable releases move `X.Y-rust` and `latest-rust` with it. These

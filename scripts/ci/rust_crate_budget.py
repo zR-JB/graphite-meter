@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def main() -> None:
     exceeded = False
-    for package, target, limit in (("graphite-meter-server", "x86_64-unknown-linux-gnu", 135),
+    for package, target, limit in (("graphite-meter-server", "x86_64-unknown-linux-musl", 135),
                                    ("graphite-meter-client", "x86_64-unknown-linux-musl", 164)):
         tree = subprocess.run(
             [

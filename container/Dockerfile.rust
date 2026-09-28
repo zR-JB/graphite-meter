@@ -5,7 +5,9 @@ ARG TARGETARCH
 FROM --platform=$BUILDPLATFORM docker.io/library/python:3.14.7-slim-bookworm@sha256:82bc3c539b8813ada9d68c63b40158fa002f7f33de9bf3312a3dfdc0620dff56 AS python
 FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS rust-amd64
 COPY --from=python /usr/local /usr/local
-ENV LD_LIBRARY_PATH=/usr/local/lib
+ENV LD_LIBRARY_PATH=/usr/local/lib \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
 WORKDIR /src
 COPY LICENSE COPYRIGHT ./
 COPY scripts/ scripts/
@@ -27,9 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-mingw-w64-x86-64-win32=12.2.0-14+deb12u1+25.2+b1 mingw-w64-x86-64-dev=10.0.0-3 \
     && rm -rf /var/lib/apt/lists/* \
     && cd rust && rustup target add $(awk '$1 !~ /^darwin/ { print $2 }' ../scripts/tui-targets.txt)
-ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
-    CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=x86_64-linux-gnu-gcc \
-    CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
+ENV CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 RUN python3 scripts/package-rust.py "$VERSION" --output /src/dist --supplement legal/rust-platform-debian-bookworm.json \
     --platform $(awk '$1 !~ /^darwin/ { print $1 }' scripts/tui-targets.txt)
 
@@ -63,7 +63,9 @@ COPY --from=browser /src/client/ /src/client/
 # The legal scan reads the bundled packages through Bun's installation cache, at the same paths.
 COPY --from=browser /root/.bun/install/cache/ /root/.bun/install/cache/
 COPY --from=browser /tmp/browser-modules.json /tmp/browser-modules.json
-RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { sub(/musl$/, "gnu", $2); print $2 }' scripts/tui-targets.txt) \
+# The server is a static musl executable, like the Linux TUIs and Go's server.
+RUN target=$(awk -v platform="linux/$TARGETARCH" '$1 == platform { print $2 }' scripts/tui-targets.txt) \
+    && (cd rust && rustup target add "$target") \
     && python3 -m scripts.legal.rust --package graphite-meter-server --target "$target" --profile "$PROFILE" \
         --out /src/rust/target/server-notices --reviews legal/rust-reviewed-components.json \
         --supplement legal/rust-platform-debian-bookworm.json --browser-scan /tmp/browser-modules.json \
@@ -78,16 +80,18 @@ ARG TARGETARCH
 COPY --from=server-build /src/rust/target/server-notices/THIRD_PARTY_SOURCE.tar.gz \
     /graphite-meter-server_${VERSION}_linux_${TARGETARCH}_rust_third-party-source.tar.gz
 
-# The GNU build needs libc and libgcc; the base image carries the CA bundle.
-FROM gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97 AS server
+# Like Go's image: one static binary, its notices and the CA roots, with no libc, shell or package.
+FROM scratch AS server
 COPY --from=server-build /graphite-meter /graphite-meter
 COPY LICENSE COPYRIGHT /usr/share/licenses/graphite-meter/
 COPY --from=server-build /src/rust/target/server-notices/LEGAL.txt /usr/share/licenses/graphite-meter/THIRD_PARTY_NOTICES.txt
 COPY --from=server-build /SOURCE.txt /usr/share/licenses/graphite-meter/SOURCE.txt
+COPY --from=server-build /usr/share/doc/ca-certificates/copyright /usr/share/licenses/ca-certificates/COPYRIGHT
+# Outbound OIDC discovery, token exchange, UserInfo and JWKS requests need the public CA roots.
+COPY --from=server-build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 EXPOSE 7246/tcp 7247/tcp 7248/tcp 7249/tcp 7249/udp
 # As in Go's image, relative GM_* paths resolve from /, and like Go's x509 the
-# server also trusts CA files added to /etc/ssl/certs beside the base image's
-# SSL_CERT_FILE bundle.
+# server trusts the bundle and any CA file added to /etc/ssl/certs.
 ENV SSL_CERT_DIR=/etc/ssl/certs
 WORKDIR /
 USER 65532:65532

@@ -97,10 +97,9 @@ Releases can also publish an experimental Rust server image for linux/amd64 and 
 replacement, and Go remains the default. To try it, change the tag in the `docker run` command, Compose file or
 Quadlet unit to `:latest-rust` (the newest stable release that shipped one), or pin `:X.Y.Z-rust` or a digest. It
 keeps the Go image's ports, `GM_*` variables, `hash-password` command and [container user](#container-user), and runs
-with the same read-only root and dropped capabilities. It differs in:
+with the same read-only root and dropped capabilities. Like Go's, it holds one static binary on `scratch` with the
+notices and CA roots, and trusts CA files added to `/etc/ssl/certs`. It differs in:
 
-- **Base image:** the server links glibc and runs on distroless `cc-debian13`, not as a static binary on `scratch`.
-  The image is larger, and scanners report its Debian packages, including libraries the server does not link.
 - **Identity and notices:** `--version` and `/preflight` report `X.Y.Z-rust`. `--legal` prints the third-party
   notices, which both images also ship in `/usr/share/licenses/graphite-meter/`; the Go server has no such flag.
 - **Settings and behaviour:** `GM_MAX_BUFFER_BYTES` (default 8 GiB) caps the connection buffers its HTTP/2 and QUIC

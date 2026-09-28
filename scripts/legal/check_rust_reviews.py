@@ -23,13 +23,13 @@ Crate = tuple[str, str, str]
 
 
 def shipped(targets: str) -> list[tuple[str, str]]:
-    """The TUI ships every listed target; the server image ships the Linux ones on glibc."""
+    """The TUI ships every listed target; the server image ships the static Linux ones too."""
     pairs = []
     for line in targets.splitlines():
         platform, target = line.split()
         pairs.append(('graphite-meter-client', target))
         if platform.startswith('linux/'):
-            pairs.append(('graphite-meter-server', target.removesuffix('musl') + 'gnu'))
+            pairs.append(('graphite-meter-server', target))
     return pairs
 
 
