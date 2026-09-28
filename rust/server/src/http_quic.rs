@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 const MIN_SEND_WINDOW: u64 = 2 * 1024 * 1024;
-const MAX_SEND_WINDOW: u64 = RECEIVE_WINDOW as u64;
+const MAX_SEND_WINDOW: u64 = 16 * 1024 * 1024;
 const SEND_WINDOW_STEP: u64 = 256 * 1024;
 const SEND_WINDOW_SHRINK_DELAY: Duration = Duration::from_secs(1);
 const INCOMING_BYTES: u64 = 64 * 1024;
@@ -496,8 +496,8 @@ impl SendWindow {
         let now = tokio::time::Instant::now();
         let sent = path.udp_tx.bytes;
         if let Some((last, previous)) = self.last {
-            // Two observed bandwidth-delay products allow a new path to
-            // grow without a full window on fast local links.
+            // Two observed bandwidth-delay products let a new path grow without a full window on fast local
+            // links, up to about quic-go's in-flight cap: a deeper window only fills the bottleneck queue.
             let target = desired_send_window(sent.saturating_sub(previous), path.rtt, now.duration_since(last));
             if target == MIN_SEND_WINDOW && self.limit != MIN_SEND_WINDOW {
                 let since = self.low_demand_since.get_or_insert(now);
