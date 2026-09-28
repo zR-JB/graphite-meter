@@ -18,8 +18,13 @@ pub fn servers<'a>(catalog: &'a ServerCatalog, config: &Config) -> Result<Vec<&'
     Ok(catalog.servers.iter().filter(|entry| ids.contains(&entry.id)).collect())
 }
 
-pub fn throughput(config: &Config, entry: &ServerEntry, preflight: &Preflight) -> Result<ThroughputTarget, Error> {
-    let order = config.throughput_transport.map_or_else(
+pub fn throughput(
+    config: &Config,
+    entry: &ServerEntry,
+    preflight: &Preflight,
+    selected: Option<ThroughputTransport>,
+) -> Result<ThroughputTarget, Error> {
+    let order = selected.map_or_else(
         || vec![ThroughputTransport::FetchStream, ThroughputTransport::WebTransport],
         |transport| vec![transport],
     );
@@ -28,23 +33,13 @@ pub fn throughput(config: &Config, entry: &ServerEntry, preflight: &Preflight) -
         match throughput_candidate(config, entry, preflight, transport) {
             Ok(Some(target)) => return Ok(target),
             Ok(None) => {}
-            Err(error) if config.throughput_transport.is_some() => return Err(error),
+            Err(error) if selected.is_some() => return Err(error),
             Err(error) => {
                 first_error.get_or_insert(error);
             }
         }
     }
     Err(first_error.unwrap_or_else(|| "selected throughput endpoint is not advertised".into()))
-}
-
-pub fn throughput_with_transport(
-    config: &Config,
-    entry: &ServerEntry,
-    preflight: &Preflight,
-    transport: ThroughputTransport,
-) -> Result<ThroughputTarget, Error> {
-    throughput_candidate(config, entry, preflight, transport)?
-        .ok_or_else(|| "selected throughput endpoint is not advertised".into())
 }
 
 fn throughput_candidate(
@@ -84,20 +79,7 @@ fn throughput_candidate(
     Ok(Some(target))
 }
 
-pub fn latency(config: &Config, entry: &ServerEntry, preflight: &Preflight) -> Result<LatencyTarget, Error> {
-    select_latency(config, entry, preflight, config.latency_transport)
-}
-
-pub fn latency_with_transport(
-    config: &Config,
-    entry: &ServerEntry,
-    preflight: &Preflight,
-    transport: LatencyTransport,
-) -> Result<LatencyTarget, Error> {
-    select_latency(config, entry, preflight, Some(transport))
-}
-
-fn select_latency(
+pub fn latency(
     config: &Config,
     entry: &ServerEntry,
     preflight: &Preflight,
@@ -177,13 +159,13 @@ mod tests {
             throughput_protocol: Some(Protocol::Http3),
             ..Default::default()
         };
-        assert!(throughput(&config, &entry, &preflight).is_err());
+        assert!(throughput(&config, &entry, &preflight, None).is_err());
         preflight.capabilities.throughput[0].protocol = Protocol::Negotiated;
         assert_eq!(
-            throughput(&config, &entry, &preflight).unwrap().protocol,
+            throughput(&config, &entry, &preflight, None).unwrap().protocol,
             Protocol::Http3
         );
         preflight.capabilities.throughput[0].base_url = "https://foreign.example".into();
-        assert!(throughput(&config, &entry, &preflight).is_err());
+        assert!(throughput(&config, &entry, &preflight, None).is_err());
     }
 }
