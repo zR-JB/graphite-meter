@@ -126,7 +126,9 @@ emphasised values, 600 titles and controls.
 
 Hairlines mark structure only: a plate's edge, row separators inside plates, a head once content scrolls under it,
 the axis under a graph, the latency card's gridlines and the facts' top edge in a card. Spacing separates everything
-else.
+else. A sheet, and a dialog built as one (About & legal, opaque `--sheet-solid`), takes the `--border-subtle` edge;
+glass over the instrument (menus, popovers, toasts, tips) and a confirm dialog's opaque `--surface-1` take
+`--border-strong`.
 
 ## Icons
 
@@ -137,9 +139,9 @@ hue, never by a boxed icon.
 
 ## Motion
 
-- Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers), `--dur-sheet` 420 ms (sheets and their column),
-  `--dur-graph` 280 ms (washes, chips, scale changes), `--dur-pulse` 1.1 s (a live indicator only). Easing is
-  `--ease-out` for anything the user triggered.
+- Tokens: `--dur-hover` 120 ms, `--dur-slide` 180 ms (popovers, dialogs, tips), `--dur-sheet` 420 ms (sheets and
+  their column), `--dur-graph` 280 ms (washes, chips, scale changes), `--dur-pulse` 1.1 s (a live indicator only).
+  Easing is `--ease-out` for anything the user triggered.
 - Live values and the running graph's leading edge move on the single frame clock in
   `presentation/motion.svelte.ts`; a glide smooths only the rendering.
 - The room's light cross-fades 1.1 s between stages: one layer per stage in the stage column, never a repaint of the
@@ -208,13 +210,14 @@ hue, never by a boxed icon.
   (0.4 s, jargon 0.2 s, at once when moving from one tip to the next), on keyboard focus, on a click or tap on jargon
   or an explained fact, or on a long press on a control; never after a click on a control. It stays while the pointer
   is on its word, closes a moment after it leaves, and one tip shows at a time. A scroll or a tap elsewhere closes a
-  pointer's tip; a tap on the tip closes it without reaching what lies beneath.
+  pointer's tip; a tap on the tip closes it without reaching what lies beneath. A tip the viewport would cut flips
+  below its word, then aligns to the word's edge.
 
 | Primitive                | Height         | Radius             | Type            | States                                               |
 | ------------------------ | -------------- | ------------------ | --------------- | ---------------------------------------------------- |
 | `.kv` row                | 42             | plate 8            | row             | separators `--border-subtle`                         |
 | Choice row               | 42 (two lines) | 5, concentric      | row + `small`   | hover `--hover-wash`; chosen by its mark             |
-| `.btn`                   | 32             | 8                  | control         | quiet: no ring, hover wash; disabled 0.5             |
+| `.btn`                   | 32             | 8                  | control         | quiet: hover, press and open washes; disabled 0.5    |
 | Run button               | 40 (44 phone)  | 8                  | 14 px 600       | ink fill, `--text-inverse`; running: outline         |
 | Stage chip               | 36             | 8                  | 13 px, name 600 | on: plate, filled bead; off: edge; running: hue wash |
 | `.segmented`             | 32             | 8 track, 6 segment | control         | selected `--selected-wash`                           |

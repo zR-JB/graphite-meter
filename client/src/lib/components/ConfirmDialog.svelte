@@ -58,7 +58,8 @@
     padding: var(--space-4);
   }
   h2 {
-    font: var(--w-strong) var(--type-lg) var(--font-display);
+    font: var(--role-panel-title);
+    letter-spacing: var(--track-tight);
   }
   p {
     margin-top: var(--space-2);

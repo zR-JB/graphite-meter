@@ -72,7 +72,7 @@ test("Escape closes a settings confirmation; Back closes it with its panel", asy
     )
     .toBe(true);
   await expect(
-    page.getByRole("button", { name: "Open settings" }),
+    page.getByRole("button", { name: "Settings", exact: true }),
   ).toBeFocused();
 });
 
@@ -161,7 +161,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
   await expect(dialog).toContainText("Third-party software");
 
   const link = dialog.locator(".group:last-child .component:last-child a");
-  const close = dialog.getByRole("button", { name: "Close", exact: true });
+  const close = dialog.getByRole("button", { name: "Close About & legal" });
   await link.evaluate((el: HTMLElement) => el.focus());
   // Past the last control a modal hands focus to the browser, never the page.
   await page.raw.press("Tab");
@@ -175,7 +175,7 @@ test("legal notices recover through Retry and keep focus in the dialog", async (
 test("a History chunk that fails to load settles and recovers through Retry", async (page) => {
   await open(page);
   await page.blockRequests(["*HistoryWorkspace*"]);
-  await page.getByRole("button", { name: "Open History" }).click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   const stage = page.locator(".history-stage");
   await expect(stage).toContainText("History could not be opened.");
   const mutations = await page.evaluate(

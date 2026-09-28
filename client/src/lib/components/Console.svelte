@@ -86,7 +86,25 @@
   >(null);
   const panelInvokers: Partial<Record<PanelSurface, HTMLElement>> = {};
 
+  // Starting over asks first while a run is live or its unsaved result is on screen.
   let resetConfirmOpen = $state(false);
+  let resetReason = $state<"running" | "unsaved">("running");
+  const RESET_CONFIRM = {
+    running: {
+      title: "Stop the running test?",
+      description:
+        "The measurement in progress stops and its results are cleared.",
+      cancelLabel: "Keep running",
+      confirmLabel: "Stop test",
+    },
+    unsaved: {
+      title: "Clear this result?",
+      description: "It is not saved; starting over removes it.",
+      cancelLabel: "Keep result",
+      confirmLabel: "Clear result",
+    },
+  };
+  const resetCopy = $derived(RESET_CONFIRM[resetReason]);
   let currentRoute = $state<Route>(
     parseRoute(typeof window === "undefined" ? "#/" : window.location.hash),
   );
@@ -185,6 +203,8 @@
   );
 
   const THEME_CYCLE = ["light", "dark", "auto"] as const;
+  // Tips name a key only while the page shortcuts act on it.
+  const keyHint = (key: string) => (store.keyShortcuts ? ` (${key})` : "");
 
   function toggleTheme() {
     const next =
@@ -239,7 +259,8 @@
       routeTo(withWorkspace(currentRoute, { kind: "measurement" }));
       return;
     }
-    if (store.isRunning) {
+    if (store.isRunning || (store.result && !store.savingResults)) {
+      resetReason = store.isRunning ? "running" : "unsaved";
       resetConfirmOpen = true;
       return;
     }
@@ -554,12 +575,10 @@
       type="button"
       class="brand-btn"
       aria-label={measurementOpen
-        ? "Graphite Meter — return to a fresh, blank test"
-        : "Graphite Meter — return to live meter"}
+        ? "Graphite Meter — start over"
+        : "Graphite Meter — return to measurement"}
       {@attach tooltip(() =>
-        measurementOpen
-          ? "Return to a fresh, blank test"
-          : "Return to live meter",
+        measurementOpen ? "Start over" : "Return to measurement",
       )}
       onclick={requestReturnToStart}
       ><svg class="brand-glyph" viewBox="0 0 24 24" aria-hidden="true"
@@ -579,9 +598,9 @@
     >
     <button
       class="btn btn-icon btn-quiet"
-      aria-label="Open settings"
+      aria-label="Settings"
       aria-expanded={settingsOpen}
-      {@attach tooltip(() => "Settings — test and display (S)")}
+      {@attach tooltip(() => `Settings — test and display${keyHint("S")}`)}
       onclick={(event) =>
         togglePanel("settings", event.currentTarget as HTMLElement)}
       ><Icon name="settings" /></button
@@ -592,9 +611,9 @@
         class="btn return-live"
         data-tone={awayRunIndicator.tone}
         type="button"
-        aria-label={`${awayRunIndicator.label}. Return to live meter.`}
+        aria-label={`Live ${awayRunIndicator.label}. Return to measurement.`}
         {@attach tooltip(
-          () => `${awayRunIndicator.label} — return to live meter`,
+          () => `${awayRunIndicator.label} — return to measurement`,
         )}
         onclick={() => {
           focusWorkspace("measurement");
@@ -611,12 +630,10 @@
     {#if store.savingResults}<button
         class="btn btn-icon btn-quiet direct-history"
         type="button"
-        aria-label={historyOpen ? "Close History" : "Open History"}
+        aria-label="History"
         aria-current={historyOpen ? "page" : undefined}
         aria-pressed={historyOpen}
-        {@attach tooltip(() =>
-          historyOpen ? "Close History" : "History — saved results (H)",
-        )}
+        {@attach tooltip(() => `History — saved results${keyHint("H")}`)}
         onclick={(event) =>
           toggleHistoryFromPointer(event.currentTarget as HTMLElement)}
         ><Icon name="history" /></button
@@ -626,7 +643,7 @@
       aria-label={`Theme: ${THEME[store.theme].label}`}
       {@attach tooltip(
         () =>
-          `Theme: ${THEME[store.theme].label} (T) — cycles light / dark / auto`,
+          `Theme: ${THEME[store.theme].label}${keyHint("T")} — cycles light, dark and auto`,
       )}
       onclick={toggleTheme}><Icon name={THEME[store.theme].icon} /></button
     >
@@ -634,7 +651,7 @@
       class="btn btn-icon btn-quiet direct-endpoint"
       aria-label="Details"
       aria-expanded={telemetryOpen}
-      {@attach tooltip(() => "Details — server and connection (D)")}
+      {@attach tooltip(() => `Details — server and connection${keyHint("D")}`)}
       onclick={(event) =>
         togglePanel("endpoint", event.currentTarget as HTMLElement)}
       ><Icon name="info" /></button
@@ -745,10 +762,10 @@
   <ConfirmDialog
     open={resetConfirmOpen}
     id="reset-confirm"
-    title="Stop the running test?"
-    description="Returning to a fresh test will abort the measurement in progress."
-    cancelLabel="Keep running"
-    confirmLabel="Stop test"
+    title={resetCopy.title}
+    description={resetCopy.description}
+    cancelLabel={resetCopy.cancelLabel}
+    confirmLabel={resetCopy.confirmLabel}
     onCancel={() => (resetConfirmOpen = false)}
     onConfirm={confirmReturnToStart}
   />
@@ -815,12 +832,13 @@
     opacity: 1;
   }
 
+  /* The last icon's own 8 px padding completes the right inset, so the bar's ink sits 16 px in at both ends. */
   .topbar {
     grid-area: topbar;
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding-inline: var(--space-4);
+    padding-inline: var(--space-4) var(--space-2);
     container: topbar / inline-size;
   }
   .topbar > :global(*) {
@@ -834,17 +852,22 @@
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: var(--space-1) 6px;
+    min-height: var(--control-h);
+    padding: 0 6px;
     margin-left: -6px;
     border-radius: var(--r-chrome);
     font: var(--w-strong) var(--type-md) / 1.4 var(--font-sans);
     letter-spacing: -0.01em;
-    transition: color var(--dur-hover) var(--ease-out);
+    transition: var(--transition-control);
   }
+  /* Washed like the quiet buttons beside it. */
   @media (hover: hover) {
     .brand-btn:hover {
-      color: var(--brand-strong);
+      background: var(--hover-wash);
     }
+  }
+  .brand-btn:active {
+    background: var(--selected-wash);
   }
   /* Hexagon in the brand accent, needle in the text colour (favicon.svg). */
   .brand-glyph {
@@ -857,8 +880,7 @@
   }
   .return-live {
     --btn-line: var(--tone-line);
-    padding-inline: var(--space-2) 10px;
-    background-color: color-mix(in srgb, var(--tone) 9%, var(--surface-2));
+    padding-inline: var(--space-2) var(--space-3);
   }
   @media (hover: hover) {
     .return-live:hover {
@@ -874,9 +896,10 @@
     align-items: baseline;
     gap: 6px;
   }
+  /* Small text in a hue takes its ink, so it clears 4.5:1 in every stage. */
   .live-copy strong {
-    color: var(--tone);
-    font-weight: var(--w-heavy);
+    color: var(--tone-ink);
+    font-weight: var(--w-strong);
   }
   /* 44px coarse targets fit three direct actions to ~320px, one to ~260px. */
   .topbar-more,
@@ -908,7 +931,9 @@
     }
   }
 
+  /* The stage is the anchor the phase toast keeps to, clear of docked sheets. */
   .stage {
+    anchor-name: --stage;
     grid-area: stage;
     display: flex;
     flex-direction: column;
@@ -961,14 +986,19 @@
     font-variant-numeric: tabular-nums;
     container: status / inline-size;
   }
+  /* Space and R act on the measurement only, so History drops their hint. */
+  .history-stage ~ .status :global(.command-hints > :first-child) {
+    display: none;
+  }
 
   @media (max-width: 759px) {
     .stage {
       padding-inline: var(--space-4);
     }
+    /* 44 px targets put their 16 px icons on the page's 16 px gutter. */
     .topbar {
       gap: var(--space-1);
-      padding-inline: 6px;
+      padding-inline: calc(var(--space-4) - (var(--hit) - var(--icon)) / 2);
     }
     .brand-label,
     .live-copy {

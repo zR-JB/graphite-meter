@@ -498,7 +498,7 @@
                 select((invoker) => requestConfirm({ kind: "clear" }, invoker))}
             >
               <span><Icon name="trash" /></span>
-              <span><strong>Clear all saved results</strong></span>
+              <span><strong>Clear history</strong></span>
             </button>
           {/snippet}
         </MoreMenu>
@@ -789,12 +789,11 @@
   open={confirm !== null}
   id="history-confirm"
   invoker={confirmInvoker}
-  title={confirm?.kind === "clear"
-    ? "Clear result history?"
-    : "Delete this result?"}
+  title={confirm?.kind === "clear" ? "Clear history?" : "Delete this result?"}
   description={confirm?.kind === "clear"
-    ? "Permanently remove all saved results from this browser?"
-    : "Permanently remove this saved result from this browser?"}
+    ? "All saved results are permanently removed from this browser."
+    : "This saved result is permanently removed from this browser."}
+  cancelLabel={confirm?.kind === "clear" ? "Keep history" : "Keep result"}
   confirmLabel={confirm?.kind === "clear" ? "Clear history" : "Delete result"}
   onCancel={() => {
     confirm = null;

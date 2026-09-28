@@ -29,7 +29,7 @@ async function tap(page: Page, locator: Locator) {
 
 test("a pause on a control opens its tip while the hand drifts, and leaving closes it", async (page) => {
   await open(page, home.http);
-  const settings = page.getByRole("button", { name: "Open settings" });
+  const settings = page.getByRole("button", { name: "Settings", exact: true });
   const { x, y } = await centre(settings);
   // A reading hand never holds still: the tip must open while it drifts a few pixels every step.
   let opened = false;

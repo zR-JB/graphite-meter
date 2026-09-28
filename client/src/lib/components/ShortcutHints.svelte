@@ -40,7 +40,7 @@
   span {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: var(--space-1);
   }
   /* Every run action shares one cell, so a label change never moves the strip. */
   .stack {

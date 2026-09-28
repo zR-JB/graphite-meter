@@ -562,7 +562,7 @@
     background: var(--surface-2);
     box-shadow: var(--elev-tile);
     color: var(--text-muted);
-    font: var(--w-strong) var(--type-2xs) / 1 var(--font-mono);
+    font: 500 var(--type-2xs) / 1 var(--font-mono);
   }
   ::selection {
     background: color-mix(in oklab, var(--brand) 32%, transparent);
@@ -666,9 +666,6 @@
     background: transparent;
     box-shadow: none;
   }
-  .head-actions .btn[aria-expanded="true"] {
-    background: var(--hover-wash) padding-box;
-  }
   @media (hover: hover) {
     :is(.btn-quiet, .head-actions .btn):hover:not(
         :disabled,
@@ -678,12 +675,17 @@
       background: var(--hover-wash) padding-box;
     }
   }
+  /* A press, or a toggle whose surface is open, takes the selected wash; after hover, so it wins there. */
+  :is(.btn-quiet, .head-actions .btn):is(
+      :active,
+      [aria-expanded="true"],
+      [aria-pressed="true"]
+    ):not(:disabled, [aria-disabled="true"]) {
+    background: var(--selected-wash) padding-box;
+  }
   @media (pointer: coarse) {
     .btn {
       --hit-pad: 6px;
-    }
-    .menu > button {
-      min-height: var(--hit);
     }
   }
 
@@ -710,6 +712,8 @@
     border-radius: var(--r-full);
     background: var(--tone);
     box-shadow: 0 0 0 3px var(--tone-wash);
+    /* The dot is the state itself; forced colours would paint it the canvas. */
+    forced-color-adjust: none;
   }
   .status-dot.inline {
     display: inline-block;
@@ -939,8 +943,8 @@
       background-image: linear-gradient(var(--hover-wash) 0 0);
     }
   }
-  /* A choice's second line says what it does; the ring alone marks the chosen one. */
-  .choices small {
+  /* A choice's or a menu item's second line says what it does; the ring alone marks the chosen one. */
+  :is(.choices, .menu > button) small {
     display: block;
     margin-top: 1px;
     overflow: hidden;
@@ -1181,9 +1185,10 @@
     background: var(--surface-1);
     backdrop-filter: none;
   }
+  /* Built like a side sheet, it takes a sheet's material and edge, opaque. */
   dialog.float.sheet {
-    background: var(--bg);
-    background-blend-mode: overlay, normal;
+    border-color: var(--border-subtle);
+    background: var(--sheet-solid);
   }
 
   .tooltip,
@@ -1277,11 +1282,6 @@
   .menu > button :where(strong) {
     font-weight: var(--w-strong);
   }
-  .menu > button :where(small) {
-    margin-top: 2px;
-    color: var(--text-muted);
-    font: var(--role-caption);
-  }
   /* Focus keeps the global ring, inset; the wash marks only the current choice. */
   .menu > button:focus-visible {
     outline-offset: -2px;
@@ -1312,15 +1312,32 @@
   .menu > button:disabled {
     opacity: 0.55;
   }
+  /* A two-line item is a row, like a choice; coarse pointers grow every item to a hit. */
+  .menu > :has(small) {
+    min-height: var(--row-h);
+    padding-block: 2px;
+  }
+  @media (pointer: coarse) {
+    .menu > button {
+      min-height: var(--hit);
+    }
+  }
 
   .tooltip {
     position: fixed;
     inset: auto;
+    width: max-content;
     max-width: min(300px, calc(100vw - 16px));
     margin: 8px;
     overflow: visible;
     position-area: block-start;
-    position-try-fallbacks: flip-block;
+    /* Cut by the viewport, a tip flips below, then aligns to its word's edge; max-content keeps it from squeezing. */
+    position-try-fallbacks:
+      flip-block,
+      block-end span-inline-start,
+      block-end span-inline-end,
+      block-start span-inline-start,
+      block-start span-inline-end;
     position-visibility: anchors-visible;
     white-space: pre-line;
     overflow-wrap: anywhere;
@@ -1374,10 +1391,10 @@
   .popover,
   dialog.float {
     transition:
-      opacity var(--dur-hover) var(--ease-out),
-      translate var(--dur-hover) var(--ease-out),
-      overlay var(--dur-hover) allow-discrete,
-      display var(--dur-hover) allow-discrete;
+      opacity var(--dur-slide) var(--ease-out),
+      translate var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
   }
   /* Important, so no component display can keep a closed popover hit-testable. */
   [popover]:not(:popover-open),
@@ -1397,9 +1414,9 @@
   dialog.float::backdrop {
     background: var(--scrim);
     transition:
-      opacity var(--dur-hover) var(--ease-out),
-      overlay var(--dur-hover) allow-discrete,
-      display var(--dur-hover) allow-discrete;
+      opacity var(--dur-slide) var(--ease-out),
+      overlay var(--dur-slide) allow-discrete,
+      display var(--dur-slide) allow-discrete;
   }
   @starting-style {
     dialog.float[open]::backdrop {

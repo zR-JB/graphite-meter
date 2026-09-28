@@ -75,7 +75,7 @@ test("an HTTP/1.1 and WebSocket run is saved and listed after reload", async (pa
   await page.goto(`${home.http}/#/`);
 
   const row = page.locator(`a.result-row[data-history-id="${saved.id}"]`);
-  await page.getByRole("button", { name: "Open History" }).click();
+  await page.getByRole("button", { name: "History", exact: true }).click();
   await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
   await expect(row).toHaveCount(1);
   await page.reload();

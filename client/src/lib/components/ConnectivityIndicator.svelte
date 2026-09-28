@@ -59,11 +59,7 @@
   );
 </script>
 
-<div
-  class="pulse"
-  tabindex="-1"
-  {@attach tooltip(() => [label, ...facts].join("\n"))}
->
+<div class="pulse" {@attach tooltip(() => [label, ...facts].join("\n"))}>
   <span class="sr-only">{[label, ...facts].join(". ")}</span>
   <span class="status-dot" data-tone={state.tone}></span>
   <svg class="spark" viewBox="0 0 36 16" aria-hidden="true">
@@ -77,6 +73,12 @@
     align-items: center;
     gap: var(--space-2);
     padding: 0 6px;
+  }
+  /* A finger gets a full-height target for the facts. */
+  @media (pointer: coarse) {
+    .pulse {
+      min-height: var(--hit);
+    }
   }
   .spark {
     width: 36px;

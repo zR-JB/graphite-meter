@@ -35,7 +35,7 @@
 <div class="more-control" class:danger>
   <button
     bind:this={trigger}
-    class="btn btn-icon more-trigger"
+    class="btn btn-icon btn-quiet more-trigger"
     type="button"
     aria-label={label}
     aria-haspopup="menu"

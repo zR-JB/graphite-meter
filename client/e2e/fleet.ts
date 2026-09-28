@@ -78,9 +78,9 @@ export async function open(page: Page, origin = home.url, seed: Seed = {}) {
 }
 
 export async function openSettings(page: Page) {
-  const panel = page.locator('[aria-label="Settings"]');
+  const panel = page.locator('dialog[aria-label="Settings"]');
   if (await panel.all((els) => els.every((el) => el.inert)))
-    await page.getByRole("button", { name: "Open settings" }).click();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect
     .poll(() => panel.all((els) => els.some((el) => !el.inert)))
     .toBe(true);
@@ -90,7 +90,7 @@ export async function openSettings(page: Page) {
 }
 
 export async function closeSettings(page: Page) {
-  const panel = page.locator('[aria-label="Settings"]');
+  const panel = page.locator('dialog[aria-label="Settings"]');
   await panel.getByRole("button", { name: "Close Settings" }).click();
   // The close transition must finish, or a reopen sees a panel that is still open.
   await expect
