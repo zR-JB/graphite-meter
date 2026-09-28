@@ -141,6 +141,7 @@ hue, never by a boxed icon.
 - The room's light cross-fades 1.1 s between stages: one layer per stage in the stage column, never a repaint of the
   page; History is read without it. A docked sheet slides from its edge while its column
   (`--dock-left`, `--dock-right`) grows, and back out when closed. A changed stage time rolls (320 ms).
+- A radio's ring closes in and a check draws in (180 ms); a row that appears in a sheet unfolds from its own height.
 - Reduced motion keeps colour and opacity changes; sheets, rolls and glides jump to their end state.
 
 ## Components

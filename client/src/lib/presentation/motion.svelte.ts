@@ -1,6 +1,8 @@
 // One frame clock moves every animated value; it runs only while something moves.
 import { untrack } from "svelte";
+import { expoOut } from "svelte/easing";
 import { prefersReducedMotion } from "svelte/motion";
+import type { TransitionConfig } from "svelte/transition";
 
 type Task = (now: number) => boolean;
 const tasks = new Set<Task>();
@@ -215,4 +217,24 @@ export function handoff<T>(
     untrack(() => view.set(value));
   });
   return view;
+}
+
+const REVEAL_MS = 180;
+
+/** A row that appears in a panel unfolds from its own height, row floor included, and fades in as it opens. */
+export function reveal(node: Element): TransitionConfig {
+  const style = getComputedStyle(node);
+  const px = (value: string) => parseFloat(value) || 0;
+  const height = px(style.height);
+  const floor = px(style.minHeight);
+  const [top, bottom] = [px(style.paddingTop), px(style.paddingBottom)];
+  const edge = px(style.borderTopWidth);
+  return {
+    duration: still() ? 0 : REVEAL_MS,
+    easing: expoOut,
+    css: (t) =>
+      `overflow: hidden; opacity: ${Math.min(1, t * 2)};` +
+      `height: ${t * height}px; min-height: ${t * floor}px;` +
+      `padding-block: ${t * top}px ${t * bottom}px; border-top-width: ${t * edge}px;`,
+  };
 }
