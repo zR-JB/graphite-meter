@@ -973,6 +973,18 @@ async fn data_after_the_peers_close_is_a_message_error() -> Result<(), TestError
 }
 
 #[tokio::test]
+async fn an_ended_session_opens_no_streams() -> Result<(), TestError> {
+    let peers = peers(usize::MAX).await?;
+    let (serving, _) = serve_sessions(&peers, |session| async move { session.close(2, "lifetime").await });
+    let (driver, requests) = client(&peers);
+    let (session, _) = Session::connect(&requests, connect_request()).await?.expect("accepted");
+    assert_eq!(session.closed().await?, (2, "lifetime".into()));
+    assert_eq!(session.open_uni().await.err(), Some(Error::Refused));
+    drop((session, driver, serving));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_peer_withholding_stream_credit_cannot_hold_a_session() -> Result<(), TestError> {
     // No stream credit: the 200 head never leaves, yet the close ends within its drain.
     let peers = peers_with(usize::MAX, Some(0), true, true).await?;

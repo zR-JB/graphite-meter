@@ -17,7 +17,7 @@ pub enum Error {
     Transport(noq::ConnectionError),
     /// A protocol deadline passed.
     TimedOut,
-    /// Refused locally: over a limit or the budget, or after GOAWAY.
+    /// Refused locally: over a limit or the budget, after GOAWAY, or in an ended session.
     Refused,
 }
 

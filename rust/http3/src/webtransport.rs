@@ -597,7 +597,11 @@ impl Session {
         self.datagrams.lock().await.recv().await
     }
 
+    /// Refused once the session ended: the drafts allow no new stream after its CLOSE.
     pub async fn open_uni(&self) -> Result<SendStream, Error> {
+        if self.ended.borrow().is_some() {
+            return Err(Error::Refused);
+        }
         SendStream::open(&self.shared, self.id).await
     }
 
