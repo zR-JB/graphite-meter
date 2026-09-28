@@ -1002,14 +1002,16 @@
     background: var(--brand);
     color: var(--text-inverse);
   }
-  /* The check is drawn in as the box fills, and out as it empties. */
+  /* The check is drawn in as the box fills, and out as it empties. Individual transforms only:
+     the minifier folds a `scale` beside `transform` into it, where `:checked` cannot undo it. */
   input.check[type="checkbox"]::after {
     content: "";
     width: 9px;
     height: 5px;
     border-left: 2px solid currentColor;
     border-bottom: 2px solid currentColor;
-    transform: translateY(-1px) rotate(-45deg);
+    translate: 0 -1px;
+    rotate: -45deg;
     scale: 0;
     transition: scale var(--dur-slide) var(--ease-out);
   }
