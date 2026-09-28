@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { warmUp } from "../actions/intent";
+  import { scrub } from "../actions/scrub";
   import { fmtDuration, formatLatency } from "../format";
   import {
     nearestAt,
@@ -85,30 +87,30 @@
     };
   });
 
-  let pointerX = 0;
   let box: HTMLElement | undefined = $state();
-  function track() {
-    if (!box) return;
-    const rect = box.getBoundingClientRect();
-    const ratio = Math.min(1, Math.max(0, (pointerX - rect.left) / rect.width));
-    hoverT = start + ratio * span;
-  }
-  // A readout answers the pointer at once; only explainers wait for a resting pointer.
-  function onMove(event: PointerEvent) {
-    if (event.pointerType !== "mouse") return;
-    pointerX = event.clientX;
-    track();
-  }
-  function onDown(event: PointerEvent) {
-    pointerX = event.clientX;
-    track();
-  }
-  // A tap keeps its readout until focus moves on; touch always leaves as the finger lifts.
-  function onLeave(event: PointerEvent) {
-    if (event.pointerType !== "mouse") return;
-    if (hoverT !== null) warmUp();
+  function clear() {
     if (!keyboard) hoverT = null;
   }
+  // A readout answers the pointer at once; only explainers wait for a pause.
+  const pointer = scrub({
+    read(event) {
+      if (!box) return;
+      const rect = box.getBoundingClientRect();
+      const ratio = (event.clientX - rect.left) / rect.width;
+      hoverT = start + Math.min(1, Math.max(0, ratio)) * span;
+    },
+    clear,
+  });
+  function onLeave(event: PointerEvent) {
+    if (event.pointerType === "touch") return;
+    if (hoverT !== null) warmUp();
+    clear();
+  }
+  // A new run's graph starts without the last one's reading.
+  $effect(() => {
+    void start;
+    untrack(clear);
+  });
   // Arrow keys walk the drawn bins from the newest; the readout names the sample nearest where it stops.
   function stepTo(key: string): boolean {
     const times = graph?.bins.find((lane) => lane.length)?.map((p) => p.t);
@@ -157,8 +159,10 @@
   aria-valuetext={hover
     ? `${hover.time}: ${hover.rows.map((row) => `${row.label} ${row.value}`).join(", ")}`
     : undefined}
-  onpointermove={onMove}
-  onpointerdown={onDown}
+  onpointerdown={pointer.down}
+  onpointermove={pointer.move}
+  onpointerup={pointer.up}
+  onpointercancel={pointer.cancel}
   onpointerleave={onLeave}
   onfocus={(event) => {
     if (!(event.currentTarget as HTMLElement).matches(":focus-visible")) return;
@@ -257,6 +261,7 @@
     min-height: 0;
     cursor: crosshair;
     outline-offset: 4px;
+    touch-action: pan-y pinch-zoom;
   }
   .graph[tabindex="-1"] {
     cursor: default;

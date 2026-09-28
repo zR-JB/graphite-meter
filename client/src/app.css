@@ -1246,6 +1246,12 @@
       opacity var(--dur-slide) var(--ease-out),
       scale var(--dur-slide) var(--ease-out);
   }
+  /* Without anchor positioning, tooltip.ts places the bubble itself. */
+  @supports not (position-area: block-start) {
+    .tooltip {
+      margin: 0;
+    }
+  }
   .tooltip[data-titled]::first-line {
     font-weight: var(--w-strong);
   }
@@ -1256,22 +1262,25 @@
     opacity: 1;
     scale: none;
   }
+  /* The arrow is the bubble's own glass, so it never reads as a second material. */
   .tooltip::before {
     position: absolute;
-    top: calc(100% - 1px);
+    top: calc(100% - var(--hairline));
     left: var(--arrow-x, 50%);
     width: 8px;
     height: 8px;
     border: inherit;
     border-width: 0 var(--hairline) var(--hairline) 0;
     background: inherit;
+    -webkit-backdrop-filter: inherit;
+    backdrop-filter: inherit;
     content: "";
     clip-path: polygon(100% 0, 100% 100%, 0 100%);
     translate: -50% -50%;
     rotate: 45deg;
   }
   .tooltip[data-side="below"]::before {
-    top: 1px;
+    top: var(--hairline);
     border-width: var(--hairline) 0 0 var(--hairline);
     clip-path: polygon(0 0, 100% 0, 0 100%);
   }
@@ -1322,6 +1331,15 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* A finger pressing an explained word asks for its tip, not a text selection or callout. */
+@media (pointer: coarse) {
+  [data-tip] {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 }
 

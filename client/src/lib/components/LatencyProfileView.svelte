@@ -5,6 +5,7 @@
   import Icon from "./Icon.svelte";
   import { term, tooltip } from "../actions/tooltip";
   import { warmUp } from "../actions/intent";
+  import { scrub } from "../actions/scrub";
   import { JARGON, MISSING, STAGE } from "../presentation/vocabulary";
   import { fmtAddedMs, fmtMs, formatLatency } from "../format";
   import { fmtGaugeTick } from "./gaugeScale";
@@ -109,11 +110,12 @@
     };
   }
 
-  // A card answers the pointer near a marker at once and follows it along the lane.
+  // A card answers the pointer near a marker at once and follows it along the lane; a finger reaches further.
   function inspect(
     x: number,
     lane: LatencyProfileViewLane,
     track: HTMLElement,
+    reach: number,
   ) {
     const rect = track.getBoundingClientRect();
     const ratio = Math.min(
@@ -123,19 +125,31 @@
     const metric = nearestMetric(lane, ratio * scale);
     const px =
       metric && atPct(pos(metricValue(lane, metric), scale), rect.width);
-    if (metric && Math.abs(px! - (x - rect.left)) <= 12)
+    if (metric && Math.abs(px! - (x - rect.left)) <= reach)
       setHover(lane, metric, track);
     else if (keyboardLane !== lane.key) hover = null;
   }
-  function onTrackMove(event: PointerEvent, lane: LatencyProfileViewLane) {
-    if (event.pointerType !== "mouse") return;
-    inspect(event.clientX, lane, event.currentTarget as HTMLElement);
-  }
-  function onTrackDown(event: PointerEvent, lane: LatencyProfileViewLane) {
-    inspect(event.clientX, lane, event.currentTarget as HTMLElement);
-  }
+  const laneOf = (event: PointerEvent) => {
+    const track = event.currentTarget as HTMLElement;
+    return lanes.find((lane) => lane.key === track.dataset.lane) ?? null;
+  };
+  const pointer = scrub({
+    read(event) {
+      const lane = laneOf(event);
+      if (lane)
+        inspect(
+          event.clientX,
+          lane,
+          event.currentTarget as HTMLElement,
+          event.pointerType === "touch" ? 24 : 12,
+        );
+    },
+    clear(event) {
+      if (keyboardLane !== laneOf(event)?.key) hover = null;
+    },
+  });
   function onTrackLeave(event: PointerEvent, lane: LatencyProfileViewLane) {
-    if (event.pointerType !== "mouse") return;
+    if (event.pointerType === "touch") return;
     if (hover) warmUp();
     if (keyboardLane !== lane.key) hover = null;
   }
@@ -347,8 +361,11 @@
             aria-valuetext={selected >= 0 && hover && hoverValue != null
               ? `${metricLabel(hover.metric)} ${fmtMs(hoverValue)} milliseconds, ${metricMeaning(hover.metric)}`
               : undefined}
-            onpointermove={(event) => onTrackMove(event, lane)}
-            onpointerdown={(event) => onTrackDown(event, lane)}
+            data-lane={lane.key}
+            onpointerdown={pointer.down}
+            onpointermove={pointer.move}
+            onpointerup={pointer.up}
+            onpointercancel={pointer.cancel}
             onpointerleave={(event) => onTrackLeave(event, lane)}
             onfocus={(event) => onTrackFocus(event, lane)}
             onblur={() => {
@@ -665,6 +682,7 @@
     height: var(--profile-track-height, 26px);
     cursor: crosshair;
     isolation: isolate;
+    touch-action: pan-y pinch-zoom;
   }
   .track[aria-disabled="true"] {
     cursor: default;
