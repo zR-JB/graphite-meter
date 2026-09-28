@@ -139,6 +139,8 @@ the client. Unknown signing keys trigger one coordinated JWKS refresh.
 
 Authentication forms require URL-encoded POST bodies with unique fields. Unlike
 Go's form parser, Rust does not accept passwords or CSRF proofs from URL queries.
+A CLI approval page opened by another login is refused at once, where Go shows
+the page and then refuses its approval.
 
 The workspace pins Rust 1.98.1. From the repository root:
 
