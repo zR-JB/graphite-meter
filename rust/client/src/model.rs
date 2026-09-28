@@ -118,7 +118,6 @@ pub struct ServerFailure {
     pub stage: Stage,
     pub scope: FailureScope,
     pub reason: graphite_meter_core::failure::FailureReason,
-    pub message: String,
     pub at: Duration,
 }
 
@@ -233,7 +232,6 @@ pub struct AuthPrompt {
 pub struct Snapshot {
     pub phase: Phase,
     pub stage: Option<Stage>,
-    pub status: String,
     pub latest: Point,
     pub history: Trace,
     pub results: Vec<StageResult>,
@@ -328,7 +326,6 @@ impl Snapshot {
             stage,
             scope,
             reason,
-            message: error.to_string(),
             at: self.results.iter().map(|result| result.elapsed).sum::<Duration>() + self.latest.elapsed,
         });
         Some(reason)

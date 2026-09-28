@@ -211,7 +211,6 @@ impl<'a> StageRun<'a> {
         snapshots.send_modify(|snapshot| {
             snapshot.phase = Phase::Preparing;
             snapshot.stage = Some(stage);
-            snapshot.status = format!("Preparing {}", stage.name());
             snapshot.latest = Point::default();
             let offset = snapshot.results.iter().map(|result| result.elapsed).sum::<Duration>();
             snapshot.history.add(Point {
@@ -416,10 +415,7 @@ impl<'a> StageRun<'a> {
             .fold(self.config.warmup, |warmup, server| {
                 warmup.max(adaptive_warmup(self.config.warmup, server.idle_rtt))
             });
-        self.snapshots.send_modify(|snapshot| {
-            snapshot.phase = Phase::Warmup;
-            snapshot.status = "Warming up".into();
-        });
+        self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Warmup);
         let end = Instant::now() + warmup;
         loop {
             self.check_health()?;
@@ -461,10 +457,7 @@ impl<'a> StageRun<'a> {
 
     async fn measure_window(&mut self) -> Result<(), Error> {
         let (started, end) = self.window.expect("window opened");
-        self.snapshots.send_modify(|snapshot| {
-            snapshot.phase = Phase::Measuring;
-            snapshot.status = format!("Measuring {}", self.stage.name());
-        });
+        self.snapshots.send_modify(|snapshot| snapshot.phase = Phase::Measuring);
         let mut sample = tokio::time::interval(SAMPLE_INTERVAL);
         sample.set_missed_tick_behavior(MissedTickBehavior::Skip);
         sample.tick().await;
@@ -573,7 +566,6 @@ impl<'a> StageRun<'a> {
             if removed {
                 snapshot.leave(id);
             }
-            snapshot.status = format!("{id}: {}", reason.label());
         });
         if removed {
             let member = self.members.remove(index);

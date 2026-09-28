@@ -110,10 +110,7 @@ async fn prepare(
         .into()
     };
     config.validate()?;
-    snapshots.send_modify(|snapshot| {
-        snapshot.error = None;
-        snapshot.status = "Loading server catalogue".into();
-    });
+    snapshots.send_modify(|snapshot| snapshot.error = None);
     let discovery = tokio::time::timeout_at(deadline, http.discover(&config.url))
         .await
         .map_err(|_| late())??;
@@ -133,9 +130,6 @@ async fn prepare(
     });
     let transfers = config.stages.iter().any(|stage| stage.downloads() || stage.uploads());
     let latency = config.loaded_latency || config.stages.contains(&crate::model::Stage::Latency);
-    snapshots.send_modify(|snapshot| {
-        snapshot.status = format!("Verifying {} selected servers", selected.len());
-    });
     // Results publish as they arrive; catalogue order stays for lane planning and error selection.
     let mut checks = selected
         .iter()
@@ -146,9 +140,7 @@ async fn prepare(
         })
         .collect::<FuturesUnordered<_>>();
     let mut results: Vec<_> = (0..selected.len()).map(|_| None).collect();
-    let mut completed = 0;
     while let Some((index, result)) = checks.next().await {
-        completed += 1;
         let entry = selected[index];
         snapshots.send_modify(|snapshot| {
             if let Some(summary) = snapshot.servers.iter_mut().find(|summary| summary.id == entry.id) {
@@ -160,7 +152,6 @@ async fn prepare(
                     Err(error) => summary.error = Some(error.to_string()),
                 }
             }
-            snapshot.status = format!("Verified {completed}/{} selected servers", selected.len());
         });
         results[index] = Some(result);
     }
@@ -362,7 +353,6 @@ pub async fn run(
                 snapshot.phase = Phase::Preparing;
                 snapshot.stage = Some(*stage);
                 snapshot.latest = Point::default();
-                snapshot.status = format!("Preparing {}", stage.name());
             });
             let entry = sole.as_ref().expect("sole-server retry");
             let transfer = stage.downloads() || stage.uploads();
@@ -457,14 +447,14 @@ pub async fn run(
             .results
             .iter()
             .any(|result| snapshot.stage_status(result) == crate::model::StageStatus::Failed);
-        (snapshot.phase, snapshot.status) = if stopped {
-            (Phase::Cancelled, "Stopped".into())
+        snapshot.phase = if stopped {
+            Phase::Cancelled
         } else if missing {
-            (Phase::Incomplete, "Incomplete".into())
+            Phase::Incomplete
         } else if !snapshot.failures.is_empty() {
-            (Phase::Partial, "Partial".into())
+            Phase::Partial
         } else {
-            (Phase::Complete, "Complete".into())
+            Phase::Complete
         };
     });
     Ok(())

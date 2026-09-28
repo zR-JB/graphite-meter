@@ -187,7 +187,6 @@ impl Controller {
             } else {
                 Phase::Checking
             },
-            status: "Preparing selected servers".into(),
             ..Snapshot::default()
         });
         let (cancel, cancelled) = watch::channel(false);
@@ -226,13 +225,7 @@ impl Controller {
         if !self.operations.is_empty() {
             self.cancelling = true;
             self.cancel_deadline.get_or_insert(Instant::now() + CANCEL_GRACE);
-            let running = self.running;
-            self.snapshots.send_modify(|snapshot| {
-                if running && matches!(snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring) {
-                    snapshot.status = "Stopping the test…".into();
-                }
-                snapshot.auth = None;
-            });
+            self.snapshots.send_modify(|snapshot| snapshot.auth = None);
         }
     }
     fn finished(
@@ -248,11 +241,7 @@ impl Controller {
                     snapshot.phase,
                     Phase::Checking | Phase::Preparing | Phase::Warmup | Phase::Measuring
                 ) {
-                    (snapshot.phase, snapshot.status) = if running {
-                        (Phase::Cancelled, "Stopped".into())
-                    } else {
-                        (Phase::Setup, "Recheck needed".into())
-                    };
+                    snapshot.phase = if running { Phase::Cancelled } else { Phase::Setup };
                     snapshot.error = None;
                 }
                 snapshot.auth = None;
@@ -266,12 +255,11 @@ impl Controller {
                 Err(error) => {
                     let signed_out = authentication_required(error.as_ref()).is_some();
                     self.snapshots.send_modify(|snapshot| {
-                        (snapshot.phase, snapshot.status) =
-                            if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
-                                (Phase::Incomplete, "Incomplete".into())
-                            } else {
-                                (Phase::Failed, "Failed".into())
-                            };
+                        snapshot.phase = if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
+                            Phase::Incomplete
+                        } else {
+                            Phase::Failed
+                        };
                         let text = crate::failure::text(error.as_ref());
                         let started = !snapshot.participants.is_empty() || !snapshot.results.is_empty();
                         snapshot.error = Some(if !running || started {
@@ -308,14 +296,9 @@ impl Controller {
             return;
         };
         // The URL came from validated PKCE setup, never a shell command.
-        match browser(&prompt.browser_url) {
-            Ok(child) => {
-                self.browser = Some(child);
-                self.browser_deadline = Some(Instant::now() + Duration::from_secs(5));
-            }
-            Err(error) => self.snapshots.send_modify(|snapshot| {
-                snapshot.status = format!("Could not open browser: {error}; copy the displayed URL")
-            }),
+        if let Ok(child) = browser(&prompt.browser_url) {
+            self.browser = Some(child);
+            self.browser_deadline = Some(Instant::now() + Duration::from_secs(5));
         }
     }
     async fn close_browser(&mut self) {
@@ -361,7 +344,7 @@ async fn execute(
                 biased;
                 _ = cancelled(&mut cancel) => return Ok(None),
                 result = runner::prepare_run(config, &http, &snapshots) => result.map(|prepared| {
-                    snapshots.send_modify(|snapshot| { snapshot.phase = Phase::Setup; snapshot.status = "Selected servers verified".into(); });
+                    snapshots.send_modify(|snapshot| snapshot.phase = Phase::Setup);
                     Some(prepared)
                 }),
             },
@@ -392,7 +375,6 @@ async fn execute(
                 snapshot.phase = Phase::Preparing;
             }
             snapshot.error = None;
-            snapshot.status = "Approve this client in your browser".into();
             snapshot.auth = Some(AuthPrompt {
                 deadline: pending.deadline,
                 origin: origin.clone(),
@@ -405,10 +387,7 @@ async fn execute(
             _ = cancelled(&mut cancel) => return Ok(None),
             result = http.poll_authorization(pending) => result?,
         }
-        snapshots.send_modify(|snapshot| {
-            snapshot.auth = None;
-            snapshot.status = "Approved; retrying selected operation".into();
-        });
+        snapshots.send_modify(|snapshot| snapshot.auth = None);
     }
 }
 async fn cancelled(cancel: &mut watch::Receiver<bool>) {
@@ -460,12 +439,6 @@ mod tests {
         for phase in [Phase::Measuring, Phase::Cancelled, Phase::Complete] {
             let (snapshots, _) = watch::channel(Snapshot {
                 phase,
-                status: if phase == Phase::Complete {
-                    "Complete"
-                } else {
-                    "Stopped"
-                }
-                .into(),
                 ..Snapshot::default()
             });
             let mut controller = Controller::new(&Config::default(), snapshots.clone(), true).unwrap();
@@ -488,14 +461,6 @@ mod tests {
                 Phase::Cancelled
             };
             assert_eq!(controller.snapshots.borrow().phase, expected);
-            assert_eq!(
-                controller.snapshots.borrow().status,
-                if phase == Phase::Complete {
-                    "Complete"
-                } else {
-                    "Stopped"
-                }
-            );
             assert_eq!(controller.snapshots.borrow().latest.up_bps, Some(42.0));
         }
     }
