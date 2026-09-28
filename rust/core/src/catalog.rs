@@ -2,7 +2,7 @@
 
 use crate::{
     discovery::{DiscoveryError, Preflight},
-    origin::{browser_connect_source_supported, canonical_origin, key, target_origin},
+    origin::{browser_connect_source_supported, canonical_origin, catalog_origin, key, target_origin},
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -55,6 +55,13 @@ impl fmt::Display for CatalogError {
 }
 impl std::error::Error for CatalogError {}
 
+/// A received catalogue entry left out, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejected {
+    pub id: String,
+    pub error: CatalogError,
+}
+
 impl Default for ServerCatalog {
     fn default() -> Self {
         Self::singleton()
@@ -78,50 +85,96 @@ impl ServerCatalog {
         if self.servers.is_empty() || self.servers.len() > MAX_CATALOG_SERVERS || self.servers[0].id != "self" {
             return Err(CatalogError::InvalidServers);
         }
-        for (index, entry) in self.servers.iter().enumerate() {
-            let valid_id = !entry.id.is_empty()
-                && entry.id.len() <= 64
-                && entry
-                    .id
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
-            if !valid_id
-                || entry.name.len() > 256
-                || entry.location.len() > 256
-                || !entry
-                    .name
-                    .chars()
-                    .chain(entry.location.chars())
-                    .all(crate::text::display_character)
-            {
-                return Err(CatalogError::InvalidIdentity);
-            }
-            let origin_key = key(&entry.url);
-            if self.servers[..index]
-                .iter()
-                .any(|prior| prior.id == entry.id || key(&prior.url) == origin_key)
-            {
-                return Err(CatalogError::DuplicateServer);
-            }
-            if entry.url == "." {
-                if entry.id != "self" {
-                    return Err(CatalogError::InvalidOrigin);
-                }
-            } else if canonical_origin(&entry.url).is_err() {
-                return Err(CatalogError::InvalidOrigin);
-            }
-            if entry.additional_origins.len() > 32 {
-                return Err(CatalogError::TooManyAdditionalOrigins);
-            }
-            if entry
-                .additional_origins
-                .iter()
-                .any(|raw| canonical_origin(raw).is_err())
-            {
-                return Err(CatalogError::InvalidOrigin);
-            }
+        for index in 0..self.servers.len() {
+            self.validate_entry(index)?;
         }
         self.validate_selection(&self.default_selection)
+    }
+
+    /// One entry, against the entries before it.
+    fn validate_entry(&self, index: usize) -> Result<(), CatalogError> {
+        let entry = &self.servers[index];
+        let valid_id = !entry.id.is_empty()
+            && entry.id.len() <= 64
+            && entry
+                .id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'));
+        if !valid_id
+            || entry.name.len() > 256
+            || entry.location.len() > 256
+            || !entry
+                .name
+                .chars()
+                .chain(entry.location.chars())
+                .all(crate::text::display_character)
+        {
+            return Err(CatalogError::InvalidIdentity);
+        }
+        let origin_key = key(&entry.url);
+        if self.servers[..index]
+            .iter()
+            .any(|prior| prior.id == entry.id || key(&prior.url) == origin_key)
+        {
+            return Err(CatalogError::DuplicateServer);
+        }
+        if entry.url == "." {
+            if entry.id != "self" {
+                return Err(CatalogError::InvalidOrigin);
+            }
+        } else if canonical_origin(&entry.url).is_err() {
+            return Err(CatalogError::InvalidOrigin);
+        }
+        if entry.additional_origins.len() > 32 {
+            return Err(CatalogError::TooManyAdditionalOrigins);
+        }
+        if entry
+            .additional_origins
+            .iter()
+            .any(|raw| canonical_origin(raw).is_err())
+        {
+            return Err(CatalogError::InvalidOrigin);
+        }
+        Ok(())
+    }
+
+    /// A catalogue as a client receives it. Its origins may end in one slash and name
+    /// international hosts, as Go's catalogues may (`catalog_origin`); an entry still invalid
+    /// is left out alone and returned with its reason, and the default selection drops it, or
+    /// falls back to self if nothing else is left. The catalogue as a whole must still hold.
+    pub fn received(mut self) -> Result<(Self, Vec<Rejected>), CatalogError> {
+        if self.servers.is_empty() || self.servers.len() > MAX_CATALOG_SERVERS || self.servers[0].id != "self" {
+            return Err(CatalogError::InvalidServers);
+        }
+        let mut rejected = Vec::new();
+        let servers = std::mem::take(&mut self.servers);
+        for mut entry in servers {
+            if entry.url != "." {
+                entry.url = catalog_origin(&entry.url).unwrap_or(entry.url);
+            }
+            for raw in &mut entry.additional_origins {
+                if let Ok(origin) = catalog_origin(raw) {
+                    *raw = origin;
+                }
+            }
+            self.servers.push(entry);
+            let index = self.servers.len() - 1;
+            if let Err(error) = self.validate_entry(index) {
+                if index == 0 {
+                    return Err(error);
+                }
+                let entry = self.servers.pop().expect("the entry just pushed");
+                rejected.push(Rejected { id: entry.id, error });
+            }
+        }
+        let servers = &self.servers;
+        self.default_selection
+            .retain(|id| servers.iter().any(|entry| entry.id == *id));
+        if self.default_selection.is_empty() {
+            self.default_selection.push("self".into());
+        }
+        self.validate_selection(&self.default_selection)?;
+        Ok((self, rejected))
     }
 
     pub fn validate_selection(&self, selected: &[String]) -> Result<(), CatalogError> {

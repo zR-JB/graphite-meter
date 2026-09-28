@@ -142,11 +142,19 @@ allocations, header decoding and metadata, TLS state, and allocator overhead sti
 need worst-case accounting and sustained-load measurements before the
 experimental merge. The many-client performance matrix remains unfinished.
 
-Origins require ASCII hosts; use punycode for international names. Empty host
-labels, host punctuation other than hyphens and underscores, IPv4 shorthand,
-leading-zero IPv4 octets, and trailing-dot IPv4 addresses are rejected. Domain
-trailing dots remain supported. Punycode labels are passed to DNS as ASCII,
-without IDNA decoding. OIDC issuer paths must be ASCII; percent-encode other
+Configured origins require ASCII hosts; use punycode for international names.
+Empty host labels, host punctuation other than hyphens and underscores, IPv4
+shorthand, leading-zero IPv4 octets, and trailing-dot IPv4 addresses are
+rejected. Domain trailing dots remain supported. Punycode labels are passed to
+DNS as ASCII, without IDNA decoding. The TUI reads a received catalogue as Go
+does: an origin may end in one slash, and international hosts in catalogues and
+preflight targets become the punycode Go dials. It converts Latin, IPA, Greek,
+Cyrillic, Armenian, Hebrew, Arabic, Georgian, kana, CJK and Hangul letters, and
+refuses a label that IDNA would map to other letters, that needs combining
+marks, or that mixes writing directions, where Go also accepts those it can
+map. Unlike Go, an entry that stays invalid is left out alone instead of
+refusing the whole catalogue; selecting it names its fault. `-url` still takes
+ASCII hosts. OIDC issuer paths must be ASCII; percent-encode other
 characters. HTTP and WebSocket clients read `HTTP_PROXY`, `HTTPS_PROXY` and
 `NO_PROXY` as Go does, never `ALL_PROXY`: loopback bypasses proxies, NO_PROXY
 supports ports, a leading dot matches subdomains only, and under CGI cleartext

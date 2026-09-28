@@ -150,6 +150,21 @@ impl Preflight {
         value.validate()?;
         Ok(value)
     }
+    /// A preflight as a client receives it: international target hosts become punycode first,
+    /// as Go's client dials them.
+    pub fn decode_received(data: &[u8]) -> Result<Self, DiscoveryError> {
+        let mut value: Self = decode_json(data).map_err(|_| DiscoveryError::InvalidJson)?;
+        let targets = &mut value.capabilities;
+        let throughput = targets.throughput.iter_mut().map(|target| &mut target.base_url);
+        let latency = targets.latency.iter_mut().map(|target| &mut target.base_url);
+        for base_url in throughput.chain(latency) {
+            if let Ok(origin) = crate::origin::ascii_origin(base_url) {
+                *base_url = origin;
+            }
+        }
+        value.validate()?;
+        Ok(value)
+    }
     pub fn validate(&self) -> Result<(), DiscoveryError> {
         if self.server.name.len() > 256
             || self.server.location.len() > 256

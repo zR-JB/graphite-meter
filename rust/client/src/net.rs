@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures_util::{Stream, TryStreamExt};
 use graphite_meter_core::{
     approval,
-    catalog::{ServerCatalog, ServerEntry},
+    catalog::{Rejected, ServerCatalog, ServerEntry},
     discovery::{Preflight, Probe, Protocol},
     origin::{canonical_origin, split_url, target_origin},
     wire::decode_json,
@@ -448,6 +448,8 @@ struct GrantScope {
 pub struct Discovery {
     pub source: String,
     pub catalog: ServerCatalog,
+    /// Entries the catalogue named but the client left out.
+    pub rejected: Vec<Rejected>,
 }
 #[derive(Debug)]
 pub struct AuthRequired {
@@ -663,17 +665,19 @@ impl Http {
         let catalog: ServerCatalog = self
             .json(Method::GET, &format!("{source}/servers"), Protocol::Negotiated)
             .await?;
-        catalog.validate()?;
-        let catalog = catalog.resolve(&source);
-        catalog.validate()?;
-        Ok(Discovery { source, catalog })
+        let (catalog, rejected) = catalog.resolve(&source).received()?;
+        Ok(Discovery {
+            source,
+            catalog,
+            rejected,
+        })
     }
     pub async fn preflight(&self, entry: &ServerEntry) -> Result<Preflight> {
         let origin = canonical_origin(&entry.url)?;
         let bytes = self
             .control(Method::GET, &format!("{origin}/preflight"), Protocol::Negotiated)
             .await?;
-        let mut preflight = Preflight::decode(&bytes)?;
+        let mut preflight = Preflight::decode_received(&bytes)?;
         preflight.resolve_self(&origin);
         entry.validate_discovery(&preflight)?;
         Ok(preflight)
@@ -904,6 +908,92 @@ mod tests {
             })
             .await??;
         }
+        Ok(())
+    }
+
+    /// Serves each request's path from `bodies`, one request per connection.
+    async fn json_peer(bodies: Vec<(&'static str, String)>) -> Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let origin = format!("http://{}", listener.local_addr()?);
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let mut head = Vec::new();
+                while !head.ends_with(b"\r\n\r\n") {
+                    let Ok(byte) = stream.read_u8().await else { break };
+                    head.push(byte);
+                }
+                let head = String::from_utf8_lossy(&head);
+                let path = head.split_whitespace().nth(1).unwrap_or_default();
+                let body = bodies
+                    .iter()
+                    .find(|(route, _)| *route == path)
+                    .map_or("{}", |(_, body)| body.as_str());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        Ok(origin)
+    }
+
+    /// Catalogue origins may end in one slash, as servers.schema.json allows, and may name
+    /// international hosts, which are dialled as punycode, as Go does; an entry that is still
+    /// invalid is left out alone. Preflight targets may name international hosts too.
+    #[tokio::test]
+    async fn discovery_takes_go_catalogue_origins_and_leaves_out_only_a_broken_entry() -> Result<()> {
+        let catalog = serde_json::json!({
+            "defaultSelection": ["self", "slashed"],
+            "servers": [
+                {"id": "self", "url": ".", "name": "self"},
+                {"id": "slashed", "url": "https://remote.example:8443/", "name": "slashed"},
+                {"id": "international", "url": "https://BÜCHER.example", "name": "international",
+                 "additionalOrigins": ["https://münchen.example/"]},
+                {"id": "broken", "url": "https://two words.example", "name": "broken"}
+            ]
+        });
+        let preflight = serde_json::json!({
+            "generation": "fixture",
+            "capabilities": {
+                "throughput": [{"baseUrl": "https://münchen.example", "transport": "fetch-stream", "protocol": "http2"}],
+                "latency": []
+            }
+        });
+        let origin = json_peer(vec![
+            ("/servers", catalog.to_string()),
+            ("/preflight", preflight.to_string()),
+        ])
+        .await?;
+        let http = http(false);
+        let discovery = http.discover(&origin).await?;
+        let urls: Vec<_> = discovery
+            .catalog
+            .servers
+            .iter()
+            .map(|entry| entry.url.as_str())
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                origin.as_str(),
+                "https://remote.example:8443",
+                "https://xn--bcher-kva.example"
+            ]
+        );
+        assert_eq!(
+            discovery.catalog.servers[2].additional_origins,
+            ["https://xn--mnchen-3ya.example"]
+        );
+        assert_eq!(discovery.catalog.default_selection, ["self", "slashed"]);
+        let mut entry = discovery.catalog.servers[0].clone();
+        entry.additional_origins = discovery.catalog.servers[2].additional_origins.clone();
+        let preflight = http.preflight(&entry).await?;
+        assert_eq!(
+            preflight.capabilities.throughput[0].base_url,
+            "https://xn--mnchen-3ya.example"
+        );
         Ok(())
     }
 

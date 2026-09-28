@@ -112,6 +112,17 @@ async fn prepare(
     let discovery = tokio::time::timeout_at(deadline, http.discover(&config.url))
         .await
         .map_err(|_| late())??;
+    if let Some(left_out) = discovery
+        .rejected
+        .iter()
+        .find(|entry| config.servers.contains(&entry.id))
+    {
+        return Err(format!(
+            "the catalogue's server {:?} was left out: {}",
+            left_out.id, left_out.error
+        )
+        .into());
+    }
     let selected = selection::servers(&discovery.catalog, config)?;
     snapshots.send_modify(|snapshot| {
         snapshot.servers = discovery

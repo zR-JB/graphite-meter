@@ -117,3 +117,59 @@ fn enforces_identity_origin_and_size_limits() {
     let empty: ServerCatalog = serde_json::from_str("{}").unwrap();
     assert_eq!(empty.validate(), Err(CatalogError::InvalidServers));
 }
+
+/// A client leaves out only the entries still invalid once Go's catalogue forms are read, and
+/// the default selection loses them; the catalogue as a whole must still hold.
+#[test]
+fn a_received_catalogue_leaves_out_only_its_invalid_entries() {
+    let mut catalog = ServerCatalog::default();
+    catalog.servers[0].url = "https://self.example".into();
+    let mut international = entry("international", "https://BÜCHER.example/");
+    international
+        .additional_origins
+        .push("https://münchen.example:7248/".into());
+    catalog.servers.extend([
+        entry("slashed", "https://slashed.example/"),
+        international,
+        entry("broken", "https://two words.example"),
+        entry("duplicate", "https://SLASHED.example:443"),
+        entry("slashed", "https://other.example"),
+        entry("bad id", "https://named.example"),
+    ]);
+    catalog.default_selection = vec!["self".into(), "broken".into(), "international".into()];
+    assert_eq!(catalog.validate(), Err(CatalogError::InvalidOrigin));
+    let (received, rejected) = catalog.received().unwrap();
+    received.validate().unwrap();
+    let urls: Vec<_> = received.servers.iter().map(|entry| entry.url.as_str()).collect();
+    assert_eq!(
+        urls,
+        [
+            "https://self.example",
+            "https://slashed.example",
+            "https://xn--bcher-kva.example"
+        ]
+    );
+    assert_eq!(
+        received.servers[2].additional_origins,
+        ["https://xn--mnchen-3ya.example:7248"]
+    );
+    assert_eq!(received.default_selection, ["self", "international"]);
+    let rejected: Vec<_> = rejected.iter().map(|left| (left.id.as_str(), left.error)).collect();
+    assert_eq!(
+        rejected,
+        [
+            ("broken", CatalogError::InvalidOrigin),
+            ("duplicate", CatalogError::DuplicateServer),
+            ("slashed", CatalogError::DuplicateServer),
+            ("bad id", CatalogError::InvalidIdentity),
+        ]
+    );
+    // Nothing left to select falls back to self; an invalid self refuses the catalogue.
+    let mut only_broken = ServerCatalog::default();
+    only_broken.servers.push(entry("broken", "https://two words.example"));
+    only_broken.default_selection = vec!["broken".into()];
+    assert_eq!(only_broken.received().unwrap().0.default_selection, ["self"]);
+    let mut broken_self = ServerCatalog::default();
+    broken_self.servers[0].url = "https://two words.example".into();
+    assert_eq!(broken_self.received().err(), Some(CatalogError::InvalidOrigin));
+}

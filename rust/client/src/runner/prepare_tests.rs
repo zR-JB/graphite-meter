@@ -388,6 +388,54 @@ async fn unreachable_webtransport_preserves_ambiguous_fetch_error() -> Result<()
     Ok(())
 }
 
+/// Selecting an entry the catalogue named but the client left out says why.
+#[tokio::test]
+async fn selecting_a_left_out_catalogue_entry_names_its_fault() -> Result<(), Error> {
+    let _ = crate::crypto::provider().install_default();
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("http://{}", listener.local_addr()?);
+    let catalog = serde_json::json!({
+        "defaultSelection": ["self"],
+        "servers": [
+            {"id": "self", "url": ".", "name": "self"},
+            {"id": "broken", "url": "https://two words.example", "name": "broken"}
+        ]
+    })
+    .to_string();
+    let server = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let _ = stream.read(&mut [0; 2048]).await;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{catalog}",
+                catalog.len()
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+    let config = Config {
+        url: origin,
+        servers: vec!["broken".into()],
+        stages: vec![Stage::Download],
+        loaded_latency: false,
+        ..Config::default()
+    };
+    let (snapshots, _) = watch::channel(Snapshot::default());
+    let result = prepare(
+        &config,
+        &Http::new(false)?,
+        &snapshots,
+        Instant::now() + PREPARATION_TIMEOUT,
+    )
+    .await;
+    server.abort();
+    let error = result.err().ok_or("a left-out entry was prepared")?;
+    assert_eq!(
+        error.to_string(),
+        "the catalogue's server \"broken\" was left out: invalid catalogue origin"
+    );
+    Ok(())
+}
+
 /// A reverse proxy speaks HTTP/2 to the client and HTTP/1.1 upstream, and the server reports its
 /// own hop; lanes use the version the client's connection negotiated, as Go's `response.Proto` does.
 #[tokio::test]
