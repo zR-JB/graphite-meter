@@ -94,6 +94,11 @@ download, upload, progress stream or WebTransport session has run on it for 15
 seconds. Unadmitted requests never extend that period; those in flight get five
 seconds, even if the peer withholds flow control, while admitted work that raced
 the GOAWAY runs to its own limits.
+As in Go, every exchange on every listener has 15 seconds in all, request and
+reply, until it is admitted as a measurement and its operation's lifetime takes
+over. A write of an HTTP/2 or HTTP/3 reply that the peer's flow control holds
+for 30 seconds ends the reply, as Go's idle writer ends a download; Rust also
+applies this to progress streams, which Go bounds only by their lifetime.
 Once a quarter of either connection capacity or the budget is used, unvalidated
 QUIC handshakes require Retry; as in Go, so does one from a source whose IPv4
 address or IPv6 /64, /56 or /48 already holds a QUIC connection. A connection

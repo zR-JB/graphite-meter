@@ -1232,6 +1232,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stalled_http3_replies_end_at_the_control_and_idle_bounds() {
+        use super::*;
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let (tls, mut client_config) = tls();
+        let mut transport = quinn::TransportConfig::default();
+        // Too little stream credit for any reply's head; pings keep the stalled connection open.
+        transport.stream_receive_window(64_u32.into());
+        transport.keep_alive_interval(Some(Duration::from_secs(5)));
+        client_config.transport_config(Arc::new(transport));
+        let (address, stop, serving) = serve(&server, tls);
+        let client = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let (quic, requests) = tokio::time::timeout(Duration::from_secs(5), h3_client(&client, client_config, address))
+            .await
+            .unwrap();
+        let open = async |path: &str| {
+            let request = http::Request::get(format!("https://localhost{path}")).body(()).unwrap();
+            let (mut send, recv) = requests.send_request(request).await.unwrap().split();
+            send.finish().await.unwrap();
+            (send, recv)
+        };
+        let (_probe, mut probe) = open("/probe").await;
+        let (_download, mut download) = open("/download?bytes=1000000").await;
+        settled(&server.memory, &[&quic]).await;
+        assert_eq!(server.admission.load().0, 1, "the download holds its permit");
+        // Reading a reply would grant it credit, so each is read only past its bound.
+        let step = async || {
+            tokio::time::pause();
+            tokio::time::advance(Duration::from_secs(8)).await;
+            tokio::time::resume();
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        step().await;
+        step().await;
+        let reply = tokio::time::timeout(Duration::from_secs(2), probe.response()).await;
+        assert!(
+            matches!(reply, Ok(Err(_))),
+            "an unadmitted reply outlived Go's fifteen seconds: {reply:?}"
+        );
+        step().await;
+        step().await;
+        let reply = tokio::time::timeout(Duration::from_secs(2), download.response()).await;
+        assert!(
+            matches!(reply, Ok(Err(_))),
+            "a stalled download outlived its thirty idle seconds: {reply:?}"
+        );
+        assert_eq!(server.admission.load().0, 0);
+        quic.close(0_u32.into(), b"done");
+        stop.send(()).unwrap();
+        serving.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
     async fn a_source_that_already_holds_a_quic_connection_must_answer_retry() {
         use super::*;
         let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());

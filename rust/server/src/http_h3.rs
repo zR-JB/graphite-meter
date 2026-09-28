@@ -104,23 +104,20 @@ async fn respond(
     let (parts, mut body) = response.into_parts();
     let active = (!head && body.size_hint().upper().is_some_and(|size| size > 1024 * 1024))
         .then(|| ActiveResponse::new(active_responses));
-    send.send_response(Response::from_parts(parts, ()))
-        .await
-        .map_err(io::Error::other)?;
-    let idle = tokio::time::sleep(Duration::from_secs(30));
-    tokio::pin!(idle);
+    // Go's idle writer, from the head on: a write the peer's stream credit holds for thirty seconds ends the reply.
+    // Each write gets a fresh bound, and the operation's lifetime still caps them all.
+    let written = |result: Result<Result<(), http3::Error>, tokio::time::error::Elapsed>| {
+        result
+            .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
+            .map_err(io::Error::other)
+    };
+    written(tokio::time::timeout(WRITE_IDLE, send.send_response(Response::from_parts(parts, ()))).await)?;
     if !head {
         while let Some(frame) = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await {
             if let Ok(mut data) = frame?.into_data() {
                 while !data.is_empty() {
                     let chunk = data.split_to(data.len().min(DATA_BYTES));
-                    tokio::select! {
-                        biased;
-                        _ = &mut idle => return Err(io::ErrorKind::TimedOut.into()),
-                        result = send.send_data(chunk) => result.map_err(io::Error::other)?,
-                    }
-                    idle.as_mut()
-                        .reset(tokio::time::Instant::now() + Duration::from_secs(30));
+                    written(tokio::time::timeout(WRITE_IDLE, send.send_data(chunk)).await)?;
                     if active.as_ref().is_some_and(ActiveResponse::contended) {
                         // Only a crowded connection needs a scheduler
                         // handoff; per-chunk yields halve ordinary H3

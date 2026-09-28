@@ -187,13 +187,16 @@ async fn send_response(
     }
 }
 
+/// As Go's idle writer, a write the peer's flow control holds for thirty seconds ends the reply; each write gets a
+/// fresh bound, and the operation's lifetime still caps them all.
 async fn reserve(stream: &mut SendStream<Bytes>, bytes: usize) -> io::Result<usize> {
     stream.reserve_capacity(bytes);
     if stream.capacity() > 0 {
         return Ok(stream.capacity());
     }
-    std::future::poll_fn(|cx| stream.poll_capacity(cx))
+    tokio::time::timeout(WRITE_IDLE, std::future::poll_fn(|cx| stream.poll_capacity(cx)))
         .await
+        .map_err(|_| io::Error::from(io::ErrorKind::TimedOut))?
         .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))?
         .map_err(io::Error::other)
 }
@@ -442,6 +445,49 @@ mod write_stall_tests {
             panic!("final queued response escaped the write-stall bound");
         };
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    }
+}
+
+#[cfg(test)]
+mod exchange_tests {
+    use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn stalled_replies_end_at_the_control_and_idle_bounds() {
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let facts = Connection {
+            peer: "127.0.0.1:31000".parse().unwrap(),
+            tls: true,
+            listener: Listener::default(),
+        };
+        let (client, served) = tokio::io::duplex(1 << 20);
+        let serving = tokio::spawn(server.clone().serve_http2_connection(served, facts));
+        // No stream window: each reply's head goes out, and nothing after it.
+        let (client, connection) = h2::client::Builder::new()
+            .initial_window_size(0)
+            .handshake::<_, Bytes>(client)
+            .await
+            .unwrap();
+        let driver = tokio::spawn(connection);
+        let started = tokio::time::Instant::now();
+        let get = |path: &str| Request::get(format!("https://localhost{path}")).body(()).unwrap();
+        let mut client = client.ready().await.unwrap();
+        let (probe, _) = client.send_request(get("/probe"), true).unwrap();
+        client = client.ready().await.unwrap();
+        let (download, _) = client.send_request(get("/download?bytes=1000000"), true).unwrap();
+        let mut probe = probe.await.unwrap().into_body();
+        let mut download = download.await.unwrap().into_body();
+        assert_eq!(server.admission.load().0, 1, "the download holds its permit");
+        // Unadmitted, the probe has Go's fifteen seconds in all.
+        assert!(probe.data().await.unwrap().is_err());
+        assert_eq!(started.elapsed().as_secs(), 15);
+        // Admitted, the download has thirty idle seconds, not its five-minute lifetime.
+        assert!(download.data().await.unwrap().is_err());
+        assert_eq!(started.elapsed().as_secs(), 30);
+        assert_eq!(server.admission.load().0, 0);
+        drop(client);
+        driver.abort();
+        serving.abort();
     }
 }
 

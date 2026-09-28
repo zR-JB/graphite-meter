@@ -64,6 +64,10 @@ use tokio::{
 const MAX_HEADER_BYTES: usize = 32 * 1024;
 const DOWNLOAD_BLOCK_BYTES: usize = 256 * 1024;
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// Go's controlTimeout: all of an exchange until admission hands it an operation's own deadlines.
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(15);
+/// Go's idle writer bound: each write of a multiplexed reply must move within it.
+const WRITE_IDLE: Duration = Duration::from_secs(30);
 const DEFAULT_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024;
 
 pub struct HttpServer {
@@ -320,7 +324,10 @@ impl HttpServer {
             let head = request.method() == Method::HEAD;
             let probe = request.uri().path() == "/probe" && request.method() != Method::OPTIONS;
             let lifecycle = lifecycle.clone();
-            *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active { complete: false };
+            *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = Http1Lifecycle::Active {
+                complete: false,
+                control: Some(Box::pin(tokio::time::sleep(CONTROL_TIMEOUT))),
+            };
             async move {
                 let mut response = if bootstrap_port.is_some()
                     && !matches!(
@@ -344,18 +351,26 @@ impl HttpServer {
                         .headers_mut()
                         .insert(header::CONNECTION, http::HeaderValue::from_static("close"));
                 }
-                if head && let Some(operation) = &response.body().operation {
-                    operation.lock().expect("operation poisoned").body_complete = true;
-                }
-                *lifecycle.lock().expect("HTTP/1 lifecycle poisoned") = if response.status()
-                    == StatusCode::SWITCHING_PROTOCOLS
-                {
+                let admitted = response.body().operation.as_ref().is_some_and(|operation| {
+                    let mut operation = operation.lock().expect("operation poisoned");
+                    operation.body_complete |= head;
+                    operation.permit.is_some()
+                });
+                let mut state = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
+                let control = match &mut *state {
+                    Http1Lifecycle::Active { control, .. } => control.take(),
+                    _ => None,
+                };
+                *state = if response.status() == StatusCode::SWITCHING_PROTOCOLS {
                     Http1Lifecycle::UpgradePending(Box::pin(tokio::time::sleep(server.config.max_operation_duration)))
                 } else {
                     Http1Lifecycle::Active {
                         complete: head || response.body().is_end_stream(),
+                        // An admitted reply runs to its operation's deadlines; any other keeps the exchange's.
+                        control: control.filter(|_| !admitted),
                     }
                 };
+                drop(state);
                 Ok::<_, io::Error>(response.map(|inner| Http1Body { inner, lifecycle }))
             }
         });
@@ -672,6 +687,8 @@ impl HttpServer {
     }
 
     /// Bounds a multiplexed request by its operations and counts it as admitted work once it holds a permit.
+    /// Until then, as Go's boundedRequest, the whole exchange has fifteen seconds, even if the peer withholds
+    /// flow control.
     async fn guard(
         &self,
         operations: &Operations,
@@ -679,6 +696,7 @@ impl HttpServer {
         exchange: impl Future<Output = io::Result<()>>,
     ) -> io::Result<()> {
         let mut exchange = std::pin::pin!(exchange);
+        let mut control = std::pin::pin!(tokio::time::sleep(CONTROL_TIMEOUT));
         let mut admitted = None;
         let guarded = std::future::poll_fn(|cx| {
             check_operations(operations, cx)?;
@@ -689,6 +707,9 @@ impl HttpServer {
             }
             if admitted.is_none() && holds_permit(operations) {
                 admitted = Some(work.admit());
+            }
+            if result.is_pending() && admitted.is_none() && control.as_mut().poll(cx).is_ready() {
+                return Poll::Ready(Err(io::ErrorKind::TimedOut.into()));
             }
             result
         });
@@ -1006,7 +1027,12 @@ struct DeadlineIo<T> {
 
 enum Http1Lifecycle {
     Headers(Pin<Box<Sleep>>),
-    Active { complete: bool },
+    /// `control` bounds the exchange from its request until it holds an admitted operation, as Go's
+    /// boundedRequest does; an upload admitted while its body is read already owns the operation's deadlines.
+    Active {
+        complete: bool,
+        control: Option<Pin<Box<Sleep>>>,
+    },
     Idle(Pin<Box<Sleep>>),
     UpgradePending(Pin<Box<Sleep>>),
     Upgraded,
@@ -1025,7 +1051,7 @@ impl Body for Http1Body {
         let result = Pin::new(&mut self.inner).poll_frame(cx);
         if self.inner.is_end_stream() || matches!(result, Poll::Ready(None)) {
             let mut lifecycle = self.lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
-            if let Http1Lifecycle::Active { complete } = &mut *lifecycle {
+            if let Http1Lifecycle::Active { complete, .. } = &mut *lifecycle {
                 *complete = true;
             }
         }
@@ -1043,11 +1069,23 @@ impl<T> DeadlineIo<T> {
     fn check_deadlines(&self, cx: &mut Context<'_>) -> io::Result<()> {
         if let Some(lifecycle) = &self.lifecycle {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
-            if let Http1Lifecycle::Headers(deadline)
-            | Http1Lifecycle::Idle(deadline)
-            | Http1Lifecycle::UpgradePending(deadline) = &mut *lifecycle
-                && deadline.as_mut().poll(cx).is_ready()
-            {
+            let control = match &mut *lifecycle {
+                Http1Lifecycle::Headers(deadline)
+                | Http1Lifecycle::Idle(deadline)
+                | Http1Lifecycle::UpgradePending(deadline) => {
+                    if deadline.as_mut().poll(cx).is_ready() {
+                        return Err(io::ErrorKind::TimedOut.into());
+                    }
+                    false
+                }
+                Http1Lifecycle::Active {
+                    control: Some(deadline),
+                    ..
+                } => deadline.as_mut().poll(cx).is_ready(),
+                _ => false,
+            };
+            drop(lifecycle);
+            if control && !holds_permit(&self.operations) {
                 return Err(io::ErrorKind::TimedOut.into());
             }
         }
@@ -1057,7 +1095,7 @@ impl<T> DeadlineIo<T> {
     fn flushed(&self, cx: &mut Context<'_>) {
         if let Some(lifecycle) = &self.lifecycle {
             let mut lifecycle = lifecycle.lock().expect("HTTP/1 lifecycle poisoned");
-            if matches!(*lifecycle, Http1Lifecycle::Active { complete: true }) {
+            if matches!(*lifecycle, Http1Lifecycle::Active { complete: true, .. }) {
                 *lifecycle = Http1Lifecycle::Idle(Box::pin(tokio::time::sleep(Duration::from_secs(15))));
             } else if matches!(*lifecycle, Http1Lifecycle::UpgradePending(_)) {
                 *lifecycle = Http1Lifecycle::Upgraded;
@@ -1381,6 +1419,43 @@ mod tests {
         assert_eq!(server.admission.load().0, 1);
         drop(io);
         assert_eq!(server.admission.load().0, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn http1_control_exchanges_end_fifteen_seconds_after_they_start() {
+        let server = Arc::new(HttpServer::new(Arc::new(Config::default())).unwrap());
+        let connection = Connection {
+            peer: "127.0.0.1:31000".parse().unwrap(),
+            tls: false,
+            listener: Listener {
+                ui: true,
+                webtransport: false,
+            },
+        };
+        // A small pipe the peer drains a little at a time: the reply always moves, well within the write-stall bound.
+        let (client, served) = tokio::io::duplex(16);
+        let started = tokio::time::Instant::now();
+        let serving = tokio::spawn(server.serve_http1_connection(served, connection, None));
+        let (mut reader, mut writer) = tokio::io::split(client);
+        writer
+            .write_all(b"GET /servers HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let trickle = tokio::spawn(async move {
+            let (mut received, mut chunk) = (Vec::new(), [0; 16]);
+            while let Ok(read @ 1..) = reader.read(&mut chunk).await {
+                received.extend_from_slice(&chunk[..read]);
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+            received
+        });
+        tokio::time::timeout(Duration::from_secs(16), serving)
+            .await
+            .expect("a control reply outlived Go's fifteen seconds")
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_secs(15));
+        assert!(trickle.await.unwrap().starts_with(b"HTTP/1.1 200 OK\r\n"));
+        drop(writer);
     }
 
     #[tokio::test(start_paused = true)]
