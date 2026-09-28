@@ -99,6 +99,20 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<(), Error> {
+        self.validate_settings()?;
+        if self.stages.is_empty() {
+            return Err("select at least one measurement stage".into());
+        }
+        for stage in &self.stages {
+            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&self.duration(*stage)) {
+                return Err("stage duration must be from one second to five minutes".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Setup edits check these alone, so an unfinished stage plan never blocks them.
+    pub fn validate_settings(&self) -> Result<(), Error> {
         graphite_meter_core::origin::canonical_origin(&self.url)?;
         for origin in [&self.throughput_origin, &self.latency_origin].into_iter().flatten() {
             graphite_meter_core::origin::canonical_origin(origin)?;
@@ -112,9 +126,6 @@ impl Config {
         {
             return Err("select up to four different server IDs".into());
         }
-        if self.stages.is_empty() {
-            return Err("select at least one measurement stage".into());
-        }
         if self.auto_streams == 0 || self.auto_streams > MAX_STREAMS || self.streams > MAX_STREAMS {
             return Err("stream counts must be within 1..=14 (0 means automatic for --streams)".into());
         }
@@ -125,11 +136,6 @@ impl Config {
         }
         if self.warmup > Duration::from_secs(4) {
             return Err("warmup must be from zero to four seconds".into());
-        }
-        for stage in &self.stages {
-            if !(Duration::from_secs(1)..=Duration::from_secs(300)).contains(&self.duration(*stage)) {
-                return Err("stage duration must be from one second to five minutes".into());
-            }
         }
         Ok(())
     }

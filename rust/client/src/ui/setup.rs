@@ -1,8 +1,11 @@
-//! Setup pages, editing, and configuration validation.
+//! Setup pages and editing; Config owns validation.
 use super::{MAX_TEXT, Ui, cell_width, safe_character};
-use crate::{Error, config::Config, model::Stage};
+use crate::{Error, config::Config, model::Stage, vocabulary::CADENCES};
 use crossterm::event::KeyCode;
-use graphite_meter_core::discovery::{LatencyTransport, Protocol, ThroughputTransport};
+use graphite_meter_core::{
+    discovery::{LatencyTransport, Protocol, ThroughputTransport},
+    origin::canonical_origin,
+};
 use std::time::Duration;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -84,7 +87,7 @@ impl Ui {
                 match field {
                     Field::Protocol => 4,
                     Field::ThroughputTransport | Field::LatencyTransport => 2,
-                    Field::PingInterval | Field::LoadedPingInterval => 3,
+                    Field::PingInterval | Field::LoadedPingInterval => CADENCES.len() - 1,
                     _ => 1,
                 }
             };
@@ -175,12 +178,9 @@ impl Field {
     }
 }
 fn cadence(interval: Duration) -> String {
-    match interval.as_millis() {
-        0 => "Reply-driven".into(),
-        80 => "Fast (80 ms)".into(),
-        250 => "Medium (250 ms)".into(),
-        600 => "Slow (600 ms)".into(),
-        custom => format!("Custom ({custom} ms)"),
+    match CADENCES.iter().find(|(.., preset)| *preset == interval) {
+        Some((_, label, _)) => (*label).into(),
+        None => format!("Custom ({} ms)", interval.as_millis()),
     }
 }
 pub(super) fn on_off(value: bool) -> &'static str {
@@ -296,12 +296,8 @@ impl Ui {
                 } else {
                     &mut self.config.loaded_ping_interval
                 };
-                *cadence = match cadence.as_millis() {
-                    0 => Duration::from_millis(80),
-                    80 => Duration::from_millis(250),
-                    250 => Duration::from_millis(600),
-                    _ => Duration::ZERO,
-                }
+                let index = CADENCES.iter().position(|(.., preset)| preset == cadence);
+                *cadence = CADENCES[index.map_or(0, |index| (index + 1) % CADENCES.len())].2;
             }
             Field::Start => {}
             Field::Advanced => self.advanced = !self.advanced,
@@ -336,52 +332,23 @@ impl Ui {
     }
     pub(super) fn apply(&mut self, field: Field, value: String) -> Result<(), Error> {
         let value = value.trim();
+        let origin = || (!value.is_empty()).then(|| canonical_origin(value)).transpose();
+        let mut config = self.config.clone();
         match field {
-            Field::Url => {
-                graphite_meter_core::origin::canonical_origin(value)?;
-                self.config.url = value.into();
-                self.config.servers.clear();
-                self.snapshot.servers.clear();
-            }
-            Field::ThroughputOrigin | Field::LatencyOrigin => {
-                let origin = if value.is_empty() {
-                    None
-                } else {
-                    Some(graphite_meter_core::origin::canonical_origin(value)?)
-                };
-                if matches!(field, Field::ThroughputOrigin) {
-                    self.config.throughput_origin = origin;
-                } else {
-                    self.config.latency_origin = origin;
-                }
-            }
-            Field::Streams | Field::AutoStreams => {
-                let number: usize = value.parse()?;
-                if number > crate::config::MAX_STREAMS || matches!(field, Field::AutoStreams) && number == 0 {
-                    return Err("stream count must be 1..14; fixed streams also permits 0 for automatic".into());
-                }
-                if matches!(field, Field::Streams) {
-                    self.config.streams = number;
-                } else {
-                    self.config.auto_streams = number;
-                }
-            }
-            _ => {
-                let number: f64 = value.parse()?;
-                if !number.is_finite()
-                    || number < 0.0
-                    || number > 86400.0
-                    || number == 0.0 && !matches!(field, Field::Warmup)
-                {
-                    return Err("enter a positive duration up to 86400 (warmup also permits zero)".into());
-                }
-                let duration = Duration::try_from_secs_f64(number)?;
-                match field {
-                    Field::Warmup => self.config.warmup = duration,
-                    _ => return Err("this field is not editable text".into()),
-                }
-            }
+            Field::Url => config.url = value.into(),
+            Field::ThroughputOrigin => config.throughput_origin = origin()?,
+            Field::LatencyOrigin => config.latency_origin = origin()?,
+            Field::Streams => config.streams = value.parse()?,
+            Field::AutoStreams => config.auto_streams = value.parse()?,
+            Field::Warmup => config.warmup = Duration::try_from_secs_f64(value.parse()?)?,
+            _ => return Err("this field is not editable text".into()),
         }
+        config.validate_settings()?;
+        if field == Field::Url {
+            config.servers.clear();
+            self.snapshot.servers.clear();
+        }
+        self.config = config;
         Ok(())
     }
 }
