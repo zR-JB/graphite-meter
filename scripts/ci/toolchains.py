@@ -28,6 +28,9 @@ PIN_PATTERNS = {
         "binfmt": r"docker\.io/tonistiigi/binfmt@sha256:[0-9a-f]{64}",
         "bun": r"docker\.io/oven/bun:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
         "golang": r"docker\.io/library/golang:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}",
+        "python": r"docker\.io/library/python:\d+\.\d+\.\d+-slim-bookworm@sha256:[0-9a-f]{64}",
+        "rust": r"docker\.io/library/rust:\d+\.\d+\.\d+-bookworm@sha256:[0-9a-f]{64}",
+        "distroless_cc": r"gcr\.io/distroless/cc-debian13:nonroot@sha256:[0-9a-f]{64}",
     },
 }
 
@@ -58,9 +61,12 @@ def load_pins(root: Path = ROOT) -> dict[str, dict[str, str]]:
                 raise ValueError(f"mise.toml {section}.{name} must be an exact version or image digest")
             pins[section][name] = value
     pins["runtime"] = {name: pins["tools"][name] for name in ("bun", "python", "go")}
-    for name, runtime in (("bun", "bun"), ("golang", "go")):
-        if pins["images"][name].split(":")[1].split("@")[0] != pins["runtime"][runtime]:
+    for name, runtime in (("bun", "bun"), ("golang", "go"), ("python", "python")):
+        if pins["images"][name].split(":")[1].split("@")[0].split("-")[0] != pins["runtime"][runtime]:
             raise ValueError(f"mise.toml images.{name} must use the tools.{runtime} version")
+    channel = tomllib.loads((root / "rust/rust-toolchain.toml").read_text(encoding="utf-8"))["toolchain"]["channel"]
+    if pins["images"]["rust"].split(":")[1].split("-")[0] != channel:
+        raise ValueError("mise.toml images.rust must use the rust/rust-toolchain.toml channel")
     return pins
 
 
@@ -83,6 +89,16 @@ def literal_updates(root: Path = ROOT) -> dict[Path, str]:
              f"FROM {pins['images']['bun']} AS client"),
             (r"(?m)^FROM docker\.io/library/golang:\S+ AS server$",
              f"FROM {pins['images']['golang']} AS server"),
+        ],
+        "container/Dockerfile.rust": [
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/python:\S+( AS python)$",
+             rf"\g<1>{pins['images']['python']}\g<2>"),
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/library/rust:\S+( AS rust-amd64)$",
+             rf"\g<1>{pins['images']['rust']}\g<2>"),
+            (r"(?m)^(FROM --platform=\$BUILDPLATFORM )docker\.io/oven/bun:\S+( AS browser)$",
+             rf"\g<1>{pins['images']['bun']}\g<2>"),
+            (r"(?m)^FROM gcr\.io/distroless/cc-debian13:\S+ AS server$",
+             f"FROM {pins['images']['distroless_cc']} AS server"),
         ],
         ".github/workflows/release-request.yml": [
             (r"(?m)^(\s*image: )docker.io/tonistiigi/binfmt@\S+$", rf"\g<1>{pins['images']['binfmt']}"),

@@ -14,7 +14,8 @@ class ToolchainBoundaryTests(unittest.TestCase):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         root = pathlib.Path(directory.name)
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
+                     "rust/rust-toolchain.toml"):
             target = root / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, target)
@@ -39,11 +40,29 @@ class ToolchainBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "container/Dockerfile"):
             check(root)
         updates = literal_updates(root)
-        self.assertEqual(set(updates), {root / "container/Dockerfile"})
+        self.assertEqual(set(updates), {root / "container/Dockerfile", root / "container/Dockerfile.rust"})
         for path, content in updates.items():
             path.write_text(content)
         check(root)
         self.assertIn(f"FROM {image} AS client", (root / "container/Dockerfile").read_text())
+        self.assertIn(f"FROM --platform=$BUILDPLATFORM {image} AS browser",
+                      (root / "container/Dockerfile.rust").read_text())
+
+    def test_the_rust_image_follows_the_workspace_toolchain(self) -> None:
+        root = self.copy_pins()
+        path = root / "rust/rust-toolchain.toml"
+        channel = load_pins(root)["images"]["rust"].split(":")[1].split("-")[0]
+        path.write_text(path.read_text().replace(f'channel = "{channel}"', 'channel = "1.0.0"'))
+        with self.assertRaisesRegex(ValueError, "images.rust must use"):
+            load_pins(root)
+
+    def test_rust_image_drift_is_rejected(self) -> None:
+        root = self.copy_pins()
+        path = root / "container/Dockerfile.rust"
+        image = load_pins(root)["images"]["distroless_cc"]
+        path.write_text(path.read_text().replace(image, image[:-1] + ("0" if image[-1] != "0" else "1")))
+        with self.assertRaisesRegex(ValueError, "Dockerfile.rust"):
+            check(root)
 
     def test_publication_image_drift_is_rejected(self) -> None:
         root = self.copy_pins()

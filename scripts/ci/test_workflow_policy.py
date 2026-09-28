@@ -34,6 +34,14 @@ MUTATIONS: tuple[tuple[str, str | None, str, str], ...] = (
     ("container/Dockerfile", None, "FROM docker.io/library/alpine:3 AS extra\n", "digest-pinned"),
     ("container/Dockerfile", "# Graphite Meter", "#Syntax = example/frontend\n# Graphite Meter",
      "BuildKit frontend"),
+    ("container/Dockerfile.rust", None, "FROM --platform=$BUILDPLATFORM docker.io/library/alpine:3 AS extra\n",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "FROM rust-amd64 AS rust-arm64", "FROM rust:1.98.1 AS rust-arm64",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "FROM rust-${TARGETARCH} AS server-build", "FROM ${BASE} AS server-build",
+     "Dockerfile.rust base images must be digest-pinned"),
+    ("container/Dockerfile.rust", "# Experimental only", "# syntax=example/frontend\n# Experimental only",
+     "BuildKit frontend"),
     (W + "ci.yml", None, PINNED_STEP.format("actions/setup-go"), "through mise"),
     (REQUEST, "ref: ${{ github.sha }}", "ref: ${{ inputs.sha }}", "triggering github.sha"),
     (W + "ci.yml", "        with: {persist-credentials: false}\n",
@@ -142,7 +150,8 @@ class WorkflowPolicyTests(unittest.TestCase):
         self.addCleanup(directory.cleanup)
         root = Path(directory.name)
         shutil.copytree(ROOT / ".github", root / ".github")
-        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile"):
+        for name in ("mise.toml", "mise.lock", "go/go.mod", "container/Dockerfile", "container/Dockerfile.rust",
+                     "rust/rust-toolchain.toml"):
             (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / name, root / name)
         return root

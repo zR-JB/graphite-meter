@@ -256,12 +256,22 @@ def check_repository(root: Path = ROOT) -> None:
         check_toolchain_literals(root)
     except (ValueError, OSError) as exc:
         fail(str(exc))
-    dockerfile = read(root, "container/Dockerfile")
-    if unpinned := [image for image in re.findall(r"(?m)^FROM (\S+)", dockerfile)
-                    if image != "scratch" and "@sha256:" not in image]:
-        fail(f"container/Dockerfile base images must be digest-pinned: {unpinned}")
-    if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
-        fail("container/Dockerfile must not select a BuildKit frontend with # syntax=")
+    for name in ("container/Dockerfile", "container/Dockerfile.rust"):
+        dockerfile = read(root, name)
+        stages = re.findall(r"(?im)^FROM\s.*\sAS\s+(\S+)\s*$", dockerfile)
+
+        def stage(image: str) -> bool:
+            # A build argument such as rust-${TARGETARCH} may select an earlier stage; a bare
+            # ${BASE} could name any image.
+            literals = re.split(r"\$\{[^}]*\}", image)
+            pattern = ".+".join(map(re.escape, literals))
+            return "".join(literals) != "" and any(re.fullmatch(pattern, name) for name in stages)
+
+        if unpinned := [image for image in re.findall(r"(?m)^FROM(?:\s+--\S+)*\s+(\S+)", dockerfile)
+                        if image != "scratch" and "@sha256:" not in image and not stage(image)]:
+            fail(f"{name} base images must be digest-pinned: {unpinned}")
+        if re.search(r"(?im)^\s*#\s*syntax\s*=", dockerfile):
+            fail(f"{name} must not select a BuildKit frontend with # syntax=")
     check_actions(root)
     check_workflows(root)
     check_ci(root)
