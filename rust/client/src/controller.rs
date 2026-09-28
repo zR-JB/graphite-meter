@@ -237,10 +237,7 @@ impl Controller {
         let running = self.running;
         if self.cancelling {
             self.snapshots.send_modify(|snapshot| {
-                if matches!(
-                    snapshot.phase,
-                    Phase::Checking | Phase::Preparing | Phase::Warmup | Phase::Measuring
-                ) {
+                if snapshot.phase.busy() {
                     snapshot.phase = if running { Phase::Cancelled } else { Phase::Setup };
                     snapshot.error = None;
                 }
@@ -255,7 +252,7 @@ impl Controller {
                 Err(error) => {
                     let signed_out = authentication_required(error.as_ref()).is_some();
                     self.snapshots.send_modify(|snapshot| {
-                        snapshot.phase = if snapshot.results.iter().any(|result| result.elapsed > Duration::ZERO) {
+                        snapshot.phase = if snapshot.measured() {
                             Phase::Incomplete
                         } else {
                             Phase::Failed
@@ -353,12 +350,7 @@ async fn execute(
             Ok(prepared) => return Ok(prepared),
             Err(error) => error,
         };
-        let measured = snapshots
-            .borrow()
-            .results
-            .iter()
-            .any(|result| result.elapsed > Duration::ZERO);
-        if measured && matches!(work, Work::Run(_)) {
+        if snapshots.borrow().measured() && matches!(work, Work::Run(_)) {
             return Err(error);
         }
         let Some(required) = authentication_required(error.as_ref()).filter(|_| interactive) else {
@@ -478,15 +470,8 @@ mod tests {
         controller.operations.spawn(async move {
             snapshots.send_modify(|snapshot| {
                 snapshot.results.push(crate::model::StageResult {
-                    stage: crate::model::Stage::Latency,
                     elapsed: Duration::from_secs(1),
-                    down: None,
-                    up: None,
-                    intervals: Default::default(),
-                    omitted_intervals: 0,
-                    stopped: false,
-                    server_latencies: Vec::new(),
-                    server_results: Vec::new(),
+                    ..Default::default()
                 })
             });
             Err(Box::new(crate::net::AuthRequired {

@@ -85,10 +85,6 @@ impl<'a> Report<'a> {
         }
     }
 
-    fn live(&self) -> bool {
-        matches!(self.snapshot.phase, Phase::Preparing | Phase::Warmup | Phase::Measuring)
-    }
-
     fn servers(&self) -> Vec<&crate::model::ServerSummary> {
         self.snapshot
             .servers
@@ -228,7 +224,7 @@ impl<'a> Report<'a> {
                 })
                 .collect();
             let mut rates = rates.join("  ");
-            if rates.is_empty() && !self.live() {
+            if rates.is_empty() && !self.snapshot.phase.live() {
                 rates = self.unmeasured(*stage).to_owned();
             } else if self.status(*stage) == StageStatus::Partial {
                 rates = format!("{rates}  {}", StageStatus::Partial.label());
@@ -282,7 +278,7 @@ impl<'a> Report<'a> {
                         _ => {}
                     }
                 }
-                None if *stage == Stage::Latency && !self.live() => {
+                None if *stage == Stage::Latency && !self.snapshot.phase.live() => {
                     rows.push(vec![
                         compact_population(*stage).to_owned(),
                         self.unmeasured(*stage).to_owned(),
@@ -375,10 +371,11 @@ impl<'a> Report<'a> {
         let servers = self.servers();
         let remaining = self.snapshot.participants.len();
         let outcome = outcome(self.snapshot.phase);
+        let live = self.snapshot.phase.live();
         let mut lines = vec![match servers.len() {
             1 => status(self.snapshot).to_owned(),
-            selected if self.live() && remaining < selected => format!("{remaining} of {selected} servers remaining"),
-            selected if self.live() => format!("All {selected} servers"),
+            selected if live && remaining < selected => format!("{remaining} of {selected} servers remaining"),
+            selected if live => format!("All {selected} servers"),
             selected if remaining < selected => format!("{outcome} · {remaining} of {selected} servers"),
             selected => format!("{outcome} · all {selected} servers"),
         }];
@@ -472,7 +469,7 @@ impl<'a> Report<'a> {
             .iter()
             .flat_map(|result| result.intervals.iter().map(move |interval| (result.stage, interval)))
             .collect();
-        if full && !self.live() && !intervals.is_empty() {
+        if full && !live && !intervals.is_empty() {
             lines.extend([String::new(), "Aggregation intervals".to_owned()]);
             for (stage, interval) in intervals {
                 let names: Vec<_> = interval.participants.iter().map(|id| self.name(id)).collect();

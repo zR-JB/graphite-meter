@@ -387,23 +387,16 @@ pub async fn run(
                         let ending = crate::model::Ending::Failed(crate::failure::reason(error.as_ref(), true));
                         snapshot.results.push(crate::model::StageResult {
                             stage: *stage,
-                            elapsed: Duration::ZERO,
-                            down: None,
-                            up: None,
-                            intervals: Default::default(),
-                            omitted_intervals: 0,
-                            stopped: false,
                             server_results: vec![crate::model::ServerContribution {
                                 id: entry.id.clone(),
-                                down: None,
-                                up: None,
+                                ..Default::default()
                             }],
                             server_latencies: vec![crate::model::ServerLatencyResult {
-                                elapsed: None,
                                 id: entry.id.clone(),
-                                summary: Default::default(),
                                 ending: Some(ending),
+                                ..Default::default()
                             }],
+                            ..Default::default()
                         });
                     });
                     continue;
@@ -416,11 +409,7 @@ pub async fn run(
             Err(error)
                 if sole.is_some()
                     && crate::net::authentication_required(error.as_ref()).is_none()
-                    && snapshots
-                        .borrow()
-                        .results
-                        .iter()
-                        .any(|result| result.elapsed > Duration::ZERO) =>
+                    && snapshots.borrow().measured() =>
             {
                 retry_sole = true;
                 continue;
